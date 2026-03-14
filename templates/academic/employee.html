@@ -1,0 +1,360 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="employee-container">
+    <div class="stats-row">
+        <div class="stat-card maroon">
+            <span class="stat-label">REGULAR</span>
+            <span class="stat-value">{{ reg }}</span>
+        </div>
+        <div class="stat-card maroon">
+            <span class="stat-label">PART-TIME</span>
+            <span class="stat-value">{{ pt }}</span>
+        </div>
+        <div class="stat-card maroon">
+            <span class="stat-label">DESIGNEES</span>
+            <span class="stat-value">{{ temp }}</span>
+        </div>
+        <div class="stat-card white-border">
+            <span class="stat-label">TOTAL EMPLOYEE</span>
+            <span class="stat-value total">{{ total }}</span>
+        </div>
+        <div class="action-section">
+            <button class="btn-add-employee" onclick="openAddModal()">ADD NEW EMPLOYEE</button>
+        </div>
+    </div>
+
+    <div class="table-wrapper">
+        <div class="table-header-filters">
+            <div class="filter-group">
+                <label>SEARCH EMPLOYEE</label>
+                <div class="search-box">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>EMPLOYEE TYPE</label>
+                <select id="typeFilter" onchange="filterTable()">
+                    <option value="">All Types</option>
+                    <option value="Permanent">Permanent</option>
+                    <option value="Part-Time">Part-Time</option>
+                    <option value="Temporary">Temporary</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>DEPARTMENT</label>
+                <select id="deptFilter" onchange="filterTable()">
+                    <option value="">All Departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept.departmentname }}">{{ dept.departmentname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="table-actions-right">
+                <span class="sort-text" onclick="sortTable()" style="cursor:pointer">
+                    <span id="sortDirection">Ascending</span> <i class="fas fa-sort"></i>
+                </span>
+                <button class="btn-export" onclick="openImportModal()">
+                    <i class="fas fa-file-import"></i> Import
+                </button>
+                <button class="btn-export" onclick="exportToExcel()">
+                    <i class="fas fa-file-export"></i> Export
+                </button>
+            </div>
+        </div>
+
+        <table class="employee-table" id="instructorTable">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="selectAll"></th>
+                    <th>Employee Name</th>
+                    <th>Department</th>
+                    <th>Designation</th> 
+                    <th>Email</th>
+                    <th>Contact</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for emp in employees %}
+                <tr>
+                    <td><input type="checkbox" class="row-check"></td>
+                    <td class="emp-name"><strong>{{ emp.lastname }}, {{ emp.firstname }}</strong></td>
+                    <td class="emp-dept">{{ emp.departmentname }}</td>
+                    <td>{{ emp.designationname if emp.designationname else 'N/A' }}</td> 
+                    <td>{{ emp.email }}</td>
+                    <td>{{ emp.contactnumber }}</td>
+                    <td class="emp-type">
+                        <span class="badge {{ emp.employeestatus|lower|replace('-', '') }}">
+                            {{ emp.employeestatus }}
+                        </span>
+                    </td>
+                    <td class="action-icons">
+                        <i class="fas fa-edit edit" onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.departmentid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
+                        <i class="fas fa-trash trash" onclick="confirmDelete('{{ emp.employeenumber }}')"></i>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="addEmployeeModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2><i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE</h2>
+            <span class="close-btn" onclick="closeAddModal()">&times;</span>
+        </div>
+        <form id="addEmployeeForm" action="/add_employee" method="POST">
+            <div class="form-grid">
+                <div class="form-group full-width">
+                    <label>EMPLOYEE NUMBER</label>
+                    <input type="text" name="employee_number" placeholder="e.g. 2024-FAC-000" required>
+                </div>
+                <div class="form-group"><label>FIRST NAME</label><input type="text" name="first_name" required></div>
+                <div class="form-group"><label>LAST NAME</label><input type="text" name="last_name" required></div>
+                <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" name="email" required></div>
+                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" name="contact" required></div>
+                <hr class="form-divider full-width">
+                <div class="form-group">
+                    <label>DEPARTMENT</label>
+                    <select name="department_id" required>
+                        <option value="" disabled selected>Select Department</option>
+                        {% for dept in departments %}
+                            <option value="{{ dept.departmentid }}">{{ dept.departmentname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>EMPLOYEE TYPE</label>
+                    <select name="type_id" required>
+                        <option value="" disabled selected>Select Type</option>
+                        {% for etype in employee_types %}
+                            <option value="{{ etype.employeetypeid }}">{{ etype.typename }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>DESIGNATION</label>
+                    <select name="designation_id">
+                        <option value="" disabled selected>Select Designation (Optional)</option>
+                        {% for des in designations %}
+                            <option value="{{ des.designationid }}">{{ des.designationname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>EMPLOYMENT STATUS</label>
+                    <select name="status" required>
+                        <option value="" disabled selected>Select Status</option>
+                        <option value="Permanent">Permanent</option>
+                        <option value="Part-Time">Part-Time</option>
+                        <option value="Temporary">Temporary</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-cancel" onclick="closeAddModal()">CANCEL</button>
+                <button type="submit" class="btn-save">SAVE EMPLOYEE</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="editEmployeeModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2><i class="fas fa-user-edit"></i> EDIT EMPLOYEE</h2>
+            <span class="close-btn" onclick="closeEditModal()">&times;</span>
+        </div>
+        <form id="editEmployeeForm" action="/edit_employee" method="POST">
+            <div class="form-grid">
+                <div class="form-group full-width">
+                    <label>EMPLOYEE NUMBER</label>
+                    <input type="text" id="edit_emp_num" name="employee_number" readonly style="background-color: #eee;">
+                </div>
+                <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>
+                <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name" required></div>
+                <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" id="edit_email" name="email" required></div>
+                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact" required></div>
+                <hr class="form-divider full-width">
+                <div class="form-group">
+                    <label>DEPARTMENT</label>
+                    <select id="edit_dept" name="department_id" required>
+                        {% for dept in departments %}<option value="{{ dept.departmentid }}">{{ dept.departmentname }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>EMPLOYEE TYPE</label>
+                    <select id="edit_type" name="type_id" required>
+                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}">{{ etype.typename }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>DESIGNATION</label>
+                    <select id="edit_desig" name="designation_id">
+                        <option value="">No Designation</option>
+                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>EMPLOYMENT STATUS</label>
+                    <select id="edit_status" name="status" required>
+                        <option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-cancel" onclick="closeEditModal()">CANCEL</button>
+                <button type="submit" class="btn-save">UPDATE EMPLOYEE</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="importEmployeeModal" class="modal">
+    <div class="modal-content" style="width: 450px;">
+        <div class="modal-header">
+            <h2><i class="fas fa-file-csv"></i> BULK IMPORT CSV</h2>
+            <span class="close-btn" onclick="closeImportModal()">&times;</span>
+        </div>
+        <form action="/bulk_import" method="POST" enctype="multipart/form-data">
+            <div class="form-grid" style="display: block; padding: 25px;">
+                <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
+                    Please upload a <b>.csv</b> file. The columns must exactly follow this order:<br>
+                    <code style="background: #eee; padding: 4px; display: block; margin-top: 10px; font-size: 11px;">
+                        EmpNum, FirstName, LastName, Email, Contact, DeptID, TypeID, DesigID, Status
+                    </code>
+                </p>
+                <div class="form-group">
+                    <label>SELECT CSV FILE</label>
+                    <input type="file" name="file" accept=".csv" required style="padding: 10px 0; border: none;">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-cancel" onclick="closeImportModal()">CANCEL</button>
+                <button type="submit" class="btn-save">IMPORT DATA</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// --- CHECKBOX LOGIC FIX ---
+document.getElementById("selectAll").addEventListener("change", function() {
+    let checkboxes = document.querySelectorAll('.row-check');
+    for (let checkbox of checkboxes) {
+        let row = checkbox.closest('tr');
+        if (row.style.display !== "none") { // Only check visible rows
+            checkbox.checked = this.checked;
+        }
+    }
+});
+
+function filterTable() {
+    let input = document.getElementById("searchInput").value.toUpperCase();
+    let type = document.getElementById("typeFilter").value.toUpperCase();
+    let dept = document.getElementById("deptFilter").value.toUpperCase();
+    let tr = document.getElementById("instructorTable").getElementsByTagName("tr");
+
+    for (let i = 1; i < tr.length; i++) {
+        let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
+        let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
+        let deptTxt = tr[i].querySelector(".emp-dept").textContent.toUpperCase();
+        
+        let matchSearch = nameTxt.indexOf(input) > -1;
+        let matchType = type === "" || typeTxt.trim() === type;
+        let matchDept = dept === "" || deptTxt.trim() === dept;
+
+        tr[i].style.display = (matchSearch && matchType && matchDept) ? "" : "none";
+    }
+}
+
+let currentOrder = 'asc';
+function sortTable() {
+    let table = document.getElementById("instructorTable");
+    let rows = Array.from(table.rows).slice(1);
+    let direction = currentOrder === 'asc' ? 1 : -1;
+    
+    rows.sort((a, b) => {
+        let nameA = a.querySelector(".emp-name").textContent.trim();
+        let nameB = b.querySelector(".emp-name").textContent.trim();
+        return nameA.localeCompare(nameB) * direction;
+    });
+
+    rows.forEach(row => table.appendChild(row));
+    currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+    document.getElementById("sortDirection").innerText = currentOrder === 'asc' ? 'Ascending' : 'Descending';
+}
+
+// --- EXPORT LOGIC FIX ---
+function exportToExcel() {
+    let originalTable = document.getElementById("instructorTable");
+    let cloneTable = document.createElement("table");
+    
+    // Check which rows are selected
+    let checkboxes = document.querySelectorAll('.row-check');
+    let hasSelection = Array.from(checkboxes).some(cb => cb.checked);
+
+    // Clone header and remove Checkbox and Action columns
+    let thead = originalTable.querySelector("thead").cloneNode(true);
+    thead.rows[0].deleteCell(-1); // Delete Actions
+    thead.rows[0].deleteCell(0);  // Delete Checkbox
+    cloneTable.appendChild(thead);
+
+    let tbody = document.createElement("tbody");
+    let allRows = originalTable.querySelectorAll("tbody tr");
+
+    allRows.forEach((row, index) => {
+        // Only export if visible AND (no checkboxes selected OR this specific checkbox is selected)
+        if (row.style.display !== "none" && (!hasSelection || checkboxes[index].checked)) {
+            let cloneRow = row.cloneNode(true);
+            cloneRow.deleteCell(-1); // Delete Actions
+            cloneRow.deleteCell(0);  // Delete Checkbox
+            tbody.appendChild(cloneRow);
+        }
+    });
+
+    cloneTable.appendChild(tbody);
+    let wb = XLSX.utils.table_to_book(cloneTable, {sheet: "Employees"});
+    XLSX.writeFile(wb, "PUP_Employee_Export.xlsx");
+}
+
+function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
+function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
+function openEditModal(empNum, fName, lName, email, contact, deptId, typeId, desigId, status) {
+    document.getElementById("edit_emp_num").value = empNum;
+    document.getElementById("edit_f_name").value = fName;
+    document.getElementById("edit_l_name").value = lName;
+    document.getElementById("edit_email").value = email;
+    document.getElementById("edit_contact").value = contact;
+    document.getElementById("edit_dept").value = deptId;
+    document.getElementById("edit_type").value = typeId;
+    document.getElementById("edit_desig").value = desigId;
+    document.getElementById("edit_status").value = status;
+    document.getElementById("editEmployeeModal").style.display = "block";
+}
+function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
+function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
+function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
+
+function confirmDelete(empNum) {
+    if (confirm("Are you sure you want to delete employee " + empNum + "? This action cannot be undone.")) {
+        window.location.href = "/delete_employee/" + empNum;
+    }
+}
+
+window.onclick = function(event) {
+    if (event.target == document.getElementById("addEmployeeModal")) closeAddModal();
+    if (event.target == document.getElementById("editEmployeeModal")) closeEditModal();
+    if (event.target == document.getElementById("importEmployeeModal")) closeImportModal();
+}
+</script>
+{% endblock %}

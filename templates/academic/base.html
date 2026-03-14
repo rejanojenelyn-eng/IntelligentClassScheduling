@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PUP Lopez Academic Management</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />  
+  </head> 
+
+  <head>
+    <meta charset="UTF-8">
+    <title>Academic Scheduler</title>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    {% block head %}{% endblock %}
+</head>
+
+  <body>
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-top-section">
+        <div class="logo-container">
+          <img
+            src="{{ url_for('static', filename='img/pup-logo.png') }}"
+            alt="PUP Logo"
+          />
+          <div class="logo-text-group">
+            <span class="logo-text">PUP LOPEZ</span>
+            <span class="ay-label">A.Y. 25-26</span>
+          </div>
+        </div>
+        <button id="toggleBtn" class="menu-btn-sidebar">
+          <i class="fas fa-bars"></i>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav-container">
+        <ul class="nav-list">
+          <li
+            class="nav-item {{ 'active' if request.path == '/dashboard' or request.path == '/' }}"
+          >
+            <a href="/dashboard">
+              <i class="fas fa-th-large"></i>
+              <span class="nav-label">Dashboard</span>
+            </a>
+          </li>
+
+          <li class="nav-item {{ 'active' if request.path == '/employee' }}">
+            <a href="/employee">
+              <i class="fas fa-users"></i>
+              <span class="nav-label">Employee Management</span>
+            </a>
+          </li>
+
+          <li class="nav-item {{ 'active' if request.path == '/curriculum' }}">
+            <a href="/curriculum">
+              <i class="fas fa-book"></i>
+              <span class="nav-label">Curriculum</span>
+            </a>
+          </li>
+
+          <li class="nav-item {{ 'active' if request.path == '/room' }}">
+            <a href="/room">
+              <i class="fas fa-door-open"></i>
+              <span class="nav-label">Rooms</span>
+            </a>
+          </li>
+
+          <li class="nav-item {{ 'active' if request.path == '/schedule' }}">
+            <a href="/schedule">
+              <i class="fas fa-calendar-alt"></i>
+              <span class="nav-label">Schedule</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="main-wrapper">
+      <header class="top-header">
+        <div class="header-left">
+          <div class="search-container">
+            <i class="fas fa-search search-icon"></i>
+            <input
+              type="text"
+              class="search-input"
+              placeholder="Search records..."
+            />
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="user-profile">
+            <span class="user-role">Academic Head</span>
+            <div class="avatar">AH</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="content-body">{% block content %}{% endblock %}</section>
+    </main>
+
+    <script>
+      const sidebar = document.getElementById("sidebar");
+      const toggleBtn = document.getElementById("toggleBtn");
+
+      toggleBtn.onclick = () => {
+        sidebar.classList.toggle("collapsed");
+      };
+    </script>
+  </body>
+</html>
