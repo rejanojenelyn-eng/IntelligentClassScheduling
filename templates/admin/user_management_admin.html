@@ -1,0 +1,25 @@
+{% extends "admin/base_admin.html" %}
+
+{% block content %}
+    <h1 style="color: #800000;">User Management</h1>
+    <p>Manage system access for Admin, Academic Head, and Faculty accounts.</p>
+    
+    <button style="background: #800000; color: white; padding: 10px; border: none; margin-top: 10px;">
+        + Add New User
+    </button>
+
+    <table border="1" style="width: 100%; margin-top: 20px; border-collapse: collapse;">
+        <tr style="background: #eee;">
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+        <tr>
+            <td>acadhead_01</td>
+            <td>Academic Head</td>
+            <td>Active</td>
+            <td><button>Edit</button></td>
+        </tr>
+    </table>
+{% endblock %}
