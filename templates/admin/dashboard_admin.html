@@ -1,4 +1,116 @@
 {% extends "admin/base_admin.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_admin.css') }}">
+{% endblock %}
+
 {% block content %}
-<h1>Admin Dashboard is Working</h1>
+<div class="dashboard-wrapper">
+    <!-- Header -->
+    <div class="welcome-header">
+        <h1>Welcome, Admin!</h1>
+        <p class="current-date">{{ current_date }}</p>
+    </div>
+
+    <!-- Action Buttons Grid -->
+     <div class="action-grid">
+        <a href="{{ url_for('admin_schedule') }}" class="btn-action white">GENERATE SCHEDULE</a>
+        <a href="{{ url_for('admin_employee') }}" class="btn-action">MANAGE FACULTY</a>
+        <a href="{{ url_for('admin_curriculum') }}" class="btn-action">MANAGE CURRICULUM</a>
+        <a href="{{ url_for('admin_users') }}" class="btn-action">MANAGE USERS</a>
+        <a href="{{ url_for('admin_schedule') }}" class="btn-action">VIEW SCHEDULES</a>
+        <a href="{{ url_for('admin_reports') }}" class="btn-action">EXPORT REPORTS</a>
+    </div>
+
+    <!-- Activity Logs Section -->
+    <div class="section-container">
+        <div class="section-header">
+            <h2>Activity Logs</h2>
+            <a href="#" class="view-all-btn">VIEW ALL</a>
+        </div>
+        <div class="table-controls maroon-bg">
+            <div class="table-actions-right">
+                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
+                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            </div>
+        </div>
+        <table class="dashboard-table">
+            <thead>
+                <tr>
+                    <th>Activity</th>
+                    <th>Performed by</th>
+                    <th>Date performed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in activity_logs %}
+                <tr>
+                    <td>{{ log.activity }}</td>
+                    <td>{{ log.performed_by }}</td>
+                    <td class="date-col">{{ log.date_performed }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td>Added faculty information</td>
+                    <td>Dr. Lourdes Avila</td>
+                    <td class="date-col">03-14-26 00:03:00</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Schedule List Section -->
+    <div class="section-container">
+        <div class="section-header">
+            <h2>Schedule List</h2>
+            <a href="#" class="view-all-btn">VIEW ALL</a>
+        </div>
+        <div class="table-controls maroon-bg">
+            <div class="search-filter">
+                <select><option>PROGRAM</option></select>
+                <select><option>ACAD YEAR</option></select>
+                <select><option>SEMESTER</option></select>
+                <select><option>STATUS</option></select>
+            </div>
+            <div class="table-actions-right">
+                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
+                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            </div>
+        </div>
+        <table class="dashboard-table">
+            <thead>
+                <tr>
+                    <th>Program</th>
+                    <th>Year level</th>
+                    <th>Acad year</th>
+                    <th>Semester</th>
+                    <th>Created by</th>
+                    <th>Date Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sched in schedules %}
+                <tr>
+                    <td>{{ sched.program }}</td>
+                    <td>{{ sched.year }}</td>
+                    <td>{{ sched.acad_year }}</td>
+                    <td>{{ sched.semester }}</td>
+                    <td>{{ sched.created_by }}</td>
+                    <td class="date-col">{{ sched.date_created }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td>BSIT</td>
+                    <td>1</td>
+                    <td>2025-2026</td>
+                    <td>BSIT-2</td>
+                    <td>Dr. Lourdes Avila</td>
+                    <td class="date-col">03-14-26 00:03:00</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}

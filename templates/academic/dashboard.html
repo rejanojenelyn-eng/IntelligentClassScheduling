@@ -1,42 +1,132 @@
 {% extends "academic/base.html" %}
 
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_acad.css') }}">
+    <!-- Ensure FontAwesome is included for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+{% endblock %}
 
 {% block content %}
-<div class="dashboard-header">
-    <h1 style="font-size: 1.75rem; color: #111827;">Administrative Overview</h1>
-    <p style="color: #6B7280;">Manage academic schedules, faculty loads, and room assignments.</p>
-</div>
-
-<div class="card-grid">
-    <div class="card">
-        <div class="stat-label">Total Faculty</div>
-        <div class="stat-value">{{ faculty_count }}</div>
-        <div style="color: #10B981; font-size: 0.8rem;">● Online System Active</div>
-    </div>
-    
-    <div class="card">
-        <div class="stat-label">Active Rooms</div>
-        <div class="stat-value">{{ room_count }}</div>
-        <div style="color: #6B7280; font-size: 0.8rem;">Lecture & Lab</div>
+<div class="dashboard-wrapper">
+    <!-- Header Section -->
+    <div class="welcome-header">
+        <h1>Welcome, Acad head!</h1>
+        <p class="current-date">{{ current_date }}</p>
     </div>
 
-    <div class="card">
-        <div class="stat-label">Pending Requests</div>
-        <div class="stat-value">12</div>
-        <div style="color: #F59E0B; font-size: 0.8rem;">Requires Approval</div>
+    <!-- Quick Action Buttons -->
+    <!-- Quick Action Buttons -->
+    <div class="action-grid">
+        <a href="{{ url_for('schedule') }}" class="btn-action white">GENERATE SCHEDULE</a>
+        
+        <a href="{{ url_for('employee') }}" class="btn-action">MANAGE FACULTY</a>
+        
+        <a href="{{ url_for('curriculum') }}" class="btn-action">MANAGE CURRICULUM</a>
+        
+        <a href="{{ url_for('schedule') }}" class="btn-action">VIEW SCHEDULES</a>
+        
+        <a href="{{ url_for('reports') }}" class="btn-action">EXPORT REPORTS</a>
     </div>
 
-    <div class="card">
-        <div class="stat-label">Schedule Status</div>
-        <div class="stat-value" style="font-size: 1.2rem; padding: 10px 0;">GENERATED</div>
-        <div style="color: #3B82F6; font-size: 0.8rem;">A.Y. 2025-2026</div>
-    </div>
-</div>
+    <!-- Requests Table Section -->
+    <div class="section-container">
+        <div class="section-header">
+            <h2>Requests <span class="badge-count">2</span></h2>
+            <button class="view-all-btn">VIEW ALL</button>
+        </div>
+        
+        <div class="table-controls maroon-bg">
+            <div class="search-filter">
+                <input type="text" placeholder="Search employee...">
+                <select><option>Status: Pending</option></select>
+                <select><option>Status: Pending</option></select>
+            </div>
+            <div class="table-actions">
+                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
+                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            </div>
+        </div>
 
-<div style="margin-top: 30px; background: white; border: 1px solid var(--border-color); border-radius: 8px;">
-    <div style="padding: 20px; border-bottom: 1px solid var(--border-color); font-weight: 600;">Recent Schedule Activities</div>
-    <div style="padding: 40px; text-align: center; color: #9CA3AF;">
-        Select a department from the sidebar to view detailed schedules.
+        <table class="dashboard-table">
+            <thead>
+                <tr>
+                    <th>Employee Name</th>
+                    <th>Course code</th>
+                    <th>Program/Yr</th>
+                    <th>Requested date</th>
+                    <th>Status</th>
+                    <th>Date Submitted</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Obmerga, Icon</td>
+                    <td>COMP001</td>
+                    <td>BSIT-2</td>
+                    <td>03-20-26</td>
+                    <td><span class="status-pill pending">Pending</span></td>
+                    <td>03-14-26 00:03:00</td>
+                </tr>
+                <tr>
+                    <td>Zurbano, Andie</td>
+                    <td>COMP002</td>
+                    <td>BSIT-3</td>
+                    <td>03-23-26</td>
+                    <td><span class="status-pill pending">Pending</span></td>
+                    <td>03-15-26 00:02:00</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Schedule List Table Section -->
+    <div class="section-container">
+        <div class="section-header">
+            <h2>Schedule List</h2>
+            <button class="view-all-btn">VIEW ALL</button>
+        </div>
+
+        <div class="table-controls maroon-bg">
+            <div class="search-filter">
+                <input type="text" placeholder="Search...">
+                <select><option>Program</option></select>
+                <select><option>Acad Year</option></select>
+                <select><option>Semester</option></select>
+                <select><option>Status</option></select>
+            </div>
+            <div class="table-actions">
+                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
+                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            </div>
+        </div>
+
+        <table class="dashboard-table">
+            <thead>
+                <tr>
+                    <th>Program</th>
+                    <th>Year level</th>
+                    <th>Acad year</th>
+                    <th>Semester</th>
+                    <th>Date Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>BSIT</td>
+                    <td>1</td>
+                    <td>2025-2026</td>
+                    <td>1st Semester</td>
+                    <td>03-14-26 00:03:00</td>
+                </tr>
+                <tr>
+                    <td>BSBA</td>
+                    <td>2</td>
+                    <td>2025-2026</td>
+                    <td>1st Semester</td>
+                    <td>03-14-26 00:03:00</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

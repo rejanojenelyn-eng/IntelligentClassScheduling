@@ -7,6 +7,8 @@
 
 {% block content %}
 <div class="employee-container">
+    
+    <!-- STATS CARDS SECTION -->
     <div class="stats-row">
         <div class="stat-card maroon">
             <span class="stat-label">REGULAR</span>
@@ -17,53 +19,57 @@
             <span class="stat-value">{{ pt }}</span>
         </div>
         <div class="stat-card maroon">
-            <span class="stat-label">DESIGNEE</span>
+            <span class="stat-label">DESIGNEES</span>
             <span class="stat-value">{{ des }}</span>
         </div>
         <div class="stat-card white-border">
             <span class="stat-label">TOTAL EMPLOYEE</span>
             <span class="stat-value total">{{ total }}</span>
         </div>
-        <div class="action-section">
-            <div class="bulk-action-wrapper">
-                <select id="bulkAction" disabled>
-                    <option value="">Bulk Actions</option>
-                    <option value="delete">Delete Selected</option>
-                </select>
-                <button id="bulkApplyBtn" class="btn-apply" disabled onclick="applyBulkAction()">Apply</button>
+    </div>
+
+    <!-- ACTION BUTTONS ROW -->
+    <div class="employee-header-flex">
+        <div class="action-buttons-group">
+            <button class="btn-capsule btn-add" onclick="openAddModal()">ADD NEW EMPLOYEE</button>
+            <!-- Note: Archive buttons removed for Acad Head -->
+        </div>
+
+        <div class="import-container">
+            <div class="import-button-wrapper">
+                <button class="btn-import" onclick="openImportModal()">IMPORT <i class="fas fa-chevron-down"></i></button>
+                <small class="import-subtext">Upload CSV file</small>
             </div>
-            <button class="btn-add-employee" onclick="openAddModal()">ADD NEW EMPLOYEE</button>
         </div>
     </div>
 
+    <!-- MAROON FILTER BAR -->
     <div class="table-wrapper">
         <div class="table-header-filters">
+            <!-- Search Group -->
+            <!-- Search Group (Updated class for emphasis) -->
+<div class="filter-group search-group">
+    <label>Search Employee</label>
+    <div class="search-input-wrapper">
+        <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Type name to search...">
+        <i class="fas fa-search"></i>
+    </div>
+</div>
+
+            <!-- Type Group -->
             <div class="filter-group">
-                <label>SEARCH EMPLOYEE</label>
-                <div class="search-box">
-                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
-                </div>
-            </div>
-            <div class="filter-group">
-                <label>SPECIALIZATION</label>
-                <select id="specFilter" onchange="filterTable()">
-                    <option value="">All Specializations</option>
-                    {% for spec in specializations %}
-                        <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>EMPLOYEE TYPE</label>
+                <label>Type</label>
                 <select id="typeFilter" onchange="filterTable()">
                     <option value="">All Types</option>
-                     {% for etype in employee_types %}
-                        <option value="{{ etype.typename }}">{{ etype.typename }}</option>
+                    {% for etype in employee_types %}
+                    <option value="{{ etype.typename }}">{{ etype.typename }}</option>
                     {% endfor %}
                 </select>
             </div>
+
+            <!-- Status Group -->
             <div class="filter-group">
-                <label>EMPLOYMENT STATUS</label>
+                <label>Status</label>
                 <select id="statusFilter" onchange="filterTable()">
                     <option value="">All Status</option>
                     <option value="Permanent">Permanent</option>
@@ -71,111 +77,113 @@
                     <option value="Temporary">Temporary</option>
                 </select>
             </div>
+
+            <!-- Specialization Group -->
+            <div class="filter-group">
+                <label>Specialization</label>
+                <select id="specFilter" onchange="filterTable()">
+                    <option value="">All Specializations</option>
+                    {% for spec in specializations %}
+                    <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Actions Right -->
             <div class="table-actions-right">
-                <span class="sort-text" onclick="sortTable()" style="cursor:pointer">
-                    <span id="sortDirection">Ascending</span> <i class="fas fa-sort"></i>
-                </span>
-                <button class="btn-export" onclick="openImportModal()">
-                    <i class="fas fa-file-import"></i> Import
-                </button>
-                <button class="btn-export" onclick="exportToExcel()">
+                <div class="sort-wrapper" onclick="sortTable()">
+                    <span id="sortDirection">Ascending</span> 
+                    <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
+                </div>
+                <button class="btn-export-white" onclick="exportToExcel()">
                     <i class="fas fa-file-export"></i> Export
                 </button>
             </div>
         </div>
-
-        <table class="employee-table" id="instructorTable">
-            <thead>
-                <tr>
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th>Employee Number</th>
-                    <th>Full Name</th>
-                    <th>Email</th>
-                    <th>Contact</th>
-                    <th>Specialization</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Designation</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <!-- Added class to TR for row background color -->
-                {% for emp in employees %}
-                <tr class="type-{{ emp.typename.lower().replace('-','') }}">
-                    <td><input type="checkbox" class="row-check" value="{{ emp.employeenumber }}"></td>
-                    <td>{{ emp.employeenumber }}</td>
-                    <td class="emp-name">
-                        <strong>{{ emp.lastname }}, {{ emp.firstname }} {% if emp.middlename %}{{ emp.middlename[0] }}.{% endif %}</strong>
-                    </td>
-                    <td>{{ emp.email }}</td>
-                    <td>{{ emp.contactnumber }}</td>
-                    <td class="emp-spec">{{ emp.specializationname }}</td>
-                    <td class="emp-type">
-                        <!-- Added badge for Employee Type coloring -->
-                        <span class="badge badge-{{ emp.typename.lower().replace('-','') }}">{{ emp.typename }}</span>
-                    </td>
-                    <td class="emp-status">{{ emp.employeestatus }}</td>
-                    <td>{{ emp.designationname if emp.designationname else 'N/A' }}</td>
-                    <td class="action-icons">
-                        <i class="fas fa-edit edit" onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
-                        <i class="fas fa-trash trash" onclick="openDeleteModal('{{ emp.employeenumber }}')"></i>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
     </div>
+
+    <!-- TABLE -->
+    <table class="employee-table" id="instructorTable">
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="selectAll"></th>
+                <th>Employee Number</th>
+                <th>Employee Name</th>
+                <th>Specialization</th>
+                <th>Email</th>
+                <th>Employment type</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for emp in employees %}
+            <tr>
+                <td><input type="checkbox" class="row-check" value="{{ emp.employeenumber }}"></td>
+                <td>{{ emp.employeenumber }}</td>
+                <td class="emp-name">
+                    <strong>{{ emp.lastname }}, {{ emp.firstname }}</strong>
+                </td>
+                <td class="emp-spec">{{ emp.specializationname }}</td>
+                <td>{{ emp.email }}</td>
+                <td class="emp-type">
+                    <span class="badge badge-{{ emp.typename.lower().replace('-', '') }}">
+                        {{ emp.typename }}
+                    </span>
+                </td>
+                <td class="emp-status">{{ emp.employeestatus }}</td>
+                <td class="action-icons">
+                    <!-- FIXED: Edit Modal passing all data correctly -->
+                    <i class="fas fa-edit edit" onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 
-<!-- MODALS (HTML Unchanged, but including for completeness) -->
-<!-- ADD NEW EMPLOYEE MODAL -->
+<!-- MODALS (Copied from Admin for UI Consistency) -->
+
+<!-- ADD MODAL -->
 <div id="addEmployeeModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2><i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE</h2>
             <span class="close-btn" onclick="closeAddModal()">&times;</span>
         </div>
-        <form id="addEmployeeForm" action="/add_employee" method="POST">
+        <form id="addEmployeeForm" action="{{ url_for('add_employee') }}" method="POST">
             <div class="form-grid">
                 <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" name="first_name" required></div>
-                <div class="form-group"><label>MIDDLE NAME (OPTIONAL)</label><input type="text" name="middle_name"></div>
+                <div class="form-group"><label>MIDDLE NAME</label><input type="text" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" name="last_name" required></div>
                 <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" name="email" required></div>
                 <div class="form-group"><label>CONTACT NUMBER</label><input type="text" name="contact" required></div>
                 <hr class="form-divider full-width">
-                 <div class="form-group">
+                <div class="form-group">
                     <label>SPECIALIZATION</label>
                     <select name="specialization_id" required>
                         <option value="" disabled selected>Select Specialization</option>
-                        {% for spec in specializations %}
-                            <option value="{{ spec.specializationid }}">{{ spec.specializationname }}</option>
-                        {% endfor %}
+                        {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{ spec.specializationname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>EMPLOYEE TYPE</label>
                     <select name="type_id" id="add_type" required onchange="toggleDesignation('add')">
                         <option value="" disabled selected>Select Type</option>
-                        {% for etype in employee_types %}
-                            <option value="{{ etype.employeetypeid }}" data-typename="{{ etype.typename }}">{{ etype.typename }}</option>
-                        {% endfor %}
+                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}" data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>DESIGNATION (FOR DESIGNEES ONLY)</label>
                     <select name="designation_id" id="add_designation" disabled>
                         <option value="">No Designation</option>
-                        {% for des in designations %}
-                            <option value="{{ des.designationid }}">{{ des.designationname }}</option>
-                        {% endfor %}
+                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>EMPLOYMENT STATUS</label>
                     <select name="status" required>
-                        <option value="" disabled selected>Select Status</option>
                         <option value="Permanent">Permanent</option>
                         <option value="Part-Time">Part-Time</option>
                         <option value="Temporary">Temporary</option>
@@ -190,23 +198,23 @@
     </div>
 </div>
 
-<!-- EDIT EMPLOYEE MODAL -->
+<!-- EDIT MODAL -->
 <div id="editEmployeeModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2><i class="fas fa-user-edit"></i> EDIT EMPLOYEE</h2>
             <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
-        <form id="editEmployeeForm" action="/edit_employee" method="POST">
+        <form id="editEmployeeForm" action="{{ url_for('edit_employee') }}" method="POST">
             <div class="form-grid">
                 <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>
-                <div class="form-group"><label>MIDDLE NAME (OPTIONAL)</label><input type="text" id="edit_m_name" name="middle_name"></div>
+                <div class="form-group"><label>MIDDLE NAME</label><input type="text" id="edit_m_name" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name" required></div>
                 <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" id="edit_email" name="email" required></div>
                 <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact" required></div>
                 <hr class="form-divider full-width">
-                 <div class="form-group">
+                <div class="form-group">
                     <label>SPECIALIZATION</label>
                     <select id="edit_spec" name="specialization_id" required>
                         {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{ spec.specializationname }}</option>{% endfor %}
@@ -219,7 +227,7 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>DESIGNATION (FOR DESIGNEES ONLY)</label>
+                    <label>DESIGNATION</label>
                     <select id="edit_designation" name="designation_id">
                         <option value="">No Designation</option>
                         {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}</option>{% endfor %}
@@ -228,7 +236,9 @@
                 <div class="form-group">
                     <label>EMPLOYMENT STATUS</label>
                     <select id="edit_status" name="status" required>
-                        <option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option>
+                        <option value="Permanent">Permanent</option>
+                        <option value="Part-Time">Part-Time</option>
+                        <option value="Temporary">Temporary</option>
                     </select>
                 </div>
             </div>
@@ -240,19 +250,19 @@
     </div>
 </div>
 
-<!-- IMPORT CSV MODAL -->
+<!-- IMPORT MODAL -->
 <div id="importEmployeeModal" class="modal">
     <div class="modal-content" style="width: 550px;">
         <div class="modal-header">
             <h2><i class="fas fa-file-csv"></i> BULK IMPORT CSV</h2>
             <span class="close-btn" onclick="closeImportModal()">&times;</span>
         </div>
-        <form action="/bulk_import" method="POST" enctype="multipart/form-data">
+        <form action="{{ url_for('bulk_import') }}" method="POST" enctype="multipart/form-data">
              <div class="form-grid" style="display: block; padding: 25px;">
-                <p>Upload a .csv file with columns in the exact order: <br><code>EmployeeNumber,LastName,FirstName,MiddleName,Email,ContactNumber,SpecializationID,EmployeeTypeID,EmployeeStatus,DesignationID</code></p>
+                <p>Upload a .csv file with standard columns.</p>
                 <div class="form-group" style="margin-top: 20px;">
                     <label>SELECT CSV FILE</label>
-                    <input type="file" name="file" accept=".csv" required style="padding: 10px 0; border: none;">
+                    <input type="file" name="file" accept=".csv" required>
                 </div>
             </div>
             <div class="modal-footer">
@@ -263,140 +273,13 @@
     </div>
 </div>
 
-<!-- SINGLE DELETE CONFIRMATION MODAL -->
-<div id="deleteConfirmModal" class="modal">
-    <div class="modal-content" style="width: 400px;">
-        <div class="modal-header">
-            <h2><i class="fas fa-exclamation-triangle"></i> CONFIRM DELETE</h2>
-            <span class="close-btn" onclick="closeDeleteModal()">&times;</span>
-        </div>
-        <div style="padding: 25px; font-size: 14px; color: #333;">
-            <p>Are you sure you want to delete this employee? This action cannot be undone.</p>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn-cancel" onclick="closeDeleteModal()">CANCEL</button>
-            <a id="confirmDeleteBtn" href="#" class="btn-delete-confirm">DELETE</a>
-        </div>
-    </div>
-</div>
-
-<!-- BULK DELETE CONFIRMATION MODAL -->
-<div id="bulkDeleteConfirmModal" class="modal">
-    <div class="modal-content" style="width: 450px;">
-        <div class="modal-header">
-            <h2><i class="fas fa-exclamation-triangle"></i> CONFIRM BULK DELETE</h2>
-            <span class="close-btn" onclick="closeBulkDeleteModal()">&times;</span>
-        </div>
-        <div style="padding: 25px; font-size: 14px; color: #333;">
-            <p>Are you sure you want to permanently delete the <strong id="bulkDeleteCount"></strong> selected employees? This action cannot be undone.</p>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn-cancel" onclick="closeBulkDeleteModal()">CANCEL</button>
-            <button id="confirmBulkDeleteBtn" class="btn-delete-confirm">DELETE SELECTED</button>
-        </div>
-    </div>
-</div>
-
-<!-- SCRIPT (with bulk delete panel logic) -->
 <script>
-let selectedIdsForBulkDelete = [];
-
-function updateBulkActions() {
-    const checkboxes = document.querySelectorAll('.row-check:checked');
-    const bulkActionSelect = document.getElementById('bulkAction');
-    const bulkApplyBtn = document.getElementById('bulkApplyBtn');
-
-    if (checkboxes.length > 0) {
-        bulkActionSelect.disabled = false;
-        bulkApplyBtn.disabled = false;
-    } else {
-        bulkActionSelect.disabled = true;
-        bulkApplyBtn.disabled = true;
-        bulkActionSelect.value = "";
-    }
-}
-
-document.getElementById("selectAll").addEventListener("change", function() {
-    document.querySelectorAll('.row-check').forEach(checkbox => {
-        if (checkbox.closest('tr').style.display !== "none") {
-            checkbox.checked = this.checked;
-        }
-    });
-    updateBulkActions();
-});
-
-document.querySelectorAll('.row-check').forEach(checkbox => {
-    checkbox.addEventListener('change', updateBulkActions);
-});
-
-function applyBulkAction() {
-    const action = document.getElementById('bulkAction').value;
-    if (!action) return;
-
-    selectedIdsForBulkDelete = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
-
-    if (action === 'delete' && selectedIdsForBulkDelete.length > 0) {
-        document.getElementById('bulkDeleteCount').textContent = selectedIdsForBulkDelete.length;
-        document.getElementById('bulkDeleteConfirmModal').style.display = 'block';
-    }
-}
-
-document.getElementById('confirmBulkDeleteBtn').addEventListener('click', function() {
-    fetch('/bulk_delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee_ids: selectedIdsForBulkDelete })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert(data.success);
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    });
-});
-
-
-function filterTable() {
-    let input = document.getElementById("searchInput").value.toUpperCase();
-    let status = document.getElementById("statusFilter").value.toUpperCase();
-    let spec = document.getElementById("specFilter").value.toUpperCase();
-    let type = document.getElementById("typeFilter").value.toUpperCase();
-    let table = document.getElementById("instructorTable");
-    let tr = table.getElementsByTagName("tr");
-    for (let i = 1; i < tr.length; i++) {
-        let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
-        let statusTxt = tr[i].querySelector(".emp-status").textContent.toUpperCase();
-        let specTxt = tr[i].querySelector(".emp-spec").textContent.toUpperCase();
-        let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
-        let matchSearch = nameTxt.includes(input);
-        let matchStatus = status === "" || statusTxt.trim() === status;
-        let matchSpec = spec === "" || specTxt.trim() === spec;
-        let matchType = type === "" || typeTxt.trim() === type;
-        tr[i].style.display = (matchSearch && matchStatus && matchSpec && matchType) ? "" : "none";
-    }
-}
-
-let currentOrder = 'asc';
-function sortTable() {
-    let table = document.getElementById("instructorTable"), rows = Array.from(table.rows).slice(1);
-    let direction = currentOrder === 'asc' ? 1 : -1;
-    rows.sort((a, b) => {
-        let nameA = a.querySelector(".emp-name strong").textContent.trim();
-        let nameB = b.querySelector(".emp-name strong").textContent.trim();
-        return nameA.localeCompare(nameB) * direction;
-    });
-    const tbody = table.querySelector('tbody');
-    rows.forEach(row => tbody.appendChild(row));
-    currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
-    document.getElementById("sortDirection").innerText = currentOrder === 'asc' ? 'Ascending' : 'Descending';
-}
-
-function exportToExcel() { /* ... unchanged ... */ }
+// --- MODAL CONTROLS ---
 function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
 function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
+function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
+function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
+
 function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
     document.getElementById("edit_emp_num").value = empNum;
     document.getElementById("edit_f_name").value = fName;
@@ -412,32 +295,107 @@ function openEditModal(empNum, fName, mName, lName, email, contact, specId, type
     document.getElementById("editEmployeeModal").style.display = "block";
 }
 function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
-function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
-function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
-function openDeleteModal(empNum) {
-    document.getElementById("confirmDeleteBtn").href = `/delete_employee/${empNum}`;
-    document.getElementById("deleteConfirmModal").style.display = "block";
-}
-function closeDeleteModal() { document.getElementById("deleteConfirmModal").style.display = "none"; }
-function closeBulkDeleteModal() { document.getElementById('bulkDeleteConfirmModal').style.display = 'none'; }
+
 function toggleDesignation(modalType) {
     const typeSelect = document.getElementById(`${modalType}_type`);
     const designationSelect = document.getElementById(`${modalType}_designation`);
     const selectedOption = typeSelect.options[typeSelect.selectedIndex];
     const employeeTypeName = selectedOption.getAttribute('data-typename');
-    if (employeeTypeName === 'Designee') {
-        designationSelect.disabled = false;
-    } else {
-        designationSelect.disabled = true;
-        designationSelect.value = "";
+    designationSelect.disabled = (employeeTypeName !== 'Designee');
+    if (designationSelect.disabled) designationSelect.value = "";
+}
+
+// --- FILTERING ---
+function filterTable() {
+    let nameInput = document.getElementById("searchInput").value.toUpperCase();
+    let typeInput = document.getElementById("typeFilter").value.toUpperCase();
+    let statusInput = document.getElementById("statusFilter").value.toUpperCase();
+    let specInput = document.getElementById("specFilter").value.toUpperCase();
+
+    let table = document.getElementById("instructorTable");
+    let tr = table.getElementsByTagName("tbody")[0].getElementsByTagName("tr");
+
+    for (let i = 0; i < tr.length; i++) {
+        let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
+        let specTxt = tr[i].querySelector(".emp-spec").textContent.toUpperCase();
+        let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
+        let statusTxt = tr[i].querySelector(".emp-status").textContent.toUpperCase();
+
+        let matchName = nameTxt.includes(nameInput);
+        let matchType = typeInput === "" || typeTxt.trim() === typeInput;
+        let matchStatus = statusInput === "" || statusTxt.trim() === statusInput;
+        let matchSpec = specInput === "" || specTxt.trim() === specInput;
+
+        tr[i].style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
     }
 }
+
+// --- SORTING (FIXED: Clicking Ascending sorts Z-A) ---
+function sortTable() {
+    const sortDirectionSpan = document.getElementById("sortDirection");
+    const icon = document.getElementById("sortIcon");
+    const table = document.getElementById("instructorTable");
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+
+    const currentText = sortDirectionSpan.innerText.trim();
+    let direction;
+
+    if (currentText === 'Ascending') {
+        // If label is Ascending, user clicked to sort Z-A
+        direction = -1; 
+        sortDirectionSpan.innerText = 'Descending';
+        icon.className = 'fas fa-sort-amount-up';
+    } else {
+        // If label is Descending, user clicked to sort A-Z
+        direction = 1; 
+        sortDirectionSpan.innerText = 'Ascending';
+        icon.className = 'fas fa-sort-amount-down-alt';
+    }
+
+    rows.sort((a, b) => {
+        const nameA = a.querySelector(".emp-name").innerText.toLowerCase();
+        const nameB = b.querySelector(".emp-name").innerText.toLowerCase();
+        return nameA.localeCompare(nameB) * direction;
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+// --- EXPORT ---
+function exportToExcel() {
+    const table = document.getElementById("instructorTable");
+    const allRows = Array.from(table.querySelectorAll("tbody tr")).filter(r => r.style.display !== 'none');
+    
+    const data = [["Employee #", "Employee Name", "Specialization", "Email", "Type", "Status"]];
+    allRows.forEach(row => {
+        const cells = row.querySelectorAll("td");
+        data.push([
+            cells[1].innerText, // ID
+            cells[2].innerText, // Name
+            cells[3].innerText, // Spec
+            cells[4].innerText, // Email
+            cells[5].innerText, // Type
+            cells[6].innerText  // Status
+        ]);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Faculty");
+    XLSX.writeFile(wb, "Faculty_List.xlsx");
+}
+
+// Checkbox select all
+document.getElementById("selectAll").addEventListener("change", function() {
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = this.checked);
+});
+
+// Window click to close modals
 window.onclick = function(event) {
-    if (event.target == document.getElementById("addEmployeeModal")) closeAddModal();
-    if (event.target == document.getElementById("editEmployeeModal")) closeEditModal();
-    if (event.target == document.getElementById("importEmployeeModal")) closeImportModal();
-    if (event.target == document.getElementById("deleteConfirmModal")) closeDeleteModal();
-    if (event.target == document.getElementById("bulkDeleteConfirmModal")) closeBulkDeleteModal();
+    ["addEmployeeModal", "editEmployeeModal", "importEmployeeModal"].forEach(id => {
+        if (event.target == document.getElementById(id)) document.getElementById(id).style.display = "none";
+    });
 }
 </script>
 {% endblock %}

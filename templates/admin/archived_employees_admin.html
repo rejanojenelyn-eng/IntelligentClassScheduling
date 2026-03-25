@@ -1,0 +1,327 @@
+{% extends "admin/base_admin.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="employee-container">
+    <!-- TOP HEADER SECTION -->
+    <div class="employee-header-flex" style="margin-bottom: 20px;">
+        <h1 style="color: var(--pup-maroon); font-weight: 800; font-size: 24px; margin: 0;">ARCHIVED EMPLOYEES</h1>
+        
+        <div class="action-buttons-group">
+            <button id="btnBulkRestore" class="btn-capsule btn-add" onclick="openBulkRestoreModal()" disabled>
+                <i class="fas fa-sync-alt"></i> RESTORE SELECTED
+            </button>
+            <a href="{{ url_for('admin_employee') }}" class="btn-capsule" style="background-color: #6c757d; color: white; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-arrow-left"></i> BACK
+            </a>
+        </div>
+    </div>
+
+    <!-- MAROON FILTER BAR -->
+    <div class="table-wrapper">
+        <div class="table-header-filters">
+            <!-- Search Group -->
+            <div class="filter-group">
+                <label>SEARCH EMPLOYEE</label>
+                <div class="search-input-wrapper">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
+            
+            <!-- Type Group -->
+            <div class="filter-group">
+                <label>EMPLOYEE TYPE</label>
+                <select id="typeFilter" onchange="filterTable()">
+                    <option value="">All Types</option>
+                    {# IMPORTANT: Your backend MUST pass 'employee_types' to this template #}
+                    {% for etype in employee_types %}
+                        <option value="{{ etype.typename }}">{{ etype.typename }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Status Group -->
+            <div class="filter-group">
+                <label>Status</label>
+                <select id="statusFilter" onchange="filterTable()">
+                    <option value="">All Status</option>
+                    <option value="Permanent">Permanent</option>
+                    <option value="Part-Time">Part-Time</option>
+                    <option value="Temporary">Temporary</option>
+                </select>
+            </div>
+
+            <!-- Specialization Group -->
+            <div class="filter-group">
+                <label>SPECIALIZATION</label>
+                <select id="specFilter" onchange="filterTable()">
+                    <option value="">All Specializations</option>
+                    {# IMPORTANT: Your backend MUST pass 'specializations' to this template #}
+                    {% for spec in specializations %}
+                        <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- FIXED: Actions Right (with new Sort button) -->
+            <div class="table-actions-right">
+                <div class="sort-wrapper" onclick="sortTable()">
+                    <span id="sortDirection">Ascending</span> <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
+                </div>
+                <button class="btn-export-white" onclick="exportToExcel()">
+                    <i class="fas fa-file-export"></i> Export
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ARCHIVE TABLE -->
+    <table class="employee-table" id="archiveTable">
+        <thead>
+           
+            <tr>
+                <th style="width: 5%;"><input type="checkbox" id="selectAll"></th>
+                <th>Employee Number</th> 
+                <th>Employee Name</th>
+                <th>Specialization</th>
+                <th>Employment type</th>
+                <th>Status</th>
+                <th>Date Archived</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for emp in archived_employees %}
+            <tr>
+                <td><input type="checkbox" class="row-check" value="{{ emp.facultyarchiveid }}"></td>
+                <td><small>{{ emp.employeenumber }}</small></td> 
+                <td class="emp-name" style="color: var(--pup-maroon); font-weight: bold;">
+                    {{ emp.lastname }}, {{ emp.firstname }}
+                </td>
+                <td class="emp-spec">{{ emp.specializationname }}</td>
+                <td class="emp-type">
+                    <span class="badge badge-{{ emp.typename.lower().replace('-', '') }}">
+                        {{ emp.typename }}
+                    </span>
+                </td>
+                <td class="emp-status">{{ emp.employeestatus }}</td>
+                <td class="date-archived" style="color: var(--pup-maroon); font-weight: 600; font-size: 12px;">
+                    {{ emp.archivedat.strftime('%Y-%m-%d %H:%M') }}
+                </td>
+                <td>
+                    <button class="btn-restore-pill" onclick="openRestoreModal('{{ emp.facultyarchiveid }}', '{{ emp.firstname }} {{ emp.lastname }}')">
+                        <i class="fas fa-sync-alt"></i> RESTORE
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- MODALS (No changes needed here) -->
+<!-- SINGLE RESTORE MODAL -->
+<div id="restoreConfirmModal" class="modal">
+    <div class="modal-content" style="width: 400px;">
+        <div class="modal-header">
+            <h2>CONFIRM RESTORE</h2>
+            <span class="close-btn" onclick="closeRestoreModal()">&times;</span>
+        </div>
+        <div style="padding: 25px; text-align: center;">
+            <p>Restore <strong id="restoreEmployeeName"></strong> to active list?</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeRestoreModal()">CANCEL</button>
+            <a id="confirmRestoreBtn" href="#" class="btn-save">RESTORE</a>
+        </div>
+    </div>
+</div>
+
+<!-- BULK RESTORE MODAL -->
+<div id="bulkRestoreConfirmModal" class="modal">
+    <div class="modal-content" style="width: 450px;">
+        <div class="modal-header">
+            <h2>CONFIRM BULK RESTORE</h2>
+            <span class="close-btn" onclick="closeBulkRestoreModal()">&times;</span>
+        </div>
+        <div style="padding: 25px;">
+            <p>Restore <strong id="bulkRestoreCount"></strong> selected employees to the active list?</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeBulkRestoreModal()">CANCEL</button>
+            <button id="confirmBulkRestoreBtn" class="btn-save" style="background: var(--pup-maroon);">RESTORE ALL</button>
+        </div>
+    </div>
+</div>
+
+
+<script>
+// --- MODAL CONTROLS ---
+function openRestoreModal(archiveId, name) {
+    document.getElementById('restoreEmployeeName').textContent = name;
+    document.getElementById('confirmRestoreBtn').href = `/admin/restore_employee/${archiveId}`;
+    document.getElementById('restoreConfirmModal').style.display = 'block';
+}
+function closeRestoreModal() { document.getElementById('restoreConfirmModal').style.display = 'none'; }
+
+function openBulkRestoreModal() {
+    const selectedIds = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+    document.getElementById('bulkRestoreCount').textContent = selectedIds.length;
+    document.getElementById('bulkRestoreConfirmModal').style.display = 'block';
+}
+function closeBulkRestoreModal() { document.getElementById('bulkRestoreConfirmModal').style.display = 'none'; }
+
+window.onclick = function(event) {
+    const modals = ["restoreConfirmModal", "bulkRestoreConfirmModal"];
+    modals.forEach(id => {
+        if (event.target == document.getElementById(id)) {
+            document.getElementById(id).style.display = "none";
+        }
+    });
+}
+
+// --- BULK ACTIONS & SELECTION ---
+function updateBulkActions() {
+    const checkboxes = document.querySelectorAll('.row-check:checked');
+    const restoreBtn = document.getElementById('btnBulkRestore');
+    restoreBtn.disabled = (checkboxes.length === 0);
+}
+
+document.getElementById("selectAll").addEventListener("change", function() {
+    document.querySelectorAll('.row-check').forEach(cb => {
+        const row = cb.closest("tr");
+        if (row.style.display !== 'none') {
+            cb.checked = this.checked;
+        }
+    });
+    updateBulkActions();
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('row-check')) {
+        updateBulkActions();
+    }
+});
+
+document.getElementById('confirmBulkRestoreBtn').addEventListener('click', function() {
+    const selectedIds = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+    fetch('/admin/bulk_restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archive_ids: selectedIds })
+    }).then(res => res.json()).then(data => {
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert("An error occurred while restoring employees.");
+        }
+    });
+});
+
+// --- FILTERING ---
+function filterTable() {
+    let nameInput = document.getElementById("searchInput").value.toUpperCase();
+    let typeInput = document.getElementById("typeFilter").value.toUpperCase();
+    let statusInput = document.getElementById("statusFilter").value.toUpperCase();
+    let specInput = document.getElementById("specFilter").value.toUpperCase();
+    let rows = document.querySelectorAll("#archiveTable tbody tr");
+
+    rows.forEach(row => {
+        let nameCol = row.querySelector(".emp-name").textContent.toUpperCase();
+        let typeCol = row.querySelector(".emp-type").textContent.toUpperCase().trim();
+        let statusCol = row.querySelector(".emp-status").textContent.toUpperCase().trim();
+        let specCol = row.querySelector(".emp-spec").textContent.toUpperCase().trim();
+        
+        let matchName = nameCol.includes(nameInput);
+        let matchType = (typeInput === "" || typeCol.includes(typeInput));
+        let matchStatus = (statusInput === "" || statusCol === statusInput);
+        let matchSpec = (specInput === "" || specCol.includes(specInput));
+
+        row.style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
+    });
+}
+
+// --- SORTING (FIXED) ---
+// Sorts the table by Employee Name only and toggles Ascending/Descending.
+let currentOrder = 'asc'; 
+
+function sortTable() {
+    const table = document.getElementById("archiveTable");
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+
+    // Logic Swap: 
+    // If currentOrder is 'asc', we use -1 to force Z-A
+    // If currentOrder is 'desc', we use 1 to force A-Z
+    const direction = currentOrder === 'asc' ? -1 : 1;
+
+    rows.sort((a, b) => {
+        const nameA = a.querySelector(".emp-name").innerText.toLowerCase().trim();
+        const nameB = b.querySelector(".emp-name").innerText.toLowerCase().trim();
+        return nameA.localeCompare(nameB) * direction;
+    });
+
+    // Toggle the state for the next click
+    currentOrder = (currentOrder === 'asc') ? 'desc' : 'asc';
+    
+    // Update the UI Text and Icon
+    const sortLabel = document.getElementById("sortDirection");
+    const sortIcon = document.getElementById("sortIcon");
+
+    if (currentOrder === 'asc') {
+        // This state triggers Z-A (as per your request)
+        sortLabel.innerText = 'Ascending';
+        sortIcon.className = 'fas fa-sort-amount-up'; // Icon showing Z at top / Upward
+    } else {
+        // This state triggers A-Z (as per your request)
+        sortLabel.innerText = 'Descending';
+        sortIcon.className = 'fas fa-sort-amount-down-alt'; // Icon showing A at top / Downward
+    }
+
+    // Re-append sorted rows to the table body
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+// --- EXPORT TO EXCEL ---
+function exportToExcel() {
+    const table = document.getElementById("archiveTable");
+    const selectedCheckboxes = Array.from(table.querySelectorAll(".row-check:checked"));
+    let rowsToExport;
+
+    if (selectedCheckboxes.length > 0) {
+        rowsToExport = selectedCheckboxes.map(cb => cb.closest("tr"));
+    } else {
+        rowsToExport = Array.from(table.querySelectorAll("tbody tr")).filter(row => row.style.display !== 'none');
+    }
+
+    if (rowsToExport.length === 0) {
+        alert("No data available to export.");
+        return;
+    }
+
+    const data = [];
+    const headerRow = ["Full Name", "Specialization", "Employment Type", "Status", "Date Archived"];
+    data.push(headerRow);
+
+    rowsToExport.forEach(row => {
+        const rowData = [];
+        rowData.push(row.querySelector(".emp-name").innerText.trim());
+        rowData.push(row.querySelector(".emp-spec").innerText.trim());
+        rowData.push(row.querySelector(".emp-type .badge").innerText.trim());
+        rowData.push(row.querySelector(".emp-status").innerText.trim());
+        rowData.push(row.querySelector(".date-archived").innerText.trim());
+        data.push(rowData);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Archived_Employees");
+    XLSX.writeFile(wb, "Archived_Employees_Export.xlsx");
+}
+</script>
+{% endblock %}  

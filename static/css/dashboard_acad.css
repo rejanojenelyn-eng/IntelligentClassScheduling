@@ -1,0 +1,199 @@
+:root {
+    --pup-maroon: #800000;
+    --table-pink: #fdeeee;
+    --text-dark: #333;
+}
+
+.dashboard-wrapper {
+    padding: 30px;
+    background-color: #fff;
+}
+
+/* Header */
+.welcome-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.welcome-header h1 {
+    font-size: 2rem;
+    color: var(--pup-maroon);
+    font-weight: 800;
+}
+
+.current-date {
+    font-style: italic;
+    color: var(--pup-maroon);
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+/* Action Buttons Container */
+.action-grid {
+    display: flex;
+    gap: 15px;
+    background-color: var(--pup-maroon);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+
+/* Base Button Styling */
+.btn-action {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    text-decoration: none; /* Removes underline from <a> tag */
+    border: 2px solid #fff;
+    color: #fff;
+    padding: 15px 10px;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); /* Smooth animation */
+    cursor: pointer;
+}
+
+/* HOVER EFFECT for Maroon Buttons (Outline to Solid White) */
+.btn-action:hover {
+    background-color: #fff;
+    color: var(--pup-maroon);
+    transform: translateY(-4px); /* Lifts the button up */
+    box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+}
+
+
+
+/* HOVER EFFECT for the White Button (Solid White to Gold/Light Grey) */
+.btn-action.white:hover {
+    background-color: #f1f1f1; /* Slightly grey/off-white */
+    border-color: #f1f1f1;
+    transform: translateY(-4px);
+    box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+}
+
+/* Active State (When clicked) */
+.btn-action:active {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+
+/* Section Containers */
+.section-container {
+    margin-bottom: 40px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.section-header h2 {
+    color: var(--pup-maroon);
+    font-weight: 800;
+}
+
+.badge-count {
+    background: var(--pup-maroon);
+    color: white;
+    border-radius: 50%;
+    padding: 2px 8px;
+    font-size: 0.9rem;
+    vertical-align: middle;
+}
+
+.view-all-btn {
+    background: var(--pup-maroon);
+    color: white;
+    border: none;
+    padding: 4px 15px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* Maroon Table Controls */
+.maroon-bg {
+    background-color: var(--pup-maroon);
+    color: white;
+    padding: 10px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 4px 4px 0 0;
+}
+
+.search-filter { display: flex; gap: 8px; }
+
+.search-filter input, .search-filter select {
+    border: none;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 0.7rem;
+}
+
+.table-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.export-inline {
+    background: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+/* Table Styling */
+.dashboard-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.dashboard-table th {
+    background-color: var(--pup-maroon);
+    color: white;
+    text-align: left;
+    padding: 12px;
+    font-size: 0.8rem;
+    border-top: 1px solid rgba(255,255,255,0.2);
+}
+
+.dashboard-table td {
+    padding: 12px;
+    font-size: 0.85rem;
+    border-bottom: 1px solid #ddd;
+}
+
+.dashboard-table tbody tr {
+    background-color: var(--table-pink);
+}
+
+/* Status Pills */
+.status-pill {
+    padding: 4px 15px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: white;
+}
+
+.status-pill.pending {
+    background-color: #555;
+}

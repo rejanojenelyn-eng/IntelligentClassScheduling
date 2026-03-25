@@ -43,41 +43,49 @@
     <div class="main-container">
         <aside class="sidebar" id="sidebar">
             <nav class="sidebar-nav-container">
-                <ul class="nav-list">
-                    <li class="nav-item {{ 'active' if request.path == '/admin/dashboard' }}">
-                        <a href="/admin/dashboard" class="nav-link">
-                            <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
-                        </a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/employee' }}">
-                        <a href="/admin/employee" class="nav-link"><i class="fas fa-users"></i><span
-                                class="nav-label">Employee Management</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/curriculum' }}">
-                        <a href="/admin/curriculum" class="nav-link"><i class="fas fa-book"></i><span
-                                class="nav-label">Curriculum</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/rooms' }}">
-                        <a href="/admin/rooms" class="nav-link"><i class="fas fa-door-open"></i><span
-                                class="nav-label">Rooms</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/schedule' }}">
-                        <a href="/admin/schedule" class="nav-link"><i class="fas fa-history"></i><span
-                                class="nav-label">Schedule</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/reports' }}">
-                        <a href="/admin/reports" class="nav-link"><i class="fas fa-file-lines"></i><span
-                                class="nav-label">Reports</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/user-management' }}">
-                        <a href="/admin/user-management" class="nav-link"><i class="fas fa-user-gear"></i><span
-                                class="nav-label">User Management</span></a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.path == '/admin/settings' }}">
-                        <a href="/admin/settings" class="nav-link"><i class="fas fa-gear"></i><span
-                                class="nav-label">Settings</span></a>
-                    </li>
-                </ul>
+                <!-- Inside templates/admin/base_admin.html -->
+<ul class="nav-list">
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_dashboard' }}">
+        <a href="{{ url_for('admin_dashboard') }}" class="nav-link">
+            <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_employee' }}">
+        <a href="{{ url_for('admin_employee') }}" class="nav-link">
+            <i class="fas fa-users"></i><span class="nav-label">Employee Management</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_curriculum' }}">
+        <a href="{{ url_for('admin_curriculum') }}" class="nav-link">
+            <i class="fas fa-book"></i><span class="nav-label">Curriculum</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_rooms' }}">
+        <a href="{{ url_for('admin_rooms') }}" class="nav-link">
+            <i class="fas fa-door-open"></i><span class="nav-label">Rooms</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_schedule' }}">
+        <a href="{{ url_for('admin_schedule') }}" class="nav-link">
+            <i class="fas fa-history"></i><span class="nav-label">Schedule</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_reports' }}">
+        <a href="{{ url_for('admin_reports') }}" class="nav-link">
+            <i class="fas fa-file-lines"></i><span class="nav-label">Reports</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_users' }}">
+        <a href="{{ url_for('admin_users') }}" class="nav-link">
+            <i class="fas fa-user-gear"></i><span class="nav-label">User Management</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.endpoint == 'admin_settings' }}">
+        <a href="{{ url_for('admin_settings') }}" class="nav-link">
+            <i class="fas fa-gear"></i><span class="nav-label">Settings</span>
+        </a>
+    </li>
+</ul>
             </nav>
 
             <div class="signout-container">
@@ -108,16 +116,38 @@
             </div>
         </div>
     </div>
-
-    <script>
-        const sidebar = document.getElementById("sidebar");
-        const toggleBtn = document.getElementById("toggleBtn");
-        toggleBtn.onclick = () => { sidebar.classList.toggle("collapsed"); };
-
-        function openLogoutModal(e) { e.preventDefault(); document.getElementById("logoutModal").style.display = "flex"; }
-        function closeLogoutModal() { document.getElementById("logoutModal").style.display = "none"; }
-        function proceedLogout() { window.location.href = "/logout"; }
     </script>
+
+    <div id="flashContainer" class="flash-container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash-toast {{ 'error' if 'Denied' in message or 'Error' in message else 'success' }}">
+                    <div class="toast-icon">
+                        <i class="fas {{ 'fa-exclamation-circle' if 'Denied' in message or 'Error' in message else 'fa-check-circle' }}"></i>
+                    </div>
+                    <div class="toast-content">
+                        <p>{{ message }}</p>
+                    </div>
+                    <span class="toast-close" onclick="this.parentElement.style.display='none'">&times;</span>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+</div>
+
+<script>
+    // Automatically hide flash messages after 5 seconds
+    window.onload = function() {
+        const toasts = document.querySelectorAll('.flash-toast');
+        toasts.forEach(toast => {
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 500);
+            }, 5000);
+        });
+    };
+</script>
 </body>
 
 </html>

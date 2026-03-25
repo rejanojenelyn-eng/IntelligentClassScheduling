@@ -1,0 +1,746 @@
+/* static/css/curriculum.css */
+
+/* =========================================================
+   CURRICULUM & CURRICULUM VIEW MAIN UI
+   ========================================================= */
+
+.curr-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.curr-header h1 {
+    font-weight: 800;
+    color: #630100;
+    font-size: 2.5rem;
+    margin: 0;
+    letter-spacing: -1px;
+}
+
+/* Import Button */
+.import-button-container {
+    background: #800000;
+    padding: 5px 12px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+}
+
+.upload-file-pill {
+    background: #9c9c9c;
+    color: #333;
+    font-size: 0.65rem;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 700;
+    margin-right: 12px;
+}
+
+.import-curriculum-btn {
+    background: transparent;
+    color: white;
+    border: none;
+    font-weight: 800;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+/* Back Button */
+.btn-back-maroon-pill {
+    background: #800000;
+    color: white;
+    border: none;
+    padding: 6px 20px;
+    border-radius: 25px;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Selection Boxes */
+.selection-box-maroon {
+    background: #630100;
+    padding: 15px;
+    border-radius: 2px;
+}
+
+.selection-inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.input-group-curr {
+    flex: 1;
+    max-width: 60%;
+}
+
+.input-group-curr label {
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 800;
+    display: block;
+    margin-bottom: 5px;
+}
+
+/* Fix the dropdown "floating" look */
+.input-group-curr select {
+    width: 100%;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid white;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    background-color: #fff;
+    color: #333;
+    display: block;
+    /* Forces the browser to anchor the list properly */
+    position: relative;
+}
+
+/* Ensure the container has enough height so the browser doesn't flip the dropdown up */
+.curriculum-ui {
+    padding-bottom: 500px !important;
+    /* Extremely high padding to force downward expansion */
+    min-height: 100vh;
+}
+
+/* Ensure the select list anchors properly */
+#mainProgramFilter {
+    position: relative;
+    z-index: 100;
+}
+
+/* Ensure the maroon box is positioned correctly */
+.selection-box-maroon {
+    position: relative;
+    z-index: 100;
+    /* Keeps it above the placeholder */
+}
+
+
+.btn-export-curr {
+    background: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 6px 15px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.helper-text-italic {
+    font-style: italic;
+    color: #630100;
+    font-size: 0.85rem;
+    margin: 15px 0;
+    font-weight: 500;
+}
+
+/* Selection Panel (View Page) */
+.selection-panel-main {
+    background: #630100;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 25px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.row-top-panel {
+    display: flex;
+    gap: 15px;
+    padding: 15px;
+    align-items: flex-end;
+}
+
+.row-bottom-panel {
+    background: #4b0a0a;
+    padding: 10px 15px;
+    display: flex;
+    gap: 40px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.field-item label,
+.field-item-inline label {
+    color: white;
+    font-weight: 800;
+    font-size: 0.65rem;
+    display: block;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.visible-dropdown {
+    width: 100%;
+    background: #fff;
+    color: #333;
+    border: none;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.visible-dropdown-small {
+    background: #fff;
+    color: #333;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+
+.button-group-export {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-export-outline-white {
+    background: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+    height: 38px;
+}
+
+/* Tables */
+.curr-list-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 5px;
+}
+
+.curr-list-table thead th {
+    background: #630100;
+    color: white;
+    padding: 10px 15px;
+    text-align: left;
+    font-size: 0.85rem;
+}
+
+.curr-list-table tbody td {
+    background: #FFFDF9;
+    border: 1px solid #e2d1d1;
+    padding: 10px 15px;
+    color: #630100;
+    font-weight: 600;
+}
+
+.btn-black-view {
+    background: #1a1a1a;
+    color: white;
+    padding: 4px 25px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.subjects-table-exact {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 4px;
+}
+
+.subjects-table-exact thead th {
+    background: #630100;
+    color: white;
+    padding: 10px 10px;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.subjects-table-exact tbody td {
+    background: #FFFDF9;
+    border: 1px solid #e2d1d1;
+    padding: 10px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.code-maroon-bold {
+    color: #800000 !important;
+    font-weight: 800 !important;
+}
+
+.req-cell {
+    color: #555;
+    font-size: 0.75rem;
+}
+
+.desc-cell {
+    color: #000;
+}
+
+/* Curriculum Block Groups */
+.curriculum-section-group {
+    margin-bottom: 40px;
+}
+
+.banners-flex-container {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 5px;
+}
+
+.banner-title-box,
+.banner-info-box {
+    border: 4px solid #630100;
+    padding: 8px 15px;
+    color: #630100;
+    font-weight: 900;
+    background: #fff;
+    text-transform: uppercase;
+    font-size: 1rem;
+}
+
+.banner-title-box {
+    flex: 3;
+}
+
+.banner-info-box {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+@media (max-width: 1100px) {
+    .row-top-panel {
+        flex-wrap: wrap;
+    }
+
+    .banners-flex-container {
+        flex-direction: column;
+    }
+
+    .banner-info-box {
+        width: 100%;
+    }
+}
+
+/* =========================================================
+   IMPORT MODAL SPECIFIC STYLES (Vertical Layout)
+   ========================================================= */
+.custom-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content-lg {
+    background: #fff;
+    width: 550px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+    font-family: 'Poppins', sans-serif;
+}
+
+.modal-header-maroon {
+    background: #630100;
+    color: #fff;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header-maroon h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.close-btn {
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.modal-body-vertical {
+    padding: 25px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-height: 75vh;
+    overflow-y: auto;
+}
+
+.form-section-vert h3 {
+    color: #800000;
+    font-size: 0.95rem;
+    font-weight: 800;
+    margin-top: 0;
+    margin-bottom: 15px;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 5px;
+}
+
+.form-group-modal {
+    display: flex;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+.form-group-modal label {
+    font-weight: 800;
+    color: #630100;
+    font-size: 0.75rem;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.modal-input-styled {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.modal-readonly-bg {
+    background-color: #f5f5f5 !important;
+    color: #888 !important;
+}
+
+.form-group-modal select,
+.form-group-modal input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: 'Poppins';
+    font-size: 0.85rem;
+}
+
+.file-input-style {
+    display: block;
+    width: 100%;
+    padding: 8px;
+    border: 1px dashed #630100;
+    border-radius: 5px;
+    background: #fafafa;
+    font-size: 0.85rem;
+}
+
+/* Column Customization UI */
+.column-order-display {
+    background: #f9f9f9;
+    padding: 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #333;
+    line-height: 1.6;
+    margin-bottom: 10px;
+}
+
+.btn-link-maroon {
+    background: none;
+    border: none;
+    color: #800000;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+    margin-bottom: 10px;
+}
+
+.mapping-hint {
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 15px;
+    font-style: italic;
+}
+
+.mapping-grid-vertical {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.map-item-vert {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.map-item-vert label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #555;
+}
+
+.map-item-vert select {
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.modal-footer-flex {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px;
+    background: #f5f5f5;
+    border-top: 1px solid #ddd;
+}
+
+.btn-modal {
+    padding: 10px 30px;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.btn-cancel {
+    background: #ccc;
+    color: #333;
+}
+
+.btn-confirm {
+    background: #630100;
+    color: #fff;
+    width: 100%;
+}
+
+.btn-red-delete {
+    background: #c0392b;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-red-delete:hover {
+    background: #e74c3c;
+}
+
+/* Updated TD for alignment */
+.curr-list-table tbody td {
+    vertical-align: middle;
+}
+
+/* Delete Modal Specifics */
+#deleteCurriculumModal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: none;
+    /* Controlled by JS */
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+#deleteCurriculumModal .modal-content-logout {
+    animation: modalPop 0.3s ease-out;
+}
+
+@keyframes modalPop {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* =========================================================
+   CURRICULUM ASSIGNMENT SPECIFIC ADDITIONS
+   ========================================================= */
+
+/* New Header Styles that replicate the Mockup Titles */
+.section-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.section-header-row h2 {
+    color: #630100;
+    font-weight: 800;
+    margin: 0;
+    font-size: 1.6rem;
+    letter-spacing: -0.5px;
+    text-transform: uppercase;
+}
+
+.filter-bar-dark {
+    background: #630100;
+    padding: 10px 15px;
+    border-radius: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.filter-group-row {
+    display: flex;
+    gap: 25px;
+    align-items: center;
+}
+
+.filter-item-inline {
+    display: flex;
+    align-items: center;
+}
+
+.filter-item-inline label {
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 800;
+    margin-right: 8px;
+    text-transform: uppercase;
+}
+
+.filter-item-inline select {
+    padding: 3px 25px 3px 10px;
+    border-radius: 4px;
+    border: 1px solid white;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #333;
+    background-color: white;
+}
+
+/* Edit Icon Button for the Table */
+.btn-edit-icon {
+    background: transparent;
+    border: none;
+    color: #630100;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: color 0.2s, transform 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-edit-icon:hover {
+    color: #800000;
+    transform: scale(1.1);
+}
+
+/* Grouping outline style for Curriculum List matching the UI mock */
+.program-group-header {
+    border: 1px solid #630100;
+    color: #630100;
+    font-weight: 800;
+    font-size: 0.9rem;
+    padding: 8px 15px;
+    background: #fff;
+    border-radius: 2px;
+    margin-top: 25px;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+}
+
+/* Ensure dropdown opens downwards */
+.curriculum-ui {
+    padding-bottom: 500px !important;
+}
+
+.assignment-table {
+    margin-bottom: 40px;
+}
+
+/* Scrollable Container for Assignment Table */
+/* FORCE Scrollable Container for Assignment Table */
+.assignment-scroll-wrapper {
+    display: block;
+    max-height: 260px;
+    /* Precisely enough for ~3-4 rows */
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: 2px solid #630100;
+    border-radius: 5px;
+    margin-bottom: 35px;
+    background: #fff;
+}
+
+/* Ensure the table fills the whole scroll area */
+.assignment-table {
+    margin-bottom: 0 !important;
+    width: 100%;
+    border-collapse: collapse;
+    /* Better for sticky headers */
+}
+
+/* Make table headers stay at the top while scrolling */
+.assignment-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #630100 !important;
+    /* Matches your maroon theme */
+    box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
+}
+
+.form-group-modal input,
+.form-group-modal select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}

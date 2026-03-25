@@ -1,0 +1,116 @@
+:root {
+    --pup-maroon: #800000;
+    --table-pink: #fdeeee;
+    --table-pink-hover: #fbd7d7;
+}
+
+.dashboard-wrapper { padding: 30px; }
+
+/* Header */
+.welcome-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+.welcome-header h1 { color: var(--pup-maroon); font-weight: 800; font-size: 2.2rem; }
+.current-date { color: var(--pup-maroon); font-weight: 700; font-style: italic; font-size: 1.2rem; }
+
+/* Action Buttons Grid */
+.action-grid {
+    display: flex;
+    gap: 12px;
+    background-color: var(--pup-maroon);
+    padding: 20px;
+    border-radius: 6px;
+    margin-bottom: 35px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+
+.btn-action {
+    flex: 1;
+    text-decoration: none;
+    border: 2px solid white;
+    color: white;
+    padding: 15px 5px;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 0.7rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+/* Hover Effects */
+.btn-action:hover {
+    background-color: white;
+    color: var(--pup-maroon);
+    transform: translateY(-4px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+}
+
+
+.btn-action.white:hover { background-color: #f0f0f0; }
+
+/* Section Styling */
+.section-container { margin-bottom: 30px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.section-header h2 { color: var(--pup-maroon); font-weight: 800; font-size: 1.5rem; }
+
+.view-all-btn {
+    background: var(--pup-maroon);
+    color: white;
+    text-decoration: none;
+    padding: 5px 15px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+/* Table Controls Bar */
+.maroon-bg {
+    background-color: var(--pup-maroon);
+    color: white;
+    padding: 10px 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 4px 4px 0 0;
+}
+
+.search-filter select {
+    border: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-right: 5px;
+}
+
+.table-actions-right { margin-left: auto; display: flex; align-items: center; gap: 15px; font-size: 0.75rem; }
+
+.export-inline {
+    background: transparent;
+    border: 1px solid white;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+/* Table Styling */
+.dashboard-table { width: 100%; border-collapse: collapse; }
+.dashboard-table th {
+    background-color: var(--pup-maroon);
+    color: white;
+    padding: 12px;
+    font-size: 0.8rem;
+    text-align: left;
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+.dashboard-table td { padding: 12px; font-size: 0.85rem; border-bottom: 1px solid #ddd; }
+.dashboard-table tbody tr { background-color: var(--table-pink); transition: 0.2s; }
+.dashboard-table tbody tr:hover { background-color: var(--table-pink-hover); }
+
+.date-col { font-style: italic; color: var(--pup-maroon); font-weight: 500; }
