@@ -1,4 +1,17 @@
 {% extends "academic/base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+{% endblock %}
+
 {% block content %}
-<h1>Reports hehe</h1>
+<div class="schedule-container">
+    <div class="schedule-header"><h1>SCHEDULE MANAGEMENT: VIEW</h1></div>
+
+    <div class="placeholder-box">
+        <i class="fas fa-calendar-check"></i>
+        <h2>Schedule tab is working!</h2>
+        <p>This section will display the list of all finalized and published schedules.</p>
+    </div>
+</div>
 {% endblock %}

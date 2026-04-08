@@ -1,0 +1,23 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="schedule-container">
+    <div class="schedule-header"><h1>SCHEDULE MANAGEMENT</h1></div>
+
+    <div class="schedule-tabs">
+        <a href="{{ url_for('schedule') }}" class="sched-tab-btn inactive">VIEW SCHEDULES</a>
+        <a href="{{ url_for('schedule_generation') }}" class="sched-tab-btn active">GENERATE SCHEDULE</a>
+        <a href="{{ url_for('manual_schedule_editor') }}" class="sched-tab-btn inactive">MANUAL EDITOR</a>
+    </div>
+
+    <div class="placeholder-box">
+        <i class="fas fa-robot"></i>
+        <h2>Generate Schedule tab is working!</h2>
+        <p>This section will house the Intelligent Decision Support System, GA, and RF logic.</p>
+    </div>
+</div>
+{% endblock %}

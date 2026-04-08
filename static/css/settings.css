@@ -1,0 +1,242 @@
+/* Layout Gutters */
+.settings-container {
+    padding: 30px 50px;
+    background: #fff;
+}
+
+.settings-header h1 {
+    color: #630100;
+    font-weight: 800;
+    font-size: 2.2rem;
+    margin-bottom: 25px;
+}
+
+/* Tabs */
+.tab-btn {
+    padding: 10px 35px;
+    font-weight: 800;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    border: none;
+    transition: 0.3s;
+}
+
+.tab-btn.active {
+    background: #4b0a0a;
+    color: white;
+}
+
+.tab-btn.inactive {
+    background: #9c8484;
+    color: white;
+}
+
+/* Section alignment */
+.section-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 35px;
+    margin-bottom: 12px;
+}
+
+.section-main-title {
+    color: #630100;
+    font-weight: 800;
+    font-size: 1.1rem;
+    text-transform: uppercase;
+    margin: 0;
+}
+
+/* Top Info Box */
+.ay-control-box {
+    background: #fdf2f2;
+    padding: 20px 25px;
+    border: 1px solid #e2d1d1;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+.ay-info-bar {
+    display: flex;
+    align-items: center;
+    gap: 40px;
+    margin-bottom: 20px;
+}
+
+.info-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.info-item label {
+    font-weight: 800;
+    color: #630100;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.value-box-pill {
+    background: #fff;
+    border: 1.5px solid #630100;
+    padding: 4px 20px;
+    color: #630100;
+    font-weight: 800;
+    font-size: 0.85rem;
+    border-radius: 50px;
+    min-width: 160px;
+    text-align: center;
+}
+
+/* Tables */
+.table-pro {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border: 1.5px solid #630100;
+}
+
+.table-pro thead th {
+    background: #fff;
+    color: #630100;
+    border: 1.5px solid #630100;
+    padding: 12px 10px;
+    font-size: 0.7rem;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.table-pro tbody td {
+    border: 1.5px solid #630100;
+    padding: 10px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: #333;
+}
+
+.edit-cell-btn {
+    background: #630100 !important;
+    color: white !important;
+    width: 45px;
+    cursor: pointer;
+    text-align: center;
+}
+
+/* Modals */
+.modal-grid-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    padding: 30px;
+}
+
+.input-block {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.input-block label {
+    font-weight: 800;
+    color: #333;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.modal-input {
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+/* Styling for the dropdowns inside the info bar */
+.ay-value-select {
+    background: #fff;
+    border: 1.5px solid #630100;
+    padding: 4px 15px;
+    color: #630100;
+    font-weight: 800;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    outline: none;
+    text-align: center;
+    min-width: 120px;
+    appearance: none; /* Removes default browser arrow for a cleaner look */
+    text-align-last: center;
+}
+
+.ay-value-select:hover {
+    background: #fdf2f2;
+}
+
+/* Specific styling for the Apply Button */
+.btn-apply-maroon {
+    background: #630100;
+    color: white;
+    padding: 6px 30px;
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 0.8rem;
+    cursor: pointer;
+    border: none;
+    transition: 0.2s;
+    letter-spacing: 1px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.btn-apply-maroon:hover {
+    background: #27ae60; /* Magiging Green kapag hinover para sa "Apply/Success" feel */
+    transform: translateY(-1px);
+}
+
+.status-indicator {
+    color: #27ae60;
+    font-weight: 900;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+}
+/* Siguraduhin na ang top row ay laging isang hanay lang */
+.ay-top-row {
+    display: flex;
+    flex-direction: row; /* Isang hanay lang */
+    align-items: center; /* Pantay ang taas */
+    justify-content: flex-start;
+    gap: 20px; /* Space sa pagitan ng items */
+    flex-wrap: nowrap; /* Hindi bababa ang items */
+}
+
+/* Gawing mas compact ang display pills para hindi kainin ang space */
+.ay-value-select {
+    background: #fff;
+    border: 1.5px solid #630100;
+    padding: 5px 10px;
+    color: #630100;
+    font-weight: 800;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    min-width: 100px;
+}
+
+.btn-apply-maroon {
+    background: #630100;
+    color: white;
+    padding: 6px 20px;
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 0.75rem;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap; /* Isang salita lang */
+}
+
+.status-indicator {
+    white-space: nowrap; /* Para hindi mag-break ang status */
+}

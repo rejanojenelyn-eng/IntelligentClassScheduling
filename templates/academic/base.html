@@ -5,18 +5,111 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PUPLC Scheduling System | Academic Head</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
-    <!-- All design is now handled by this one file -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <style>
+        /* SIDEBAR DROPDOWN STYLES */
+        .nav-item-dropdown {
+            margin: 4px 12px;
+        }
+
+        /* Flex container to separate Link and Arrow */
+        .nav-link-wrapper {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 6px;
+            transition: background-color 0.3s;
+        }
+
+        .nav-link-wrapper.active {
+            background-color: #800000;
+            color: white !important;
+        }
+
+        .nav-link-wrapper:hover:not(.active) {
+            background-color: rgba(128, 0, 0, 0.05);
+        }
+
+        /* Clickable link going to main pages */
+        .nav-link-main {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            color: #800000;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .nav-link-wrapper.active .nav-link-main {
+            color: white;
+        }
+
+        .nav-link-main i {
+            font-size: 1.1rem;
+            min-width: 35px;
+        }
+
+        /* Dropdown Arrow */
+        .nav-arrow {
+            cursor: pointer;
+            padding: 5px 10px;
+            color: #800000;
+            transition: transform 0.3s;
+        }
+
+        .nav-link-wrapper.active .nav-arrow {
+            color: white;
+        }
+
+        .rotate-arrow {
+            transform: rotate(180deg);
+        }
+
+        /* Sub-menu styling */
+        .sub-menu {
+            display: none;
+            list-style: none;
+            padding: 5px 0;
+            margin: 0;
+            background-color: #fdf2f2;
+            border-radius: 0 0 6px 6px;
+        }
+
+        .show-submenu {
+            display: block !important;
+        }
+
+        .sub-menu-link {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px 10px 45px;
+            color: #630100 !important;
+            text-decoration: none !important;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .sub-menu-link i {
+            font-size: 0.6rem;
+            margin-right: 10px;
+            opacity: 0.7;
+        }
+
+        .sub-menu-link:hover,
+        .sub-menu-link.active {
+            background-color: #e2d1d1;
+            font-weight: 800;
+        }
+    </style>
 
     {% block head %}{% endblock %}
 </head>
 
 <body>
-
     <!-- TOP HEADER -->
     <header class="top-nav">
         <div class="nav-left">
@@ -28,7 +121,7 @@
             <input type="text" placeholder="Search records...">
         </div>
         <div class="nav-right">
-            <span class="ay-label">A.Y 2025 - 2026</span>
+            <span class="ay-label">{{ current_ay_label }}</span>
             <div class="user-profile">
                 <i class="far fa-user-circle" style="font-size: 1.6rem;"></i>
                 <span style="font-weight: 600;">Acad head</span>
@@ -52,10 +145,29 @@
                             <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.path == '/employee' }}">
-                        <a href="/employee" class="nav-link"><i class="fas fa-users"></i><span
-                                class="nav-label">Employee Management</span></a>
+
+                    <!-- EMPLOYEE MANAGEMENT (Merged Friend's Sub-menu using your split logic) -->
+                    <li class="nav-item-dropdown">
+                        <div class="nav-link-wrapper {{ 'active' if 'employee' in request.path }}">
+                            <a href="/employee" class="nav-link-main">
+                                <i class="fas fa-users"></i>
+                                <span class="nav-label">Employee Management</span>
+                            </a>
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotate-arrow' if 'employee' in request.path }}"
+                                id="employeeArrow"
+                                onclick="toggleSubMenu(event, 'employeeSubMenu', 'employeeArrow')"></i>
+                        </div>
+
+                        <ul class="sub-menu {{ 'show-submenu' if 'employee' in request.path }}" id="employeeSubMenu">
+                            <li>
+                                <a href="/employee/archived"
+                                    class="sub-menu-link {{ 'active' if request.path == '/employee/archived' }}">
+                                    <i class="fas fa-archive"></i> Archive Employee
+                                </a>
+                            </li>
+                        </ul>
                     </li>
+
                     <li class="nav-item {{ 'active' if request.path == '/curriculum' }}">
                         <a href="/curriculum" class="nav-link"><i class="fas fa-book"></i><span
                                 class="nav-label">Curriculum</span></a>
@@ -64,26 +176,51 @@
                         <a href="/room" class="nav-link"><i class="fas fa-door-open"></i><span
                                 class="nav-label">Rooms</span></a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.path == '/schedule' }}">
-                        <a href="/schedule" class="nav-link"><i class="fas fa-calendar-alt"></i><span
-                                class="nav-label">Schedule</span></a>
+
+                    <!-- SCHEDULE TAB (Your Split Logic) -->
+                    <li class="nav-item-dropdown">
+                        <div class="nav-link-wrapper {{ 'active' if 'schedule' in request.path }}">
+                            <!-- Click text/icon to go to Schedule View -->
+                            <a href="{{ url_for('schedule') }}" class="nav-link-main">
+                                <i class="fas fa-calendar-alt"></i>
+                                <span class="nav-label">Schedule</span>
+                            </a>
+                            <!-- Click Arrow to drop down Sub-Menu -->
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotate-arrow' if 'schedule' in request.path }}"
+                                id="scheduleArrow"
+                                onclick="toggleSubMenu(event, 'scheduleSubMenu', 'scheduleArrow')"></i>
+                        </div>
+
+                        <ul class="sub-menu {{ 'show-submenu' if 'schedule' in request.path }}" id="scheduleSubMenu">
+                            <li>
+                                <a href="{{ url_for('schedule_generation') }}"
+                                    class="sub-menu-link {{ 'active' if request.path == url_for('schedule_generation') }}">
+                                    <i class="fas fa-play"></i> Generate Schedule
+                                </a>
+                            </li>
+                            <li>
+                                <a href="{{ url_for('manual_schedule_editor') }}"
+                                    class="sub-menu-link {{ 'active' if request.path == url_for('manual_schedule_editor') }}">
+                                    <i class="fas fa-edit"></i> Manual Editor
+                                </a>
+                            </li>
+                        </ul>
                     </li>
+
                     <li class="nav-item {{ 'active' if request.path == '/reports' }}">
-                        <a href="/reports" class="nav-link"><i class="fas fa-calendar-alt"></i><span
+                        <a href="/reports" class="nav-link"><i class="fas fa-file-alt"></i><span
                                 class="nav-label">Reports</span></a>
                     </li>
                 </ul>
             </nav>
 
-            <!-- Sign out button with custom Modal trigger -->
             <div class="signout-container">
-                <a href="#" class="nav-link" style="font-weight: 800;" onclick="openLogoutModal(event)">
+                <a href="javascript:void(0)" class="nav-link" style="font-weight: 800;" onclick="openLogoutModal(event)">
                     <i class="fas fa-sign-out-alt"></i><span class="nav-label">Sign out</span>
                 </a>
             </div>
         </aside>
 
-        <!-- MAIN WRAPPER -->
         <main class="main-wrapper">
             <section class="content-body">
                 {% block content %}{% endblock %}
@@ -91,7 +228,7 @@
         </main>
     </div>
 
-    <!-- Custom Logout Modal (Matches Admin) -->
+    <!-- LOGOUT MODAL -->
     <div id="logoutModal" class="logout-modal">
         <div class="modal-content-logout">
             <div class="modal-header-logout"><i class="fas fa-sign-out-alt"></i></div>
@@ -107,27 +244,45 @@
     </div>
 
     <script>
-        // Sidebar toggle
-        const sidebar = document.getElementById("sidebar");
-        const toggleBtn = document.getElementById("toggleBtn");
-        toggleBtn.onclick = () => { sidebar.classList.toggle("collapsed"); };
+        // Use friend's DOMContentLoaded for safety
+        document.addEventListener('DOMContentLoaded', function() {
+            const sidebar = document.getElementById("sidebar");
+            const toggleBtn = document.getElementById("toggleBtn");
+            if(toggleBtn) {
+                toggleBtn.onclick = () => { sidebar.classList.toggle("collapsed"); };
+            }
+        });
 
-        // Custom Logout Modal Functions
-        function openLogoutModal(e) {
-            e.preventDefault();
-            document.getElementById("logoutModal").style.display = "flex";
-        }
-        function closeLogoutModal() {
-            document.getElementById("logoutModal").style.display = "none";
-        }
-        function proceedLogout() {
-            window.location.href = "/logout";
+        // Sub-menu toggle function (Only drops down, does not navigate)
+        function toggleSubMenu(event, menuId, arrowId) {
+            event.preventDefault();
+            event.stopPropagation(); // Stops the click from affecting the main link
+
+            const menu = document.getElementById(menuId);
+            const arrow = document.getElementById(arrowId);
+
+            if (menu) menu.classList.toggle('show-submenu');
+            if (arrow) arrow.classList.toggle('rotate-arrow');
         }
 
-        // Close modal if clicking outside the box
-        window.onclick = function (event) {
-            let modal = document.getElementById("logoutModal");
-            if (event.target == modal) { closeLogoutModal(); }
+        // Logout Modal Functions
+        function openLogoutModal(e) { 
+            e.preventDefault(); 
+            document.getElementById("logoutModal").style.display = "flex"; 
+        }
+        function closeLogoutModal() { 
+            document.getElementById("logoutModal").style.display = "none"; 
+        }
+        function proceedLogout() { 
+            window.location.href = "/logout"; 
+        }
+        
+        // Close modal when clicking outside of it
+        window.onclick = function (event) { 
+            let modal = document.getElementById("logoutModal"); 
+            if (event.target == modal) { 
+                closeLogoutModal(); 
+            } 
         }
     </script>
 </body>

@@ -1,0 +1,186 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+    {{ super() }}
+    <!-- Link to the new CSS for the schedule page -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_faculty.css') }}">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="schedule-wrapper">
+    <!-- Top Filter Bar -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label for="select-day">SELECT DAY</label>
+            <select id="select-day">
+                <option>Monday</option>
+                <option>Tuesday</option>
+                <option>Wednesday</option>
+                <option>Thursday</option>
+                <option>Friday</option>
+                <option>Saturday</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="select-time">SELECT TIME</label>
+            <input type="text" id="select-time" value="7:30AM - 10:30AM">
+        </div>
+        <div class="filter-group">
+            <label for="room-type">ROOM TYPE</label>
+            <select id="room-type">
+                <option>Lecture</option>
+                <option>Laboratory</option>
+            </select>
+        </div>
+        <button class="btn-request-room"><i class="fa-regular fa-file-lines"></i> REQUEST ROOM</button>
+    </div>
+
+    <!-- Building/Category Tabs -->
+    <div class="building-tabs">
+        <button class="tab-btn active">HEALTH AND SCIENCE</button>
+        <button class="tab-btn">EDUCATION</button>
+        <button class="tab-btn">N-TYPE</button>
+        <button class="tab-btn">ENGINEERING</button>
+        <button class="tab-btn">HM AND AGRI</button>
+        <button class="tab-btn">LABORATORIES</button>
+        <button class="tab-btn">GYM</button>
+    </div>
+
+    <!-- Main Schedule Container -->
+    <div class="schedule-container">
+        <!-- Rooms Sidebar -->
+        <aside class="rooms-sidebar">
+            <div class="floor-selector">
+                <span>ROOMS</span>
+                <select>
+                    <option>1st Floor</option>
+                    <option>2nd Floor</option>
+                </select>
+            </div>
+            <nav class="room-list">
+                <a href="#" class="room-item active">101</a>
+                <a href="#" class="room-item">102</a>
+                <a href="#" class="room-item">103</a>
+                <a href="#" class="room-item">104</a>
+                <a href="#" class="room-item">105</a>
+                <a href="#" class="room-item">106</a>
+                <a href="#" class="room-item">107</a>
+                <a href="#" class="room-item">108</a>
+                <a href="#" class="room-item">109</a>
+                <a href="#" class="room-item">110</a>
+            </nav>
+        </aside>
+
+        <!-- Schedule Grid -->
+        <main class="schedule-grid">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="time-col">TIME</th>
+                        <th>MON</th>
+                        <th>TUE</th>
+                        <th>WED</th>
+                        <th>THU</th>
+                        <th>FRI</th>
+                        <th>SAT</th>
+                        <th>SUN</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="time-col">7:30</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td class="time-col">8:30</td>
+                        <td class="class-block" rowspan="2">
+                            <div class="class-info">
+                                <strong>INTRO TO COMPUTING</strong>
+                                <span>Mrs. Icon Obmerga</span>
+                            </div>
+                        </td>
+                        <td></td>
+                        <td class="class-block" rowspan="2">
+                             <div class="class-info">
+                                <strong>IT ELECTIVE 1</strong>
+                                <span>Mr. Lynel Tabien</span>
+                            </div>
+                        </td>
+                        <td></td>
+                         <td class="class-block" rowspan="2">
+                             <div class="class-info">
+                                <strong>INTRO TO COMPUTING</strong>
+                                <span>Mrs. Icon Obmerga</span>
+                            </div>
+                        </td>
+                        <td></td>
+                        <td class="class-block" rowspan="2">
+                             <div class="class-info">
+                                <strong>IT ELECTIVE 1</strong>
+                                <span>Mr. Lynel Tabien</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="time-col">9:30</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                     <tr>
+                        <td class="time-col">10:30</td>
+                        <td></td>
+                         <td class="class-block" rowspan="2">
+                            <div class="class-info">
+                                <strong>PRINCIPLES OF ORGANIZATION</strong>
+                                <span>Mrs. Grace Silaya</span>
+                            </div>
+                        </td>
+                        <td></td>
+                         <td class="available-block" rowspan="2">
+                            <div class="class-info">
+                                <strong>AVAILABLE</strong>
+                                <a href="#">REQUEST</a>
+                            </div>
+                        </td>
+                        <td></td>
+                         <td class="class-block" rowspan="2">
+                             <div class="class-info">
+                                <strong>PRINCIPLES OF ORGANIZATION</strong>
+                                <span>Mrs. Grace Silaya</span>
+                            </div>
+                        </td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td class="time-col">11:30</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td class="time-col">12:30</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </main>
+    </div>
+</div>
+{% endblock %}

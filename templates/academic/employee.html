@@ -1,13 +1,13 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="employee-container">
-    
+
     <!-- STATS CARDS SECTION -->
     <div class="stats-row">
         <div class="stat-card maroon">
@@ -32,12 +32,13 @@
     <div class="employee-header-flex">
         <div class="action-buttons-group">
             <button class="btn-capsule btn-add" onclick="openAddModal()">ADD NEW EMPLOYEE</button>
-            <!-- Note: Archive buttons removed for Acad Head -->
+            <a href="{{ url_for('archived_employees') }}" class="btn-capsule btn-outline">VIEW ARCHIVE</a>
         </div>
 
         <div class="import-container">
             <div class="import-button-wrapper">
-                <button class="btn-import" onclick="openImportModal()">IMPORT <i class="fas fa-chevron-down"></i></button>
+                <button class="btn-import" onclick="openImportModal()">IMPORT <i
+                        class="fas fa-chevron-down"></i></button>
                 <small class="import-subtext">Upload CSV file</small>
             </div>
         </div>
@@ -48,13 +49,13 @@
         <div class="table-header-filters">
             <!-- Search Group -->
             <!-- Search Group (Updated class for emphasis) -->
-<div class="filter-group search-group">
-    <label>Search Employee</label>
-    <div class="search-input-wrapper">
-        <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Type name to search...">
-        <i class="fas fa-search"></i>
-    </div>
-</div>
+            <div class="filter-group search-group">
+                <label>Search Employee</label>
+                <div class="search-input-wrapper">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Type name to search...">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
 
             <!-- Type Group -->
             <div class="filter-group">
@@ -92,7 +93,7 @@
             <!-- Actions Right -->
             <div class="table-actions-right">
                 <div class="sort-wrapper" onclick="sortTable()">
-                    <span id="sortDirection">Ascending</span> 
+                    <span id="sortDirection">Ascending</span>
                     <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
                 </div>
                 <button class="btn-export-white" onclick="exportToExcel()">
@@ -134,7 +135,8 @@
                 <td class="emp-status">{{ emp.employeestatus }}</td>
                 <td class="action-icons">
                     <!-- FIXED: Edit Modal passing all data correctly -->
-                    <i class="fas fa-edit edit" onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
+                    <i class="fas fa-edit edit"
+                        onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
                 </td>
             </tr>
             {% endfor %}
@@ -153,7 +155,8 @@
         </div>
         <form id="addEmployeeForm" action="{{ url_for('add_employee') }}" method="POST">
             <div class="form-grid">
-                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" name="employee_number" required></div>
+                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text"
+                        name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" name="first_name" required></div>
                 <div class="form-group"><label>MIDDLE NAME</label><input type="text" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" name="last_name" required></div>
@@ -164,21 +167,24 @@
                     <label>SPECIALIZATION</label>
                     <select name="specialization_id" required>
                         <option value="" disabled selected>Select Specialization</option>
-                        {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{ spec.specializationname }}</option>{% endfor %}
+                        {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{
+                            spec.specializationname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>EMPLOYEE TYPE</label>
                     <select name="type_id" id="add_type" required onchange="toggleDesignation('add')">
                         <option value="" disabled selected>Select Type</option>
-                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}" data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
+                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}"
+                            data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>DESIGNATION (FOR DESIGNEES ONLY)</label>
                     <select name="designation_id" id="add_designation" disabled>
                         <option value="">No Designation</option>
-                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}</option>{% endfor %}
+                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}
+                        </option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
@@ -207,30 +213,39 @@
         </div>
         <form id="editEmployeeForm" action="{{ url_for('edit_employee') }}" method="POST">
             <div class="form-grid">
-                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
-                <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>
-                <div class="form-group"><label>MIDDLE NAME</label><input type="text" id="edit_m_name" name="middle_name"></div>
-                <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name" required></div>
-                <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" id="edit_email" name="email" required></div>
-                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact" required></div>
+                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" id="edit_emp_num"
+                        name="employee_number" readonly></div>
+                <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name"
+                        required></div>
+                <div class="form-group"><label>MIDDLE NAME</label><input type="text" id="edit_m_name"
+                        name="middle_name"></div>
+                <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name"
+                        required></div>
+                <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" id="edit_email" name="email"
+                        required></div>
+                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact"
+                        required></div>
                 <hr class="form-divider full-width">
                 <div class="form-group">
                     <label>SPECIALIZATION</label>
                     <select id="edit_spec" name="specialization_id" required>
-                        {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{ spec.specializationname }}</option>{% endfor %}
+                        {% for spec in specializations %}<option value="{{ spec.specializationid }}">{{
+                            spec.specializationname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>EMPLOYEE TYPE</label>
                     <select id="edit_type" name="type_id" required onchange="toggleDesignation('edit')">
-                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}" data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
+                        {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}"
+                            data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label>DESIGNATION</label>
                     <select id="edit_designation" name="designation_id">
                         <option value="">No Designation</option>
-                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}</option>{% endfor %}
+                        {% for des in designations %}<option value="{{ des.designationid }}">{{ des.designationname }}
+                        </option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
@@ -258,7 +273,7 @@
             <span class="close-btn" onclick="closeImportModal()">&times;</span>
         </div>
         <form action="{{ url_for('bulk_import') }}" method="POST" enctype="multipart/form-data">
-             <div class="form-grid" style="display: block; padding: 25px;">
+            <div class="form-grid" style="display: block; padding: 25px;">
                 <p>Upload a .csv file with standard columns.</p>
                 <div class="form-group" style="margin-top: 20px;">
                     <label>SELECT CSV FILE</label>
@@ -274,128 +289,166 @@
 </div>
 
 <script>
-// --- MODAL CONTROLS ---
-function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
-function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
-function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
-function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
+    // --- MODAL CONTROLS ---
+    function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
+    function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
+    function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
+    function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
 
-function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
-    document.getElementById("edit_emp_num").value = empNum;
-    document.getElementById("edit_f_name").value = fName;
-    document.getElementById("edit_m_name").value = mName;
-    document.getElementById("edit_l_name").value = lName;
-    document.getElementById("edit_email").value = email;
-    document.getElementById("edit_contact").value = contact;
-    document.getElementById("edit_spec").value = specId;
-    document.getElementById("edit_type").value = typeId;
-    document.getElementById("edit_designation").value = desigId;
-    document.getElementById("edit_status").value = status;
-    toggleDesignation('edit');
-    document.getElementById("editEmployeeModal").style.display = "block";
-}
-function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
-
-function toggleDesignation(modalType) {
-    const typeSelect = document.getElementById(`${modalType}_type`);
-    const designationSelect = document.getElementById(`${modalType}_designation`);
-    const selectedOption = typeSelect.options[typeSelect.selectedIndex];
-    const employeeTypeName = selectedOption.getAttribute('data-typename');
-    designationSelect.disabled = (employeeTypeName !== 'Designee');
-    if (designationSelect.disabled) designationSelect.value = "";
-}
-
-// --- FILTERING ---
-function filterTable() {
-    let nameInput = document.getElementById("searchInput").value.toUpperCase();
-    let typeInput = document.getElementById("typeFilter").value.toUpperCase();
-    let statusInput = document.getElementById("statusFilter").value.toUpperCase();
-    let specInput = document.getElementById("specFilter").value.toUpperCase();
-
-    let table = document.getElementById("instructorTable");
-    let tr = table.getElementsByTagName("tbody")[0].getElementsByTagName("tr");
-
-    for (let i = 0; i < tr.length; i++) {
-        let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
-        let specTxt = tr[i].querySelector(".emp-spec").textContent.toUpperCase();
-        let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
-        let statusTxt = tr[i].querySelector(".emp-status").textContent.toUpperCase();
-
-        let matchName = nameTxt.includes(nameInput);
-        let matchType = typeInput === "" || typeTxt.trim() === typeInput;
-        let matchStatus = statusInput === "" || statusTxt.trim() === statusInput;
-        let matchSpec = specInput === "" || specTxt.trim() === specInput;
-
-        tr[i].style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
+    function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
+        document.getElementById("edit_emp_num").value = empNum;
+        document.getElementById("edit_f_name").value = fName;
+        document.getElementById("edit_m_name").value = mName;
+        document.getElementById("edit_l_name").value = lName;
+        document.getElementById("edit_email").value = email;
+        document.getElementById("edit_contact").value = contact;
+        document.getElementById("edit_spec").value = specId;
+        document.getElementById("edit_type").value = typeId;
+        document.getElementById("edit_designation").value = desigId;
+        document.getElementById("edit_status").value = status;
+        toggleDesignation('edit');
+        document.getElementById("editEmployeeModal").style.display = "block";
     }
-}
+    function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
 
-// --- SORTING (FIXED: Clicking Ascending sorts Z-A) ---
-function sortTable() {
-    const sortDirectionSpan = document.getElementById("sortDirection");
-    const icon = document.getElementById("sortIcon");
-    const table = document.getElementById("instructorTable");
-    const tbody = table.querySelector("tbody");
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-
-    const currentText = sortDirectionSpan.innerText.trim();
-    let direction;
-
-    if (currentText === 'Ascending') {
-        // If label is Ascending, user clicked to sort Z-A
-        direction = -1; 
-        sortDirectionSpan.innerText = 'Descending';
-        icon.className = 'fas fa-sort-amount-up';
-    } else {
-        // If label is Descending, user clicked to sort A-Z
-        direction = 1; 
-        sortDirectionSpan.innerText = 'Ascending';
-        icon.className = 'fas fa-sort-amount-down-alt';
+    function toggleDesignation(modalType) {
+        const typeSelect = document.getElementById(`${modalType}_type`);
+        const designationSelect = document.getElementById(`${modalType}_designation`);
+        const selectedOption = typeSelect.options[typeSelect.selectedIndex];
+        const employeeTypeName = selectedOption.getAttribute('data-typename');
+        designationSelect.disabled = (employeeTypeName !== 'Designee');
+        if (designationSelect.disabled) designationSelect.value = "";
     }
 
-    rows.sort((a, b) => {
-        const nameA = a.querySelector(".emp-name").innerText.toLowerCase();
-        const nameB = b.querySelector(".emp-name").innerText.toLowerCase();
-        return nameA.localeCompare(nameB) * direction;
-    });
+    // --- FILTERING ---
+    function filterTable() {
+        let nameInput = document.getElementById("searchInput").value.toUpperCase();
+        let typeInput = document.getElementById("typeFilter").value.toUpperCase();
+        let statusInput = document.getElementById("statusFilter").value.toUpperCase();
+        let specInput = document.getElementById("specFilter").value.toUpperCase();
 
-    rows.forEach(row => tbody.appendChild(row));
-}
+        let table = document.getElementById("instructorTable");
+        let tr = table.getElementsByTagName("tbody")[0].getElementsByTagName("tr");
 
-// --- EXPORT ---
-function exportToExcel() {
-    const table = document.getElementById("instructorTable");
-    const allRows = Array.from(table.querySelectorAll("tbody tr")).filter(r => r.style.display !== 'none');
+        for (let i = 0; i < tr.length; i++) {
+            let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
+            let specTxt = tr[i].querySelector(".emp-spec").textContent.toUpperCase();
+            let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
+            let statusTxt = tr[i].querySelector(".emp-status").textContent.toUpperCase();
+
+            let matchName = nameTxt.includes(nameInput);
+            let matchType = typeInput === "" || typeTxt.trim() === typeInput;
+            let matchStatus = statusInput === "" || statusTxt.trim() === statusInput;
+            let matchSpec = specInput === "" || specTxt.trim() === specInput;
+
+            tr[i].style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
+        }
+    }
+
+    // --- SORTING (FIXED: Clicking Ascending sorts Z-A) ---
+    function sortTable() {
+        const sortDirectionSpan = document.getElementById("sortDirection");
+        const icon = document.getElementById("sortIcon");
+        const table = document.getElementById("instructorTable");
+        const tbody = table.querySelector("tbody");
+        const rows = Array.from(tbody.querySelectorAll("tr"));
+
+        const currentText = sortDirectionSpan.innerText.trim();
+        let direction;
+
+        if (currentText === 'Ascending') {
+            // If label is Ascending, user clicked to sort Z-A
+            direction = -1;
+            sortDirectionSpan.innerText = 'Descending';
+            icon.className = 'fas fa-sort-amount-up';
+        } else {
+            // If label is Descending, user clicked to sort A-Z
+            direction = 1;
+            sortDirectionSpan.innerText = 'Ascending';
+            icon.className = 'fas fa-sort-amount-down-alt';
+        }
+
+        rows.sort((a, b) => {
+            const nameA = a.querySelector(".emp-name").innerText.toLowerCase();
+            const nameB = b.querySelector(".emp-name").innerText.toLowerCase();
+            return nameA.localeCompare(nameB) * direction;
+        });
+
+        rows.forEach(row => tbody.appendChild(row));
+    }
+
+    // --- EXPORT ---
+ function exportToExcel() {
+    // 1. Identify the table (Works for both Main and Archive pages)
+    const table = document.querySelector(".employee-table"); 
+    if (!table) return;
+
+    // 2. Get ONLY the checked boxes
+    const checkedBoxes = table.querySelectorAll(".row-check:checked");
     
-    const data = [["Employee #", "Employee Name", "Specialization", "Email", "Type", "Status"]];
-    allRows.forEach(row => {
-        const cells = row.querySelectorAll("td");
-        data.push([
-            cells[1].innerText, // ID
-            cells[2].innerText, // Name
-            cells[3].innerText, // Spec
-            cells[4].innerText, // Email
-            cells[5].innerText, // Type
-            cells[6].innerText  // Status
-        ]);
+    let rowsToExport = [];
+
+    // 3. SELECTION LOGIC
+    if (checkedBoxes.length > 0) {
+        // If you checked boxes, ONLY export those rows
+        checkedBoxes.forEach(cb => {
+            rowsToExport.push(cb.closest("tr"));
+        });
+    } else {
+        // If nothing is checked, export all rows that are NOT hidden by filters
+        const allRows = Array.from(table.querySelectorAll("tbody tr"));
+        rowsToExport = allRows.filter(row => row.style.display !== 'none');
+    }
+
+    // 4. PREPARE DATA
+    const excelData = [];
+    
+    // Create Headers (Adjust these names to match your table headers)
+    const headers = ["Employee Number", "Name", "Specialization", "Type", "Status"];
+    excelData.push(headers);
+
+    // 5. EXTRACT ROW DATA
+    rowsToExport.forEach(row => {
+        const rowData = [];
+        
+        // We use querySelector to find specific data by class name
+        // This is much safer than using cell numbers like cells[1]
+        const empNum = row.cells[1] ? row.cells[1].innerText.trim() : "";
+        const name = row.querySelector(".emp-name") ? row.querySelector(".emp-name").innerText.trim() : "";
+        const spec = row.querySelector(".emp-spec") ? row.querySelector(".emp-spec").innerText.trim() : "";
+        const type = row.querySelector(".emp-type") ? row.querySelector(".emp-type").innerText.trim() : "";
+        const status = row.querySelector(".emp-status") ? row.querySelector(".emp-status").innerText.trim() : "";
+
+        rowData.push(empNum, name, spec, type, status);
+        excelData.push(rowData);
     });
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, "Faculty");
-    XLSX.writeFile(wb, "Faculty_List.xlsx");
+    // 6. GENERATE FILE
+    try {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(excelData);
+        XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+        
+        // If selection exists, name it "Selected", otherwise "Records"
+        const fileName = checkedBoxes.length > 0 ? "Selected_Employees.xlsx" : "Employee_Records.xlsx";
+        
+        XLSX.writeFile(wb, fileName);
+    } catch (e) {
+        console.error("Export Error:", e);
+        alert("Excel library not loaded. Please refresh the page.");
+    }
 }
 
-// Checkbox select all
-document.getElementById("selectAll").addEventListener("change", function() {
-    document.querySelectorAll('.row-check').forEach(cb => cb.checked = this.checked);
-});
-
-// Window click to close modals
-window.onclick = function(event) {
-    ["addEmployeeModal", "editEmployeeModal", "importEmployeeModal"].forEach(id => {
-        if (event.target == document.getElementById(id)) document.getElementById(id).style.display = "none";
+    // Checkbox select all
+    document.getElementById("selectAll").addEventListener("change", function () {
+        document.querySelectorAll('.row-check').forEach(cb => cb.checked = this.checked);
     });
-}
+
+    // Window click to close modals
+    window.onclick = function (event) {
+        ["addEmployeeModal", "editEmployeeModal", "importEmployeeModal"].forEach(id => {
+            if (event.target == document.getElementById(id)) document.getElementById(id).style.display = "none";
+        });
+    }
 </script>
 {% endblock %}

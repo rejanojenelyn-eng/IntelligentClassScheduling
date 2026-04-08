@@ -1,0 +1,177 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+    {{ super() }}
+    <!-- Link to the stylesheet for this page -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/subject_faculty.css') }}">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="subject-offerings-wrapper">
+    <!-- Header with title and buttons -->
+    <div class="header-section">
+        <h1>SUBJECT OFFERINGS</h1>
+        <div class="header-buttons">
+            <button class="btn-export-excel"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+            <button class="btn-export-pdf"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
+        </div>
+    </div>
+
+    <!-- Filter/Selection Bar -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label for="academic-year">ACADEMIC YEAR</label>
+            <select id="academic-year">
+                <option>A.Y 2025-2026</option>
+                <!-- Add more options here -->
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="semester">SEMESTER</label>
+            <select id="semester">
+                <option>1st Semester</option>
+                <!-- Add more options here -->
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="program">SEMESTER</label>
+            <select id="program">
+                <option>Bachelor of Science...</option>
+                <!-- Add more options here -->
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="year-level">YEAR LEVEL</label>
+            <select id="year-level">
+                <option>1st Year</option>
+                <!-- Add more options here -->
+            </select>
+        </div>
+    </div>
+
+    <!-- Program and Semester Title -->
+    <div class="program-title">
+        <p>BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY (BSIT) - 1  A.Y 2025-2026  1ST SEMESTER</p>
+    </div>
+
+    <!-- Offerings Table -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>INSTRUCTOR</th>
+                    <th>SUBJECT CODE</th>
+                    <th>SUBJECT DESCRIPTION</th>
+                    <th>LEC HOURS</th>
+                    <th>LAB HOURS</th>
+                    <th>CREDIT UNITS</th>
+                    <th>COURSE</th>
+                    <th>TIME</th>
+                    <th>DAYS</th>
+                    <th>ROOM</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                 <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                 <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                 <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+                 <tr>
+                    <td>Obmerga, Icon C.</td>
+                    <td>COMP01</td>
+                    <td>Fundamentals of Research</td>
+                    <td>3</td>
+                    <td>0</td>
+                    <td>3</td>
+                    <td>BSIT 1</td>
+                    <td>7:30 - 10:30 AM</td>
+                    <td>MON / THU</td>
+                    <td>103</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -12,16 +12,13 @@
         <p class="current-date">{{ current_date }}</p>
     </div>
 
-    <!-- Action Buttons Grid -->
+ <!-- Action Buttons Grid -->
      <div class="action-grid">
-        <a href="{{ url_for('admin_schedule') }}" class="btn-action white">GENERATE SCHEDULE</a>
+        <a href="{{ url_for('admin_schedule') }}" class="btn-action white">VIEW SCHEDULES</a>
         <a href="{{ url_for('admin_employee') }}" class="btn-action">MANAGE FACULTY</a>
         <a href="{{ url_for('admin_curriculum') }}" class="btn-action">MANAGE CURRICULUM</a>
-        <a href="{{ url_for('admin_users') }}" class="btn-action">MANAGE USERS</a>
-        <a href="{{ url_for('admin_schedule') }}" class="btn-action">VIEW SCHEDULES</a>
         <a href="{{ url_for('admin_reports') }}" class="btn-action">EXPORT REPORTS</a>
     </div>
-
     <!-- Activity Logs Section -->
     <div class="section-container">
         <div class="section-header">

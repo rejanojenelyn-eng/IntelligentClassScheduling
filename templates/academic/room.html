@@ -8,6 +8,7 @@
 {% block content %}
 <div class="room-container">
     
+    <!-- STATS CARDS -->
     <div class="stats-row">
         <div class="stat-card">
             <span class="stat-label">TOTAL LABORATORIES</span>
@@ -27,11 +28,13 @@
         </div>
     </div>
 
+    <!-- MAIN LAYOUT WRAPPER -->
     <div class="room-main-wrapper">
         <div class="room-main-header">ROOMS AND BUILDINGS</div>
         
         <div class="room-grid">
             
+            <!-- LEFT SIDEBAR: BUILDINGS -->
             <div class="building-sidebar">
                 <h3>LIST OF BUILDINGS</h3>
                 <button class="btn-building active" onclick="filterBySidebar('')">ALL BUILDINGS</button>
@@ -42,12 +45,15 @@
                 {% endfor %}
             </div>
 
+            <!-- RIGHT AREA: TABLE & FILTERS -->
             <div class="room-content-area">
+                
+                <!-- TOP FILTERS -->
                 <div class="room-filters">
                     <div class="filter-group-row">
                         <div class="filter-item">
                             <label>SEARCH ROOM</label>
-                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type...">
+                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type room...">
                         </div>
                         <div class="filter-item">
                             <label>BUILDING</label>
@@ -67,8 +73,13 @@
                             </select>
                         </div>
                     </div>
+                    
+                    <!-- ACTIONS -->
                     <div class="actions-row">
-                        <span style="font-size: 0.85rem; cursor: pointer; font-weight: 600;" onclick="sortRoomTable()">
+                        <button class="btn-room-export" style="background: white; color: var(--pup-maroon); font-weight: 800;" onclick="toggleAvailabilityRow()">
+                            <i class="fas fa-clock"></i> CHECK AVAILABLE ROOMS
+                        </button>
+                        <span style="font-size: 0.85rem; cursor: pointer; font-weight: 600; margin-left: 10px;" onclick="sortRoomTable()">
                             <span id="roomSortText">Ascending</span> <i class="fas fa-sort"></i>
                         </span>
                         <button class="btn-room-export" onclick="exportRoomExcel()">
@@ -77,27 +88,52 @@
                     </div>
                 </div>
 
-               <!-- THE TABLE -->
+                <!-- TOGGLEABLE AVAILABILITY ROW -->
+                <div id="availabilityRow" class="availability-filter-row">
+                    <div class="avail-item-inline">
+                        <label>SELECT DAY</label>
+                        <select id="filterDay" style="padding: 5px; border-radius: 4px; border: none; font-weight: 600;">
+                            <option value="">-- Select --</option>
+                            <option>Monday</option>
+                            <option>Tuesday</option>
+                            <option>Wednesday</option>
+                            <option>Thursday</option>
+                            <option>Friday</option>
+                            <option>Saturday</option>
+                            <option>Sunday</option>
+                        </select>
+                    </div>
+                    <div class="avail-item-inline">
+                        <label>SELECT TIME</label>
+                        <input type="text" id="filterTime" placeholder="e.g. 7:30 AM - 10:30 AM" style="padding: 5px; border-radius: 4px; border: none; width: 200px;">
+                    </div>
+                    <button style="background: white; color: #700000; border: none; padding: 5px 15px; border-radius: 4px; font-weight: 800; cursor: pointer;">
+                        CHECK
+                    </button>
+                </div>
+
+                <!-- BANNER -->
+                <div id="availableBanner" class="available-banner" style="display: none; opacity: 1; font-size: 1.2rem; color: #800000; margin-top: 15px;">
+                    A V A I L A B L E &nbsp; R O O M S
+                </div>
+
+               <!-- THE TABLE (Read Only, No Action Column) -->
                 <table class="room-table" id="roomTable">
                     <thead>
                         <tr>
-                            <!-- Removed the Select TH -->
                             <th>Room no.</th>
                             <th>Room type</th>
                             <th>Room capacity</th>
                             <th>Building</th>
-                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for r in rooms %}
                         <tr>
-                            <!-- Removed the Checkbox TD -->
-                            <td class="td-room-name">{{ r.roomname }}</td>
+                            <td class="td-room-name" style="font-weight: 800; color: #630100;">{{ r.roomname }}</td>
                             <td class="td-room-type">{{ r.roomtype }}</td>
                             <td>{{ r.roomcapacity }}</td>
                             <td class="td-building">{{ r.buildingname }}</td>
-                            <td><button class="btn-view">View</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -110,26 +146,34 @@
 <script>
     let activeSidebarBuilding = ""; 
 
-    // Fixed: Added 'e' parameter to handle the click event properly
+    // --- SIDEBAR FILTERING ---
     function filterBySidebar(buildingName) {
         activeSidebarBuilding = buildingName.toUpperCase();
+        
+        // Remove active class from all buttons
         let buttons = document.querySelectorAll('.btn-building');
         buttons.forEach(btn => btn.classList.remove('active'));
         
-        // Ensure the clicked button gets the active class
-        if (window.event) window.event.target.classList.add('active');
+        // Add active class to clicked button
+        if (window.event && window.event.target) {
+            window.event.target.classList.add('active');
+        }
         
+        // Reset dropdown and filter table
         document.getElementById("filterBuilding").value = ""; 
         filterRoomTable();
     }
 
+    // --- MAIN TABLE FILTERING ---
     function filterRoomTable() {
         let search = document.getElementById("searchRoom").value.toUpperCase();
         let type = document.getElementById("filterType").value.toUpperCase();
         let dropdownBuilding = document.getElementById("filterBuilding").value.toUpperCase();
+        
         let buildingFilter = dropdownBuilding !== "" ? dropdownBuilding : activeSidebarBuilding;
         let tr = document.getElementById("roomTable").getElementsByTagName("tr");
 
+        // Loop starting from 1 to skip header row
         for (let i = 1; i < tr.length; i++) {
             let roomName = tr[i].querySelector(".td-room-name").textContent.toUpperCase();
             let roomType = tr[i].querySelector(".td-room-type").textContent.toUpperCase();
@@ -143,7 +187,15 @@
         }
     }
 
+    // --- TOGGLE AVAILABILITY ROW ---
+    function toggleAvailabilityRow() {
+        const row = document.getElementById('availabilityRow');
+        const banner = document.getElementById('availableBanner');
+        row.classList.toggle('active');
+        banner.style.display = row.classList.contains('active') ? 'block' : 'none';
+    }
 
+    // --- SORTING ---
     let currentRoomOrder = 'asc';
     function sortRoomTable() {
         let table = document.getElementById("roomTable");
@@ -153,6 +205,7 @@
         rows.sort((a, b) => {
             let nameA = a.querySelector(".td-room-name").textContent.trim();
             let nameB = b.querySelector(".td-room-name").textContent.trim();
+            // Numeric sorting so LQ 2 comes before LQ 10
             return nameA.localeCompare(nameB, undefined, {numeric: true}) * direction;
         });
 
@@ -161,34 +214,31 @@
         document.getElementById("roomSortText").innerText = currentRoomOrder === 'asc' ? 'Ascending' : 'Descending';
     }
 
-     function exportRoomExcel() {
+    // --- EXPORT EXCEL ---
+    function exportRoomExcel() {
         let originalTable = document.getElementById("roomTable");
         let cloneTable = document.createElement("table");
 
-        // 1. Clone header and remove Action column
+        // Clone header
         let thead = originalTable.querySelector("thead").cloneNode(true);
-        thead.rows[0].deleteCell(-1); 
         cloneTable.appendChild(thead);
 
         let tbody = document.createElement("tbody");
         let allRows = originalTable.querySelectorAll("tbody tr");
 
         allRows.forEach((row) => {
-            // 2. FIXED: Use getComputedStyle to accurately check if the row is visible
+            // Check visibility safely
             let isVisible = window.getComputedStyle(row).display !== "none";
-            
             if (isVisible) {
                 let cloneRow = row.cloneNode(true);
-                cloneRow.deleteCell(-1); // Remove Action column
                 tbody.appendChild(cloneRow);
             }
         });
 
         cloneTable.appendChild(tbody);
         
-        // 3. Generate file
-        let wb = XLSX.utils.table_to_book(cloneTable, {sheet: "Rooms in PUP Lopez"});
-        XLSX.writeFile(wb, "PUPLopez_Rooms_Export.xlsx");
+        let wb = XLSX.utils.table_to_book(cloneTable, {sheet: "PUPLC Rooms"});
+        XLSX.writeFile(wb, "PUPLopez_Rooms_List.xlsx");
     }
 </script>
 {% endblock %}

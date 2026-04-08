@@ -1,0 +1,156 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="curriculum-ui">
+
+    <!-- SECTION 1: CURRICULUM ASSIGNMENT (READ-ONLY) -->
+    <div class="section-header-row">
+        <h2>CURRICULUM ASSIGNMENT</h2>
+    </div>
+    <div class="filter-bar-dark">
+        <div class="filter-group-row">
+            <div class="filter-item-inline">
+                <label>Curriculum</label>
+                <select id="filterAssignCurr" onchange="filterAssignments()">
+                    <option value="All">All</option>
+                    {% for c in cohorts|map(attribute='curriculumcode')|unique %}
+                    <option value="{{ c }}">{{ c }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="filter-item-inline">
+                <label>Program</label>
+                <select id="filterAssignProg" onchange="filterAssignments()" style="width: 400px;">
+                    <option value="All">All Programs</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programname }}">{{ p.programname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div>
+            <!-- Using Admin Export Route directly since data is identical -->
+            <button class="btn-export-outline-white" onclick="location.href='/admin/export/assignments'">
+                <i class="fas fa-external-link-alt"></i> Export
+            </button>
+        </div>
+    </div>
+
+    <div class="assignment-scroll-wrapper">
+        <table id="assignmentTable" class="curr-list-table assignment-table">
+            <thead>
+                <tr>
+                    <th>Curriculum Code</th>
+                    <th>Program</th>
+                    <th>Year level</th>
+                    <th>No. of Sections</th>
+                    <th>Acad Year of Entry</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cohorts %}
+                <tr>
+                    <td style="font-weight: 800; color: #630100;">{{ c.curriculumcode }}</td>
+                    <td>{{ c.programname }}</td>
+                    <td>{{ c.year_level }}</td>
+                    <td>{{ c.numberofsections }}</td>
+                    <td>{{ c.startacademicyear }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- SECTION 2: CURRICULUM LIST (READ-ONLY) -->
+    <div class="section-header-row" style="margin-top: 50px;">
+        <h2>CURRICULUM LIST</h2>
+    </div>
+
+    <div class="selection-box-maroon">
+        <div class="selection-inner">
+            <div class="input-group-curr">
+                <label>SELECT PROGRAM TO VIEW</label>
+                <select id="mainProgramFilter" onchange="location.href='?program_code='+this.value">
+                    <option value="" disabled {{ 'selected' if not selected_program }}>-- Select Program --</option>
+                    <option value="All" {{ 'selected' if selected_program=='All' }}>All Programs</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programcode }}" {{ 'selected' if selected_program==p.programcode }}>{{ p.programname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn-export-curr" onclick="handleProgramExport()">
+                <i class="fas fa-external-link-alt"></i> Export
+            </button>
+        </div>
+    </div>
+
+    {% if selected_program %}
+    <p class="helper-text-italic">Here are the curriculum versions available for the selected program.</p>
+
+    {% for p in programs %}
+        {% set prog_currs = curriculums | selectattr("programcode", "equalto", p.programcode) | list %}
+        {% if prog_currs %}
+        <div class="program-group-header">
+            {{ p.programname | upper }}
+        </div>
+
+        <table class="curr-list-table" style="margin-bottom: 30px;">
+            <thead>
+                <tr>
+                    <th>Curriculum Name</th>
+                    <th style="width: 100px; text-align: center;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in prog_currs %}
+                <tr>
+                    <td style="font-weight: 800; color: #333;">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</td>
+                    <td style="text-align: center;">
+                        <a href="{{ url_for('view_curriculum', curriculum_id=c.curriculumid) }}" class="btn-black-view" style="background: #630100;">View</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    {% endfor %}
+    {% else %}
+    <div style="text-align: center; padding: 40px; color: #bbb; border: 2px dashed #ddd; margin-top: 20px; border-radius: 5px;">
+        <p>Please select a program to view its curriculum records.</p>
+    </div>
+    {% endif %}
+
+    <!-- Spacer for dropdown -->
+    <div style="height: 250px; background: transparent; pointer-events: none;"></div>
+</div>
+
+<script>
+    function filterAssignments() {
+        const currFilter = document.getElementById('filterAssignCurr').value.toLowerCase();
+        const progFilter = document.getElementById('filterAssignProg').value.toLowerCase();
+        const rows = document.querySelectorAll('#assignmentTable tbody tr');
+
+        rows.forEach(row => {
+            const currText = row.cells[0].textContent.toLowerCase().trim();
+            const progText = row.cells[1].textContent.toLowerCase().trim();
+            const matchesCurr = (currFilter === 'all' || currText === currFilter);
+            const matchesProg = (progFilter === 'all' || progText === progFilter);
+            row.style.display = (matchesCurr && matchesProg) ? '' : 'none';
+        });
+    }
+
+    function handleProgramExport() {
+        const selectEl = document.getElementById('mainProgramFilter');
+        const programCode = selectEl ? selectEl.value : "";
+        if (programCode && programCode !== "" && programCode !== "None") {
+            window.location.href = "/admin/export/program/" + programCode;
+        } else {
+            alert("Please select a specific program or 'All Programs' before clicking Export.");
+        }
+    }
+</script>
+{% endblock %}

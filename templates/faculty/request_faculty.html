@@ -1,0 +1,70 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+    {{ super() }}
+    <!-- Link to the CSS for the My Requests page -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/request_faculty.css') }}">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="requests-wrapper">
+    <!-- Page Header -->
+    <div class="requests-header">
+        <h1>My Requests</h1>
+        <button class="btn-request-room"><i class="fa-regular fa-file-lines"></i> REQUEST ROOM</button>
+    </div>
+
+    <!-- Requests Table -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Course code</th>
+                    <th>Program/Yr</th>
+                    <th>Requested date</th>
+                    <th>Status</th>
+                    <th>Date Submitted</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>COMP001</td>
+                    <td>BSIT-2</td>
+                    <td>03-20-26</td>
+                    <td><span class="status-badge approved">Approved</span></td>
+                    <td>03-14-26 00:03:00</td>
+                    <td class="actions-cell">
+                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
+                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
+                    </td>
+                </tr>
+                <tr>
+                    <td>COMP002</td>
+                    <td>BSIT-3</td>
+                    <td>03-23-26</td>
+                    <td><span class="status-badge pending">Pending</span></td>
+                    <td>03-15-26 00:02:00</td>
+                    <td class="actions-cell">
+                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
+                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
+                    </td>
+                </tr>
+                <tr>
+                    <td>COMP002</td>
+                    <td>BSIT-3</td>
+                    <td>03-23-26</td>
+                    <td><span class="status-badge rejected">Rejected</span></td>
+                    <td>03-15-26 00:02:00</td>
+                    <td class="actions-cell">
+                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
+                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

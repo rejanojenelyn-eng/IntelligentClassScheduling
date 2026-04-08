@@ -379,38 +379,64 @@ document.getElementById('confirmBulkArchiveBtn').addEventListener('click', funct
 
 // --- SMART EXPORT ---
 function exportToExcel() {
-    const table = document.getElementById("instructorTable");
-    const allRows = Array.from(table.querySelectorAll("tbody tr"));
-    const selectedCheckboxes = Array.from(table.querySelectorAll(".row-check:checked"));
-    let rowsToExport;
-    if (selectedCheckboxes.length > 0) {
-        rowsToExport = selectedCheckboxes.map(cb => cb.closest("tr"));
+    // 1. Identify the table (Works for both Main and Archive pages)
+    const table = document.querySelector(".employee-table"); 
+    if (!table) return;
+
+    // 2. Get ONLY the checked boxes
+    const checkedBoxes = table.querySelectorAll(".row-check:checked");
+    
+    let rowsToExport = [];
+
+    // 3. SELECTION LOGIC
+    if (checkedBoxes.length > 0) {
+        // If you checked boxes, ONLY export those rows
+        checkedBoxes.forEach(cb => {
+            rowsToExport.push(cb.closest("tr"));
+        });
     } else {
+        // If nothing is checked, export all rows that are NOT hidden by filters
+        const allRows = Array.from(table.querySelectorAll("tbody tr"));
         rowsToExport = allRows.filter(row => row.style.display !== 'none');
     }
-    if (rowsToExport.length === 0) {
-        alert("No data to export.");
-        return;
-    }
-    const data = [];
-    const headerRow = [];
-    const headers = table.querySelectorAll("thead th");
-    for (let i = 1; i < headers.length - 1; i++) {
-        headerRow.push(headers[i].innerText);
-    }
-    data.push(headerRow);
+
+    // 4. PREPARE DATA
+    const excelData = [];
+    
+    // Create Headers (Adjust these names to match your table headers)
+    const headers = ["Employee Number", "Name", "Specialization", "Type", "Status"];
+    excelData.push(headers);
+
+    // 5. EXTRACT ROW DATA
     rowsToExport.forEach(row => {
         const rowData = [];
-        const cells = row.querySelectorAll("td");
-        for (let j = 1; j < cells.length - 1; j++) {
-            rowData.push(cells[j].innerText.trim());
-        }
-        data.push(rowData);
+        
+        // We use querySelector to find specific data by class name
+        // This is much safer than using cell numbers like cells[1]
+        const empNum = row.cells[1] ? row.cells[1].innerText.trim() : "";
+        const name = row.querySelector(".emp-name") ? row.querySelector(".emp-name").innerText.trim() : "";
+        const spec = row.querySelector(".emp-spec") ? row.querySelector(".emp-spec").innerText.trim() : "";
+        const type = row.querySelector(".emp-type") ? row.querySelector(".emp-type").innerText.trim() : "";
+        const status = row.querySelector(".emp-status") ? row.querySelector(".emp-status").innerText.trim() : "";
+
+        rowData.push(empNum, name, spec, type, status);
+        excelData.push(rowData);
     });
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, "Employees");
-    XLSX.writeFile(wb, "Faculty_Export.xlsx");
+
+    // 6. GENERATE FILE
+    try {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(excelData);
+        XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+        
+        // If selection exists, name it "Selected", otherwise "Records"
+        const fileName = checkedBoxes.length > 0 ? "Selected_Employees.xlsx" : "Employee_Records.xlsx";
+        
+        XLSX.writeFile(wb, fileName);
+    } catch (e) {
+        console.error("Export Error:", e);
+        alert("Excel library not loaded. Please refresh the page.");
+    }
 }
 
 // --- FILTER & SORT --- (No changes needed here)

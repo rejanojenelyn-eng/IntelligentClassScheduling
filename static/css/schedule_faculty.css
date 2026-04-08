@@ -1,0 +1,212 @@
+/* Main wrapper for the schedule page */
+.schedule-wrapper {
+    padding: 20px;
+    font-family: 'Poppins', sans-serif;
+    background-color: #fff;
+}
+
+/* Top filter bar styling */
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background-color: #800000; /* Maroon */
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-bar label {
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.filter-bar select,
+.filter-bar input {
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.9rem;
+}
+
+.btn-request-room {
+    background-color: #A40000; /* Lighter Maroon */
+    color: white;
+    border: 1px solid #eee;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    margin-left: auto; /* Pushes button to the far right */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.btn-request-room:hover {
+    background-color: #c00;
+}
+
+/* Building category tabs styling */
+.building-tabs {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    padding: 8px 15px;
+    background: #fff;
+    border: 1px solid #800000; /* Maroon border */
+    color: #800000; /* Maroon text */
+    border-radius: 15px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.8rem;
+}
+
+.tab-btn.active, .tab-btn:hover {
+    background: #800000; /* Maroon background */
+    color: white;
+}
+
+/* Main two-column container for rooms and grid */
+.schedule-container {
+    display: flex;
+    gap: 10px;
+}
+
+/* Rooms sidebar styling */
+.rooms-sidebar {
+    flex: 0 0 100px; /* Does not grow, does not shrink, base width 100px */
+}
+
+.floor-selector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px;
+    background-color: #5D0000;
+    color: white;
+    font-weight: 600;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+}
+
+.floor-selector select {
+    background-color: #800000;
+    color: white;
+    border: none;
+    font-size: 0.8rem;
+    padding: 2px;
+}
+
+.room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.room-item {
+    background-color: #800000;
+    color: white;
+    text-align: center;
+    padding: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    border-radius: 4px;
+}
+
+.room-item.active {
+    background-color: #6c757d; /* Gray */
+}
+.room-item:not(.active):hover {
+    background-color: #A40000;
+}
+
+
+/* Main schedule grid table */
+.schedule-grid {
+    flex-grow: 1; /* Takes up the remaining space */
+    overflow-x: auto; /* Allows horizontal scrolling on small screens */
+}
+
+.schedule-grid table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 2px solid #800000; /* Maroon border */
+}
+
+.schedule-grid th, .schedule-grid td {
+    border: 1px solid #800000; /* Maroon lines */
+    text-align: center;
+    height: 60px; /* Set a fixed height for rows */
+}
+
+.schedule-grid thead th {
+    background-color: #5D0000;
+    color: white;
+    padding: 12px;
+}
+
+.time-col {
+    font-weight: 600;
+    width: 80px; /* Fixed width for time column */
+    background-color: #f8f9fa;
+}
+
+/* Styling for the class/event blocks */
+.class-block {
+    background-color: #6c757d; /* Gray */
+    color: white;
+    vertical-align: middle;
+    padding: 5px;
+}
+
+.available-block {
+    background-color: #28a745; /* Green */
+    color: white;
+    vertical-align: middle;
+    padding: 5px;
+}
+
+.class-info {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+}
+
+.class-info strong {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.class-info span {
+    font-size: 0.8rem;
+    color: #f0f0f0;
+}
+
+.available-block strong {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.available-block a {
+    background-color: white;
+    color: #28a745; /* Green text */
+    text-decoration: none;
+    padding: 2px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: 10px;
+    margin-top: 5px;
+}

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,15 +8,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+        }
 
         body {
             height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), 
-                        url("{{ url_for('static', filename='img/LogInUI.png') }}");
+            background: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)),
+            url("{{ url_for('static', filename='img/LogInUI.png') }}");
             background-size: cover;
             background-position: center;
         }
@@ -27,7 +33,7 @@
             background: #fdfdfd;
             border-radius: 40px;
             overflow: hidden;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
         }
 
         /* LEFT SIDE - LOGO AREA */
@@ -41,9 +47,25 @@
             text-align: center;
         }
 
-        .card-left img { width: 260px; margin-bottom: 25px; }
-        .card-left h1 { color: #4b0a0a; font-size: 2.8rem; font-weight: 800; line-height: 1.1; margin-bottom: 5px; }
-        .card-left p { color: #4b0a0a; font-weight: 700; font-size: 1.2rem; letter-spacing: 0.5px; }
+        .card-left img {
+            width: 260px;
+            margin-bottom: 25px;
+        }
+
+        .card-left h1 {
+            color: #4b0a0a;
+            font-size: 2.8rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 5px;
+        }
+
+        .card-left p {
+            color: #4b0a0a;
+            font-weight: 700;
+            font-size: 1.2rem;
+            letter-spacing: 0.5px;
+        }
 
         /* RIGHT SIDE - EXACT DESIGN */
         .card-right {
@@ -56,11 +78,16 @@
             flex-direction: column;
             justify-content: center;
             /* Rounding the panel itself */
-            border-radius: 40px; 
-            box-shadow: -5px 0 25px rgba(0,0,0,0.2);
+            border-radius: 40px;
+            box-shadow: -5px 0 25px rgba(0, 0, 0, 0.2);
         }
 
-        .card-right h2 { font-size: 3.5rem; margin-bottom: 35px; font-weight: 700; letter-spacing: -1px; }
+        .card-right h2 {
+            font-size: 3.5rem;
+            margin-bottom: 35px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
 
         /* ROLE SELECTOR */
         .role-container {
@@ -101,12 +128,24 @@
             user-select: none;
         }
 
-        .role-option.active { color: white; }
+        .role-option.active {
+            color: white;
+        }
 
         /* FORM INPUTS */
-        .form-group { margin-bottom: 25px; }
-        label { display: block; font-size: 0.8rem; font-weight: 800; margin-bottom: 10px; letter-spacing: 1px; opacity: 0.9; }
-        
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+            opacity: 0.9;
+        }
+
         input {
             width: 100%;
             padding: 15px 20px;
@@ -132,72 +171,105 @@
             font-size: 1.3rem;
             cursor: pointer;
             transition: 0.3s;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
         }
-        .login-btn:hover { background: #ffffff; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 
-        .error-msg { color: #ffeb3b; font-size: 0.9rem; margin-top: 15px; text-align: center; font-weight: 600; }
+        .login-btn:hover {
+            background: #ffffff;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .error-msg {
+            color: #ffeb3b;
+            font-size: 0.9rem;
+            margin-top: 15px;
+            text-align: center;
+            font-weight: 600;
+        }
     </style>
 </head>
+
 <body>
 
-<div class="login-card">
-    <div class="card-left">
-        <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
-        <h1>PUP LOPEZ</h1>
-        <p>ACADEMIC SCHEDULING SYSTEM</p>
+    <div class="login-card">
+        <div class="card-left">
+            <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+            <h1>PUP LOPEZ</h1>
+            <p>ACADEMIC SCHEDULING SYSTEM</p>
+        </div>
+
+        <div class="card-right">
+            <h2>Login</h2>
+
+            <form action="/login" method="POST" style="display: flex; flex-direction: column;">
+                <input type="hidden" name="role" id="selectedRole" value="Admin">
+
+                <div class="role-container">
+                    <div class="sliding-pill" id="pill"></div>
+                    <div class="role-option active" onclick="updateRole('Admin', 0, this)">
+                        <i class="fas fa-shield-alt"></i> Admin
+                    </div>
+                    <div class="role-option" onclick="updateRole('Academic Head', 1, this)">
+                        <i class="fas fa-user-tie"></i> Acad Head
+                    </div>
+                    <div class="role-option" onclick="updateRole('Faculty', 2, this)">
+                        <i class="fas fa-user"></i> Faculty
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>USERNAME</label>
+                    <input type="text" name="username" value="{{ saved_username }}" required autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>PASSWORD</label>
+                    <input type="password" name="password" required>
+                </div>
+
+                <button type="submit" class="login-btn">LOGIN</button>
+            </form>
+
+            {% with messages = get_flashed_messages() %}
+            {% if messages %}
+            {% for message in messages %}
+            <p class="error-msg">{{ message }}</p>
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+        </div>
     </div>
 
-    <div class="card-right">
-        <h2>Login</h2>
-        
-        <form action="/login" method="POST" style="display: flex; flex-direction: column;">
-            <input type="hidden" name="role" id="selectedRole" value="Admin">
-
-            <div class="role-container">
-                <div class="sliding-pill" id="pill"></div>
-                <div class="role-option active" onclick="updateRole('Admin', 0, this)">
-                    <i class="fas fa-shield-alt"></i> Admin
-                </div>
-                <div class="role-option" onclick="updateRole('Academic Head', 1, this)">
-                    <i class="fas fa-user-tie"></i> Acad Head
-                </div>
-                <div class="role-option" onclick="updateRole('Faculty', 2, this)">
-                    <i class="fas fa-user"></i> Faculty
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label>USERNAME</label>
-                <input type="text" name="username" required autocomplete="off">
-            </div>
-
-            <div class="form-group">
-                <label>PASSWORD</label>
-                <input type="password" name="password" required>
-            </div>
-
-            <button type="submit" class="login-btn">LOGIN</button>
-        </form>
-
-        {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            <p class="error-msg">{{ messages[0] }}</p>
-        {% endif %}
-        {% endwith %}
-    </div>
-</div>
-
-<script>
+   <script>
     function updateRole(roleName, index, element) {
         document.getElementById('selectedRole').value = roleName;
         const pill = document.getElementById('pill');
         const offset = index * 33.33;
-        pill.style.left = `calc(${offset}% + 6px)`;
+        
+        // FIXED: Added backticks for template literal and fixed spacing
+        pill.style.left = `calc(${offset}% + 6px)`; 
+        
         document.querySelectorAll('.role-option').forEach(opt => opt.classList.remove('active'));
         element.classList.add('active');
     }
+
+    // Automatically move the slider when the page loads
+    document.addEventListener("DOMContentLoaded", function () {
+        // Gets the variable from Python, defaults to Admin
+        const activeRole = "{{ active_role|default('Admin') }}";
+        const roleOptions = document.querySelectorAll('.role-option');
+
+        if (activeRole === 'Academic Head') {
+            updateRole('Academic Head', 1, roleOptions[1]);
+        } else if (activeRole === 'Faculty') {
+            updateRole('Faculty', 2, roleOptions[2]);
+        } else {
+            updateRole('Admin', 0, roleOptions[0]);
+        }
+    });
 </script>
 
 </body>
+
 </html>

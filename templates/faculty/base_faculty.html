@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PUPLC Scheduling System | Faculty</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    {% block head %}{% endblock %}
+</head>
+
+<body>
+    <!-- TOP HEADER -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+            <h1>PUPLC Scheduling System</h1>
+        </div>
+        <div class="search-container">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="Search...">
+        </div>
+        <div class="nav-right">
+            <span class="ay-label">A.Y 2025 - 2026</span>
+            <div class="user-profile">
+                <i class="far fa-user-circle" style="font-size: 1.6rem;"></i>
+                <span style="font-weight: 600;">Faculty</span>
+                <i class="fas fa-caret-down"></i>
+            </div>
+        </div>
+    </header>
+
+    <!-- TOGGLE BAR -->
+    <div class="sub-header">
+        <i class="fas fa-bars toggle-btn" id="toggleBtn"></i>
+    </div>
+
+    <div class="main-container">
+        <!-- SIDEBAR -->
+<aside id="sidebar" class="sidebar">
+    <nav class="sidebar-nav-container">
+        <ul class="nav-list">
+            {% set current_page = request.path %}
+            
+            <!-- Dashboard -->
+            <li class="nav-item {% if current_page == url_for('faculty_dashboard') %}active{% endif %}">
+                <a href="{{ url_for('faculty_dashboard') }}" class="nav-link">
+                    <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
+                </a>
+            </li>
+            
+            <!-- Teaching Assignment -->
+            <li class="nav-item {% if current_page == url_for('faculty_teaching_assignment') %}active{% endif %}">
+                <a href="{{ url_for('faculty_teaching_assignment') }}" class="nav-link">
+                    <i class="fas fa-user-tie"></i><span class="nav-label">My Teaching Assignment</span>
+                </a>
+            </li>
+
+            <!-- SCHEDULE MENU -->
+            {% set schedule_pages =[url_for('faculty_schedule'), url_for('faculty_requests'), url_for('faculty_subject_offerings')] %}
+            
+            <li class="nav-item has-submenu {% if current_page in schedule_pages %}open active{% endif %}">
+                <a href="{{ url_for('faculty_schedule') }}" class="nav-link">
+                    <i class="fas fa-calendar-alt"></i>
+                    <span class="nav-label">Schedule</span>
+                    <i class="fas fa-caret-down"></i>
+                </a>
+                
+                <!-- Sub-menu -->
+                <ul class="sub-menu">
+                    <li class="nav-item {% if current_page == url_for('faculty_requests') %}active{% endif %}">
+                        <a href="{{ url_for('faculty_requests') }}" class="nav-link">
+                            <span class="nav-label">My Requests</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if current_page == url_for('faculty_subject_offerings') %}active{% endif %}">
+                        <a href="{{ url_for('faculty_subject_offerings') }}" class="nav-link">
+                            <span class="nav-label">Subject Offerings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Sign Out -->
+    <div class="signout-container">
+        <a href="javascript:void(0)" class="nav-link" onclick="openLogoutModal(event)">
+            <i class="fas fa-sign-out-alt"></i><span class="nav-label">Sign out</span>
+        </a>
+    </div>
+</aside>
+
+        <!-- MAIN WRAPPER -->
+        <main class="main-wrapper">
+            <section class="content-body">
+                {% block content %}{% endblock %}
+            </section>
+        </main>
+    </div>
+
+    <!-- Custom Logout Modal -->
+    <div id="logoutModal" class="logout-modal">
+        <div class="modal-content-logout">
+            <div class="modal-header-logout"><i class="fas fa-sign-out-alt"></i></div>
+            <div class="modal-body-logout">
+                <h2 style="margin-bottom:10px;">Confirm Logout</h2>
+                <p>Are you sure you want to log out of the PUPLC System?</p>
+            </div>
+            <div class="modal-footer-logout">
+                <button class="btn-modal btn-cancel-logout" onclick="closeLogoutModal()">Cancel</button>
+                <button class="btn-modal btn-confirm-logout" onclick="proceedLogout()">Logout</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Sidebar toggle for collapsing the whole sidebar
+            const sidebar = document.getElementById("sidebar");
+            const toggleBtn = document.getElementById("toggleBtn");
+            if(toggleBtn) {
+                toggleBtn.onclick = () => { sidebar.classList.toggle("collapsed"); };
+            }
+        });
+
+        // Modal functions
+        function openLogoutModal(e) {
+            e.preventDefault();
+            document.getElementById("logoutModal").style.display = "flex";
+        }
+        function closeLogoutModal() {
+            document.getElementById("logoutModal").style.display = "none";
+        }
+        function proceedLogout() {
+            window.location.href = "/logout";
+        }
+    </script>
+</body>
+</html>

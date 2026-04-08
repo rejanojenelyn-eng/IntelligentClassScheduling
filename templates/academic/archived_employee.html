@@ -1,0 +1,202 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="employee-container">
+    <!-- TOP HEADER SECTION -->
+    <div class="employee-header-flex" style="margin-bottom: 20px;">
+        <h1 style="color: var(--pup-maroon); font-weight: 800; font-size: 24px; margin: 0;">ARCHIVED EMPLOYEES (VIEW ONLY)</h1>
+        
+        <div class="action-buttons-group">
+            <!-- FIXED: Back button now points to the Academic Head's employee list, NOT the admin's -->
+            <a href="{{ url_for('employee') }}" class="btn-capsule" style="background-color: #6c757d; color: white; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-arrow-left"></i> BACK
+            </a>
+        </div>
+    </div>
+
+    <!-- MAROON FILTER BAR -->
+    <div class="table-wrapper">
+        <div class="table-header-filters">
+            <!-- Search Group -->
+            <div class="filter-group">
+                <label>SEARCH EMPLOYEE</label>
+                <div class="search-input-wrapper">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
+            
+            <!-- Type Group -->
+            <div class="filter-group">
+                <label>EMPLOYEE TYPE</label>
+                <select id="typeFilter" onchange="filterTable()">
+                    <option value="">All Types</option>
+                    {% for etype in employee_types %}
+                        <option value="{{ etype.typename }}">{{ etype.typename }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Status Group -->
+            <div class="filter-group">
+                <label>Status</label>
+                <select id="statusFilter" onchange="filterTable()">
+                    <option value="">All Status</option>
+                    <option value="Permanent">Permanent</option>
+                    <option value="Part-Time">Part-Time</option>
+                    <option value="Temporary">Temporary</option>
+                </select>
+            </div>
+
+            <!-- Specialization Group -->
+            <div class="filter-group">
+                <label>SPECIALIZATION</label>
+                <select id="specFilter" onchange="filterTable()">
+                    <option value="">All Specializations</option>
+                    {% for spec in specializations %}
+                        <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Actions Right -->
+            <div class="table-actions-right">
+                <div class="sort-wrapper" onclick="sortTable()">
+                    <span id="sortDirection">Ascending</span> <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
+                </div>
+                <button class="btn-export-white" onclick="exportToExcel()">
+                    <i class="fas fa-file-export"></i> Export
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ARCHIVE TABLE (VIEW ONLY - NO CHECKBOXES OR RESTORE BUTTONS) -->
+    <table class="employee-table" id="archiveTable">
+        <thead>
+            <tr>
+                <th>Employee Number</th> 
+                <th>Employee Name</th>
+                <th>Specialization</th>
+                <th>Employment type</th>
+                <th>Status</th>
+                <th>Date Archived</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for emp in archived_employees %}
+            <tr>
+                <td><small>{{ emp.employeenumber }}</small></td> 
+                <td class="emp-name" style="color: var(--pup-maroon); font-weight: bold;">
+                    {{ emp.lastname }}, {{ emp.firstname }}
+                </td>
+                <td class="emp-spec">{{ emp.specializationname }}</td>
+                <td class="emp-type">
+                    <span class="badge badge-{{ emp.typename.lower().replace('-', '') }}">
+                        {{ emp.typename }}
+                    </span>
+                </td>
+                <td class="emp-status">{{ emp.employeestatus }}</td>
+                <td class="date-archived" style="color: var(--pup-maroon); font-weight: 600; font-size: 12px;">
+                    {{ emp.archivedat.strftime('%Y-%m-%d %H:%M') }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+// --- FILTERING ---
+function filterTable() {
+    let nameInput = document.getElementById("searchInput").value.toUpperCase();
+    let typeInput = document.getElementById("typeFilter").value.toUpperCase();
+    let statusInput = document.getElementById("statusFilter").value.toUpperCase();
+    let specInput = document.getElementById("specFilter").value.toUpperCase();
+    let rows = document.querySelectorAll("#archiveTable tbody tr");
+
+    rows.forEach(row => {
+        let nameCol = row.querySelector(".emp-name").textContent.toUpperCase();
+        let typeCol = row.querySelector(".emp-type").textContent.toUpperCase().trim();
+        let statusCol = row.querySelector(".emp-status").textContent.toUpperCase().trim();
+        let specCol = row.querySelector(".emp-spec").textContent.toUpperCase().trim();
+        
+        let matchName = nameCol.includes(nameInput);
+        let matchType = (typeInput === "" || typeCol.includes(typeInput));
+        let matchStatus = (statusInput === "" || statusCol === statusInput);
+        let matchSpec = (specInput === "" || specCol.includes(specInput));
+
+        row.style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
+    });
+}
+
+// --- SORTING ---
+let currentOrder = 'asc'; 
+
+function sortTable() {
+    const table = document.getElementById("archiveTable");
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+
+    const direction = currentOrder === 'asc' ? -1 : 1;
+
+    rows.sort((a, b) => {
+        const nameA = a.querySelector(".emp-name").innerText.toLowerCase().trim();
+        const nameB = b.querySelector(".emp-name").innerText.toLowerCase().trim();
+        return nameA.localeCompare(nameB) * direction;
+    });
+
+    currentOrder = (currentOrder === 'asc') ? 'desc' : 'asc';
+    
+    const sortLabel = document.getElementById("sortDirection");
+    const sortIcon = document.getElementById("sortIcon");
+
+    if (currentOrder === 'asc') {
+        sortLabel.innerText = 'Ascending';
+        sortIcon.className = 'fas fa-sort-amount-up'; 
+    } else {
+        sortLabel.innerText = 'Descending';
+        sortIcon.className = 'fas fa-sort-amount-down-alt'; 
+    }
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+// --- EXPORT TO EXCEL ---
+function exportToExcel() {
+    const table = document.getElementById("archiveTable");
+    // Since there are no checkboxes in view-only, just export visible rows
+    const rowsToExport = Array.from(table.querySelectorAll("tbody tr")).filter(row => row.style.display !== 'none');
+
+    if (rowsToExport.length === 0) {
+        alert("No data available to export.");
+        return;
+    }
+
+    const data = [];
+    const headerRow =["Employee Number", "Full Name", "Specialization", "Employment Type", "Status", "Date Archived"];
+    data.push(headerRow);
+
+    rowsToExport.forEach(row => {
+        const rowData =[];
+        rowData.push(row.cells[0].innerText.trim()); // Employee Number
+        rowData.push(row.querySelector(".emp-name").innerText.trim());
+        rowData.push(row.querySelector(".emp-spec").innerText.trim());
+        rowData.push(row.querySelector(".emp-type .badge").innerText.trim());
+        rowData.push(row.querySelector(".emp-status").innerText.trim());
+        rowData.push(row.querySelector(".date-archived").innerText.trim());
+        data.push(rowData);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Archived_Employees");
+    XLSX.writeFile(wb, "Archived_Employees_Export.xlsx");
+}
+</script>
+{% endblock %}

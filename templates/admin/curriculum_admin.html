@@ -1,16 +1,13 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-<!-- Links your new separate curriculum stylesheet -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
 {% endblock %}
 
 {% block content %}
 <div class="curriculum-ui">
 
-    <!-- ==========================================
-         SECTION 1: CURRICULUM ASSIGNMENT
-         ========================================== -->
+    <!-- SECTION 1: CURRICULUM ASSIGNMENT -->
     <div class="section-header-row">
         <h2>CURRICULUM ASSIGNMENT</h2>
     </div>
@@ -74,9 +71,7 @@
         </table>
     </div>
 
-    <!-- ==========================================
-         SECTION 2: CURRICULUM LIST
-         ========================================== -->
+    <!-- SECTION 2: CURRICULUM LIST -->
     <div class="section-header-row" style="margin-top: 50px;">
         <h2>CURRICULUM LIST</h2>
         <div class="import-button-container" onclick="openImportModal()">
@@ -95,8 +90,7 @@
                     <option value="" disabled {{ 'selected' if not selected_program }}>-- Select Program --</option>
                     <option value="All" {{ 'selected' if selected_program=='All' }}>All Programs</option>
                     {% for p in programs %}
-                    <option value="{{ p.programcode }}" {{ 'selected' if selected_program==p.programcode }}>{{
-                        p.programname }}</option>
+                    <option value="{{ p.programcode }}" {{ 'selected' if selected_program==p.programcode }}>{{ p.programname }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -128,10 +122,8 @@
             <tr>
                 <td>C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</td>
                 <td style="text-align: right; display: flex; gap: 10px; justify-content: flex-end;">
-                    <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}"
-                        class="btn-black-view">View</a>
-                    <button class="btn-red-delete"
-                        onclick="confirmDeleteCurriculum('{{ c.curriculumid }}', '{{ c.curriculumyear }}')">
+                    <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}" class="btn-black-view">View</a>
+                    <button class="btn-red-delete" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}', '{{ c.curriculumyear }}')">
                         <i class="fas fa-trash-alt"></i>
                     </button>
                 </td>
@@ -142,19 +134,15 @@
     {% endif %}
     {% endfor %}
     {% else %}
-    <div
-        style="text-align: center; padding: 40px; color: #bbb; border: 2px dashed #ddd; margin-top: 20px; border-radius: 5px;">
+    <div style="text-align: center; padding: 40px; color: #bbb; border: 2px dashed #ddd; margin-top: 20px; border-radius: 5px;">
         <p>Please select a program or "All Programs" to view the curriculum files.</p>
     </div>
     {% endif %}
 
-    <!-- Spacer to force dropdown downwards -->
     <div style="height: 450px; background: transparent; pointer-events: none;"></div>
 </div>
 
-<!-- ==========================================
-     ALL MODALS
-     ========================================== -->
+<!-- ALL MODALS -->
 
 <!-- 1. ASSIGNMENT MODAL -->
 <div id="assignModal" class="custom-modal" style="display: none; z-index: 1000;">
@@ -164,15 +152,11 @@
             <span class="close-btn" onclick="closeAssignModal()">&times;</span>
         </div>
         <form action="/admin/curriculum/assign" method="POST">
-            
-            <!-- REAL DATA SENT TO PYTHON -->
             <input type="hidden" name="cohort_id" id="assignCohortId">
             <input type="hidden" name="program_code" id="hiddenProgramCode">
             <input type="hidden" name="start_academic_year" id="hiddenStartYear">
 
             <div class="modal-body-vertical" style="padding: 25px; gap: 15px;">
-                
-                <!-- VISIBLE LOCKED FIELDS (Disabled fields are ignored by Python, which is fine because we use hidden inputs above) -->
                 <div class="form-group-modal">
                     <label>Academic Year of Entry</label>
                     <input type="text" id="assignStartYear" disabled class="modal-input-styled modal-readonly-bg">
@@ -187,7 +171,6 @@
                     </select>
                 </div>
 
-                <!-- EDITABLE FIELDS -->
                 <div class="form-group-modal">
                     <label style="color: #c0392b;">Curriculum Version</label>
                     <select name="curriculum_id" id="assignCurriculumId" required class="modal-input-styled" style="border: 2px solid #c0392b;">
@@ -204,7 +187,6 @@
                     <label style="color: #c0392b;">Number of Sections</label>
                     <input type="number" name="number_of_sections" id="assignSections" required min="1" class="modal-input-styled" style="border: 2px solid #c0392b;">
                 </div>
-
             </div>
             <div class="modal-footer-flex">
                 <button type="button" class="btn-modal btn-cancel" onclick="closeAssignModal()">Cancel</button>
@@ -214,21 +196,18 @@
     </div>
 </div>
 
-<!-- 2. DESIGNED EXPORT NOTICE MODAL -->
+<!-- 2. EXPORT NOTICE MODAL -->
 <div id="exportWarningModal" class="custom-modal" style="display: none; z-index: 9999;">
     <div class="modal-content-logout">
-        <div class="modal-header-logout"
-            style="background-color: #f39c12; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
+        <div class="modal-header-logout" style="background-color: #f39c12; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
             <i class="fas fa-exclamation-triangle" style="font-size: 2.5rem;"></i>
         </div>
         <div class="modal-body-logout" style="text-align: center; padding: 30px;">
             <h2 style="color: #630100; margin-bottom: 10px; font-weight: 800;">SELECTION REQUIRED</h2>
-            <p style="color: #555; font-weight: 600;">Please select a specific program or <strong>"All
-                    Programs"</strong> before clicking Export.</p>
+            <p style="color: #555; font-weight: 600;">Please select a specific program or <strong>"All Programs"</strong> before clicking Export.</p>
         </div>
         <div class="modal-footer-logout" style="display: flex; justify-content: center; padding-bottom: 20px;">
-            <button type="button" class="btn-modal" onclick="closeExportWarning()"
-                style="background-color: #630100; color: white; border: none; padding: 10px 50px; border-radius: 4px; font-weight: 800; cursor: pointer;">
+            <button type="button" class="btn-modal" onclick="closeExportWarning()" style="background-color: #630100; color: white; border: none; padding: 10px 50px; border-radius: 4px; font-weight: 800; cursor: pointer;">
                 UNDERSTOOD
             </button>
         </div>
@@ -244,41 +223,35 @@
         </div>
 
         <form id="advancedImportForm" action="/admin/curriculum/import" method="POST" enctype="multipart/form-data">
-
-            <!-- Hidden mapping inputs -->
-            <input type="hidden" name="col_0" id="h_col_0" value="yl">
-            <input type="hidden" name="col_1" id="h_col_1" value="sem">
-            <input type="hidden" name="col_2" id="h_col_2" value="sc">
-            <input type="hidden" name="col_3" id="h_col_3" value="pre">
-            <input type="hidden" name="col_4" id="h_col_4" value="co">
-            <input type="hidden" name="col_5" id="h_col_5" value="sn">
-            <input type="hidden" name="col_6" id="h_col_6" value="lc">
-            <input type="hidden" name="col_7" id="h_col_7" value="lb">
-            <input type="hidden" name="col_8" id="h_col_8" value="u">
-            <input type="hidden" name="col_9" id="h_col_9" value="tui">
+            <!-- FIXED: Expanded to 11 columns to include Tuition Hours (th) -->
+            <input type="hidden" name="col_0" id="h_col_0" value="cc">
+            <input type="hidden" name="col_1" id="h_col_1" value="yl">
+            <input type="hidden" name="col_2" id="h_col_2" value="sem">
+            <input type="hidden" name="col_3" id="h_col_3" value="sc">
+            <input type="hidden" name="col_4" id="h_col_4" value="pre">
+            <input type="hidden" name="col_5" id="h_col_5" value="co">
+            <input type="hidden" name="col_6" id="h_col_6" value="sn">
+            <input type="hidden" name="col_7" id="h_col_7" value="lc">
+            <input type="hidden" name="col_8" id="h_col_8" value="lb">
+            <input type="hidden" name="col_9" id="h_col_9" value="u">
+            <input type="hidden" name="col_10" id="h_col_10" value="th">
 
             <div class="modal-body-vertical">
-
-                <!-- Section 1: Setup -->
                 <div class="form-section-vert">
                     <h3>1. Setup Curriculum Environment</h3>
-
                     <div class="form-group-modal">
                         <label>Target Program</label>
-                        <select name="program_code" id="modalProgramCode" required>
-                            <option value="" disabled selected>Select Program</option>
+                        <select name="program_code" id="modalProgramCode" required onchange="updateYearLevelDropdown()">
+                            <option value="" disabled selected data-years="4">Select Program</option>
                             {% for p in programs %}
-                            <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                            <option value="{{ p.programcode }}" data-years="{{ p.numyearlevel }}">{{ p.programname }}</option>
                             {% endfor %}
                         </select>
                     </div>
-
                     <div class="form-group-modal">
                         <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
-                        <input type="text" name="curriculum_year" id="modalCurriculumYear" required
-                            placeholder="YYYY-YYYY">
+                        <input type="text" name="curriculum_year" id="modalCurriculumYear" required placeholder="YYYY-YYYY">
                     </div>
-
                     <div style="display: flex; gap: 15px;">
                         <div class="form-group-modal" style="flex: 1;">
                             <label>Year Level</label>
@@ -303,20 +276,14 @@
                     </div>
                 </div>
 
-                <!-- Section 2: CSV Format -->
                 <div class="form-section-vert">
                     <h3>2. CSV Column Format</h3>
-
                     <div id="defaultColumnView">
                         <div class="column-order-display">
-                            <!-- Added Curriculum Code to the start of the list -->
                             Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite,
-                            Subject
-                            Description, Lecture Hours, Lab Hours, Credited Units
+                            Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours
                         </div>
-                        <button type="button" class="btn-link-maroon" onclick="toggleColumnCustomization()">Edit
-                            default
-                            order?</button>
+                        <button type="button" class="btn-link-maroon" onclick="toggleColumnCustomization()">Edit default order?</button>
                     </div>
 
                     <div id="customColumnView" style="display: none;">
@@ -324,69 +291,50 @@
                         <div class="mapping-grid-vertical" id="mappingGrid">
                             <!-- Populated dynamically by JS -->
                         </div>
-                        <button type="button" class="btn-link-maroon" style="margin-top:10px;"
-                            onclick="resetColumnCustomization()">Cancel Edit (Use Default)</button>
+                        <button type="button" class="btn-link-maroon" style="margin-top:10px;" onclick="resetColumnCustomization()">Cancel Edit (Use Default)</button>
                     </div>
                 </div>
 
-                <!-- Section 3: Upload -->
                 <div class="form-section-vert">
                     <h3>3. Upload CSV File <small>(Format: .csv)</small></h3>
                     <input type="file" name="file" id="modalFileInput" accept=".csv" required class="file-input-style">
                 </div>
-
             </div>
 
             <div class="modal-footer-flex">
-                <button type="button" class="btn-modal btn-confirm" onclick="confirmAdvancedImport()">Confirm &
-                    Import</button>
+                <button type="button" class="btn-modal btn-confirm" onclick="confirmAdvancedImport()">Confirm & Import</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- 4. RESTORED DELETE MODAL -->
+<!-- 4. DELETE MODAL -->
 <div id="deleteCurriculumModal" class="custom-modal" style="display: none; z-index: 9999;">
     <div class="modal-content-logout">
-        <div class="modal-header-logout"
-            style="background-color: #c0392b; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
+        <div class="modal-header-logout" style="background-color: #c0392b; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
             <i class="fas fa-exclamation-triangle" style="font-size: 2.5rem;"></i>
         </div>
         <div class="modal-body-logout" style="text-align: center; padding: 30px;">
             <h2 style="color: #c0392b; margin-bottom: 10px; font-weight: 800;">Confirm Deletion</h2>
             <p>You are about to delete <strong id="deleteYearText"></strong>.</p>
-
-            <p
-                style="font-size: 0.85rem; color: #666; margin-top: 15px; border: 1px solid #fee; padding: 12px; background: #fffaf9; line-height: 1.5;">
-                <strong>WARNING:</strong> This action cannot be undone. Associated data in the curriculum subjects
-                table
-                will also be removed.
+            <p style="font-size: 0.85rem; color: #666; margin-top: 15px; border: 1px solid #fee; padding: 12px; background: #fffaf9; line-height: 1.5;">
+                <strong>WARNING:</strong> This action cannot be undone. Associated data in the curriculum subjects table will also be removed.
                 <br><br>
-                <em style="color: #888;">Note: The system will block this deletion if there are active schedules or
-                    student sections currently linked to this curriculum.</em>
+                <em style="color: #888;">Note: The system will block this deletion if there are active schedules or student sections currently linked to this curriculum.</em>
             </p>
         </div>
-        <div class="modal-footer-logout"
-            style="display: flex; gap: 12px; justify-content: center; padding-bottom: 25px;">
-            <button class="btn-modal btn-cancel-logout" onclick="closeDeleteModal()"
-                style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">
+        <div class="modal-footer-logout" style="display: flex; gap: 12px; justify-content: center; padding-bottom: 25px;">
+            <button class="btn-modal btn-cancel-logout" onclick="closeDeleteModal()" style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">
                 Cancel
             </button>
-            <button class="btn-modal" id="confirmDeleteBtn"
-                style="background-color: #c0392b; color: white; border: none; padding: 10px 40px; border-radius: 4px; font-weight: 700; cursor: pointer;">
+            <button class="btn-modal" id="confirmDeleteBtn" style="background-color: #c0392b; color: white; border: none; padding: 10px 40px; border-radius: 4px; font-weight: 700; cursor: pointer;">
                 Delete
             </button>
         </div>
     </div>
 </div>
 
-<!-- ==========================================
-     SCRIPTS
-     ========================================== -->
 <script>
-    // ==========================================
-    // 1. ASSIGNMENT TABLE LOGIC (Filter & Edit)
-    // ==========================================
     function filterAssignments() {
         const currFilter = document.getElementById('filterAssignCurr').value.toLowerCase();
         const progFilter = document.getElementById('filterAssignProg').value.toLowerCase();
@@ -395,44 +343,35 @@
         rows.forEach(row => {
             const currText = row.cells[0].textContent.toLowerCase().trim();
             const progText = row.cells[1].textContent.toLowerCase().trim();
-            
             const matchesCurr = (currFilter === 'all' || currText === currFilter);
             const matchesProg = (progFilter === 'all' || progText === progFilter);
-            
             row.style.display = (matchesCurr && matchesProg) ? '' : 'none';
         });
     }
 
     function editAssignment(id, prog, curr, year, sec) {
         document.getElementById('assignModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Assignment';
-        
-        // 1. Fill Hidden Inputs (These go to Python)
         document.getElementById('assignCohortId').value = id;
         document.getElementById('hiddenProgramCode').value = prog;
         document.getElementById('hiddenStartYear').value = year;
-
-        // 2. Fill Visible Disabled Inputs (For the user to see)
         document.getElementById('assignStartYear').value = year;
         document.getElementById('assignProgramCode').value = prog;
 
-        // 3. Filter Curriculum Dropdown
         const select = document.getElementById('assignCurriculumId');
         const options = select.querySelectorAll('option');
         options.forEach(opt => {
             if (opt.value === "") return;
             if (opt.getAttribute('data-program') === prog) {
                 opt.style.display = 'block';
-                opt.disabled = false; // Make it selectable
+                opt.disabled = false; 
             } else {
                 opt.style.display = 'none';
-                opt.disabled = true;  // Prevent selecting wrong programs
+                opt.disabled = true;  
             }
         });
 
-        // 4. Set Editable Fields
         select.value = curr;
         document.getElementById('assignSections').value = sec;
-
         document.getElementById('assignModal').style.display = 'flex';
     }
 
@@ -440,13 +379,9 @@
         document.getElementById('assignModal').style.display = 'none';
     }
 
-    // ==========================================
-    // 2. CURRICULUM EXPORT LOGIC
-    // ==========================================
     function handleProgramExport() {
         const selectEl = document.getElementById('mainProgramFilter');
         const programCode = selectEl ? selectEl.value : "";
-
         if (programCode && programCode !== "" && programCode !== "None") {
             window.location.href = "/admin/export/program/" + programCode;
         } else {
@@ -458,15 +393,14 @@
         document.getElementById('exportWarningModal').style.display = 'none';
     }
 
-    // ==========================================
-    // 3. IMPORT MODAL LOGIC (Restored)
-    // ==========================================
-    const defaultOrder = [
+    // FIXED: Now expects 11 columns, including Tuition Hours
+    const defaultOrder =[
         { val: 'cc', text: 'Curriculum Code' }, { val: 'yl', text: 'Year Level' },
         { val: 'sem', text: 'Semester' }, { val: 'sc', text: 'Subject Code' },
         { val: 'pre', text: 'Pre-requisite' }, { val: 'co', text: 'Co-requisite' },
-        { val: 'sn', text: 'Subject Desc' }, { val: 'lc', text: 'Lec Hours' },
-        { val: 'lb', text: 'Lab Hours' }, { val: 'u', text: 'Units' }, { val: 'skip', text: '-- Skip --' }
+        { val: 'sn', text: 'Subject Name' }, { val: 'lc', text: 'Lec Hours' },
+        { val: 'lb', text: 'Lab Hours' }, { val: 'u', text: 'Units' }, 
+        { val: 'th', text: 'Tuition Hours' }, { val: 'skip', text: '-- Skip --' }
     ];
 
     function toggleColumnCustomization() {
@@ -474,7 +408,7 @@
         document.getElementById('customColumnView').style.display = 'block';
         const grid = document.getElementById('mappingGrid');
         grid.innerHTML = '';
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 11; i++) { // Changed from 10 to 11
             let html = `<div class="map-item-vert"><label>Col ${i + 1}</label><select onchange="updateHiddenCol(${i}, this.value)">`;
             defaultOrder.forEach(opt => {
                 let selected = (defaultOrder[i] && defaultOrder[i].val === opt.val) ? 'selected' : '';
@@ -487,8 +421,8 @@
     function resetColumnCustomization() {
         document.getElementById('defaultColumnView').style.display = 'block';
         document.getElementById('customColumnView').style.display = 'none';
-        const originalDefault = ['cc', 'yl', 'sem', 'sc', 'pre', 'co', 'sn', 'lc', 'lb', 'u'];
-        for (let i = 0; i < 10; i++) {
+        const originalDefault =['cc', 'yl', 'sem', 'sc', 'pre', 'co', 'sn', 'lc', 'lb', 'u', 'th'];
+        for (let i = 0; i < 11; i++) { // Changed from 10 to 11
             const hiddenCol = document.getElementById(`h_col_${i}`);
             if (hiddenCol) hiddenCol.value = originalDefault[i];
         }
@@ -508,9 +442,8 @@
     }
 
     function confirmAdvancedImport() {
-        // Prevent duplicate columns
-        const selectedCols = [];
-        for (let i = 0; i < 10; i++) {
+        const selectedCols =[];
+        for (let i = 0; i < 11; i++) { // Changed from 10 to 11
             const val = document.getElementById(`h_col_${i}`).value;
             if (val !== 'skip') {
                 if (selectedCols.includes(val)) {
@@ -523,16 +456,13 @@
         document.getElementById('advancedImportForm').submit();
     }
 
-    // ==========================================
-    // 4. DELETE CURRICULUM LOGIC
-    // ==========================================
     let deleteTargetId = null;
 
     function confirmDeleteCurriculum(id, year) {
         deleteTargetId = id;
         document.getElementById('deleteYearText').innerText = "C.Y " + year;
         document.getElementById('deleteCurriculumModal').style.display = "flex";
-        
+
         document.getElementById('confirmDeleteBtn').onclick = function () {
             window.location.href = "/admin/curriculum/delete/" + deleteTargetId;
         };
@@ -540,6 +470,31 @@
 
     function closeDeleteModal() {
         document.getElementById('deleteCurriculumModal').style.display = "none";
+    }
+
+    function updateYearLevelDropdown() {
+        const progSelect = document.getElementById('modalProgramCode');
+        const ylSelect = document.getElementById('modalYearLevel');
+        const selectedOption = progSelect.options[progSelect.selectedIndex];
+        let maxYears = parseInt(selectedOption.getAttribute('data-years'));
+        if (isNaN(maxYears) || maxYears <= 0) maxYears = 4;
+        
+        const currentVal = ylSelect.value;
+        let html = '<option value="0">All Year Levels</option>';
+        for (let i = 1; i <= maxYears; i++) {
+            let suffix = "th";
+            if (i === 1) suffix = "st";
+            else if (i === 2) suffix = "nd";
+            else if (i === 3) suffix = "rd";
+            html += `<option value="${i}">${i}${suffix} Year</option>`;
+        }
+        
+        ylSelect.innerHTML = html;
+        if (currentVal <= maxYears) {
+            ylSelect.value = currentVal;
+        } else {
+            ylSelect.value = "0";
+        }
     }
 </script>
 {% endblock %}

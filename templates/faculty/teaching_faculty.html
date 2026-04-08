@@ -1,0 +1,173 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+    {{ super() }}
+    <!-- Link to the new CSS file for this specific page -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/teaching_faculty.css') }}">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="teaching-assignment-wrapper">
+    <!-- Main Header -->
+    <div class="main-header">
+        <h1>MY TEACHING ASSIGNMENT</h1>
+        <button class="btn-export-pdf">
+            <i class="fa-solid fa-arrow-up-from-bracket"></i>
+            Export as PDF
+        </button>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tabs-container">
+        <a href="#" class="tab-link"><i class="fa-regular fa-calendar-days"></i> Weekly schedule</a>
+        <a href="#" class="tab-link active"><i class="fa-solid fa-table-list"></i> Teaching Assignment</a>
+    </div>
+
+    <!-- Regular Load Section -->
+    <div class="load-section">
+        <h2>REGULAR LOAD</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>SUBJECT CODE</th>
+                        <th>SUBJECT DESCRIPTION</th>
+                        <th>UNITS</th>
+                        <th>YEAR & SECTION</th>
+                        <th>SUBJ REF</th>
+                        <th>TIME</th>
+                        <th>TIME CODE</th>
+                        <th>DAY/S</th>
+                        <th>ROOM</th>
+                        <th>EFFECTIVITY</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>M</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                    <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>TH</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                    <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>TH</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                     <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>M</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                    <!-- Empty rows for spacing -->
+                    <tr><td></td><td></td><td>3</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="10" class="total-units">TOTAL REGULAR LOAD: 15</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Part Time Load Section -->
+    <div class="load-section">
+        <h2>PART TIME LOAD</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>SUBJECT CODE</th>
+                        <th>SUBJECT DESCRIPTION</th>
+                        <th>UNITS</th>
+                        <th>YEAR & SECTION</th>
+                        <th>SUBJ REF</th>
+                        <th>TIME</th>
+                        <th>TIME CODE</th>
+                        <th>DAY/S</th>
+                        <th>ROOM</th>
+                        <th>EFFECTIVITY</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>M</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                     <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>TH</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                    <tr>
+                        <td>COMPO1</td>
+                        <td>Fundamentals of Research</td>
+                        <td>3</td>
+                        <td>BSIT-3 LQ 1-1</td>
+                        <td>C</td>
+                        <td>7:30 - 10:30 AM</td>
+                        <td>2345</td>
+                        <td>TH</td>
+                        <td>103</td>
+                        <td>09/01/2025</td>
+                    </tr>
+                    <!-- Empty rows for spacing -->
+                    <tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

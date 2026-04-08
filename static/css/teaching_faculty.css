@@ -1,0 +1,130 @@
+/* General Styling for the Teaching Assignment Wrapper */
+.teaching-assignment-wrapper {
+    width: 100%;
+    padding: 20px;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Header section with Title and Export Button */
+.main-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #5D0000; /* Dark Maroon */
+    color: white;
+    padding: 15px 25px;
+    margin-bottom: 20px;
+}
+
+.main-header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.btn-export-pdf {
+    background-color: white;
+    color: #333;
+    border: 1px solid #ccc;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Space between icon and text */
+}
+
+.btn-export-pdf:hover {
+    background-color: #f2f2f2;
+}
+
+/* Tab navigation styling */
+.tabs-container {
+    display: flex;
+    margin-bottom: 30px;
+    border-bottom: 2px solid #ddd;
+}
+
+.tab-link {
+    padding: 10px 20px;
+    text-decoration: none;
+    color: #555;
+    font-weight: 500;
+    border: 1px solid transparent;
+    border-bottom: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: -2px; /* Pulls the link down to overlap the container border */
+}
+
+.tab-link.active {
+    background-color: #5D0000; /* Dark Maroon */
+    color: white;
+    border: 1px solid #5D0000;
+    border-bottom: 2px solid #5D0000;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+}
+
+.tab-link:not(.active):hover {
+    background-color: #f7f7f7;
+}
+
+/* Styling for the load sections (Regular & Part-time) */
+.load-section {
+    margin-bottom: 30px;
+}
+
+.load-section h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 15px;
+}
+
+.table-container {
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    overflow: hidden; /* Ensures the child table respects the border radius */
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    font-size: 0.85rem;
+    border: 1px solid #e0e0e0;
+}
+
+thead th {
+    background-color: #800000; /* Maroon Header */
+    color: white;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+tbody td {
+    color: #444;
+}
+
+/* Footer style for total units */
+tfoot .total-units {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #333;
+    padding-left: 15px;
+    border: 1px solid #e0e0e0;
+    background-color: #f5f5f5;
+}

@@ -2,8 +2,8 @@
 :root {
     --pup-maroon: #800000;
     --dark-maroon: #4b0a0a;
-    --pup-gold: #D4AF37;       
-    --ivory-panel: #FAF9F6;    
+    --pup-gold: #D4AF37;
+    --ivory-panel: #FAF9F6;
     --white: #ffffff;
     --border-color: #E5E7EB;
     --text-main: #1F2937;
@@ -12,8 +12,21 @@
 }
 
 /* --- GLOBAL STYLES --- */
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', 'Inter', sans-serif; }
-body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc; color: var(--text-main); overflow: hidden; }
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', 'Inter', sans-serif;
+}
+
+body {
+    display: flex;
+    height: 100vh;
+    flex-direction: column;
+    background: #fcfcfc;
+    color: var(--text-main);
+    overflow: hidden;
+}
 
 /* --- TOP MAROON NAVIGATION --- */
 .top-nav {
@@ -26,20 +39,58 @@ body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc
     justify-content: space-between;
     z-index: 1001;
 }
-.nav-left { display: flex; align-items: center; gap: 15px; min-width: 250px; }
-.nav-left img { width: 45px; }
-.nav-left h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.5px; }
+
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    min-width: 250px;
+}
+
+.nav-left img {
+    width: 45px;
+}
+
+.nav-left h1 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
 
 /* Search Bar */
-.search-container { position: relative; width: 35%; }
-.search-container input { 
-    width: 100%; padding: 10px 15px 10px 45px; border-radius: 25px; 
-    border: none; outline: none; background: rgba(255, 255, 255, 0.9); 
+.search-container {
+    position: relative;
+    width: 35%;
 }
-.search-container i { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); color: #666; }
 
-.nav-right { display: flex; align-items: center; gap: 30px; }
-.ay-label { font-size: 0.85rem; font-weight: 600; text-decoration: underline; }
+.search-container input {
+    width: 100%;
+    padding: 10px 15px 10px 45px;
+    border-radius: 25px;
+    border: none;
+    outline: none;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.search-container i {
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #666;
+}
+
+.nav-right {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+}
+
+.ay-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: underline;
+}
 
 /* --- SUB-HEADER (Toggle Bar) --- */
 .sub-header {
@@ -52,10 +103,19 @@ body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc
     color: white;
     z-index: 1000;
 }
-.toggle-btn { cursor: pointer; font-size: 1.4rem; transition: 0.3s; }
+
+.toggle-btn {
+    cursor: pointer;
+    font-size: 1.4rem;
+    transition: 0.3s;
+}
 
 /* --- MAIN CONTENT LAYOUT --- */
-.main-container { display: flex; flex: 1; height: calc(100vh - 115px); }
+.main-container {
+    display: flex;
+    flex: 1;
+    height: calc(100vh - 115px);
+}
 
 /* --- SIDEBAR PANEL --- */
 .sidebar {
@@ -68,23 +128,110 @@ body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc
     overflow: hidden;
 }
 
-.sidebar-nav-container { flex-grow: 1; padding: 15px 0; overflow-y: auto; }
-.nav-list { list-style: none; padding: 0; margin: 0; }
-
-.nav-item { margin: 4px 12px; }
-.nav-link {
-    display: flex; align-items: center; padding: 12px 16px;
-    color: var(--pup-maroon) !important; text-decoration: none !important;
-    font-weight: 600; font-size: 0.95rem; border-radius: 6px; transition: var(--transition);
+.sidebar-nav-container {
+    flex-grow: 1;
+    padding: 15px 0;
+    overflow-y: auto;
 }
-.nav-link i { font-size: 1.1rem; min-width: 35px; }
 
-/* Active & Hover States */
-.nav-item.active .nav-link {
+.nav-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* Nav Item */
+.nav-item {
+    margin: 4px 12px;
+    position: relative;
+}
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    color: var(--pup-maroon) !important;
+    text-decoration: none !important;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border-radius: 6px;
+    transition: var(--transition);
+}
+
+.nav-link i {
+    font-size: 1.1rem;
+    min-width: 35px;
+}
+
+/* Active & Hover States (Using > to prevent sub-menus from being styled) */
+.nav-item.active > .nav-link {
     background-color: var(--pup-maroon) !important;
     color: var(--white) !important;
 }
-.nav-item:hover .nav-link:not(.active) { background-color: rgba(128, 0, 0, 0.05); }
+
+.nav-item:hover:not(.active) > .nav-link {
+    background-color: rgba(128, 0, 0, 0.05);
+}
+
+/* =============================================== */
+/* --- STYLES FOR COLLAPSIBLE SIDEBAR SUB-MENU --- */
+/* =============================================== */
+
+/* Container for sub-menu */
+.nav-item .sub-menu {
+    display: none; /* Hidden by default */
+    list-style: none;
+    padding: 5px 0 5px 35px; /* Indent to align with parent text */
+    margin: 0;
+}
+
+/* Show sub-menu */
+.nav-item.open > .sub-menu {
+    display: block;
+}
+
+/* Style main Schedule tab when open */
+.nav-item.open > .nav-link {
+    background-color: var(--pup-maroon) !important;
+    color: white !important;
+}
+
+/* Arrow rotation */
+.fa-caret-down {
+    transition: transform 0.3s ease;
+    margin-left: auto;
+}
+
+.nav-item.open > .nav-link .fa-caret-down {
+    transform: rotate(180deg);
+}
+
+/* --- SUB-TAB STYLING (Smaller, clear active state) --- */
+.sub-menu .nav-item { margin: 2px 0; }
+
+.sub-menu .nav-link {
+    font-size: 0.85rem; /* Smaller text */
+    padding: 8px 15px;  /* Smaller padding */
+    color: #666 !important;        /* Gray color so it looks like a sub-tab */
+    background-color: transparent !important;
+    border-radius: 5px;
+    transition: all 0.2s ease-in-out;
+}
+
+/* Hover Effect for Sub-tabs */
+.sub-menu .nav-item:hover:not(.active) > .nav-link {
+    background-color: rgba(128, 0, 0, 0.08) !important; /* Light maroon hover */
+    color: var(--pup-maroon) !important;
+    padding-left: 20px; /* Cool slight slide effect when hovered */
+}
+
+/* Active State for Sub-tabs (Makes it VERY obvious where you are) */
+.sub-menu .nav-item.active > .nav-link {
+    background-color: var(--pup-maroon) !important;
+    color: white !important;
+    font-weight: 600;
+    box-shadow: 0 2px 5px rgba(128, 0, 0, 0.2);
+}
 
 /* --- SIGN OUT (Pinned to Bottom) --- */
 .signout-container {
@@ -93,35 +240,139 @@ body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc
     margin-top: auto;
 }
 
-/* --- MAIN CONTENT WRAPPER --- */
-.main-wrapper { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
-.content-body { padding: 30px; flex-grow: 1; }
+.signout-btn {
+    cursor: pointer;
+}
 
-/* --- COLLAPSED UTILITIES --- */
-.sidebar.collapsed { width: 80px; }
-.sidebar.collapsed .nav-label, .sidebar.collapsed .fa-chevron-down { display: none; }
-.sidebar.collapsed .nav-link { justify-content: center; padding: 12px 0; }
-.sidebar.collapsed .nav-link i { min-width: unset; margin: 0; }
+/* --- MAIN CONTENT WRAPPER --- */
+.main-wrapper { 
+    flex: 1; 
+    display: flex; 
+    flex-direction: column; 
+    overflow-y: auto; 
+}
+
+.content-body {
+    padding: 30px;
+    flex-grow: 1;
+}
+
+/* =============================================== */
+/* --- COLLAPSED SIDEBAR BEHAVIOR --- */
+/* =============================================== */
+
+/* 1. Shrink the width of the sidebar */
+.sidebar.collapsed {
+    width: 80px;
+}
+
+/* 2. Hide labels, sub-menus, and dropdown arrows when sidebar is collapsed */
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-arrow,
+.sidebar.collapsed .fa-caret-down,
+.sidebar.collapsed .sub-menu {
+    display: none !important;
+}
+
+/* 3. Center the icons inside the shrunken sidebar */
+.sidebar.collapsed .nav-link,
+.sidebar.collapsed .nav-link-wrapper,
+.sidebar.collapsed .nav-link-main {
+    justify-content: center;
+    padding: 15px 0; /* Adjust padding to make it a neat square */
+}
+
+/* 4. Remove the extra margin on the icon so it stays dead center */
+.sidebar.collapsed .nav-link i,
+.sidebar.collapsed .nav-link-main i {
+    min-width: auto;
+    margin: 0;
+    font-size: 1.3rem; /* Make the icon slightly bigger when collapsed */
+}
+
+/* 5. Center the Sign-out button container */
+.sidebar.collapsed .signout-container {
+    padding: 20px 10px;
+    display: flex;
+    justify-content: center;
+}
+
 
 /* --- CUSTOM LOGOUT MODAL --- */
 .logout-modal {
-    display: none; position: fixed; z-index: 2000; left: 0; top: 0;
-    width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px); align-items: center; justify-content: center;
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
 }
+
 .modal-content-logout {
-    background-color: #fff; width: 400px; border-radius: 15px;
-    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3); text-align: center; overflow: hidden;
+    background-color: #fff;
+    width: 400px;
+    border-radius: 15px;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    overflow: hidden;
     animation: modalPop 0.3s ease-out;
 }
-@keyframes modalPop { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.modal-header-logout { background-color: var(--pup-maroon); color: white; padding: 30px 20px; }
-.modal-header-logout i { font-size: 3rem; }
-.modal-body-logout { padding: 25px; }
-.modal-footer-logout { padding: 0 25px 25px; display: flex; gap: 12px; }
-.btn-modal { flex: 1; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; border: none; }
-.btn-cancel-logout { background-color: #eee; color: #555; }
-.btn-confirm-logout { background-color: var(--pup-maroon); color: white; }
+
+@keyframes modalPop {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.modal-header-logout {
+    background-color: var(--pup-maroon);
+    color: white;
+    padding: 30px 20px;
+}
+
+.modal-header-logout i {
+    font-size: 3rem;
+}
+
+.modal-body-logout {
+    padding: 25px;
+}
+
+.modal-footer-logout {
+    padding: 0 25px 25px;
+    display: flex;
+    gap: 12px;
+}
+
+.btn-modal {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+}
+
+.btn-cancel-logout {
+    background-color: #eee;
+    color: #555;
+}
+
+.btn-confirm-logout {
+    background-color: var(--pup-maroon);
+    color: white;
+}
 
 /* --- FLASH TOAST POPUPS --- */
 .flash-container {
@@ -140,26 +391,49 @@ body { display: flex; height: 100vh; flex-direction: column; background: #fcfcfc
     max-width: 400px;
     padding: 15px 20px;
     border-radius: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
     display: flex;
     align-items: center;
     gap: 15px;
-    border-left: 6px solid #800000; /* Default Maroon */
+    border-left: 6px solid var(--pup-maroon);
     animation: slideIn 0.4s ease-out forwards;
-    transition: opacity 0.5s ease;
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    opacity: 1;
 }
 
-.flash-toast.error { border-left-color: #c0392b; } /* Red for errors */
-.flash-toast.success { border-left-color: #27ae60; } /* Green for success */
+/* Red for errors */
+.flash-toast.error {
+    border-left-color: #c0392b;
+}
+
+/* Green for success */
+.flash-toast.success {
+    border-left-color: #27ae60;
+}
 
 @keyframes slideIn {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
-.toast-icon { font-size: 1.5rem; }
-.flash-toast.error .toast-icon { color: #c0392b; }
-.flash-toast.success .toast-icon { color: #27ae60; }
+.toast-icon {
+    font-size: 1.5rem;
+}
+
+.flash-toast.error .toast-icon {
+    color: #c0392b;
+}
+
+.flash-toast.success .toast-icon {
+    color: #27ae60;
+}
 
 .toast-content p {
     margin: 0;

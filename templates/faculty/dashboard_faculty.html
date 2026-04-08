@@ -1,0 +1,88 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+    {{ super() }}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_faculty.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-wrapper">
+    
+    <!-- Welcome Header -->
+    <div class="dashboard-header">
+        <h2 class="welcome-heading">
+            Welcome, {{ user.firstname }} {{ user.lastname }}! 
+            {% if user.designationname %}
+                <span class="role-badge">{{ user.designationname }}</span>
+            {% endif %}
+        </h2>
+    </div>
+
+    <!-- Quick Action Buttons -->
+    <div class="action-bar-container">
+        <a href="{{ url_for('faculty_schedule') }}" class="btn-outline">VIEW MY SCHEDULE</a>
+        <a href="{{ url_for('faculty_teaching_assignment') }}" class="btn-outline">VIEW MY TEACHING ASSIGNMENT</a>
+        <a href="{{ url_for('faculty_subject_offerings') }}" class="btn-outline">VIEW SUBJECT OFFERINGS</a>
+        <a href="{{ url_for('faculty_schedule') }}" class="btn-outline">VIEW AVAILABLE ROOMS</a>
+        <a href="{{ url_for('faculty_requests') }}" class="btn-solid-white">
+            <i class="fa-solid fa-file-lines"></i> REQUEST ROOM
+        </a>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="main-stats-grid">
+        
+        <!-- Left: Today's Schedule -->
+        <div class="section-wrapper schedule-section">
+            <div class="section-tab">Today's Schedule</div>
+            <div class="section-content">
+                <!-- Item 1 -->
+                <div class="schedule-card">
+                    <div class="card-left">
+                        <div class="subject-code">IT 301 – DATABASE SYSTEMS</div>
+                        <div class="subject-meta">ROOM: 103 &nbsp;&nbsp; TIME: 1:00 PM - 3:00 PM</div>
+                    </div>
+                    <div class="card-right">BSIT - 3</div>
+                </div>
+                <!-- Item 2 -->
+                <div class="schedule-card">
+                    <div class="card-left">
+                        <div class="subject-code">COMP 001 – INTRO TO COMPUTING</div>
+                        <div class="subject-meta">ROOM: 103 &nbsp;&nbsp; TIME: 1:00 PM - 3:00 PM</div>
+                    </div>
+                    <div class="card-right">BSIT - 2</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Overview -->
+        <div class="section-wrapper overview-section">
+            <div class="section-tab">Overview</div>
+            <div class="section-content overview-content">
+                <div class="stat-box">
+                    <div class="stat-title">TOTAL TEACHING<br>UNITS</div>
+                    <div class="stat-value">15</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-title">TOTAL ASSIGNED<br>SUBJECTS</div>
+                    <div class="stat-value">12</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Bottom: Inbox -->
+    <div class="section-wrapper inbox-section">
+        <div class="section-tab">Inbox</div>
+        <div class="section-content">
+            <div class="inbox-banner">
+                <span>Your schedule request has been approved.</span>
+                <a href="{{ url_for('faculty_requests') }}" class="view-details">View details</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
