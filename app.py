@@ -16,14 +16,18 @@ app.secret_key = 'pup_lopez_super_secret_key' # Required for Login Sessions
 @app.context_processor
 def inject_active_period():
     try:
+        today = date.today()
         conn = get_db_connection()
         cur = conn.cursor()
+        
+        # New Query: Automatically find the semester encompassing today's date
         cur.execute("""
             SELECT ay.YearStart, ay.YearEnd, s.SemesterType, ay.AcademicYearID
             FROM Semester s 
             JOIN AcademicYear ay ON s.AcademicYearID = ay.AcademicYearID 
-            WHERE ay.IsActive = TRUE AND s.IsActive = TRUE LIMIT 1
-        """)
+            WHERE %s BETWEEN s.SemStartDate AND s.SemEndDate
+            LIMIT 1
+        """, (today,))
         result = cur.fetchone()
         
         if result:
@@ -1682,7 +1686,8 @@ def activate_period():
     sem_type = request.form.get('active_sem_select')
     today = date.today()
 
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             SELECT SemStartDate, SemEndDate FROM Semester 
@@ -1696,6 +1701,7 @@ def activate_period():
 
         sem_start, sem_end = res[0], res[1]
 
+        # This is line 1699 - Ensure it is exactly 8 spaces (or 2 tabs) from the left
         if not (sem_start <= today <= sem_end):
             flash(f"Activation Denied: Today's date ({today}) is outside the range of {sem_start} to {sem_end}.", "error")
             return redirect(url_for('admin_settings'))
@@ -1712,7 +1718,8 @@ def activate_period():
         conn.rollback()
         flash(f"Error: {str(e)}", "error")
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
     return redirect(url_for('admin_settings'))
 
 @app.route('/admin/settings/upsert_ay', methods=['POST'])

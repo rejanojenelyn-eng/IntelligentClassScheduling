@@ -23,23 +23,23 @@
         </button>
     </div>
     
-    <div class="ay-control-box" style="background: #fdf2f2; padding: 20px 25px; border: 1px solid #e2d1d1; border-radius: 4px;">
-        <!-- Static Info Row (No Form, No Dropdowns, No Apply Button) -->
-        <div class="ay-top-row" style="display: flex; align-items: center; gap: 40px;">
-            <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
-                <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Current Academic Year:</label>
-                <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #630100; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
-                    {{ current_ay_label }}
-                </div>
-            </div>
-
-            <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
-                <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Semester:</label>
-                <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #800000; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
-                    {{ current_sem_label }}
-                </div>
+  <div class="ay-control-box" style="background: #fdf2f2; padding: 20px 25px; border: 1px solid #e2d1d1; border-radius: 4px;">
+    <!-- STATIC DISPLAY ROW -->
+    <div class="ay-top-row" style="display: flex; align-items: center; gap: 40px;">
+        <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
+            <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Current Academic Year:</label>
+            <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #630100; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
+                {{ current_ay_label }}
             </div>
         </div>
+
+        <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
+            <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Semester:</label>
+            <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #800000; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
+                {{ current_sem_label }}
+            </div>
+        </div>
+    </div>
 
         <!-- Table remains exactly as it was -->
         <table class="settings-table-exact" style="width: 100%; border-collapse: collapse; background: white; margin-top: 25px; border: 1px solid #630100;">
