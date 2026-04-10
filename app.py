@@ -398,26 +398,39 @@ def curriculum():
     if 'loggedin' not in session: return redirect(url_for('login'))
     
     raw_programs = query_db("SELECT * FROM Programs WHERE IsActive = TRUE ORDER BY ProgramName")
-    programs =[{k.lower(): v for k, v in row.items()} for row in raw_programs] if raw_programs else[]
+    programs = [{k.lower(): v for k, v in row.items()} for row in raw_programs] if raw_programs else []
     selected_program = request.args.get('program_code', 'All')
     
-    currs_raw =[]
+    currs_raw = []
     if selected_program == 'All':
         currs_raw = query_db("SELECT c.*, p.ProgramName FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode ORDER BY p.ProgramName ASC, c.CurriculumYear DESC")
     elif selected_program:
         currs_raw = query_db("SELECT * FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC", (selected_program,))
-    
-    curriculums =[{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else[]
 
+    curriculums = [{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else []
+    
+    today = date.today()
     cohorts_raw = query_db("""
         SELECT c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, 
-               c.StartAcademicYear, c.NumberOfSections, MAX(sec.YearLevel) as year_level
-        FROM Cohort c JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode LEFT JOIN Sections sec ON c.CohortID = sec.CohortID
-        GROUP BY c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, c.StartAcademicYear, c.NumberOfSections
+               c.StartAcademicYear, c.NumberOfSections,
+               (CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 as year_level
+        FROM Cohort c 
+        JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
+        JOIN Programs p ON c.ProgramCode = p.ProgramCode 
+        CROSS JOIN (
+            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
+            UNION ALL 
+            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
+            LIMIT 1
+        ) ay
+        WHERE 
+            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) >= 1
+            AND 
+            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) <= p.NumYearLevel
         ORDER BY c.StartAcademicYear DESC, p.ProgramName ASC
-    """)
-    cohorts =[{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else[]
+    """, (today,))
+
+    cohorts = [{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else []
 
     return render_template('academic/curriculum.html', programs=programs, curriculums=curriculums, selected_program=selected_program, cohorts=cohorts)
 
@@ -1119,7 +1132,6 @@ def edit_building():
     except Exception as e: flash(f"Error: {e}", "error")
     finally: cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
-
 @app.route('/admin/curriculum')
 def admin_curriculum():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -1128,35 +1140,41 @@ def admin_curriculum():
     cur = conn.cursor()
 
     try:
-        # --- AUTOMATION SYNC LOGIC (Restored from your working version) ---
-        cur.execute("SELECT AcademicYearID FROM AcademicYear WHERE IsActive = TRUE LIMIT 1")
-        active_ay_row = cur.fetchone()
+        # 1. AUTOMATION: Find the AY based on today's date
+        today = date.today()
+        cur.execute("""
+            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
+            UNION ALL 
+            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
+            LIMIT 1
+        """, (today,))
         
-        if active_ay_row:
-            ay_id = active_ay_row['academicyearid'] if isinstance(active_ay_row, dict) else active_ay_row[0]
-            base_year_int = int(ay_id[2:4]) # e.g., 25
+        active_res = cur.fetchone()
 
-            # This query finds the latest curriculum that is NOT NEWER than the batch entry year
+        if active_res:
+            ay_id = active_res[0] 
+            base_year_int = int(ay_id[2:4]) 
+
+            # 2. Logic: Assign the latest curriculum that is NOT newer than the student's entry year
             cur.execute("""
                 INSERT INTO Cohort (ProgramCode, CurriculumID, StartAcademicYear, NumberOfSections)
                 SELECT p.ProgramCode,
                     (
-                        SELECT c.CurriculumID 
-                        FROM Curriculum c 
+                        SELECT c.CurriculumID FROM Curriculum c 
                         WHERE c.ProgramCode = p.ProgramCode 
-                        AND CAST(SUBSTRING(c.CurriculumYear, 1, 4) AS INT) <= (2000 + b.base_year - gs.n)
+                        AND CAST(SUBSTRING(c.CurriculumYear, 1, 4) AS INT) <= (2000 + %s - gs.n)
                         ORDER BY c.CurriculumYear DESC LIMIT 1
                     ),
-                    'AY' || LPAD((b.base_year - gs.n)::text, 2, '0') || LPAD((b.base_year - gs.n + 1)::text, 2, '0'), 1
+                    'AY' || LPAD((%s - gs.n)::text, 2, '0') || LPAD((%s - gs.n + 1)::text, 2, '0'), 1
                 FROM Programs p 
                 JOIN LATERAL generate_series(0, p.NumYearLevel - 1) AS gs(n) ON TRUE
-                CROSS JOIN (SELECT %s AS base_year) AS b 
                 WHERE p.IsActive = TRUE
                 AND EXISTS (SELECT 1 FROM Curriculum c WHERE c.ProgramCode = p.ProgramCode)
                 ON CONFLICT (ProgramCode, StartAcademicYear) 
                 DO UPDATE SET CurriculumID = EXCLUDED.CurriculumID
-            """, (base_year_int,))
+            """, (base_year_int, base_year_int, base_year_int))
 
+            # 3. Sync Sections
             cur.execute("""
                 INSERT INTO Sections (CohortID, YearLevel, SectionName)
                 SELECT c.CohortID, (CAST(SUBSTRING(%s, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1, CHR(64 + gs.num)
@@ -1171,31 +1189,47 @@ def admin_curriculum():
     finally:
         cur.close(); conn.close()
 
+    # --- FETCH DATA FOR THE PAGE ---
     programs = query_db("SELECT * FROM Programs WHERE IsActive = TRUE ORDER BY ProgramName")
     selected_program = request.args.get('program_code')
     
-    currs_raw =[]
+    currs_raw = []
     if selected_program == 'All':
         currs_raw = query_db("SELECT c.*, p.ProgramName FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode ORDER BY p.ProgramName ASC, c.CurriculumYear DESC")
     elif selected_program:
         currs_raw = query_db("SELECT * FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC", (selected_program,))
-    curriculums =[{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else[]
+    curriculums = [{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else []
 
     unique_codes_raw = query_db("SELECT DISTINCT CurriculumCode FROM Curriculum ORDER BY CurriculumCode DESC")
-    unique_codes =[{k.lower(): v for k, v in row.items()} for row in unique_codes_raw] if unique_codes_raw else[]
+    unique_codes = [{k.lower(): v for k, v in row.items()} for row in unique_codes_raw] if unique_codes_raw else []
 
     all_curriculums_raw = query_db("SELECT * FROM Curriculum ORDER BY CurriculumYear DESC")
-    all_curriculums =[{k.lower(): v for k, v in row.items()} for row in all_curriculums_raw] if all_curriculums_raw else[]
+    all_curriculums = [{k.lower(): v for k, v in row.items()} for row in all_curriculums_raw] if all_curriculums_raw else []
 
+    # Get cohorts based on automatic year detection for the table display
+    today = date.today()
     cohorts_raw = query_db("""
         SELECT c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, 
-               c.StartAcademicYear, c.NumberOfSections, MAX(sec.YearLevel) as year_level
-        FROM Cohort c JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode LEFT JOIN Sections sec ON c.CohortID = sec.CohortID
-        GROUP BY c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, c.StartAcademicYear, c.NumberOfSections
+               c.StartAcademicYear, c.NumberOfSections,
+               (CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 as year_level
+        FROM Cohort c 
+        JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
+        JOIN Programs p ON c.ProgramCode = p.ProgramCode 
+        CROSS JOIN (
+            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
+            UNION ALL 
+            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
+            LIMIT 1
+        ) ay
+        -- THIS LINE ENFORCES YOUR RULES (3yr for Diploma, 4yr for Degree, 5yr for Arch)
+        WHERE 
+            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) >= 1
+            AND 
+            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) <= p.NumYearLevel
         ORDER BY c.StartAcademicYear DESC, p.ProgramName ASC
-    """)
-    cohorts =[{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else[]
+    """, (today,))
+
+    cohorts = [{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else []
 
     return render_template('admin/curriculum_admin.html', programs=programs, curriculums=curriculums, 
                            selected_program=selected_program, cohorts=cohorts, 
