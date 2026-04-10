@@ -1,0 +1,223 @@
+/* manualSchedule.css */
+
+/* 1. Main Layout Containers */
+.editor-wrapper {
+    display: grid;
+    grid-template-columns: 320px 1fr; /* Left panel fixed, Right panel fills space */
+    gap: 25px;
+    align-items: start;
+    margin-top: 20px;
+}
+
+.editor-left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.editor-right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* 2. Grid Area (Sidebar + Table) */
+.grid-container {
+    display: flex; /* Sidebar and Grid side-by-side */
+    flex-direction: row;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.rooms-sidebar {
+    width: 130px; /* Fixed width for Room List */
+    background: #fdf2f2;
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.rooms-filter {
+    padding: 10px;
+    background: #630100;
+}
+
+.floor-select {
+    width: 100%;
+    padding: 5px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+.rooms-list {
+    padding: 10px;
+    overflow-y: auto;
+    max-height: 550px;
+}
+
+/* Room Items */
+.room-pill {
+    padding: 10px;
+    margin-bottom: 8px;
+    background: #fff;
+    border: 1px solid #630100;
+    color: #630100;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+}
+
+.room-pill:hover {
+    background: #fdf2f2;
+}
+
+.room-pill.active-room {
+    background-color: #630100 !important;
+    color: white !important;
+    border: 2px solid #ffc107;
+}
+
+/* 3. Timetable Grid Styling */
+.timetable-wrapper {
+    position: relative; /* REQUIRED for absolute positioning of pills */
+    flex-grow: 1;
+    overflow-x: auto;
+}
+
+.timetable {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.timetable thead th {
+    background-color: #630100;
+    color: white;
+    padding: 12px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    border: 1px solid #7a0100;
+}
+
+.timetable td {
+    border: 1px solid #eee;
+    height: 55px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.time-col {
+    background-color: #f8f9fa;
+    font-weight: 800;
+    color: #630100;
+    width: 80px;
+    font-size: 0.75rem;
+}
+
+/* 4. Schedule Cards (The Pills) */
+.schedule-pill {
+    position: absolute !important; /* Forces placement on top of grid */
+    z-index: 10;
+    border-radius: 4px;
+    padding: 5px;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: bold;
+    text-align: center;
+    box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    line-height: 1.2;
+    border: 1px solid rgba(255,255,255,0.4);
+}
+
+.pill-subject {
+    font-size: 0.75rem;
+    font-weight: 900;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+}
+
+/* 5. Building Tabs */
+/* HORIZONTAL SCROLLABLE TABS */
+.building-tabs-container {
+    display: flex;
+    overflow-x: auto; /* This enables the horizontal scroll */
+    white-space: nowrap; /* This prevents tabs from wrapping to the next line */
+    gap: 10px;
+    padding-bottom: 10px;
+    margin-bottom: 5px;
+    -webkit-overflow-scrolling: touch; /* Smooth scrolling for mobile */
+}
+
+/* Hide the scrollbar but keep functionality (Optional, for clean look) */
+.building-tabs-container::-webkit-scrollbar {
+    height: 4px;
+}
+.building-tabs-container::-webkit-scrollbar-thumb {
+    background: #630100;
+    border-radius: 10px;
+}
+
+.bldg-tab {
+    flex: 0 0 auto; /* This is MANDATORY: it prevents the tabs from squishing */
+    padding: 8px 20px;
+    border: 1px solid #630100;
+    border-radius: 20px;
+    background: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* SUMMARY CARD STYLE (Matching reference) */
+.summary-white-box {
+    background: white;
+    padding: 15px;
+    border-radius: 10px;
+    color: #630100;
+    border: 1px solid #630100;
+    margin-top: 10px;
+}
+
+.summary-white-box div {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 5px;
+    line-height: 1.4;
+}
+
+.summary-white-box span:first-child {
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.summary-white-box span:last-child {
+    font-weight: 700;
+    color: #333;
+}
+
+.btn-confirm-dark {
+    width: 100%;
+    background: #630100;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 4px;
+    font-weight: 800;
+    cursor: pointer;
+    text-transform: uppercase;
+}

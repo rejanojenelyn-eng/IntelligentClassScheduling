@@ -537,71 +537,155 @@ def manual_schedule_editor():
         cur.close()
         conn.close()
 
-@app.route('/api/get_curriculum')
-def api_get_curriculum():
-    if 'loggedin' not in session: return jsonify({"success": False, "label": "Unauthorized"}), 401
+@app.route('/api/save_manual_schedule', methods=['POST'])
+def save_manual_schedule():
+    if 'loggedin' not in session: return jsonify({"success": False, "message": "Unauthorized"}), 401
     
-    prog = request.args.get('program')
-    ay_id = request.args.get('ay')
-    yl = request.args.get('year_level', '1') 
+    data = request.get_json()
+    emp_num = data.get('employee_number')
+    subj_code = data.get('subject_code')
+    curr_id = data.get('curriculum_id')
+    room_id = data.get('room_id')
+    day = data.get('day')
+    start_time_val = data.get('start_time')
+    end_time_val = data.get('end_time')
+    ay_id = data.get('ay_id')
+    sem_code = data.get('semester_code')
+    yl = data.get('year_level')
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        # 1. Resolve IDs
+        cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s", (ay_id, sem_code))
+        sem_res = cur.fetchone()
+        if not sem_res: return jsonify({"success": False, "message": "Semester not found."})
+        semester_id = sem_res['semesterid']
+
+        cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE curriculumid = %s AND subjectcode = %s AND semester = %s AND yearlevel = %s", 
+                    (curr_id, subj_code, sem_code, yl))
+        cs_res = cur.fetchone()
+        if not cs_res: return jsonify({"success": False, "message": "Subject mapping not found."})
+        cs_id = cs_res['curriculumsubjectid']
+
+        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (start_time_val,))
+        start_id = cur.fetchone()['timeid']
+        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (end_time_val,))
+        end_id = cur.fetchone()['timeid']
+
+        # 2. STRICT CONFLICT CHECK (Faculty OR Room OR Section)
+        # Check if Faculty is busy OR Room is busy during this time
+        conflict_query = """
+            SELECT 'Faculty' as type FROM schedule_sessions ss JOIN schedule s ON ss.scheduleid = s.scheduleid
+            WHERE s.employeenumber = %s AND ss.daydesc = %s AND NOT (%s >= ss.endtimeid OR %s <= ss.starttimeid) AND s.semesterid = %s
+            UNION ALL
+            SELECT 'Room' as type FROM schedule_sessions ss JOIN schedule s ON ss.scheduleid = s.scheduleid
+            WHERE ss.roomid = %s AND ss.daydesc = %s AND NOT (%s >= ss.endtimeid OR %s <= ss.starttimeid) AND s.semesterid = %s
+        """
+        cur.execute(conflict_query, (emp_num, day, start_id, end_id, semester_id, room_id, day, start_id, end_id, semester_id))
+        conflict = cur.fetchone()
+        if conflict:
+            return jsonify({"success": False, "message": f"Conflict detected: {conflict['type']} is already occupied at this time."})
+
+        # 3. Check if this Subject is already scheduled for this Section
+        # (Assuming section 1 for now, adjust based on your section logic)
+        cur.execute("SELECT 1 FROM schedule WHERE curriculumsubjectid = %s AND semesterid = %s", (cs_id, semester_id))
+        if cur.fetchone():
+             return jsonify({"success": False, "message": "This subject is already scheduled for this curriculum/year."})
+
+        # 4. INSERT
+        cur.execute("SELECT sectionid FROM sections LIMIT 1") # Placeholder
+        section_id = cur.fetchone()['sectionid']
+
+        cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid",
+                    (cs_id, section_id, emp_num, semester_id))
+        sched_id = cur.fetchone()['scheduleid']
+
+        cur.execute("INSERT INTO schedule_sessions (scheduleid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
+                    (sched_id, day, start_id, end_id, room_id))
+
+        conn.commit()
+        return jsonify({"success": True, "message": "Saved Successfully!"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "message": str(e)})
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/api/get_room_schedule/<int:room_id>')
+def get_room_schedule(room_id):
+    if 'loggedin' not in session: return jsonify([])
     
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("SELECT YearStart FROM AcademicYear WHERE AcademicYearID = %s", (ay_id,))
-        ay_row = cur.fetchone()
-        if not ay_row: return jsonify({"success": False, "label": "AY NOT FOUND"})
-            
-        ay_start_year = ay_row[0]
-        cohort_start_year = ay_start_year - (int(yl) - 1)
-
         cur.execute("""
-            SELECT CurriculumID, CurriculumYear 
-            FROM Curriculum 
-            WHERE ProgramCode = %s AND CAST(SUBSTRING(CurriculumYear, 1, 4) AS INT) <= %s
-            ORDER BY CurriculumYear DESC LIMIT 1
-        """, (prog, cohort_start_year))
-        res = cur.fetchone()
-        
-        if not res:
-            cur.execute("""
-                SELECT CurriculumID, CurriculumYear FROM Curriculum 
-                WHERE ProgramCode = %s ORDER BY CurriculumYear DESC LIMIT 1
-            """, (prog,))
-            res = cur.fetchone()
-            
-        if res:
-            return jsonify({"success": True, "curriculum_id": res[0], "label": f"C.Y {res[1]}"})
-        else:
-            return jsonify({"success": False, "label": "NO CURRICULUM"})
-            
+            SELECT 
+                cs.subjectcode,
+                subj.subjectname,
+                f.lastname || ', ' || f.firstname as instructor,
+                ss.daydesc,
+                ss.starttimeid,
+                ss.endtimeid
+            FROM schedule_sessions ss
+            JOIN schedule s ON ss.scheduleid = s.scheduleid
+            JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject subj ON cs.subjectcode = subj.subjectcode
+            JOIN faculty f ON s.employeenumber = f.employeenumber
+            WHERE ss.roomid = %s
+        """, (room_id,))
+        return jsonify(cur.fetchall())
+    except Exception as e:
+        print(f"Error fetching room schedule: {e}")
+        return jsonify([])
     finally:
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
+        
+@app.route('/api/get_curriculum')
+def api_get_curriculum():
+    prog = request.args.get('program')
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # Get the latest curriculum version for the selected program
+        cur.execute("""
+            SELECT CurriculumID, CurriculumYear, CurriculumCode 
+            FROM Curriculum 
+            WHERE ProgramCode = %s 
+            ORDER BY CurriculumYear DESC LIMIT 1
+        """, (prog,))
+        res = cur.fetchone()
+        if res:
+            return jsonify({
+                "success": True, 
+                "curriculum_id": res['curriculumid'], 
+                "label": f"{res['curriculumcode']} (C.Y {res['curriculumyear']})"
+            })
+        return jsonify({"success": False})
+    finally:
+        cur.close(); conn.close()
 
 @app.route('/api/get_subjects')
 def api_get_subjects():
-    if 'loggedin' not in session: return jsonify({"success": False, "label": "Unauthorized"}), 401
-    
     curr_id = request.args.get('curriculum_id')
     yl = request.args.get('year_level')
     sem = request.args.get('semester')
     
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("""
             SELECT s.SubjectCode, s.SubjectName 
             FROM CurriculumSubject cs
             JOIN Subject s ON cs.SubjectCode = s.SubjectCode
             WHERE cs.CurriculumID = %s AND cs.YearLevel = %s AND cs.Semester = %s
+            ORDER BY s.SubjectName ASC
         """, (curr_id, yl, sem))
-        subjects = [{"code": row[0], "name": row[1]} for row in cur.fetchall()]
+        subjects = cur.fetchall()
         return jsonify({"success": True, "subjects": subjects})
     finally:
-        cur.close()
-        conn.close()
-
+        cur.close(); conn.close()
 @app.route('/reports')
 def reports():
     if 'loggedin' not in session: return redirect(url_for('login'))

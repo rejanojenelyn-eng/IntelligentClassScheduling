@@ -2,6 +2,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -9,12 +10,12 @@
     
     <!-- HEADER -->
     <div class="manual-header-row">
-        <div style="width: 150px;"></div> <!-- Spacer to keep Title centered -->
+        <div style="width: 150px;"></div> 
         <h1>MANUAL SCHEDULE CREATION</h1>
         <div class="header-tools">
             <i class="fas fa-undo" title="Undo"></i>
             <i class="fas fa-redo" title="Redo"></i>
-            <i class="fas fa-sync-alt" title="Refresh"></i>
+            <i class="fas fa-sync-alt" title="Refresh" onclick="location.reload()"></i>
         </div>
     </div>
 
@@ -23,8 +24,6 @@
         <!-- LEFT PANEL: CONFIGURATION -->
         <!-- ===================================== -->
         <div class="editor-left-panel">
-            
-            <!-- TOP YELLOW SECTION -->
             <div class="panel-top-yellow">
                 <div class="form-row-editor" style="margin-bottom: 0;">
                     <div style="flex: 1;">
@@ -48,14 +47,12 @@
                 </div>
             </div>
 
-            <!-- BOTTOM WHITE SECTION -->
             <div class="panel-bottom-white">
                 <div class="form-group-editor">
                     <label>SELECT PROGRAM</label>
                     <select id="sel_prog" class="input-maroon" onchange="triggerCascade()">
                         <option value="" disabled selected>-Select Program-</option>
                         {% for prog in programs %}
-                        <!-- Assuming prog[0] is code and prog[1] is name -->
                         <option value="{{ prog[0] }}">{{ prog[1] }}</option> 
                         {% endfor %}
                     </select>
@@ -66,10 +63,8 @@
                         <label>YEAR</label>
                         <select id="sel_year" class="input-maroon" onchange="triggerCascade()">
                             <option value="" disabled selected>-Select-</option>
-                            <option value="1">1st</option>
-                            <option value="2">2nd</option>
-                            <option value="3">3rd</option>
-                            <option value="4">4th</option>
+                            <option value="1">1st</option><option value="2">2nd</option>
+                            <option value="3">3rd</option><option value="4">4th</option>
                         </select>
                     </div>
                     <div style="flex: 1;">
@@ -96,12 +91,10 @@
                     </select>
                 </div>
                 
-                <!-- NEW: ROOM SELECTION IN SIDEBAR -->
                 <div class="form-group-editor">
                     <label>SELECT ROOM</label>
                     <select id="sel_room" class="input-maroon">
                         <option value="" disabled selected>-Select Room-</option>
-                        <!-- Populated by JavaScript below -->
                     </select>
                 </div>
 
@@ -115,39 +108,35 @@
                     </div>
                 </div>
                 
-                <!-- NEW: START AND END TIME SELECTION -->
                 <div class="form-row-editor">
                     <div style="flex: 1;">
                         <label>START TIME</label>
                         <select id="sel_start_time" class="input-maroon">
                             <option value="" disabled selected>-Start-</option>
-                            <!-- Populated by JavaScript below -->
                         </select>
                     </div>
                     <div style="flex: 1;">
                         <label>END TIME</label>
                         <select id="sel_end_time" class="input-maroon">
                             <option value="" disabled selected>-End-</option>
-                            <!-- Populated by JavaScript below -->
                         </select>
                     </div>
                 </div>
 
-                <!-- REDESIGNED SUMMARY CARD -->
                 <div class="summary-container">
                     <div class="summary-title-red" style="color: #630100; font-weight: 900; margin-bottom: 8px;">
                         YOU ARE CREATING A SCHEDULE FOR:<br>
                         <span id="summary_period" style="font-size: 0.9rem;">A.Y ---- | - SEMESTER</span>
                     </div>
                     
-                    <div class="summary-white-box" style="background: white; padding: 10px; border-radius: 6px; font-size: 0.75rem; color: #630100; border: 1px solid #630100;">
-                        <div style="display: grid; grid-template-columns: 85px 1fr; gap: 4px; margin-bottom: 4px;">
-                            <span style="font-weight: 800;">PROGRAM:</span><span id="sum_prog" style="color: #333; font-weight: 700;">-</span>
-                            <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course" style="color: #333; font-weight: 700;">-</span>
-                            <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst" style="color: #333; font-weight: 700;">-</span>
-                            <span style="font-weight: 800;">ROOM:</span><span id="sum_room" style="color: #333; font-weight: 700;">-</span>
-                        </div>
-                    </div>
+                   <div class="summary-white-box">
+    <div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px;">
+        <span style="font-weight: 800;">PROGRAM/YR:</span><span id="sum_prog">-</span>
+        <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course">-</span>
+        <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst">-</span>
+        <span style="font-weight: 800;">ROOM:</span><span id="sum_room">-</span>
+    </div>
+</div>
                     <button class="btn-confirm-dark" onclick="confirmAndPlace()">Confirm Assignment</button>
                 </div>
             </div>
@@ -157,7 +146,7 @@
         <!-- RIGHT PANEL: TIMETABLE GRID -->
         <!-- ===================================== -->
         <div class="editor-right-panel">
-            
+            <!-- 1. Tabs at top -->
             <div class="building-tabs-container">
                 <button class="bldg-tab active" onclick="filterByBuilding('ALL', this)">ALL BUILDINGS</button>
                 {% for b in buildings %}
@@ -165,8 +154,8 @@
                 {% endfor %}
             </div>
 
+            <!-- 2. Grid and Rooms Sidebar Area -->
             <div class="grid-container">
-                <!-- Smart Rooms Column -->
                 <div class="rooms-sidebar">
                     <div class="rooms-filter">
                         <select id="sel_floor" class="floor-select" onchange="renderRooms()">
@@ -178,9 +167,8 @@
                     <div id="room_list_container" class="rooms-list"></div>
                 </div>
 
-                <!-- Spaced Timetable -->
-                <div class="timetable-wrapper">
-                    <table class="timetable">
+                <div class="timetable-wrapper" id="gridWrapper">
+                    <table class="timetable" id="mainTimetable">
                         <thead>
                             <tr>
                                 <th>TIME</th><th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
@@ -198,39 +186,35 @@
                 </div>
             </div>
 
-            <!-- Action Bar -->
+            <!-- 3. Action Bar at Bottom -->
             <div class="editor-action-bar">
                 <button class="btn-outline-dark"><i class="fas fa-save"></i> Save as Draft</button>
                 <button class="btn-solid-dark"><i class="fas fa-check-circle"></i> Save Schedule</button>
             </div>
-
         </div>
     </div>
 </div>
 
 <script>
-    // --- 1. INITIALIZE DATA ---
     const allRooms = JSON.parse('{{ rooms_json | safe }}');
-    
-    // Populate the Start/End Time dropdowns automatically
     const timeSlots = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM', '06:30 PM', '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM', '09:00 PM'];
     
-    const startSelect = document.getElementById('sel_start_time');
-    const endSelect = document.getElementById('sel_end_time');
-    const roomSelect = document.getElementById('sel_room');
-
-    timeSlots.forEach(t => {
-        startSelect.innerHTML += `<option value="${t}">${t}</option>`;
-        endSelect.innerHTML += `<option value="${t}">${t}</option>`;
+    // Initial Setup
+    window.addEventListener('DOMContentLoaded', () => {
+        const startSelect = document.getElementById('sel_start_time');
+        const endSelect = document.getElementById('sel_end_time');
+        const roomSelect = document.getElementById('sel_room');
+        timeSlots.forEach(t => {
+            startSelect.innerHTML += `<option value="${t}">${t}</option>`;
+            endSelect.innerHTML += `<option value="${t}">${t}</option>`;
+        });
+        allRooms.forEach(r => {
+            roomSelect.innerHTML += `<option value="${r.id}">${r.name}</option>`;
+        });
+        renderRooms();
     });
 
-    allRooms.forEach(r => {
-        roomSelect.innerHTML += `<option value="${r.id}">${r.name}</option>`;
-    });
-
-    // --- 2. SMART ROOM FILTERING LOGIC (GRID) ---
     let currentBldgId = 'ALL';
-
     function filterByBuilding(bldgId, btnElement) {
         currentBldgId = bldgId;
         document.querySelectorAll('.bldg-tab').forEach(btn => btn.classList.remove('active'));
@@ -242,91 +226,143 @@
         const selectedFloor = document.getElementById('sel_floor').value;
         const container = document.getElementById('room_list_container');
         container.innerHTML = ''; 
-
         allRooms.forEach(room => {
-            const matchesBldg = (currentBldgId === 'ALL' || room.bldg_id == currentBldgId);
-            const matchesFloor = (selectedFloor === 'ALL' || room.floor === selectedFloor);
-
-            if (matchesBldg && matchesFloor) {
-                container.innerHTML += `<div class="room-pill">${room.name}</div>`;
+            if ((currentBldgId === 'ALL' || room.bldg_id == currentBldgId) && (selectedFloor === 'ALL' || room.floor === selectedFloor)) {
+                container.innerHTML += `<div class="room-pill" onclick="selectRoom('${room.id}', '${room.name}', this)">${room.name}</div>`;
             }
         });
     }
-    window.addEventListener('DOMContentLoaded', renderRooms);
 
-    // --- 3. CASCADING DROPDOWNS LOGIC ---
     async function triggerCascade() {
         const ay = document.getElementById('sel_ay').value;
         const sem = document.getElementById('sel_sem').value;
-        const prog = document.getElementById('sel_prog').value;
+        const progSelect = document.getElementById('sel_prog');
+        const prog = progSelect.value;
         const year = document.getElementById('sel_year').value;
-        
-        const currDisplay = document.getElementById('display_curr');
-        const currHidden = document.getElementById('curr_id_hidden');
-        const subjSelect = document.getElementById('sel_subj');
-        
-        // Update Summary Text
-        if(ay && sem) {
-            document.getElementById('summary_period').innerText = `A.Y 20${ay.substring(2,4)}-20${ay.substring(4,6)} | ${sem === 'A' ? '1ST' : sem === 'B' ? '2ND' : 'SUMMER'} SEMESTER`;
+        if(ay && sem) document.getElementById('summary_period').innerText = `A.Y ${ay} | ${sem === 'A' ? '1ST' : '2ND'} SEMESTER`;
+        document.getElementById('sum_prog').innerText = prog ? `${prog} ${year || ''}` : '-';
+        if (prog) {
+            try {
+                const resp = await fetch(`/api/get_curriculum?program=${prog}`);
+                const data = await resp.json();
+                if (data.success) {
+                    document.getElementById('display_curr').innerText = data.label;
+                    document.getElementById('curr_id_hidden').value = data.curriculum_id;
+                    if (year && sem) {
+                        const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}`);
+                        const sData = await sResp.json();
+                        const subjSelect = document.getElementById('sel_subj');
+                        subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
+                        sData.subjects.forEach(s => { subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`; });
+                    }
+                }
+            } catch (e) { console.error(e); } updateSummary(); 
         }
-        document.getElementById('sum_prog').innerText = prog ? `${prog} ${year}` : '-';
+    }
 
-        if (!prog || !ay || !year || !sem) return;
+    async function selectRoom(roomId, roomName, element) {
+        document.querySelectorAll('.room-pill').forEach(el => el.classList.remove('active-room'));
+        element.classList.add('active-room');
+        document.getElementById('sel_room').value = roomId;
+        document.getElementById('sum_room').innerText = roomName;
+        await renderGrid(roomId);
+    }
 
-        currDisplay.innerText = "Loading...";
+    async function renderGrid(roomId) {
+        const wrapper = document.getElementById('gridWrapper');
+        const table = document.getElementById('mainTimetable');
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
         try {
-            const currResponse = await fetch(`/api/get_curriculum?program=${prog}&ay=${ay}&year_level=${year}`);
-            const currData = await currResponse.json();
-            
-            currDisplay.innerText = currData.label;
-            
-            if (currData.success) {
-                currHidden.value = currData.curriculum_id; 
-                subjSelect.innerHTML = '<option>Loading subjects...</option>';
-                
-                const subjResponse = await fetch(`/api/get_subjects?curriculum_id=${currData.curriculum_id}&year_level=${year}&semester=${sem}`);
-                const subjData = await subjResponse.json();
-                
-                subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
-                subjData.subjects.forEach(s => {
-                    // Displaying subject NAME only as requested
-                    subjSelect.innerHTML += `<option value="${s.code}">${s.name}</option>`;
-                });
-            } else {
-                currHidden.value = "";
-                subjSelect.innerHTML = '<option value="">-- No Curriculum Found --</option>';
-            }
-        } catch (error) {
-            console.error("Cascade Error:", error);
-            currDisplay.innerText = "Error";
-        }
+            const resp = await fetch(`/api/get_room_schedule/${roomId}`);
+            const sessions = await resp.json();
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const firstCell = table.querySelector('tbody td:nth-child(2)');
+            const timeCol = table.querySelector('.time-col');
+            const thead = table.querySelector('thead');
+            const colWidth = firstCell.getBoundingClientRect().width;
+            const rowHeight = firstCell.getBoundingClientRect().height;
+            const leftOffset = timeCol.getBoundingClientRect().width;
+            const topOffset = thead.getBoundingClientRect().height;
+
+            sessions.forEach(sess => {
+                const pill = document.createElement('div');
+                pill.className = 'schedule-pill';
+                const dayIdx = days.indexOf(sess.daydesc);
+                const stepHeight = rowHeight / 2;
+                pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
+                pill.style.width = (colWidth - 6) + "px";
+                pill.style.height = ((sess.endtimeid - sess.starttimeid) * stepHeight - 6) + "px";
+                pill.style.left = (leftOffset + (dayIdx * colWidth) + 3) + "px";
+                pill.style.top = (topOffset + ((sess.starttimeid - 1) * stepHeight) + 3) + "px";
+                pill.innerHTML = `<div class="pill-subject">${sess.subjectcode}</div><div style="font-size:0.6rem;">${sess.instructor}</div>`;
+                wrapper.appendChild(pill);
+            });
+        } catch (err) { console.error(err); }
     }
 
-    // --- 4. SUMMARY CARD UPDATERS ---
-    document.getElementById('sel_subj').addEventListener('change', function() {
-        document.getElementById('sum_course').innerText = this.options[this.selectedIndex].text.substring(0, 20) + '...';
-    });
-    document.getElementById('sel_faculty').addEventListener('change', function() {
-        document.getElementById('sum_inst').innerText = this.options[this.selectedIndex].text.substring(0, 20) + '...';
-    });
-    document.getElementById('sel_room').addEventListener('change', function() {
-        document.getElementById('sum_room').innerText = this.options[this.selectedIndex].text;
-    });
-
-    // --- 5. CONFIRM ASSIGNMENT ---
-    function confirmAndPlace() {
-        const subj = document.getElementById('sel_subj').value;
-        const fac = document.getElementById('sel_faculty').value;
-        const room = document.getElementById('sel_room').value;
-        const start = document.getElementById('sel_start_time').value;
-        const end = document.getElementById('sel_end_time').value;
-
-        if(!subj || !fac || !room || !start || !end) {
-            alert("Please complete all selections before confirming.");
-            return;
-        }
-
-        alert("Assignment logic ready! In the next phase, this will plot onto the grid.");
+    async function confirmAndPlace() {
+        const payload = {
+            employee_number: document.getElementById('sel_faculty').value,
+            subject_code: document.getElementById('sel_subj').value,
+            curriculum_id: document.getElementById('curr_id_hidden').value,
+            room_id: document.getElementById('sel_room').value,
+            day: document.getElementById('sel_day').value,
+            start_time: document.getElementById('sel_start_time').value,
+            end_time: document.getElementById('sel_end_time').value,
+            ay_id: document.getElementById('sel_ay').value,
+            semester_code: document.getElementById('sel_sem').value,
+            year_level: document.getElementById('sel_year').value
+        };
+        const resp = await fetch('/api/save_manual_schedule', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const result = await resp.json();
+        alert(result.message);
+        if(result.success) await renderGrid(payload.room_id);
     }
+
+    const colorPalette = ['#16a085', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#f39c12', '#d35400', '#c0392b'];
+    function getSubjectColor(code) {
+        let hash = 0;
+        for (let i = 0; i < code.length; i++) { hash = code.charCodeAt(i) + ((hash << 5) - hash); }
+        return colorPalette[Math.abs(hash) % colorPalette.length];
+    }
+
+    // This function grabs the selected TEXT (not just the value) from dropdowns
+function updateSummary() {
+    const progSelect = document.getElementById('sel_prog');
+    const yearSelect = document.getElementById('sel_year');
+    const subjSelect = document.getElementById('sel_subj');
+    const facSelect = document.getElementById('sel_faculty');
+
+    // 1. Update Program/Year
+    if (progSelect.selectedIndex > 0) {
+        const progName = progSelect.options[progSelect.selectedIndex].text;
+        const yearVal = yearSelect.value || '';
+        document.getElementById('sum_prog').innerText = `${progName} ${yearVal}`;
+    }
+
+    // 2. Update Subject Name (Grabs the text like "ETHICS/ETIKA")
+    if (subjSelect.selectedIndex > 0) {
+        document.getElementById('sum_course').innerText = subjSelect.options[subjSelect.selectedIndex].text;
+    } else {
+        document.getElementById('sum_course').innerText = '-';
+    }
+
+    // 3. Update Instructor Name (Grabs the text like "Mrs. Icon Obmerga")
+    if (facSelect.selectedIndex > 0) {
+        document.getElementById('sum_inst').innerText = facSelect.options[facSelect.selectedIndex].text;
+    } else {
+        document.getElementById('sum_inst').innerText = '-';
+    }
+}
+
+// Add "Listeners" so the summary updates the second you click a dropdown
+document.getElementById('sel_prog').addEventListener('change', updateSummary);
+document.getElementById('sel_year').addEventListener('change', updateSummary);
+document.getElementById('sel_subj').addEventListener('change', updateSummary);
+document.getElementById('sel_faculty').addEventListener('change', updateSummary);
 </script>
 {% endblock %}
