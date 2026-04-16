@@ -1,17 +1,490 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
 {% endblock %}
 
 {% block content %}
-<div class="schedule-container">
-    <div class="schedule-header"><h1>SCHEDULE MANAGEMENT: VIEW</h1></div>
+<div class="schedule-page-container">
 
-    <div class="placeholder-box">
-        <i class="fas fa-calendar-check"></i>
-        <h2>Schedule tab is working!</h2>
-        <p>This section will display the list of all finalized and published schedules.</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div id="flash-container">
+        {% for category, message in messages %}
+        <div class="flash-alert flash-{{ category }}">
+            <i class="fas {% if category == 'success' %}fa-check-circle{% else %}fa-exclamation-circle{% endif %}"></i>
+            {{ message }}
+            <span class="flash-close" onclick="this.parentElement.remove()">&times;</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <!-- SECTION 1: SCHEDULE STATUS -->
+    <div class="landing-section">
+        <h2 class="section-header-text">SCHEDULE LIST</h2>
+
+        <div class="filter-bar-maroon">
+            <div class="filter-inputs-left">
+                <div class="filter-unit">
+                    <label>PROGRAM</label>
+                    <select><option>Type...</option></select>
+                </div>
+                <div class="filter-unit">
+                    <label>ACAD YEAR</label>
+                    <select>
+                        {% for ay in acad_years %}
+                        <option value="{{ ay.academicyearid }}">{{ ay.academicyearid }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-unit">
+                    <label>SEMESTER</label>
+                    <select><option value="A">1st semester</option></select>
+                </div>
+            </div>
+            <div class="filter-bar-right-controls">
+                <button class="btn-sort-recent">
+                    <i class="fas fa-sort-amount-down"></i> Most recent
+                </button>
+                <button class="btn-export-white">
+                    <i class="fas fa-external-link-alt"></i> Export
+                </button>
+            </div>
+        </div>
+
+        <table class="status-monitor-table">
+            <thead>
+                <tr>
+                    <th>Program</th>
+                    <th>Year level</th>
+                    <th>Acad year</th>
+                    <th>Semester</th>
+                    <th>Date Generated</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stat in status_list %}
+                <tr>
+                    <td>{{ stat.programcode }}</td>
+                    <td>{{ stat.yearlevel }}</td>
+                    <td>{{ stat.academicyearid }}</td>
+                    <td>{{ stat.programcode }}-{{ stat.yearlevel }}</td>
+                    <td>{{ stat.datecreated.strftime('%m-%d-%y %H:%M:%S') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="status-footer-buttons">
+            <button class="btn-white-maroon"><i class="fas fa-file-alt"></i> See requests</button>
+            <a href="{{ url_for('manual_schedule_editor') }}" class="btn-white-maroon">
+                <i class="fas fa-edit"></i> Go to Manual Editor
+            </a>
+            <a href="{{ url_for('schedule_generation') }}" class="btn-maroon-solid">
+                <i class="fas fa-play"></i> Go to Schedule Generation
+            </a>
+        </div>
+    </div>
+
+    <!-- SECTION 2: SUBJECT OFFERINGS -->
+    <div class="landing-section" style="margin-top: 50px;">
+        <div class="offerings-top-row">
+            <h2 class="section-header-text">SUBJECT OFFERINGS</h2>
+            <div class="pill-import-group" onclick="openImportModal()">
+                <div class="upload-file-label">Upload file</div>
+                <button type="button" class="import-schedule-btn">
+                    <i class="fas fa-arrow-circle-down"></i> IMPORT SCHEDULE
+                </button>
+            </div>
+        </div>
+
+        <div class="filter-bar-minimal">
+            <div class="search-section">
+                <div class="search-pill">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="Search...">
+                </div>
+            </div>
+            <div class="filter-controls">
+                <div class="control-unit">
+                    <label>ACADEMIC YEAR</label>
+                    <select id="view_ay" onchange="refreshOfferings()">
+                        {% for ay in acad_years %}
+                        <option value="{{ ay.academicyearid }}" {% if loop.first %}selected{% endif %}>
+                            {{ ay.academicyearid }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="control-unit">
+                    <label>SEMESTER</label>
+                    <select id="view_sem" onchange="refreshOfferings()">
+                        <option value="A">1ST SEMESTER</option>
+                        <option value="B">2ND SEMESTER</option>
+                    </select>
+                </div>
+                <div class="control-unit">
+                    <label>PROGRAM</label>
+                    <select id="view_prog" onchange="refreshOfferings()">
+                        {% for p in programs %}
+                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="control-unit">
+                    <label>YEAR LEVEL</label>
+                    <select id="view_yl" onchange="refreshOfferings()">
+                        <option value="1">1ST YEAR</option>
+                        <option value="2">2ND YEAR</option>
+                        <option value="3">3RD YEAR</option>
+                        <option value="4">4TH YEAR</option>
+                    </select>
+                </div>
+                <div class="control-unit">
+                    <label>INSTRUCTOR</label>
+                    <select id="view_instructor"><option value="">ALL</option></select>
+                </div>
+            </div>
+        </div>
+
+        <div class="view-control-row">
+            <div class="view-toggles">
+                <button class="toggle-btn active" id="btn-calendar" onclick="setView('calendar')">
+                    <i class="fas fa-calendar-alt"></i> Calendar view
+                </button>
+                <button class="toggle-btn" id="btn-table" onclick="setView('table')">
+                    <i class="fas fa-table"></i> Table view
+                </button>
+            </div>
+            <div class="right-controls-row">
+                <button class="btn-sort-ascending">
+                    <i class="fas fa-sort-alpha-down"></i> Ascending
+                </button>
+                <button class="btn-export-outline-dark">
+                    <i class="fas fa-external-link-alt"></i> Export Schedule
+                </button>
+            </div>
+        </div>
+
+        <div class="schedule-grid-card">
+            <div class="grid-card-header" id="gridLabel">
+                BACHELOR OF ELEMENTARY EDUCATION (BEED) - Year 1 | A.Y 2025-2026 | 1ST SEMESTER
+            </div>
+
+            <!-- CALENDAR VIEW -->
+            <div id="calendarViewWrapper">
+                <div class="timetable-wrapper" id="gridWrapper" style="position: relative;">
+                    <table class="timetable-grid" id="mainTimetable">
+                        <thead>
+                            <tr>
+                                <th class="time-header">TIME</th>
+                                <th>MONDAY</th>
+                                <th>TUESDAY</th>
+                                <th>WEDNESDAY</th>
+                                <th>THURSDAY</th>
+                                <th>FRIDAY</th>
+                                <th>SATURDAY</th>
+                            </tr>
+                        </thead>
+                     <tbody>
+    {% for t in ['7:30','8:30','9:30','10:30','11:30','12:30','1:30','2:30','3:30','4:30','5:30','6:30','7:30','8:30'] %}
+    <tr>
+        <td class="time-cell">{{ t }}{{ ' PM' if t|int < 7 or t == '12:30' else ' AM' }}</td>
+        <td></td><td></td><td></td><td></td><td></td><td></td>
+    </tr>
+    {% endfor %}
+</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TABLE VIEW -->
+            <div id="tableViewWrapper">
+                <table class="offerings-list-table" id="offeringsTable">
+                    <thead>
+                        <tr>
+                            <th class="col-instructor">INSTRUCTOR</th>
+                            <th class="col-code">SUBJECT<br>CODE</th>
+                            <th class="col-desc">SUBJECT DESCRIPTION</th>
+                            <th class="col-num">LEC<br>HOURS</th>
+                            <th class="col-num">LAB<br>HOURS</th>
+                            <th class="col-num">CREDIT<br>UNITS</th>
+                            <th class="col-course">COURSE</th>
+                            <th class="col-time">TIME</th>
+                            <th class="col-hours">HOURS</th>
+                            <th class="col-days">DAYS</th>
+                            <th class="col-room">ROOM</th>
+                        </tr>
+                    </thead>
+                    <tbody id="offeringsTableBody">
+                        <tr class="table-empty-row">
+                            <td colspan="11">No data loaded. Select a program and year level.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- IMPORT MODAL -->
+<div id="importScheduleModal" class="import-modal-overlay">
+    <div class="import-modal-content">
+        <div class="import-modal-header">
+            <h3><i class="fas fa-file-import"></i> Import Schedule File</h3>
+            <span class="close-modal" onclick="closeImportModal()">&times;</span>
+        </div>
+        <form action="/academic/schedule/import" method="POST" enctype="multipart/form-data">
+            <div class="modal-body">
+                <div class="form-section">
+                    <h4>1. Setup Schedule Environment</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>ACADEMIC YEAR</label>
+                            <select name="ay_id">
+                                {% for ay in acad_years %}
+                                <option value="{{ ay.academicyearid }}">{{ ay.academicyearid }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>SEMESTER</label>
+                            <select name="semester_type">
+                                <option value="A">1st Semester</option>
+                                <option value="B">2nd Semester</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-section">
+                    <h4>2. CSV Column Format</h4>
+                    <div class="format-hint">
+                        Instructor, SubjectCode, SubjectName, LectureHours, LaboratoryHours, CreditUnits, Program, YearLevel, Hours, Day/s, Time, Room
+                    </div>
+                </div>
+                <div class="form-section">
+                    <h4>3. Upload CSV File</h4>
+                    <div class="upload-zone">
+                        <input type="file" name="file" accept=".csv" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-confirm-import">
+                    <i class="fas fa-check-circle"></i> Confirm &amp; Import
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    /* ---- Modal ---- */
+    function openImportModal()  { document.getElementById('importScheduleModal').style.display = 'flex'; }
+    function closeImportModal() { document.getElementById('importScheduleModal').style.display = 'none'; }
+
+    /* ---- View toggle ---- */
+    let currentView = 'calendar';
+    function setView(type) {
+        currentView = type;
+        document.getElementById('btn-calendar').classList.toggle('active', type === 'calendar');
+        document.getElementById('btn-table').classList.toggle('active', type === 'table');
+        document.getElementById('calendarViewWrapper').style.display = type === 'calendar' ? 'block' : 'none';
+        document.getElementById('tableViewWrapper').style.display    = type === 'table'    ? 'block' : 'none';
+        renderCurrentView(window._lastSessions || []);
+    }
+
+    /* ---- Color palette for pills ---- */
+    const colorPalette = ['#3498db','#e67e22','#27ae60','#9b59b6','#e74c3c','#16a085','#d35400'];
+    function getSubjectColor(code) {
+        let h = 0;
+        for (let i = 0; i < code.length; i++) h = code.charCodeAt(i) + ((h << 5) - h);
+        return colorPalette[Math.abs(h) % colorPalette.length];
+    }
+
+    /* ---- Day abbreviation helper ---- */
+    function dayAbbr(day) {
+        const map = { Monday:'MON', Tuesday:'TUE', Wednesday:'WED',
+                      Thursday:'THU', Friday:'FRI', Saturday:'SAT', Sunday:'SUN' };
+        return map[day] || day;
+    }
+
+    /*
+     * TIME GRID SETUP
+     * The timetable rows are rendered for times: 7:30, 8:30, 9:30 ... 4:30
+     * Each row represents ONE hour.  Each row has offsetHeight = rowHeight.
+     * The DB gives us starttimeid / endtimeid (timeslot IDs).
+     * We also receive start_time / end_time as "HH:MM" strings from the API.
+     * We use start_time / end_time to position pills accurately.
+     *
+     * Grid origin:  7:30  (= 450 minutes from midnight)
+     * One pixel per minute * (rowHeight / 60)
+     */
+    const GRID_ORIGIN_MINS = 7 * 60 + 30;   // 7:30 AM in minutes
+
+    function timeStrToMins(t) {
+        // t is "HH:MM"
+        if (!t) return null;
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+    }
+
+    /* ---- Render calendar pills ---- */
+    function renderCalendar(sessions) {
+        const wrapper = document.getElementById('gridWrapper');
+        const table   = document.getElementById('mainTimetable');
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+
+        const days      = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const firstCell = table.querySelector('tbody td:nth-child(2)');
+        const timeCol   = table.querySelector('.time-cell');
+        const thead     = table.querySelector('thead');
+        if (!firstCell || !timeCol) return;
+
+        const colWidth   = firstCell.offsetWidth;
+        const rowHeight  = firstCell.offsetHeight;   // height of one 1-hour row
+        const leftOffset = timeCol.offsetWidth;
+        const topOffset  = thead.offsetHeight;
+        const pxPerMin   = rowHeight / 60;           // pixels per minute
+
+        sessions.forEach(sess => {
+            const dayIdx = days.indexOf(sess.daydesc);
+            if (dayIdx < 0) return;
+
+            const startMins = timeStrToMins(sess.start_time);
+            const endMins   = timeStrToMins(sess.end_time);
+            if (startMins === null || endMins === null) return;
+
+            const durationMins  = endMins - startMins;
+            const offsetFromTop = (startMins - GRID_ORIGIN_MINS) * pxPerMin;
+
+            const pill = document.createElement('div');
+            pill.className = 'schedule-pill';
+            pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
+            pill.style.width  = (colWidth - 8) + 'px';
+            pill.style.height = (durationMins * pxPerMin - 4) + 'px';
+            pill.style.left   = (leftOffset + dayIdx * colWidth + 4) + 'px';
+            pill.style.top    = (topOffset + offsetFromTop + 2) + 'px';
+
+            pill.innerHTML =
+                '<div class="pill-subject">'    + (sess.subjectname || sess.subjectcode) + '</div>' +
+                '<div class="pill-instructor">' + (sess.instructor  || 'TBA')           + '</div>' +
+                '<div class="pill-room">Room '  + (sess.roomname    || '—')             + '</div>';
+            wrapper.appendChild(pill);
+        });
+    }
+
+    /* ---- Format "HH:MM" → "7:30 AM" ---- */
+    function fmtTime(t) {
+        if (!t) return '—';
+        const [hh, mm] = t.split(':').map(Number);
+        const suffix = hh >= 12 ? 'PM' : 'AM';
+        const h12    = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+        return h12 + ':' + String(mm).padStart(2, '0') + ' ' + suffix;
+    }
+
+    /* ---- Render table rows — grouped by subject+instructor ---- */
+    function renderTable(sessions) {
+        const tbody = document.getElementById('offeringsTableBody');
+        const prog  = document.getElementById('view_prog').value;
+        const yl    = document.getElementById('view_yl').value;
+        const courseLabel = prog + ' ' + yl;
+
+        if (!sessions.length) {
+            tbody.innerHTML = '<tr class="table-empty-row"><td colspan="11">No schedule data found for the selected filters.</td></tr>';
+            return;
+        }
+
+        /* Group multi-day entries into a single row */
+        const grouped = {};
+        sessions.forEach(sess => {
+            const key = sess.subjectcode + '||' + (sess.instructor || 'TBA');
+            if (!grouped[key]) {
+                grouped[key] = Object.assign({}, sess, { daysArr: [], timeStr: '—' });
+            }
+            grouped[key].daysArr.push(dayAbbr(sess.daydesc));
+            if (sess.start_time && sess.end_time) {
+                grouped[key].timeStr = fmtTime(sess.start_time) + ' - ' + fmtTime(sess.end_time);
+            }
+        });
+
+        tbody.innerHTML = Object.values(grouped).map(sess => {
+            const lec   = sess.lecturehours    || 0;
+            const lab   = sess.laboratoryhours || 0;
+            const units = sess.creditunits     || 0;
+            const hrs   = sess.hours           || (lec + lab);
+            const days  = [...new Set(sess.daysArr)].join('/\n');
+
+            return '<tr>' +
+                '<td class="td-instructor">' + (sess.instructor  || 'TBA') + '</td>' +
+                '<td class="td-code">'       + (sess.subjectcode || '—')   + '</td>' +
+                '<td class="td-desc">'       + (sess.subjectname || '—')   + '</td>' +
+                '<td class="td-num">'        + lec                          + '</td>' +
+                '<td class="td-num">'        + lab                          + '</td>' +
+                '<td class="td-num">'        + units                        + '</td>' +
+                '<td class="td-course">'     + courseLabel                  + '</td>' +
+                '<td class="td-time">'       + sess.timeStr                 + '</td>' +
+                '<td class="td-num">'        + hrs                          + '</td>' +
+                '<td class="td-days">'       + days                         + '</td>' +
+                '<td class="td-room">'       + (sess.roomname || '—')       + '</td>' +
+                '</tr>';
+        }).join('');
+    }
+
+    /* ---- Dispatch ---- */
+    function renderCurrentView(sessions) {
+        if (currentView === 'calendar') renderCalendar(sessions);
+        else renderTable(sessions);
+    }
+
+    /* ---- Main fetch ---- */
+    async function refreshOfferings() {
+        const prog   = document.getElementById('view_prog').value;
+        const yl     = document.getElementById('view_yl').value;
+        const sem    = document.getElementById('view_sem').value;
+        // view_ay now holds the academicyearid directly e.g. "AY2526"
+        const ayCode = document.getElementById('view_ay').value;   // "AY2526"
+
+        // Build a display label from AY code: "AY2526" -> "2025-2026"
+        let ayDisplay = ayCode;
+        if (ayCode.startsWith('AY') && ayCode.length === 6) {
+            const y1 = '20' + ayCode.slice(2, 4);
+            const y2 = '20' + ayCode.slice(4, 6);
+            ayDisplay = y1 + '-' + y2;
+        }
+
+        const progOpt  = document.getElementById('view_prog');
+        const progText = progOpt.options[progOpt.selectedIndex].text;
+        const semLabel = sem === 'A' ? '1ST SEMESTER' : sem === 'B' ? '2ND SEMESTER' : 'SUMMER';
+        document.getElementById('gridLabel').innerText =
+            progText.toUpperCase() + ' (' + prog + ') - Year ' + yl +
+            ' | A.Y ' + ayDisplay + ' | ' + semLabel;
+
+        try {
+            const resp = await fetch(
+                '/api/get_offerings_schedule?program=' + encodeURIComponent(prog) +
+                '&year_level=' + encodeURIComponent(yl) +
+                '&semester='   + encodeURIComponent(sem) +
+                '&ay='         + encodeURIComponent(ayCode)
+            );
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const sessions = await resp.json();
+            window._lastSessions = sessions;
+            renderCurrentView(sessions);
+        } catch (e) {
+            console.error('Failed to load schedule data:', e);
+        }
+    }
+
+    /* ---- Init ---- */
+    window.onload = function () {
+        document.getElementById('calendarViewWrapper').style.display = 'block';
+        document.getElementById('tableViewWrapper').style.display    = 'none';
+
+        // Populate academic year dropdown from the server-rendered options
+        // (already done via Jinja) — just refresh
+        refreshOfferings();
+    };
+</script>
 {% endblock %}

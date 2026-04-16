@@ -60,7 +60,7 @@
 
                 <div class="form-row-editor">
                     <div style="flex: 1;">
-                        <label>YEAR</label>
+                        <label>YEAR LEVEL</label>
                         <select id="sel_year" class="input-maroon" onchange="triggerCascade()">
                             <option value="" disabled selected>-Select-</option>
                             <option value="1">1st</option><option value="2">2nd</option>
@@ -70,7 +70,7 @@
                     <div style="flex: 1;">
                         <label>CURRICULUM</label>
                         <input type="hidden" id="curr_id_hidden">
-                        <div id="display_curr" class="read-only-maroon">Waiting...</div>
+                        <div id="display_curr" class="read-only-maroon">------</div>
                     </div>
                 </div>
 
@@ -234,31 +234,66 @@
     }
 
     async function triggerCascade() {
-        const ay = document.getElementById('sel_ay').value;
-        const sem = document.getElementById('sel_sem').value;
-        const progSelect = document.getElementById('sel_prog');
-        const prog = progSelect.value;
-        const year = document.getElementById('sel_year').value;
-        if(ay && sem) document.getElementById('summary_period').innerText = `A.Y ${ay} | ${sem === 'A' ? '1ST' : '2ND'} SEMESTER`;
-        document.getElementById('sum_prog').innerText = prog ? `${prog} ${year || ''}` : '-';
-        if (prog) {
-            try {
-                const resp = await fetch(`/api/get_curriculum?program=${prog}`);
-                const data = await resp.json();
-                if (data.success) {
-                    document.getElementById('display_curr').innerText = data.label;
-                    document.getElementById('curr_id_hidden').value = data.curriculum_id;
-                    if (year && sem) {
-                        const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}`);
-                        const sData = await sResp.json();
-                        const subjSelect = document.getElementById('sel_subj');
-                        subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
-                        sData.subjects.forEach(s => { subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`; });
-                    }
+    const ay = document.getElementById('sel_ay').value;
+    const sem = document.getElementById('sel_sem').value;
+    const progSelect = document.getElementById('sel_prog');
+    const prog = progSelect.value;
+    const year = document.getElementById('sel_year').value;
+    
+    const currDisplay = document.getElementById('display_curr');
+    const currHidden = document.getElementById('curr_id_hidden');
+    const subjSelect = document.getElementById('sel_subj');
+
+    // --- 1. RESET EVERYTHING FIRST ---
+    // This ensures old data disappears before we even try to fetch new data
+    currDisplay.innerText = "---";
+    currHidden.value = "";
+    subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
+    
+    // Clear the summary card too
+    document.getElementById('sum_course').innerText = '-';
+    document.getElementById('sum_prog').innerText = prog ? progSelect.options[progSelect.selectedIndex].text : '-';
+
+    // 2. Check if we have enough info to proceed
+    if (!prog) return;
+
+    try {
+        const resp = await fetch(`/api/get_curriculum?program=${prog}`);
+        const data = await resp.json();
+
+        if (data.success) {
+            // Update labels with the new curriculum
+            currDisplay.innerText = data.label;
+            currHidden.value = data.curriculum_id;
+
+            // 3. If we have Year and Sem, fetch the subjects
+            if (year && sem) {
+                const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}`);
+                const sData = await sResp.json();
+                
+                subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
+                if (sData.subjects && sData.subjects.length > 0) {
+                    sData.subjects.forEach(s => {
+                        subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`;
+                    });
+                } else {
+                    subjSelect.innerHTML = '<option value="">No subjects found</option>';
                 }
-            } catch (e) { console.error(e); } updateSummary(); 
+            }
+        } else {
+            // 4. If API says success: false (No curriculum for this program)
+            currDisplay.innerText = "No Curriculum";
+            currHidden.value = "";
+            subjSelect.innerHTML = '<option value="">-- No Curriculum --</option>';
         }
+    } catch (e) {
+        console.error("Fetch Error:", e);
+        currDisplay.innerText = "Error loading";
     }
+
+    // Update the final summary box text
+    if(typeof updateSummary === "function") updateSummary();
+}
 
     async function selectRoom(roomId, roomName, element) {
         document.querySelectorAll('.room-pill').forEach(el => el.classList.remove('active-room'));

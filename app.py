@@ -495,10 +495,268 @@ def room():
     except Exception as e:
         return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[])
 
+# Insert these routes into the "ACADEMIC HEAD SPECIFIC ROUTES" section of your app.py
+
 @app.route('/schedule')
 def schedule():
     if 'loggedin' not in session: return redirect(url_for('login'))
-    return render_template('academic/schedule.html')
+ 
+    programs   = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+ 
+    status_query = """
+        SELECT DISTINCT
+            p.programname,
+            p.programcode,
+            sec.yearlevel,
+            ay.academicyearid,
+            s.datecreated
+        FROM schedule s
+        JOIN sections sec   ON s.sectionid         = sec.sectionid
+        JOIN cohort c       ON sec.cohortid         = c.cohortid
+        JOIN programs p     ON c.programcode        = p.programcode
+        JOIN semester sem   ON s.semesterid         = sem.semesterid
+        JOIN academicyear ay ON sem.academicyearid  = ay.academicyearid
+        ORDER BY s.datecreated DESC
+    """
+    status_list = query_db(status_query)
+ 
+    return render_template('academic/schedule.html',
+                           programs=programs,
+                           acad_years=acad_years,
+                           status_list=status_list)
+
+@app.route('/api/get_offerings_schedule')
+def get_offerings_schedule():
+    prog     = request.args.get('program')
+    yl       = request.args.get('year_level')
+    sem_type = request.args.get('semester')
+    ay       = request.args.get('ay')
+ 
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # First, try to get from the normalized active schedule
+        cur.execute("""
+            SELECT
+                cs.subjectcode, subj.subjectname, subj.lecturehours, subj.laboratoryhours,
+                subj.creditunits, (subj.lecturehours + subj.laboratoryhours) AS hours,
+                f.lastname || ', ' || f.firstname AS instructor, COALESCE(r.roomname, 'TBA') AS roomname,
+                ss.daydesc, ts_start.timevalue AS start_time, ts_end.timevalue AS end_time
+            FROM schedule_version sv
+            JOIN schedule sg ON sv.scheduleid = sg.scheduleid
+            JOIN schedule_sessions ss ON sv.versionid = ss.versionid
+            JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject subj ON cs.subjectcode = subj.subjectcode
+            JOIN faculty f ON sg.employeenumber = f.employeenumber
+            JOIN semester sem ON sg.semesterid = sem.semesterid
+            JOIN sections sec ON sg.sectionid = sec.sectionid
+            JOIN cohort coh ON sec.cohortid = coh.cohortid
+            JOIN timeslot ts_start ON ss.starttimeid = ts_start.timeid
+            JOIN timeslot ts_end ON ss.endtimeid = ts_end.timeid
+            LEFT JOIN room r ON ss.roomid = r.roomid
+            WHERE sv.status = 'Published' AND coh.programcode ILIKE %s 
+            AND sec.yearlevel = %s AND sem.semestertype = %s AND sem.academicyearid = %s
+        """, (prog, yl, sem_type, ay))
+        rows = cur.fetchall()
+
+        # If empty, search in historical_data table
+        if not rows:
+            cur.execute("""
+                SELECT 
+                    "Subject Code" as subjectcode, "Subject Name" as subjectname,
+                    "Lecture Hours" as lecturehours, "Laboratory Hours" as laboratoryhours,
+                    "Credit Units" as creditunits, "Hours" as hours,
+                    "Instructor" as instructor, "Room" as roomname,
+                    "Day/s" as daydesc, "Time" as raw_time
+                FROM historical_data
+                WHERE "Program" ILIKE %s AND "Year Level" = %s 
+                AND semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)
+            """, (prog, yl, ay, sem_type))
+            hist_rows = cur.fetchall()
+            
+            # Helper to split "7:30 - 10:30" into start/end for the calendar
+            for row in hist_rows:
+                raw = row['raw_time']
+                if ' - ' in raw:
+                    parts = raw.split(' - ')
+                    row['start_time'] = parts[0]
+                    row['end_time'] = parts[1]
+                rows.append(row)
+
+        result = []
+        for row in rows:
+            d = dict(row)
+            if d.get('start_time'): d['start_time'] = str(d['start_time'])[:5]
+            if d.get('end_time'): d['end_time'] = str(d['end_time'])[:5]
+            result.append(d)
+        return jsonify(result)
+    finally:
+        cur.close(); conn.close()
+ 
+@app.route('/academic/schedule/import', methods=['POST'])
+def import_schedule():
+    if session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
+ 
+    file     = request.files.get('file')
+    ay_id    = request.form.get('ay_id')
+    sem_type = request.form.get('semester_type')
+ 
+    if not file:
+        flash("No file selected.", "error")
+        return redirect(url_for('schedule'))
+ 
+    # Day mapping
+    _SINGLE = {'M':'Monday','MON':'Monday','T':'Tuesday','TUE':'Tuesday','W':'Wednesday','WED':'Wednesday','TH':'Thursday','THU':'Thursday','F':'Friday','FRI':'Friday','S':'Saturday','SAT':'Saturday','SUN':'Sunday'}
+    _COMPOUND = {'MTH':['M','TH'],'MW':['M','W'],'TF':['T','F'],'WTH':['W','TH'],'WSAT':['W','SAT'],'MWF':['M','W','F'],'MWTH':['M','W','TH']}
+ 
+    def resolve_days(raw):
+        raw = raw.strip().upper().replace(' ', '')
+        if '/' in raw:
+            result = []
+            for part in raw.split('/'): result.extend(resolve_days(part))
+            return result
+        if raw in _COMPOUND: return [_SINGLE[t] for t in _COMPOUND[raw]]
+        if raw in _SINGLE: return [_SINGLE[raw]]
+        return []
+ 
+    def parse_time_range(raw):
+        import re
+        s = raw.strip()
+        parts = s.split(' - ', 1) if ' - ' in s else re.split(r'(?<=\d)-(?=\d)', s)
+        if len(parts) != 2: return None, None
+        def parse_raw_time(t_str):
+            t_str = t_str.strip().upper()
+            is_pm, is_am = 'PM' in t_str, 'AM' in t_str
+            t_clean = t_str.replace('PM','').replace('AM','').replace(' ','')
+            if ':' not in t_clean: return None, None, False, False
+            hh, mm = map(int, t_clean.split(':', 1))
+            return hh, mm, is_am, is_pm
+        h1, m1, am1, pm1 = parse_raw_time(parts[0])
+        h2, m2, am2, pm2 = parse_raw_time(parts[1])
+        if h1 is None or h2 is None: return None, None
+        def adjust_hour(h, is_am, is_pm):
+            if is_pm and h < 12: return h + 12
+            if is_am and h == 12: return 0
+            if not is_am and not is_pm and 1 <= h <= 6: return h + 12
+            return h
+        h1_adj, h2_adj = adjust_hour(h1, am1, pm1), adjust_hour(h2, am2, pm2)
+        if h2_adj < h1_adj and h2_adj < 12: h2_adj += 12
+        return f"{h1_adj:02d}:{m1:02d}:00", f"{h2_adj:02d}:{m2:02d}:00"
+ 
+    stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+    csv_input = csv.DictReader(stream)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    new_faculty_cache = {}
+ 
+    try:
+        # 1. Resolve semester
+        cur.execute("SELECT semesterid, isactive, academicyearid FROM semester WHERE academicyearid = %s AND semestertype = %s", (ay_id, sem_type))
+        sem_res = cur.fetchone()
+        if not sem_res:
+            flash(f"Semester {ay_id} not found.", "error")
+            return redirect(url_for('schedule'))
+            
+        sem_id = sem_res['semesterid']
+        
+        # Determine if active/future
+        target_year_str = sem_res['academicyearid']
+        target_start_year = int("20" + target_year_str[2:4])
+        current_calendar_year = datetime.now().year
+        
+        is_active_sem = True if (sem_res['isactive'] or target_start_year >= (current_calendar_year - 1)) else False
+ 
+        cur.execute("SELECT specializationid FROM specialization LIMIT 1")
+        def_spec = cur.fetchone()['specializationid'] if cur.rowcount > 0 else 1
+        cur.execute("SELECT employeetypeid FROM employeetype LIMIT 1")
+        def_type = cur.fetchone()['employeetypeid'] if cur.rowcount > 0 else 1
+        cur.execute("SELECT employeenumber FROM faculty WHERE employeenumber ~ '^EMP\\d+$' ORDER BY employeenumber DESC LIMIT 1")
+        last_emp = cur.fetchone()
+        current_emp_seq = int(last_emp['employeenumber'].replace('EMP', '')) if last_emp else 0
+ 
+        import_count, skip_count, session_count, hist_count = 0, 0, 0, 0
+ 
+        for row in csv_input:
+            row = {k: (v.strip() if v else '') for k, v in row.items()}
+            inst, s_code = row.get('Instructor', ''), (row.get('SubjectCode') or row.get('Subject Code') or row.get('SubjectCo'))
+            s_name = (row.get('SubjectName') or row.get('Subject Name'))
+            prog, y_l_raw = row.get('Program', ''), (row.get('YearLevel') or row.get('Year Level'))
+            days_s, t_s, r_n = (row.get('Day/s') or row.get('Days')), row.get('Time', ''), row.get('Room', '')
+            lec_h = (row.get('LectureHours') or row.get('Lecture Hour'))
+            lab_h = (row.get('LaboratoryHours') or row.get('Laboratory Hour'))
+            c_u = (row.get('CreditUnits') or row.get('Credit Units'))
+ 
+            if not s_code or not prog or not y_l_raw:
+                skip_count += 1
+                continue
+            year_lvl = int(y_l_raw) if str(y_l_raw).isdigit() else 0
+ 
+            emp_num = None
+            if inst and inst.upper() not in ['TBA', '']:
+                if ',' in inst: ln, fn = [p.strip() for p in inst.split(',', 1)]
+                else: 
+                    parts = inst.split()
+                    fn, ln = parts[0] if parts else 'Unknown', parts[-1] if len(parts) > 1 else 'Unknown'
+                cur.execute("SELECT employeenumber FROM faculty WHERE lastname ILIKE %s AND firstname ILIKE %s", (ln, fn + '%'))
+                db_res = cur.fetchone()
+                if db_res: emp_num = db_res['employeenumber']
+                elif inst in new_faculty_cache: emp_num = new_faculty_cache[inst]
+                else:
+                    current_emp_seq += 1
+                    emp_num = f"EMP{current_emp_seq:03d}"
+                    cur.execute("INSERT INTO faculty (employeenumber, firstname, lastname, email, contactnumber, specializationid, employeetypeid, employeestatus) VALUES (%s, %s, %s, %s, '000', %s, %s, 'Temporary')", (emp_num, fn, ln, f"{emp_num.lower()}@pup.edu.ph", def_spec, def_type))
+                    new_faculty_cache[inst] = emp_num
+ 
+            if is_active_sem:
+                # FIX 1: Use ILIKE for Program and Subject code (Fixes BSArch vs BSARCH)
+                cur.execute("""
+                    SELECT cs.curriculumsubjectid, 
+                    (SELECT sec2.sectionid FROM sections sec2 
+                     JOIN cohort coh2 ON sec2.cohortid = coh2.cohortid 
+                     WHERE coh2.programcode ILIKE %s AND sec2.yearlevel = %s LIMIT 1) AS sectionid 
+                    FROM curriculumsubject cs 
+                    JOIN curriculum cur2 ON cs.curriculumid = cur2.curriculumid 
+                    WHERE cur2.programcode ILIKE %s AND cs.subjectcode ILIKE %s AND cs.yearlevel = %s LIMIT 1
+                """, (prog, year_lvl, prog, s_code, year_lvl))
+                
+                mapping = cur.fetchone()
+                if not mapping or not mapping['sectionid']:
+                    skip_count += 1
+                    continue
+                
+                cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid", (mapping['curriculumsubjectid'], mapping['sectionid'], emp_num, sem_id))
+                cur.execute("INSERT INTO schedule_version (scheduleid, version, status) VALUES (%s, 1, 'Published') RETURNING versionid", (cur.fetchone()['scheduleid'],))
+                v_id, import_count = cur.fetchone()['versionid'], import_count + 1
+                
+                # FIX 2: Flexible Room Matching (Matches "208" to "LQ208")
+                cur.execute("SELECT roomid FROM room WHERE roomname ILIKE %s OR roomname ILIKE %s", (r_n, f"%{r_n}%"))
+                r_res = cur.fetchone()
+                r_id = r_res['roomid'] if r_res else None
+                
+                t_ranges = [t.strip() for t in t_s.split('/') if t.strip()]
+                for i, day in enumerate(resolve_days(days_s)):
+                    ts, te = parse_time_range(t_ranges[min(i, len(t_ranges)-1)] if t_ranges else '')
+                    if ts and te:
+                        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (ts,))
+                        t1 = cur.fetchone()
+                        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (te,))
+                        t2 = cur.fetchone()
+                        if t1 and t2 and t2['timeid'] > t1['timeid']:
+                            cur.execute("INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)", (v_id, day, t1['timeid'], t2['timeid'], r_id))
+                            session_count += 1
+            else:
+                cur.execute("INSERT INTO historical_data (\"Instructor\", \"Subject Code\", \"Subject Name\", \"Lecture Hours\", \"Laboratory Hours\", \"Credit Units\", \"Program\", \"Year Level\", \"Hours\", \"Day/s\", \"Time\", \"Room\", semesterid, academicyearid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (inst, s_code, s_name, int(lec_h or 0), int(lab_h or 0), int(c_u or 0), prog, year_lvl, int(row.get('Hours') or 0), days_s, t_s, r_n, sem_id, ay_id))
+                hist_count += 1
+        conn.commit()
+        flash("Import successful!", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Import failed: {str(e)}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('schedule'))
 
 @app.route('/schedule/generation')
 def schedule_generation():
@@ -1807,31 +2065,27 @@ def activate_period():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""
-            SELECT SemStartDate, SemEndDate FROM Semester 
-            WHERE AcademicYearID = %s AND SemesterType = %s
-        """, (ay_id, sem_type))
-        res = cur.fetchone()
-
-        if not res or not res[0] or not res[1]:
-            flash("Activation Failed: Please set the start and end dates for this semester first.", "error")
-            return redirect(url_for('admin_settings'))
-
-        sem_start, sem_end = res[0], res[1]
-
-        # This is line 1699 - Ensure it is exactly 8 spaces (or 2 tabs) from the left
-        if not (sem_start <= today <= sem_end):
-            flash(f"Activation Denied: Today's date ({today}) is outside the range of {sem_start} to {sem_end}.", "error")
-            return redirect(url_for('admin_settings'))
-
+        # 1. Reset everything to false first (Ensures only ONE is active)
         cur.execute("UPDATE AcademicYear SET IsActive = FALSE")
         cur.execute("UPDATE Semester SET IsActive = FALSE")
         
+        # 2. Set the chosen ones to true
         cur.execute("UPDATE AcademicYear SET IsActive = TRUE WHERE AcademicYearID = %s", (ay_id,))
         cur.execute("UPDATE Semester SET IsActive = TRUE WHERE AcademicYearID = %s AND SemesterType = %s", (ay_id, sem_type))
         
+        # 3. Check dates for warning only
+        cur.execute("SELECT SemStartDate, SemEndDate FROM Semester WHERE AcademicYearID = %s AND SemesterType = %s", (ay_id, sem_type))
+        res = cur.fetchone()
+        
         conn.commit()
-        flash(f"System period updated to {ay_id} - {sem_type} Successfully!", "success")
+
+        if not res or not res[0] or not res[1]:
+            flash(f"{ay_id} Activated, but please set dates to show on dashboard.", "warning")
+        elif not (res[0] <= today <= res[1]):
+            flash(f"{ay_id} Activated! Note: Today is outside the set date range.", "info")
+        else:
+            flash(f"System period updated to {ay_id} Successfully!", "success")
+
     except Exception as e:
         conn.rollback()
         flash(f"Error: {str(e)}", "error")

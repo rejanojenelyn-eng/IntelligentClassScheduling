@@ -1,0 +1,674 @@
+.schedule-page-container { padding: 30px 40px; background-color: #fff; }
+.section-header-text { color: #630100; font-weight: 900; font-size: 1.5rem; margin-bottom: 15px; letter-spacing: 0.5px; }
+
+/* =====================================================
+   1. SCHEDULE STATUS — MAROON BAR
+   ===================================================== */
+.filter-bar-maroon {
+    background-color: #630100;
+    padding: 10px 16px;
+    border-radius: 4px 4px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: white;
+}
+.filter-inputs-left { display: flex; gap: 16px; align-items: center; }
+.filter-unit { display: flex; flex-direction: column; }
+.filter-unit label { font-size: 0.6rem; font-weight: 800; margin-bottom: 3px; color: rgba(255,255,255,0.75); text-transform: uppercase; letter-spacing: 0.5px; }
+.filter-unit select {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    min-width: 120px;
+}
+.filter-unit select option { background: #630100; color: white; }
+
+.filter-bar-right-controls { display: flex; align-items: center; gap: 10px; }
+
+/* "Most recent" sort button */
+.btn-sort-recent {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.4);
+    color: white;
+    padding: 5px 12px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+}
+.btn-sort-recent:hover { background: rgba(255,255,255,0.15); }
+
+/* Export button in maroon bar */
+.btn-export-white {
+    background: white;
+    border: none;
+    color: #630100;
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: opacity 0.15s;
+}
+.btn-export-white:hover { opacity: 0.85; }
+
+/* =====================================================
+   2. SCHEDULE STATUS TABLE
+   ===================================================== */
+.status-monitor-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #e0e0e0;
+    border-top: none;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+.status-monitor-table thead tr { background-color: #f8eaea; }
+.status-monitor-table th {
+    color: #630100;
+    padding: 11px 16px;
+    font-weight: 900;
+    font-size: 0.82rem;
+    text-align: center;
+    border-bottom: 2px solid #e0c0c0;
+}
+.status-monitor-table td {
+    padding: 10px 16px;
+    text-align: center;
+    font-size: 0.84rem;
+    font-weight: 600;
+    border-bottom: 1px solid #f0e0e0;
+    color: #333;
+}
+.status-monitor-table tbody tr:hover { background-color: #fff5f5; }
+/* Alternating row highlight like reference */
+.status-monitor-table tbody tr:nth-child(odd) { background-color: #fff; }
+.status-monitor-table tbody tr:nth-child(even) { background-color: #fdf5f5; }
+
+/* =====================================================
+   3. STATUS FOOTER BUTTONS
+   ===================================================== */
+.status-footer-buttons {
+    display: flex;
+    justify-content: flex-end; /* Aligns to the right */
+    align-items: center;
+    gap: 15px; /* Spacing between buttons */
+    margin-top: 20px;
+    width: 100%;
+}
+
+.btn-white-maroon {
+    background: white;
+    border: 1.5px solid #630100;
+    color: #630100;
+    padding: 8px 18px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+}
+.btn-white-maroon:hover { background: #fdf0f0; }
+
+.btn-maroon-solid {
+    background: #630100;
+    border: none;
+    color: white;
+    padding: 9px 20px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+.btn-maroon-solid:hover { background: #440000; }
+.btn-maroon-solid i { font-size: 0.85rem; }
+
+/* =====================================================
+   4. SUBJECT OFFERINGS TOP ROW
+   ===================================================== */
+.offerings-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 8px;
+}
+
+/* Import schedule pill */
+.pill-import-group {
+    display: flex;
+    align-items: center;
+    border: 1.5px solid #ddd;
+    border-radius: 30px;
+    overflow: hidden;
+    height: 38px;
+    cursor: pointer;
+    transition: box-shadow 0.15s;
+}
+.pill-import-group:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.upload-file-label {
+    background: #efefef;
+    padding: 0 18px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: #666;
+    border-right: 1px solid #ddd;
+}
+.import-schedule-btn {
+    background: #630100;
+    color: white;
+    border: none;
+    height: 100%;
+    padding: 0 18px;
+    font-weight: 800;
+    font-size: 0.78rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+}
+.import-schedule-btn:hover { background: #440000; }
+
+/* =====================================================
+   5. MINIMALISTIC FILTER BAR (SUBJECT OFFERINGS)
+   ===================================================== */
+.filter-bar-minimal {
+    background-color: #630100;
+    padding: 12px 20px;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-top: 0;
+}
+
+.search-section { display: flex; align-items: center; }
+.search-pill {
+    background: white;
+    display: flex;
+    align-items: center;
+    padding: 6px 14px;
+    border-radius: 20px;
+    width: 240px;
+    gap: 8px;
+}
+.search-pill i { color: #630100; font-size: 0.85rem; }
+.search-pill input { border: none; outline: none; width: 100%; font-size: 0.82rem; background: transparent; }
+
+.filter-controls { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.control-unit { display: flex; flex-direction: column; }
+.control-unit label {
+    color: rgba(255,255,255,0.8);
+    font-size: 0.58rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.control-unit select {
+    background: rgba(255,255,255,0.12);
+    border: 1.5px solid rgba(255,255,255,0.5);
+    color: white;
+    padding: 5px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    min-width: 100px;
+    cursor: pointer;
+}
+.control-unit select option { background: #630100; color: white; }
+#view_prog { min-width: 180px; }
+
+/* =====================================================
+   6. VIEW CONTROLS ROW (Calendar / Table toggle)
+   ===================================================== */
+.view-control-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 10px 0 6px 0;
+}
+.view-toggles { display: flex; gap: 4px; }
+
+.toggle-btn {
+    background: transparent;
+    border: 1.5px solid #ccc;
+    color: #666;
+    padding: 6px 14px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+.toggle-btn:hover { border-color: #630100; color: #630100; }
+.toggle-btn.active {
+    background: #630100;
+    border-color: #630100;
+    color: white;
+}
+
+.right-controls-row { display: flex; gap: 8px; align-items: center; }
+
+.btn-sort-ascending {
+    background: transparent;
+    border: 1.5px solid #ccc;
+    color: #555;
+    padding: 6px 13px;
+    border-radius: 5px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+.btn-sort-ascending:hover { border-color: #630100; color: #630100; }
+
+.btn-export-outline-dark {
+    background: transparent;
+    border: 1.5px solid #630100;
+    color: #630100;
+    padding: 6px 14px;
+    border-radius: 5px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+    text-decoration: none;
+}
+.btn-export-outline-dark:hover { background: #fdf0f0; }
+
+/* =====================================================
+   7. SCHEDULE GRID CARD & TIMETABLE
+   ===================================================== */
+.schedule-grid-card {
+    border: 2px solid #630100;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+.grid-card-header {
+    background: #630100;
+    color: white;
+    padding: 11px 16px;
+    text-align: center;
+    font-weight: 900;
+    font-size: 0.9rem;
+    letter-spacing: 0.3px;
+    border-bottom: none;
+}
+
+.timetable-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+/* TIME column */
+.timetable-grid .time-header,
+.timetable-grid .time-cell {
+    background: #630100 !important;
+    color: white !important;
+    font-weight: 900;
+    text-align: center;
+    font-size: 0.78rem;
+    width: 70px;
+    min-width: 70px;
+}
+
+/* Day header cells */
+.timetable-grid thead tr th {
+    background: #440000;
+    color: white;
+    padding: 10px 6px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.15);
+    letter-spacing: 0.5px;
+}
+.timetable-grid thead tr th.time-header {
+    background: #630100;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+/* Body cells */
+.timetable-grid td {
+    border: 1px solid #e8d0d0;
+    height: 52px;
+    vertical-align: top;
+    position: relative;
+}
+.timetable-grid td.time-cell {
+    border: 1px solid rgba(255,255,255,0.2);
+    vertical-align: middle;
+    text-align: center;
+    padding: 0;
+}
+
+/* =====================================================
+   8. SCHEDULE PILLS (subject blocks on timetable)
+   ===================================================== */
+.schedule-pill {
+    position: absolute;
+    border-radius: 5px;
+    padding: 5px 7px;
+    color: white;
+    cursor: pointer;
+    overflow: hidden;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+    transition: opacity 0.15s, transform 0.1s;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+}
+.schedule-pill:hover { opacity: 0.9; transform: scale(1.01); }
+.schedule-pill .pill-subject {
+    font-weight: 900;
+    font-size: 0.65rem;
+    line-height: 1.2;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.schedule-pill .pill-instructor {
+    font-size: 0.58rem;
+    opacity: 0.9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.schedule-pill .pill-room {
+    font-size: 0.55rem;
+    opacity: 0.85;
+    margin-top: 1px;
+}
+
+/* =====================================================
+   9. IMPORT MODAL
+   ===================================================== */
+.import-modal-overlay {
+    position: fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.55); z-index:9999;
+    display:none; align-items:center; justify-content:center;
+}
+.import-modal-content {
+    background:white; width:520px; border-radius:8px;
+    overflow:hidden; box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+}
+.import-modal-header {
+    background:#630100; color:white; padding:14px 20px;
+    display:flex; justify-content:space-between; align-items:center;
+}
+.import-modal-header h3 { font-size: 1rem; font-weight: 800; margin: 0; }
+.close-modal {
+    font-size: 1.4rem; cursor: pointer; opacity: 0.8;
+    line-height: 1; transition: opacity 0.15s;
+}
+.close-modal:hover { opacity: 1; }
+
+.modal-body { padding: 28px; display:flex; flex-direction:column; gap:22px; }
+.form-section h4 {
+    color: #630100; font-size: 0.9rem; border-bottom: 1.5px solid #f0e0e0;
+    padding-bottom: 6px; margin-bottom: 14px; font-weight: 800;
+}
+.form-row { display: flex; gap: 18px; }
+.form-group { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.form-group label { font-size: 0.72rem; font-weight: 800; color: #555; text-transform: uppercase; }
+.form-group select {
+    padding: 8px 10px; border: 1.5px solid #ddd; border-radius: 4px;
+    background: #f9f9f9; font-size: 0.82rem; transition: border-color 0.15s;
+}
+.form-group select:focus { border-color: #630100; outline: none; }
+
+.format-hint {
+    background: #f7f7f7; padding: 12px 14px; border: 1px solid #e8e8e8;
+    font-size: 0.73rem; color: #555; line-height: 1.6; border-radius: 5px;
+    font-family: monospace;
+}
+.upload-zone {
+    border: 2px dashed #c0a0a0; padding: 22px; text-align: center;
+    background: #fff8f8; border-radius: 6px; transition: border-color 0.15s;
+}
+.upload-zone:hover { border-color: #630100; }
+.upload-zone input { font-size: 0.82rem; }
+
+.btn-confirm-import {
+    background:#630100; color:white; border:none; width:100%; padding:13px;
+    border-radius:5px; font-weight:800; cursor:pointer; font-size: 0.95rem;
+    margin-top: 6px; transition: background 0.15s; letter-spacing: 0.3px;
+}
+.btn-confirm-import:hover { background: #440000; }
+
+/* =====================================================
+   10. TIMETABLE WRAPPER (for absolutely positioned pills)
+   ===================================================== */
+.timetable-wrapper {
+    position: relative;
+    overflow-x: auto;
+}
+
+/* =====================================================
+   11. TABLE VIEW — Subject Offerings List Table
+   ===================================================== */
+#tableViewWrapper { display: none; overflow-x: auto; }
+#calendarViewWrapper { display: block; }
+
+.offerings-list-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+/* Table header — dark maroon matching reference */
+.offerings-list-table thead tr {
+    background-color: #630100;
+}
+.offerings-list-table thead th {
+    color: white;
+    padding: 10px 8px;
+    font-weight: 900;
+    font-size: 0.7rem;
+    text-align: center;
+    border-right: 1px solid rgba(255,255,255,0.18);
+    border-bottom: none;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    line-height: 1.3;
+    vertical-align: middle;
+}
+.offerings-list-table thead th:last-child { border-right: none; }
+
+/* Column widths — matching reference proportions */
+.offerings-list-table thead th.col-instructor {
+    min-width: 155px;
+    text-align: left;
+    padding-left: 14px;
+}
+.offerings-list-table thead th.col-code {
+    width: 80px;
+    min-width: 80px;
+}
+.offerings-list-table thead th.col-desc {
+    min-width: 190px;
+    text-align: left;
+    padding-left: 10px;
+}
+.offerings-list-table thead th.col-num {
+    width: 48px;
+    min-width: 48px;
+}
+.offerings-list-table thead th.col-course {
+    width: 70px;
+    min-width: 70px;
+}
+.offerings-list-table thead th.col-time {
+    width: 110px;
+    min-width: 110px;
+}
+.offerings-list-table thead th.col-hours {
+    width: 52px;
+    min-width: 52px;
+}
+.offerings-list-table thead th.col-days {
+    width: 58px;
+    min-width: 58px;
+}
+.offerings-list-table thead th.col-room {
+    width: 54px;
+    min-width: 54px;
+}
+
+/* Table body rows */
+.offerings-list-table tbody tr {
+    border-bottom: 1px solid #eedede;
+    transition: background 0.1s;
+}
+.offerings-list-table tbody tr:nth-child(odd)  { background-color: #fff; }
+.offerings-list-table tbody tr:nth-child(even) { background-color: #fdf6f6; }
+.offerings-list-table tbody tr:hover           { background-color: #f8eaea; }
+
+.offerings-list-table tbody td {
+    padding: 8px 8px;
+    text-align: center;
+    color: #2c0000;
+    font-weight: 500;
+    font-size: 0.8rem;
+    border-right: 1px solid #f0e0e0;
+    vertical-align: middle;
+}
+.offerings-list-table tbody td:last-child { border-right: none; }
+
+/* Left-aligned text columns */
+.offerings-list-table tbody td.td-instructor {
+    text-align: left;
+    padding-left: 14px;
+    font-weight: 600;
+    color: #1a0000;
+    font-size: 0.8rem;
+}
+.offerings-list-table tbody td.td-desc {
+    text-align: left;
+    padding-left: 10px;
+    font-weight: 500;
+    font-size: 0.8rem;
+}
+
+/* Subject code — maroon bold */
+.offerings-list-table tbody td.td-code {
+    font-weight: 800;
+    color: #630100;
+    font-size: 0.76rem;
+    letter-spacing: 0.2px;
+}
+
+/* Numeric cells */
+.offerings-list-table tbody td.td-num {
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: #333;
+}
+
+/* Days cell — stacked like "MON/\nTHU" */
+.offerings-list-table tbody td.td-days {
+    font-weight: 800;
+    font-size: 0.74rem;
+    color: #630100;
+    white-space: pre-line;
+    line-height: 1.4;
+}
+
+/* Time cell */
+.offerings-list-table tbody td.td-time {
+    white-space: nowrap;
+    font-size: 0.77rem;
+    font-weight: 600;
+    color: #2c0000;
+}
+
+/* Course cell */
+.offerings-list-table tbody td.td-course {
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: #333;
+}
+
+/* Room cell */
+.offerings-list-table tbody td.td-room {
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: #333;
+}
+
+/* Empty state */
+.table-empty-row td {
+    padding: 30px !important;
+    text-align: center !important;
+    color: #aaa !important;
+    font-style: italic;
+    font-weight: 400 !important;
+    border-right: none !important;
+}
+.schedule-pill {
+    padding: 2px 4px !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pill-subject {
+    font-size: 9px !important; /* Smaller font */
+    font-weight: bold;
+    line-height: 1.1;
+    margin-bottom: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; /* Shows max 2 lines */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.pill-instructor, .pill-room {
+    font-size: 8px !important;
+    opacity: 0.9;
+    white-space: nowrap;
+}
