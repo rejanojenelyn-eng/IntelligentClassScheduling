@@ -193,8 +193,8 @@
 
                         <ul class="sub-menu {{ 'show-submenu' if 'schedule' in request.path }}" id="scheduleSubMenu">
                             <li>
-                                <a href="{{ url_for('schedule_generation') }}"
-                                    class="sub-menu-link {{ 'active' if request.path == url_for('schedule_generation') }}">
+                                <a href="{{ url_for('schedule_generation_view') }}"
+                                    class="sub-menu-link {{ 'active' if request.path == url_for('schedule_generation_view') }}">
                                     <i class="fas fa-play"></i> Generate Schedule
                                 </a>
                             </li>
@@ -244,12 +244,18 @@
     </div>
 
     <script>
-        // Use friend's DOMContentLoaded for safety
         document.addEventListener('DOMContentLoaded', function() {
             const sidebar = document.getElementById("sidebar");
             const toggleBtn = document.getElementById("toggleBtn");
-            if(toggleBtn) {
-                toggleBtn.onclick = () => { sidebar.classList.toggle("collapsed"); };
+            // Restore collapse state across page navigations
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                sidebar.classList.add('collapsed');
+            }
+            if (toggleBtn) {
+                toggleBtn.onclick = () => {
+                    sidebar.classList.toggle("collapsed");
+                    localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+                };
             }
         });
 

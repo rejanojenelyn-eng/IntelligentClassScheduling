@@ -2,6 +2,71 @@
 .section-header-text { color: #630100; font-weight: 900; font-size: 1.5rem; margin-bottom: 15px; letter-spacing: 0.5px; }
 
 /* =====================================================
+   IMPORT NOTIFICATION POPUP
+   ===================================================== */
+.notif-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: notifFadeIn 0.25s ease;
+}
+.notif-overlay.notif-fade-out {
+    animation: notifFadeOut 0.3s ease forwards;
+}
+@keyframes notifFadeIn  { from { opacity:0; } to { opacity:1; } }
+@keyframes notifFadeOut { from { opacity:1; } to { opacity:0; } }
+
+.notif-popup {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    padding: 28px 32px 24px;
+    max-width: 480px;
+    width: 90%;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    position: relative;
+    animation: notifSlideUp 0.25s ease;
+}
+@keyframes notifSlideUp { from { transform: translateY(24px); opacity:0; } to { transform: translateY(0); opacity:1; } }
+
+.notif-icon { font-size: 2.2rem; line-height: 1; flex-shrink: 0; margin-top: 2px; }
+.notif-success { color: #27ae60; }
+.notif-error   { color: #e74c3c; }
+
+.notif-body { flex: 1; }
+.notif-title {
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: #2c3e50;
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+}
+.notif-message {
+    font-size: 0.87rem;
+    color: #555;
+    line-height: 1.5;
+}
+.notif-close-btn {
+    position: absolute;
+    top: 12px; right: 14px;
+    background: none;
+    border: none;
+    font-size: 1rem;
+    color: #aaa;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.notif-close-btn:hover { color: #630100; background: rgba(99,1,0,0.08); }
+
+/* =====================================================
    1. SCHEDULE STATUS — MAROON BAR
    ===================================================== */
 .filter-bar-maroon {
@@ -295,6 +360,23 @@
 }
 .btn-sort-ascending:hover { border-color: #630100; color: #630100; }
 
+/* Table-view sort buttons */
+.btn-sort-tbl {
+    background: transparent;
+    border: 1.5px solid #888;
+    color: #555;
+    padding: 5px 11px;
+    border-radius: 5px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s;
+}
+.btn-sort-tbl:hover, .btn-sort-tbl.active { border-color: #630100; color: #630100; background: rgba(99,1,0,0.06); }
+
 .btn-export-outline-dark {
     background: transparent;
     border: 1.5px solid #630100;
@@ -387,39 +469,51 @@
 .schedule-pill {
     position: absolute;
     border-radius: 5px;
-    padding: 5px 7px;
+    padding: 4px 6px;
     color: white;
     cursor: pointer;
     overflow: hidden;
     z-index: 10;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
-    transition: opacity 0.15s, transform 0.1s;
+    min-width: 60px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.22);
+    transition: opacity 0.15s, transform 0.1s, box-shadow 0.1s;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 1px;
 }
-.schedule-pill:hover { opacity: 0.9; transform: scale(1.01); }
+.schedule-pill:hover {
+    opacity: 1;
+    transform: scale(1.03);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    z-index: 50;
+}
 .schedule-pill .pill-subject {
-    font-weight: 900;
-    font-size: 0.65rem;
+    font-weight: 800;
+    font-size: 0.63rem;
     line-height: 1.2;
-    text-transform: uppercase;
-    white-space: nowrap;
+    white-space: normal;
     overflow: hidden;
-    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    line-clamp: 3;
 }
 .schedule-pill .pill-instructor {
-    font-size: 0.58rem;
-    opacity: 0.9;
+    font-size: 0.6rem;
+    opacity: 0.92;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-weight: 600;
 }
 .schedule-pill .pill-room {
-    font-size: 0.55rem;
+    font-size: 0.57rem;
     opacity: 0.85;
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* =====================================================
@@ -671,4 +765,27 @@
     font-size: 8px !important;
     opacity: 0.9;
     white-space: nowrap;
+}
+/* Add to your CSS file */
+.timetable-grid tbody tr {
+    height: 35px; /* Adjust this to make the grid more compact or spacious */
+}
+
+.schedule-pill {
+    font-size: 10px;
+    padding: 2px;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border: 1px solid rgba(0,0,0,0.05);
+}
+
+.pill-subject {
+    font-weight: bold;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2; /* Wrap subject names to 2 lines */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1;
+    font-size: 9px;
 }

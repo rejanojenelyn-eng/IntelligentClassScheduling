@@ -13,32 +13,51 @@ app = Flask(__name__)
 app.secret_key = 'pup_lopez_super_secret_key' # Required for Login Sessions
 
 # --- CONTEXT PROCESSOR FOR DYNAMIC ACADEMIC YEAR ---
+# --- CONTEXT PROCESSOR FOR DYNAMIC ACADEMIC YEAR ---
 @app.context_processor
 def inject_active_period():
     try:
         today = date.today()
         conn = get_db_connection()
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # New Query: Automatically find the semester encompassing today's date
+        # 1. FIND the semester that SHOULD be active based on Today's Date
         cur.execute("""
-            SELECT ay.YearStart, ay.YearEnd, s.SemesterType, ay.AcademicYearID
-            FROM Semester s 
-            JOIN AcademicYear ay ON s.AcademicYearID = ay.AcademicYearID 
-            WHERE %s BETWEEN s.SemStartDate AND s.SemEndDate
+            SELECT s.semesterid, s.semestertype, ay.academicyearid, ay.yearstart, ay.yearend
+            FROM semester s 
+            JOIN academicyear ay ON s.academicyearid = ay.academicyearid 
+            WHERE %s BETWEEN s.semstartdate AND s.semenddate
             LIMIT 1
         """, (today,))
-        result = cur.fetchone()
+        actual = cur.fetchone()
         
-        if result:
-            y_start, y_end, s_type, ay_id = result[0], result[1], result[2], result[3]
-            ay_label = f"A.Y {y_start} - {y_end}"
-            sem_label = "1ST SEMESTER" if s_type == 'A' else "2ND SEMESTER" if s_type == 'B' else "SUMMER"
-        else:
-            ay_label, sem_label, ay_id = "NOT SET", "NOT SET", None
+        if actual:
+            # 2. AUTO-SYNC: Set this specific semester as the ONLY active one
+            cur.execute("UPDATE academicyear SET isactive = FALSE")
+            cur.execute("UPDATE semester SET isactive = FALSE")
+            cur.execute("UPDATE academicyear SET isactive = TRUE WHERE academicyearid = %s", (actual['academicyearid'],))
+            cur.execute("UPDATE semester SET isactive = TRUE WHERE semesterid = %s", (actual['semesterid'],))
+            conn.commit()
             
-        cur.close()
-        conn.close()
+            ay_label = f"A.Y {actual['yearstart']} - {actual['yearend']}"
+            s_type = actual['semestertype']
+            sem_label = "1ST SEMESTER" if s_type == 'A' else "2ND SEMESTER" if s_type == 'B' else "SUMMER"
+            ay_id = actual['academicyearid']
+        else:
+            # Fallback if today doesn't fall in any range
+            cur.execute("""
+                SELECT s.semestertype, ay.yearstart, ay.yearend, ay.academicyearid 
+                FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid 
+                WHERE s.isactive = TRUE LIMIT 1
+            """)
+            res = cur.fetchone()
+            if res:
+                ay_label, ay_id = f"A.Y {res['yearstart']} - {res['yearend']}", res['academicyearid']
+                sem_label = "1ST SEMESTER" if res['semestertype'] == 'A' else "2ND SEMESTER" if res['semestertype'] == 'B' else "SUMMER"
+            else:
+                ay_label, sem_label, ay_id = "NOT SET", "NOT SET", None
+            
+        cur.close(); conn.close()
         return {'current_ay_label': ay_label, 'current_sem_label': sem_label, 'current_ay_id': ay_id}
     except:
         return {'current_ay_label': "ERROR", 'current_sem_label': "ERROR", 'current_ay_id': None}
@@ -500,10 +519,22 @@ def room():
 @app.route('/schedule')
 def schedule():
     if 'loggedin' not in session: return redirect(url_for('login'))
- 
+
+    from datetime import date as _date
     programs   = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
     acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
- 
+
+    # Detect current semester for pre-selecting dropdowns
+    today = _date.today()
+    active_sem_res = query_db("""
+        SELECT s.semestertype, ay.academicyearid
+        FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE %s BETWEEN s.semstartdate AND s.semenddate
+        LIMIT 1
+    """, [today])
+    active_sem_type = active_sem_res[0]['semestertype'] if active_sem_res else 'B'
+    active_ay       = active_sem_res[0]['academicyearid'] if active_sem_res else (acad_years[0]['academicyearid'] if acad_years else '')
+
     status_query = """
         SELECT DISTINCT
             p.programname,
@@ -520,242 +551,730 @@ def schedule():
         ORDER BY s.datecreated DESC
     """
     status_list = query_db(status_query)
- 
+
     return render_template('academic/schedule.html',
                            programs=programs,
                            acad_years=acad_years,
-                           status_list=status_list)
+                           status_list=status_list,
+                           active_sem_type=active_sem_type,
+                           active_ay=active_ay)
 
 @app.route('/api/get_offerings_schedule')
 def get_offerings_schedule():
-    prog     = request.args.get('program')
-    yl       = request.args.get('year_level')
-    sem_type = request.args.get('semester')
-    ay       = request.args.get('ay')
- 
+    import re
+    prog = request.args.get('program')
+    yl   = request.args.get('year_level')
+    sem  = request.args.get('semester')
+    ay   = request.args.get('ay')
+
+    print(f"\n[DEBUG get_offerings_schedule] prog={prog!r} yl={yl!r} sem={sem!r} ay={ay!r}")
+
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # First, try to get from the normalized active schedule
+        # ── 1. Try normalized schedule_sessions first ─────────────────────
         cur.execute("""
             SELECT
-                cs.subjectcode, subj.subjectname, subj.lecturehours, subj.laboratoryhours,
-                subj.creditunits, (subj.lecturehours + subj.laboratoryhours) AS hours,
-                f.lastname || ', ' || f.firstname AS instructor, COALESCE(r.roomname, 'TBA') AS roomname,
-                ss.daydesc, ts_start.timevalue AS start_time, ts_end.timevalue AS end_time
+                sub.subjectcode,
+                sub.subjectname,
+                COALESCE(f.lastname || ', ' || f.firstname || COALESCE(' ' || f.middlename, ''), 'TBA') AS instructor,
+                COALESCE(r.roomname, 'TBA')                         AS roomname,
+                ss.daydesc,
+                TO_CHAR(ts_s.timevalue, 'HH24:MI')                 AS start_time,
+                TO_CHAR(ts_e.timevalue, 'HH24:MI')                 AS end_time,
+                COALESCE(sub.lecturehours,    0)                    AS lecturehours,
+                COALESCE(sub.laboratoryhours, 0)                    AS laboratoryhours,
+                COALESCE(sub.creditunits,     0)                    AS creditunits,
+                (COALESCE(sub.lecturehours,0) + COALESCE(sub.laboratoryhours,0)) AS total_hours
             FROM schedule_version sv
-            JOIN schedule sg ON sv.scheduleid = sg.scheduleid
-            JOIN schedule_sessions ss ON sv.versionid = ss.versionid
-            JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN subject subj ON cs.subjectcode = subj.subjectcode
-            JOIN faculty f ON sg.employeenumber = f.employeenumber
-            JOIN semester sem ON sg.semesterid = sem.semesterid
-            JOIN sections sec ON sg.sectionid = sec.sectionid
-            JOIN cohort coh ON sec.cohortid = coh.cohortid
-            JOIN timeslot ts_start ON ss.starttimeid = ts_start.timeid
-            JOIN timeslot ts_end ON ss.endtimeid = ts_end.timeid
-            LEFT JOIN room r ON ss.roomid = r.roomid
-            WHERE sv.status = 'Published' AND coh.programcode ILIKE %s 
-            AND sec.yearlevel = %s AND sem.semestertype = %s AND sem.academicyearid = %s
-        """, (prog, yl, sem_type, ay))
-        rows = cur.fetchall()
+            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
+            JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub           ON cs.subjectcode = sub.subjectcode
+            JOIN sections sec          ON sc.sectionid = sec.sectionid
+            JOIN cohort co             ON sec.cohortid = co.cohortid
+            LEFT JOIN faculty f        ON sc.employeenumber = f.employeenumber
+            LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+            LEFT JOIN room r           ON ss.roomid = r.roomid
+            LEFT JOIN timeslot ts_s    ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e    ON ss.endtimeid   = ts_e.timeid
+            WHERE UPPER(co.programcode) = UPPER(%s)
+              AND sec.yearlevel = %s
+              AND sc.semesterid = (
+                  SELECT semesterid FROM semester
+                  WHERE semestertype = %s AND academicyearid = %s LIMIT 1
+              )
+            ORDER BY ts_s.timevalue NULLS LAST
+        """, (prog, int(yl), sem, ay))
+        normalized_rows = cur.fetchall()
+        print(f"[DEBUG] normalized_rows count={len(normalized_rows)}")
+        for r in normalized_rows[:3]:
+            print(f"  norm: subj={r['subjectcode']!r} start={r['start_time']!r} day={r['daydesc']!r}")
 
-        # If empty, search in historical_data table
-        if not rows:
-            cur.execute("""
-                SELECT 
-                    "Subject Code" as subjectcode, "Subject Name" as subjectname,
-                    "Lecture Hours" as lecturehours, "Laboratory Hours" as laboratoryhours,
-                    "Credit Units" as creditunits, "Hours" as hours,
-                    "Instructor" as instructor, "Room" as roomname,
-                    "Day/s" as daydesc, "Time" as raw_time
-                FROM historical_data
-                WHERE "Program" ILIKE %s AND "Year Level" = %s 
-                AND semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)
-            """, (prog, yl, ay, sem_type))
-            hist_rows = cur.fetchall()
-            
-            # Helper to split "7:30 - 10:30" into start/end for the calendar
-            for row in hist_rows:
-                raw = row['raw_time']
-                if ' - ' in raw:
-                    parts = raw.split(' - ')
-                    row['start_time'] = parts[0]
-                    row['end_time'] = parts[1]
-                rows.append(row)
+        # ── 2. historical_data — always query; covers unmatched faculty and past semesters ─
+        # Build a set of subject codes already in normalized results to avoid duplicates
+        cur.execute("""
+            SELECT
+                "Subject Code"      AS subjectcode,
+                "Subject Name"      AS subjectname,
+                "Instructor"        AS instructor,
+                "Room"              AS roomname,
+                "Day/s"             AS raw_days,
+                "Time"              AS raw_time,
+                "Lecture Hours"     AS lecturehours,
+                "Laboratory Hours"  AS laboratoryhours,
+                "Credit Units"      AS creditunits,
+                "Hours"             AS total_hours
+            FROM historical_data
+            WHERE REGEXP_REPLACE("Program", '\\s+\\d+$', '') ILIKE %s
+              AND CAST("Year Level" AS TEXT) = %s
+              AND academicyearid = %s
+              AND (
+                semesterid = (
+                    SELECT semesterid FROM semester
+                    WHERE semestertype = %s AND academicyearid = %s
+                    LIMIT 1
+                )
+                OR semesterid IS NULL
+              )
+        """, (prog, str(yl), ay, sem, ay))
+ 
+        raw_rows = cur.fetchall()
+        print(f"[DEBUG] historical raw_rows count={len(raw_rows)}")
+        for r in raw_rows[:3]:
+            print(f"  hist: subj={r['subjectcode']!r} raw_days={r['raw_days']!r} raw_time={r['raw_time']!r} ay={r.get('total_hours')!r}")
 
+        # ── Greedy day tokenizer — longest token wins, handles all formats ──
+        # Order matters: longer tokens must come before shorter prefixes
+        _DAY_TOKENS = [
+            ('WEDNESDAY', 'Wednesday'), ('THURSDAY',  'Thursday'),
+            ('SATURDAY',  'Saturday'),  ('SATURDAY',  'Saturday'),
+            ('TUESDAY',   'Tuesday'),   ('SUNDAY',    'Sunday'),
+            ('MONDAY',    'Monday'),    ('FRIDAY',    'Friday'),
+            ('THURS',     'Thursday'),  ('THUR',      'Thursday'),
+            ('TUES',      'Tuesday'),   ('WED',       'Wednesday'),
+            ('THU',       'Thursday'),  ('SAT',       'Saturday'),
+            ('SUN',       'Sunday'),    ('MON',       'Monday'),
+            ('TUE',       'Tuesday'),   ('FRI',       'Friday'),
+            ('TH',        'Thursday'),  ('M',         'Monday'),
+            ('T',         'Tuesday'),   ('W',         'Wednesday'),
+            ('F',         'Friday'),    ('S',         'Saturday'),
+        ]
+
+        def resolve_days(raw):
+            raw = raw.strip().upper()
+            raw = re.sub(r'[^A-Z/]', '', raw)   # strip digits, spaces, etc.
+            if not raw:
+                return []
+            # Slash-separated → recurse each segment
+            if '/' in raw:
+                result = []
+                for part in raw.split('/'):
+                    result.extend(resolve_days(part))
+                return result
+            # Greedy left-to-right tokenize
+            result, s = [], raw
+            while s:
+                for tok, day in _DAY_TOKENS:
+                    if s.startswith(tok):
+                        result.append(day)
+                        s = s[len(tok):]
+                        break
+                else:
+                    s = s[1:]   # skip unrecognised character
+            return result
+
+        def clean_time_str(t):
+            if not t:
+                return None
+            t = str(t).strip().upper()
+            is_pm = 'PM' in t
+            is_am = 'AM' in t
+            t = t.replace('AM', '').replace('PM', '').replace(' ', '')
+            if ':' not in t:
+                t = t.zfill(4)
+                t = t[:2] + ':' + t[2:]
+            parts = t.split(':')
+            try:
+                hh = int(parts[0])
+                mm = int(parts[1][:2]) if len(parts) > 1 else 0
+                if is_pm and hh != 12:
+                    hh += 12
+                elif is_am and hh == 12:
+                    hh = 0   # explicit 12:xx AM → midnight
+                elif not is_pm and not is_am:
+                    if 1 <= hh <= 6:
+                        hh += 12  # 1:00–6:00 no meridiem → PM (13:00–18:00)
+                    # 12 no meridiem stays 12 (noon); 7–11 no meridiem stays AM
+                return f"{hh:02d}:{mm:02d}"
+            except (ValueError, IndexError):
+                return None
+
+        def parse_time_range(raw):
+            s = raw.strip()
+            if not s:
+                return None, None
+            # Try explicit ' - ' separator first
+            if ' - ' in s:
+                parts = s.split(' - ', 1)
+                return clean_time_str(parts[0]), clean_time_str(parts[1])
+            # Split on any '-' that is followed by optional whitespace then a digit
+            # (handles "7:30AM-11:00PM", "7:30-11:00", "7:30 AM-11:00 AM")
+            parts = re.split(r'-(?=\s*\d)', s, maxsplit=1)
+            if len(parts) == 2:
+                return clean_time_str(parts[0]), clean_time_str(parts[1])
+            return None, None
+ 
+        # ── Build output — one record per (subject, day) ─────────────────
         result = []
-        for row in rows:
-            d = dict(row)
-            if d.get('start_time'): d['start_time'] = str(d['start_time'])[:5]
-            if d.get('end_time'): d['end_time'] = str(d['end_time'])[:5]
-            result.append(d)
-        return jsonify(result)
+        for row in raw_rows:
+            raw_days = str(row.get('raw_days') or '').strip()
+            raw_time = str(row.get('raw_time') or '').strip()
+ 
+            full_days  = resolve_days(raw_days)
+            time_parts = [t.strip() for t in raw_time.split('/') if t.strip()]
+ 
+            def _make_row(day_name, t_start, t_end):
+                return {
+                    'subjectcode':     row.get('subjectcode') or '',
+                    'subjectname':     row.get('subjectname') or '',
+                    'instructor':      row.get('instructor')  or 'TBA',
+                    'roomname':        row.get('roomname')    or 'TBA',
+                    'daydesc':         day_name,
+                    'start_time':      t_start,
+                    'end_time':        t_end,
+                    'lecturehours':    row.get('lecturehours')    or 0,
+                    'laboratoryhours': row.get('laboratoryhours') or 0,
+                    'creditunits':     row.get('creditunits')     or 0,
+                    'total_hours':     row.get('total_hours')     or 0,
+                }
+
+            if not full_days:
+                # No day info — still include the row so it appears in the table view
+                t_raw = time_parts[0] if time_parts else ''
+                t_start, t_end = parse_time_range(t_raw) if t_raw else (None, None)
+                result.append(_make_row(None, t_start, t_end))
+                continue
+
+            for i, day_name in enumerate(full_days):
+                t_raw   = time_parts[min(i, len(time_parts) - 1)] if time_parts else ''
+                t_start, t_end = parse_time_range(t_raw)
+                result.append(_make_row(day_name, t_start, t_end))
+
+        # Subjects that have REAL time data in the normalized (schedule_sessions) path
+        norm_subjects_with_time = {r['subjectcode'] for r in normalized_rows if r['start_time']}
+
+        # From normalized: keep only rows that have time data
+        norm_timed = [dict(r) for r in normalized_rows if r['start_time']]
+
+        # From historical: include any subject not already covered by a timed normalized row
+        hist_extra = [row for row in result if row['subjectcode'] not in norm_subjects_with_time]
+
+        # For normalized rows with NO time, keep them only if historical has nothing for that subject
+        hist_subjects = {r['subjectcode'] for r in result}
+        norm_untimed_fallback = [
+            dict(r) for r in normalized_rows
+            if not r['start_time'] and r['subjectcode'] not in hist_subjects
+        ]
+
+        combined = norm_timed + hist_extra + norm_untimed_fallback
+        print(f"[DEBUG] combined={len(combined)} (norm_timed={len(norm_timed)}, hist_extra={len(hist_extra)}, fallback={len(norm_untimed_fallback)})")
+        for c in combined[:3]:
+            print(f"  out: subj={c['subjectcode']!r} day={c['daydesc']!r} start={c['start_time']!r} hours={c['total_hours']!r}")
+        return jsonify(combined)
+ 
+    except Exception as e:
+        print(f"[get_offerings_schedule] ERROR: {e}")
+        import traceback; traceback.print_exc()
+        return jsonify([])
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route('/api/debug_hist')
+def debug_hist():
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute('SELECT academicyearid, semesterid, COUNT(*) as cnt FROM historical_data GROUP BY academicyearid, semesterid ORDER BY academicyearid, semesterid')
+        counts = [dict(r) for r in cur.fetchall()]
+        cur.execute('SELECT DISTINCT "Program", "Year Level", academicyearid, semesterid FROM historical_data WHERE academicyearid = \'AY2425\' ORDER BY "Program", "Year Level"')
+        ay2425 = [dict(r) for r in cur.fetchall()]
+        cur.execute('SELECT semesterid, semestertype, academicyearid FROM semester ORDER BY academicyearid, semestertype')
+        sems = [dict(r) for r in cur.fetchall()]
+        return jsonify({'counts': counts, 'ay2425_programs': ay2425, 'semesters': sems})
     finally:
         cur.close(); conn.close()
- 
+
+@app.route('/api/export_schedule')
+def export_schedule():
+    if session.get('role') not in ('Academic Head', 'Admin'): return redirect(url_for('login'))
+    prog = request.args.get('program', '')
+    yl   = request.args.get('year_level', '')
+    sem  = request.args.get('semester', '')
+    ay   = request.args.get('ay', '')
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # ── 1. Normalized schedule_sessions (current schedule) ────────────
+        norm_filters = []
+        norm_params  = []
+        norm_q = """
+            SELECT
+                COALESCE(f.lastname || ', ' || f.firstname || COALESCE(' ' || f.middlename, ''), 'TBA') AS "Instructor",
+                sub.subjectcode   AS "SubjectCode",
+                sub.subjectname   AS "SubjectName",
+                COALESCE(sub.lecturehours, 0)    AS "LectureHours",
+                COALESCE(sub.laboratoryhours, 0) AS "LaboratoryHours",
+                COALESCE(sub.creditunits, 0)     AS "CreditUnits",
+                co.programcode   AS "Program",
+                sec.yearlevel    AS "YearLevel",
+                (COALESCE(sub.lecturehours,0) + COALESCE(sub.laboratoryhours,0)) AS "Hours",
+                ss.daydesc       AS "Day/s",
+                TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS "Time",
+                COALESCE(r.roomname, 'TBA') AS "Room"
+            FROM schedule_version sv
+            JOIN schedule sc           ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
+            JOIN curriculumsubject cs   ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub            ON cs.subjectcode = sub.subjectcode
+            JOIN sections sec           ON sc.sectionid = sec.sectionid
+            JOIN cohort co              ON sec.cohortid = co.cohortid
+            LEFT JOIN faculty f         ON sc.employeenumber = f.employeenumber
+            LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+            LEFT JOIN room r            ON ss.roomid = r.roomid
+            LEFT JOIN timeslot ts_s     ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e     ON ss.endtimeid   = ts_e.timeid
+        """
+        if prog: norm_filters.append("UPPER(co.programcode) = UPPER(%s)"); norm_params.append(prog)
+        if yl:   norm_filters.append("sec.yearlevel = %s");                 norm_params.append(int(yl))
+        if sem or ay:
+            sem_sub = "SELECT semesterid FROM semester WHERE TRUE"
+            if sem: sem_sub += " AND semestertype = %s"; norm_params.append(sem)
+            if ay:  sem_sub += " AND academicyearid = %s"; norm_params.append(ay)
+            sem_sub += " LIMIT 1"
+            norm_filters.append(f"sc.semesterid = ({sem_sub})")
+        if norm_filters:
+            norm_q += " WHERE " + " AND ".join(norm_filters)
+        norm_q += " ORDER BY f.lastname, sub.subjectcode, ss.daydesc NULLS LAST"
+        cur.execute(norm_q, norm_params)
+        norm_rows = cur.fetchall()
+
+        # ── 2. historical_data fallback ───────────────────────────────────
+        hist_filters = ["TRUE"]
+        hist_params  = []
+        if prog: hist_filters.append('REGEXP_REPLACE("Program", \'\\s+\\d+$\', \'\') ILIKE %s'); hist_params.append(prog)
+        if yl:   hist_filters.append('CAST("Year Level" AS TEXT) = %s'); hist_params.append(str(yl))
+        if ay:   hist_filters.append("academicyearid = %s"); hist_params.append(ay)
+        if sem:
+            hist_filters.append("""semesterid = (
+                SELECT semesterid FROM semester WHERE semestertype = %s
+                AND (%s = '' OR academicyearid = %s) LIMIT 1
+            )""")
+            hist_params.extend([sem, ay, ay])
+        hist_q = """
+            SELECT
+                "Instructor"        AS "Instructor",
+                "Subject Code"      AS "SubjectCode",
+                "Subject Name"      AS "SubjectName",
+                "Lecture Hours"     AS "LectureHours",
+                "Laboratory Hours"  AS "LaboratoryHours",
+                "Credit Units"      AS "CreditUnits",
+                "Program"           AS "Program",
+                "Year Level"        AS "YearLevel",
+                "Hours"             AS "Hours",
+                "Day/s"             AS "Day/s",
+                "Time"              AS "Time",
+                "Room"              AS "Room"
+            FROM historical_data
+            WHERE """ + " AND ".join(hist_filters) + """
+            ORDER BY "Instructor", "Subject Code"
+        """
+        cur.execute(hist_q, hist_params)
+        hist_rows = cur.fetchall()
+
+        # Same logic as API: prefer normalized rows with time, fall back to historical
+        norm_exp_with_time = {r['SubjectCode'] for r in norm_rows if r['Time']}
+        norm_timed_exp     = [r for r in norm_rows if r['Time']]
+        hist_exp_extra     = [r for r in hist_rows if r['SubjectCode'] not in norm_exp_with_time]
+        hist_exp_subjects  = {r['SubjectCode'] for r in hist_rows}
+        norm_untimed_exp   = [r for r in norm_rows if not r['Time'] and r['SubjectCode'] not in hist_exp_subjects]
+        all_rows = norm_timed_exp + hist_exp_extra + norm_untimed_exp
+
+        cols = ["Instructor","SubjectCode","SubjectName","LectureHours","LaboratoryHours",
+                "CreditUnits","Program","YearLevel","Hours","Day/s","Time","Room"]
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(cols)
+        for row in all_rows:
+            writer.writerow([row.get(c) or '' for c in cols])
+
+        prog_label = prog or 'all'
+        filename = f"schedule_{prog_label}_{ay}_{sem}.csv"
+        return Response(output.getvalue(), mimetype='text/csv',
+                        headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
 @app.route('/academic/schedule/import', methods=['POST'])
 def import_schedule():
-    if session.get('role') != 'Academic Head':
-        return redirect(url_for('login'))
- 
-    file     = request.files.get('file')
-    ay_id    = request.form.get('ay_id')
-    sem_type = request.form.get('semester_type')
- 
-    if not file:
-        flash("No file selected.", "error")
-        return redirect(url_for('schedule'))
- 
-    # Day mapping
-    _SINGLE = {'M':'Monday','MON':'Monday','T':'Tuesday','TUE':'Tuesday','W':'Wednesday','WED':'Wednesday','TH':'Thursday','THU':'Thursday','F':'Friday','FRI':'Friday','S':'Saturday','SAT':'Saturday','SUN':'Sunday'}
-    _COMPOUND = {'MTH':['M','TH'],'MW':['M','W'],'TF':['T','F'],'WTH':['W','TH'],'WSAT':['W','SAT'],'MWF':['M','W','F'],'MWTH':['M','W','TH']}
- 
-    def resolve_days(raw):
-        raw = raw.strip().upper().replace(' ', '')
-        if '/' in raw:
-            result = []
-            for part in raw.split('/'): result.extend(resolve_days(part))
+    if session.get('role') != 'Academic Head': return redirect(url_for('login'))
+    file, ay_id, sem_type = request.files.get('file'), request.form.get('ay_id'), request.form.get('semester_type')
+    
+    # HELPER: Converts empty strings or text to 0 for Integer columns
+    def safe_int(val):
+        if not val or str(val).strip() == "": return 0
+        try:
+            # Extract only digits (handles cases like "3 units")
+            numeric_part = ''.join(filter(str.isdigit, str(val)))
+            return int(numeric_part) if numeric_part else 0
+        except: return 0
+
+    DAY_MAP = {
+        'M': 'Monday', 'MON': 'Monday',
+        'T': 'Tuesday', 'TUE': 'Tuesday', 'TUES': 'Tuesday',
+        'W': 'Wednesday', 'WED': 'Wednesday',
+        'TH': 'Thursday', 'THU': 'Thursday', 'THUR': 'Thursday', 'THURS': 'Thursday',
+        'F': 'Friday', 'FRI': 'Friday',
+        'SAT': 'Saturday', 'S': 'Saturday',
+        'SUN': 'Sunday',
+    }
+
+    def parse_days(days_raw):
+        """Handle slash-separated ('M/TH', 'TF/W') and concatenated ('MTH', 'MTHS', 'FSAT') formats."""
+        # Longest-first greedy tokenizer; S=Saturday must come after SAT/SUN
+        _tokens = ['THURS', 'THUR', 'WED', 'SAT', 'SUN', 'THU', 'TH', 'MON', 'TUES', 'TUE', 'FRI', 'M', 'T', 'W', 'F', 'S']
+
+        def _greedy(s):
+            result, s = [], s.upper().strip()
+            while s:
+                for tok in _tokens:
+                    if s.startswith(tok):
+                        result.append(tok)
+                        s = s[len(tok):]
+                        break
+                else:
+                    s = s[1:]
             return result
-        if raw in _COMPOUND: return [_SINGLE[t] for t in _COMPOUND[raw]]
-        if raw in _SINGLE: return [_SINGLE[raw]]
-        return []
- 
-    def parse_time_range(raw):
+
+        if '/' in days_raw:
+            result = []
+            for part in days_raw.split('/'):
+                part = part.strip()
+                if not part:
+                    continue
+                if part.upper() in DAY_MAP:
+                    result.append(part.upper())
+                else:
+                    # e.g. 'TF' or 'MTHS' inside a slash-list
+                    result.extend(_greedy(part))
+            return result
+        return _greedy(days_raw)
+
+    def parse_time_str(t, force_pm=False):
+        """Return HH:MM:SS string from a time token like '07:30', '07:30 AM', '07:30 PM'."""
         import re
-        s = raw.strip()
-        parts = s.split(' - ', 1) if ' - ' in s else re.split(r'(?<=\d)-(?=\d)', s)
-        if len(parts) != 2: return None, None
-        def parse_raw_time(t_str):
-            t_str = t_str.strip().upper()
-            is_pm, is_am = 'PM' in t_str, 'AM' in t_str
-            t_clean = t_str.replace('PM','').replace('AM','').replace(' ','')
-            if ':' not in t_clean: return None, None, False, False
-            hh, mm = map(int, t_clean.split(':', 1))
-            return hh, mm, is_am, is_pm
-        h1, m1, am1, pm1 = parse_raw_time(parts[0])
-        h2, m2, am2, pm2 = parse_raw_time(parts[1])
-        if h1 is None or h2 is None: return None, None
-        def adjust_hour(h, is_am, is_pm):
-            if is_pm and h < 12: return h + 12
-            if is_am and h == 12: return 0
-            if not is_am and not is_pm and 1 <= h <= 6: return h + 12
-            return h
-        h1_adj, h2_adj = adjust_hour(h1, am1, pm1), adjust_hour(h2, am2, pm2)
-        if h2_adj < h1_adj and h2_adj < 12: h2_adj += 12
-        return f"{h1_adj:02d}:{m1:02d}:00", f"{h2_adj:02d}:{m2:02d}:00"
- 
-    stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-    csv_input = csv.DictReader(stream)
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    new_faculty_cache = {}
- 
+        t = t.strip()
+        m = re.match(r'(\d{1,2}):(\d{2})\s*(AM|PM)?', t, re.IGNORECASE)
+        if not m:
+            return None
+        h, mi, meridiem = int(m.group(1)), int(m.group(2)), (m.group(3) or '').upper()
+        if meridiem == 'PM' and h != 12:
+            h += 12
+        elif meridiem == 'AM' and h == 12:
+            h = 0
+        elif not meridiem and force_pm and h != 12:
+            h += 12
+        elif not meridiem and 1 <= h <= 6:
+            # No AM/PM: hours 1–6 are never school-start times, treat as afternoon (+12h)
+            h += 12
+        return f"{h:02d}:{mi:02d}:00"
+
+    def normalize_room(raw):
+        r = raw.strip()
+        if not r:
+            return 'TBA'
+        u = r.upper()
+        if u in ('G', 'GYM', 'PUP GYM'):
+            return 'PUP GYM'
+        if u in ('Q', 'QUAD', 'LQ-QUAD'):
+            return 'LQ-Quad'
+        if u.startswith('LQ-'):
+            return r  # already formatted
+        return f'LQ-{r}'  # everything else gets the prefix
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 1. Resolve semester
-        cur.execute("SELECT semesterid, isactive, academicyearid FROM semester WHERE academicyearid = %s AND semestertype = %s", (ay_id, sem_type))
+        cur.execute("""
+            SELECT semesterid, semstartdate, semenddate
+            FROM semester
+            WHERE academicyearid = %s AND semestertype = %s
+        """, (ay_id, sem_type))
         sem_res = cur.fetchone()
         if not sem_res:
-            flash(f"Semester {ay_id} not found.", "error")
+            flash("Semester not found. Please check the academic year and semester settings.")
             return redirect(url_for('schedule'))
-            
+
         sem_id = sem_res['semesterid']
-        
-        # Determine if active/future
-        target_year_str = sem_res['academicyearid']
-        target_start_year = int("20" + target_year_str[2:4])
-        current_calendar_year = datetime.now().year
-        
-        is_active_sem = True if (sem_res['isactive'] or target_start_year >= (current_calendar_year - 1)) else False
- 
-        cur.execute("SELECT specializationid FROM specialization LIMIT 1")
-        def_spec = cur.fetchone()['specializationid'] if cur.rowcount > 0 else 1
-        cur.execute("SELECT employeetypeid FROM employeetype LIMIT 1")
-        def_type = cur.fetchone()['employeetypeid'] if cur.rowcount > 0 else 1
-        cur.execute("SELECT employeenumber FROM faculty WHERE employeenumber ~ '^EMP\\d+$' ORDER BY employeenumber DESC LIMIT 1")
-        last_emp = cur.fetchone()
-        current_emp_seq = int(last_emp['employeenumber'].replace('EMP', '')) if last_emp else 0
- 
-        import_count, skip_count, session_count, hist_count = 0, 0, 0, 0
- 
+        print(f"\n[DEBUG IMPORT] ay_id={ay_id!r} sem_type={sem_type!r} sem_id={sem_id!r} is_current will be based on dates: {sem_res['semstartdate']} → {sem_res['semenddate']}")
+        today = date.today()
+        sem_start = sem_res['semstartdate']
+        sem_end   = sem_res['semenddate']
+
+        # A semester is "current" only when the admin has configured its date range
+        # AND today falls within that range.
+        is_current = bool(sem_start and sem_end and sem_start <= today <= sem_end)
+        print(f"[DEBUG IMPORT] today={today} is_current={is_current}")
+
+        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        csv_input = csv.DictReader(stream)
+
+        saved_current = 0
+        saved_historical = 0
+
         for row in csv_input:
-            row = {k: (v.strip() if v else '') for k, v in row.items()}
-            inst, s_code = row.get('Instructor', ''), (row.get('SubjectCode') or row.get('Subject Code') or row.get('SubjectCo'))
-            s_name = (row.get('SubjectName') or row.get('Subject Name'))
-            prog, y_l_raw = row.get('Program', ''), (row.get('YearLevel') or row.get('Year Level'))
-            days_s, t_s, r_n = (row.get('Day/s') or row.get('Days')), row.get('Time', ''), row.get('Room', '')
-            lec_h = (row.get('LectureHours') or row.get('Lecture Hour'))
-            lab_h = (row.get('LaboratoryHours') or row.get('Laboratory Hour'))
-            c_u = (row.get('CreditUnits') or row.get('Credit Units'))
- 
-            if not s_code or not prog or not y_l_raw:
-                skip_count += 1
+            row = {k.strip(): v.strip() for k, v in row.items() if k}
+
+            inst       = row.get('Instructor', '')
+            s_code     = row.get('SubjectCode') or row.get('Subject Code') or row.get('SubjectCo') or ''
+            # Strip trailing year-level number from program (e.g. "BSIT 3" → "BSIT")
+            import re as _re_prog
+            prog       = _re_prog.sub(r'\s+\d+$', '', row.get('Program', '').strip()).strip()
+            # Clamp yl to 1-5 — prevents smallint overflow when CSV has bad data in YearLevel column
+            _yl_raw = safe_int(row.get('YearLevel') or row.get('Year Level')) or 1
+            yl      = max(1, min(_yl_raw, 5)) if _yl_raw <= 32767 else 1
+            lec        = min(safe_int(row.get('LectureHours') or row.get('Lecture Hours') or row.get('Lec')), 999)
+            lab        = min(safe_int(row.get('LaboratoryHours') or row.get('Laboratory Hours') or row.get('Lab')), 999)
+            unit       = min(safe_int(row.get('CreditUnits') or row.get('Credit Units') or row.get('Units')), 999)
+            hrs        = min(safe_int(row.get('Hours')) or (lec + lab), 999)
+            days_raw   = (row.get('Day/s') or row.get('Days') or '').strip()
+            time_raw   = (row.get('Time') or '').strip()
+            room_raw   = (row.get('Room') or '').strip()
+            subj_name  = (row.get('SubjectName') or row.get('Subject Name') or '').strip()
+
+            # Skip completely empty rows (e.g. trailing blank lines in CSV)
+            if not inst and not s_code:
                 continue
-            year_lvl = int(y_l_raw) if str(y_l_raw).isdigit() else 0
- 
-            emp_num = None
-            if inst and inst.upper() not in ['TBA', '']:
-                if ',' in inst: ln, fn = [p.strip() for p in inst.split(',', 1)]
-                else: 
-                    parts = inst.split()
-                    fn, ln = parts[0] if parts else 'Unknown', parts[-1] if len(parts) > 1 else 'Unknown'
-                cur.execute("SELECT employeenumber FROM faculty WHERE lastname ILIKE %s AND firstname ILIKE %s", (ln, fn + '%'))
-                db_res = cur.fetchone()
-                if db_res: emp_num = db_res['employeenumber']
-                elif inst in new_faculty_cache: emp_num = new_faculty_cache[inst]
-                else:
-                    current_emp_seq += 1
-                    emp_num = f"EMP{current_emp_seq:03d}"
-                    cur.execute("INSERT INTO faculty (employeenumber, firstname, lastname, email, contactnumber, specializationid, employeetypeid, employeestatus) VALUES (%s, %s, %s, %s, '000', %s, %s, 'Temporary')", (emp_num, fn, ln, f"{emp_num.lower()}@pup.edu.ph", def_spec, def_type))
-                    new_faculty_cache[inst] = emp_num
- 
-            if is_active_sem:
-                # FIX 1: Use ILIKE for Program and Subject code (Fixes BSArch vs BSARCH)
+
+            inserted_as_current = False
+
+            if is_current:
+                # --- Resolve FKs needed for the normalized schedule tables ---
+
+                # 1. Faculty by name — match only, never create new records
+                emp_num = None
+                if inst:
+                    parts = inst.split(',', 1)
+                    lastname      = parts[0].strip()
+                    firstname_key = parts[1].strip().split()[0] if len(parts) > 1 and parts[1].strip() else ''
+
+                    # Pass 1: last name + first word of first name
+                    cur.execute("""
+                        SELECT employeenumber FROM faculty
+                        WHERE UPPER(lastname) = UPPER(%s) AND UPPER(firstname) LIKE UPPER(%s) || '%%'
+                        LIMIT 1
+                    """, (lastname, firstname_key))
+                    r = cur.fetchone()
+                    emp_num = r['employeenumber'] if r else None
+
+                    # Pass 2: last name only
+                    if not emp_num:
+                        cur.execute("""
+                            SELECT employeenumber FROM faculty
+                            WHERE UPPER(lastname) = UPPER(%s)
+                            LIMIT 1
+                        """, (lastname,))
+                        r = cur.fetchone()
+                        emp_num = r['employeenumber'] if r else None
+                    # No match → emp_num stays None; row will be saved to historical_data
+
+                # 2. Curriculum subject — try program+subjectcode, fallback to subjectcode only
+                cs_id = None
+                if s_code and prog:
+                    cur.execute("""
+                        SELECT cs.curriculumsubjectid
+                        FROM curriculumsubject cs
+                        JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                        WHERE UPPER(c.programcode) = UPPER(%s) AND UPPER(cs.subjectcode) = UPPER(%s)
+                        LIMIT 1
+                    """, (prog, s_code))
+                    r = cur.fetchone()
+                    cs_id = r['curriculumsubjectid'] if r else None
+                if not cs_id and s_code:
+                    cur.execute("""
+                        SELECT curriculumsubjectid FROM curriculumsubject
+                        WHERE subjectcode = %s LIMIT 1
+                    """, (s_code,))
+                    r = cur.fetchone()
+                    cs_id = r['curriculumsubjectid'] if r else None
+
+                # 3. Section — try active first, then any, then any year level, then any in program
+                sec_id = None
+                if prog and yl:
+                    cur.execute("""
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN cohort co ON sec.cohortid = co.cohortid
+                        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s AND sec.isactive = TRUE
+                        ORDER BY sec.sectionname LIMIT 1
+                    """, (prog, yl))
+                    r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                if not sec_id and prog and yl:
+                    cur.execute("""
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN cohort co ON sec.cohortid = co.cohortid
+                        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s
+                        ORDER BY sec.sectionname LIMIT 1
+                    """, (prog, yl))
+                    r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                if not sec_id and prog:
+                    # No section for this year level — use any section for the program
+                    cur.execute("""
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN cohort co ON sec.cohortid = co.cohortid
+                        WHERE UPPER(co.programcode) = UPPER(%s)
+                        ORDER BY sec.yearlevel, sec.sectionname LIMIT 1
+                    """, (prog,))
+                    r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+
+                if emp_num and cs_id and sec_id:
+                    import re as _re2
+
+                    # 4. Skip if already imported for this semester (prevent duplicates on re-import)
+                    cur.execute("""
+                        SELECT scheduleid FROM schedule
+                        WHERE curriculumsubjectid = %s AND sectionid = %s AND semesterid = %s
+                        LIMIT 1
+                    """, (cs_id, sec_id, sem_id))
+                    if cur.fetchone():
+                        print(f"[IMPORT DUPLICATE SKIP] subj={s_code!r} prog={prog!r} yl={yl} cs_id={cs_id} sec_id={sec_id}")
+                        inserted_as_current = True
+                        saved_current += 1
+                    else:
+                        cur.execute("""
+                            INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid)
+                            VALUES (%s, %s, %s, %s) RETURNING scheduleid
+                        """, (cs_id, sec_id, emp_num, sem_id))
+                        sched_id = cur.fetchone()['scheduleid']
+
+                        cur.execute("""
+                            INSERT INTO schedule_version (scheduleid, version, status)
+                            VALUES (%s, 1, 'Published') RETURNING versionid
+                        """, (sched_id,))
+                        ver_id = cur.fetchone()['versionid']
+
+                        # 5. Parse sessions (days/times/rooms are "/" separated, positionally aligned)
+                        days_parts  = parse_days(days_raw)
+                        times_parts = [t.strip() for t in time_raw.split('/') if t.strip()]
+                        rooms_parts = [r.strip() for r in room_raw.split('/') if r.strip()]
+
+                        def _resolve_session(day_abbr, time_seg, room_seg):
+                            day_full = DAY_MAP.get(day_abbr.upper(), day_abbr) if day_abbr else None
+
+                            start_str = end_str = None
+                            if time_seg and '-' in time_seg:
+                                _parts = _re2.split(r'\s*-\s*', time_seg, maxsplit=1)
+                                if len(_parts) == 2:
+                                    _s_raw, _e_raw = _parts[0].strip(), _parts[1].strip()
+                                    _e_merid = _re2.search(r'(AM|PM)\s*$', _e_raw, _re2.IGNORECASE)
+                                    _s_merid = _re2.search(r'(AM|PM)', _s_raw, _re2.IGNORECASE)
+                                    _force_pm = bool(_e_merid and _e_merid.group(1).upper() == 'PM' and not _s_merid)
+                                    start_str = parse_time_str(_s_raw, force_pm=_force_pm)
+                                    end_str   = parse_time_str(_e_raw)
+
+                            s_id = e_id = None
+                            if start_str:
+                                cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time", (start_str,))
+                                _r = cur.fetchone(); s_id = _r['timeid'] if _r else None
+                            if end_str:
+                                cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time", (end_str,))
+                                _r = cur.fetchone(); e_id = _r['timeid'] if _r else None
+                            # Shift unlabeled PM end time +12h if end <= start
+                            if s_id and e_id and e_id <= s_id and end_str:
+                                m2 = _re2.match(r'(\d{2}):(\d{2}):00', end_str)
+                                if m2:
+                                    eh = int(m2.group(1))
+                                    if eh < 12:
+                                        alt = f"{eh + 12:02d}:{m2.group(2)}:00"
+                                        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time", (alt,))
+                                        _r = cur.fetchone()
+                                        if _r: e_id = _r['timeid']
+
+                            rm_id = None
+                            if room_seg and room_seg.upper() not in ('TBA', ''):
+                                norm_room = normalize_room(room_seg)
+                                cur.execute("SELECT roomid FROM room WHERE UPPER(roomname) = UPPER(%s)", (norm_room,))
+                                _r = cur.fetchone(); rm_id = _r['roomid'] if _r else None
+                                if not rm_id and norm_room.upper().startswith('LQ-'):
+                                    bare = norm_room[3:]
+                                    cur.execute("SELECT roomid FROM room WHERE UPPER(roomname) = UPPER(%s)", (bare,))
+                                    _r = cur.fetchone(); rm_id = _r['roomid'] if _r else None
+                                if not rm_id:
+                                    cur.execute("SELECT roomid FROM room WHERE UPPER(roomname) LIKE '%%' || UPPER(%s) || '%%' LIMIT 1", (room_seg.strip(),))
+                                    _r = cur.fetchone(); rm_id = _r['roomid'] if _r else None
+                            return day_full, s_id, e_id, rm_id
+
+                        sessions_inserted = 0
+                        for i, day_abbr in enumerate(days_parts):
+                            time_seg = times_parts[i] if i < len(times_parts) else (times_parts[0] if times_parts else '')
+                            room_seg = rooms_parts[i] if i < len(rooms_parts) else (rooms_parts[0] if rooms_parts else '')
+                            day_full, start_id, end_id, room_id = _resolve_session(day_abbr, time_seg, room_seg)
+                            if day_full and start_id and end_id:
+                                cur.execute("""
+                                    INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                """, (ver_id, day_full, start_id, end_id, room_id))
+                                sessions_inserted += 1
+
+                        # If sessions couldn't be created (time not in timeslot table, or missing
+                        # time data) but the CSV had raw day/time text, save to historical_data so
+                        # the display combination logic can show the raw values.
+                        print(f"[DEBUG IMPORT] subj={s_code!r} sessions_inserted={sessions_inserted} days_raw={days_raw!r} time_raw={time_raw!r}")
+                        if sessions_inserted == 0 and (days_raw.strip() or time_raw.strip()):
+                            norm_hist_room = normalize_room(room_raw) if room_raw.strip() else ''
+                            print(f"[DEBUG IMPORT] → fallback to historical_data: prog={prog!r} yl={yl!r} sem_id={sem_id!r} ay_id={ay_id!r}")
+                            cur.execute("""
+                                INSERT INTO historical_data (
+                                    "Instructor", "Subject Code", "Subject Name", "Program", "Year Level",
+                                    "Day/s", "Time", "Room", semesterid, academicyearid,
+                                    "Lecture Hours", "Laboratory Hours", "Credit Units", "Hours"
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (inst, s_code, subj_name, prog, yl, days_raw, time_raw, norm_hist_room,
+                                  sem_id, ay_id, lec, lab, unit, hrs))
+                            saved_historical += 1
+
+                        inserted_as_current = True
+                        saved_current += 1
+
+            if not inserted_as_current:
+                # Not the current semester, OR FK lookups failed — save to historical data
+                norm_hist_room = normalize_room(room_raw) if room_raw.strip() else ''
                 cur.execute("""
-                    SELECT cs.curriculumsubjectid, 
-                    (SELECT sec2.sectionid FROM sections sec2 
-                     JOIN cohort coh2 ON sec2.cohortid = coh2.cohortid 
-                     WHERE coh2.programcode ILIKE %s AND sec2.yearlevel = %s LIMIT 1) AS sectionid 
-                    FROM curriculumsubject cs 
-                    JOIN curriculum cur2 ON cs.curriculumid = cur2.curriculumid 
-                    WHERE cur2.programcode ILIKE %s AND cs.subjectcode ILIKE %s AND cs.yearlevel = %s LIMIT 1
-                """, (prog, year_lvl, prog, s_code, year_lvl))
-                
-                mapping = cur.fetchone()
-                if not mapping or not mapping['sectionid']:
-                    skip_count += 1
-                    continue
-                
-                cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid", (mapping['curriculumsubjectid'], mapping['sectionid'], emp_num, sem_id))
-                cur.execute("INSERT INTO schedule_version (scheduleid, version, status) VALUES (%s, 1, 'Published') RETURNING versionid", (cur.fetchone()['scheduleid'],))
-                v_id, import_count = cur.fetchone()['versionid'], import_count + 1
-                
-                # FIX 2: Flexible Room Matching (Matches "208" to "LQ208")
-                cur.execute("SELECT roomid FROM room WHERE roomname ILIKE %s OR roomname ILIKE %s", (r_n, f"%{r_n}%"))
-                r_res = cur.fetchone()
-                r_id = r_res['roomid'] if r_res else None
-                
-                t_ranges = [t.strip() for t in t_s.split('/') if t.strip()]
-                for i, day in enumerate(resolve_days(days_s)):
-                    ts, te = parse_time_range(t_ranges[min(i, len(t_ranges)-1)] if t_ranges else '')
-                    if ts and te:
-                        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (ts,))
-                        t1 = cur.fetchone()
-                        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (te,))
-                        t2 = cur.fetchone()
-                        if t1 and t2 and t2['timeid'] > t1['timeid']:
-                            cur.execute("INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)", (v_id, day, t1['timeid'], t2['timeid'], r_id))
-                            session_count += 1
-            else:
-                cur.execute("INSERT INTO historical_data (\"Instructor\", \"Subject Code\", \"Subject Name\", \"Lecture Hours\", \"Laboratory Hours\", \"Credit Units\", \"Program\", \"Year Level\", \"Hours\", \"Day/s\", \"Time\", \"Room\", semesterid, academicyearid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (inst, s_code, s_name, int(lec_h or 0), int(lab_h or 0), int(c_u or 0), prog, year_lvl, int(row.get('Hours') or 0), days_s, t_s, r_n, sem_id, ay_id))
-                hist_count += 1
+                    INSERT INTO historical_data (
+                        "Instructor", "Subject Code", "Subject Name", "Program", "Year Level",
+                        "Day/s", "Time", "Room", semesterid, academicyearid,
+                        "Lecture Hours", "Laboratory Hours", "Credit Units", "Hours"
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (inst, s_code, subj_name, prog, yl, days_raw, time_raw, norm_hist_room,
+                      sem_id, ay_id, lec, lab, unit, hrs))
+                saved_historical += 1
+
         conn.commit()
-        flash("Import successful!", "success")
+        if is_current:
+            msg = f"Import successful! {saved_current} row(s) saved to current schedule."
+            if saved_historical:
+                msg += f" {saved_historical} row(s) could not be matched and were saved to historical data."
+        else:
+            msg = f"Import successful! {saved_historical} row(s) saved to historical data (semester is not currently active)."
+        flash(msg, 'success')
     except Exception as e:
         conn.rollback()
-        flash(f"Import failed: {str(e)}", "error")
-    finally:
-        cur.close(); conn.close()
+        print(f"Import Error Detail: {str(e)}")
+        flash(f"Import failed: {str(e)}")
+    finally: cur.close(); conn.close()
     return redirect(url_for('schedule'))
 
 @app.route('/schedule/generation')
@@ -1766,13 +2285,23 @@ def import_curriculum():
                 ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
             """, (target_curr_id, s_code, final_yl, final_sem))
 
-            for key, table, col in[('pre', 'SubjectPrerequisite', 'PrerequisiteCode'), ('co', 'SubjectCorequisite', 'CorequisiteCode')]:
-                req_val = get_val(row, key)
-                if req_val and req_val.upper() not in['NONE', '-', 'N/A']:
-                    for r_code in req_val.split(','):
-                        clean_r = r_code.strip()
-                        if clean_r:
-                            cur.execute(f"INSERT INTO {table} (SubjectCode, {col}) VALUES (%s, %s) ON CONFLICT DO NOTHING", (s_code, clean_r))
+            pre_val = get_val(row, 'pre') or ''
+            co_val  = get_val(row, 'co')  or ''
+            pre_clean = pre_val.strip() if pre_val.strip().upper() not in ('NONE', '-', 'N/A', '') else None
+            co_clean  = co_val.strip()  if co_val.strip().upper()  not in ('NONE', '-', 'N/A', '') else None
+            if pre_clean is not None or co_clean is not None:
+                try:
+                    cur.execute("SAVEPOINT prereq_sp")
+                    cur.execute("""
+                        UPDATE subject
+                           SET prerequisite = COALESCE(%s, prerequisite),
+                               corequisite  = COALESCE(%s, corequisite)
+                         WHERE subjectcode = %s
+                    """, (pre_clean, co_clean, s_code))
+                    cur.execute("RELEASE SAVEPOINT prereq_sp")
+                except Exception as _e:
+                    cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
+                    print(f"[WARN] Could not save prereq/coreq for {s_code!r}: {_e}")
 
         conn.commit()
         flash(f"Import Successful for {prog_code} C.Y {curr_year}")
@@ -1787,39 +2316,82 @@ def import_curriculum():
 @app.route('/admin/curriculum/delete/<int:curriculum_id>')
 def admin_delete_curriculum(curriculum_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    
-    conn = get_db_connection(); cur = conn.cursor()
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        # ── 1. Block if any current schedule rows reference this curriculum ──
         cur.execute("""
-            SELECT COUNT(*) FROM Schedule s
-            JOIN CurriculumSubject cs ON s.CurriculumSubjectID = cs.CurriculumSubjectID
-            WHERE cs.CurriculumID = %s
+            SELECT COUNT(*) AS cnt
+            FROM schedule s
+            JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+            WHERE cs.curriculumid = %s
         """, (curriculum_id,))
-        if cur.fetchone()[0] > 0:
-            flash("Deletion Denied: This curriculum is currently linked to one or more active class schedules.")
+        if cur.fetchone()['cnt'] > 0:
+            flash("Cannot delete: this curriculum is linked to existing schedules.", "error")
             return redirect(request.referrer)
 
+        # ── 2. Block if historical_data contains rows for any subject in this curriculum ──
         cur.execute("""
-            SELECT COUNT(*) FROM Sections sec
-            JOIN Cohort c ON sec.CohortID = c.CohortID
-            WHERE c.CurriculumID = %s
+            SELECT COUNT(*) AS cnt
+            FROM historical_data hd
+            JOIN curriculumsubject cs
+              ON UPPER(hd."Subject Code") = UPPER(cs.subjectcode)
+            WHERE cs.curriculumid = %s
         """, (curriculum_id,))
-        if cur.fetchone()[0] > 0:
-            flash("Deletion Denied: This curriculum is currently assigned to active student batches/sections.")
+        if cur.fetchone()['cnt'] > 0:
+            flash("Cannot delete: this curriculum has historical schedule records.", "error")
             return redirect(request.referrer)
 
-        cur.execute("DELETE FROM CurriculumSubject WHERE CurriculumID = %s", (curriculum_id,))
-        cur.execute("DELETE FROM Curriculum WHERE CurriculumID = %s", (curriculum_id,))
-        
+        # ── 3. Collect subjects exclusive to this curriculum ──────────────
+        # A subject is "exclusive" if it appears in no other curriculum
+        # and is not referenced in any schedule or historical record.
+        cur.execute("""
+            SELECT cs.subjectcode
+            FROM curriculumsubject cs
+            WHERE cs.curriculumid = %s
+              AND cs.subjectcode NOT IN (
+                  SELECT subjectcode FROM curriculumsubject WHERE curriculumid != %s
+              )
+              AND cs.subjectcode NOT IN (
+                  SELECT UPPER(sub.subjectcode)
+                  FROM curriculumsubject sub
+                  JOIN schedule s ON s.curriculumsubjectid = sub.curriculumsubjectid
+                  WHERE sub.curriculumid != %s
+              )
+              AND UPPER(cs.subjectcode) NOT IN (
+                  SELECT UPPER(hd."Subject Code") FROM historical_data hd
+              )
+        """, (curriculum_id, curriculum_id, curriculum_id))
+        exclusive_subjects = [r['subjectcode'] for r in cur.fetchall()]
+
+        # ── 4. Cascade delete ──────────────────────────────────────────────
+        # 4a. Unlink cohorts assigned to this curriculum (preserve cohort, just clear the link)
+        cur.execute("UPDATE cohort SET curriculumid = NULL WHERE curriculumid = %s", (curriculum_id,))
+
+        # 4b. Delete curriculum subjects
+        cur.execute("DELETE FROM curriculumsubject WHERE curriculumid = %s", (curriculum_id,))
+
+        # 4c. Delete subjects exclusive to this curriculum
+        for s_code in exclusive_subjects:
+            cur.execute("DELETE FROM subject WHERE subjectcode = %s", (s_code,))
+
+        # 4d. Delete the curriculum itself
+        cur.execute("DELETE FROM curriculum WHERE curriculumid = %s", (curriculum_id,))
+
         conn.commit()
-        flash("Curriculum and associated subjects successfully removed.")
-        
+        msg = "Curriculum deleted."
+        if exclusive_subjects:
+            msg += f" {len(exclusive_subjects)} exclusive subject(s) also removed."
+        flash(msg, "success")
+
     except Exception as e:
         conn.rollback()
-        flash("Error: Could not delete. Ensure no other data depends on this curriculum.")
+        print(f"[delete_curriculum] ERROR: {e}")
+        flash(f"Error deleting curriculum: {str(e)}", "error")
     finally:
         cur.close(); conn.close()
-        
+
     return redirect(url_for('admin_curriculum'))
 
 @app.route('/admin/curriculum/assign', methods=['POST'])
@@ -2295,6 +2867,433 @@ def faculty_subject_offerings():
     if 'loggedin' not in session or session.get('role') != 'Faculty':
         return redirect(url_for('login'))
     return render_template('faculty/subject_faculty.html')
+
+
+
+
+# =====================================================================
+# SCHEDULE GENERATION ROUTES (Add these below your existing routes)
+# =====================================================================
+
+from scheduler import IntelligentScheduler
+from scheduler import validate_draft   # standalone validator
+ 
+scheduler_engine = IntelligentScheduler()
+
+
+def _load_faculty_map():
+    rows = query_db("""
+        SELECT f.employeenumber,
+               CONCAT(f.lastname, ', ', f.firstname) AS fullname,
+               f.employeestatus,
+               f.designationid,
+               et.regularload, et.parttimeload,
+               et.regular_start, et.regular_end,
+               et.parttime_start, et.parttime_end,
+               d.nightteachingservice
+        FROM faculty f
+        JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        LEFT JOIN designation d ON f.designationid = d.designationid
+        WHERE f.employeestatus != 'Archive'
+    """)
+    faculty_map = {}
+    for row in (rows or []):
+        fnum = row['employeenumber']
+        faculty_map[fnum] = {
+            'employeenumber': fnum,
+            'fullname':       row['fullname'],
+            'employeestatus': row['employeestatus'],
+            'designationid':  row['designationid'],
+            'nightteachingservice': row['nightteachingservice'],
+            'employeetype': {
+                'regularload':    row['regularload'],
+                'parttimeload':   row['parttimeload'],
+                'regular_start':  row['regular_start'] or time(7, 30),
+                'regular_end':    row['regular_end']   or time(16, 30),
+                'parttime_start': row['parttime_start'],
+                'parttime_end':   row['parttime_end'],
+            },
+        }
+    return faculty_map
+
+def _parse_days(days_str: str) -> list:
+    """Convert 'MON/THU' string back to ['Monday', 'Thursday']."""
+    abbr_map = {
+        'MON': 'Monday', 'TUE': 'Tuesday', 'WED': 'Wednesday',
+        'THU': 'Thursday', 'FRI': 'Friday', 'SAT': 'Saturday', 'SUN': 'Sunday',
+    }
+    if not days_str:
+        return []
+    return [abbr_map.get(d.strip().upper(), d.strip()) for d in days_str.split('/')]
+ 
+ 
+def _parse_time_str(t_str: str):
+    """Convert 'HH:MM' or '07:30 AM' string back to a time object."""
+    from datetime import datetime as _dt
+    for fmt in ('%I:%M %p', '%H:%M', '%H:%M:%S'):
+        try:
+            return _dt.strptime(t_str.strip(), fmt).time()
+        except ValueError:
+            continue
+    return None
+ 
+ 
+def _serialize_class(cls: dict) -> dict:
+    """Return a JSON-safe copy of a class assignment dict (strip time objects)."""
+    safe = {}
+    for key, val in cls.items():
+        if isinstance(val, time):
+            continue                          # already have 'time' string field
+        elif isinstance(val, list):
+            safe[key] = [str(v) for v in val]
+        else:
+            safe[key] = val
+    return safe
+ 
+
+# ── ADD THIS HERE (at the same indentation level as other helpers) ──
+def _rehydrate_schedule(schedule_data: list) -> list:
+    """
+    Reconstruct start_time / end_time / days_list on each class dict
+    from the string fields ('time', 'days') that the frontend sends back.
+    Called before any validation on frontend-originated data.
+    """
+    for cls in schedule_data:
+        # ── Rehydrate start_time / end_time from 'time' string ──────
+        # 'time' field looks like "07:30 AM – 09:00 AM"
+        if 'start_time' not in cls and 'time' in cls:
+            try:
+                parts = cls['time'].replace('–', '-').split('-')
+                if len(parts) == 2:
+                    cls['start_time'] = _parse_time_str(parts[0].strip())
+                    cls['end_time']   = _parse_time_str(parts[1].strip())
+            except Exception:
+                pass
+
+        # ── Rehydrate days_list from 'days' string ───────────────────
+        # 'days' field looks like "MON/THU"
+        if 'days_list' not in cls and 'days' in cls:
+            cls['days_list'] = _parse_days(cls['days'])
+
+        # ── Ensure 'day' (primary day) exists ────────────────────────
+        if 'day' not in cls and 'days_list' in cls and cls['days_list']:
+            cls['day'] = cls['days_list'][0]
+
+    return schedule_data
+ 
+def _ensure_schedule_group(cur, program, year_level, term, acad_year) -> int:
+    """
+    Get or create a schedule_group row and return its groupid.
+    schedule_group is the parent that ties versions to a context.
+    """
+    cur.execute("""
+        SELECT groupid FROM schedule_group
+        WHERE programcode = %s AND yearlevel = %s AND term = %s AND acadyear = %s
+    """, (program, year_level, term, acad_year))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+ 
+    cur.execute("""
+        INSERT INTO schedule_group (programcode, yearlevel, term, acadyear)
+        VALUES (%s, %s, %s, %s)
+        RETURNING groupid
+    """, (program, year_level, term, acad_year))
+    return cur.fetchone()[0]
+ 
+ 
+ 
+@app.route('/academic/schedule-generation')
+def schedule_generation_view():
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+ 
+    programs_data   = query_db("SELECT programcode FROM programs WHERE isactive = true;")
+    acad_years_data = query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC;")
+    curriculums_data = query_db("SELECT DISTINCT curriculumyear FROM curriculum;")
+ 
+    programs    = [p['programcode']    for p in (programs_data   or [])]
+    acad_years  = [a['academicyearid'] for a in (acad_years_data or [])]
+    curriculums = [c['curriculumyear'] for c in (curriculums_data or [])]
+ 
+    terms = [
+        {'id': 'A', 'name': '1ST SEMESTER'},
+        {'id': 'B', 'name': '2ND SEMESTER'},
+        {'id': 'C', 'name': 'SUMMER'},
+    ]
+    year_levels = [1, 2, 3, 4, 5]
+ 
+    return render_template('academic/scheduleGeneration.html',
+                           programs=programs,
+                           acad_years=acad_years,
+                           curriculums=curriculums,
+                           terms=terms,
+                           year_levels=year_levels)
+ 
+ 
+ 
+@app.route('/api/schedule/generate', methods=['POST'])
+def api_generate_schedule():
+    data           = request.json or {}
+    program        = data.get('program')
+    year_level     = int(data.get('yearLevel', 1))
+    term           = data.get('term')
+    curriculum     = data.get('curriculum')
+    use_historical = data.get('useHistorical', False)
+ 
+    result = scheduler_engine.generate_draft(
+        program, year_level, term, curriculum, use_historical
+    )
+ 
+    if not result['success']:
+        return jsonify({'success': False, 'error': result['error']}), 400
+ 
+    serialized = [_serialize_class(cls) for cls in result['schedule_data']]
+    violations  = result.get('violations', [])
+ 
+    return jsonify({
+        'success':        True,
+        'batch_id':       'DRAFT-NEW-001',
+        'schedule_data':  serialized,
+        'conflict_count': result['conflict_count'],
+        'violations':     violations,
+    })
+ 
+
+
+ 
+@app.route('/api/schedule/validate', methods=['POST'])
+def api_validate_draft():
+    data          = request.json or {}
+    schedule_data = data.get('schedule_data', [])
+ 
+    for cls in schedule_data:
+        if isinstance(cls.get('start_time'), str):
+            try:
+                cls['start_time'] = _parse_time_str(cls['start_time'])
+                cls['end_time']   = _parse_time_str(cls['end_time'])
+            except Exception:
+                pass
+        if 'days_list' not in cls and 'days' in cls:
+            cls['days_list'] = _parse_days(cls['days'])
+ 
+    faculty_map = _load_faculty_map()
+    result      = validate_draft(schedule_data, faculty_map)
+    return jsonify(result)
+ 
+@app.route('/api/schedule/save-draft', methods=['POST'])
+def api_save_draft():
+    try:
+        data          = request.json or {}
+        schedule_data = data.get('schedule_data', [])
+        context       = data.get('context', {})
+ 
+        program    = context.get('program')
+        year_level = context.get('yearLevel')
+        term       = context.get('term')
+        acad_year  = context.get('acadYear')
+ 
+        if not all([program, year_level, term, acad_year]):
+            return jsonify({'success': False, 'error': 'Missing context (program/yearLevel/term/acadYear).'}), 400
+ 
+        # Validate (allow saving even with violations — just flag them)
+        faculty_map   = _load_faculty_map()
+        schedule_data = _rehydrate_schedule(schedule_data)
+        validation    = validate_draft(schedule_data, faculty_map)
+ 
+        conn = get_db_connection()
+        cur  = conn.cursor()
+ 
+        # Ensure schedule_group exists
+        group_id = _ensure_schedule_group(cur, program, year_level, term, acad_year)
+ 
+        # Archive the current Draft for this context
+        cur.execute("""
+            UPDATE schedule_version
+            SET    status = 'Archive'
+            WHERE  groupid = %s AND status = 'Draft'
+        """, (group_id,))
+ 
+        # Get the next version number
+        cur.execute("""
+            SELECT COALESCE(MAX(version), 0) + 1
+            FROM   schedule_version
+            WHERE  groupid = %s
+        """, (group_id,))
+        new_version = cur.fetchone()[0]
+ 
+        # Insert new Draft
+        cur.execute("""
+            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            VALUES (%s, %s, 'Draft', %s, NOW())
+        """, (group_id, new_version, json.dumps(schedule_data)))
+ 
+        conn.commit()
+        cur.close()
+        conn.close()
+ 
+        return jsonify({
+            'success':        True,
+            'message':        f'Saved as Draft V{new_version}.',
+            'draft_version':  new_version,
+            'can_publish':    validation['can_publish'],
+            'conflict_count': len(validation['violations']),
+            'violations':     validation['violations'],
+        })
+ 
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+ 
+   
+@app.route('/api/schedule/approve', methods=['POST'])
+def api_approve_schedule():
+    try:
+        data          = request.json or {}
+        schedule_data = data.get('schedule_data', [])
+        context       = data.get('context', {})
+ 
+        program    = context.get('program')
+        year_level = context.get('yearLevel')
+        term       = context.get('term')
+        acad_year  = context.get('acadYear')
+ 
+        if not all([program, year_level, term, acad_year]):
+            return jsonify({'success': False, 'error': 'Missing context (program/yearLevel/term/acadYear).'}), 400
+ 
+        # Gate: must pass all hard constraints to publish
+        faculty_map   = _load_faculty_map()
+        schedule_data = _rehydrate_schedule(schedule_data)
+        validation    = validate_draft(schedule_data, faculty_map)
+
+        if not validation['can_publish']:
+            return jsonify({
+                'success':    False,
+                'error':      'Cannot publish — schedule has unresolved hard constraint violations.',
+                'violations': validation['violations'],
+            }), 400
+ 
+        conn = get_db_connection()
+        cur  = conn.cursor()
+ 
+        # Ensure schedule_group exists
+        group_id = _ensure_schedule_group(cur, program, year_level, term, acad_year)
+ 
+        # Step 1: Archive any existing Published for this group
+        cur.execute("""
+            UPDATE schedule_version
+            SET    status = 'Archive'
+            WHERE  groupid = %s AND status = 'Published'
+        """, (group_id,))
+ 
+        # Step 2: Archive the current Draft (being promoted)
+        cur.execute("""
+            UPDATE schedule_version
+            SET    status = 'Archive'
+            WHERE  groupid = %s AND status = 'Draft'
+        """, (group_id,))
+ 
+        # Step 3: Get next version number
+        cur.execute("""
+            SELECT COALESCE(MAX(version), 0) + 1
+            FROM   schedule_version
+            WHERE  groupid = %s
+        """, (group_id,))
+        new_version = cur.fetchone()[0]
+ 
+        schedule_json = json.dumps(schedule_data)
+ 
+        # Step 4: Insert new Published
+        cur.execute("""
+            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            VALUES (%s, %s, 'Published', %s, NOW())
+        """, (group_id, new_version, schedule_json))
+ 
+        # Step 5: Auto-create sibling Draft (same content, next version)
+        cur.execute("""
+            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            VALUES (%s, %s, 'Draft', %s, NOW())
+        """, (group_id, new_version + 1, schedule_json))
+ 
+        conn.commit()
+        cur.close()
+        conn.close()
+ 
+        return jsonify({
+            'success':           True,
+            'message':           f'Schedule published as V{new_version}. Draft V{new_version + 1} created.',
+            'published_version': new_version,
+            'draft_version':     new_version + 1,
+        })
+ 
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+ 
+
+ 
+# ─────────────────────────────────────────────────────────────
+#  LIST DRAFTS  (for View Drafts modal)
+# ─────────────────────────────────────────────────────────────
+ 
+@app.route('/api/schedule/drafts')
+def api_list_drafts():
+    try:
+        rows = query_db("""
+            SELECT sv.versionid, sv.version, sv.status, sv.created_at,
+                   sg.programcode, sg.yearlevel, sg.term, sg.acadyear
+            FROM   schedule_version sv
+            JOIN   schedule_group   sg ON sv.groupid = sg.groupid
+            WHERE  sv.status = 'Draft'
+            ORDER BY sv.created_at DESC
+        """)
+        result = []
+        for row in (rows or []):
+            result.append({
+                'versionid':   row['versionid'],
+                'version':     row['version'],
+                'status':      row['status'],
+                'created_at':  str(row['created_at']),
+                'programcode': row['programcode'],
+                'yearlevel':   row['yearlevel'],
+                'term':        row['term'],
+                'acadyear':    row['acadyear'],
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify([]), 500
+ 
+ 
+# ─────────────────────────────────────────────────────────────
+#  LIST ALL VERSIONS  (for Version History modal)
+# ─────────────────────────────────────────────────────────────
+ 
+@app.route('/api/schedule/versions')
+def api_list_versions():
+    try:
+        rows = query_db("""
+            SELECT sv.versionid, sv.version, sv.status, sv.created_at,
+                   sg.programcode, sg.yearlevel, sg.term, sg.acadyear
+            FROM   schedule_version sv
+            JOIN   schedule_group   sg ON sv.groupid = sg.groupid
+            ORDER BY sv.created_at DESC
+            LIMIT 100
+        """)
+        result = []
+        for row in (rows or []):
+            result.append({
+                'versionid':   row['versionid'],
+                'version':     row['version'],
+                'status':      row['status'],
+                'created_at':  str(row['created_at']),
+                'programcode': row['programcode'],
+                'yearlevel':   row['yearlevel'],
+                'term':        row['term'],
+                'acadyear':    row['acadyear'],
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify([]), 500
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
