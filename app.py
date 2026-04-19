@@ -1161,7 +1161,7 @@ def import_schedule():
                         sched_id = cur.fetchone()['scheduleid']
 
                         cur.execute("""
-                            INSERT INTO schedule_version (scheduleid, version, status)
+                            INSERT INTO schedule_version (scheduleid, version_number, status)
                             VALUES (%s, 1, 'Published') RETURNING versionid
                         """, (sched_id,))
                         ver_id = cur.fetchone()['versionid']
@@ -3124,7 +3124,7 @@ def api_save_draft():
  
         # Insert new Draft
         cur.execute("""
-            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            INSERT INTO schedule_version (groupid, version_number, status, schedule_json, created_at)
             VALUES (%s, %s, 'Draft', %s, NOW())
         """, (group_id, new_version, json.dumps(schedule_data)))
  
@@ -3205,13 +3205,13 @@ def api_approve_schedule():
  
         # Step 4: Insert new Published
         cur.execute("""
-            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            INSERT INTO schedule_version (groupid, version_number, status, schedule_json, created_at)
             VALUES (%s, %s, 'Published', %s, NOW())
         """, (group_id, new_version, schedule_json))
  
         # Step 5: Auto-create sibling Draft (same content, next version)
         cur.execute("""
-            INSERT INTO schedule_version (groupid, version, status, schedule_json, created_at)
+            INSERT INTO schedule_version (groupid, version_number, status, schedule_json, created_at)
             VALUES (%s, %s, 'Draft', %s, NOW())
         """, (group_id, new_version + 1, schedule_json))
  
