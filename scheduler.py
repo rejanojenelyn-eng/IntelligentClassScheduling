@@ -1,5 +1,3 @@
-# scheduler.py
-
 """
 scheduler.py  —  Intelligent Scheduling Engine
 ================================================
@@ -843,4 +841,3 @@ def validate_draft(schedule_data: list, faculty_map: dict) -> dict:
         "violations":  violations,
         "can_publish": len(violations) == 0,
     }
-

@@ -456,18 +456,38 @@ function renderCalendar(sessions) {
             pill.className = 'schedule-pill';
             pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
             const w = (colWidth - 6) / (overlapCount || 1);
-            
+            const pillH = (end - start) * pxPerMin - 2;
+
             pill.style.width = (w - 2) + 'px';
-            pill.style.height = ((end - start) * pxPerMin - 2) + 'px';
+            pill.style.height = pillH + 'px';
             pill.style.left = (timeCol.offsetWidth + (dayIdx * colWidth) + (overlapIndex * w) + 4) + 'px';
             pill.style.top = (thead.offsetHeight + (start - GRID_ORIGIN) * pxPerMin + 1) + 'px';
 
             const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
             pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${fmtTime(sess.start_time)} – ${fmtTime(sess.end_time)}\n${sess.roomname}`;
-            pill.innerHTML = `
-                <div class="pill-subject">${sess.subjectname}</div>
-                <div class="pill-instructor">${instrLast}</div>
-                <div class="pill-room">${sess.roomname}</div>`;
+
+            // Tiered layout based on pill height so short sessions stay legible.
+            //   < 55px  → compact: subject code + room, single line
+            //   55-85px → medium: subject name (clamped 2 lines) + room
+            //   ≥ 85px  → full: subject + instructor + room
+            if (pillH < 55) {
+                pill.classList.add('schedule-pill--compact');
+                pill.innerHTML = `
+                    <div class="pill-subject">${sess.subjectname}</div>
+                    <div class="pill-instructor">${instrLast}</div>
+                    <div class="pill-room">${sess.roomname}</div>`;
+            } else if (pillH < 85) {
+                pill.classList.add('schedule-pill--medium');
+                pill.innerHTML = `
+                    <div class="pill-subject">${sess.subjectname}</div>
+                    <div class="pill-instructor">${instrLast}</div>
+                    <div class="pill-room">${sess.roomname}</div>`;
+            } else {
+                pill.innerHTML = `
+                    <div class="pill-subject">${sess.subjectname}</div>
+                    <div class="pill-instructor">${instrLast}</div>
+                    <div class="pill-room">${sess.roomname}</div>`;
+            }
             wrapper.appendChild(pill);
         });
     });

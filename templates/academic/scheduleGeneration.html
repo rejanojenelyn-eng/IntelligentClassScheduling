@@ -42,7 +42,7 @@
                     <select id="program" name="program" required>
                         <option value="">Select...</option>
                         {% for prog in programs %}
-                            <option value="{{ prog }}">{{ prog }}</option>
+                            <option value="{{ prog.code }}">{{ prog.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -57,18 +57,16 @@
                 </div>
                 <div class="form-group">
                     <label>CURRICULUM</label>
-                    <select id="curriculum" name="curriculum" required>
-                        <option value="">Select...</option>
-                        {% for cur in curriculums %}
-                            <option value="{{ cur }}">{{ cur }}</option>
-                        {% endfor %}
-                    </select>
+                    <div id="curriculumDisplay" class="curriculum-display">
+                        <input type="hidden" id="curriculum" name="curriculum" value="">
+                        <span id="curriculumText">Select Program first</span>
+                    </div>
                 </div>
             </form>
         </div>
 
         <div class="generate-box">
-            <button type="button" id="btnGenerate" disabled>
+            <button type="button" id="btnGenerate">
                 <i class="fas fa-magic"></i> GENERATE SCHEDULE
             </button>
             <div class="checkbox-wrapper">
@@ -85,13 +83,14 @@
 
         <div class="table-toolbar">
             <div class="view-toggles">
-                <button class="outline-btn"><i class="far fa-calendar-alt"></i> Calendar view</button>
-                <button class="active-btn"><i class="fas fa-table"></i> Table view</button>
+                <button class="outline-btn" id="btnCalendarView"><i class="far fa-calendar-alt"></i> Calendar view</button>
+                <button class="active-btn" id="btnTableView"><i class="fas fa-table"></i> Table view</button>
             </div>
             <button class="outline-btn" id="btnExport" disabled><i class="fas fa-file-export"></i> Export Schedule</button>
         </div>
 
-        <div class="table-wrapper">
+        <!-- Table View -->
+        <div class="table-wrapper" id="tableViewContainer">
             <table class="schedule-table">
                 <thead>
                     <tr>
@@ -115,6 +114,23 @@
 
             <div id="successToast" class="toast hidden">
                 <i class="fas fa-check-circle"></i> Schedule Generated Successfully!
+            </div>
+        </div>
+
+        <!-- Calendar View (hidden by default) -->
+        <div class="calendar-wrapper hidden" id="calendarViewContainer">
+            <div class="calendar-grid">
+                <div class="calendar-header time-col">TIME</div>
+                <div class="calendar-header">MONDAY</div>
+                <div class="calendar-header">TUESDAY</div>
+                <div class="calendar-header">WEDNESDAY</div>
+                <div class="calendar-header">THURSDAY</div>
+                <div class="calendar-header">FRIDAY</div>
+                <div class="calendar-header">SATURDAY</div>
+                <div class="calendar-header">SUNDAY</div>
+            </div>
+            <div id="calendarBody" class="calendar-body">
+                <!-- Will be populated by JavaScript -->
             </div>
         </div>
 
@@ -183,13 +199,13 @@
      VIEW DRAFTS MODAL
 ═══════════════════════════════════════════════ -->
 <div id="draftsModal" class="modal-overlay hidden">
-    <div class="modal-content wide-modal-content">
-        <div class="modal-header-bar">
+    <div class="modal-content">
+        <div class="modal-header">
             <h3><i class="fas fa-edit"></i> Saved Drafts</h3>
             <button onclick="document.getElementById('draftsModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
         </div>
-        <div id="draftsModalBody" class="modal-scroll-body">
-            <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading drafts...</p>
+        <div class="modal-body" id="draftsModalBody">
+            <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading...</p>
         </div>
     </div>
 </div>
@@ -198,283 +214,412 @@
      VERSION HISTORY MODAL
 ═══════════════════════════════════════════════ -->
 <div id="versionModal" class="modal-overlay hidden">
-    <div class="modal-content wide-modal-content">
-        <div class="modal-header-bar">
+    <div class="modal-content">
+        <div class="modal-header">
             <h3><i class="fas fa-history"></i> Version History</h3>
             <button onclick="document.getElementById('versionModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
         </div>
-        <div id="versionModalBody" class="modal-scroll-body">
-            <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading history...</p>
+        <div class="modal-body" id="versionModalBody">
+            <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading...</p>
         </div>
     </div>
 </div>
 
 <script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    // ── State ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // ══════════════════════════════════════════════════════════════════
+    //  STATE MANAGEMENT
+    // ══════════════════════════════════════════════════════════════════
     let currentScheduleData = [];
     let currentBatchId      = null;
-    let hasGenerated        = false;
-    let progressInterval    = null;
-    let cancelRequested     = false;
+    let canPublish          = false;
 
-    // ── DOM refs ──────────────────────────────────────────────────────
-    const formInputs      = document.querySelectorAll("#generateScheduleForm select");
-    const btnGenerate     = document.getElementById("btnGenerate");
-    const btnRegenerate   = document.getElementById("btnRegenerate");
-    const btnSaveDraft    = document.getElementById("btnSaveDraft");
-    const btnManualEditor = document.getElementById("btnManualEditor");
-    const btnApprove      = document.getElementById("btnApprove");
-    const btnExport       = document.getElementById("btnExport");
-    const loadingModal    = document.getElementById("loadingModal");
-    const successToast    = document.getElementById("successToast");
-    const tableBody       = document.getElementById("scheduleTableBody");
-    const tableTitle      = document.getElementById("tableTitle");
-    const conflictBanner  = document.getElementById("conflictBanner");
-    const conflictText    = document.getElementById("conflictText");
+    // Form elements
+    const acadYear    = document.getElementById('acadYear');
+    const term        = document.getElementById('term');
+    const program     = document.getElementById('program');
+    const yearLevel   = document.getElementById('yearLevel');
+    const curriculum  = document.getElementById('curriculum');
+    const curriculumText = document.getElementById('curriculumText');
+    const useHistorical = document.getElementById('useHistorical');
 
-    // ── Form validation → enable Generate ────────────────────────────
-    formInputs.forEach(input => input.addEventListener('change', checkFormValidity));
+    // Buttons
+    const btnGenerate      = document.getElementById('btnGenerate');
+    const btnRegenerate    = document.getElementById('btnRegenerate');
+    const btnSaveDraft     = document.getElementById('btnSaveDraft');
+    const btnApprove       = document.getElementById('btnApprove');
+    const btnManualEditor  = document.getElementById('btnManualEditor');
+    const btnExport        = document.getElementById('btnExport');
+    const btnCalendarView  = document.getElementById('btnCalendarView');
+    const btnTableView     = document.getElementById('btnTableView');
 
-    function checkFormValidity() {
-        let isValid = [...formInputs].every(i => i.value !== "");
-        // Only enable Generate if we haven't generated yet (after that, use Re-generate)
-        btnGenerate.disabled = !isValid || hasGenerated;
-    }
+    // ══════════════════════════════════════════════════════════════════
+    //  AUTO-FETCH CURRICULUM WHEN PROGRAM CHANGES
+    // ══════════════════════════════════════════════════════════════════
+    program.addEventListener('change', async function() {
+        const programValue = this.value;
+        if (!programValue) {
+            curriculumText.textContent = "Select Program first";
+            curriculum.value = "";
+            checkFormValidity();
+            return;
+        }
 
-    // ── Helpers: Info Modal (replaces all alert/confirm) ─────────────
-    function showInfo(title, message, type = 'info') {
-        return new Promise(resolve => {
-            const modal   = document.getElementById('infoModal');
-            const icon    = document.getElementById('infoModalIcon');
-            const ttl     = document.getElementById('infoModalTitle');
-            const msg     = document.getElementById('infoModalMessage');
-            const okBtn   = document.getElementById('infoModalConfirmBtn');
-            const canBtn  = document.getElementById('infoModalCancelBtn');
+        // Show loading state
+        curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+        
+        try {
+            // Fetch the LATEST curriculum for this program
+            const res = await fetch(`/api/curriculum-by-year?program=${encodeURIComponent(programValue)}`);
+            const data = await res.json();
 
-            const icons = { info: 'fa-info-circle', success: 'fa-check-circle', error: 'fa-times-circle', warning: 'fa-exclamation-triangle', confirm: 'fa-question-circle' };
-            icon.className = `info-modal-icon ${type}`;
-            icon.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i>`;
-            ttl.textContent  = title;
-            msg.innerHTML    = message;
-            okBtn.textContent = type === 'confirm' ? 'Yes, proceed' : 'OK';
-            canBtn.classList.toggle('hidden', type !== 'confirm');
-
-            modal.classList.remove('hidden');
-
-            const cleanup = (result) => {
-                modal.classList.add('hidden');
-                okBtn.replaceWith(okBtn.cloneNode(true));
-                canBtn.replaceWith(canBtn.cloneNode(true));
-                resolve(result);
-            };
-
-            document.getElementById('infoModalConfirmBtn').addEventListener('click', () => cleanup(true), { once: true });
-            document.getElementById('infoModalCancelBtn').addEventListener('click', () => cleanup(false), { once: true });
-        });
-    }
-
-    // ── Progress bar animation ────────────────────────────────────────
-    const steps = [
-        "Initializing genetic algorithm...",
-        "Loading faculty availability...",
-        "Mapping curriculum subjects...",
-        "Running constraint checks (HC1-HC5)...",
-        "Evaluating room assignments...",
-        "Optimizing day pairings...",
-        "Applying soft constraints...",
-        "Scoring fitness across population...",
-        "Selecting elite candidates...",
-        "Finalizing schedule draft...",
-    ];
-
-    function startProgress() {
-        let pct = 0;
-        let stepIdx = 0;
-        const fill  = document.getElementById('progressBarFill');
-        const label = document.getElementById('progressLabel');
-        const step  = document.getElementById('loadingStep');
-
-        fill.style.width = '0%';
-        label.textContent = '0%';
-        step.textContent = steps[0];
-
-        progressInterval = setInterval(() => {
-            if (cancelRequested) { clearInterval(progressInterval); return; }
-            // Slow down near 90% to wait for real response
-            const increment = pct < 70 ? Math.random() * 4 + 2 : Math.random() * 1.2;
-            pct = Math.min(pct + increment, 92);
-            fill.style.width = pct + '%';
-            label.textContent = Math.round(pct) + '%';
-
-            const newStep = Math.min(Math.floor((pct / 100) * steps.length), steps.length - 1);
-            if (newStep !== stepIdx) {
-                stepIdx = newStep;
-                step.style.opacity = 0;
-                setTimeout(() => {
-                    step.textContent = steps[stepIdx];
-                    step.style.opacity = 1;
-                }, 200);
+            if (data.curriculum) {
+                curriculum.value = data.curriculum;
+                curriculumText.textContent = `CY ${data.curriculum}`;
+            } else {
+                curriculumText.textContent = "No curriculum found";
+                curriculum.value = "";
             }
-        }, 180);
+        } catch (e) {
+            console.error('Error fetching curriculum:', e);
+            curriculumText.textContent = "Error loading curriculum";
+            curriculum.value = "";
+        }
+        
+        // Recheck form validity after curriculum is loaded
+        checkFormValidity();
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ENABLE/DISABLE GENERATE BUTTON BASED ON FORM VALIDITY
+    // ══════════════════════════════════════════════════════════════════
+    function checkFormValidity() {
+        const allFilled = acadYear.value && term.value && program.value && yearLevel.value && curriculum.value;
+        btnGenerate.disabled = !allFilled;
     }
 
-    function finishProgress(success) {
-        clearInterval(progressInterval);
-        const fill  = document.getElementById('progressBarFill');
-        const label = document.getElementById('progressLabel');
-        const step  = document.getElementById('loadingStep');
-        fill.style.width = '100%';
-        label.textContent = '100%';
-        step.textContent = success ? 'Schedule ready!' : 'Generation failed.';
-        if (!success) fill.style.background = '#e74c3c';
-    }
+    // Listen to all form changes (except program which has its own handler above)
+    [acadYear, term, yearLevel, useHistorical].forEach(el => {
+        el.addEventListener('change', checkFormValidity);
+    });
 
-    // ── Build context object from form ────────────────────────────────
+    // Initial check
+    checkFormValidity();
+
+    // ══════════════════════════════════════════════════════════════════
+    //  VIEW TOGGLE (CALENDAR / TABLE)
+    // ══════════════════════════════════════════════════════════════════
+    btnCalendarView.addEventListener('click', () => {
+        document.getElementById('tableViewContainer').classList.add('hidden');
+        document.getElementById('calendarViewContainer').classList.remove('hidden');
+        btnCalendarView.classList.add('active-btn');
+        btnCalendarView.classList.remove('outline-btn');
+        btnTableView.classList.add('outline-btn');
+        btnTableView.classList.remove('active-btn');
+        
+        // Render calendar if we have data
+        if (currentScheduleData.length > 0) {
+            renderCalendarView(currentScheduleData);
+        }
+    });
+
+    btnTableView.addEventListener('click', () => {
+        document.getElementById('calendarViewContainer').classList.add('hidden');
+        document.getElementById('tableViewContainer').classList.remove('hidden');
+        btnTableView.classList.add('active-btn');
+        btnTableView.classList.remove('outline-btn');
+        btnCalendarView.classList.add('outline-btn');
+        btnCalendarView.classList.remove('active-btn');
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    //  HELPER: GET CURRENT CONTEXT
+    // ══════════════════════════════════════════════════════════════════
     function getContext() {
         return {
-            program:    document.getElementById('program').value,
-            yearLevel:  document.getElementById('yearLevel').value,
-            term:       document.getElementById('term').value,
-            curriculum: document.getElementById('curriculum').value,
-            acadYear:   document.getElementById('acadYear').value,
+            program:    program.value,
+            yearLevel:  parseInt(yearLevel.value),
+            term:       term.value,
+            acadYear:   acadYear.value,
         };
     }
 
-    function getLabelText(ctx) {
-        const termEl   = document.getElementById('term');
-        const progEl   = document.getElementById('program');
-        const yrEl     = document.getElementById('yearLevel');
-        const ayEl     = document.getElementById('acadYear');
-        const termTxt  = termEl.options[termEl.selectedIndex].text;
-        const progTxt  = progEl.options[progEl.selectedIndex].text;
-        const yrTxt    = yrEl.options[yrEl.selectedIndex].text;
-        return `${progTxt} (${ctx.program}) - YEAR ${ctx.yearLevel} | ${ctx.acadYear} | ${termTxt}`;
+    // ══════════════════════════════════════════════════════════════════
+    //  HELPER: CUSTOM INFO/CONFIRM MODAL
+    // ══════════════════════════════════════════════════════════════════
+    function showInfo(title, message, type = 'info') {
+        return new Promise(resolve => {
+            const modal    = document.getElementById('infoModal');
+            const icon     = document.getElementById('infoModalIcon');
+            const titleEl  = document.getElementById('infoModalTitle');
+            const msgEl    = document.getElementById('infoModalMessage');
+            const confirmBtn = document.getElementById('infoModalConfirmBtn');
+            const cancelBtn  = document.getElementById('infoModalCancelBtn');
+
+            titleEl.textContent = title;
+            msgEl.innerHTML     = message;
+
+            // Set icon color
+            icon.className = 'info-modal-icon';
+            if (type === 'success') {
+                icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+                icon.classList.add('success');
+            } else if (type === 'error') {
+                icon.innerHTML = '<i class="fas fa-times-circle"></i>';
+                icon.classList.add('error');
+            } else if (type === 'confirm') {
+                icon.innerHTML = '<i class="fas fa-question-circle"></i>';
+                icon.classList.add('warning');
+            } else {
+                icon.innerHTML = '<i class="fas fa-info-circle"></i>';
+            }
+
+            modal.classList.remove('hidden');
+
+            // Show/hide cancel button for confirm dialogs
+            if (type === 'confirm') {
+                cancelBtn.classList.remove('hidden');
+                confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
+                cancelBtn.onclick  = () => { modal.classList.add('hidden'); resolve(false); };
+            } else {
+                cancelBtn.classList.add('hidden');
+                confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
+            }
+        });
     }
 
-    // ── GENERATE ──────────────────────────────────────────────────────
-    async function generateSchedule() {
-        cancelRequested = false;
+    // ══════════════════════════════════════════════════════════════════
+    //  LOADING MODAL CONTROL
+    // ══════════════════════════════════════════════════════════════════
+    function showLoading() {
+        document.getElementById('loadingModal').classList.remove('hidden');
+        document.getElementById('progressBarFill').style.width = '0%';
+        document.getElementById('progressLabel').textContent = '0%';
+        simulateProgress();
+    }
+    function hideLoading() {
+        document.getElementById('loadingModal').classList.add('hidden');
+    }
+
+    function simulateProgress() {
+        let progress = 0;
+        const steps = [
+            'Initializing genetic algorithm...',
+            'Analyzing constraints and faculty availability...',
+            'Generating schedule population...',
+            'Evaluating fitness scores...',
+            'Performing crossover and mutation...',
+            'Optimizing conflicts...',
+            'Finalizing schedule...',
+        ];
+        let stepIndex = 0;
+
+        const interval = setInterval(() => {
+            progress += Math.random() * 15;
+            if (progress > 95) progress = 95;
+
+            document.getElementById('progressBarFill').style.width = progress + '%';
+            document.getElementById('progressLabel').textContent = Math.floor(progress) + '%';
+
+            if (stepIndex < steps.length && progress > (stepIndex + 1) * (95 / steps.length)) {
+                document.getElementById('loadingStep').textContent = steps[stepIndex];
+                stepIndex++;
+            }
+        }, 400);
+
+        // Store interval ID so we can clear it when generation completes
+        btnGenerate._progressInterval = interval;
+    }
+
+    function completeProgress() {
+        if (btnGenerate._progressInterval) {
+            clearInterval(btnGenerate._progressInterval);
+        }
+        document.getElementById('progressBarFill').style.width = '100%';
+        document.getElementById('progressLabel').textContent = '100%';
+        document.getElementById('loadingStep').textContent = 'Complete!';
+        setTimeout(hideLoading, 500);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  RENDER TABLE VIEW
+    // ══════════════════════════════════════════════════════════════════
+    function renderTable(scheduleArray) {
+        const tbody = document.getElementById('scheduleTableBody');
+        if (!scheduleArray.length) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> No classes scheduled yet</span></td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = scheduleArray.map(cls => `
+            <tr>
+                <td>${cls.instructor || '-'}</td>
+                <td>${cls.subject_code || '-'}</td>
+                <td>${cls.subject_name || cls.description || cls.subjectname || '-'}</td>
+                <td>${cls.lec_hours || cls.lecturehours || 0}</td>
+                <td>${cls.lab_hours || cls.laboratoryhours || 0}</td>
+                <td>${cls.credit_units || cls.creditunits || 0}</td>
+                <td>${cls.course || '-'}</td>
+                <td>${cls.time || '-'}</td>
+                <td>${cls.hours || 0}</td>
+                <td>${cls.days || '-'}</td>
+                <td>${cls.room || 'TBA'}</td>
+            </tr>
+        `).join('');
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  RENDER CALENDAR VIEW
+    // ══════════════════════════════════════════════════════════════════
+    function renderCalendarView(scheduleArray) {
+        const calendarBody = document.getElementById('calendarBody');
+        
+        // Time slots from 7:00 AM to 9:00 PM
+        const timeSlots = [];
+        for (let hour = 7; hour <= 21; hour++) {
+            timeSlots.push(`${hour <= 12 ? hour : hour - 12}:00 ${hour < 12 ? 'AM' : 'PM'}`);
+            if (hour < 21) {
+                timeSlots.push(`${hour <= 12 ? hour : hour - 12}:30 ${hour < 12 ? 'AM' : 'PM'}`);
+            }
+        }
+
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        
+        let html = '';
+        
+        timeSlots.forEach(timeSlot => {
+            html += `<div class="calendar-row">`;
+            html += `<div class="calendar-time">${timeSlot}</div>`;
+            
+            days.forEach(day => {
+                // Find classes for this day and time
+                const classesHere = scheduleArray.filter(cls => {
+                    if (!cls.days || !cls.time) return false;
+                    
+                    const dayMatch = cls.days.includes(day.substring(0, 3).toUpperCase());
+                    
+                    // Parse time range
+                    const timeMatch = cls.time.includes(timeSlot.split(':')[0]);
+                    
+                    return dayMatch && timeMatch;
+                });
+                
+                if (classesHere.length > 0) {
+                    const cls = classesHere[0];
+                    html += `
+                        <div class="calendar-cell occupied">
+                            <div class="class-block" style="background-color: ${getRandomColor()};">
+                                <strong>${cls.subject_code}</strong><br>
+                                <small>${cls.instructor}</small><br>
+                                <small>${cls.room || 'TBA'}</small>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html += `<div class="calendar-cell"></div>`;
+                }
+            });
+            
+            html += `</div>`;
+        });
+        
+        calendarBody.innerHTML = html;
+    }
+
+    // Helper to generate random colors for classes
+    function getRandomColor() {
+        const colors = ['#16A085', '#2980B9', '#8E44AD', '#C0392B', '#D35400', '#27AE60', '#2C3E50', '#7F8C8D'];
+        return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  UPDATE TITLE BAR
+    // ══════════════════════════════════════════════════════════════════
+    function updateTitleBar() {
+        const ctx = getContext();
+        const termName = term.options[term.selectedIndex]?.text || ctx.term;
+        document.getElementById('tableTitle').innerHTML =
+            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} - Year ${ctx.yearLevel || '?'} | ${termName} | ${ctx.acadYear || 'AY'}`;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  GENERATE SCHEDULE
+    // ══════════════════════════════════════════════════════════════════
+    btnGenerate.addEventListener('click', async () => {
         const ctx = getContext();
 
-        // Show loading modal + start animation
-        loadingModal.classList.remove('hidden');
-        startProgress();
+        // Ensure all fields are filled
+        if (!ctx.acadYear || !ctx.term || !ctx.program || !ctx.yearLevel) {
+            await showInfo('Missing Fields', 'Please select all required fields before generating.', 'error');
+            return;
+        }
+
+        btnGenerate.disabled = true;
+        btnGenerate.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+        showLoading();
 
         try {
-            const response = await fetch('/api/schedule/generate', {
+            const res = await fetch('/api/schedule/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    program:      ctx.program,
-                    yearLevel:    ctx.yearLevel,
-                    term:         ctx.term,
-                    curriculum:   ctx.curriculum,
-                    useHistorical: document.getElementById('useHistorical').checked,
+                    program:       ctx.program,
+                    yearLevel:     ctx.yearLevel,
+                    term:          ctx.term,
+                    curriculum:    curriculum.value,
+                    useHistorical: useHistorical.checked,
                 }),
             });
 
-            if (cancelRequested) { loadingModal.classList.add('hidden'); return; }
+            const data = await res.json();
+            completeProgress();
 
-            const data = await response.json();
-            finishProgress(data.success);
+            if (data.success) {
+                currentScheduleData = data.schedule_data || [];
+                currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
+                canPublish          = data.conflict_count === 0;
 
-            await new Promise(r => setTimeout(r, 600)); // brief pause so 100% is visible
-            loadingModal.classList.add('hidden');
+                renderTable(currentScheduleData);
+                updateTitleBar();
 
-            if (!data.success) {
-                await showInfo('Generation Failed', data.error || 'No subjects found for this selection.', 'error');
-                return;
-            }
+                // Enable action buttons
+                btnRegenerate.disabled    = false;
+                btnSaveDraft.disabled     = false;
+                btnManualEditor.disabled  = false;
+                btnExport.disabled        = false;
+                btnApprove.disabled       = !canPublish;
 
-            // ── Populate table ──────────────────────────────────────
-            currentScheduleData = data.schedule_data;
-            currentBatchId      = data.batch_id;
-            hasGenerated        = true;
+                // Show conflict banner if needed
+                if (data.conflict_count > 0) {
+                    document.getElementById('conflictText').textContent =
+                        `Schedule has ${data.conflict_count} unresolved conflict(s). Approve is blocked until resolved.`;
+                    document.getElementById('conflictBanner').classList.remove('hidden');
+                } else {
+                    document.getElementById('conflictBanner').classList.add('hidden');
+                }
 
-            tableTitle.innerHTML = `<i class="fas fa-calendar-check"></i> ${getLabelText(ctx)}`;
-            tableBody.innerHTML  = '';
-
-            data.schedule_data.forEach(row => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td class="red-cell">${row.instructor}</td>
-                    <td>${row.subject_code}</td>
-                    <td class="desc-cell">${row.description}</td>
-                    <td>${row.lec_hours}</td>
-                    <td>${row.lab_hours}</td>
-                    <td>${row.units}</td>
-                    <td>${row.course}</td>
-                    <td class="red-cell">${row.time}</td>
-                    <td>${row.hours}</td>
-                    <td class="red-cell">${row.days}</td>
-                    <td class="red-cell">${row.room}</td>
-                `;
-                tableBody.appendChild(tr);
-            });
-
-            // ── Enable action buttons ───────────────────────────────
-            btnGenerate.disabled     = true;   // use Re-generate from now on
-            btnRegenerate.disabled   = false;
-            btnSaveDraft.disabled    = false;
-            btnManualEditor.disabled = false;
-            btnExport.disabled       = false;
-
-            // ── Conflict handling ───────────────────────────────────
-            if (data.conflict_count > 0) {
-                conflictText.textContent = `⚠ ${data.conflict_count} conflict(s) detected. Approve is blocked until resolved in Manual Editor.`;
-                conflictBanner.classList.remove('hidden');
-                btnApprove.disabled = true;
+                // Show success toast
+                const toast = document.getElementById('successToast');
+                toast.classList.remove('hidden');
+                setTimeout(() => toast.classList.add('hidden'), 3000);
             } else {
-                conflictBanner.classList.add('hidden');
-                btnApprove.disabled = false;
+                await showInfo('Generation Failed', data.error || 'Could not generate schedule.', 'error');
             }
-
-            // ── Save to session storage for Manual Editor ───────────
-            sessionStorage.setItem('pendingSchedule', JSON.stringify({
-                schedule_data: data.schedule_data,
-                context: ctx,
-                label: getLabelText(ctx),
-                batch_id: data.batch_id,
-            }));
-
-            // ── Toast ───────────────────────────────────────────────
-            successToast.classList.remove('hidden', 'show');
-            void successToast.offsetWidth;
-            successToast.classList.add('show');
-            setTimeout(() => {
-                successToast.classList.remove('show');
-                setTimeout(() => successToast.classList.add('hidden'), 400);
-            }, 4000);
-
-        } catch (err) {
-            finishProgress(false);
-            await new Promise(r => setTimeout(r, 500));
-            loadingModal.classList.add('hidden');
-            await showInfo('Connection Error', 'Could not connect to the server. Please check the Python terminal.', 'error');
+        } catch (e) {
+            completeProgress();
+            await showInfo('Error', 'Connection error. Please try again.', 'error');
+        } finally {
+            btnGenerate.disabled = false;
+            btnGenerate.innerHTML = '<i class="fas fa-magic"></i> GENERATE SCHEDULE';
         }
-    }
-
-    // ── Button listeners ──────────────────────────────────────────────
-    btnGenerate.addEventListener('click', generateSchedule);
-
-    document.getElementById('btnCancelGenerate').addEventListener('click', () => {
-        cancelRequested = true;
-        clearInterval(progressInterval);
-        loadingModal.classList.add('hidden');
     });
 
-    btnRegenerate.addEventListener('click', async () => {
-        const confirmed = await showInfo(
-            'Re-generate Schedule?',
-            'This will overwrite the current draft layout with a newly generated schedule.',
-            'confirm'
-        );
-        if (confirmed) generateSchedule();
+    // ── RE-GENERATE ───────────────────────────────────────────────────
+    btnRegenerate.addEventListener('click', () => {
+        btnGenerate.click();
     });
 
-    // ── SAVE AS DRAFT ─────────────────────────────────────────────────
+    // ── SAVE DRAFT ────────────────────────────────────────────────────
     btnSaveDraft.addEventListener('click', async () => {
         if (!currentScheduleData.length) return;
 
@@ -565,6 +710,50 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    // ══════════════════════════════════════════════════════════════════
+    //  LOAD DRAFT FUNCTION (called from View Drafts modal)
+    // ══════════════════════════════════════════════════════════════════
+    window.loadDraft = async function(versionId) {
+        try {
+            const res = await fetch(`/api/schedule/load-draft/${versionId}`);
+            const data = await res.json();
+            
+            if (data.success) {
+                // Close modal
+                document.getElementById('draftsModal').classList.add('hidden');
+                
+                // Load the draft data
+                currentScheduleData = data.schedule_data || [];
+                currentBatchId = `DRAFT-${versionId}`;
+                
+                // Update form fields to match draft context
+                if (data.context) {
+                    acadYear.value = data.context.acadYear || '';
+                    term.value = data.context.term || '';
+                    program.value = data.context.program || '';
+                    yearLevel.value = data.context.yearLevel || '';
+                }
+                
+                // Render the schedule
+                renderTable(currentScheduleData);
+                updateTitleBar();
+                
+                // Enable buttons
+                btnRegenerate.disabled = false;
+                btnSaveDraft.disabled = false;
+                btnManualEditor.disabled = false;
+                btnExport.disabled = false;
+                btnApprove.disabled = true; // Re-validate before allowing approve
+                
+                await showInfo('Draft Loaded', `Draft V${data.version} has been loaded successfully.`, 'success');
+            } else {
+                await showInfo('Load Failed', data.error || 'Could not load draft.', 'error');
+            }
+        } catch (e) {
+            await showInfo('Error', 'Failed to load draft. Please try again.', 'error');
+        }
+    };
+
     // ── VIEW DRAFTS ───────────────────────────────────────────────────
     window.openDraftsModal = async function() {
         const modal = document.getElementById('draftsModal');
@@ -623,7 +812,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             body.innerHTML = `
                 <table class="modal-table">
-                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>Version</th><th>Status</th><th>Date</th></tr></thead>
+                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>Version</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
                     <tbody>
                         ${data.map(d => `
                             <tr>
@@ -633,6 +822,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                 <td>V${d.version}</td>
                                 <td><span class="badge ${statusClass[d.status] || ''}">${d.status}</span></td>
                                 <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                                <td>${d.status === 'Draft' ? `<button class="btn-load-draft" onclick="loadDraft(${d.versionid})"><i class="fas fa-folder-open"></i> Load</button>` : '-'}</td>
                             </tr>
                         `).join('')}
                     </tbody>

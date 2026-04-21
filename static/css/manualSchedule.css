@@ -2,64 +2,192 @@
 
 /* 1. Main Layout Containers */
 .editor-wrapper {
-    display: grid;
-    grid-template-columns: 320px 1fr; /* Left panel fixed, Right panel fills space */
-    gap: 25px;
-    align-items: start;
-    margin-top: 20px;
+    display: flex;
+    gap: 12px;
+    align-items: stretch;
+    margin-top: 15px;
+    height: calc(100vh - 130px);   /* viewport-bounded — keeps rooms/calendar proportional and scrollable within */
+}
+
+/* Compact the form so it fits the bounded wrapper without internal scroll */
+.editor-left-panel .panel-top-yellow {
+    padding: 12px 15px;
+}
+.editor-left-panel .panel-bottom-white {
+    padding: 12px 15px;
+}
+.editor-left-panel .form-group-editor,
+.editor-left-panel .form-row-editor {
+    margin-bottom: 10px;
+}
+.editor-left-panel .input-maroon,
+.editor-left-panel .read-only-maroon {
+    padding: 7px 10px;
+    font-size: 0.8rem;
+}
+.editor-left-panel label {
+    margin-bottom: 3px !important;
+}
+.editor-left-panel .summary-container {
+    padding-top: 10px;
+}
+.editor-left-panel .btn-confirm-dark {
+    padding: 9px;
+    margin-top: 8px;
 }
 
 .editor-left-panel {
+    width: 320px;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    gap: 0;
     border-radius: 8px;
-    overflow: hidden;
     box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    overflow: visible;   /* explicit override — schedule.css sets overflow-y: auto; we want the form's full natural height to drive the row, no internal scroll */
+    height: auto;
 }
 
 .editor-right-panel {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    align-self: stretch;   /* forces right panel to match form (sibling) height via the flex line */
+    overflow: hidden;
 }
 
-/* 2. Grid Area (Sidebar + Table) */
+/* action bar: inherit natural spacing via right panel's gap — drop schedule.css's extra margin-top so the calendar reclaims that space */
+.editor-right-panel .editor-action-bar {
+    margin-top: 0;
+}
+
+/* 2. Buildings section */
+.buildings-section {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 12px 10px;
+    overflow: hidden;
+    min-width: 0;
+    flex-shrink: 0;   /* natural height — leaves grid-container the remaining vertical space */
+}
+
+.section-label-bar {
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: #630100;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 2px solid #630100;
+}
+
+/* 3. Grid Area (Sidebar + Table) */
 .grid-container {
-    display: flex; /* Sidebar and Grid side-by-side */
+    display: flex;
     flex-direction: row;
     background: white;
     border: 1px solid #ddd;
     border-radius: 4px;
     overflow: hidden;
+    flex: 1;          /* takes remaining vertical space in right panel */
+    min-height: 0;
 }
 
 .rooms-sidebar {
-    width: 130px; /* Fixed width for Room List */
+    width: 140px;
+    min-width: 140px;
     background: #fdf2f2;
     border-right: 1px solid #ddd;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    height: 100%;
+    min-height: 0;
+}
+
+.rooms-sidebar-header {
+    background: #630100;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+    padding: 7px 10px;
+    text-transform: uppercase;
 }
 
 .rooms-filter {
-    padding: 10px;
-    background: #630100;
+    padding: 8px;
+    background: #f0e8e8;
+    border-bottom: 1px solid #ddd;
 }
 
 .floor-select {
     width: 100%;
-    padding: 5px;
+    padding: 4px 6px;
     border-radius: 4px;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: bold;
+    border: 1px solid #ccc;
 }
 
 .rooms-list {
-    padding: 10px;
+    padding: 8px;
     overflow-y: auto;
-    max-height: 550px;
+    flex: 1;
+}
+
+/* Timetable area wrapper */
+.timetable-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* Calendar filter bar */
+.cal-filter-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #ddd;
+    flex-wrap: wrap;
+}
+
+.cal-filter-select {
+    padding: 5px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #333;
+    background: white;
+    flex: 1;
+    min-width: 90px;
+}
+
+.btn-cal-filter {
+    padding: 5px 14px;
+    background: #630100;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-cal-filter:hover {
+    background: #7a0100;
 }
 
 /* Room Items */
@@ -78,7 +206,9 @@
 }
 
 .room-pill:hover {
-    background: #fdf2f2;
+    background: #fffde7;
+    border-color: #c8860a;
+    color: #5a0000;
 }
 
 .room-pill.active-room {
@@ -87,11 +217,19 @@
     border: 2px solid #ffc107;
 }
 
+.room-pill.active-room:hover {
+    background-color: #7a0100 !important;
+    color: white !important;
+}
+
+
 /* 3. Timetable Grid Styling */
 .timetable-wrapper {
     position: relative; /* REQUIRED for absolute positioning of pills */
     flex-grow: 1;
-    overflow-x: auto;
+    overflow: auto;     /* vertical/horizontal scroll inside the calendar frame so the layout stays inside the viewport */
+    min-width: 0;
+    min-height: 0;
 }
 
 .timetable {
@@ -108,6 +246,9 @@
     font-weight: 800;
     text-transform: uppercase;
     border: 1px solid #7a0100;
+    position: sticky;
+    top: 0;
+    z-index: 20;          /* must exceed .schedule-pill z-index so pills never cover the day header on scroll */
 }
 
 .timetable td {
@@ -153,34 +294,155 @@
 }
 
 /* 5. Building Tabs */
-/* HORIZONTAL SCROLLABLE TABS */
 .building-tabs-container {
     display: flex;
-    overflow-x: auto; /* This enables the horizontal scroll */
-    white-space: nowrap; /* This prevents tabs from wrapping to the next line */
-    gap: 10px;
-    padding-bottom: 10px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    padding: 6px 2px 12px;
     margin-bottom: 5px;
-    -webkit-overflow-scrolling: touch; /* Smooth scrolling for mobile */
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    box-sizing: border-box;
 }
 
-/* Hide the scrollbar but keep functionality (Optional, for clean look) */
+/* Prominent, always-visible horizontal scrollbar so users see they can scroll buildings */
+.building-tabs-container {
+    scrollbar-color: #630100 #f0e0e0;   /* Firefox thumb / track */
+    scrollbar-width: thin;
+}
 .building-tabs-container::-webkit-scrollbar {
-    height: 4px;
+    height: 10px;
+    background: #f0e0e0;
+}
+.building-tabs-container::-webkit-scrollbar-track {
+    background: #f0e0e0;
+    border-radius: 10px;
 }
 .building-tabs-container::-webkit-scrollbar-thumb {
     background: #630100;
     border-radius: 10px;
+    border: 2px solid #f0e0e0;
+}
+.building-tabs-container::-webkit-scrollbar-thumb:hover {
+    background: #7a0100;
 }
 
 .bldg-tab {
-    flex: 0 0 auto; /* This is MANDATORY: it prevents the tabs from squishing */
+    flex: 0 0 auto;
     padding: 8px 20px;
-    border: 1px solid #630100;
+    border: 2px solid #630100;
     border-radius: 20px;
     background: white;
+    color: #630100;
     font-weight: bold;
     cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.8rem;
+}
+
+.bldg-tab:hover {
+    background: #fffde7;
+    border-color: #e6ac00;
+    color: #7a5000;
+}
+
+.bldg-tab.active {
+    background: #630100;
+    color: white;
+    border: 2px solid #ffc107;
+    box-shadow: 0 3px 8px rgba(99,1,0,0.35);
+    font-weight: 900;
+}
+
+.bldg-tab.active:hover {
+    background: #7a0100;
+    border-color: #ffc107;
+    color: white;
+}
+
+/* Highlighted when a room inside this building is selected */
+.bldg-tab.building-linked {
+    border-color: #ffc107;
+    box-shadow: 0 0 0 2px #ffc10755;
+    background: #fffde7;
+    color: #630100;
+}
+
+.bldg-tab.active.building-linked {
+    background: #630100;
+    color: white;
+    border-color: #ffc107;
+    box-shadow: 0 0 0 3px #ffc10788;
+}
+
+/* Program custom dropdown — trigger always shows CODE, menu shows CODE / Full Name */
+.prog-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.prog-selected-display {
+    width: 100%;
+    padding: 8px 12px;
+    background: #630100;
+    color: white;
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-sizing: border-box;
+    letter-spacing: 0.5px;
+}
+
+.prog-selected-display::after {
+    content: '\25BE';
+    font-size: 0.75rem;
+    opacity: 0.7;
+    margin-left: 8px;
+}
+
+.prog-menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #630100;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 100;
+}
+
+.prog-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #333;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.prog-option:last-child {
+    border-bottom: none;
+}
+
+.prog-option:hover {
+    background: #fffde7;
+    color: #630100;
+}
+
+.prog-option strong {
+    color: #630100;
+}
+
+.prog-option-name {
+    color: #666;
+    font-size: 0.8rem;
 }
 
 /* SUMMARY CARD STYLE (Matching reference) */
