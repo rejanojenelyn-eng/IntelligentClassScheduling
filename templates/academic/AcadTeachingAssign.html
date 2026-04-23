@@ -1,0 +1,42 @@
+{% extends "academic/base.html" %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/teaching_faculty.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="teaching-assignment-wrapper">
+    <div class="main-header">
+        <h1>MY TEACHING ASSIGNMENT</h1>
+    </div>
+
+    <div class="load-section">
+        <h2>PERSONAL LOAD DETAILS</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>SUBJECT CODE</th>
+                        <th>SUBJECT DESCRIPTION</th>
+                        <th>UNITS</th>
+                        <th>TIME</th>
+                        <th>DAY/S</th>
+                        <th>ROOM</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in assignments %}
+                    <tr>
+                        <td style="font-weight: 800; color: #630100;">{{ a.subjectcode }}</td>
+                        <td>{{ a.subjectname }}</td>
+                        <td>{{ a.creditunits }}</td>
+                        <td>{{ a.time_range }}</td>
+                        <td>{{ a.daydesc }}</td>
+                        <td>{{ a.roomname }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

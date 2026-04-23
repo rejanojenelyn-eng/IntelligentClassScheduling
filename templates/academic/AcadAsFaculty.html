@@ -1,0 +1,41 @@
+{% extends "academic/base.html" %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_faculty.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-wrapper">
+    <div class="dashboard-header">
+        <h2 class="welcome-heading">Welcome, {{ user.firstname }} (Academic Head)</h2>
+    </div>
+
+    <div class="main-stats-grid">
+        <div class="section-wrapper schedule-section">
+            <div class="section-tab">My Today's Schedule</div>
+            <div class="section-content">
+                {% for sess in schedule %}
+                <div class="schedule-card">
+                    <div class="card-left">
+                        <div class="subject-code">{{ sess.subjectcode }} – {{ sess.subjectname }}</div>
+                        <div class="subject-meta">ROOM: {{ sess.roomname }} &nbsp;&nbsp; TIME: {{ sess.start_time }} - {{ sess.end_time }}</div>
+                    </div>
+                    <div class="card-right">{{ sess.daydesc }}</div>
+                </div>
+                {% else %}
+                <p style="padding: 20px;">No classes scheduled for you today.</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="section-wrapper overview-section">
+            <div class="section-tab">Overview</div>
+            <div class="section-content overview-content">
+                <div class="stat-box">
+                    <div class="stat-title">MY TEACHING UNITS</div>
+                    <div class="stat-value">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

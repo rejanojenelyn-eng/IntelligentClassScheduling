@@ -151,8 +151,74 @@ def login():
     return render_template('login.html', active_role=active_role, saved_username=saved_username)
 
 # ==============================================================================
-# --- ACADEMIC HEAD SPECIFIC ROUTES ---
+# --- ACADEMIC HEAD PERSONAL FACULTY VIEW ---
 # ==============================================================================
+
+@app.route('/academic/my-dashboard')
+def academic_my_dashboard():
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
+    
+    username = session.get('username')
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
+    acc = cur.fetchone()
+    emp_num = acc['employeenumber'] if acc else None
+
+    cur.execute("""
+        SELECT f.*, d.designationname 
+        FROM faculty f 
+        LEFT JOIN designation d ON f.designationid = d.designationid 
+        WHERE f.employeenumber = %s
+    """, (emp_num,))
+    user_data = cur.fetchone()
+
+    cur.execute("""
+        SELECT ss.*, sub.subjectcode, sub.subjectname, r.roomname,
+               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
+        JOIN room r ON ss.roomid = r.roomid
+        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        WHERE sc.employeenumber = %s AND sv.status = 'Published'
+    """, (emp_num,))
+    my_schedule = cur.fetchall()
+    cur.close(); conn.close()
+    return render_template('academic/AcadAsFaculty.html', user=user_data, schedule=my_schedule)
+
+@app.route('/academic/my-teaching-assignment')
+def academic_my_teaching_assignment():
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
+    
+    username = session.get('username')
+    acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s", (username,), one=True)
+    emp_num = acc['employeenumber'] if acc else None
+    
+    query = """
+        SELECT sub.subjectcode, sub.subjectname, sub.creditunits, 
+               sec.sectionname, ss.daydesc, r.roomname,
+               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as time_range
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
+        JOIN sections sec ON sc.sectionid = sec.sectionid
+        JOIN room r ON ss.roomid = r.roomid
+        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        WHERE sc.employeenumber = %s AND sv.status = 'Published'
+    """
+    assignments = query_db(query, (emp_num,))
+    return render_template('academic/AcadTeachingAssign.html', assignments=assignments)
 
 @app.route('/dashboard')
 def dashboard():
@@ -1415,92 +1481,6 @@ def manual_schedule_editor():
     finally:
         cur.close()
         conn.close()
-
-@app.route('/api/save_manual_schedule', methods=['POST'])
-def save_manual_schedule():
-    if 'loggedin' not in session: return jsonify({"success": False, "message": "Unauthorized"}), 401
-    
-    data = request.get_json()
-    emp_num = data.get('employee_number')
-    subj_code = data.get('subject_code')
-    curr_id = data.get('curriculum_id')
-    room_id = data.get('room_id')
-    day = data.get('day')
-    start_time_val = data.get('start_time')
-    end_time_val = data.get('end_time')
-    ay_id = data.get('ay_id')
-    sem_code = data.get('semester_code')
-    yl = data.get('year_level')
-
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-        # 1. Resolve IDs
-        cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s", (ay_id, sem_code))
-        sem_res = cur.fetchone()
-        if not sem_res: return jsonify({"success": False, "message": "Semester not found."})
-        semester_id = sem_res['semesterid']
-
-        cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE curriculumid = %s AND subjectcode = %s AND semester = %s AND yearlevel = %s", 
-                    (curr_id, subj_code, sem_code, yl))
-        cs_res = cur.fetchone()
-        if not cs_res: return jsonify({"success": False, "message": "Subject mapping not found."})
-        cs_id = cs_res['curriculumsubjectid']
-
-        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (start_time_val,))
-        start_id = cur.fetchone()['timeid']
-        cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s", (end_time_val,))
-        end_id = cur.fetchone()['timeid']
-
-        # 2. STRICT CONFLICT CHECK (Faculty OR Room OR Section)
-        # Check if Faculty is busy OR Room is busy during this time
-        conflict_query = """
-            SELECT 'Faculty' AS type
-            FROM schedule_sessions ss
-            JOIN schedule_version sv ON ss.versionid = sv.versionid
-            JOIN schedule s ON sv.scheduleid = s.scheduleid
-            WHERE s.employeenumber = %s AND ss.daydesc = %s
-              AND NOT (%s >= ss.endtimeid OR %s <= ss.starttimeid)
-              AND s.semesterid = %s
-            UNION ALL
-            SELECT 'Room' AS type
-            FROM schedule_sessions ss
-            JOIN schedule_version sv ON ss.versionid = sv.versionid
-            JOIN schedule s ON sv.scheduleid = s.scheduleid
-            WHERE ss.roomid = %s AND ss.daydesc = %s
-              AND NOT (%s >= ss.endtimeid OR %s <= ss.starttimeid)
-              AND s.semesterid = %s
-        """
-        cur.execute(conflict_query, (emp_num, day, start_id, end_id, semester_id, room_id, day, start_id, end_id, semester_id))
-        conflict = cur.fetchone()
-        if conflict:
-            return jsonify({"success": False, "message": f"Conflict detected: {conflict['type']} is already occupied at this time."})
-
-        # 3. Check if this Subject is already scheduled for this Section
-        # (Assuming section 1 for now, adjust based on your section logic)
-        cur.execute("SELECT 1 FROM schedule WHERE curriculumsubjectid = %s AND semesterid = %s", (cs_id, semester_id))
-        if cur.fetchone():
-             return jsonify({"success": False, "message": "This subject is already scheduled for this curriculum/year."})
-
-        # 4. INSERT
-        cur.execute("SELECT sectionid FROM sections LIMIT 1") # Placeholder
-        section_id = cur.fetchone()['sectionid']
-
-        cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid",
-                    (cs_id, section_id, emp_num, semester_id))
-        sched_id = cur.fetchone()['scheduleid']
-
-        cur.execute("INSERT INTO schedule_sessions (scheduleid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
-                    (sched_id, day, start_id, end_id, room_id))
-
-        conn.commit()
-        return jsonify({"success": True, "message": "Saved Successfully!"})
-    except Exception as e:
-        conn.rollback()
-        return jsonify({"success": False, "message": str(e)})
-    finally:
-        cur.close(); conn.close()
 
 @app.route('/api/get_room_schedule/<int:room_id>')
 def get_room_schedule(room_id):
@@ -3361,179 +3341,108 @@ def _get_semester_id(cur, acad_year, term):
     return result[0]
 
 
+def _insert_schedule_batch(cur, schedule_data, semester_id, target_status):
+    cur.execute("SELECT sectionid FROM sections LIMIT 1")
+    sec_res = cur.fetchone()
+    default_sec_id = sec_res['sectionid'] if sec_res else None
+
+    for cls in schedule_data:
+        # Support both AI (subjectcode) and Manual (subject_code) naming
+        s_code = cls.get('subjectcode') or cls.get('subject_code')
+        f_num  = cls.get('employeenumber') or cls.get('faculty_id')
+        r_id   = cls.get('roomid') or cls.get('room_id')
+        day    = cls.get('daydesc') or cls.get('day')
+        start_t = cls.get('start_time')
+        end_t   = cls.get('end_time')
+
+        if not all([s_code, f_num, start_t, end_t]): continue
+
+        # 1. Resolve IDs
+        cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE subjectcode = %s LIMIT 1", (s_code,))
+        cs_res = cur.fetchone()
+        if not cs_res: continue
+        cs_id = cs_res['curriculumsubjectid']
+
+        try:
+            # The ::time cast fixes the "operator does not exist" error
+            cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time LIMIT 1", (str(start_t),))
+            st_row = cur.fetchone()
+            cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time LIMIT 1", (str(end_t),))
+            et_row = cur.fetchone()
+            if not st_row or not et_row: continue
+            start_id, end_id = st_row['timeid'], et_row['timeid']
+        except: continue
+
+        # 2. Parent Schedule row
+        cur.execute("SELECT scheduleid FROM schedule WHERE curriculumsubjectid = %s AND semesterid = %s AND employeenumber = %s LIMIT 1", (cs_id, semester_id, f_num))
+        sched_res = cur.fetchone()
+        sched_id = sched_res['scheduleid'] if sched_res else None
+
+        if not sched_id:
+            cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid", (cs_id, default_sec_id, f_num, semester_id))
+            sched_id = cur.fetchone()['scheduleid']
+
+        # 3. VERSIONING: Archive existing version of SAME status
+        cur.execute("UPDATE schedule_version SET status = 'Archive' WHERE scheduleid = %s AND status = %s", (sched_id, target_status))
+        
+        cur.execute("SELECT COALESCE(MAX(version_number), 0) + 1 as next_v FROM schedule_version WHERE scheduleid = %s", (sched_id,))
+        new_v = cur.fetchone()['next_v']
+
+        cur.execute("INSERT INTO schedule_version (scheduleid, version_number, status) VALUES (%s, %s, %s) RETURNING versionid", (sched_id, new_v, target_status))
+        ver_id = cur.fetchone()['versionid']
+
+        # 4. Insert Session
+        cur.execute("INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)", 
+                    (ver_id, day, start_id, end_id, r_id if str(r_id).isdigit() else None))
+
 @app.route('/api/schedule/save-draft', methods=['POST'])
 def api_save_draft():
-    """Save schedule as a Draft version."""
     try:
-        data          = request.json or {}
+        data = request.json or {}
         schedule_data = data.get('schedule_data', [])
-        context       = data.get('context', {})
-
-        program    = context.get('program')
-        year_level = context.get('yearLevel')
-        term       = context.get('term')
-        acad_year  = context.get('acadYear')
-
-        if not all([program, year_level, term, acad_year]):
-            return jsonify({'success': False, 'error': 'Missing context (program/yearLevel/term/acadYear).'}), 400
-
-        # Validate before saving
-        faculty_map   = _load_faculty_map()
-        schedule_data = _rehydrate_schedule(schedule_data)
-        validation    = validate_draft(schedule_data, faculty_map)
+        ctx = data.get('context', {})
+        
+        faculty_map = _load_faculty_map()
+        validation = validate_draft(_rehydrate_schedule(list(schedule_data)), faculty_map)
 
         conn = get_db_connection()
-        cur  = conn.cursor()
-
-        # Get semester ID
-        semester_id = _get_semester_id(cur, acad_year, term)
-
-        # Get or create schedule record for this context
-        schedule_id = _get_or_create_schedule_record(conn, cur, program, year_level, term, acad_year, semester_id)
-
-        # Get next version number for this schedule
-        cur.execute("""
-            SELECT COALESCE(MAX(version_number), 0) + 1
-            FROM   public.schedule_version
-            WHERE  scheduleid = %s
-        """, (schedule_id,))
-        new_version = cur.fetchone()[0]
-
-        # Archive the current Draft for this schedule
-        cur.execute("""
-            UPDATE public.schedule_version
-            SET    status = 'Archive'
-            WHERE  scheduleid = %s AND status = 'Draft'
-        """, (schedule_id,))
-
-        # Insert new Draft
-        cur.execute("""
-            INSERT INTO public.schedule_version 
-                (scheduleid, version_number, status, datecreated)
-            VALUES (%s, %s, 'Draft', NOW())
-            RETURNING versionid
-        """, (schedule_id, new_version))
-
-        version_id = cur.fetchone()[0]
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        sem_id = _get_semester_id(cur, ctx.get('acadYear'), ctx.get('term'))
         
-        # Store schedule_json as metadata (optional, for reference)
-        # Your current schema doesn't have schedule_json column, so we skip this
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return jsonify({
-            'success':        True,
-            'message':        f'Saved as Draft V{new_version}.',
-            'draft_version':  new_version,
-            'versionid':      version_id,
-            'can_publish':    validation['can_publish'],
-            'conflict_count': len(validation['violations']),
-            'violations':     validation['violations'],
-        })
-
+        if sem_id:
+            _insert_schedule_batch(cur, schedule_data, sem_id, 'Draft')
+            conn.commit()
+            return jsonify({'success': True, 'violations': validation['violations'], 'can_publish': validation['can_publish']})
+        return jsonify({'success': False, 'error': 'Semester not found'})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/schedule/approve', methods=['POST'])
 def api_approve_schedule():
-    """Promote Draft to Published and create new Draft."""
     try:
-        data          = request.json or {}
+        data = request.json or {}
         schedule_data = data.get('schedule_data', [])
-        context       = data.get('context', {})
+        ctx = data.get('context', {})
 
-        program    = context.get('program')
-        year_level = context.get('yearLevel')
-        term       = context.get('term')
-        acad_year  = context.get('acadYear')
-
-        if not all([program, year_level, term, acad_year]):
-            return jsonify({'success': False, 'error': 'Missing context (program/yearLevel/term/acadYear).'}), 400
-
-        # Gate: must pass all hard constraints to publish
-        faculty_map   = _load_faculty_map()
-        schedule_data = _rehydrate_schedule(schedule_data)
-        validation    = validate_draft(schedule_data, faculty_map)
-
+        faculty_map = _load_faculty_map()
+        validation = validate_draft(_rehydrate_schedule(list(schedule_data)), faculty_map)
         if not validation['can_publish']:
-            return jsonify({
-                'success':    False,
-                'error':      'Cannot publish — schedule has unresolved hard constraint violations.',
-                'violations': validation['violations'],
-            }), 400
+            return jsonify({'success': False, 'error': 'Constraints violated', 'violations': validation['violations']}), 400
 
         conn = get_db_connection()
-        cur  = conn.cursor()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        sem_id = _get_semester_id(cur, ctx.get('acadYear'), ctx.get('term'))
 
-        # Get semester ID
-        semester_id = _get_semester_id(cur, acad_year, term)
-
-        # Get or create schedule record for this context
-        schedule_id = _get_or_create_schedule_record(conn, cur, program, year_level, term, acad_year, semester_id)
-
-        # Step 1: Archive any existing Published for this schedule
-        cur.execute("""
-            UPDATE public.schedule_version
-            SET    status = 'Archive'
-            WHERE  scheduleid = %s AND status = 'Published'
-        """, (schedule_id,))
-
-        # Step 2: Archive the current Draft (being promoted)
-        cur.execute("""
-            UPDATE public.schedule_version
-            SET    status = 'Archive'
-            WHERE  scheduleid = %s AND status = 'Draft'
-        """, (schedule_id,))
-
-        # Step 3: Get next version number
-        cur.execute("""
-            SELECT COALESCE(MAX(version_number), 0) + 1
-            FROM   public.schedule_version
-            WHERE  scheduleid = %s
-        """, (schedule_id,))
-        new_version = cur.fetchone()[0]
-
-        # Step 4: Insert new Published
-        cur.execute("""
-            INSERT INTO public.schedule_version 
-                (scheduleid, version_number, status, datecreated)
-            VALUES (%s, %s, 'Published', NOW())
-            RETURNING versionid
-        """, (schedule_id, new_version))
-        published_version_id = cur.fetchone()[0]
-
-        # Step 5: Auto-create sibling Draft (same content, next version)
-        cur.execute("""
-            INSERT INTO public.schedule_version 
-                (scheduleid, version_number, status, datecreated)
-            VALUES (%s, %s, 'Draft', NOW())
-            RETURNING versionid
-        """, (schedule_id, new_version + 1))
-        draft_version_id = cur.fetchone()[0]
-
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return jsonify({
-            'success':              True,
-            'message':              f'Schedule published as V{new_version}. Draft V{new_version + 1} created.',
-            'published_version':    new_version,
-            'published_version_id': published_version_id,
-            'draft_version':        new_version + 1,
-            'draft_version_id':     draft_version_id,
-        })
-
+        if sem_id:
+            # 1. Publish it (Archives old Published)
+            _insert_schedule_batch(cur, schedule_data, sem_id, 'Published')
+            # 2. Create Sibling Draft (Archives old Draft)
+            _insert_schedule_batch(cur, schedule_data, sem_id, 'Draft')
+            conn.commit()
+            return jsonify({'success': True, 'message': 'Published & Sibling Draft created.'})
+        return jsonify({'success': False, 'error': 'Semester not found'})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/schedule/drafts')
 def api_list_drafts():

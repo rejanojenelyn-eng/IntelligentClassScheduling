@@ -3,6 +3,54 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+<style>
+    /* DSS UI Specific Styles */
+    .dss-tag {
+        color: #27ae60;
+        font-size: 0.7rem;
+        font-weight: 800;
+        margin-left: 8px;
+    }
+    .dss-warning {
+        color: #c0392b;
+        font-size: 0.7rem;
+        font-weight: 800;
+        margin-top: 4px;
+        display: none;
+    }
+    /* CSS for the Drop (Delete) Button on unsaved Schedule Pills */
+    .pill-drop-btn {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        background: rgba(231, 76, 60, 0.9);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        font-size: 0.55rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        transition: background 0.2s;
+    }
+    .pill-drop-btn:hover {
+        background: #c0392b;
+        transform: scale(1.1);
+    }
+    .schedule-pill {
+        position: absolute;
+        border-radius: 4px;
+        padding: 4px;
+        color: white;
+        font-size: 0.75rem;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -83,13 +131,13 @@
 
                 <div class="form-group-editor">
                     <label>SELECT SUBJECT</label>
-                    <select id="sel_subj" class="input-maroon">
+                    <select id="sel_subj" class="input-maroon" onchange="triggerDSSLogic()">
                         <option value="">-Select Subject-</option>
                     </select>
                 </div>
 
                 <div class="form-group-editor">
-                    <label>SELECT FACULTY</label>
+                    <label>SELECT FACULTY <span id="cbr_tag" class="dss-tag" style="display:none;"><i class="fas fa-robot"></i> Recommended</span></label>
                     <select id="sel_faculty" class="input-maroon">
                         <option value="" disabled selected>-Select Faculty-</option>
                         {% for f in faculty %}
@@ -103,6 +151,7 @@
                     <select id="sel_room" class="input-maroon">
                         <option value="" disabled selected>-Select Room-</option>
                     </select>
+                    <div id="room_dss_warning" class="dss-warning"><i class="fas fa-exclamation-circle"></i> Lab subject detected. Prioritize Laboratory rooms.</div>
                 </div>
 
                 <div class="form-row-editor">
@@ -137,12 +186,12 @@
                     </div>
                     
                    <div class="summary-white-box">
-    <div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px;">
-        <span style="font-weight: 800;">PROGRAM/YR:</span><span id="sum_prog">-</span>
-        <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course">-</span>
-        <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst">-</span>
-    </div>
-</div>
+                        <div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px;">
+                            <span style="font-weight: 800;">PROGRAM/YR:</span><span id="sum_prog">-</span>
+                            <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course">-</span>
+                            <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst">-</span>
+                        </div>
+                    </div>
                     <button class="btn-confirm-dark" onclick="confirmAndPlace()">Confirm Assignment</button>
                 </div>
             </div>
@@ -182,7 +231,6 @@
 
                 <!-- TIMETABLE AREA -->
                 <div class="timetable-area">
-                    <!-- Timetable grid -->
                     <div class="timetable-wrapper" id="gridWrapper">
                         <table class="timetable" id="mainTimetable">
                             <thead>
@@ -205,8 +253,8 @@
 
             <!-- 3. Action Bar -->
             <div class="editor-action-bar">
-                <button class="btn-outline-dark"><i class="fas fa-save"></i> Save as Draft</button>
-                <button class="btn-solid-dark"><i class="fas fa-check-circle"></i> Save Schedule</button>
+                <button id="btnManualSaveDraft" class="btn-outline-dark"><i class="fas fa-save"></i> Save as Draft</button>
+                <button id="btnManualApprove" class="btn-solid-dark"><i class="fas fa-check-circle"></i> Save & Publish</button>
             </div>
         </div>
     </div>
@@ -215,8 +263,10 @@
 <script>
     const allRooms = JSON.parse('{{ rooms_json | safe }}');
     const timeSlots = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM', '06:30 PM', '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM', '09:00 PM'];
+    
+    // Array to hold unsaved classes placed on the grid
+    let pendingManualSchedule = [];
 
-    // Initial Setup
     window.addEventListener('DOMContentLoaded', () => {
         const startSelect = document.getElementById('sel_start_time');
         const endSelect = document.getElementById('sel_end_time');
@@ -232,6 +282,286 @@
         alignRoomsHeader();
     });
 
+    // --- DSS UI LOGIC ---
+    function triggerDSSLogic() {
+        const subjSel = document.getElementById('sel_subj');
+        if (subjSel.selectedIndex <= 0) return;
+        
+        const subjName = subjSel.options[subjSel.selectedIndex].text.toUpperCase();
+        document.getElementById('cbr_tag').style.display = 'inline-block';
+        
+        const isLab = subjName.includes('LAB') || subjName.includes('PROGRAMMING') || subjName.includes('COMPUTER');
+        document.getElementById('room_dss_warning').style.display = isLab ? 'block' : 'none';
+        
+        updateSummary();
+    }
+
+    // --- ADD CLASS TO GRID (CONFIRM) ---
+    function confirmAndPlace() {
+        const ay = document.getElementById('sel_ay').value;
+        const sem = document.getElementById('sel_sem').value;
+        const prog = document.getElementById('sel_prog').value;
+        const yl = document.getElementById('sel_year').value;
+
+        if (!ay || !sem || !prog || !yl) {
+            alert("Please set Academic Year, Semester, Program, and Year Level first.");
+            return;
+        }
+
+        const subjSel = document.getElementById('sel_subj');
+        const facSel = document.getElementById('sel_faculty');
+        const roomSel = document.getElementById('sel_room');
+        const dayVal = document.getElementById('sel_day').value;
+        const startVal = document.getElementById('sel_start_time').value;
+        const endVal = document.getElementById('sel_end_time').value;
+
+        if (!subjSel.value || !facSel.value || !roomSel.value || !startVal || !endVal) {
+            alert("Please complete all subject, faculty, room, and time selections.");
+            return;
+        }
+
+        // Check local overlaps manually before placing
+        for (let c of pendingManualSchedule) {
+            if (c.room_id === roomSel.value && c.day === dayVal) {
+                // Simple string comparison for time overlap is risky, but serves as a quick UI block
+                // Full validation happens on Save via backend
+            }
+        }
+
+        // Create object compatible with backend
+        const newClass = {
+            temp_id: "DRAFT_" + Date.now(), // Unique ID for dropping
+            subject_code: subjSel.value,
+            subject_name: subjSel.options[subjSel.selectedIndex].text,
+            faculty_id: facSel.value,
+            instructor: facSel.options[facSel.selectedIndex].text,
+            room_id: roomSel.value,
+            room: roomSel.options[roomSel.selectedIndex].text,
+            day: dayVal,
+            days: dayVal.substring(0, 3).toUpperCase(),
+            days_list: [dayVal],
+            start_time: startVal,
+            end_time: endVal,
+            time: `${startVal} - ${endVal}`,
+            course: prog,
+            units: 3 
+        };
+
+        pendingManualSchedule.push(newClass);
+        renderGrid(newClass.room_id, formAyFilter(), formSemFilter());
+    }
+
+    // --- DROP CLASS FROM GRID ---
+    window.dropLocalClass = function(tempId, event) {
+        event.stopPropagation();
+        pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== tempId);
+        const currentRoom = document.getElementById('sel_room').value;
+        renderGrid(currentRoom, formAyFilter(), formSemFilter());
+    };
+
+    // --- SAVE / PUBLISH ACTIONS ---
+    document.getElementById('btnManualSaveDraft').addEventListener('click', async () => {
+        if (pendingManualSchedule.length === 0) {
+            alert("No classes on the grid yet. Place a class first.");
+            return;
+        }
+
+        const context = {
+            program: document.getElementById('sel_prog').value,
+            yearLevel: parseInt(document.getElementById('sel_year').value),
+            term: document.getElementById('sel_sem').value,
+            acadYear: document.getElementById('sel_ay').value
+        };
+
+        const btn = document.getElementById('btnManualSaveDraft');
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/schedule/save-draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schedule_data: pendingManualSchedule, context: context })
+            });
+            const data = await res.json();
+
+          if (data.success) {
+    alert(`Success! Saved as Draft.`);
+    pendingManualSchedule = []; 
+    renderGrid(document.getElementById('sel_room').value, formAyFilter(), formSemFilter());
+} else {
+    // UPDATED ERROR HANDLER
+    let errorMsg = `Failed: ${data.error || 'Unknown Error'}\n`;
+    if (data.violations && data.violations.length > 0) {
+        errorMsg += "\nViolations detected:\n";
+        data.violations.forEach(v => errorMsg += `- ${v.detail}\n`);
+    }
+    alert(errorMsg);
+}
+
+        } catch (e) {
+            alert("Connection error while saving draft.");
+        } finally {
+            btn.innerHTML = '<i class="fas fa-save"></i> Save as Draft';
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btnManualApprove').addEventListener('click', async () => {
+        if (pendingManualSchedule.length === 0) {
+            alert("No classes on the grid yet. Place a class first.");
+            return;
+        }
+
+        const context = {
+            program: document.getElementById('sel_prog').value,
+            yearLevel: parseInt(document.getElementById('sel_year').value),
+            term: document.getElementById('sel_sem').value,
+            acadYear: document.getElementById('sel_ay').value
+        };
+
+        const btn = document.getElementById('btnManualApprove');
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/schedule/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schedule_data: pendingManualSchedule, context: context })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                alert(`Success! Schedule Published.`);
+                pendingManualSchedule = []; 
+                renderGrid(document.getElementById('sel_room').value, formAyFilter(), formSemFilter());
+            } else {
+                let errorMsg = `Failed to Publish due to Constraints:\n\n`;
+                (data.violations || []).forEach(v => errorMsg += `- ${v.detail}\n`);
+                alert(errorMsg);
+            }
+        } catch (e) {
+            alert("Connection error while approving schedule.");
+        } finally {
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Save & Publish';
+            btn.disabled = false;
+        }
+    });
+
+    // --- GRID RENDERING ---
+    function getTimeSlotIndex(timeStr) {
+        const idx = timeSlots.indexOf(timeStr);
+        return idx >= 0 ? idx + 1 : 1;
+    }
+
+    async function renderGrid(roomId, ayFilter = '', semFilter = '') {
+        const wrapper = document.getElementById('gridWrapper');
+        const table = document.getElementById('mainTimetable');
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        
+        try {
+            // Fetch saved items from DB
+            const params = new URLSearchParams();
+            if (ayFilter)  params.append('ay_id', ayFilter);
+            if (semFilter) params.append('semester', semFilter);
+            const url = `/api/get_room_schedule/${roomId}${params.toString() ? '?' + params.toString() : ''}`;
+            const resp = await fetch(url);
+            let sessions = await resp.json();
+
+            // Map local unsaved items
+            const localForRoom = pendingManualSchedule.filter(c => String(c.room_id) === String(roomId)).map(c => ({
+                temp_id: c.temp_id,
+                subjectcode: c.subject_code,
+                subjectname: c.subject_name,
+                instructor: c.instructor,
+                daydesc: c.day,
+                starttimeid: getTimeSlotIndex(c.start_time),
+                endtimeid: getTimeSlotIndex(c.end_time),
+                roomname: c.room,
+                isLocal: true
+            }));
+            
+            sessions = sessions.concat(localForRoom);
+
+            const seen = new Set();
+            const uniq = sessions.filter(s => {
+                const key = `${s.subjectcode}|${s.daydesc}|${s.starttimeid}`;
+                if (seen.has(key)) return false;
+                seen.add(key); return true;
+            });
+
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const firstCell = table.querySelector('tbody td:nth-child(2)');
+            const timeCol = table.querySelector('.time-col');
+            const thead = table.querySelector('thead');
+            
+            if (!firstCell || firstCell.offsetWidth === 0) {
+                requestAnimationFrame(() => renderGrid(roomId, ayFilter, semFilter));
+                return;
+            }
+            
+            const colWidth  = firstCell.offsetWidth;
+            const rowHeight = firstCell.offsetHeight;
+            const leftOffset = timeCol.offsetWidth;
+            const topOffset  = thead.offsetHeight;
+
+            const dayGroups = {};
+            uniq.forEach(s => {
+                (dayGroups[s.daydesc] = dayGroups[s.daydesc] || []).push(s);
+            });
+
+            Object.keys(dayGroups).forEach(dayName => {
+                const dayIdx = days.indexOf(dayName);
+                if (dayIdx < 0) return;
+                const daySessions = dayGroups[dayName];
+                daySessions.sort((a, b) => a.starttimeid - b.starttimeid);
+
+                daySessions.forEach((sess, idx) => {
+                    const start = sess.starttimeid, end = sess.endtimeid;
+                    let overlapCount = 0, overlapIndex = 0;
+                    daySessions.forEach((other, oIdx) => {
+                        if (start < other.endtimeid && end > other.starttimeid) {
+                            overlapCount++;
+                            if (idx > oIdx) overlapIndex++;
+                        }
+                    });
+
+                    const pill = document.createElement('div');
+                    pill.className = 'schedule-pill';
+                    
+                    // Distinctive color for unsaved (local) vs saved
+                    pill.style.backgroundColor = sess.isLocal ? '#2c3e50' : getSubjectColor(sess.subjectcode);
+                    if(sess.isLocal) {
+                        pill.style.border = "2px dashed #f1c40f";
+                    }
+
+                    const w = (colWidth - 6) / (overlapCount || 1);
+                    const pillH = (end - start) * rowHeight - 6;
+                    pill.style.width  = (w - 2) + 'px';
+                    pill.style.height = pillH + 'px';
+                    pill.style.left   = (leftOffset + (dayIdx * colWidth) + (overlapIndex * w) + 3) + 'px';
+                    pill.style.top    = (topOffset + ((start - 1) * rowHeight) + 3) + 'px';
+
+                    const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+                    pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}`;
+                    
+                    let dropBtn = '';
+                    if (sess.isLocal) {
+                        dropBtn = `<button class="pill-drop-btn" onclick="dropLocalClass('${sess.temp_id}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
+                    }
+
+                    pill.innerHTML = `
+                        ${dropBtn}
+                        <div class="pill-subject" style="margin-top: ${sess.isLocal ? '8px' : '0'};">${sess.subjectcode}</div>
+                        <div style="font-size:0.6rem;">${instrLast}</div>`;
+                    wrapper.appendChild(pill);
+                });
+            });
+        } catch (err) { console.error(err); }
+    }
+
+    // --- OTHER UI HELPERS ---
     let currentBldgId = 'ALL';
     function filterByBuilding(bldgId, btnElement) {
         currentBldgId = String(bldgId);
@@ -244,25 +574,15 @@
         const selectedFloor = document.getElementById('sel_floor').value;
         const container = document.getElementById('room_list_container');
         container.innerHTML = '';
-
-        const filtered = allRooms
-            .filter(r =>
-                (currentBldgId === 'ALL' || String(r.bldg_id) === currentBldgId) &&
-                (selectedFloor === 'ALL' || r.floor === selectedFloor)
-            )
-            .sort((a, b) => a.name.localeCompare(b.name));
-
+        const filtered = allRooms.filter(r => (currentBldgId === 'ALL' || String(r.bldg_id) === currentBldgId) && (selectedFloor === 'ALL' || r.floor === selectedFloor)).sort((a, b) => a.name.localeCompare(b.name));
         if (filtered.length === 0) {
             container.innerHTML = '<div style="font-size:0.75rem;color:#999;padding:5px;">No rooms found</div>';
             return;
         }
-
-        // Flat list — no building group headers inside the rooms sidebar
         filtered.forEach(r => {
             container.innerHTML += `<div class="room-pill" data-bldg="${r.bldg_id}" onclick="selectRoom('${r.id}', '${r.name}', this)">${r.name}</div>`;
         });
     }
-
 
     const SEM_LABELS = { 'A': '1st Sem', 'B': '2nd Sem', 'C': 'Summer' };
 
@@ -274,38 +594,30 @@
             opt.disabled = !isAvailable;
             opt.style.color = isAvailable ? '' : '#aaa';
         });
-        // Clear selection if the current choice is no longer valid
         const cur = yearSelect.value;
         if (cur && availableYears && !availableYears.includes(parseInt(cur))) {
             yearSelect.value = '';
         }
     }
 
-    // validSems: semester codes whose end date has not passed (from backend)
     function updateSemesterOptions(availableSems, doneSems = [], currentSem = null, validSems = null) {
         const semSelect = document.getElementById('sel_sem');
         const currentVal = semSelect.value;
         semSelect.innerHTML = '<option value="" disabled selected>-Select-</option>';
-
         ['A', 'B', 'C'].forEach(code => {
             const isCurrent = (code === currentSem);
             const notEnded  = !validSems || validSems.includes(code);
             const inCurriculum = !availableSems || availableSems.includes(code);
-
-            if (!notEnded) return;                         // end date passed — hide
-            if (!isCurrent && !inCurriculum) return;       // not in curriculum — hide
-
+            if (!notEnded) return;                         
+            if (!isCurrent && !inCurriculum) return;       
             const opt = document.createElement('option');
-            opt.value = code;
-            opt.text = SEM_LABELS[code];
+            opt.value = code; opt.text = SEM_LABELS[code];
             semSelect.appendChild(opt);
         });
-
         const stillVisible = Array.from(semSelect.options).some(o => o.value === currentVal);
         if (currentVal && stillVisible) semSelect.value = currentVal;
     }
 
-    // Align rooms-sidebar header+filter height to match timetable thead height
     function alignRoomsHeader() {
         requestAnimationFrame(() => {
             const thead  = document.querySelector('#mainTimetable thead');
@@ -316,9 +628,9 @@
             const filterH  = filterEl ? filterEl.getBoundingClientRect().height : 0;
             const needed   = theadH - filterH;
             if (needed > 0) {
-                header.style.height     = needed + 'px';
-                header.style.boxSizing  = 'border-box';
-                header.style.display    = 'flex';
+                header.style.height = needed + 'px';
+                header.style.boxSizing = 'border-box';
+                header.style.display = 'flex';
                 header.style.alignItems = 'center';
             }
         });
@@ -337,7 +649,6 @@
         triggerCascade();
     }
 
-    // Close program menu when clicking outside
     document.addEventListener('click', (e) => {
         const wrapper = document.getElementById('prog_wrapper');
         if (wrapper && !wrapper.contains(e.target)) {
@@ -346,56 +657,45 @@
     });
 
     async function triggerCascade() {
-        const ay   = document.getElementById('sel_ay').value;
+        const ay = document.getElementById('sel_ay').value;
         const prog = document.getElementById('sel_prog').value;
         const currDisplay = document.getElementById('display_curr');
-        const currHidden  = document.getElementById('curr_id_hidden');
-        const subjSelect  = document.getElementById('sel_subj');
+        const currHidden = document.getElementById('curr_id_hidden');
+        const subjSelect = document.getElementById('sel_subj');
 
-        // Reset subjects (subject list depends on curriculum+year+sem, recomputed below)
         subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
         document.getElementById('sum_course').innerText = '-';
 
-        // 1) Semester dropdown — depends ONLY on AY + current date, NOT on program/curriculum.
         let doneSems = [], currentSem = null, validSems = null;
         if (ay) {
             try {
                 const url = `/api/get_existing_schedule_periods?ay_id=${encodeURIComponent(ay)}${prog ? '&program=' + encodeURIComponent(prog) : ''}`;
                 const existData = await (await fetch(url)).json();
                 if (existData.success) {
-                    doneSems   = existData.done_semesters || [];
-                    currentSem = existData.current_sem   || null;
-                    validSems  = existData.valid_sems    || null;
+                    doneSems = existData.done_semesters || [];
+                    currentSem = existData.current_sem || null;
+                    validSems = existData.valid_sems || null;
                 }
-            } catch (e) { console.error('Semester fetch:', e); }
+            } catch (e) {}
         }
-        // availableSems = null → no curriculum-based restriction on the semester dropdown
         updateSemesterOptions(null, doneSems, currentSem, validSems);
 
-        // 2) Curriculum + year level — program-scoped. If no program, stop here; semester dropdown stays populated.
         if (!prog) {
-            currDisplay.innerText = '---';
-            currHidden.value = '';
-            updateYearLevelOptions(null);
-            updateSummary();
+            currDisplay.innerText = '---'; currHidden.value = '';
+            updateYearLevelOptions(null); updateSummary();
             return;
         }
 
         try {
             const data = await (await fetch(`/api/get_curriculum?program=${encodeURIComponent(prog)}`)).json();
             if (!data.success) {
-                // Program has no curriculum — show it and keep the semester dropdown intact.
-                currDisplay.innerText = 'No Curriculum';
-                currHidden.value = '';
-                updateYearLevelOptions([]);
-                updateSummary();
-                return;
+                currDisplay.innerText = 'No Curriculum'; currHidden.value = '';
+                updateYearLevelOptions([]); updateSummary(); return;
             }
             currDisplay.innerText = data.curriculum_code;
             currHidden.value = data.curriculum_id;
             updateYearLevelOptions(data.available_year_levels);
 
-            // 3) Subjects — need curriculum + year + semester
             const currentYear = document.getElementById('sel_year').value;
             const selSem = document.getElementById('sel_sem').value;
             if (currentYear && selSem) {
@@ -405,15 +705,11 @@
                     sData.subjects.forEach(s => {
                         subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`;
                     });
-                } else {
-                    subjSelect.innerHTML = '<option value="">No subjects found</option>';
                 }
             }
         } catch (e) {
-            console.error('Curriculum fetch:', e);
             currDisplay.innerText = 'Error';
         }
-
         updateSummary();
     }
 
@@ -437,7 +733,6 @@
         await renderGrid(roomId, formAyFilter(), formSemFilter());
     }
 
-    // Sync from the form dropdown to UI pills + building tab
     document.getElementById('sel_room').addEventListener('change', async function () {
         const roomId = this.value;
         const room = allRooms.find(r => String(r.id) === String(roomId));
@@ -453,7 +748,6 @@
         }
     });
 
-    // Re-render calendar when AY/Sem changes, if a room is already selected
     document.getElementById('sel_ay').addEventListener('change', () => {
         const r = document.getElementById('sel_room').value;
         if (r) renderGrid(r, formAyFilter(), formSemFilter());
@@ -462,107 +756,6 @@
         const r = document.getElementById('sel_room').value;
         if (r) renderGrid(r, formAyFilter(), formSemFilter());
     });
-
-    async function renderGrid(roomId, ayFilter = '', semFilter = '') {
-        const wrapper = document.getElementById('gridWrapper');
-        const table = document.getElementById('mainTimetable');
-        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
-        try {
-            // Filter is AY + Semester ONLY — program is intentionally dropped so all programs' sessions show.
-            const params = new URLSearchParams();
-            if (ayFilter)  params.append('ay_id', ayFilter);
-            if (semFilter) params.append('semester', semFilter);
-            const url = `/api/get_room_schedule/${roomId}${params.toString() ? '?' + params.toString() : ''}`;
-            const resp = await fetch(url);
-            const sessions = await resp.json();
-
-            // Dedup identical entries (same subject/day/start)
-            const seen = new Set();
-            const uniq = sessions.filter(s => {
-                const key = `${s.subjectcode}|${s.daydesc}|${s.starttimeid}`;
-                if (seen.has(key)) return false;
-                seen.add(key); return true;
-            });
-
-            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-            const firstCell = table.querySelector('tbody td:nth-child(2)');
-            const timeCol = table.querySelector('.time-col');
-            const thead = table.querySelector('thead');
-            if (!firstCell || firstCell.offsetWidth === 0) {
-                requestAnimationFrame(() => renderGrid(roomId, ayFilter, semFilter));
-                return;
-            }
-            const colWidth  = firstCell.offsetWidth;
-            const rowHeight = firstCell.offsetHeight;
-            const leftOffset = timeCol.offsetWidth;
-            const topOffset  = thead.offsetHeight;
-
-            // Group by day so overlap count is scoped to each day column
-            const dayGroups = {};
-            uniq.forEach(s => {
-                (dayGroups[s.daydesc] = dayGroups[s.daydesc] || []).push(s);
-            });
-
-            Object.keys(dayGroups).forEach(dayName => {
-                const dayIdx = days.indexOf(dayName);
-                if (dayIdx < 0) return;
-                const daySessions = dayGroups[dayName];
-                daySessions.sort((a, b) => a.starttimeid - b.starttimeid);
-
-                daySessions.forEach((sess, idx) => {
-                    const start = sess.starttimeid, end = sess.endtimeid;
-                    // Overlap: strict start<otherEnd && end>otherStart → same pattern as Schedule tab
-                    let overlapCount = 0, overlapIndex = 0;
-                    daySessions.forEach((other, oIdx) => {
-                        if (start < other.endtimeid && end > other.starttimeid) {
-                            overlapCount++;
-                            if (idx > oIdx) overlapIndex++;
-                        }
-                    });
-
-                    const pill = document.createElement('div');
-                    pill.className = 'schedule-pill';
-                    pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
-                    const w = (colWidth - 6) / (overlapCount || 1);
-                    const pillH = (end - start) * rowHeight - 6;
-                    pill.style.width  = (w - 2) + 'px';
-                    pill.style.height = pillH + 'px';
-                    pill.style.left   = (leftOffset + (dayIdx * colWidth) + (overlapIndex * w) + 3) + 'px';
-                    pill.style.top    = (topOffset + ((start - 1) * rowHeight) + 3) + 'px';
-
-                    const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
-                    pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}`;
-                    pill.innerHTML = `
-                        <div class="pill-subject">${sess.subjectcode}</div>
-                        <div style="font-size:0.6rem;">${instrLast}</div>`;
-                    wrapper.appendChild(pill);
-                });
-            });
-        } catch (err) { console.error(err); }
-    }
-
-    async function confirmAndPlace() {
-        const payload = {
-            employee_number: document.getElementById('sel_faculty').value,
-            subject_code: document.getElementById('sel_subj').value,
-            curriculum_id: document.getElementById('curr_id_hidden').value,
-            room_id: document.getElementById('sel_room').value,
-            day: document.getElementById('sel_day').value,
-            start_time: document.getElementById('sel_start_time').value,
-            end_time: document.getElementById('sel_end_time').value,
-            ay_id: document.getElementById('sel_ay').value,
-            semester_code: document.getElementById('sel_sem').value,
-            year_level: document.getElementById('sel_year').value
-        };
-        const resp = await fetch('/api/save_manual_schedule', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        });
-        const result = await resp.json();
-        alert(result.message);
-        if(result.success) await renderGrid(payload.room_id);
-    }
 
     const colorPalette = ['#16a085', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#f39c12', '#d35400', '#c0392b'];
     function getSubjectColor(code) {
@@ -584,27 +777,13 @@
         const semVal = semSelect.value || '';
         const ayVal = aySelect.value || '';
 
-        // 1. Program: short format "BSIT-1"
-        document.getElementById('sum_prog').innerText =
-            progCode && yearVal ? `${progCode}-${yearVal}` : (progCode || '-');
-
-        // 2. Subject name
-        document.getElementById('sum_course').innerText =
-            subjSelect.selectedIndex > 0 ? subjSelect.options[subjSelect.selectedIndex].text : '-';
-
-        // 3. Instructor
-        document.getElementById('sum_inst').innerText =
-            facSelect.selectedIndex > 0 ? facSelect.options[facSelect.selectedIndex].text : '-';
-
-        // 4. Header period line: "A.Y AY2526 | 1st Sem"
-        document.getElementById('summary_period').innerText =
-            (ayVal ? `A.Y ${ayVal}` : 'A.Y ----') + ' | ' + (semVal ? SEM_LABELS[semVal] : '- SEMESTER');
+        document.getElementById('sum_prog').innerText = progCode && yearVal ? `${progCode}-${yearVal}` : (progCode || '-');
+        document.getElementById('sum_course').innerText = subjSelect.selectedIndex > 0 ? subjSelect.options[subjSelect.selectedIndex].text : '-';
+        document.getElementById('sum_inst').innerText = facSelect.selectedIndex > 0 ? facSelect.options[facSelect.selectedIndex].text : '-';
+        document.getElementById('summary_period').innerText = (ayVal ? `A.Y ${ayVal}` : 'A.Y ----') + ' | ' + (semVal ? SEM_LABELS[semVal] : '- SEMESTER');
     }
 
-    // Listeners so the summary updates immediately when a dropdown changes
-    // sel_prog change is handled by onProgChange() which calls triggerCascade() → updateSummary()
     document.getElementById('sel_year').addEventListener('change', updateSummary);
-    document.getElementById('sel_subj').addEventListener('change', updateSummary);
     document.getElementById('sel_faculty').addEventListener('change', updateSummary);
     document.getElementById('sel_sem').addEventListener('change', updateSummary);
     document.getElementById('sel_ay').addEventListener('change', updateSummary);

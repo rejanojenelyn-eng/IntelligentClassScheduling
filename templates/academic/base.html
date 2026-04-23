@@ -139,34 +139,46 @@
         <!-- SIDEBAR -->
         <aside id="sidebar" class="sidebar">
             <nav class="sidebar-nav-container">
-                <ul class="nav-list">
-                    <li class="nav-item {{ 'active' if request.path == url_for('dashboard') }}">
-                        <a href="{{ url_for('dashboard') }}" class="nav-link">
-                            <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
-                        </a>
-                    </li>
+    <ul class="nav-list">
+    <!-- PERSONAL FACULTY SECTION -->
+    <li class="nav-item {{ 'active' if request.path == url_for('academic_my_dashboard') }}">
+        <a href="{{ url_for('academic_my_dashboard') }}" class="nav-link">
+            <i class="fas fa-th-large"></i><span class="nav-label">Faculty Dashboard</span>
+        </a>
+    </li>
+    <li class="nav-item {{ 'active' if request.path == url_for('academic_my_teaching_assignment') }}">
+        <a href="{{ url_for('academic_my_teaching_assignment') }}" class="nav-link">
+            <i class="fas fa-calendar-check"></i><span class="nav-label">My Teaching Assignment</span>
+        </a>
+    </li>
 
-                    <!-- EMPLOYEE MANAGEMENT (Merged Friend's Sub-menu using your split logic) -->
-                    <li class="nav-item-dropdown">
-                        <div class="nav-link-wrapper {{ 'active' if 'employee' in request.path }}">
-                            <a href="/employee" class="nav-link-main">
-                                <i class="fas fa-users"></i>
-                                <span class="nav-label">Employee Management</span>
-                            </a>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotate-arrow' if 'employee' in request.path }}"
-                                id="employeeArrow"
-                                onclick="toggleSubMenu(event, 'employeeSubMenu', 'employeeArrow')"></i>
-                        </div>
+    <hr style="border: 0.5px solid #e2d1d1; margin: 15px 12px;">
+    <li style="padding-left: 12px; margin-bottom: 10px;">
+        <span style="color: #c0392b; font-size: 0.7rem; font-weight: 800; letter-spacing: 1px;">ACADEMIC MANAGEMENT</span>
+    </li>
 
-                        <ul class="sub-menu {{ 'show-submenu' if 'employee' in request.path }}" id="employeeSubMenu">
-                            <li>
-                                <a href="/employee/archived"
-                                    class="sub-menu-link {{ 'active' if request.path == '/employee/archived' }}">
-                                    <i class="fas fa-archive"></i> Archive Employee
-                                </a>
-                            </li>
-                        </ul>
-                    </li>
+    <!-- EXISTING DASHBOARD -->
+    <li class="nav-item {{ 'active' if request.path == url_for('dashboard') }}">
+        <a href="{{ url_for('dashboard') }}" class="nav-link">
+            <i class="fas fa-chart-line"></i><span class="nav-label">Dashboard</span>
+        </a>
+    </li>
+
+    <!-- EMPLOYEE MANAGEMENT -->
+    <li class="nav-item-dropdown">
+        <div class="nav-link-wrapper {{ 'active' if 'employee' in request.path }}">
+            <a href="/employee" class="nav-link-main">
+                <i class="fas fa-users"></i>
+                <span class="nav-label">Employee Management</span>
+            </a>
+            <i class="fas fa-caret-down nav-arrow {{ 'rotate-arrow' if 'employee' in request.path }}"
+                id="employeeArrow"
+                onclick="toggleSubMenu(event, 'employeeSubMenu', 'employeeArrow')"></i>
+        </div>
+        <ul class="sub-menu {{ 'show-submenu' if 'employee' in request.path }}" id="employeeSubMenu">
+            <li><a href="/employee/archived" class="sub-menu-link"><i class="fas fa-archive"></i> Archive Employee</a></li>
+        </ul>
+    </li>
 
                     <li class="nav-item {{ 'active' if request.path == '/curriculum' }}">
                         <a href="/curriculum" class="nav-link"><i class="fas fa-book"></i><span
