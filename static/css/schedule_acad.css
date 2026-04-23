@@ -742,50 +742,53 @@
     border-right: none !important;
 }
 .schedule-pill {
-    padding: 2px 4px !important;
+    padding: 5px 6px 4px;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: flex-start;
+    align-items: flex-start;
+    gap: 2px;
+    overflow: hidden;
+}
+
+.pill-subject {
+    font-size: 0.63rem;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    line-clamp: 3;
+    overflow: hidden;
+    white-space: normal;
+}
+
+.pill-instructor, .pill-room {
+    font-size: 0.6rem;
+    opacity: 0.92;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.pill-subject {
-    font-size: 9px !important; /* Smaller font */
-    font-weight: bold;
-    line-height: 1.1;
-    margin-bottom: 2px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2; /* Shows max 2 lines */
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.pill-instructor, .pill-room {
-    font-size: 8px !important;
-    opacity: 0.9;
-    white-space: nowrap;
-}
-/* Add to your CSS file */
 .timetable-grid tbody tr {
-    height: 35px; /* Adjust this to make the grid more compact or spacious */
+    height: 52px;
 }
 
-.schedule-pill {
-    font-size: 10px;
-    padding: 2px;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    border: 1px solid rgba(0,0,0,0.05);
+.pill-room {
+    font-size: 0.57rem;
+    opacity: 0.85;
+    margin-top: 1px;
 }
 
 .pill-subject {
     font-weight: bold;
     white-space: normal;
     display: -webkit-box;
-    -webkit-line-clamp: 2; /* Wrap subject names to 2 lines */
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    line-height: 1;
+    line-height: 1.2;
     font-size: 9px;
 }

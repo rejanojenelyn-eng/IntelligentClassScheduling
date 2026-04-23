@@ -119,18 +119,27 @@
 
         <!-- Calendar View (hidden by default) -->
         <div class="calendar-wrapper hidden" id="calendarViewContainer">
-            <div class="calendar-grid">
-                <div class="calendar-header time-col">TIME</div>
-                <div class="calendar-header">MONDAY</div>
-                <div class="calendar-header">TUESDAY</div>
-                <div class="calendar-header">WEDNESDAY</div>
-                <div class="calendar-header">THURSDAY</div>
-                <div class="calendar-header">FRIDAY</div>
-                <div class="calendar-header">SATURDAY</div>
-                <div class="calendar-header">SUNDAY</div>
-            </div>
-            <div id="calendarBody" class="calendar-body">
-                <!-- Will be populated by JavaScript -->
+            <div class="timetable-wrapper" id="genGridWrapper" style="position: relative;">
+                <table class="timetable-grid" id="genMainTimetable">
+                    <thead>
+                        <tr>
+                            <th class="time-header">TIME</th>
+                            <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                            <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
+                                        '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
+                                        '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
+                        {% for t in times %}
+                        <tr>
+                            <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -469,67 +478,156 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  RENDER CALENDAR VIEW
+    //  RENDER CALENDAR VIEW  (timetable-grid + pill overlay)
     // ══════════════════════════════════════════════════════════════════
-    function renderCalendarView(scheduleArray) {
-        const calendarBody = document.getElementById('calendarBody');
-        
-        // Time slots from 7:00 AM to 9:00 PM
-        const timeSlots = [];
-        for (let hour = 7; hour <= 21; hour++) {
-            timeSlots.push(`${hour <= 12 ? hour : hour - 12}:00 ${hour < 12 ? 'AM' : 'PM'}`);
-            if (hour < 21) {
-                timeSlots.push(`${hour <= 12 ? hour : hour - 12}:30 ${hour < 12 ? 'AM' : 'PM'}`);
-            }
-        }
+    const CAL_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const CAL_DAY_MAP = {
+        'MONDAY':'Monday','TUESDAY':'Tuesday','WEDNESDAY':'Wednesday',
+        'THURSDAY':'Thursday','FRIDAY':'Friday','SATURDAY':'Saturday','SUNDAY':'Sunday',
+        'MON':'Monday','TUE':'Tuesday','WED':'Wednesday','THU':'Thursday',
+        'FRI':'Friday','SAT':'Saturday','SUN':'Sunday',
+        'M':'Monday','W':'Wednesday','F':'Friday','S':'Saturday',
+        'T':'Tuesday','TH':'Thursday','SU':'Sunday'
+    };
+    const GRID_ORIGIN_MINS = 7 * 60 + 30; // 7:30 AM
 
-        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        
-        let html = '';
-        
-        timeSlots.forEach(timeSlot => {
-            html += `<div class="calendar-row">`;
-            html += `<div class="calendar-time">${timeSlot}</div>`;
-            
-            days.forEach(day => {
-                // Find classes for this day and time
-                const classesHere = scheduleArray.filter(cls => {
-                    if (!cls.days || !cls.time) return false;
-                    
-                    const dayMatch = cls.days.includes(day.substring(0, 3).toUpperCase());
-                    
-                    // Parse time range
-                    const timeMatch = cls.time.includes(timeSlot.split(':')[0]);
-                    
-                    return dayMatch && timeMatch;
-                });
-                
-                if (classesHere.length > 0) {
-                    const cls = classesHere[0];
-                    html += `
-                        <div class="calendar-cell occupied">
-                            <div class="class-block" style="background-color: ${getRandomColor()};">
-                                <strong>${cls.subject_code}</strong><br>
-                                <small>${cls.instructor}</small><br>
-                                <small>${cls.room || 'TBA'}</small>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    html += `<div class="calendar-cell"></div>`;
-                }
-            });
-            
-            html += `</div>`;
-        });
-        
-        calendarBody.innerHTML = html;
+    function calParseTimeMins(t) {
+        if (!t) return null;
+        t = t.trim();
+        let m = t.match(/^(\d{1,2}):(\d{2})$/);
+        if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+        m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (m) {
+            let h = parseInt(m[1]), mn = parseInt(m[2]);
+            if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+            if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+            return h * 60 + mn;
+        }
+        return null;
     }
 
-    // Helper to generate random colors for classes
-    function getRandomColor() {
-        const colors = ['#16A085', '#2980B9', '#8E44AD', '#C0392B', '#D35400', '#27AE60', '#2C3E50', '#7F8C8D'];
-        return colors[Math.floor(Math.random() * colors.length)];
+    function calParseTimeRange(timeStr) {
+        if (!timeStr) return { start: null, end: null };
+        const parts = timeStr.split(/\s*[-–]\s*/);
+        if (parts.length >= 2) return { start: calParseTimeMins(parts[0]), end: calParseTimeMins(parts[parts.length - 1]) };
+        return { start: null, end: null };
+    }
+
+    function calParseDays(daysStr) {
+        if (!daysStr) return [];
+        const result = [];
+        const push = (d) => { if (!result.includes(d)) result.push(d); };
+        const parts = daysStr.split(/[\/,\s]+/).filter(p => p);
+        for (const part of parts) {
+            const up = part.toUpperCase();
+            if (CAL_DAY_MAP[up]) { push(CAL_DAY_MAP[up]); continue; }
+            if (up === 'TTH') { push('Tuesday'); push('Thursday'); }
+            else if (up === 'MWF') { push('Monday'); push('Wednesday'); push('Friday'); }
+            else if (up === 'MW')  { push('Monday'); push('Wednesday'); }
+            else if (up === 'TF')  { push('Tuesday'); push('Friday'); }
+            else if (up === 'MTH') { push('Monday'); push('Tuesday'); push('Thursday'); }
+        }
+        return result;
+    }
+
+    function calSubjectColor(code) {
+        const colors = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
+        let h = 0;
+        for (let i = 0; i < (code || '').length; i++) h = (code || '').charCodeAt(i) + ((h << 5) - h);
+        return colors[Math.abs(h) % colors.length];
+    }
+
+    function calFmtMins(mins) {
+        if (mins === null || mins === undefined) return '—';
+        const h = Math.floor(mins / 60), m = mins % 60;
+        const suffix = h >= 12 ? 'PM' : 'AM';
+        const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+        return h12 + ':' + String(m).padStart(2, '0') + ' ' + suffix;
+    }
+
+    function renderCalendarView(scheduleArray) {
+        const wrapper = document.getElementById('genGridWrapper');
+        const table   = document.getElementById('genMainTimetable');
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+
+        if (!scheduleArray.length) return;
+
+        // Expand each schedule entry into per-day sessions
+        const sessions = [];
+        scheduleArray.forEach(cls => {
+            const { start, end } = calParseTimeRange(cls.time);
+            const parsedDays = calParseDays(cls.days);
+            parsedDays.forEach(day => {
+                sessions.push({
+                    daydesc:    day,
+                    startMins:  start,
+                    endMins:    end,
+                    subjectcode: cls.subject_code || '',
+                    subjectname: cls.subject_name || cls.description || cls.subjectname || '',
+                    instructor:  cls.instructor || 'TBA',
+                    roomname:    cls.room || 'TBA',
+                });
+            });
+        });
+
+        const firstCell = table.querySelector('tbody td:nth-child(2)');
+        const timeCol   = table.querySelector('.time-cell');
+        const thead     = table.querySelector('thead');
+        if (!firstCell || firstCell.offsetWidth === 0) {
+            requestAnimationFrame(() => renderCalendarView(scheduleArray));
+            return;
+        }
+
+        const colWidth = firstCell.offsetWidth;
+        const pxPerMin = firstCell.offsetHeight / 30;
+
+        const dayGroups = {};
+        sessions.forEach(s => {
+            if (!dayGroups[s.daydesc]) dayGroups[s.daydesc] = [];
+            dayGroups[s.daydesc].push(s);
+        });
+
+        Object.keys(dayGroups).forEach(dayName => {
+            const dayIdx = CAL_DAYS.indexOf(dayName);
+            if (dayIdx < 0) return;
+            const daySessions = dayGroups[dayName];
+            daySessions.sort((a, b) => a.startMins - b.startMins);
+
+            daySessions.forEach((sess, idx) => {
+                let start = sess.startMins, end = sess.endMins;
+                if (start === null) return;
+                if (start < GRID_ORIGIN_MINS) start += 12 * 60;
+                if (end <= start) end += 12 * 60;
+
+                let overlapCount = 0, overlapIndex = 0;
+                daySessions.forEach((other, oIdx) => {
+                    let oS = other.startMins, oE = other.endMins;
+                    if (oS < GRID_ORIGIN_MINS) oS += 12 * 60;
+                    if (oE <= oS) oE += 12 * 60;
+                    if (start < oE && end > oS) { overlapCount++; if (idx > oIdx) overlapIndex++; }
+                });
+
+                const pill  = document.createElement('div');
+                pill.className = 'schedule-pill';
+                pill.style.backgroundColor = calSubjectColor(sess.subjectcode);
+
+                const w     = (colWidth - 6) / (overlapCount || 1);
+                const pillH = (end - start) * pxPerMin - 2;
+
+                pill.style.width  = (w - 2) + 'px';
+                pill.style.height = pillH + 'px';
+                pill.style.left   = (timeCol.offsetWidth + dayIdx * colWidth + overlapIndex * w + 4) + 'px';
+                pill.style.top    = (thead.offsetHeight + (start - GRID_ORIGIN_MINS) * pxPerMin + 1) + 'px';
+
+                pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${calFmtMins(start)} – ${calFmtMins(end)}\n${sess.roomname}`;
+                pill.innerHTML = `
+                    <div class="pill-subject">${sess.subjectname}</div>
+                    <div class="pill-instructor">${sess.instructor}</div>
+                    <div class="pill-room">${sess.roomname}</div>`;
+
+                wrapper.appendChild(pill);
+            });
+        });
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -765,22 +863,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const res  = await fetch('/api/schedule/drafts');
             const data = await res.json();
 
-            if (!data.length) {
+            if (!Array.isArray(data) || !data.length) {
                 body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-folder-open"></i> No drafts saved yet.</p>';
                 return;
             }
 
             body.innerHTML = `
                 <table class="modal-table">
-                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>Version</th><th>Saved</th><th>Action</th></tr></thead>
+                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>A.Y.</th><th>Version</th><th>Saved</th><th>Action</th></tr></thead>
                     <tbody>
                         ${data.map(d => `
                             <tr>
-                                <td>${d.programcode}</td>
-                                <td>Year ${d.yearlevel}</td>
-                                <td>${d.term}</td>
-                                <td><span class="badge draft">Draft V${d.version}</span></td>
-                                <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                                <td>${d.programcode || '-'}</td>
+                                <td>Year ${d.yearlevel || '-'}</td>
+                                <td>${d.term || '-'}</td>
+                                <td>${d.acadyear || '-'}</td>
+                                <td><span class="badge draft">Draft V${d.version_number}</span></td>
+                                <td>${d.datecreated ? new Date(d.datecreated).toLocaleDateString() : '-'}</td>
                                 <td><button class="btn-load-draft" onclick="loadDraft(${d.versionid})"><i class="fas fa-folder-open"></i> Load</button></td>
                             </tr>
                         `).join('')}
@@ -803,7 +902,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res  = await fetch('/api/schedule/versions');
             const data = await res.json();
 
-            if (!data.length) {
+            if (!Array.isArray(data) || !data.length) {
                 body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-history"></i> No version history yet.</p>';
                 return;
             }
@@ -812,16 +911,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
             body.innerHTML = `
                 <table class="modal-table">
-                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>Version</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>A.Y.</th><th>Version</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
                     <tbody>
                         ${data.map(d => `
                             <tr>
-                                <td>${d.programcode}</td>
-                                <td>Year ${d.yearlevel}</td>
-                                <td>${d.term}</td>
-                                <td>V${d.version}</td>
+                                <td>${d.programcode || '-'}</td>
+                                <td>Year ${d.yearlevel || '-'}</td>
+                                <td>${d.term || '-'}</td>
+                                <td>${d.acadyear || '-'}</td>
+                                <td>V${d.version_number}</td>
                                 <td><span class="badge ${statusClass[d.status] || ''}">${d.status}</span></td>
-                                <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                                <td>${d.datecreated ? new Date(d.datecreated).toLocaleDateString() : '-'}</td>
                                 <td>${d.status === 'Draft' ? `<button class="btn-load-draft" onclick="loadDraft(${d.versionid})"><i class="fas fa-folder-open"></i> Load</button>` : '-'}</td>
                             </tr>
                         `).join('')}

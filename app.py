@@ -3048,32 +3048,23 @@ def faculty_subject_offerings():
 
 
 
-
-
-#app.py
 # =====================================================================
-# SCHEDULE GENERATION ROUTES
+# SCHEDULE GENERATION ROUTES - FINAL WORKING VERSION
 # =====================================================================
 
-
-from scheduler import IntelligentScheduler
-from scheduler import validate_draft
+from scheduler import IntelligentScheduler, validate_draft
 from datetime import time
 import json
 
 scheduler_engine = IntelligentScheduler()
 
+# ── HELPERS ────────────────────────────────────────────────────────────
 
 def _load_faculty_map():
-    """Load faculty with all required fields for constraint checking."""
     rows = query_db("""
-        SELECT f.employeenumber,
-               CONCAT(f.lastname, ', ', f.firstname) AS fullname,
-               f.employeestatus,
-               f.designationid,
-               et.regularload, et.parttimeload,
-               et.regular_start, et.regular_end,
-               et.parttime_start, et.parttime_end,
+        SELECT f.employeenumber, CONCAT(f.lastname, ', ', f.firstname) AS fullname,
+               f.employeestatus, f.designationid, et.regularload, et.parttimeload,
+               et.regular_start, et.regular_end, et.parttime_start, et.parttime_end,
                d.nightteachingservice
         FROM faculty f
         JOIN employeetype et ON f.employeetypeid = et.employeetypeid
@@ -3084,60 +3075,39 @@ def _load_faculty_map():
     for row in (rows or []):
         fnum = row['employeenumber']
         faculty_map[fnum] = {
-            'employeenumber': fnum,
-            'fullname':       row['fullname'],
-            'employeestatus': row['employeestatus'],
-            'designationid':  row['designationid'],
+            'employeenumber': fnum, 'fullname': row['fullname'],
+            'employeestatus': row['employeestatus'], 'designationid': row['designationid'],
             'nightteachingservice': row['nightteachingservice'],
             'employeetype': {
-                'regularload':    row['regularload'],
-                'parttimeload':   row['parttimeload'],
-                'regular_start':  row['regular_start'] or time(7, 30),
-                'regular_end':    row['regular_end']   or time(16, 30),
-                'parttime_start': row['parttime_start'],
-                'parttime_end':   row['parttime_end'],
+                'regularload': row['regularload'], 'parttimeload': row['parttimeload'],
+                'regular_start': row['regular_start'] or time(7, 30),
+                'regular_end': row['regular_end'] or time(16, 30),
+                'parttime_start': row['parttime_start'], 'parttime_end': row['parttime_end'],
             },
         }
     return faculty_map
 
-
 def _parse_days(days_str: str) -> list:
-    """Convert 'MON/THU' string back to ['Monday', 'Thursday']."""
-    abbr_map = {
-        'MON': 'Monday', 'TUE': 'Tuesday', 'WED': 'Wednesday',
-        'THU': 'Thursday', 'FRI': 'Friday', 'SAT': 'Saturday', 'SUN': 'Sunday',
-    }
-    if not days_str:
-        return []
+    abbr_map = {'MON': 'Monday', 'TUE': 'Tuesday', 'WED': 'Wednesday', 'THU': 'Thursday', 'FRI': 'Friday', 'SAT': 'Saturday', 'SUN': 'Sunday'}
+    if not days_str: return []
     return [abbr_map.get(d.strip().upper(), d.strip()) for d in days_str.split('/')]
 
-
 def _parse_time_str(t_str: str):
-    """Convert 'HH:MM' or '07:30 AM' string back to a time object."""
     from datetime import datetime as _dt
     for fmt in ('%I:%M %p', '%H:%M', '%H:%M:%S'):
-        try:
-            return _dt.strptime(t_str.strip(), fmt).time()
-        except ValueError:
-            continue
+        try: return _dt.strptime(t_str.strip(), fmt).time()
+        except ValueError: continue
     return None
 
-
 def _serialize_class(cls: dict) -> dict:
-    """Return a JSON-safe copy of a class assignment dict (strip time objects)."""
     safe = {}
     for key, val in cls.items():
-        if isinstance(val, time):
-            continue
-        elif isinstance(val, list):
-            safe[key] = [str(v) for v in val]
-        else:
-            safe[key] = val
+        if isinstance(val, time): continue
+        elif isinstance(val, list): safe[key] = [str(v) for v in val]
+        else: safe[key] = val
     return safe
 
-
 def _rehydrate_schedule(schedule_data: list) -> list:
-    """Reconstruct start_time / end_time / days_list from string fields."""
     for cls in schedule_data:
         if 'start_time' not in cls and 'time' in cls:
             try:
@@ -3145,473 +3115,247 @@ def _rehydrate_schedule(schedule_data: list) -> list:
                 if len(parts) == 2:
                     cls['start_time'] = _parse_time_str(parts[0].strip())
                     cls['end_time']   = _parse_time_str(parts[1].strip())
-            except Exception:
-                pass
-
+            except Exception: pass
         if 'days_list' not in cls and 'days' in cls:
             cls['days_list'] = _parse_days(cls['days'])
-
         if 'day' not in cls and 'days_list' in cls and cls['days_list']:
             cls['day'] = cls['days_list'][0]
-
     return schedule_data
 
-
-@app.route('/academic/schedule-generation')
-def schedule_generation_view():
-    """Display schedule generation UI with proper filters."""
-    if 'loggedin' not in session:
-        return redirect(url_for('login'))
-
-    # Get active programs with full names
-    programs_data = query_db("""
-        SELECT programcode, programname 
-        FROM programs 
-        WHERE isactive = true 
-        ORDER BY programname;
-    """)
-    programs = [{'code': p['programcode'], 'name': p['programname']} 
-                for p in (programs_data or [])]
-
-    # Get academic years
-    acad_years_data = query_db("""
-        SELECT academicyearid 
-        FROM academicyear 
-        ORDER BY yearstart DESC;
-    """)
-    acad_years = [a['academicyearid'] for a in (acad_years_data or [])]
-
-    # Get curriculum years
-    curriculums_data = query_db("""
-        SELECT DISTINCT curriculumyear 
-        FROM curriculum 
-        ORDER BY curriculumyear DESC;
-    """)
-    curriculums = [c['curriculumyear'] for c in (curriculums_data or [])]
-
-    terms = [
-        {'id': 'A', 'name': '1ST SEMESTER'},
-        {'id': 'B', 'name': '2ND SEMESTER'},
-        {'id': 'C', 'name': 'SUMMER'},
-    ]
-    year_levels = [1, 2, 3, 4, 5]
-
-    return render_template('academic/scheduleGeneration.html',
-                           programs=programs,
-                           acad_years=acad_years,
-                           curriculums=curriculums,
-                           terms=terms,
-                           year_levels=year_levels)
-
-
-@app.route('/api/schedule/generate', methods=['POST'])
-def api_generate_schedule():
-    """Generate schedule using intelligent scheduler engine."""
-    data           = request.json or {}
-    program        = data.get('program')
-    year_level     = int(data.get('yearLevel', 1))
-    term           = data.get('term')
-    curriculum     = data.get('curriculum')
-    use_historical = data.get('useHistorical', False)
-
-    if not all([program, year_level, term, curriculum]):
-        return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
-
-    result = scheduler_engine.generate_draft(
-        program, year_level, term, curriculum, use_historical
-    )
-
-    if not result['success']:
-        return jsonify({'success': False, 'error': result['error']}), 400
-
-    serialized = [_serialize_class(cls) for cls in result['schedule_data']]
-    violations = result.get('violations', [])
-
-    return jsonify({
-        'success':        True,
-        'batch_id':       'DRAFT-NEW-001',
-        'schedule_data':  serialized,
-        'conflict_count': result['conflict_count'],
-        'violations':     violations,
-    })
-
-
-@app.route('/api/schedule/validate', methods=['POST'])
-def api_validate_draft():
-    """Validate a schedule draft against all hard constraints."""
-    data          = request.json or {}
-    schedule_data = data.get('schedule_data', [])
-
-    for cls in schedule_data:
-        if isinstance(cls.get('start_time'), str):
-            try:
-                cls['start_time'] = _parse_time_str(cls['start_time'])
-                cls['end_time']   = _parse_time_str(cls['end_time'])
-            except Exception:
-                pass
-        if 'days_list' not in cls and 'days' in cls:
-            cls['days_list'] = _parse_days(cls['days'])
-
-    faculty_map = _load_faculty_map()
-    result      = validate_draft(schedule_data, faculty_map)
-    return jsonify(result)
-
-
-def _get_or_create_schedule_record(conn, cur, program, year_level, term, acad_year, semester_id):
-    """
-    Get or create a schedule record for this context.
-    This is the parent record that holds all versions.
-    
-    Returns: scheduleid (int)
-    """
-    # Try to find existing schedule record for this context
-    cur.execute("""
-        SELECT sg.scheduleid
-        FROM public.schedule sg
-        JOIN public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-        JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-        JOIN public.sections sec ON sg.sectionid = sec.sectionid
-        JOIN public.cohort co ON sec.cohortid = co.cohortid
-        WHERE c.programcode = %s 
-          AND cs.yearlevel = %s
-          AND cs.semester = %s
-          AND sg.semesterid = %s
-        LIMIT 1
-    """, (program, year_level, term, semester_id))
-    
-    result = cur.fetchone()
-    if result:
-        return result[0]  # Return existing scheduleid
-    
-    # If no schedule exists, create one
-    # We need a curriculumsubjectid and sectionid to create a schedule
-    # Get the first available curriculumsubject and section for this context
-    cur.execute("""
-        SELECT cs.curriculumsubjectid, sec.sectionid
-        FROM public.curriculumsubject cs
-        JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-        JOIN public.cohort co ON c.programcode = co.programcode
-        JOIN public.sections sec ON co.cohortid = sec.cohortid
-        WHERE c.programcode = %s
-          AND cs.yearlevel = %s
-          AND cs.semester = %s
-          AND sec.yearlevel = %s
-        LIMIT 1
-    """, (program, year_level, term, year_level))
-    
-    sub_sec = cur.fetchone()
-    if not sub_sec:
-        raise Exception(f"No curriculum/section found for {program} Year {year_level} Sem {term}")
-    
-    curriculumsubjectid, sectionid = sub_sec
-    
-    # Create a new schedule record
-    # Get any active faculty member to use as placeholder
-    cur.execute("""
-        SELECT employeenumber FROM public.faculty
-        WHERE employeestatus != 'Archive'
-        LIMIT 1
-    """)
-    fac = cur.fetchone()
-    if not fac:
-        raise Exception("No active faculty found in database")
-
-    faculty_placeholder = fac[0]
-
-    cur.execute("""
-        INSERT INTO public.schedule 
-            (curriculumsubjectid, sectionid, employeenumber, semesterid, datecreated)
-        VALUES (%s, %s, %s, %s, NOW())
-        RETURNING scheduleid
-    """, (curriculumsubjectid, sectionid, faculty_placeholder, semester_id))  # ✅ Uses real faculty
-    
-    conn.commit()
-    return cur.fetchone()[0]
-
+def _fmt_12h(t_str):
+    try:
+        parts = str(t_str).split(':')
+        h, m = int(parts[0]), int(parts[1])
+        suffix = 'PM' if h >= 12 else 'AM'
+        h12 = h - 12 if h > 12 else (12 if h == 0 else h)
+        return f"{h12}:{m:02d} {suffix}"
+    except Exception: return str(t_str) if t_str else ''
 
 def _get_semester_id(cur, acad_year, term):
-    """Get semesterid from academicyearid and semestertype."""
-    cur.execute("""
-        SELECT semesterid FROM public.semester
-        WHERE academicyearid = %s AND semestertype = %s
-    """, (acad_year, term))
+    cur.execute("SELECT semesterid FROM public.semester WHERE academicyearid = %s AND semestertype = %s", (acad_year, term))
     result = cur.fetchone()
-    if not result:
-        raise Exception(f"Semester not found for {acad_year} {term}")
-    return result[0]
+    if not result: raise Exception(f"Semester not found for {acad_year} {term}")
+    return result['semesterid']
 
+# ── DATABASE BATCH VERSIONING LOGIC ───────────────────────────────────
 
-def _insert_schedule_batch(cur, schedule_data, semester_id, target_status):
-    cur.execute("SELECT sectionid FROM sections LIMIT 1")
+def _archive_status(cur, program, year_level, term, semester_id, status_to_archive):
+    cur.execute("""
+        UPDATE public.schedule_version sv
+        SET status = 'Archive'
+        FROM public.schedule s, public.curriculumsubject cs, public.curriculum c
+        WHERE sv.scheduleid = s.scheduleid AND s.curriculumsubjectid = cs.curriculumsubjectid
+          AND cs.curriculumid = c.curriculumid AND UPPER(c.programcode) = UPPER(%s)
+          AND cs.yearlevel = %s AND cs.semester = %s AND s.semesterid = %s AND sv.status = %s
+    """, (program, year_level, term, semester_id, status_to_archive))
+
+def _insert_batch(cur, schedule_data, semester_id, target_status, version_number, program, year_level):
+    cur.execute("""
+        SELECT sec.sectionid FROM public.sections sec JOIN public.cohort co ON sec.cohortid = co.cohortid
+        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s LIMIT 1
+    """, (program, year_level))
     sec_res = cur.fetchone()
-    default_sec_id = sec_res['sectionid'] if sec_res else None
+    section_id = sec_res['sectionid'] if sec_res else None
+    if not section_id:
+        cur.execute("SELECT sectionid FROM public.sections LIMIT 1")
+        section_id = cur.fetchone()['sectionid']
 
     for cls in schedule_data:
-        # Support both AI (subjectcode) and Manual (subject_code) naming
         s_code = cls.get('subjectcode') or cls.get('subject_code')
         f_num  = cls.get('employeenumber') or cls.get('faculty_id')
         r_id   = cls.get('roomid') or cls.get('room_id')
         day    = cls.get('daydesc') or cls.get('day')
-        start_t = cls.get('start_time')
-        end_t   = cls.get('end_time')
+        start_t, end_t = cls.get('start_time'), cls.get('end_time')
 
         if not all([s_code, f_num, start_t, end_t]): continue
 
-        # 1. Resolve IDs
-        cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE subjectcode = %s LIMIT 1", (s_code,))
+        cur.execute("""
+            SELECT cs.curriculumsubjectid FROM public.curriculumsubject cs
+            JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+            WHERE UPPER(cs.subjectcode) = UPPER(%s) AND UPPER(c.programcode) = UPPER(%s) LIMIT 1
+        """, (s_code, program))
         cs_res = cur.fetchone()
         if not cs_res: continue
         cs_id = cs_res['curriculumsubjectid']
 
         try:
-            # The ::time cast fixes the "operator does not exist" error
-            cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time LIMIT 1", (str(start_t),))
-            st_row = cur.fetchone()
-            cur.execute("SELECT timeid FROM timeslot WHERE timevalue = %s::time LIMIT 1", (str(end_t),))
-            et_row = cur.fetchone()
-            if not st_row or not et_row: continue
-            start_id, end_id = st_row['timeid'], et_row['timeid']
+            cur.execute("SELECT timeid FROM public.timeslot WHERE timevalue = %s::time LIMIT 1", (str(start_t),))
+            s_id = cur.fetchone()['timeid']
+            cur.execute("SELECT timeid FROM public.timeslot WHERE timevalue = %s::time LIMIT 1", (str(end_t),))
+            e_id = cur.fetchone()['timeid']
         except: continue
 
-        # 2. Parent Schedule row
-        cur.execute("SELECT scheduleid FROM schedule WHERE curriculumsubjectid = %s AND semesterid = %s AND employeenumber = %s LIMIT 1", (cs_id, semester_id, f_num))
-        sched_res = cur.fetchone()
-        sched_id = sched_res['scheduleid'] if sched_res else None
+        cur.execute("""
+            INSERT INTO public.schedule (curriculumsubjectid, sectionid, employeenumber, semesterid, datecreated) 
+            VALUES (%s, %s, %s, %s, NOW()) RETURNING scheduleid
+        """, (cs_id, section_id, f_num, semester_id))
+        sched_id = cur.fetchone()['scheduleid']
 
-        if not sched_id:
-            cur.execute("INSERT INTO schedule (curriculumsubjectid, sectionid, employeenumber, semesterid) VALUES (%s, %s, %s, %s) RETURNING scheduleid", (cs_id, default_sec_id, f_num, semester_id))
-            sched_id = cur.fetchone()['scheduleid']
-
-        # 3. VERSIONING: Archive existing version of SAME status
-        cur.execute("UPDATE schedule_version SET status = 'Archive' WHERE scheduleid = %s AND status = %s", (sched_id, target_status))
-        
-        cur.execute("SELECT COALESCE(MAX(version_number), 0) + 1 as next_v FROM schedule_version WHERE scheduleid = %s", (sched_id,))
-        new_v = cur.fetchone()['next_v']
-
-        cur.execute("INSERT INTO schedule_version (scheduleid, version_number, status) VALUES (%s, %s, %s) RETURNING versionid", (sched_id, new_v, target_status))
+        cur.execute("""
+            INSERT INTO public.schedule_version (scheduleid, version_number, status, datecreated) 
+            VALUES (%s, %s, %s, NOW()) RETURNING versionid
+        """, (sched_id, version_number, target_status))
         ver_id = cur.fetchone()['versionid']
 
-        # 4. Insert Session
-        cur.execute("INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)", 
-                    (ver_id, day, start_id, end_id, r_id if str(r_id).isdigit() else None))
+        cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
+                    (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
+
+# ── ROUTES ────────────────────────────────────────────────────────────
+
+@app.route('/academic/schedule-generation')
+def schedule_generation_view():
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    programs_data = query_db("SELECT programcode, programname FROM programs WHERE isactive = true ORDER BY programname;")
+    programs = [{'code': p['programcode'], 'name': p['programname']} for p in (programs_data or [])]
+    acad_years = [a['academicyearid'] for a in (query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC;") or [])]
+    curriculums = [c['curriculumyear'] for c in (query_db("SELECT DISTINCT curriculumyear FROM curriculum ORDER BY curriculumyear DESC;") or [])]
+    terms = [{'id': 'A', 'name': '1ST SEMESTER'}, {'id': 'B', 'name': '2ND SEMESTER'}, {'id': 'C', 'name': 'SUMMER'}]
+    return render_template('academic/scheduleGeneration.html', programs=programs, acad_years=acad_years, curriculums=curriculums, terms=terms, year_levels=[1,2,3,4,5])
+
+@app.route('/api/schedule/generate', methods=['POST'])
+def api_generate_schedule():
+    data = request.json or {}
+    res = scheduler_engine.generate_draft(data.get('program'), int(data.get('yearLevel', 1)), data.get('term'), data.get('curriculum'), data.get('useHistorical', False))
+    if not res['success']: return jsonify({'success': False, 'error': res['error']}), 400
+    return jsonify({'success': True, 'batch_id': 'DRAFT-NEW-001', 'schedule_data': [_serialize_class(cls) for cls in res['schedule_data']], 'conflict_count': res['conflict_count'], 'violations': res.get('violations', [])})
 
 @app.route('/api/schedule/save-draft', methods=['POST'])
 def api_save_draft():
     try:
-        data = request.json or {}
-        schedule_data = data.get('schedule_data', [])
-        ctx = data.get('context', {})
-        
-        faculty_map = _load_faculty_map()
-        validation = validate_draft(_rehydrate_schedule(list(schedule_data)), faculty_map)
+        data, ctx = request.json or {}, (request.json or {}).get('context', {})
+        program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        sem_id = _get_semester_id(cur, ay, term)
 
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        sem_id = _get_semester_id(cur, ctx.get('acadYear'), ctx.get('term'))
-        
-        if sem_id:
-            _insert_schedule_batch(cur, schedule_data, sem_id, 'Draft')
-            conn.commit()
-            return jsonify({'success': True, 'violations': validation['violations'], 'can_publish': validation['can_publish']})
-        return jsonify({'success': False, 'error': 'Semester not found'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        cur.execute("""
+    SELECT COALESCE(MAX(sv.version_number), 0) 
+    FROM public.schedule_version sv
+    JOIN public.schedule s ON sv.scheduleid = s.scheduleid
+    JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+    JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+    WHERE UPPER(c.programcode) = UPPER(%s) 
+      AND cs.yearlevel = %s 
+      AND s.semesterid = %s
+""", (program, year_level, sem_id))
+        new_v = cur.fetchone()['coalesce'] + 1
+
+        _archive_status(cur, program, year_level, term, sem_id, 'Draft')
+        _insert_batch(cur, _rehydrate_schedule(list(data.get('schedule_data', []))), sem_id, 'Draft', new_v, program, year_level)
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({'success': True, 'draft_version': new_v})
+    except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/schedule/approve', methods=['POST'])
 def api_approve_schedule():
     try:
-        data = request.json or {}
-        schedule_data = data.get('schedule_data', [])
-        ctx = data.get('context', {})
+        data, ctx = request.json or {}, (request.json or {}).get('context', {})
+        program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        sem_id = _get_semester_id(cur, ay, term)
 
-        faculty_map = _load_faculty_map()
-        validation = validate_draft(_rehydrate_schedule(list(schedule_data)), faculty_map)
-        if not validation['can_publish']:
-            return jsonify({'success': False, 'error': 'Constraints violated', 'violations': validation['violations']}), 400
+        cur.execute("""
+    SELECT COALESCE(MAX(sv.version_number), 0) 
+    FROM public.schedule_version sv
+    JOIN public.schedule s ON sv.scheduleid = s.scheduleid
+    JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+    JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+    WHERE UPPER(c.programcode) = UPPER(%s) 
+      AND cs.yearlevel = %s 
+      AND s.semesterid = %s
+""", (program, year_level, sem_id))
+        max_v = cur.fetchone()['coalesce']
 
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        sem_id = _get_semester_id(cur, ctx.get('acadYear'), ctx.get('term'))
+        _archive_status(cur, program, year_level, term, sem_id, 'Published')
+        _archive_status(cur, program, year_level, term, sem_id, 'Draft')
+        
+        sched_data = _rehydrate_schedule(list(data.get('schedule_data', [])))
+        _insert_batch(cur, sched_data, sem_id, 'Published', max_v + 1, program, year_level)
+        _insert_batch(cur, sched_data, sem_id, 'Draft', max_v + 2, program, year_level)
 
-        if sem_id:
-            # 1. Publish it (Archives old Published)
-            _insert_schedule_batch(cur, schedule_data, sem_id, 'Published')
-            # 2. Create Sibling Draft (Archives old Draft)
-            _insert_schedule_batch(cur, schedule_data, sem_id, 'Draft')
-            conn.commit()
-            return jsonify({'success': True, 'message': 'Published & Sibling Draft created.'})
-        return jsonify({'success': False, 'error': 'Semester not found'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({'success': True, 'published_version': max_v + 1, 'draft_version': max_v + 2})
+    except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/schedule/drafts')
-def api_list_drafts():
-    """List all Draft versions across all contexts."""
-    try:
-        rows = query_db("""
-            SELECT sv.versionid, sv.version_number, sv.status, sv.datecreated,
-                   c.programcode, cs.yearlevel, cs.semester,
-                   p.programname, ay.academicyearid
-            FROM   public.schedule_version sv
-            JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
-            JOIN   public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN   public.curriculum c ON cs.curriculumid = c.curriculumid
-            JOIN   public.programs p ON c.programcode = p.programcode
-            JOIN   public.semester sem ON sg.semesterid = sem.semesterid
-            JOIN   public.academicyear ay ON sem.academicyearid = ay.academicyearid
-            WHERE  sv.status = 'Draft'
-            ORDER BY sv.datecreated DESC
-        """)
-        result = []
-        for row in (rows or []):
-            result.append({
-                'versionid':    row['versionid'],
-                'version':      row['version_number'],
-                'status':       row['status'],
-                'created_at':   str(row['datecreated']),
-                'programcode':  row['programcode'],
-                'programname':  row['programname'],
-                'yearlevel':    row['yearlevel'],
-                'term':         row['semester'],
-                'acadyear':     row['academicyearid'],
-            })
-        return jsonify(result)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify([]), 500
-
-
 @app.route('/api/schedule/versions')
 def api_list_versions():
-    """List version history for all schedules."""
     try:
-        rows = query_db("""
-            SELECT sv.versionid, sv.version_number, sv.status, sv.datecreated,
-                   c.programcode, cs.yearlevel, cs.semester,
-                   p.programname, ay.academicyearid
+        status_filter = "WHERE sv.status = 'Draft'" if 'drafts' in request.path else ""
+        rows = query_db(f"""
+            SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number)
+                   sv.versionid, sv.version_number, sv.status, sv.datecreated,
+                   c.programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
             FROM   public.schedule_version sv
             JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
             JOIN   public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   public.curriculum c ON cs.curriculumid = c.curriculumid
-            JOIN   public.programs p ON c.programcode = p.programcode
             JOIN   public.semester sem ON sg.semesterid = sem.semesterid
             JOIN   public.academicyear ay ON sem.academicyearid = ay.academicyearid
-            ORDER BY sv.datecreated DESC
-            LIMIT 100
+            {status_filter}
+            ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
         """)
-        result = []
-        for row in (rows or []):
-            result.append({
-                'versionid':    row['versionid'],
-                'version':      row['version_number'],
-                'status':       row['status'],
-                'created_at':   str(row['datecreated']),
-                'programcode':  row['programcode'],
-                'programname':  row['programname'],
-                'yearlevel':    row['yearlevel'],
-                'term':         row['semester'],
-                'acadyear':     row['academicyearid'],
+        output = []
+        for r in (rows or []):
+            dt = r['datecreated']
+            output.append({
+                'versionid': r['versionid'], 'version_number': r['version_number'], 'status': r['status'],
+                'datecreated': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                'programcode': r['programcode'], 'yearlevel': r['yearlevel'], 'term': r['term'], 'acadyear': r['acadyear']
             })
-        return jsonify(result)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify([]), 500
-
-
-
-
-@app.route('/api/curriculum-by-year')
-def api_curriculum_by_year():
-    """
-    Fetch the LATEST curriculum for the selected program.
-    
-    Query params:
-        program - Program code (e.g., 'BSIT', 'DIT')
-    
-    Returns:
-        {
-            "curriculum": "2526",
-            "description": "Latest curriculum for BSIT"
-        }
-    """
-    program = request.args.get('program', '')
-    
-    if not program:
-        return jsonify({'curriculum': '', 'description': 'No program provided'}), 400
-    
-    try:
-        # Get the LATEST curriculum for this program
-        cur_row = query_db("""
-            SELECT c.curriculumcode, c.curriculumyear
-            FROM curriculum c
-            WHERE c.programcode = %s
-            ORDER BY c.curriculumyear DESC
-            LIMIT 1
-        """, (program,))
-        
-        if cur_row:
-            curriculum_year = cur_row[0]['curriculumyear']
-            return jsonify({
-                'curriculum': curriculum_year,
-                'description': f"Latest curriculum {curriculum_year} for {program}"
-            })
-        else:
-            return jsonify({
-                'curriculum': '', 
-                'description': f'No curriculum found for {program}'
-            }), 404
-            
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
- 
-
-# Add this route after your api_list_versions route in app.py
+        return jsonify(sorted(output, key=lambda x: x['datecreated'], reverse=True))
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/api/schedule/load-draft/<int:version_id>')
 def api_load_draft(version_id):
-    """Load a specific draft version by ID"""
     try:
-        conn = get_db_connection()
-        cur  = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Fetch the draft version
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT sv.schedule_json, sv.version,
-                   sg.programcode, sg.yearlevel, sg.term, sg.acadyear
-            FROM   schedule_version sv
-            JOIN   schedule_group   sg ON sv.groupid = sg.groupid
-            WHERE  sv.versionid = %s
+            SELECT sv.version_number, c.programcode, cs.yearlevel, sem.semestertype AS term, ay.academicyearid AS acadyear, sc.semesterid
+            FROM schedule_version sv JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN semester sem ON sc.semesterid = sem.semesterid
+            JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
+            WHERE sv.versionid = %s
         """, (version_id,))
-        
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        
-        if not row:
-            return jsonify({'success': False, 'error': 'Draft not found.'}), 404
-        
-        schedule_data = json.loads(row['schedule_json']) if isinstance(row['schedule_json'], str) else row['schedule_json']
-        
-        return jsonify({
-            'success': True,
-            'schedule_data': schedule_data,
-            'version': row['version'],
-            'context': {
-                'program': row['programcode'],
-                'yearLevel': row['yearlevel'],
-                'term': row['term'],
-                'acadYear': row['acadyear'],
-            }
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        m = cur.fetchone()
+        if not m: return jsonify({'success': False, 'error': 'Not found'}), 404
+        cur.execute("""
+            SELECT sub.subjectcode AS subject_code, sub.subjectname AS description, cs.lecturehours AS lec_hours,
+                   cs.laboratoryhours AS lab_hours, cs.creditunits AS units, c.programcode AS course,
+                   sc.employeenumber AS faculty_id, CONCAT(f.lastname, ', ', f.firstname) AS instructor,
+                   ss.daydesc, TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time, TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
+                   r.roomname AS room, r.roomid
+            FROM schedule_version sv JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub ON cs.subjectcode = sub.subjectcode
+            JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+            LEFT JOIN room r ON ss.roomid = r.roomid
+            LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+            WHERE c.programcode = %s AND cs.yearlevel = %s AND sc.semesterid = %s AND sv.version_number = %s
+        """, (m['programcode'], m['yearlevel'], m['semesterid'], m['version_number']))
+        rows = cur.fetchall(); cur.close(); conn.close()
+        _abbr = {'Monday': 'MON', 'Tuesday': 'TUE', 'Wednesday': 'WED', 'Thursday': 'THU', 'Friday': 'FRI', 'Saturday': 'SAT', 'Sunday': 'SUN'}
+        sched = [{
+            'subject_code': r['subject_code'], 'description': r['description'], 'lec_hours': r['lec_hours'], 'lab_hours': r['lab_hours'],
+            'units': r['units'], 'course': r['course'], 'faculty_id': r['faculty_id'], 'instructor': r['instructor'],
+            'days': _abbr.get(r['daydesc'], r['daydesc'][:3].upper() if r['daydesc'] else ''), 'day': r['daydesc'],
+            'time': f"{_fmt_12h(r['start_time'])} – {_fmt_12h(r['end_time'])}" if r['start_time'] else '',
+            'hours': str((r['lec_hours'] or 0) + (r['lab_hours'] or 0)), 'room': r['room'], 'room_id': r['roomid']
+        } for r in rows]
+        return jsonify({'success': True, 'schedule_data': sched, 'version': m['version_number'], 'context': {'program': m['programcode'], 'yearLevel': m['yearlevel'], 'term': m['term'], 'acadYear': m['acadyear']}})
+    except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
-
+@app.route('/api/curriculum-by-year')
+def api_curriculum_by_year():
+    p = request.args.get('program', '')
+    try:
+        row = query_db("SELECT curriculumyear FROM curriculum WHERE programcode = %s ORDER BY curriculumyear DESC LIMIT 1", (p,))
+        return jsonify({'curriculum': row[0]['curriculumyear'] if row else ''})
+    except: return jsonify({'curriculum': ''}), 500
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':

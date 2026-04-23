@@ -186,12 +186,13 @@
                     </div>
                     
                    <div class="summary-white-box">
-                        <div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px;">
-                            <span style="font-weight: 800;">PROGRAM/YR:</span><span id="sum_prog">-</span>
-                            <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course">-</span>
-                            <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst">-</span>
-                        </div>
-                    </div>
+    <div style="display: grid; grid-template-columns: 100px 1fr; gap: 5px;">
+        <span style="font-weight: 800;">PROGRAM/YR:</span><span id="sum_prog">-</span>
+        <span style="font-weight: 800;">SUBJECT:</span><span id="sum_course">-</span>
+        <span style="font-weight: 800;">INSTRUCTOR:</span><span id="sum_inst">-</span>
+        <span style="font-weight: 800;">ROOM:</span><span id="sum_room">-</span>
+    </div>
+</div>
                     <button class="btn-confirm-dark" onclick="confirmAndPlace()">Confirm Assignment</button>
                 </div>
             </div>
@@ -201,72 +202,62 @@
         <!-- RIGHT PANEL: TIMETABLE GRID -->
         <!-- ===================================== -->
         <div class="editor-right-panel">
-
-            <!-- 1. BUILDINGS SECTION -->
-            <div class="buildings-section">
-                <div class="section-label-bar">BUILDINGS</div>
-                <div class="building-tabs-container">
-                    <button class="bldg-tab active" onclick="filterByBuilding('ALL', this)">ALL</button>
-                    {% for b in buildings %}
-                    <button class="bldg-tab" onclick="filterByBuilding('{{ b[0] }}', this)">{{ b[1] }}</button>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <!-- 2. GRID: Rooms sidebar + Timetable -->
-            <div class="grid-container">
-
-                <!-- ROOMS SIDEBAR -->
-                <div class="rooms-sidebar">
-                    <div class="rooms-sidebar-header">ROOMS</div>
-                    <div class="rooms-filter">
-                        <select id="sel_floor" class="floor-select" onchange="renderRooms()">
-                            <option value="ALL">All Floors</option>
-                            <option value="1">1st Floor</option>
-                            <option value="2">2nd Floor</option>
-                        </select>
-                    </div>
-                    <div id="room_list_container" class="rooms-list"></div>
-                </div>
-
-                <!-- TIMETABLE AREA -->
-                <div class="timetable-area">
-                    <div class="timetable-wrapper" id="gridWrapper">
-                        <table class="timetable" id="mainTimetable">
-                            <thead>
-                                <tr>
-                                    <th>TIME</th><th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for time in ['7:30 AM','8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM','2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM','5:00 PM','5:30 PM','6:00 PM','6:30 PM','7:00 PM','7:30 PM','8:00 PM','8:30 PM','9:00 PM'] %}
-                                <tr>
-                                    <td class="time-col">{{ time }}</td>
-                                    <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 3. Action Bar -->
-            <div class="editor-action-bar">
-                <button id="btnManualSaveDraft" class="btn-outline-dark"><i class="fas fa-save"></i> Save as Draft</button>
-                <button id="btnManualApprove" class="btn-solid-dark"><i class="fas fa-check-circle"></i> Save & Publish</button>
-            </div>
+    <!-- 1. BUILDINGS SECTION -->
+    <div class="buildings-section">
+        <div class="section-label-bar">BUILDINGS</div>
+        <div class="building-tabs-container">
+            <button class="bldg-tab active" onclick="filterByBuilding('ALL', this)">ALL</button>
+            {% for b in buildings %}
+            <button class="bldg-tab" onclick="filterByBuilding('{{ b[0] }}', this)">{{ b[1] }}</button>
+            {% endfor %}
         </div>
+    </div>
+
+    <!-- 3. GRID CONTAINER (Calendar View) -->
+    <div class="grid-container" id="calendarViewContainer">
+        <div class="rooms-sidebar">
+            <div class="rooms-sidebar-header">ROOMS</div>
+            <div class="rooms-filter">
+                <select id="sel_floor" class="floor-select" onchange="renderRooms()">
+                    <option value="ALL">All Floors</option>
+                    <option value="1">1st Floor</option>
+                    <option value="2">2nd Floor</option>
+                </select>
+            </div>
+            <div id="room_list_container" class="rooms-list"></div>
+        </div>
+
+        <div class="timetable-wrapper" id="gridWrapper">
+            <table class="timetable" id="mainTimetable">
+                <thead>
+                    <tr>
+                        <th>TIME</th><th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for time in ['7:30 AM', '8:00 AM', '8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '1:00 PM', '1:30 PM', '2:00 PM', '2:30 PM', '3:00 PM', '3:30 PM', '4:00 PM', '4:30 PM', '5:00 PM', '5:30 PM', '6:00 PM', '6:30 PM', '7:00 PM', '7:30 PM', '8:00 PM', '8:30 PM', '9:00 PM'] %}
+                    <tr>
+                        <td class="time-col">{{ time }}</td>
+                        <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 4. Action Bar -->
+    <div class="editor-action-bar">
+        <button id="btnManualSaveDraft" class="btn-outline-dark"><i class="fas fa-save"></i> Save as Draft</button>
+        <button id="btnManualApprove" class="btn-solid-dark"><i class="fas fa-check-circle"></i> Save & Publish</button>
     </div>
 </div>
 
 <script>
     const allRooms = JSON.parse('{{ rooms_json | safe }}');
     const timeSlots = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM', '06:30 PM', '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM', '09:00 PM'];
-    
-    // Array to hold unsaved classes placed on the grid
-    let pendingManualSchedule = [];
 
+    // Initial Setup
     window.addEventListener('DOMContentLoaded', () => {
         const startSelect = document.getElementById('sel_start_time');
         const endSelect = document.getElementById('sel_end_time');
@@ -574,188 +565,146 @@
         const selectedFloor = document.getElementById('sel_floor').value;
         const container = document.getElementById('room_list_container');
         container.innerHTML = '';
-        const filtered = allRooms.filter(r => (currentBldgId === 'ALL' || String(r.bldg_id) === currentBldgId) && (selectedFloor === 'ALL' || r.floor === selectedFloor)).sort((a, b) => a.name.localeCompare(b.name));
-        if (filtered.length === 0) {
-            container.innerHTML = '<div style="font-size:0.75rem;color:#999;padding:5px;">No rooms found</div>';
-            return;
-        }
-        filtered.forEach(r => {
-            container.innerHTML += `<div class="room-pill" data-bldg="${r.bldg_id}" onclick="selectRoom('${r.id}', '${r.name}', this)">${r.name}</div>`;
-        });
-    }
-
-    const SEM_LABELS = { 'A': '1st Sem', 'B': '2nd Sem', 'C': 'Summer' };
-
-    function updateYearLevelOptions(availableYears) {
-        const yearSelect = document.getElementById('sel_year');
-        Array.from(yearSelect.options).forEach(opt => {
-            if (!opt.value) return;
-            const isAvailable = !availableYears || availableYears.includes(parseInt(opt.value));
-            opt.disabled = !isAvailable;
-            opt.style.color = isAvailable ? '' : '#aaa';
-        });
-        const cur = yearSelect.value;
-        if (cur && availableYears && !availableYears.includes(parseInt(cur))) {
-            yearSelect.value = '';
-        }
-    }
-
-    function updateSemesterOptions(availableSems, doneSems = [], currentSem = null, validSems = null) {
-        const semSelect = document.getElementById('sel_sem');
-        const currentVal = semSelect.value;
-        semSelect.innerHTML = '<option value="" disabled selected>-Select-</option>';
-        ['A', 'B', 'C'].forEach(code => {
-            const isCurrent = (code === currentSem);
-            const notEnded  = !validSems || validSems.includes(code);
-            const inCurriculum = !availableSems || availableSems.includes(code);
-            if (!notEnded) return;                         
-            if (!isCurrent && !inCurriculum) return;       
-            const opt = document.createElement('option');
-            opt.value = code; opt.text = SEM_LABELS[code];
-            semSelect.appendChild(opt);
-        });
-        const stillVisible = Array.from(semSelect.options).some(o => o.value === currentVal);
-        if (currentVal && stillVisible) semSelect.value = currentVal;
-    }
-
-    function alignRoomsHeader() {
-        requestAnimationFrame(() => {
-            const thead  = document.querySelector('#mainTimetable thead');
-            const header = document.querySelector('.rooms-sidebar-header');
-            if (!thead || !header) return;
-            const theadH  = thead.getBoundingClientRect().height;
-            const filterEl = document.querySelector('.rooms-filter');
-            const filterH  = filterEl ? filterEl.getBoundingClientRect().height : 0;
-            const needed   = theadH - filterH;
-            if (needed > 0) {
-                header.style.height = needed + 'px';
-                header.style.boxSizing = 'border-box';
-                header.style.display = 'flex';
-                header.style.alignItems = 'center';
+        allRooms.forEach(room => {
+            if ((currentBldgId === 'ALL' || room.bldg_id == currentBldgId) && (selectedFloor === 'ALL' || room.floor === selectedFloor)) {
+                container.innerHTML += `<div class="room-pill" onclick="selectRoom('${room.id}', '${room.name}', this)">${room.name}</div>`;
             }
         });
     }
 
-    function toggleProgMenu(e) {
-        e.stopPropagation();
-        const menu = document.getElementById('prog_menu');
-        menu.style.display = (menu.style.display === 'none') ? 'block' : 'none';
-    }
-
-    function selectProg(code) {
-        document.getElementById('sel_prog').value = code;
-        document.getElementById('prog_trigger_text').innerText = code || '-Select Program-';
-        document.getElementById('prog_menu').style.display = 'none';
-        triggerCascade();
-    }
-
-    document.addEventListener('click', (e) => {
-        const wrapper = document.getElementById('prog_wrapper');
-        if (wrapper && !wrapper.contains(e.target)) {
-            document.getElementById('prog_menu').style.display = 'none';
-        }
-    });
-
     async function triggerCascade() {
         const ay = document.getElementById('sel_ay').value;
-        const prog = document.getElementById('sel_prog').value;
+    const sem = document.getElementById('sel_sem').value;
+    const progSelect = document.getElementById('sel_prog');
+    const prog = progSelect.value;
+    const year = document.getElementById('sel_year').value;
+    
         const currDisplay = document.getElementById('display_curr');
         const currHidden = document.getElementById('curr_id_hidden');
         const subjSelect = document.getElementById('sel_subj');
 
+    // --- 1. RESET EVERYTHING FIRST ---
+    // This ensures old data disappears before we even try to fetch new data
+    currDisplay.innerText = "---";
+    currHidden.value = "";
         subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
+    
+    // Clear the summary card too
         document.getElementById('sum_course').innerText = '-';
+    document.getElementById('sum_prog').innerText = prog ? progSelect.options[progSelect.selectedIndex].text : '-';
 
-        let doneSems = [], currentSem = null, validSems = null;
-        if (ay) {
-            try {
-                const url = `/api/get_existing_schedule_periods?ay_id=${encodeURIComponent(ay)}${prog ? '&program=' + encodeURIComponent(prog) : ''}`;
-                const existData = await (await fetch(url)).json();
-                if (existData.success) {
-                    doneSems = existData.done_semesters || [];
-                    currentSem = existData.current_sem || null;
-                    validSems = existData.valid_sems || null;
-                }
-            } catch (e) {}
-        }
-        updateSemesterOptions(null, doneSems, currentSem, validSems);
+    // 2. Check if we have enough info to proceed
+    if (!prog) return;
 
-        if (!prog) {
-            currDisplay.innerText = '---'; currHidden.value = '';
-            updateYearLevelOptions(null); updateSummary();
-            return;
-        }
+    try {
+        const resp = await fetch(`/api/get_curriculum?program=${prog}`);
+        const data = await resp.json();
 
-        try {
-            const data = await (await fetch(`/api/get_curriculum?program=${encodeURIComponent(prog)}`)).json();
-            if (!data.success) {
-                currDisplay.innerText = 'No Curriculum'; currHidden.value = '';
-                updateYearLevelOptions([]); updateSummary(); return;
-            }
-            currDisplay.innerText = data.curriculum_code;
+        if (data.success) {
+            // Update labels with the new curriculum
+            currDisplay.innerText = data.label;
             currHidden.value = data.curriculum_id;
-            updateYearLevelOptions(data.available_year_levels);
 
-            const currentYear = document.getElementById('sel_year').value;
-            const selSem = document.getElementById('sel_sem').value;
-            if (currentYear && selSem) {
-                const sData = await (await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${currentYear}&semester=${selSem}`)).json();
+            // 3. If we have Year and Sem, fetch the subjects
+            if (year && sem) {
+                const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}`);
+                const sData = await sResp.json();
+                
                 subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
                 if (sData.subjects && sData.subjects.length > 0) {
                     sData.subjects.forEach(s => {
                         subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`;
                     });
+                } else {
+                    subjSelect.innerHTML = '<option value="">No subjects found</option>';
                 }
             }
+        } else {
+            // 4. If API says success: false (No curriculum for this program)
+            currDisplay.innerText = "No Curriculum";
+            currHidden.value = "";
+            subjSelect.innerHTML = '<option value="">-- No Curriculum --</option>';
+            }
         } catch (e) {
-            currDisplay.innerText = 'Error';
+        console.error("Fetch Error:", e);
+        currDisplay.innerText = "Error loading";
         }
-        updateSummary();
-    }
 
-    function highlightBuildingTab(bldgId) {
-        document.querySelectorAll('.bldg-tab').forEach(tab => tab.classList.remove('building-linked'));
-        if (!bldgId) return;
-        document.querySelectorAll('.bldg-tab').forEach(tab => {
-            const oc = tab.getAttribute('onclick') || '';
-            if (oc.includes(`'${String(bldgId)}'`)) tab.classList.add('building-linked');
-        });
-    }
-
-    function formAyFilter()   { return document.getElementById('sel_ay').value || ''; }
-    function formSemFilter()  { return document.getElementById('sel_sem').value || ''; }
+    // Update the final summary box text
+    if(typeof updateSummary === "function") updateSummary();
+}
 
     async function selectRoom(roomId, roomName, element) {
         document.querySelectorAll('.room-pill').forEach(el => el.classList.remove('active-room'));
         element.classList.add('active-room');
         document.getElementById('sel_room').value = roomId;
-        highlightBuildingTab(element.dataset.bldg);
-        await renderGrid(roomId, formAyFilter(), formSemFilter());
+        document.getElementById('sum_room').innerText = roomName;
+        await renderGrid(roomId);
     }
 
-    document.getElementById('sel_room').addEventListener('change', async function () {
-        const roomId = this.value;
-        const room = allRooms.find(r => String(r.id) === String(roomId));
-        document.querySelectorAll('.room-pill').forEach(el => el.classList.remove('active-room'));
-        if (room) {
-            highlightBuildingTab(room.bldg_id);
-            document.querySelectorAll('.room-pill').forEach(el => {
-                if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`'${roomId}'`)) {
-                    el.classList.add('active-room');
-                }
-            });
-            await renderGrid(roomId, formAyFilter(), formSemFilter());
-        }
-    });
+    async function renderGrid(roomId) {
+        const wrapper = document.getElementById('gridWrapper');
+        const table = document.getElementById('mainTimetable');
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        try {
+            const resp = await fetch(`/api/get_room_schedule/${roomId}`);
+            const sessions = await resp.json();
 
-    document.getElementById('sel_ay').addEventListener('change', () => {
-        const r = document.getElementById('sel_room').value;
-        if (r) renderGrid(r, formAyFilter(), formSemFilter());
-    });
-    document.getElementById('sel_sem').addEventListener('change', () => {
-        const r = document.getElementById('sel_room').value;
-        if (r) renderGrid(r, formAyFilter(), formSemFilter());
-    });
+            // Dedup identical entries (same subject/day/start)
+            const seen = new Set();
+            const uniq = sessions.filter(s => {
+                const key = `${s.subjectcode}|${s.daydesc}|${s.starttimeid}`;
+                if (seen.has(key)) return false;
+                seen.add(key); return true;
+            });
+
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const firstCell = table.querySelector('tbody td:nth-child(2)');
+            const timeCol = table.querySelector('.time-col');
+            const thead = table.querySelector('thead');
+            const colWidth = firstCell.getBoundingClientRect().width;
+            const rowHeight = firstCell.getBoundingClientRect().height;
+            const leftOffset = timeCol.getBoundingClientRect().width;
+            const topOffset = thead.getBoundingClientRect().height;
+
+            sessions.forEach(sess => {
+                    const pill = document.createElement('div');
+                    pill.className = 'schedule-pill';
+                const dayIdx = days.indexOf(sess.daydesc);
+                const stepHeight = rowHeight / 2;
+                    pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
+                pill.style.width = (colWidth - 6) + "px";
+                pill.style.height = ((sess.endtimeid - sess.starttimeid) * stepHeight - 6) + "px";
+                pill.style.left = (leftOffset + (dayIdx * colWidth) + 3) + "px";
+                pill.style.top = (topOffset + ((sess.starttimeid - 1) * stepHeight) + 3) + "px";
+                pill.innerHTML = `<div class="pill-subject">${sess.subjectcode}</div><div style="font-size:0.6rem;">${sess.instructor}</div>`;
+                    wrapper.appendChild(pill);
+                });
+        } catch (err) { console.error(err); }
+    }
+
+    async function confirmAndPlace() {
+        const payload = {
+            employee_number: document.getElementById('sel_faculty').value,
+            subject_code: document.getElementById('sel_subj').value,
+            curriculum_id: document.getElementById('curr_id_hidden').value,
+            room_id: document.getElementById('sel_room').value,
+            day: document.getElementById('sel_day').value,
+            start_time: document.getElementById('sel_start_time').value,
+            end_time: document.getElementById('sel_end_time').value,
+            ay_id: document.getElementById('sel_ay').value,
+            semester_code: document.getElementById('sel_sem').value,
+            year_level: document.getElementById('sel_year').value
+        };
+        const resp = await fetch('/api/save_manual_schedule', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const result = await resp.json();
+        alert(result.message);
+        if(result.success) await renderGrid(payload.room_id);
+    }
 
     const colorPalette = ['#16a085', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#f39c12', '#d35400', '#c0392b'];
     function getSubjectColor(code) {
@@ -774,18 +723,28 @@
 
         const progCode = progSelect.value || '';
         const yearVal = yearSelect.value || '';
-        const semVal = semSelect.value || '';
-        const ayVal = aySelect.value || '';
-
-        document.getElementById('sum_prog').innerText = progCode && yearVal ? `${progCode}-${yearVal}` : (progCode || '-');
-        document.getElementById('sum_course').innerText = subjSelect.selectedIndex > 0 ? subjSelect.options[subjSelect.selectedIndex].text : '-';
-        document.getElementById('sum_inst').innerText = facSelect.selectedIndex > 0 ? facSelect.options[facSelect.selectedIndex].text : '-';
-        document.getElementById('summary_period').innerText = (ayVal ? `A.Y ${ayVal}` : 'A.Y ----') + ' | ' + (semVal ? SEM_LABELS[semVal] : '- SEMESTER');
+        document.getElementById('sum_prog').innerText = `${progName} ${yearVal}`;
     }
 
+    // 2. Update Subject Name (Grabs the text like "ETHICS/ETIKA")
+    if (subjSelect.selectedIndex > 0) {
+        document.getElementById('sum_course').innerText = subjSelect.options[subjSelect.selectedIndex].text;
+    } else {
+        document.getElementById('sum_course').innerText = '-';
+    }
+
+    // 3. Update Instructor Name (Grabs the text like "Mrs. Icon Obmerga")
+    if (facSelect.selectedIndex > 0) {
+        document.getElementById('sum_inst').innerText = facSelect.options[facSelect.selectedIndex].text;
+    } else {
+        document.getElementById('sum_inst').innerText = '-';
+    }
+    
+
+// Add "Listeners" so the summary updates the second you click a dropdown
+document.getElementById('sel_prog').addEventListener('change', updateSummary);
     document.getElementById('sel_year').addEventListener('change', updateSummary);
+    document.getElementById('sel_subj').addEventListener('change', updateSummary);
     document.getElementById('sel_faculty').addEventListener('change', updateSummary);
-    document.getElementById('sel_sem').addEventListener('change', updateSummary);
-    document.getElementById('sel_ay').addEventListener('change', updateSummary);
 </script>
 {% endblock %}

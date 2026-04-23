@@ -3,6 +3,75 @@
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+    <style>
+        /* ── schedule-table: matches Generate Schedule tab table styling ── */
+        .schedule-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .schedule-table thead {
+            background: linear-gradient(135deg, #7a0000 0%, #5c0000 100%);
+            color: #fff;
+        }
+        .schedule-table th {
+            padding: 10px 8px;
+            font-weight: 600;
+            font-size: 11px;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+            text-align: left;
+            border-right: 1px solid rgba(255,255,255,.15);
+        }
+        .schedule-table th:last-child { border-right: none; }
+        .schedule-table tbody tr {
+            border-bottom: 1px solid #eeeeee;
+            transition: background .15s;
+        }
+        .schedule-table tbody tr:hover { background: #f9f0f0; }
+        .schedule-table td {
+            padding: 10px 8px;
+            color: #555;
+        }
+        .empty-row td { text-align: center; padding: 40px 20px; }
+        .empty-msg {
+            font-size: 13px;
+            color: #aaa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        #tableViewWrapper.table-wrapper {
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 6px rgba(122,0,0,.12);
+        }
+
+        /* ── Time cell: single-line "7:00AM" format ── */
+        .timetable-grid td.time-cell {
+            padding: 0;
+            font-size: 0.72rem;
+            font-weight: 900;
+            white-space: nowrap;
+        }
+
+        /* ── Calendar card: match Generate Schedule tab wrapper style ── */
+        .schedule-grid-card {
+            background: #fff;
+            border: 1px solid #e0c8c8;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(122,0,0,.13);
+            margin-top: 4px;
+        }
+        .grid-card-header {
+            background: linear-gradient(135deg, #7a0000 0%, #5c0000 100%);
+            border-radius: 0;
+        }
+    </style>
 {% endblock %}
 
 {% block content %}
@@ -214,11 +283,7 @@
                                     '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
                     {% for t in times %}
                     <tr>
-                        <td class="time-cell">
-                            {{ t }} 
-                            {% set hr = t.split(':')[0]|int %}
-                            <small>{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</small>
-                        </td>
+                        <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
                         <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
                     </tr>
                     {% endfor %}
@@ -228,26 +293,26 @@
     </div>
 
             <!-- TABLE VIEW -->
-            <div id="tableViewWrapper">
-                <table class="offerings-list-table" id="offeringsTable">
+            <div id="tableViewWrapper" class="table-wrapper">
+                <table class="schedule-table" id="offeringsTable">
                     <thead>
                         <tr>
-                            <th class="col-instructor">INSTRUCTOR</th>
-                            <th class="col-code">SUBJECT<br>CODE</th>
-                            <th class="col-desc">SUBJECT DESCRIPTION</th>
-                            <th class="col-num">LEC<br>HOURS</th>
-                            <th class="col-num">LAB<br>HOURS</th>
-                            <th class="col-num">CREDIT<br>UNITS</th>
-                            <th class="col-course">COURSE</th>
-                            <th class="col-time">TIME</th>
-                            <th class="col-hours">HOURS</th>
-                            <th class="col-days">DAYS</th>
-                            <th class="col-room">ROOM</th>
+                            <th>INSTRUCTOR</th>
+                            <th>SUBJECT CODE</th>
+                            <th>SUBJECT DESCRIPTION</th>
+                            <th>LEC HRS</th>
+                            <th>LAB HRS</th>
+                            <th>CREDIT UNITS</th>
+                            <th>COURSE</th>
+                            <th>TIME</th>
+                            <th>HOURS</th>
+                            <th>DAYS</th>
+                            <th>ROOM</th>
                         </tr>
                     </thead>
                     <tbody id="offeringsTableBody">
-                        <tr class="table-empty-row">
-                            <td colspan="11">No data loaded. Select a program and year level.</td>
+                        <tr class="empty-row">
+                            <td colspan="11"><span class="empty-msg">No data loaded. Select a program and year level.</span></td>
                         </tr>
                     </tbody>
                 </table>
@@ -496,7 +561,7 @@ function renderCalendar(sessions) {
 function renderTable(sessions) {
     const tbody = document.getElementById('offeringsTableBody');
     if (!sessions || sessions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11">No records found.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg">No records found.</span></td></tr>';
         return;
     }
 
@@ -517,17 +582,17 @@ function renderTable(sessions) {
 
     tbody.innerHTML = Object.values(grouped).map(sess => {
         return `<tr>
-            <td>${sess.instructor}</td>
-            <td>${sess.subjectcode}</td>
-            <td style="font-weight:bold; font-size:10px;">${sess.subjectname}</td>
-            <td>${sess.lecturehours}</td>
-            <td>${sess.laboratoryhours}</td>
-            <td>${sess.creditunits}</td>
-            <td>${document.getElementById('view_prog').value}</td>
-            <td>${sess.timesArr.join(' / ')}</td>
-            <td>${sess.total_hours}</td>
-            <td>${sess.daysArr.join('/')}</td>
-            <td>${sess.roomname}</td>
+            <td>${sess.instructor || '-'}</td>
+            <td>${sess.subjectcode || '-'}</td>
+            <td>${sess.subjectname || '-'}</td>
+            <td>${sess.lecturehours || 0}</td>
+            <td>${sess.laboratoryhours || 0}</td>
+            <td>${sess.creditunits || 0}</td>
+            <td>${document.getElementById('view_prog').value || '-'}</td>
+            <td>${sess.timesArr.join(' / ') || '-'}</td>
+            <td>${sess.total_hours || 0}</td>
+            <td>${sess.daysArr.join('/') || '-'}</td>
+            <td>${sess.roomname || 'TBA'}</td>
         </tr>`;
     }).join('');
 }
