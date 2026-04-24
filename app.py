@@ -564,10 +564,15 @@ def room():
         buildings = query_db("SELECT BuildingName AS buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
         
         raw_rooms = query_db("""
-            SELECT r.RoomID, r.RoomName, r.RoomType, r.RoomCapacity, b.BuildingName 
-            FROM Room r 
-            JOIN Building b ON r.BuildingID = b.BuildingID 
-            ORDER BY r.RoomName ASC
+            SELECT r.RoomID, r.RoomName, r.RoomType, r.RoomCapacity, b.BuildingName
+            FROM Room r
+            JOIN Building b ON r.BuildingID = b.BuildingID
+            ORDER BY
+                regexp_replace(r.RoomName, '[0-9]', '', 'g'),
+                CASE WHEN regexp_replace(r.RoomName, '[^0-9]', '', 'g') = ''
+                     THEN 0
+                     ELSE CAST(regexp_replace(r.RoomName, '[^0-9]', '', 'g') AS BIGINT)
+                END
         """)
         rooms =[{k.lower(): v for k, v in row.items()} for row in raw_rooms] if raw_rooms else[]
 
@@ -1559,7 +1564,12 @@ def manual_schedule_editor():
             SELECT r.RoomID, r.RoomName, r.BuildingID, b.BuildingName
             FROM Room r
             LEFT JOIN Building b ON r.BuildingID = b.BuildingID
-            ORDER BY b.BuildingName, r.RoomName
+            ORDER BY
+                regexp_replace(r.RoomName, '[0-9]', '', 'g'),
+                CASE WHEN regexp_replace(r.RoomName, '[^0-9]', '', 'g') = ''
+                     THEN 0
+                     ELSE CAST(regexp_replace(r.RoomName, '[^0-9]', '', 'g') AS BIGINT)
+                END
         """)
         raw_rooms = cur.fetchall()
 
