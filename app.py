@@ -598,8 +598,27 @@ def schedule():
         WHERE %s BETWEEN s.semstartdate AND s.semenddate
         LIMIT 1
     """, [today])
-    active_sem_type = active_sem_res[0]['semestertype'] if active_sem_res else 'B'
-    active_ay       = active_sem_res[0]['academicyearid'] if active_sem_res else (acad_years[0]['academicyearid'] if acad_years else '')
+
+    if active_sem_res:
+        active_sem_type = active_sem_res[0]['semestertype']
+        active_ay       = active_sem_res[0]['academicyearid']
+    else:
+        # No live semester — pick the AY+semester that has the most recent imported data
+        most_recent_data = query_db("""
+            SELECT sem.semestertype, sem.academicyearid
+            FROM historical_data hd
+            JOIN semester sem ON hd.semesterid = sem.semesterid
+            GROUP BY sem.semestertype, sem.academicyearid
+            ORDER BY MAX(hd.semesterid) DESC
+            LIMIT 1
+        """)
+        if most_recent_data:
+            active_sem_type = most_recent_data[0]['semestertype']
+            active_ay       = most_recent_data[0]['academicyearid']
+        else:
+            # Final fallback: most recent AY, 2nd semester
+            active_sem_type = 'B'
+            active_ay       = acad_years[0]['academicyearid'] if acad_years else ''
 
     status_query = """
         SELECT DISTINCT
@@ -916,6 +935,77 @@ def debug_hist():
         cur.execute('SELECT semesterid, semestertype, academicyearid FROM semester ORDER BY academicyearid, semestertype')
         sems = [dict(r) for r in cur.fetchall()]
         return jsonify({'counts': counts, 'ay2425_programs': ay2425, 'semesters': sems})
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/api/schedule/diagnose')
+def schedule_diagnose():
+    """Diagnostic endpoint — shows exactly what data exists for the given filters."""
+    prog = request.args.get('program', '')
+    yl   = request.args.get('year_level', '1')
+    sem  = request.args.get('semester', 'B')
+    ay   = request.args.get('ay', '')
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 1. Semester lookup
+        cur.execute("SELECT semesterid, semestertype, academicyearid, semstartdate, semenddate FROM semester WHERE semestertype=%s AND academicyearid=%s LIMIT 1", (sem, ay))
+        sem_row = dict(cur.fetchone()) if cur.rowcount else None
+
+        # 2. All semesters
+        cur.execute("SELECT semesterid, semestertype, academicyearid FROM semester ORDER BY academicyearid, semestertype")
+        all_sems = [dict(r) for r in cur.fetchall()]
+
+        # 3. Historical data count for this filter
+        cur.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN "Time" IS NOT NULL AND "Time" != '' THEN 1 ELSE 0 END) as with_time
+            FROM historical_data
+            WHERE REGEXP_REPLACE("Program", '\\s+\\d+$', '') ILIKE %s
+              AND CAST("Year Level" AS TEXT) = %s
+              AND academicyearid = %s
+        """, (prog, str(yl), ay))
+        hist_count = dict(cur.fetchone())
+
+        # 4. Historical with exact semester match
+        sem_id = sem_row['semesterid'] if sem_row else None
+        if sem_id:
+            cur.execute("""SELECT COUNT(*) as cnt FROM historical_data
+                WHERE REGEXP_REPLACE("Program",'\\s+\\d+$','') ILIKE %s
+                AND CAST("Year Level" AS TEXT)=%s AND academicyearid=%s AND semesterid=%s
+            """, (prog, str(yl), ay, sem_id))
+            hist_sem_count = cur.fetchone()['cnt']
+        else:
+            hist_sem_count = 'N/A (semester not found)'
+
+        # 5. All historical programs for this AY
+        cur.execute("SELECT DISTINCT \"Program\", \"Year Level\", semesterid, academicyearid FROM historical_data WHERE academicyearid=%s ORDER BY \"Program\", \"Year Level\"", (ay,))
+        hist_programs = [dict(r) for r in cur.fetchall()]
+
+        # 6. Published schedule_sessions count
+        cur.execute("""
+            SELECT COUNT(ss.*) as sessions_count
+            FROM schedule_version sv
+            JOIN schedule sc ON sv.scheduleid=sc.scheduleid AND sv.status='Published'
+            JOIN sections sec ON sc.sectionid=sec.sectionid
+            JOIN cohort co ON sec.cohortid=co.cohortid
+            LEFT JOIN schedule_sessions ss ON ss.versionid=sv.versionid
+            WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s
+        """, (prog, int(yl)))
+        sched_row = cur.fetchone()
+
+        return jsonify({
+            'filters': {'program': prog, 'year_level': yl, 'semester': sem, 'ay': ay},
+            'semester_lookup': sem_row,
+            'all_semesters': all_sems,
+            'historical_for_ay_any_sem': hist_count,
+            'historical_matching_semester': hist_sem_count,
+            'all_hist_programs_in_ay': hist_programs,
+            'published_sessions_count': sched_row['sessions_count'] if sched_row else 0,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
     finally:
         cur.close(); conn.close()
 

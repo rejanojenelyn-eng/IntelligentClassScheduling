@@ -157,7 +157,7 @@
                     <td>{{ stat.yearlevel }}</td>
                     <td>{{ stat.academicyearid }}</td>
                     <td>{{ stat.programcode }}-{{ stat.yearlevel }}</td>
-                    <td>{{ stat.datecreated.strftime('%m-%d-%y %H:%M:%S') }}</td>
+                    <td>{{ stat.datecreated.strftime('%m-%d-%y %H:%M:%S') if stat.datecreated else '—' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -470,6 +470,16 @@ function renderCalendar(sessions) {
     const wrapper = document.getElementById('gridWrapper');
     const table   = document.getElementById('mainTimetable');
     wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+    wrapper.querySelectorAll('.cal-no-data').forEach(el => el.remove());
+
+    if (!sessions || sessions.length === 0) {
+        const msg = document.createElement('div');
+        msg.className = 'cal-no-data';
+        msg.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#aaa;font-size:13px;pointer-events:none;z-index:5;text-align:center;';
+        msg.textContent = 'No schedule data found for the selected filters.';
+        wrapper.appendChild(msg);
+        return;
+    }
 
     // Deduplicate: one pill per (subject, day, start_time)
     const seen = new Set();
@@ -484,12 +494,13 @@ function renderCalendar(sessions) {
     const firstCell = table.querySelector('tbody td:nth-child(2)');
     const timeCol = table.querySelector('.time-cell');
     const thead = table.querySelector('thead');
-    if (!firstCell || firstCell.offsetWidth === 0) {
+    if (!firstCell || firstCell.offsetWidth === 0 || firstCell.offsetHeight === 0) {
         requestAnimationFrame(() => renderCalendar(sessions)); return;
     }
 
     const colWidth = firstCell.offsetWidth;
     const pxPerMin = firstCell.offsetHeight / 30;
+    console.log('[Calendar] colWidth:', colWidth, 'cellHeight:', firstCell.offsetHeight, 'pxPerMin:', pxPerMin);
     const GRID_ORIGIN = 7 * 60 + 30;
 
     const dayGroups = {};
@@ -497,10 +508,11 @@ function renderCalendar(sessions) {
         if (!dayGroups[s.daydesc]) dayGroups[s.daydesc] = [];
         dayGroups[s.daydesc].push(s);
     });
+    console.log('[Calendar] Day groups:', Object.keys(dayGroups), '| Total sessions with time:', sessions.filter(s=>s.start_time).length);
 
     Object.keys(dayGroups).forEach(dayName => {
         const dayIdx = days.indexOf(dayName);
-        if (dayIdx < 0) return;
+        if (dayIdx < 0) { console.warn('[Calendar] Unrecognized day:', dayName); return; }
         const daySessions = dayGroups[dayName];
         daySessions.sort((a,b) => timeStrToMins(a.start_time) - timeStrToMins(b.start_time));
 
@@ -623,12 +635,20 @@ async function refreshOfferings() {
     _refreshController = new AbortController();
 
     try {
-        const resp = await fetch(
-            `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&_t=${Date.now()}`,
-            { signal: _refreshController.signal, cache: 'no-store' }
-        );
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&_t=${Date.now()}`;
+        console.log('[Schedule] Fetching:', url);
+        const resp = await fetch(url, { signal: _refreshController.signal, cache: 'no-store' });
+        if (!resp.ok) {
+            console.error('[Schedule] API error:', resp.status, resp.statusText);
+            document.getElementById('gridLabel').innerText += ' — Error loading data (check console)';
+            return;
+        }
         const data = await resp.json();
+        console.log('[Schedule] Got', data.length, 'sessions for', pSel.value, yl, sem, ay);
         window._lastSessions = data;
+        if (data.length === 0) {
+            console.warn('[Schedule] API returned 0 records — no schedule data found for this filter');
+        }
         // Wait for layout before placing pills
         requestAnimationFrame(() => renderCurrentView(data));
     } catch (e) {
