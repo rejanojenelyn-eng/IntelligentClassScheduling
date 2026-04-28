@@ -1,0 +1,301 @@
+/* ═══════════════════════════════════════════════════════════
+   ROOM DETAIL PAGE  —  room_detail.css
+   ═══════════════════════════════════════════════════════════ */
+
+.rd-container {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* ── TOP HEADER BAR ─────────────────────────────────────── */
+.rd-header-bar {
+    background-color: var(--pup-maroon);
+    color: white;
+    padding: 14px 22px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-radius: 8px 8px 0 0;
+}
+
+.rd-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 1rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.rd-title i { font-size: 1.3rem; color: var(--pup-gold); }
+
+.rd-room-name {
+    color: var(--pup-gold);
+    font-size: 1.15rem;
+    letter-spacing: 1px;
+}
+
+.rd-room-meta {
+    font-size: 0.75rem;
+    font-weight: 500;
+    opacity: 0.8;
+    color: #f0d080;
+    margin-left: 6px;
+}
+
+.rd-btn-back {
+    background: white;
+    color: var(--pup-maroon);
+    border: none;
+    padding: 8px 18px;
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    cursor: pointer;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: 0.2s;
+    letter-spacing: 0.5px;
+}
+.rd-btn-back:hover { background: #f5e6e6; }
+
+/* ── BUILDING TABS ──────────────────────────────────────── */
+.rd-building-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    background-color: #6a0000;
+    padding: 10px 18px;
+    gap: 4px;
+}
+
+.rd-tab-btn {
+    background: transparent;
+    color: white;
+    border: 1px solid rgba(255,255,255,0.45);
+    padding: 7px 16px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: 0.2s;
+    letter-spacing: 0.4px;
+}
+.rd-tab-btn:hover { background: rgba(255,255,255,0.12); }
+.rd-tab-btn.active { background: white; color: var(--pup-maroon); border-color: white; }
+
+/* ── MAIN BODY ──────────────────────────────────────────── */
+.rd-body {
+    display: flex;
+    background: white;
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    min-height: 600px;
+}
+
+/* ── LEFT ROOM SIDEBAR ──────────────────────────────────── */
+.rd-room-sidebar {
+    width: 160px;
+    background-color: #800000;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.rd-sidebar-label {
+    background-color: #5d0000;
+    color: var(--pup-gold);
+    text-align: center;
+    padding: 10px 8px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.rd-room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 8px;
+    overflow-y: auto;
+}
+
+.rd-room-btn {
+    background: transparent;
+    color: white;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 8px 6px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: 0.15s;
+    text-align: center;
+}
+.rd-room-btn:hover { background: rgba(255,255,255,0.15); }
+.rd-room-btn.active { background: white; color: var(--pup-maroon); border-color: white; }
+
+.rd-no-rooms {
+    color: rgba(255,255,255,0.5);
+    font-size: 0.75rem;
+    text-align: center;
+    padding: 12px 0;
+}
+
+/* ── CALENDAR AREA ──────────────────────────────────────── */
+.rd-calendar-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+}
+
+.rd-cal-header {
+    background-color: #f5f5f5;
+    padding: 10px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--pup-maroon);
+    font-weight: 800;
+    font-size: 0.95rem;
+    color: var(--pup-maroon);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.rd-cal-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72rem;
+    color: #666;
+    font-weight: 600;
+}
+
+.rd-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #800000;
+    display: inline-block;
+}
+
+.rd-loading {
+    display: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255,255,255,0.92);
+    color: var(--pup-maroon);
+    font-weight: 800;
+    font-size: 0.9rem;
+    padding: 14px 28px;
+    border-radius: 6px;
+    border: 2px solid var(--pup-maroon);
+    z-index: 10;
+}
+
+.rd-cal-scroll {
+    overflow: auto;
+    flex: 1;
+}
+
+/* ── CALENDAR TABLE ─────────────────────────────────────── */
+.rd-cal-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.rd-cal-table thead th {
+    background-color: #6a0000;
+    color: white;
+    padding: 10px 6px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-align: center;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.rd-cal-table .rd-time-col {
+    width: 80px;
+    background-color: #f9f4f4;
+    color: #800000;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-align: right;
+    padding: 4px 8px;
+    border-right: 2px solid #e0c0c0;
+    white-space: nowrap;
+}
+
+.rd-cal-table thead th.rd-time-col {
+    background-color: #6a0000;
+    color: var(--pup-gold);
+    border-right: 2px solid #5d0000;
+}
+
+.rd-cal-table tbody tr {
+    height: 28px;
+    border-bottom: 1px solid #f0e8e8;
+}
+
+.rd-cal-table tbody tr:nth-child(even) td:not(.rd-time-col):not(.rd-pill-cell) {
+    background-color: #fdf9f9;
+}
+
+.rd-cell {
+    padding: 0;
+    vertical-align: top;
+    border-right: 1px solid #ede0e0;
+    position: relative;
+}
+
+.rd-pill-cell {
+    padding: 3px;
+    vertical-align: top;
+}
+
+/* ── SCHEDULE PILL ──────────────────────────────────────── */
+.rd-pill {
+    background: linear-gradient(135deg, #800000, #a01b1b);
+    color: white;
+    border-radius: 4px;
+    padding: 5px 7px;
+    font-size: 0.68rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    height: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.rd-pill-subj {
+    font-weight: 800;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    letter-spacing: 0.2px;
+}
+
+.rd-pill-instr {
+    font-weight: 500;
+    font-size: 0.63rem;
+    opacity: 0.88;
+    line-height: 1.2;
+}

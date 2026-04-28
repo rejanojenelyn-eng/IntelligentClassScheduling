@@ -1,0 +1,712 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scheduleGeneration.css') }}">
+<style>
+    .dv-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .dv-title-block { flex: 1; min-width: 0; }
+
+    .dv-eyebrow {
+        font-size: 0.62rem;
+        font-weight: 900;
+        letter-spacing: 2px;
+        color: #888;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+
+    .dv-title {
+        font-size: 1.25rem;
+        font-weight: 900;
+        color: #630100;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        margin: 0 0 4px;
+        line-height: 1.25;
+    }
+
+    .dv-date {
+        font-size: 0.72rem;
+        color: #888;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+
+    .dv-top-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+    .btn-dv-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: white;
+        border: 2px solid #630100;
+        color: #630100;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.75rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        transition: all 0.18s;
+    }
+    .btn-dv-back:hover { background: #630100; color: white; text-decoration: none; }
+
+    /* Context bar */
+    .dv-context-bar {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        background: white;
+        border: 1px solid #e8c8c8;
+        border-radius: 8px;
+        padding: 14px 20px;
+        margin-bottom: 18px;
+        align-items: flex-end;
+    }
+
+    .dv-context-item {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 100px;
+    }
+
+    .dv-context-label {
+        font-size: 0.6rem;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        color: #888;
+        text-transform: uppercase;
+    }
+
+    .dv-context-value {
+        font-size: 0.82rem;
+        font-weight: 800;
+        color: #630100;
+    }
+
+    .dv-status-badge {
+        display: inline-block;
+        background: #fff3cd;
+        color: #c8860a;
+        border: 1.5px solid #ffc107;
+        border-radius: 12px;
+        padding: 3px 12px;
+        font-size: 0.68rem;
+        font-weight: 900;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        align-self: center;
+        margin-left: auto;
+    }
+
+    /* View toggle + export bar */
+    .dv-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        gap: 10px;
+    }
+
+    .dv-view-toggles { display: flex; gap: 8px; }
+
+    /* Calendar wrapper */
+    .dv-calendar-wrapper {
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 16px;
+    }
+
+    .dv-timetable-wrapper {
+        position: relative;
+        overflow: auto;
+        max-height: 520px;
+    }
+
+    .dv-timetable {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+
+    .dv-timetable thead th {
+        background: #630100;
+        color: white;
+        padding: 10px 6px;
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        border: 1px solid #7a0100;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        text-align: center;
+    }
+
+    .dv-timetable td {
+        border: 1px solid #eee;
+        height: 40px;
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    .dv-time-cell {
+        background: #f8f9fa;
+        font-weight: 800;
+        color: #630100;
+        font-size: 0.7rem;
+        width: 72px;
+        white-space: nowrap;
+    }
+
+    /* Pill */
+    .dv-pill {
+        position: absolute;
+        border-radius: 4px;
+        padding: 4px 5px;
+        color: white;
+        font-size: 0.65rem;
+        overflow: hidden;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.18);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        line-height: 1.2;
+        cursor: default;
+    }
+
+    .dv-pill-subj { font-weight: 900; font-size: 0.68rem; }
+    .dv-pill-instr { font-size: 0.58rem; opacity: 0.9; }
+    .dv-pill-room  { font-size: 0.58rem; opacity: 0.85; }
+
+    /* Table view */
+    .dv-table-wrapper {
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        overflow: auto;
+        margin-bottom: 16px;
+    }
+
+    .dv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+    }
+
+    .dv-table thead th {
+        background: #630100;
+        color: white;
+        padding: 10px 12px;
+        font-size: 0.65rem;
+        font-weight: 900;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .dv-table tbody td {
+        padding: 9px 12px;
+        border-bottom: 1px solid #eee;
+        color: #333;
+    }
+
+    .dv-table tbody tr:nth-child(even) { background: #fdf2f2; }
+    .dv-table tbody tr:hover { background: #ffe8e8; }
+
+    /* Action buttons */
+    .dv-action-bar {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding-top: 4px;
+    }
+
+    .dv-action-left, .dv-action-right { display: flex; gap: 10px; }
+
+    .dv-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border: none;
+        transition: all 0.18s;
+        white-space: nowrap;
+    }
+    .dv-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .dv-btn-outline {
+        background: white;
+        border: 2px solid #630100;
+        color: #630100;
+    }
+    .dv-btn-outline:hover:not(:disabled) { background: #630100; color: white; }
+
+    .dv-btn-solid {
+        background: #630100;
+        color: white;
+    }
+    .dv-btn-solid:hover:not(:disabled) { background: #7a0100; }
+
+    .dv-btn-green {
+        background: #27ae60;
+        color: white;
+    }
+    .dv-btn-green:hover:not(:disabled) { background: #219150; }
+
+    /* Loading state */
+    .dv-loading {
+        text-align: center;
+        padding: 80px 20px;
+        color: #630100;
+        font-size: 0.9rem;
+    }
+    .dv-loading i { font-size: 2rem; display: block; margin-bottom: 10px; }
+
+    .hidden { display: none !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-container" style="padding: 20px 28px;">
+
+    <!-- ── Header ── -->
+    <div class="dv-header">
+        <div class="dv-title-block">
+            <div class="dv-eyebrow">Schedule Draft</div>
+            <h1 class="dv-title" id="dvTitle">Loading...</h1>
+            <div class="dv-date" id="dvDate"></div>
+        </div>
+        <div class="dv-top-actions">
+            <a href="{{ url_for('schedule_drafts_list') }}" class="btn-dv-back">
+                <i class="fas fa-arrow-left"></i> All Drafts
+            </a>
+        </div>
+    </div>
+
+    <!-- ── Context Bar ── -->
+    <div class="dv-context-bar" id="dvContextBar" style="display:none;">
+        <div class="dv-context-item">
+            <span class="dv-context-label">Academic Year</span>
+            <span class="dv-context-value" id="dvAcadYear">—</span>
+        </div>
+        <div class="dv-context-item">
+            <span class="dv-context-label">Term</span>
+            <span class="dv-context-value" id="dvTerm">—</span>
+        </div>
+        <div class="dv-context-item">
+            <span class="dv-context-label">Program</span>
+            <span class="dv-context-value" id="dvProgram">—</span>
+        </div>
+        <div class="dv-context-item">
+            <span class="dv-context-label">Year Level</span>
+            <span class="dv-context-value" id="dvYearLevel">—</span>
+        </div>
+        <span class="dv-status-badge" id="dvVersionBadge">DRAFT</span>
+    </div>
+
+    <!-- ── Loading State ── -->
+    <div class="dv-loading" id="dvLoading">
+        <i class="fas fa-spinner fa-spin"></i>
+        Loading draft schedule...
+    </div>
+
+    <!-- ── Main Content (hidden until loaded) ── -->
+    <div id="dvContent" class="hidden">
+        <!-- View Toolbar -->
+        <div class="dv-toolbar">
+            <div class="dv-view-toggles">
+                <button class="active-btn" id="dvBtnCal" onclick="showCalView()">
+                    <i class="far fa-calendar-alt"></i> Calendar view
+                </button>
+                <button class="outline-btn" id="dvBtnTbl" onclick="showTblView()">
+                    <i class="fas fa-table"></i> Table view
+                </button>
+            </div>
+            <button class="outline-btn" id="dvBtnExport" onclick="exportDraft()">
+                <i class="fas fa-file-export"></i> Export Schedule
+            </button>
+        </div>
+
+        <!-- Calendar View -->
+        <div class="dv-calendar-wrapper" id="dvCalWrapper">
+            <div class="dv-timetable-wrapper" id="dvGridWrapper" style="position:relative;">
+                <table class="dv-timetable" id="dvTimetable">
+                    <thead>
+                        <tr>
+                            <th>TIME</th>
+                            <th>MON</th><th>TUE</th><th>WED</th>
+                            <th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in ['7:30 AM','8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM',
+                                     '11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM',
+                                     '2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM',
+                                     '5:00 PM','5:30 PM','6:00 PM','6:30 PM','7:00 PM','7:30 PM',
+                                     '8:00 PM','8:30 PM','9:00 PM'] %}
+                        <tr>
+                            <td class="dv-time-cell">{{ t }}</td>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Table View -->
+        <div class="dv-table-wrapper hidden" id="dvTblWrapper">
+            <table class="dv-table">
+                <thead>
+                    <tr>
+                        <th>INSTRUCTOR</th>
+                        <th>SUBJECT CODE</th>
+                        <th>DESCRIPTION</th>
+                        <th>LEC</th>
+                        <th>LAB</th>
+                        <th>UNITS</th>
+                        <th>TIME</th>
+                        <th>DAYS</th>
+                        <th>ROOM</th>
+                    </tr>
+                </thead>
+                <tbody id="dvTableBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="dv-action-bar">
+            <div class="dv-action-left">
+                <button class="dv-btn dv-btn-outline" id="dvBtnRegen" onclick="regenDraft()">
+                    <i class="fas fa-sync-alt"></i> Re-generate
+                </button>
+                <button class="dv-btn dv-btn-outline" id="dvBtnSave" onclick="saveDraft()">
+                    <i class="fas fa-save"></i> Save changes
+                </button>
+            </div>
+            <div class="dv-action-right">
+                <button class="dv-btn dv-btn-solid" id="dvBtnManual" onclick="goManual()">
+                    <i class="fas fa-pen"></i> Go to Manual Editor
+                </button>
+                <button class="dv-btn dv-btn-green" id="dvBtnApprove" onclick="approveDraft()">
+                    <i class="fas fa-check-circle"></i> Approve Schedule
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(async function() {
+    const VERSION_ID = {{ version_id }};
+    let scheduleData = [];
+    let draftContext = {};
+    let draftVersion = null;
+
+    const DAYS_FULL = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const GRID_ORIGIN = 7 * 60 + 30;
+    const COLORS = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#d35400','#c0392b','#f39c12','#1abc9c','#8e44ad'];
+
+    function subjColor(code) {
+        let h = 0;
+        for (let i = 0; i < (code||'').length; i++) h = (code||'').charCodeAt(i) + ((h << 5) - h);
+        return COLORS[Math.abs(h) % COLORS.length];
+    }
+
+    function parseMins(t) {
+        if (!t) return null;
+        t = t.trim();
+        let m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (m) {
+            let h = parseInt(m[1]), mn = parseInt(m[2]);
+            if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+            if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+            return h * 60 + mn;
+        }
+        m = t.match(/^(\d{1,2}):(\d{2})$/);
+        if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+        return null;
+    }
+
+    function parseRange(timeStr) {
+        if (!timeStr) return { s: null, e: null };
+        const parts = timeStr.split(/\s*[-–]\s*/);
+        return parts.length >= 2 ? { s: parseMins(parts[0]), e: parseMins(parts[parts.length-1]) } : { s: null, e: null };
+    }
+
+    const DAY_MAP = {
+        'MONDAY':'Monday','TUESDAY':'Tuesday','WEDNESDAY':'Wednesday','THURSDAY':'Thursday',
+        'FRIDAY':'Friday','SATURDAY':'Saturday','SUNDAY':'Sunday',
+        'MON':'Monday','TUE':'Tuesday','WED':'Wednesday','THU':'Thursday',
+        'FRI':'Friday','SAT':'Saturday','SUN':'Sunday'
+    };
+
+    function parseDays(daysStr) {
+        if (!daysStr) return [];
+        const result = [];
+        const add = d => { if (!result.includes(d)) result.push(d); };
+        daysStr.split(/[\/,\s]+/).filter(p=>p).forEach(part => {
+            const up = part.toUpperCase();
+            if (DAY_MAP[up]) { add(DAY_MAP[up]); return; }
+            if (up === 'MTH') { add('Monday'); add('Thursday'); }
+            else if (up === 'TF')  { add('Tuesday'); add('Friday'); }
+            else if (up === 'WS')  { add('Wednesday'); add('Saturday'); }
+            else if (up === 'TTH') { add('Tuesday'); add('Thursday'); }
+            else if (up === 'MWF') { add('Monday'); add('Wednesday'); add('Friday'); }
+        });
+        return result;
+    }
+
+    function renderCalendar() {
+        const wrapper = document.getElementById('dvGridWrapper');
+        const table   = document.getElementById('dvTimetable');
+        wrapper.querySelectorAll('.dv-pill').forEach(p => p.remove());
+
+        if (!scheduleData.length) return;
+
+        // Build sessions
+        const sessions = [];
+        scheduleData.forEach(cls => {
+            const { s, e } = parseRange(cls.time);
+            const days = cls.day ? [cls.day] : parseDays(cls.days);
+            days.forEach(day => sessions.push({
+                day, startMins: s, endMins: e,
+                code:     cls.subject_code || '',
+                name:     cls.description || cls.subject_name || cls.subjectname || cls.subject_code || '',
+                instr:    cls.instructor || 'TBA',
+                room:     cls.room || 'TBA'
+            }));
+        });
+
+        const firstCell = table.querySelector('tbody td:nth-child(2)');
+        const timeCol   = table.querySelector('.dv-time-cell');
+        const thead     = table.querySelector('thead');
+        if (!firstCell || firstCell.offsetWidth === 0) {
+            requestAnimationFrame(renderCalendar); return;
+        }
+
+        const colW   = firstCell.offsetWidth;
+        const pxMin  = firstCell.offsetHeight / 30;
+        const leftOff = timeCol.offsetWidth;
+        const topOff  = thead.offsetHeight;
+
+        const groups = {};
+        sessions.forEach(s => (groups[s.day] = groups[s.day] || []).push(s));
+
+        Object.entries(groups).forEach(([dayName, daySessions]) => {
+            const dayIdx = DAYS_FULL.indexOf(dayName);
+            if (dayIdx < 0) return;
+            daySessions.sort((a,b) => a.startMins - b.startMins);
+
+            daySessions.forEach((sess, idx) => {
+                let { startMins: st, endMins: en } = sess;
+                if (st === null) return;
+                if (st < GRID_ORIGIN) st += 12 * 60;
+                if (en <= st) en += 12 * 60;
+
+                let oCount = 0, oIdx = 0;
+                daySessions.forEach((o, oi) => {
+                    let oS = o.startMins, oE = o.endMins;
+                    if (oS < GRID_ORIGIN) oS += 12*60;
+                    if (oE <= oS) oE += 12*60;
+                    if (st < oE && en > oS) { oCount++; if (idx > oi) oIdx++; }
+                });
+
+                const pill = document.createElement('div');
+                pill.className = 'dv-pill';
+                pill.style.backgroundColor = subjColor(sess.code);
+                const w = (colW - 6) / (oCount || 1);
+                pill.style.width  = (w - 2) + 'px';
+                pill.style.height = ((en - st) * pxMin - 2) + 'px';
+                pill.style.left   = (leftOff + dayIdx * colW + oIdx * w + 3) + 'px';
+                pill.style.top    = (topOff + (st - GRID_ORIGIN) * pxMin + 1) + 'px';
+                pill.title = `${sess.code}\n${sess.name}\n${sess.instr}\n${sess.room}`;
+                pill.innerHTML = `
+                    <div class="dv-pill-subj">${sess.name}</div>
+                    <div class="dv-pill-instr">${sess.instr}</div>
+                    <div class="dv-pill-room">${sess.room}</div>`;
+                wrapper.appendChild(pill);
+            });
+        });
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('dvTableBody');
+        if (!scheduleData.length) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#888;">No sessions found.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = scheduleData.map(r => `
+            <tr>
+                <td>${r.instructor || '—'}</td>
+                <td style="font-weight:800;color:#630100;">${r.subject_code || '—'}</td>
+                <td>${r.description || r.subject_name || '—'}</td>
+                <td>${r.lec_hours || 0}</td>
+                <td>${r.lab_hours || 0}</td>
+                <td>${r.units || r.credit_units || 0}</td>
+                <td>${r.time || '—'}</td>
+                <td>${r.days || r.day || '—'}</td>
+                <td>${r.room || 'TBA'}</td>
+            </tr>`).join('');
+    }
+
+    function showCalView() {
+        document.getElementById('dvCalWrapper').classList.remove('hidden');
+        document.getElementById('dvTblWrapper').classList.add('hidden');
+        document.getElementById('dvBtnCal').className = 'active-btn';
+        document.getElementById('dvBtnTbl').className = 'outline-btn';
+        renderCalendar();
+    }
+
+    function showTblView() {
+        document.getElementById('dvTblWrapper').classList.remove('hidden');
+        document.getElementById('dvCalWrapper').classList.add('hidden');
+        document.getElementById('dvBtnTbl').className = 'active-btn';
+        document.getElementById('dvBtnCal').className = 'outline-btn';
+    }
+
+    window.showCalView = showCalView;
+    window.showTblView = showTblView;
+
+    window.regenDraft = function() {
+        // Navigate back to generate page — user can re-fill and regenerate
+        window.location.href = "{{ url_for('schedule_generation_view') }}";
+    };
+
+    window.saveDraft = async function() {
+        const btn = document.getElementById('dvBtnSave');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        try {
+            const res = await fetch('/api/schedule/save-draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schedule_data: scheduleData, context: draftContext })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`Saved as Draft V${data.draft_version}`);
+            } else {
+                alert('Save failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch(e) {
+            alert('Connection error. Please try again.');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-save"></i> Save changes';
+        }
+    };
+
+    window.goManual = function() {
+        window.location.href = "{{ url_for('manual_schedule_editor') }}";
+    };
+
+    window.approveDraft = async function() {
+        if (!confirm('Approve and publish this schedule? The previous published version will be archived.')) return;
+        const btn = document.getElementById('dvBtnApprove');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
+        try {
+            const res = await fetch('/api/schedule/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schedule_data: scheduleData, context: draftContext })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`Published as V${data.published_version}!`);
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Published';
+            } else {
+                alert('Publish failed: ' + (data.error || 'Unknown error'));
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+            }
+        } catch(e) {
+            alert('Connection error. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+        }
+    };
+
+    window.exportDraft = function() {
+        alert('Export feature coming soon.');
+    };
+
+    // ── Load the draft ──────────────────────────────────────────────────
+    try {
+        const res  = await fetch(`/api/schedule/load-draft/${VERSION_ID}`);
+        const data = await res.json();
+
+        if (!data.success) {
+            document.getElementById('dvLoading').innerHTML =
+                `<i class="fas fa-exclamation-circle" style="color:#c0392b;font-size:2rem;display:block;margin-bottom:10px;"></i>
+                 Failed to load draft: ${data.error || 'Not found'}.
+                 <br><small style="color:#888;font-size:0.75rem;">Version ID: ${VERSION_ID}</small>`;
+            return;
+        }
+
+        scheduleData = data.schedule_data || [];
+        draftContext = data.context || {};
+        draftVersion = data.version;
+
+        const ctx = draftContext;
+        const termLabel = ctx.term === 'A' ? '1st Semester' : ctx.term === 'B' ? '2nd Semester' : ctx.term === 'C' ? 'Summer' : ctx.term || '';
+        const yearLabel = ctx.yearLevel ? `Year ${ctx.yearLevel}` : '';
+        const dateStr   = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }).toUpperCase();
+
+        document.getElementById('dvTitle').textContent =
+            `${ctx.program || ''} ${yearLabel} SCHEDULE — DRAFT V${draftVersion}`;
+        document.getElementById('dvDate').textContent = `SAVED: ${dateStr}`;
+
+        // acadYear is 'AY2526' format — display as 'AY 2025-2026'
+        const ayRaw = String(ctx.acadYear || '');
+        const ayDigits = ayRaw.startsWith('AY') ? ayRaw.slice(2) : ayRaw;
+        const ayDisplay = ayDigits.length >= 4
+            ? `AY 20${ayDigits.slice(0,2)}-20${ayDigits.slice(2,4)}`
+            : ayRaw || '—';
+        document.getElementById('dvAcadYear').textContent  = ayDisplay;
+        document.getElementById('dvTerm').textContent      = termLabel || '—';
+        document.getElementById('dvProgram').textContent   = ctx.program    || '—';
+        document.getElementById('dvYearLevel').textContent = yearLabel       || '—';
+        document.getElementById('dvVersionBadge').textContent = `DRAFT V${draftVersion}`;
+        document.getElementById('dvContextBar').style.display = 'flex';
+
+        document.getElementById('dvLoading').classList.add('hidden');
+        document.getElementById('dvContent').classList.remove('hidden');
+
+        renderTable();
+        renderCalendar();
+
+    } catch(e) {
+        console.error('Draft load error:', e);
+        document.getElementById('dvLoading').innerHTML =
+            `<i class="fas fa-exclamation-circle" style="color:#c0392b;font-size:2rem;display:block;margin-bottom:10px;"></i>
+             Connection error: ${e.message}`;
+    }
+})();
+</script>
+{% endblock %}

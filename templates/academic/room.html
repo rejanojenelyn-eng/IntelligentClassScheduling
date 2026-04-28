@@ -7,7 +7,7 @@
 
 {% block content %}
 <div class="room-container">
-    
+
     <!-- STATS CARDS -->
     <div class="stats-row">
         <div class="stat-card">
@@ -30,16 +30,15 @@
 
     <!-- MAIN LAYOUT WRAPPER -->
     <div class="room-main-wrapper">
-        <div class="room-main-header">ROOMS AND BUILDINGS</div>
-        
+
         <div class="room-grid">
-            
+
             <!-- LEFT SIDEBAR: BUILDINGS -->
             <div class="building-sidebar">
                 <h3>LIST OF BUILDINGS</h3>
-                <button class="btn-building active" onclick="filterBySidebar('')">ALL BUILDINGS</button>
+                <button class="btn-building active" onclick="filterBySidebar(this, '')">ALL BUILDINGS</button>
                 {% for bldg in buildings %}
-                    <button class="btn-building" onclick="filterBySidebar('{{ bldg.buildingname }}')">
+                    <button class="btn-building" onclick="filterBySidebar(this, '{{ bldg.buildingname }}')">
                         {{ bldg.buildingname }}
                     </button>
                 {% endfor %}
@@ -47,13 +46,13 @@
 
             <!-- RIGHT AREA: TABLE & FILTERS -->
             <div class="room-content-area">
-                
+
                 <!-- TOP FILTERS -->
                 <div class="room-filters">
                     <div class="filter-group-row">
                         <div class="filter-item">
                             <label>SEARCH ROOM</label>
-                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type room...">
+                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type...">
                         </div>
                         <div class="filter-item">
                             <label>BUILDING</label>
@@ -73,7 +72,7 @@
                             </select>
                         </div>
                     </div>
-                    
+
                     <!-- ACTIONS -->
                     <div class="actions-row">
                         <button class="btn-room-export" style="background: white; color: var(--pup-maroon); font-weight: 800;" onclick="toggleAvailabilityRow()">
@@ -94,22 +93,15 @@
                         <label>SELECT DAY</label>
                         <select id="filterDay" style="padding: 5px; border-radius: 4px; border: none; font-weight: 600;">
                             <option value="">-- Select --</option>
-                            <option>Monday</option>
-                            <option>Tuesday</option>
-                            <option>Wednesday</option>
-                            <option>Thursday</option>
-                            <option>Friday</option>
-                            <option>Saturday</option>
-                            <option>Sunday</option>
+                            <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                            <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
                         </select>
                     </div>
                     <div class="avail-item-inline">
                         <label>SELECT TIME</label>
                         <input type="text" id="filterTime" placeholder="e.g. 7:30 AM - 10:30 AM" style="padding: 5px; border-radius: 4px; border: none; width: 200px;">
                     </div>
-                    <button style="background: white; color: #700000; border: none; padding: 5px 15px; border-radius: 4px; font-weight: 800; cursor: pointer;">
-                        CHECK
-                    </button>
+                    <button style="background: white; color: #700000; border: none; padding: 5px 15px; border-radius: 4px; font-weight: 800; cursor: pointer;">CHECK</button>
                 </div>
 
                 <!-- BANNER -->
@@ -117,7 +109,7 @@
                     A V A I L A B L E &nbsp; R O O M S
                 </div>
 
-               <!-- THE TABLE (Read Only, No Action Column) -->
+                <!-- TABLE -->
                 <table class="room-table" id="roomTable">
                     <thead>
                         <tr>
@@ -125,6 +117,7 @@
                             <th>Room type</th>
                             <th>Room capacity</th>
                             <th>Building</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -134,6 +127,7 @@
                             <td class="td-room-type">{{ r.roomtype }}</td>
                             <td>{{ r.roomcapacity }}</td>
                             <td class="td-building">{{ r.buildingname }}</td>
+                            <td><a href="/room/view/{{ r.roomid }}" class="btn-view">View</a></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -144,100 +138,72 @@
 </div>
 
 <script>
-    let activeSidebarBuilding = ""; 
+    let activeSidebarBuilding = "";
 
-    // --- SIDEBAR FILTERING ---
-    function filterBySidebar(buildingName) {
+    function filterBySidebar(btn, buildingName) {
         activeSidebarBuilding = buildingName.toUpperCase();
-        
-        // Remove active class from all buttons
-        let buttons = document.querySelectorAll('.btn-building');
-        buttons.forEach(btn => btn.classList.remove('active'));
-        
-        // Add active class to clicked button
-        if (window.event && window.event.target) {
-            window.event.target.classList.add('active');
-        }
-        
-        // Reset dropdown and filter table
-        document.getElementById("filterBuilding").value = ""; 
+        document.querySelectorAll('.btn-building').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById("filterBuilding").value = "";
         filterRoomTable();
     }
 
-    // --- MAIN TABLE FILTERING ---
     function filterRoomTable() {
-        let search = document.getElementById("searchRoom").value.toUpperCase();
-        let type = document.getElementById("filterType").value.toUpperCase();
-        let dropdownBuilding = document.getElementById("filterBuilding").value.toUpperCase();
-        
-        let buildingFilter = dropdownBuilding !== "" ? dropdownBuilding : activeSidebarBuilding;
-        let tr = document.getElementById("roomTable").getElementsByTagName("tr");
+        let search   = document.getElementById("searchRoom").value.toUpperCase();
+        let type     = document.getElementById("filterType").value.toUpperCase();
+        let dropdown = document.getElementById("filterBuilding").value.toUpperCase();
+        let bldgFilter = dropdown !== "" ? dropdown : activeSidebarBuilding;
 
-        // Loop starting from 1 to skip header row
-        for (let i = 1; i < tr.length; i++) {
-            let roomName = tr[i].querySelector(".td-room-name").textContent.toUpperCase();
-            let roomType = tr[i].querySelector(".td-room-type").textContent.toUpperCase();
-            let building = tr[i].querySelector(".td-building").textContent.toUpperCase();
-            
-            let matchSearch = roomName.indexOf(search) > -1;
-            let matchType = type === "" || roomType === type;
-            let matchBldg = buildingFilter === "" || building === buildingFilter;
+        let rows = document.getElementById("roomTable").getElementsByTagName("tr");
+        for (let i = 1; i < rows.length; i++) {
+            let roomName = rows[i].querySelector(".td-room-name").textContent.toUpperCase();
+            let roomType = rows[i].querySelector(".td-room-type").textContent.toUpperCase();
+            let building = rows[i].querySelector(".td-building").textContent.toUpperCase();
 
-            tr[i].style.display = (matchSearch && matchType && matchBldg) ? "" : "none";
+            let ok = roomName.indexOf(search) > -1
+                  && (type === "" || roomType === type)
+                  && (bldgFilter === "" || building === bldgFilter);
+            rows[i].style.display = ok ? "" : "none";
         }
     }
 
-    // --- TOGGLE AVAILABILITY ROW ---
     function toggleAvailabilityRow() {
-        const row = document.getElementById('availabilityRow');
+        const row    = document.getElementById('availabilityRow');
         const banner = document.getElementById('availableBanner');
         row.classList.toggle('active');
         banner.style.display = row.classList.contains('active') ? 'block' : 'none';
     }
 
-    // --- SORTING ---
     let currentRoomOrder = 'asc';
     function sortRoomTable() {
         let table = document.getElementById("roomTable");
-        let rows = Array.from(table.rows).slice(1);
-        let direction = currentRoomOrder === 'asc' ? 1 : -1;
-        
+        let rows  = Array.from(table.rows).slice(1);
+        let dir   = currentRoomOrder === 'asc' ? 1 : -1;
         rows.sort((a, b) => {
-            let nameA = a.querySelector(".td-room-name").textContent.trim();
-            let nameB = b.querySelector(".td-room-name").textContent.trim();
-            // Numeric sorting so LQ 2 comes before LQ 10
-            return nameA.localeCompare(nameB, undefined, {numeric: true}) * direction;
+            let na = a.querySelector(".td-room-name").textContent.trim();
+            let nb = b.querySelector(".td-room-name").textContent.trim();
+            return na.localeCompare(nb, undefined, {numeric: true}) * dir;
         });
-
-        rows.forEach(row => table.appendChild(row));
+        rows.forEach(r => table.appendChild(r));
         currentRoomOrder = currentRoomOrder === 'asc' ? 'desc' : 'asc';
         document.getElementById("roomSortText").innerText = currentRoomOrder === 'asc' ? 'Ascending' : 'Descending';
     }
 
-    // --- EXPORT EXCEL ---
     function exportRoomExcel() {
-        let originalTable = document.getElementById("roomTable");
-        let cloneTable = document.createElement("table");
-
-        // Clone header
-        let thead = originalTable.querySelector("thead").cloneNode(true);
-        cloneTable.appendChild(thead);
-
+        let orig  = document.getElementById("roomTable");
+        let clone = document.createElement("table");
+        clone.appendChild(orig.querySelector("thead").cloneNode(true));
         let tbody = document.createElement("tbody");
-        let allRows = originalTable.querySelectorAll("tbody tr");
-
-        allRows.forEach((row) => {
-            // Check visibility safely
-            let isVisible = window.getComputedStyle(row).display !== "none";
-            if (isVisible) {
-                let cloneRow = row.cloneNode(true);
-                tbody.appendChild(cloneRow);
+        orig.querySelectorAll("tbody tr").forEach(row => {
+            if (window.getComputedStyle(row).display !== "none") {
+                let r = row.cloneNode(true);
+                // Remove Action column from export
+                if (r.lastElementChild) r.removeChild(r.lastElementChild);
+                tbody.appendChild(r);
             }
         });
-
-        cloneTable.appendChild(tbody);
-        
-        let wb = XLSX.utils.table_to_book(cloneTable, {sheet: "PUPLC Rooms"});
+        clone.appendChild(tbody);
+        let wb = XLSX.utils.table_to_book(clone, {sheet: "PUPLC Rooms"});
         XLSX.writeFile(wb, "PUPLopez_Rooms_List.xlsx");
     }
 </script>

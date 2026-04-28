@@ -175,6 +175,7 @@ def academic_my_dashboard():
     """, (emp_num,))
     user_data = cur.fetchone()
 
+    today_day = datetime.now().strftime('%A')
     cur.execute("""
         SELECT ss.*, sub.subjectcode, sub.subjectname, r.roomname,
                TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
@@ -184,41 +185,53 @@ def academic_my_dashboard():
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
         JOIN subject sub ON cs.subjectcode = sub.subjectcode
-        JOIN room r ON ss.roomid = r.roomid
-        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-        JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        LEFT JOIN room r ON ss.roomid = r.roomid
+        LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        WHERE sc.employeenumber = %s AND sv.status = 'Published'
+          AND ss.daydesc = %s
+    """, (emp_num, today_day))
+    my_schedule = cur.fetchall()
+
+    cur.execute("""
+        SELECT COALESCE(SUM(sub.creditunits), 0) as total_units,
+               COUNT(DISTINCT sub.subjectcode) as total_subjects
+        FROM schedule_version sv
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
         WHERE sc.employeenumber = %s AND sv.status = 'Published'
     """, (emp_num,))
-    my_schedule = cur.fetchall()
+    stats = cur.fetchone()
+    total_units    = int(stats['total_units'])    if stats else 0
+    total_subjects = int(stats['total_subjects']) if stats else 0
+
     cur.close(); conn.close()
-    return render_template('academic/AcadAsFaculty.html', user=user_data, schedule=my_schedule)
+    return render_template('academic/AcadAsFaculty.html', user=user_data, schedule=my_schedule,
+                           total_units=total_units, total_subjects=total_subjects)
 
 @app.route('/academic/my-teaching-assignment')
 def academic_my_teaching_assignment():
     if 'loggedin' not in session or session.get('role') != 'Academic Head':
         return redirect(url_for('login'))
-    
+
     username = session.get('username')
     acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s", (username,), one=True)
-    emp_num = acc['employeenumber'] if acc else None
-    
-    query = """
-        SELECT sub.subjectcode, sub.subjectname, sub.creditunits, 
-               sec.sectionname, ss.daydesc, r.roomname,
-               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as time_range
-        FROM schedule_sessions ss
-        JOIN schedule_version sv ON ss.versionid = sv.versionid
-        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-        JOIN subject sub ON cs.subjectcode = sub.subjectcode
-        JOIN sections sec ON sc.sectionid = sec.sectionid
-        JOIN room r ON ss.roomid = r.roomid
-        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-        JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
-        WHERE sc.employeenumber = %s AND sv.status = 'Published'
-    """
-    assignments = query_db(query, (emp_num,))
-    return render_template('academic/AcadTeachingAssign.html', assignments=assignments)
+    own_emp_num = acc['employeenumber'] if acc else None
+
+    active = query_db("""
+        SELECT ay.academicyearid, s.semestertype
+        FROM semester s
+        JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE s.isactive = TRUE LIMIT 1
+    """, one=True)
+    active_ay_id = active['academicyearid'] if active else ''
+    active_sem   = active['semestertype']    if active else 'A'
+
+    return render_template('academic/AcadTeachingAssign.html',
+                           own_emp_num=own_emp_num,
+                           active_ay_id=active_ay_id,
+                           active_sem=active_sem)
 
 @app.route('/dashboard')
 def dashboard():
@@ -584,6 +597,62 @@ def room():
                                buildings=buildings, rooms=rooms)
     except Exception as e:
         return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[])
+
+@app.route('/room/view/<int:room_id>')
+def room_view(room_id):
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    try:
+        room_info = query_db("""
+            SELECT r.roomid, r.roomname, r.roomtype, r.roomcapacity,
+                   b.buildingname, b.buildingid
+            FROM Room r
+            JOIN Building b ON r.buildingid = b.buildingid
+            WHERE r.roomid = %s
+        """, (room_id,), one=True)
+        if not room_info:
+            return redirect(url_for('room'))
+
+        buildings = query_db("SELECT buildingid, buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
+
+        raw_rooms = query_db("""
+            SELECT r.roomid, r.roomname, r.roomtype, b.buildingid, b.buildingname
+            FROM Room r
+            JOIN Building b ON r.buildingid = b.buildingid
+            WHERE b.isactive = TRUE
+            ORDER BY b.buildingname,
+                regexp_replace(r.roomname, '[0-9]', '', 'g'),
+                CASE WHEN regexp_replace(r.roomname, '[^0-9]', '', 'g') = ''
+                     THEN 0
+                     ELSE CAST(regexp_replace(r.roomname, '[^0-9]', '', 'g') AS BIGINT)
+                END
+        """)
+        rooms_by_bldg = {}
+        if raw_rooms:
+            for r in raw_rooms:
+                bid = r['buildingid']
+                if bid not in rooms_by_bldg:
+                    rooms_by_bldg[bid] = []
+                rooms_by_bldg[bid].append({k.lower(): v for k, v in r.items()})
+
+        active = query_db("""
+            SELECT ay.academicyearid, s.semestertype
+            FROM semester s
+            JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+            WHERE s.isactive = TRUE LIMIT 1
+        """, one=True)
+        active_ay_id = active['academicyearid'] if active else ''
+        active_sem   = active['semestertype']    if active else ''
+
+        import json
+        return render_template('academic/room_detail.html',
+                               room=dict(room_info),
+                               buildings=buildings or [],
+                               rooms_by_bldg_json=json.dumps(rooms_by_bldg),
+                               active_ay_id=active_ay_id,
+                               active_sem=active_sem)
+    except Exception as e:
+        print(f"room_view error: {e}")
+        return redirect(url_for('room'))
 
 # Insert these routes into the "ACADEMIC HEAD SPECIFIC ROUTES" section of your app.py
 
@@ -1575,9 +1644,11 @@ def manual_schedule_editor():
 
         rooms_list = [{"id": r[0], "name": r[1], "bldg_id": r[2], "bldg_name": r[3] or "Unknown", "floor": "1" if "LQ1" in r[1].replace(" ","") else "2" if "LQ2" in r[1].replace(" ","") else "ALL"} for r in raw_rooms]
         
+        faculty_json = json.dumps([{"id": f[0], "name": f[1]} for f in faculty])
         return render_template('academic/manualScheduleEditor.html',
                                acad_years=acad_years, programs=programs,
-                               faculty=faculty, buildings=buildings, rooms_json=json.dumps(rooms_list))
+                               faculty=faculty, faculty_json=faculty_json,
+                               buildings=buildings, rooms_json=json.dumps(rooms_list))
     finally:
         cur.close()
         conn.close()
@@ -1592,10 +1663,16 @@ def get_room_schedule(room_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        filters = ["ss.roomid = %s"]
+        filters = ["ss.roomid = %s", "sv.status = 'Published'"]
         params  = [room_id]
-        # Always join semester — we use its end date to filter out past semesters by default
-        joins = " JOIN semester sem ON s.semesterid = sem.semesterid"
+        joins = """ JOIN semester sem ON s.semesterid = sem.semesterid
+            LEFT JOIN sections sec ON s.sectionid = sec.sectionid
+            LEFT JOIN cohort c ON sec.cohortid = c.cohortid
+            JOIN room r ON ss.roomid = r.roomid"""
+
+        # Always exclude semesters that have already ended
+        filters.append("(sem.semenddate IS NULL OR sem.semenddate >= CURRENT_DATE)")
+
         if ay_id:
             joins += " JOIN academicyear ay ON sem.academicyearid = ay.academicyearid"
             filters.append("ay.academicyearid = %s")
@@ -1603,11 +1680,7 @@ def get_room_schedule(room_id):
         if semester:
             filters.append("sem.semestertype = %s")
             params.append(semester)
-        if not (ay_id or semester):
-            # No explicit AY/Sem chosen — exclude semesters whose end date has passed so the past doesn't bleed in
-            filters.append("(sem.semenddate IS NULL OR sem.semenddate >= CURRENT_DATE)")
         if program:
-            joins += " JOIN sections sec ON s.sectionid = sec.sectionid JOIN cohort c ON sec.cohortid = c.cohortid"
             filters.append("c.programcode = %s")
             params.append(program)
 
@@ -1618,7 +1691,11 @@ def get_room_schedule(room_id):
                 f.lastname || ', ' || f.firstname AS instructor,
                 ss.daydesc,
                 ss.starttimeid,
-                ss.endtimeid
+                ss.endtimeid,
+                cs.yearlevel AS year_level,
+                c.programcode,
+                r.roomname,
+                sv.status
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule s ON sv.scheduleid = s.scheduleid
@@ -1634,7 +1711,114 @@ def get_room_schedule(room_id):
         return jsonify([])
     finally:
         cur.close(); conn.close()
-        
+
+
+# ── Single source of truth: faculty schedule (calendar + table) ──────────────
+@app.route('/api/get_faculty_schedule')
+def api_get_faculty_schedule():
+    """
+    Returns schedule sessions for a faculty member (or all faculty if emp_num omitted).
+    Used by both the Weekly Schedule calendar and the Teaching Assignment table.
+    Query params:
+      emp_num    – faculty employee number (required for calendar; optional for table)
+      ay_id      – academicyearid
+      semester   – semester type ('A', 'B', 'C')
+      program    – programcode filter (optional)
+      year_level – yearlevel filter (optional)
+    """
+    if 'loggedin' not in session:
+        return jsonify([])
+
+    emp_num    = request.args.get('emp_num')
+    ay_id      = request.args.get('ay_id')
+    semester   = request.args.get('semester')
+    program    = request.args.get('program')
+    year_level = request.args.get('year_level')
+
+    filters = ["sv.status = 'Published'"]
+    params  = []
+
+    if emp_num:
+        filters.append("sc.employeenumber = %s")
+        params.append(emp_num)
+
+    if ay_id and semester:
+        filters.append("""sc.semesterid = (
+            SELECT semesterid FROM semester
+            WHERE academicyearid = %s AND semestertype = %s LIMIT 1
+        )""")
+        params += [ay_id, semester]
+
+    if program:
+        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        params.append(program)
+
+    if year_level:
+        filters.append("sec.yearlevel = %s")
+        params.append(int(year_level))
+
+    try:
+        rows = query_db(f"""
+            SELECT sub.subjectcode, sub.subjectname, sub.creditunits,
+                   sec.sectionname, sec.yearlevel, co.programcode, ss.daydesc, r.roomname,
+                   ss.starttimeid, ss.endtimeid, sv.status,
+                   f.lastname || ', ' || f.firstname AS instructor,
+                   sc.employeenumber,
+                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range
+            FROM schedule_sessions ss
+            JOIN schedule_version sv ON ss.versionid = sv.versionid
+            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub ON cs.subjectcode = sub.subjectcode
+            LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+            LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+            LEFT JOIN room r ON ss.roomid = r.roomid
+            LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+            LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+            WHERE {' AND '.join(filters)}
+            ORDER BY ts_s.timevalue, ss.daydesc
+        """, params or None)
+        return jsonify([dict(r) for r in (rows or [])])
+    except Exception as e:
+        print(f"[api_get_faculty_schedule] Error: {e}")
+        return jsonify([]), 500
+
+
+@app.route('/api/manual/faculty_schedule')
+def api_manual_faculty_schedule():
+    """Published + Draft sessions for a faculty member — used for conflict checking in the manual scheduler."""
+    if 'loggedin' not in session:
+        return jsonify([])
+    emp_num  = request.args.get('emp_num')
+    ay_id    = request.args.get('ay_id')
+    semester = request.args.get('semester')
+    if not emp_num:
+        return jsonify([])
+    filters = ["sv.status IN ('Published', 'Draft')", "sc.employeenumber = %s"]
+    params  = [emp_num]
+    if ay_id and semester:
+        filters.append("""sc.semesterid = (
+            SELECT semesterid FROM semester
+            WHERE academicyearid = %s AND semestertype = %s LIMIT 1
+        )""")
+        params += [ay_id, semester]
+    try:
+        rows = query_db(f"""
+            SELECT sub.subjectcode, sub.subjectname, ss.daydesc, ss.starttimeid, ss.endtimeid, sv.status
+            FROM schedule_sessions ss
+            JOIN schedule_version sv ON ss.versionid = sv.versionid
+            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub ON cs.subjectcode = sub.subjectcode
+            WHERE {' AND '.join(filters)}
+        """, params)
+        return jsonify([dict(r) for r in (rows or [])])
+    except Exception as e:
+        print(f"[api_manual_faculty_schedule] Error: {e}")
+        return jsonify([]), 500
+
 @app.route('/api/get_curriculum')
 def api_get_curriculum():
     prog = request.args.get('program')
@@ -1686,25 +1870,271 @@ def api_get_existing_schedule_periods():
             done = [r['semester_code'] for r in cur.fetchall()]
         from datetime import date as _date
         today = _date.today()
+        # Current semester = one that is ongoing right now (started, not yet ended)
         cur.execute("""
             SELECT semestertype FROM semester
-            WHERE academicyearid = %s AND isactive = TRUE
+            WHERE academicyearid = %s
+              AND (semstartdate IS NULL OR semstartdate <= %s)
+              AND (semenddate   IS NULL OR semenddate   >= %s)
             LIMIT 1
-        """, (ay_id,))
+        """, (ay_id, today, today))
         row = cur.fetchone()
         current_sem = row['semestertype'] if row else None
-        # Semesters whose end date has not yet passed
+        # Valid = not ended yet (NULL end date counts as "not past")
         cur.execute("""
             SELECT semestertype FROM semester
-            WHERE academicyearid = %s AND semenddate >= %s
+            WHERE academicyearid = %s
+              AND (semenddate IS NULL OR semenddate >= %s)
         """, (ay_id, today))
         valid_sems = [r['semestertype'] for r in cur.fetchall()]
-        # Only show current + future — a semester past its end date is dropped even if it's still marked active
         return jsonify({"success": True, "done_semesters": done, "current_sem": current_sem, "valid_sems": valid_sems})
     except Exception:
         return jsonify({"success": False, "done_semesters": [], "current_sem": None, "valid_sems": []})
     finally:
         cur.close(); conn.close()
+
+@app.route('/api/dss/suggest')
+def api_dss_suggest():
+    subject_code = request.args.get('subject_code', '').strip()
+    if not subject_code:
+        return jsonify({"success": False, "error": "subject_code required"})
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 1. Is this a lab subject?
+        cur.execute("SELECT LaboratoryHours FROM Subject WHERE SubjectCode = %s", (subject_code,))
+        subj_row = cur.fetchone()
+        is_lab = bool(subj_row and subj_row.get('laboratoryhours') and subj_row['laboratoryhours'] > 0)
+
+        # 2. All active faculty
+        cur.execute("""
+            SELECT EmployeeNumber,
+                   LastName || ', ' || FirstName ||
+                   CASE WHEN MiddleName IS NOT NULL AND MiddleName != ''
+                        THEN ' ' || MiddleName ELSE '' END AS fullname
+            FROM Faculty WHERE EmployeeStatus != 'Archived' ORDER BY LastName
+        """)
+        all_faculty = [dict(r) for r in cur.fetchall()]
+
+        # 3. Historical instructor frequency for this subject
+        cur.execute("""
+            SELECT TRIM("Instructor") AS instructor, COUNT(*) AS freq
+            FROM historical_data
+            WHERE UPPER(TRIM("Subject Code")) = UPPER(TRIM(%s))
+              AND "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
+            GROUP BY TRIM("Instructor")
+            ORDER BY freq DESC
+            LIMIT 15
+        """, (subject_code,))
+        hist_faculty = cur.fetchall()
+
+        # 4. Match historical names to faculty records (by last name prefix)
+        recommended_ids = set()
+        recommended_faculty = []
+        for hf in hist_faculty:
+            hist_name = (hf['instructor'] or '').strip().lower()
+            for f in all_faculty:
+                last = f['fullname'].split(',')[0].strip().lower()
+                if last and (hist_name.startswith(last + ',') or hist_name.startswith(last + ' ') or hist_name == last):
+                    if f['employeenumber'] not in recommended_ids:
+                        recommended_ids.add(f['employeenumber'])
+                        recommended_faculty.append({
+                            "id": f['employeenumber'],
+                            "name": f['fullname'].strip(),
+                            "count": int(hf['freq'])
+                        })
+                    break
+        others_faculty = [
+            {"id": f['employeenumber'], "name": f['fullname'].strip()}
+            for f in all_faculty if f['employeenumber'] not in recommended_ids
+        ]
+
+        # 5. All rooms with type
+        cur.execute("""
+            SELECT r.RoomID, r.RoomName, COALESCE(r.RoomType, 'Lecture') AS RoomType
+            FROM Room r
+            ORDER BY
+                regexp_replace(r.RoomName, '[0-9]', '', 'g'),
+                CASE WHEN regexp_replace(r.RoomName, '[^0-9]', '', 'g') = ''
+                     THEN 0
+                     ELSE CAST(regexp_replace(r.RoomName, '[^0-9]', '', 'g') AS BIGINT) END
+        """)
+        all_rooms = [dict(r) for r in cur.fetchall()]
+
+        # 6. Historical room frequency for this subject
+        cur.execute("""
+            SELECT TRIM("Room") AS room, COUNT(*) AS freq
+            FROM historical_data
+            WHERE UPPER(TRIM("Subject Code")) = UPPER(TRIM(%s))
+              AND "Room" IS NOT NULL AND TRIM("Room") != ''
+            GROUP BY TRIM("Room")
+            ORDER BY freq DESC
+            LIMIT 15
+        """, (subject_code,))
+        hist_rooms = cur.fetchall()
+
+        # 7. Match historical room names to room records
+        recommended_room_ids = set()
+        recommended_rooms = []
+        for hr in hist_rooms:
+            hist_room = (hr['room'] or '').strip().upper()
+            for r in all_rooms:
+                if r['roomname'].upper() == hist_room or hist_room in r['roomname'].upper():
+                    if r['roomid'] not in recommended_room_ids:
+                        recommended_room_ids.add(r['roomid'])
+                        recommended_rooms.append({
+                            "id": r['roomid'],
+                            "name": r['roomname'],
+                            "type": r['roomtype'],
+                            "count": int(hr['freq'])
+                        })
+                    break
+        others_rooms = [
+            {"id": r['roomid'], "name": r['roomname'], "type": r['roomtype']}
+            for r in all_rooms if r['roomid'] not in recommended_room_ids
+        ]
+        # For lab subjects put lab rooms first in Others
+        if is_lab:
+            others_rooms.sort(key=lambda r: (0 if r['type'] == 'Laboratory' else 1))
+
+        return jsonify({
+            "success": True,
+            "is_lab": is_lab,
+            "faculty": {"recommended": recommended_faculty, "others": others_faculty},
+            "rooms":   {"recommended": recommended_rooms,  "others": others_rooms}
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/api/manual/subject_info')
+def api_manual_subject_info():
+    subject_code = request.args.get('subject_code', '').strip()
+    if not subject_code:
+        return jsonify({'success': False})
+    row = query_db("""
+        SELECT lecturehours, laboratoryhours, creditunits
+        FROM subject WHERE UPPER(subjectcode) = UPPER(%s)
+    """, (subject_code,), one=True)
+    if not row:
+        return jsonify({'success': False})
+    lh  = float(row['lecturehours']    or 0)
+    lab = float(row['laboratoryhours'] or 0)
+    return jsonify({
+        'success': True,
+        'lecturehours': lh,
+        'laboratoryhours': lab,
+        'total_hours': (lh + lab) if (lh + lab) > 0 else 3.0,
+        'is_sunday_allowed': subject_code.upper().startswith(('NSTP', 'OU'))
+    })
+
+
+@app.route('/api/manual/faculty_info')
+def api_manual_faculty_info():
+    emp_num = request.args.get('emp_num', '').strip()
+    if not emp_num:
+        return jsonify({'success': False})
+    row = query_db("""
+        SELECT f.employeestatus, et.typename, f.designationid,
+               COALESCE(d.nightteachingservice, 0) AS night_service
+        FROM faculty f
+        JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        LEFT JOIN designation d ON f.designationid = d.designationid
+        WHERE f.employeenumber = %s
+    """, (emp_num,), one=True)
+    if not row:
+        return jsonify({'success': False})
+    return jsonify({
+        'success': True,
+        'typename': row['typename'],
+        'employeestatus': row['employeestatus'],
+        'has_designation': row['designationid'] is not None,
+        'night_service': int(row['night_service'] or 0)
+    })
+
+
+@app.route('/api/manual/existing_days')
+def api_manual_existing_days():
+    subj  = request.args.get('subject_code', '').strip()
+    ay_id = request.args.get('ay_id', '').strip()
+    sem   = request.args.get('semester', '').strip()
+    prog  = request.args.get('program', '').strip()
+    yl    = request.args.get('year_level', '').strip()
+    if not subj:
+        return jsonify({'success': True, 'days': []})
+    filters = ["UPPER(sub.subjectcode) = UPPER(%s)", "sv.status IN ('Published','Draft')"]
+    params  = [subj]
+    if ay_id and sem:
+        filters.append("sc.semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)")
+        params += [ay_id, sem]
+    if prog:
+        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        params.append(prog)
+    if yl:
+        filters.append("sec.yearlevel = %s")
+        params.append(int(yl))
+    rows = query_db(f"""
+        SELECT DISTINCT ss.daydesc
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
+        LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+        LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+        WHERE {' AND '.join(filters)}
+    """, params or None) or []
+    return jsonify({'success': True, 'days': [r['daydesc'] for r in rows]})
+
+
+@app.route('/api/manual/existing_sessions')
+def api_manual_existing_sessions():
+    subj  = request.args.get('subject_code', '').strip()
+    ay_id = request.args.get('ay_id', '').strip()
+    sem   = request.args.get('semester', '').strip()
+    prog  = request.args.get('program', '').strip()
+    yl    = request.args.get('year_level', '').strip()
+    if not subj or not ay_id or not sem:
+        return jsonify({'success': True, 'sessions': []})
+    filters = [
+        "UPPER(sub.subjectcode) = UPPER(%s)",
+        "sv.status IN ('Published','Draft')",
+        "sc.semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)"
+    ]
+    params = [subj, ay_id, sem]
+    if prog:
+        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        params.append(prog)
+    if yl:
+        filters.append("sec.yearlevel = %s")
+        params.append(int(yl))
+    rows = query_db(f"""
+        SELECT ss.starttimeid, ss.endtimeid, ss.daydesc,
+               sub.subjectcode, sub.subjectname,
+               sec.yearlevel, co.programcode,
+               r.roomid, r.roomname,
+               f.employeenumber,
+               f.lastname || ', ' || f.firstname AS instructor,
+               sv.status,
+               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_fmt,
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_fmt
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
+        LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+        LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+        LEFT JOIN room r ON ss.roomid = r.roomid
+        LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+        LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        WHERE {' AND '.join(filters)}
+        ORDER BY ts_s.timevalue, ss.daydesc
+    """, params or None) or []
+    return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
+
 
 @app.route('/api/get_valid_semesters')
 def api_get_valid_semesters():
@@ -3080,37 +3510,73 @@ def admin_reports():
 
 @app.route('/faculty_dashboard')
 def faculty_dashboard():
-    # 1. Verify Login
     if 'loggedin' not in session or session.get('role') != 'Faculty':
-        return redirect(url_for('login')) 
+        return redirect(url_for('login'))
 
     username = session.get('username')
+    today_day = datetime.now().strftime('%A')
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        query = """
-            SELECT 
-                a.username,
-                f.firstname, 
-                f.lastname, 
-                d.designationname 
+
+        cursor.execute("""
+            SELECT a.employeenumber, f.firstname, f.lastname, d.designationname
             FROM accounts a
             LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
             LEFT JOIN designation d ON f.designationid = d.designationid
             WHERE a.username = %s
-        """
-        cursor.execute(query, (username,))
+        """, (username,))
         user_data = cursor.fetchone()
-        
+
+        emp_num = user_data['employeenumber'] if user_data else None
+
+        today_schedule = []
+        total_units = 0
+        total_subjects = 0
+
+        if emp_num:
+            cursor.execute("""
+                SELECT sub.subjectcode, sub.subjectname, r.roomname, ss.daydesc,
+                       TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
+                       TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid = sv.versionid
+                JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN subject sub ON cs.subjectcode = sub.subjectcode
+                LEFT JOIN room r ON ss.roomid = r.roomid
+                LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+                WHERE sc.employeenumber = %s AND sv.status = 'Published'
+                  AND ss.daydesc = %s
+                ORDER BY ts_s.timevalue
+            """, (emp_num, today_day))
+            today_schedule = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT COALESCE(SUM(sub.creditunits), 0) as total_units,
+                       COUNT(DISTINCT sub.subjectcode) as total_subjects
+                FROM schedule_version sv
+                JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN subject sub ON cs.subjectcode = sub.subjectcode
+                WHERE sc.employeenumber = %s AND sv.status = 'Published'
+            """, (emp_num,))
+            stats = cursor.fetchone()
+            if stats:
+                total_units = int(stats['total_units'])
+                total_subjects = int(stats['total_subjects'])
+
         cursor.close()
         conn.close()
 
         if not user_data:
             user_data = {"firstname": "Faculty", "lastname": "Member", "designationname": "None"}
 
-        return render_template('faculty/dashboard_faculty.html', user=user_data)
+        return render_template('faculty/dashboard_faculty.html', user=user_data,
+                               schedule=today_schedule, total_units=total_units,
+                               total_subjects=total_subjects)
 
     except Exception as e:
         if conn:
@@ -3122,7 +3588,27 @@ def faculty_dashboard():
 def faculty_teaching_assignment():
     if 'loggedin' not in session or session.get('role') != 'Faculty':
         return redirect(url_for('login'))
-    return render_template('faculty/teaching_faculty.html')
+
+    username = session.get('username')
+    try:
+        acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s", (username,), one=True)
+        emp_num = acc['employeenumber'] if acc else None
+
+        active = query_db("""
+            SELECT ay.academicyearid, s.semestertype
+            FROM semester s
+            JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+            WHERE s.isactive = TRUE LIMIT 1
+        """, one=True)
+        active_ay_id = active['academicyearid'] if active else ''
+        active_sem   = active['semestertype']    if active else 'A'
+
+        return render_template('faculty/teaching_faculty.html',
+                               emp_num=emp_num,
+                               active_ay_id=active_ay_id,
+                               active_sem=active_sem)
+    except Exception as e:
+        return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
 
 # --- Route for Schedule/Rooms Page ---
 @app.route('/faculty_schedule')
@@ -3302,6 +3788,16 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
 
 # ── ROUTES ────────────────────────────────────────────────────────────
 
+@app.route('/schedule/drafts')
+def schedule_drafts_list():
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    return render_template('academic/drafts.html')
+
+@app.route('/schedule/drafts/<int:version_id>')
+def schedule_draft_detail(version_id):
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    return render_template('academic/draftView.html', version_id=version_id)
+
 @app.route('/academic/schedule-generation')
 def schedule_generation_view():
     if 'loggedin' not in session: return redirect(url_for('login'))
@@ -3410,8 +3906,11 @@ def api_load_draft(version_id):
     try:
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT sv.version_number, c.programcode, cs.yearlevel, sem.semestertype AS term, ay.academicyearid AS acadyear, sc.semesterid
-            FROM schedule_version sv JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            SELECT sv.version_number, sv.status, sv.scheduleid,
+                   c.programcode, cs.yearlevel, sem.semestertype AS term,
+                   ay.academicyearid AS acadyear, sc.semesterid
+            FROM schedule_version sv
+            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
             JOIN semester sem ON sc.semesterid = sem.semesterid
@@ -3419,10 +3918,16 @@ def api_load_draft(version_id):
             WHERE sv.versionid = %s
         """, (version_id,))
         m = cur.fetchone()
-        if not m: return jsonify({'success': False, 'error': 'Not found'}), 404
+        if not m:
+            # Diagnostic: check if versionid exists at all
+            cur.execute("SELECT versionid, scheduleid, version_number, status FROM schedule_version WHERE versionid = %s", (version_id,))
+            sv_raw = cur.fetchone()
+            if not sv_raw:
+                return jsonify({'success': False, 'error': f'Version ID {version_id} does not exist in schedule_version'}), 404
+            return jsonify({'success': False, 'error': f'Version {version_id} exists (scheduleid={sv_raw["scheduleid"]}, status={sv_raw["status"]}) but join chain failed — linked schedule or curriculum data may be missing'}), 404
         cur.execute("""
-            SELECT sub.subjectcode AS subject_code, sub.subjectname AS description, cs.lecturehours AS lec_hours,
-                   cs.laboratoryhours AS lab_hours, cs.creditunits AS units, c.programcode AS course,
+            SELECT sub.subjectcode AS subject_code, sub.subjectname AS description, sub.lecturehours AS lec_hours,
+                   sub.laboratoryhours AS lab_hours, sub.creditunits AS units, c.programcode AS course,
                    sc.employeenumber AS faculty_id, CONCAT(f.lastname, ', ', f.firstname) AS instructor,
                    ss.daydesc, TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time, TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
                    r.roomname AS room, r.roomid

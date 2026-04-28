@@ -743,6 +743,29 @@
     background: var(--maroon-dark);
 }
 
+.btn-view-all-drafts {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border: 1.5px solid rgba(255,255,255,0.5);
+    padding: 5px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.18s;
+    white-space: nowrap;
+}
+.btn-view-all-drafts:hover {
+    background: rgba(255,255,255,0.28);
+    color: white;
+    text-decoration: none;
+}
+
 .empty-modal-msg {
     text-align: center;
     padding: 40px 20px;

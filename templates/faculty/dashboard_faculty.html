@@ -37,22 +37,17 @@
         <div class="section-wrapper schedule-section">
             <div class="section-tab">Today's Schedule</div>
             <div class="section-content">
-                <!-- Item 1 -->
+                {% for sess in schedule %}
                 <div class="schedule-card">
                     <div class="card-left">
-                        <div class="subject-code">IT 301 – DATABASE SYSTEMS</div>
-                        <div class="subject-meta">ROOM: 103 &nbsp;&nbsp; TIME: 1:00 PM - 3:00 PM</div>
+                        <div class="subject-code">{{ sess.subjectcode }} – {{ sess.subjectname }}</div>
+                        <div class="subject-meta">ROOM: {{ sess.roomname or 'TBA' }} &nbsp;&nbsp; TIME: {{ sess.start_time }} - {{ sess.end_time }}</div>
                     </div>
-                    <div class="card-right">BSIT - 3</div>
+                    <div class="card-right">{{ sess.daydesc }}</div>
                 </div>
-                <!-- Item 2 -->
-                <div class="schedule-card">
-                    <div class="card-left">
-                        <div class="subject-code">COMP 001 – INTRO TO COMPUTING</div>
-                        <div class="subject-meta">ROOM: 103 &nbsp;&nbsp; TIME: 1:00 PM - 3:00 PM</div>
-                    </div>
-                    <div class="card-right">BSIT - 2</div>
-                </div>
+                {% else %}
+                <p style="padding: 20px; color: #777;">No classes scheduled for you today.</p>
+                {% endfor %}
             </div>
         </div>
 
@@ -62,11 +57,11 @@
             <div class="section-content overview-content">
                 <div class="stat-box">
                     <div class="stat-title">TOTAL TEACHING<br>UNITS</div>
-                    <div class="stat-value">15</div>
+                    <div class="stat-value">{{ total_units }}</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-title">TOTAL ASSIGNED<br>SUBJECTS</div>
-                    <div class="stat-value">12</div>
+                    <div class="stat-value">{{ total_subjects }}</div>
                 </div>
             </div>
         </div>

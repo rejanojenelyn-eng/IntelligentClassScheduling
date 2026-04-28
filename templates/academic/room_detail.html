@@ -1,0 +1,204 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/room_detail.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="rd-container">
+
+    <!-- TOP HEADER BAR -->
+    <div class="rd-header-bar">
+        <div class="rd-title">
+            <i class="fas fa-door-open"></i>
+            YOU'RE VIEWING &nbsp;<span class="rd-room-name">{{ room.roomname }}</span>
+            <span class="rd-room-meta">{{ room.roomtype }} &bull; Cap: {{ room.roomcapacity }} &bull; {{ room.buildingname }}</span>
+        </div>
+        <a href="/room" class="rd-btn-back"><i class="fas fa-arrow-left"></i> BACK TO ROOMS &amp; BUILDINGS</a>
+    </div>
+
+    <!-- HORIZONTAL BUILDING TABS -->
+    <div class="rd-building-tabs">
+        {% for bldg in buildings %}
+            <button class="rd-tab-btn {% if bldg.buildingid == room.buildingid %}active{% endif %}"
+                    data-buildingid="{{ bldg.buildingid }}"
+                    onclick="switchBuilding(this, {{ bldg.buildingid }})">
+                {{ bldg.buildingname }}
+            </button>
+        {% endfor %}
+    </div>
+
+    <!-- MAIN BODY: ROOM LIST + CALENDAR -->
+    <div class="rd-body">
+
+        <!-- LEFT: ROOM LIST SIDEBAR -->
+        <div class="rd-room-sidebar" id="rdRoomSidebar">
+            <div class="rd-sidebar-label">ROOMS</div>
+            <div id="rdRoomList" class="rd-room-list">
+                <!-- populated by JS -->
+            </div>
+        </div>
+
+        <!-- RIGHT: CALENDAR -->
+        <div class="rd-calendar-wrap">
+            <div class="rd-cal-header">
+                <span id="rdCalRoomLabel">{{ room.roomname }}</span>
+                <span class="rd-cal-legend"><span class="rd-legend-dot"></span> Published Schedule</span>
+            </div>
+            <div class="rd-cal-scroll">
+                <table class="rd-cal-table" id="rdCalTable">
+                    <thead>
+                        <tr>
+                            <th class="rd-time-col">TIME</th>
+                            <th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rdCalBody">
+                        <!-- populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="rdLoading" class="rd-loading">Loading schedule...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const ROOM_ID       = {{ room.roomid }};
+    const ACTIVE_AY_ID  = "{{ active_ay_id }}";
+    const ACTIVE_SEM    = "{{ active_sem }}";
+    const CURRENT_BLDG_ID = {{ room.buildingid }};
+
+    const ROOMS_BY_BLDG = {{ rooms_by_bldg_json | safe }};
+
+    const TIME_SLOTS = [
+        '7:30 AM','8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM',
+        '11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM','2:00 PM',
+        '2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM','5:00 PM','5:30 PM',
+        '6:00 PM','6:30 PM','7:00 PM','7:30 PM','8:00 PM','8:30 PM','9:00 PM'
+    ];
+    const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const DAY_ABBR = { Monday:'MON', Tuesday:'TUE', Wednesday:'WED', Thursday:'THU', Friday:'FRI', Saturday:'SAT', Sunday:'SUN' };
+
+    let currentRoomId = ROOM_ID;
+
+    // ── RENDER SESSIONS ONTO CALENDAR ─────────────────────────────────────────
+    // Uses a virtual grid so rowspan + cell-removal is always index-correct.
+    function renderSchedule(sessions) {
+        // Build virtual grid: grid[slot][dayIdx] = null | 'skip' | {sess, span}
+        const TOTAL_SLOTS = TIME_SLOTS.length;
+        const grid = {};
+        for (let s = 1; s <= TOTAL_SLOTS; s++) {
+            grid[s] = {};
+            for (let d = 0; d < DAYS.length; d++) grid[s][d] = null;
+        }
+
+        sessions.forEach(sess => {
+            const dayIdx = DAYS.indexOf(sess.daydesc);
+            if (dayIdx === -1) return;
+            const start = sess.starttimeid, end = sess.endtimeid;
+            if (!start || !end || start >= end) return;
+            if (grid[start] && grid[start][dayIdx] !== null) return; // conflict
+
+            const span = end - start;
+            if (grid[start]) grid[start][dayIdx] = { sess, span };
+            for (let s = start + 1; s < end; s++) {
+                if (grid[s]) grid[s][dayIdx] = 'skip';
+            }
+        });
+
+        // Build tbody from virtual grid
+        const tbody = document.getElementById('rdCalBody');
+        tbody.innerHTML = '';
+        for (let slot = 1; slot <= TOTAL_SLOTS; slot++) {
+            const tr = document.createElement('tr');
+
+            const tdTime = document.createElement('td');
+            tdTime.className = 'rd-time-col';
+            tdTime.textContent = TIME_SLOTS[slot - 1];
+            tr.appendChild(tdTime);
+
+            for (let d = 0; d < DAYS.length; d++) {
+                const cell = grid[slot][d];
+                if (cell === 'skip') continue; // consumed by rowspan above
+
+                const td = document.createElement('td');
+                if (!cell) {
+                    td.className = 'rd-cell';
+                } else {
+                    td.className = 'rd-cell rd-pill-cell';
+                    td.rowSpan = cell.span;
+                    const pill = document.createElement('div');
+                    pill.className = 'rd-pill';
+                    const subj = (cell.sess.subjectname || cell.sess.subjectcode || '').toUpperCase();
+                    const instr = cell.sess.instructor || '';
+                    pill.innerHTML = `<span class="rd-pill-subj">${subj}</span><span class="rd-pill-instr">${instr}</span>`;
+                    td.appendChild(pill);
+                }
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        }
+    }
+
+    // ── FETCH SCHEDULE FOR A ROOM ──────────────────────────────────────────────
+    async function loadRoomSchedule(roomId) {
+        const loading = document.getElementById('rdLoading');
+        loading.style.display = 'block';
+        renderSchedule([]); // show empty shell while loading
+        try {
+            const params = new URLSearchParams();
+            if (ACTIVE_AY_ID) params.set('ay_id', ACTIVE_AY_ID);
+            if (ACTIVE_SEM)   params.set('semester', ACTIVE_SEM);
+            const res = await fetch(`/api/get_room_schedule/${roomId}?${params}`);
+            const data = await res.json();
+            renderSchedule(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error('Failed to load room schedule:', e);
+            renderSchedule([]);
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    // ── ROOM SIDEBAR BUTTONS ───────────────────────────────────────────────────
+    function populateRoomSidebar(buildingId) {
+        const list = document.getElementById('rdRoomList');
+        list.innerHTML = '';
+        const rooms = ROOMS_BY_BLDG[buildingId] || [];
+        if (!rooms.length) {
+            list.innerHTML = '<div class="rd-no-rooms">No rooms</div>';
+            return;
+        }
+        rooms.forEach(r => {
+            const btn = document.createElement('button');
+            btn.className = 'rd-room-btn' + (r.roomid === currentRoomId ? ' active' : '');
+            btn.textContent = r.roomname;
+            btn.onclick = () => selectRoom(btn, r.roomid, r.roomname);
+            list.appendChild(btn);
+        });
+    }
+
+    function selectRoom(btn, roomId, roomName) {
+        document.querySelectorAll('.rd-room-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentRoomId = roomId;
+        document.getElementById('rdCalRoomLabel').textContent = roomName;
+        loadRoomSchedule(roomId);
+    }
+
+    // ── BUILDING TAB SWITCH ────────────────────────────────────────────────────
+    function switchBuilding(btn, buildingId) {
+        document.querySelectorAll('.rd-tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        populateRoomSidebar(buildingId);
+    }
+
+    // ── INIT ───────────────────────────────────────────────────────────────────
+    (function init() {
+        renderSchedule([]);
+        populateRoomSidebar(CURRENT_BLDG_ID);
+        loadRoomSchedule(ROOM_ID);
+    })();
+</script>
+{% endblock %}

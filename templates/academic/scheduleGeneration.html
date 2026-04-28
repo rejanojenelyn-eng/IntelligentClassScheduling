@@ -211,7 +211,10 @@
     <div class="modal-content">
         <div class="modal-header">
             <h3><i class="fas fa-edit"></i> Saved Drafts</h3>
-            <button onclick="document.getElementById('draftsModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <a href="/schedule/drafts" class="btn-view-all-drafts"><i class="fas fa-layer-group"></i> View All</a>
+                <button onclick="document.getElementById('draftsModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+            </div>
         </div>
         <div class="modal-body" id="draftsModalBody">
             <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading...</p>

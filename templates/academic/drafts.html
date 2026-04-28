@@ -1,0 +1,223 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<style>
+    .drafts-container {
+        padding: 30px 36px;
+        max-width: 900px;
+    }
+
+    .drafts-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 28px;
+    }
+
+    .drafts-title {
+        font-size: 1.8rem;
+        font-weight: 900;
+        color: #630100;
+        letter-spacing: 2px;
+        margin: 0;
+    }
+
+    .btn-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: white;
+        border: 2px solid #630100;
+        color: #630100;
+        padding: 8px 20px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.8rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        transition: all 0.18s;
+    }
+    .btn-back:hover {
+        background: #630100;
+        color: white;
+        text-decoration: none;
+    }
+
+    .draft-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #630100;
+        color: white;
+        padding: 18px 24px;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(99,1,0,0.18);
+    }
+
+    .draft-card-info {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .draft-card-title {
+        font-size: 1.05rem;
+        font-weight: 900;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    .draft-card-meta {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        opacity: 0.75;
+        text-transform: uppercase;
+    }
+
+    .btn-draft-view {
+        background: white;
+        color: #630100;
+        border: none;
+        padding: 8px 22px;
+        border-radius: 4px;
+        font-weight: 900;
+        font-size: 0.78rem;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        transition: all 0.18s;
+        white-space: nowrap;
+    }
+    .btn-draft-view:hover {
+        background: #ffc107;
+        color: #630100;
+        text-decoration: none;
+    }
+
+    .drafts-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: #888;
+        font-size: 0.9rem;
+    }
+
+    .drafts-empty i {
+        font-size: 2.5rem;
+        color: #ccc;
+        display: block;
+        margin-bottom: 12px;
+    }
+
+    .drafts-loading {
+        text-align: center;
+        padding: 60px 20px;
+        color: #630100;
+        font-size: 0.9rem;
+    }
+
+    .draft-version-badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.4);
+        color: white;
+        font-size: 0.62rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        text-transform: uppercase;
+        margin-top: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="drafts-container">
+    <div class="drafts-header-row">
+        <h1 class="drafts-title">DRAFTS</h1>
+        <a href="{{ url_for('schedule_generation_view') }}" class="btn-back">
+            <i class="fas fa-arrow-left"></i> BACK
+        </a>
+    </div>
+
+    <div id="draftsList">
+        <div class="drafts-loading">
+            <i class="fas fa-spinner fa-spin"></i> Loading drafts...
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const container = document.getElementById('draftsList');
+    try {
+        const res  = await fetch('/api/schedule/drafts');
+        const data = await res.json();
+
+        if (!res.ok || !Array.isArray(data)) {
+            const errMsg = (data && data.error) ? data.error : `Server error (${res.status})`;
+            container.innerHTML = `
+                <div class="drafts-empty">
+                    <i class="fas fa-exclamation-circle" style="color:#c0392b;"></i>
+                    Failed to load drafts: ${errMsg}
+                </div>`;
+            return;
+        }
+
+        if (!data.length) {
+            container.innerHTML = `
+                <div class="drafts-empty">
+                    <i class="fas fa-folder-open"></i>
+                    No saved drafts yet. Generate a schedule and save it as a draft.
+                </div>`;
+            return;
+        }
+
+        // Group by programcode + yearlevel — keep the most recent per group
+        const groups = {};
+        data.forEach(d => {
+            const key = `${d.programcode || ''}-${d.yearlevel || ''}`;
+            if (!groups[key] || (d.datecreated || '') > (groups[key].datecreated || '')) {
+                groups[key] = d;
+            }
+        });
+
+        // Sort groups by most recently saved (null-safe)
+        const sorted = Object.values(groups).sort((a, b) =>
+            (b.datecreated || '').localeCompare(a.datecreated || ''));
+
+        container.innerHTML = sorted.map(d => {
+            const dt = d.datecreated ? new Date(d.datecreated) : null;
+            const dateStr = (dt && !isNaN(dt.getTime()))
+                ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).toUpperCase()
+                : '—';
+            const termLabel = d.term === 'A' ? '1ST SEM' : d.term === 'B' ? '2ND SEM' : d.term === 'C' ? 'SUMMER' : d.term || '—';
+            const ayRaw = String(d.acadyear || '');
+            const ayDisplay = ayRaw.startsWith('AY') ? ayRaw.slice(2) : ayRaw;
+            return `
+                <div class="draft-card">
+                    <div class="draft-card-info">
+                        <div class="draft-card-title">${d.programcode || '—'} — YEAR ${d.yearlevel || '—'}</div>
+                        <div class="draft-card-meta">SAVED LAST ${dateStr}</div>
+                        <span class="draft-version-badge">DRAFT V${d.version_number} &bull; ${termLabel} &bull; AY ${ayDisplay}</span>
+                    </div>
+                    <a href="/schedule/drafts/${d.versionid}" class="btn-draft-view">VIEW</a>
+                </div>`;
+        }).join('');
+
+    } catch(e) {
+        console.error('Drafts load error:', e);
+        container.innerHTML = `
+            <div class="drafts-empty">
+                <i class="fas fa-exclamation-circle" style="color:#c0392b;"></i>
+                Failed to load drafts: ${e.message}
+            </div>`;
+    }
+});
+</script>
+{% endblock %}

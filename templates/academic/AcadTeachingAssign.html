@@ -1,42 +1,425 @@
 {% extends "academic/base.html" %}
+
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/teaching_faculty.css') }}">
+    <style>
+        /* ── Calendar Grid ── */
+        .cal-wrapper {
+            position: relative;
+            overflow: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: #fff;
+        }
+        .cal-inner { position: relative; }
+        .cal-table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 720px;
+            table-layout: fixed;
+        }
+        .cal-table th {
+            background: #630100;
+            color: white;
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 12px 8px;
+            text-align: center;
+            border: 1px solid #7a0100;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+        .cal-table td {
+            border: 1px solid #e2d1d1;
+            height: 55px;
+            text-align: center;
+            vertical-align: middle;
+            padding: 0;
+        }
+        .cal-table .tc {
+            background: #f8f9fa;
+            font-size: 0.75rem;
+            font-weight: 800;
+            color: #630100;
+            text-align: center;
+            padding: 0 6px;
+            width: 80px;
+            white-space: nowrap;
+            border-right: 2px solid #630100 !important;
+        }
+        .cal-table tbody tr:nth-child(even) td:not(.tc) { background: #fafafa; }
+
+        /* ── Pills ── */
+        .cal-pill {
+            position: absolute;
+            border-radius: 4px;
+            padding: 5px;
+            color: white;
+            font-size: 0.7rem;
+            font-weight: bold;
+            overflow: hidden;
+            box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+            z-index: 10;
+            cursor: pointer;
+            transition: transform 0.1s;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            line-height: 1.2;
+            border: 1px solid rgba(255,255,255,0.4);
+        }
+        .cal-pill:hover { transform: scale(1.02); z-index: 20; }
+        .cal-pill.draft { background: #8e9ca0 !important; border: 2px dashed #2c3e50; }
+        .cal-pill-code { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 2px; }
+        .cal-pill-sub  { font-size: 0.6rem; opacity: 0.88; }
+
+        /* ── Detail Modal ── */
+        .detail-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.35);
+            backdrop-filter: blur(2px);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .detail-overlay.active { display: flex; }
+        .detail-box {
+            background: white;
+            border-radius: 12px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+            overflow: hidden;
+        }
+        .detail-header { background: #630100; padding: 18px 22px; color: white; }
+        .detail-header h3 { margin: 0; font-size: 1rem; font-weight: 900; letter-spacing: 1px; }
+        .detail-header p  { margin: 4px 0 0; font-size: 0.72rem; opacity: 0.8; }
+        .detail-body { padding: 20px 22px; }
+        .detail-row { display: flex; gap: 10px; margin-bottom: 10px; font-size: 0.82rem; }
+        .detail-label { font-weight: 800; color: #630100; width: 90px; flex-shrink: 0; }
+        .detail-val   { color: #333; }
+        .detail-footer { display: flex; gap: 0; border-top: 1px solid #eee; }
+        .detail-btn {
+            flex: 1; border: none; padding: 12px;
+            font-weight: 800; font-size: 0.78rem;
+            letter-spacing: 1.2px; text-transform: uppercase;
+            cursor: pointer; transition: background 0.18s;
+        }
+        .detail-btn.close-btn { background: #f5f5f5; color: #555; }
+        .detail-btn.close-btn:hover { background: #e8e8e8; }
+
+        .cal-empty-msg {
+            text-align: center; padding: 40px;
+            color: #999; font-size: 0.85rem;
+        }
+        /* ── Table badges ── */
+        .badge-pub   { background: #27ae60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
+        .badge-draft { background: #8e9ca0; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
+    </style>
 {% endblock %}
 
 {% block content %}
 <div class="teaching-assignment-wrapper">
+
+    <!-- Header -->
     <div class="main-header">
-        <h1>MY TEACHING ASSIGNMENT</h1>
+        <h1>TEACHING ASSIGNMENT</h1>
+        <button class="btn-export-pdf">
+            <i class="fa-solid fa-arrow-up-from-bracket"></i> Export as PDF
+        </button>
     </div>
 
-    <div class="load-section">
-        <h2>PERSONAL LOAD DETAILS</h2>
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>SUBJECT CODE</th>
-                        <th>SUBJECT DESCRIPTION</th>
-                        <th>UNITS</th>
-                        <th>TIME</th>
-                        <th>DAY/S</th>
-                        <th>ROOM</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for a in assignments %}
-                    <tr>
-                        <td style="font-weight: 800; color: #630100;">{{ a.subjectcode }}</td>
-                        <td>{{ a.subjectname }}</td>
-                        <td>{{ a.creditunits }}</td>
-                        <td>{{ a.time_range }}</td>
-                        <td>{{ a.daydesc }}</td>
-                        <td>{{ a.roomname }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <!-- Tab Navigation -->
+    <div class="tabs-container">
+        <a class="tab-link active" onclick="showTab('weekly', this)">
+            <i class="fa-regular fa-calendar-days"></i> Weekly Schedule
+        </a>
+        <a class="tab-link" onclick="showTab('assignment', this)">
+            <i class="fa-solid fa-table-list"></i> Teaching Assignment
+        </a>
+    </div>
+
+    <!-- ── WEEKLY SCHEDULE TAB ── -->
+    <div id="tab-weekly">
+        <div class="cal-wrapper" id="calWrapper">
+            <div class="cal-inner" id="calInner">
+                <table class="cal-table" id="calTable">
+                    <thead>
+                        <tr>
+                            <th class="tc">TIME</th>
+                            <th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for slot in ['7:30 AM','8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM','2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM','5:00 PM','5:30 PM','6:00 PM','6:30 PM','7:00 PM','7:30 PM','8:00 PM','8:30 PM','9:00 PM'] %}
+                        <tr>
+                            <td class="tc">{{ slot }}</td>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div id="calEmptyMsg" class="cal-empty-msg" style="display:none;">No schedule found for the selected period.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── TEACHING ASSIGNMENT TAB ── -->
+    <div id="tab-assignment" style="display:none;">
+        <div class="load-section">
+            <h2>REGULAR LOAD</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>SUBJECT CODE</th>
+                            <th>SUBJECT DESCRIPTION</th>
+                            <th>UNITS</th>
+                            <th>YEAR & SECTION</th>
+                            <th>TIME</th>
+                            <th>DAY/S</th>
+                            <th>ROOM</th>
+                            <th>STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-regular">
+                        <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
+                    </tbody>
+                    <tfoot>
+                        <tr><td colspan="8" class="total-units">TOTAL REGULAR LOAD: <span id="total-regular-units">—</span> units</td></tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        <div class="load-section">
+            <h2>PART TIME LOAD</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>SUBJECT CODE</th>
+                            <th>SUBJECT DESCRIPTION</th>
+                            <th>UNITS</th>
+                            <th>YEAR & SECTION</th>
+                            <th>TIME</th>
+                            <th>DAY/S</th>
+                            <th>ROOM</th>
+                            <th>STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-pt">
+                        <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Detail Modal -->
+<div id="detailModal" class="detail-overlay">
+    <div class="detail-box">
+        <div class="detail-header">
+            <h3 id="det-code"></h3>
+            <p id="det-name"></p>
+        </div>
+        <div class="detail-body">
+            <div class="detail-row"><span class="detail-label">Day</span><span class="detail-val" id="det-day"></span></div>
+            <div class="detail-row"><span class="detail-label">Time</span><span class="detail-val" id="det-time"></span></div>
+            <div class="detail-row"><span class="detail-label">Room</span><span class="detail-val" id="det-room"></span></div>
+            <div class="detail-row"><span class="detail-label">Section</span><span class="detail-val" id="det-section"></span></div>
+            <div class="detail-row"><span class="detail-label">Units</span><span class="detail-val" id="det-units"></span></div>
+            <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val" id="det-status"></span></div>
+        </div>
+        <div class="detail-footer">
+            <button class="detail-btn close-btn" onclick="closeDetail()">Close</button>
         </div>
     </div>
 </div>
+
+<script>
+    const OWN_EMP_NUM    = '{{ own_emp_num }}';
+    const AY_ID          = '{{ active_ay_id }}';
+    const SEM            = '{{ active_sem }}';
+    const DAYS           = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const PALETTE        = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
+    const WEEKDAYS_SET   = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+    const REGULAR_END_SLOT = 19;
+
+    let _sessions = [];
+    let _activeTab = 'weekly';
+
+    function subjectColor(code) {
+        let h = 0;
+        for (let i = 0; i < code.length; i++) h = code.charCodeAt(i) + ((h << 5) - h);
+        return PALETTE[Math.abs(h) % PALETTE.length];
+    }
+
+    function showTab(name, el) {
+        _activeTab = name;
+        document.getElementById('tab-weekly').style.display     = name === 'weekly'     ? '' : 'none';
+        document.getElementById('tab-assignment').style.display = name === 'assignment' ? '' : 'none';
+        document.querySelectorAll('.tab-link').forEach(t => t.classList.remove('active'));
+        if (el) el.classList.add('active');
+        if (name === 'weekly')     renderCalendar();
+        if (name === 'assignment') renderTables();
+    }
+
+    async function loadData() {
+        if (!OWN_EMP_NUM) return;
+        try {
+            const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(OWN_EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}`;
+            const resp = await fetch(url);
+            _sessions = await resp.json();
+        } catch(e) {
+            console.error('loadData error:', e);
+            _sessions = [];
+        }
+        if (_activeTab === 'weekly')     renderCalendar();
+        if (_activeTab === 'assignment') renderTables();
+    }
+
+    // ── Calendar Rendering ──────────────────────────────────────────────────
+
+    function renderCalendar() {
+        const inner   = document.getElementById('calInner');
+        const table   = document.getElementById('calTable');
+        const emptyEl = document.getElementById('calEmptyMsg');
+
+        inner.querySelectorAll('.cal-pill').forEach(p => p.remove());
+
+        if (!_sessions.length) {
+            emptyEl.style.display = 'block';
+            return;
+        }
+        emptyEl.style.display = 'none';
+
+        const firstCell = table.querySelector('tbody td:nth-child(2)');
+        const tcCol     = table.querySelector('.tc');
+        const thead     = table.querySelector('thead');
+
+        if (!firstCell || firstCell.offsetWidth === 0) {
+            requestAnimationFrame(renderCalendar);
+            return;
+        }
+
+        const colW    = firstCell.offsetWidth;
+        const rowH    = firstCell.offsetHeight;
+        const leftOff = tcCol.offsetWidth;
+        const topOff  = thead.offsetHeight;
+
+        const byDay = {};
+        _sessions.forEach(s => {
+            if (!s.starttimeid || !s.endtimeid) return;
+            (byDay[s.daydesc] = byDay[s.daydesc] || []).push(s);
+        });
+
+        Object.keys(byDay).forEach(day => {
+            const dayIdx = DAYS.indexOf(day);
+            if (dayIdx < 0) return;
+            const daySessions = byDay[day].slice().sort((a,b) => a.starttimeid - b.starttimeid);
+
+            daySessions.forEach((sess, idx) => {
+                const s = sess.starttimeid, e = sess.endtimeid;
+                let overlapCount = 0, overlapIndex = 0;
+                daySessions.forEach((other, oIdx) => {
+                    if (s < other.endtimeid && e > other.starttimeid) {
+                        overlapCount++;
+                        if (idx > oIdx) overlapIndex++;
+                    }
+                });
+
+                const pill = document.createElement('div');
+                pill.className = 'cal-pill';
+                pill.style.backgroundColor = subjectColor(sess.subjectcode);
+
+                const w = (colW - 6) / (overlapCount || 1);
+                pill.style.width  = (w - 3) + 'px';
+                pill.style.height = Math.max((e - s) * rowH - 4, 18) + 'px';
+                pill.style.left   = (leftOff + dayIdx * colW + overlapIndex * w + 3) + 'px';
+                pill.style.top    = (topOff + (s - 1) * rowH + 2) + 'px';
+
+                const yearSec = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '');
+                pill.innerHTML = `
+                    <div class="cal-pill-code">${sess.subjectcode}</div>
+                    <div class="cal-pill-sub">${yearSec || sess.roomname || ''}</div>`;
+                pill.title = `${sess.subjectcode} – ${sess.subjectname}\n${sess.time_range || ''}\nRoom: ${sess.roomname || 'TBA'}\nYear/Section: ${yearSec || '—'}`;
+
+                pill.onclick = () => openDetail(sess);
+                inner.appendChild(pill);
+            });
+        });
+    }
+
+    // ── Table Rendering ──────────────────────────────────────────────────────
+
+    function renderTables() {
+        const COL_COUNT = 8;
+        const regular = _sessions.filter(s =>
+            WEEKDAYS_SET.has(s.daydesc) && s.endtimeid <= REGULAR_END_SLOT
+        );
+        const pt = _sessions.filter(s =>
+            !WEEKDAYS_SET.has(s.daydesc) || s.endtimeid > REGULAR_END_SLOT
+        );
+        const totalReg = regular.reduce((sum, s) => sum + (s.creditunits || 0), 0);
+
+        document.getElementById('total-regular-units').textContent = totalReg;
+
+        const makeRow = row => {
+            const ys = row.yearlevel ? `${row.yearlevel} - ${row.programcode || ''}` : (row.programcode || '');
+            return `
+            <tr>
+                <td style="font-weight:800;color:#630100;">${row.subjectcode}</td>
+                <td>${row.subjectname}</td>
+                <td>${row.creditunits}</td>
+                <td>${ys || '—'}</td>
+                <td>${row.time_range || ''}</td>
+                <td>${row.daydesc}</td>
+                <td>${row.roomname || 'TBA'}</td>
+                <td><span class="badge-pub">Published</span></td>
+            </tr>`;
+        };
+
+        document.getElementById('tbl-regular').innerHTML = regular.length
+            ? regular.map(makeRow).join('')
+            : `<tr><td colspan="${COL_COUNT}" style="text-align:center;color:#999;padding:16px;">No regular load found.</td></tr>`;
+
+        document.getElementById('tbl-pt').innerHTML = pt.length
+            ? pt.map(makeRow).join('')
+            : `<tr><td colspan="${COL_COUNT}" style="text-align:center;color:#999;padding:16px;">No part-time load found.</td></tr>`;
+    }
+
+    // ── Detail Modal ─────────────────────────────────────────────────────────
+
+    function openDetail(sess) {
+        document.getElementById('det-code').textContent    = sess.subjectcode;
+        document.getElementById('det-name').textContent    = sess.subjectname;
+        document.getElementById('det-day').textContent     = sess.daydesc;
+        document.getElementById('det-time').textContent       = sess.time_range;
+        document.getElementById('det-room').textContent       = sess.roomname || 'TBA';
+        document.getElementById('det-section').textContent    = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '—');
+        document.getElementById('det-units').textContent      = sess.creditunits;
+        document.getElementById('det-status').innerHTML       =
+            sess.status === 'Published'
+                ? '<span class="badge-pub">Published</span>'
+                : '<span class="badge-draft">Draft</span>';
+        document.getElementById('detailModal').classList.add('active');
+    }
+
+    function closeDetail() {
+        document.getElementById('detailModal').classList.remove('active');
+    }
+
+    document.getElementById('detailModal').addEventListener('click', function(e) {
+        if (e.target === this) closeDetail();
+    });
+
+    window.addEventListener('DOMContentLoaded', loadData);
+</script>
 {% endblock %}
