@@ -8,6 +8,133 @@ import json
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
 
+# ─────────────────────────────────────────────────────────────
+#  RANDOM FOREST DSS
+# ─────────────────────────────────────────────────────────────
+# RF DSS replaces the naive frequency-count ranking in /api/dss/suggest.
+# Instead of sorting recommended faculty/rooms by raw count alone, a
+# RandomForestRegressor learns multi-variate patterns from historical_data:
+#   Features: [freq_together, entity_total, subject_total, ratio]
+#   Target  : log1p(freq_together) — higher = more historically preferred
+# The model is lazy-trained once per process and cached at module level.
+# Falls back to frequency-count order when sklearn is not installed.
+
+try:
+    from sklearn.ensemble import RandomForestRegressor as _RFR
+    import numpy as _np
+    _SKLEARN_OK = True
+except ImportError:
+    _SKLEARN_OK = False
+
+_rf_fac_model  = None   # trained RF for faculty ranking (cached)
+_rf_room_model = None   # trained RF for room ranking (cached)
+_rf_fac_stats  = {}     # (SUBJECT_CODE, INSTRUCTOR) → feature vector
+_rf_room_stats = {}     # (SUBJECT_CODE, ROOM_NAME)  → feature vector
+
+
+def _train_rf_dss():
+    """
+    Build feature matrices from historical_data and fit RF regressors.
+    Called once on first DSS request; subsequent calls are no-ops (cached).
+    """
+    global _rf_fac_model, _rf_room_model, _rf_fac_stats, _rf_room_stats
+    if not _SKLEARN_OK or _rf_fac_model is not None:
+        return
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # ── Faculty RF ──────────────────────────────────────────────
+        cur.execute("""
+            SELECT UPPER(TRIM("Subject Code")) AS sc,
+                   UPPER(TRIM("Instructor"))   AS inst,
+                   COUNT(*) AS freq
+            FROM historical_data
+            WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
+              AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
+            GROUP BY UPPER(TRIM("Subject Code")), UPPER(TRIM("Instructor"))
+        """)
+        fac_pairs = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT UPPER(TRIM("Subject Code")) AS sc, COUNT(*) AS total
+            FROM historical_data WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
+            GROUP BY UPPER(TRIM("Subject Code"))
+        """)
+        s_totals = {r['sc']: r['total'] for r in (cur.fetchall() or [])}
+
+        cur.execute("""
+            SELECT UPPER(TRIM("Instructor")) AS inst, COUNT(*) AS total
+            FROM historical_data WHERE "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
+            GROUP BY UPPER(TRIM("Instructor"))
+        """)
+        i_totals = {r['inst']: r['total'] for r in (cur.fetchall() or [])}
+
+        X_f, y_f, fstats = [], [], {}
+        for r in fac_pairs:
+            freq = r['freq']; sc = r['sc']; inst = r['inst']
+            st = s_totals.get(sc, 1); it = i_totals.get(inst, 1)
+            feat = [freq, it, st, freq / st]
+            X_f.append(feat); y_f.append(_np.log1p(freq))
+            fstats[(sc, inst)] = feat
+        if len(X_f) >= 5:
+            _rf_fac_model = _RFR(n_estimators=50, random_state=42)
+            _rf_fac_model.fit(X_f, y_f)
+        _rf_fac_stats = fstats
+
+        # ── Room RF ─────────────────────────────────────────────────
+        cur.execute("""
+            SELECT UPPER(TRIM("Subject Code")) AS sc,
+                   UPPER(TRIM("Room"))         AS room,
+                   COUNT(*) AS freq
+            FROM historical_data
+            WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
+              AND "Room"         IS NOT NULL AND TRIM("Room")         != ''
+            GROUP BY UPPER(TRIM("Subject Code")), UPPER(TRIM("Room"))
+        """)
+        room_pairs = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT UPPER(TRIM("Room")) AS room, COUNT(*) AS total
+            FROM historical_data WHERE "Room" IS NOT NULL AND TRIM("Room") != ''
+            GROUP BY UPPER(TRIM("Room"))
+        """)
+        r_totals = {r['room']: r['total'] for r in (cur.fetchall() or [])}
+
+        X_r, y_r, rstats = [], [], {}
+        for r in room_pairs:
+            freq = r['freq']; sc = r['sc']; rm = r['room']
+            st = s_totals.get(sc, 1); rt = r_totals.get(rm, 1)
+            feat = [freq, rt, st, freq / st]
+            X_r.append(feat); y_r.append(_np.log1p(freq))
+            rstats[(sc, rm)] = feat
+        if len(X_r) >= 5:
+            _rf_room_model = _RFR(n_estimators=50, random_state=42)
+            _rf_room_model.fit(X_r, y_r)
+        _rf_room_stats = rstats
+
+    except Exception:
+        pass
+    finally:
+        cur.close(); conn.close()
+
+
+def _rf_score_faculty(subject_code: str, instructor_name: str) -> float:
+    """RF predicted score for a (subject, instructor) pair; 0.0 if unseen or untrained."""
+    if _rf_fac_model is None:
+        return 0.0
+    feat = _rf_fac_stats.get((subject_code.upper(), instructor_name.upper()))
+    return float(_rf_fac_model.predict([feat])[0]) if feat else 0.0
+
+
+def _rf_score_room(subject_code: str, room_name: str) -> float:
+    """RF predicted score for a (subject, room) pair; 0.0 if unseen or untrained."""
+    if _rf_room_model is None:
+        return 0.0
+    feat = _rf_room_stats.get((subject_code.upper(), room_name.upper()))
+    return float(_rf_room_model.predict([feat])[0]) if feat else 0.0
+
+
 # 1. INITIALIZE APP FIRST
 app = Flask(__name__)
 app.secret_key = 'pup_lopez_super_secret_key' # Required for Login Sessions
@@ -1949,6 +2076,15 @@ def api_dss_suggest():
             for f in all_faculty if f['employeenumber'] not in recommended_ids
         ]
 
+        # RF: re-rank recommended_faculty by predicted score.
+        # Replaces raw frequency-count ordering with a multi-variate RF prediction
+        # that weighs freq_together, instructor_total, subject_total, and ratio jointly.
+        if _SKLEARN_OK:
+            _train_rf_dss()
+            for entry in recommended_faculty:
+                entry['rf_score'] = _rf_score_faculty(subject_code, entry['name'])
+            recommended_faculty.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
+
         # 5. All rooms with type
         cur.execute("""
             SELECT r.RoomID, r.RoomName, COALESCE(r.RoomType, 'Lecture') AS RoomType
@@ -1996,6 +2132,14 @@ def api_dss_suggest():
         # For lab subjects put lab rooms first in Others
         if is_lab:
             others_rooms.sort(key=lambda r: (0 if r['type'] == 'Laboratory' else 1))
+
+        # RF: re-rank recommended_rooms by predicted score.
+        # Same multi-variate approach as faculty — RF considers freq_together,
+        # room_total usage, subject_total, and ratio to produce a richer ranking.
+        if _SKLEARN_OK:
+            for entry in recommended_rooms:
+                entry['rf_score'] = _rf_score_room(subject_code, entry['name'])
+            recommended_rooms.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
 
         return jsonify({
             "success": True,

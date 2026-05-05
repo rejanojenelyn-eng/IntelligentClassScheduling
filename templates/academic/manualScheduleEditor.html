@@ -1171,7 +1171,7 @@
                 maxEndIdx   = hasNS ? DES_NIGHT_END_IDX : DES_END_IDX;
             }
         }
-        const maxStartIdx = maxEndIdx - 1; // must leave room for at least one end slot
+        const maxStartIdx = maxEndIdx - 1;
 
         const prevStart = startSel.value;
         startSel.innerHTML = '<option value="">— Select Start Time —</option>';
@@ -1291,7 +1291,6 @@
 
         const addBtn = document.getElementById('btnAddNewSession');
         if (addBtn) {
-            // Only offer "Add Another Session" when user explicitly chose split mode and hours remain
             if (_splitMode === true && remainHours > 0.1) {
                 addBtn.style.display = 'inline-block';
                 addBtn.textContent = `+ Add Another Session (${remainHours}h remaining)`;
@@ -1327,7 +1326,6 @@
 
     function closeExistingSchedModal() {
         document.getElementById('existingSchedModal').classList.remove('active');
-        // If user closed without editing, reset subject so they cannot bypass the block
         if (_hasExistingSchedule) {
             document.getElementById('sel_subj').value = '';
             _hasExistingSchedule = false;
@@ -1390,10 +1388,10 @@
 
     // Intercept Browser Refresh / Close Tab
     window.addEventListener('beforeunload', function (e) {
-        if (window.isLeavingIntentionally) return; // Allow if confirmed via custom modal
+        if (window.isLeavingIntentionally) return;
         if (hasUnsavedChanges()) {
             e.preventDefault();
-            e.returnValue = ''; // Triggers native browser warning
+            e.returnValue = '';
         }
     });
 

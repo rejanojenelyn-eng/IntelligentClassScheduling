@@ -458,6 +458,120 @@ class CSPValidator:
 
 
 # ─────────────────────────────────────────────────────────────
+#  LAYER 2.5 — CASE-BASED REASONING (CBR) RETRIEVER
+# ─────────────────────────────────────────────────────────────
+# CBR 4-R cycle as applied in this system:
+#   Retrieve : score all past schedule versions by similarity to the current query
+#             (program, year level, term, curriculum year) and pick the best match
+#   Reuse    : extract that case's faculty assignments to seed the GA population
+#   Revise   : the GA evolution loop (Layer 3) refines the CBR-seeded individuals
+#   Retain   : approving/publishing a schedule writes it back to the DB as a new case
+
+class CaseBasedRetriever:
+    """
+    CBR: finds the most similar past case from historical_data (imported schedules)
+    and returns its faculty assignments as hints for seeding the GA's initial population.
+    Cases are distinct (program, year_level, term, academic_year) groups in historical_data,
+    not draft/published schedule versions.
+    """
+
+    # Similarity weights per feature dimension (must sum to 1.0)
+    _W = {'program': 0.40, 'yearlevel': 0.30, 'term': 0.20, 'acayear': 0.10}
+
+    @staticmethod
+    def _ay_to_int(ay_str: str) -> int:
+        """Parse academicyearid (e.g. 'AY2425') to a comparable integer (e.g. 2024)."""
+        try:
+            digits = ''.join(c for c in (ay_str or '') if c.isdigit())
+            return int(digits[:4]) if len(digits) >= 4 else int(digits[:2]) + 2000 if digits else 0
+        except (ValueError, TypeError):
+            return 0
+
+    def _build_case_library(self) -> list:
+        """
+        Load all distinct past cases from historical_data.
+        Each case = a unique (program, year_level, semestertype, semesterid, academicyearid)
+        group — representing one semester's worth of imported schedule data.
+        """
+        rows = query_db("""
+            SELECT DISTINCT
+                REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') AS programcode,
+                CAST(hd."Year Level" AS INTEGER)              AS yearlevel,
+                sem.semestertype                              AS term,
+                hd.semesterid,
+                hd.academicyearid
+            FROM historical_data hd
+            JOIN semester sem ON hd.semesterid = sem.semesterid
+            WHERE hd."Subject Code" IS NOT NULL AND TRIM(hd."Subject Code") != ''
+              AND hd."Instructor"   IS NOT NULL AND TRIM(hd."Instructor")   != ''
+            ORDER BY hd.academicyearid DESC
+        """)
+        return list(rows) if rows else []
+
+    def _similarity(self, query: dict, case: dict) -> float:
+        """Weighted similarity score [0.0–1.0] between a query and a stored case."""
+        w = self._W
+        score = 0.0
+        if (query['programcode'] or '').upper() == (case.get('programcode') or '').upper():
+            score += w['program']
+        if str(query['yearlevel']) == str(case.get('yearlevel')):
+            score += w['yearlevel']
+        if query['term'] == case.get('term'):
+            score += w['term']
+        # Academic year proximity: each year apart reduces score by 0.10/5 = 0.02
+        diff   = abs(self._ay_to_int(query['academicyearid']) - self._ay_to_int(case.get('academicyearid', '')))
+        score += w['acayear'] * max(0.0, 1.0 - diff / 5.0)
+        return score
+
+    def retrieve_best_case_faculty(self, program: str, year_level: int,
+                                   term: str, academicyearid: str) -> dict:
+        """
+        Returns {subjectcode: employeenumber} from the most similar historical_data case.
+        Instructor names are matched to faculty.employeenumber by last-name comparison.
+        Falls back to empty dict when no suitable case is found.
+        """
+        query = {
+            'programcode':   program,
+            'yearlevel':     year_level,
+            'term':          term,
+            'academicyearid': academicyearid or '',
+        }
+        cases = self._build_case_library()
+        if not cases:
+            return {}
+
+        best = max(cases, key=lambda c: self._similarity(query, c))
+        if self._similarity(query, best) == 0:
+            return {}
+
+        # Extract (subject_code, employeenumber) from the best-matching historical case.
+        # Match instructor names stored as "Lastname, Firstname" to faculty by last name.
+        rows = query_db("""
+            SELECT
+                TRIM(hd."Subject Code") AS subjectcode,
+                f.employeenumber
+            FROM historical_data hd
+            JOIN faculty f
+              ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1)))
+               = UPPER(TRIM(f.lastname))
+            WHERE REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') ILIKE %s
+              AND CAST(hd."Year Level" AS TEXT) = %s
+              AND hd.semesterid      = %s
+              AND hd.academicyearid  = %s
+              AND hd."Subject Code" IS NOT NULL AND TRIM(hd."Subject Code") != ''
+              AND hd."Instructor"   IS NOT NULL AND TRIM(hd."Instructor")   != ''
+              AND f.employeestatus  != 'Archive'
+        """, (program, str(year_level), best['semesterid'], best['academicyearid']))
+
+        result = {}
+        for row in (rows or []):
+            code = row['subjectcode']
+            if code not in result:
+                result[code] = row['employeenumber']
+        return result
+
+
+# ─────────────────────────────────────────────────────────────
 #  LAYER 3 — GA ENGINE
 # ─────────────────────────────────────────────────────────────
 
@@ -1109,6 +1223,17 @@ class IntelligentScheduler:
             # Always seed GA with historical teachers from same term
             historical_faculty = self.fetch_historical_faculty(program, term)
 
+            # CBR: supplement with faculty hints from the most similar historical_data case.
+            # fetch_historical_faculty() only filters by program + term (ignores year level);
+            # CBR also weighs year level and academic year, giving more targeted hints.
+            # Merge strategy: historical_faculty (recency-biased) overrides CBR where both exist.
+            ay_rows    = query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1")
+            current_ay = ay_rows[0]['academicyearid'] if ay_rows else ''
+            cbr_faculty = CaseBasedRetriever().retrieve_best_case_faculty(
+                program, year_level, term, current_ay
+            )
+            merged_faculty = {**cbr_faculty, **historical_faculty}
+
             POP_SIZE      = 40
             GENERATIONS   = 150
             MUTATION_RATE = 0.25
@@ -1116,7 +1241,9 @@ class IntelligentScheduler:
 
             population = []
             for i in range(POP_SIZE):
-                hist = historical_faculty if i < POP_SIZE // 2 else {}
+                # First half: seeded with CBR-merged faculty hints
+                # Second half: purely random (maintains population diversity)
+                hist = merged_faculty if i < POP_SIZE // 2 else {}
                 population.append(
                     self._build_individual(subjects, faculty_list, faculty_map, rooms, hist)
                 )

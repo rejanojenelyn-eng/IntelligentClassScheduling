@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Workflow — Intelligent Class Scheduling</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 40px 30px 60px;
+      min-height: 100vh;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #f8fafc;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-bottom: 48px;
+      letter-spacing: 0.03em;
+    }
+
+    /* ── Layout: two columns ── */
+    .layout {
+      display: flex;
+      gap: 0;
+      align-items: flex-start;
+      max-width: 1100px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    /* ── Phase labels ── */
+    .phase-col {
+      width: 130px;
+      flex-shrink: 0;
+      padding-top: 16px;
+    }
+
+    .phase-label {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      transform: rotate(180deg);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 14px 10px;
+      border-radius: 6px;
+      margin-bottom: 24px;
+    }
+
+    .phase-auto  { background: #1e293b; color: #60a5fa; border-left: 3px solid #3b82f6; }
+    .phase-manual{ background: #1e293b; color: #a78bfa; border-left: 3px solid #7c3aed; }
+    .phase-shared{ background: #1e293b; color: #34d399; border-left: 3px solid #10b981; }
+
+    /* ── Main diagram area ── */
+    .diagram {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* ── Row containers ── */
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      position: relative;
+    }
+
+    /* ── Boxes ── */
+    .box {
+      border-radius: 10px;
+      padding: 14px 18px;
+      text-align: center;
+      position: relative;
+    }
+
+    .box-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+
+    .box-sub {
+      font-size: 0.66rem;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+
+    /* Box colors */
+    .cbr   { background: #1e3a5f; border: 2px solid #3b82f6; min-width: 130px; }
+    .cbr .box-title { color: #93c5fd; }
+
+    .ga    { background: #1a2e1a; border: 2px solid #22c55e; min-width: 310px; padding: 16px 20px; }
+    .ga .box-title { color: #86efac; font-size: 0.85rem; }
+
+    .csp-inner {
+      background: #0f1f0f;
+      border: 1.5px dashed #16a34a;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 10px;
+    }
+    .csp-inner .box-title { color: #4ade80; font-size: 0.72rem; }
+    .csp-inner .box-sub   { font-size: 0.62rem; }
+
+    .csp-gate {
+      background: #1c1a2e;
+      border: 2px solid #7c3aed;
+      min-width: 200px;
+    }
+    .csp-gate .box-title { color: #c4b5fd; }
+
+    .rf    { background: #2d1a3a; border: 2px solid #a855f7; min-width: 140px; }
+    .rf .box-title { color: #d8b4fe; }
+
+    .manual { background: #1e1a2e; border: 2px solid #8b5cf6; min-width: 200px; }
+    .manual .box-title { color: #c4b5fd; }
+
+    .result-ok  { background: #0c2a1f; border: 2px solid #10b981; min-width: 130px; }
+    .result-ok .box-title { color: #6ee7b7; }
+
+    .result-err { background: #2a0c0c; border: 2px solid #ef4444; min-width: 130px; }
+    .result-err .box-title { color: #fca5a5; }
+
+    /* ── Arrows ── */
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #475569;
+      font-size: 1.2rem;
+      padding: 0 8px;
+      flex-shrink: 0;
+    }
+
+    .arrow-label {
+      font-size: 0.58rem;
+      color: #64748b;
+      text-align: center;
+      padding: 0 4px;
+    }
+
+    .arrow-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 0 6px;
+    }
+
+    /* ── Vertical connectors ── */
+    .vconnect {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      color: #475569;
+      font-size: 1.1rem;
+      padding: 6px 0;
+      line-height: 1;
+    }
+
+    .vconnect-label {
+      font-size: 0.58rem;
+      color: #64748b;
+      margin: 1px 0;
+    }
+
+    /* ── Dividers ── */
+    .phase-divider {
+      border: none;
+      border-top: 1px dashed #1e293b;
+      margin: 24px 0;
+    }
+
+    /* ── Legend ── */
+    .legend {
+      max-width: 1100px;
+      margin: 40px auto 0;
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.7rem;
+      color: #94a3b8;
+    }
+
+    .legend-dot {
+      width: 12px; height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    /* ── Gate section: center everything ── */
+    .gate-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0 auto;
+      max-width: 1100px;
+    }
+
+    .gate-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      justify-content: center;
+    }
+
+    .converge-label {
+      font-size: 0.62rem;
+      color: #475569;
+      text-align: center;
+      margin: 4px 0;
+    }
+
+    /* ── Tag badges ── */
+    .tag {
+      display: inline-block;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-top: 5px;
+      text-transform: uppercase;
+    }
+
+    .tag-blue   { background: #1e3a8a; color: #93c5fd; }
+    .tag-green  { background: #14532d; color: #86efac; }
+    .tag-purple { background: #3b0764; color: #d8b4fe; }
+    .tag-teal   { background: #134e4a; color: #5eead4; }
+
+    /* ── Section wrappers ── */
+    .section {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-header {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 16px;
+    }
+
+    .sh-auto   { background: #1e3a8a22; color: #60a5fa; border: 1px solid #1e40af; }
+    .sh-manual { background: #4c1d9522; color: #a78bfa; border: 1px solid #5b21b6; }
+    .sh-gate   { background: #06403022; color: #34d399; border: 1px solid #065f46; }
+
+    .flow-auto {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+
+    .flow-manual {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+
+    .spacer { height: 32px; }
+    .spacer-sm { height: 18px; }
+
+    /* converge lines */
+    .converge-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 80px;
+      margin-bottom: 0;
+    }
+
+    .converge-arm {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-size: 0.62rem;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Intelligent Class Scheduling — AI Workflow</h1>
+  <p class="subtitle">Execution order, data flow, and responsibility of each AI technique</p>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!--  PHASE 1: AUTO GENERATION                              -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-header sh-auto">Phase 1 &mdash; Auto Schedule Generation</div>
+
+    <div class="flow-auto">
+
+      <!-- STEP 1: CBR -->
+      <div class="box cbr">
+        <div class="box-title">CBR</div>
+        <div class="box-sub">Case-Based<br>Reasoning</div>
+        <span class="tag tag-blue">Runs 1st</span>
+        <div class="box-sub" style="margin-top:8px; font-size:0.6rem; color:#60a5fa;">
+          Scores past schedules<br>by similarity. Returns<br>best-match faculty hints.
+        </div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="arrow-col">
+        <div class="arrow">&#8594;</div>
+        <div class="arrow-label">faculty<br>hints</div>
+      </div>
+
+      <!-- STEP 2: GA + CSP inside -->
+      <div class="box ga">
+        <div class="box-title">&#x1F9EC; Genetic Algorithm</div>
+        <div class="box-sub">40 individuals &nbsp;·&nbsp; up to 150 generations &nbsp;·&nbsp; 25% mutation &nbsp;·&nbsp; 35% elite survival</div>
+
+        <div class="csp-inner">
+          <div class="box-title">&#x1F6A7; CSP Validator &nbsp;<span style="font-size:0.6rem;color:#64748b;">(runs inside every generation)</span></div>
+          <div class="box-sub">
+            HC1–HC10 &nbsp;·&nbsp; Faculty time windows &nbsp;·&nbsp; Room overlaps &nbsp;·&nbsp; Load limits &nbsp;·&nbsp; Sunday rules<br>
+            <span style="color:#4ade80; font-size:0.6rem;">−200 pts per violation added to fitness score</span>
+          </div>
+        </div>
+
+        <div style="margin-top:10px; font-size:0.6rem; color:#64748b;">
+          Early stop at gen 20+ if 0 violations &nbsp;|&nbsp; Best schedule saved each generation
+        </div>
+        <span class="tag tag-green" style="margin-top:8px;">Runs 2nd (CBR seeds first 20 individuals)</span>
+      </div>
+
+      <!-- Arrow -->
+      <div class="arrow-col">
+        <div class="arrow">&#8594;</div>
+        <div class="arrow-label">best<br>schedule</div>
+      </div>
+
+      <!-- Draft output -->
+      <div class="box" style="background:#1a1f2e; border:2px solid #334155; min-width:110px;">
+        <div class="box-title" style="color:#94a3b8;">Draft</div>
+        <div class="box-sub">Saved for<br>review / editing</div>
+        <span class="tag tag-teal" style="margin-top:6px;">Output</span>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!--  PHASE 2: MANUAL EDITOR (independent)                  -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-header sh-manual">Phase 2 &mdash; Manual Schedule Editor &nbsp;(Independent)</div>
+
+    <div class="flow-manual">
+
+      <!-- RF DSS -->
+      <div class="box rf">
+        <div class="box-title">&#x1F333; Random Forest</div>
+        <div class="box-sub">DSS Suggestions</div>
+        <span class="tag tag-purple">Runs on demand</span>
+        <div class="box-sub" style="margin-top:8px; font-size:0.6rem; color:#c084fc;">
+          Trained once on historical_data.<br>
+          Re-ranks faculty &amp; rooms by<br>
+          multi-variate RF score.
+        </div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="arrow-col">
+        <div class="arrow">&#8594;</div>
+        <div class="arrow-label">ranked<br>suggestions</div>
+      </div>
+
+      <!-- Manual editing -->
+      <div class="box manual">
+        <div class="box-title">Manual Editing</div>
+        <div class="box-sub">User assigns faculty,<br>time, room per subject.<br>RF suggests best options.</div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="arrow-col">
+        <div class="arrow">&#8594;</div>
+        <div class="arrow-label">edited<br>schedule</div>
+      </div>
+
+      <!-- Connects to gate below — visual placeholder -->
+      <div class="box" style="background:#1a1f2e; border:2px solid #334155; min-width:110px;">
+        <div class="box-title" style="color:#94a3b8;">Draft</div>
+        <div class="box-sub">Ready for<br>approval</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!--  CONVERGENCE + APPROVAL GATE                           -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-header sh-gate">Both Phases Converge Here</div>
+
+    <!-- Converging arrows -->
+    <div class="converge-wrap">
+      <div class="converge-arm">
+        <div style="color:#60a5fa; font-size:0.65rem;">from Phase 1</div>
+        <div style="font-size:1.1rem; color:#475569; margin-top:2px;">&#8600;</div>
+      </div>
+      <div class="converge-arm">
+        <div style="color:#a78bfa; font-size:0.65rem;">from Phase 2</div>
+        <div style="font-size:1.1rem; color:#475569; margin-top:2px;">&#8601;</div>
+      </div>
+    </div>
+
+    <div class="spacer-sm"></div>
+
+    <!-- Gate + outcomes -->
+    <div class="gate-row">
+
+      <div class="box csp-gate">
+        <div class="box-title">&#x26D4; CSP Approval Gate</div>
+        <div class="box-sub">Runs HC1–HC10 on the final schedule.<br>Hard violation = publish blocked.<br>Zero violations = schedule is published.</div>
+        <span class="tag tag-teal" style="margin-top:8px;">Runs 3rd (final check)</span>
+      </div>
+
+      <!-- Outcomes -->
+      <div style="display:flex; flex-direction:column; gap:12px; margin-left:0;">
+
+        <div style="display:flex; align-items:center; gap:0;">
+          <div class="arrow-col">
+            <div class="arrow">&#8594;</div>
+            <div class="arrow-label">0 violations</div>
+          </div>
+          <div class="box result-ok">
+            <div class="box-title">&#x2705; Published</div>
+            <div class="box-sub">Saved to DB.<br>Becomes a new<br>CBR case for future.</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0;">
+          <div class="arrow-col">
+            <div class="arrow">&#8594;</div>
+            <div class="arrow-label">violations found</div>
+          </div>
+          <div class="box result-err">
+            <div class="box-title">&#x274C; Blocked</div>
+            <div class="box-sub">Returns to editing.<br>Violations listed<br>for the user.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!--  LEGEND                                                -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#3b82f6;"></div>
+      CBR — Case-Based Reasoning (similarity retrieval)
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#22c55e;"></div>
+      GA — Genetic Algorithm (schedule optimization)
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#16a34a; border: 1px dashed #4ade80;"></div>
+      CSP — Constraint Satisfaction (hard rule enforcement)
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#a855f7;"></div>
+      RF — Random Forest (DSS suggestion ranking)
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#10b981;"></div>
+      Published schedule → retained as new CBR case
+    </div>
+  </div>
+
+</body>
+</html>
