@@ -599,6 +599,67 @@
         transition: all 0.18s;
     }
     .existing-sched-btn-close:hover { background: #f1f2f6; color: #2c3e50; border-color: #95a5a6; }
+
+    /* ── Split-Choice Modal ── */
+    .split-choice-overlay {
+        display: none; position: fixed; inset: 0;
+        background: rgba(0,0,0,0.5); backdrop-filter: blur(3px);
+        z-index: 10001; align-items: center; justify-content: center;
+    }
+    .split-choice-overlay.active { display: flex; }
+    .split-choice-box {
+        background: #fff; border-radius: 14px; max-width: 500px; width: 94%;
+        overflow: hidden; box-shadow: 0 18px 60px rgba(99,1,0,0.22);
+        border: 1.5px solid #f5c6c6;
+        animation: conflictPop 0.22s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    .split-choice-header {
+        background: #630100; padding: 20px 24px; color: white;
+    }
+    .split-choice-header h2 {
+        font-size: 0.95rem; font-weight: 900; letter-spacing: 0.5px;
+        margin: 0 0 5px; text-transform: uppercase;
+    }
+    .split-choice-header p { font-size: 0.82rem; color: rgba(255,255,255,0.8); margin: 0; }
+    .split-choice-body { padding: 20px 24px; display: flex; gap: 14px; }
+    .split-choice-btn {
+        flex: 1; display: flex; flex-direction: column; align-items: center;
+        gap: 8px; padding: 18px 12px; border-radius: 8px;
+        border: 2px solid #ced4da; background: white;
+        cursor: pointer; transition: all 0.18s; text-align: center;
+    }
+    .split-choice-btn:hover { border-color: #630100; background: #fff5f5; }
+    .split-choice-btn i { font-size: 1.8rem; color: #630100; }
+    .split-choice-btn strong { font-size: 0.83rem; font-weight: 900; color: #2c3e50; display: block; }
+    .split-choice-btn small { font-size: 0.68rem; color: #7f8c8d; line-height: 1.35; }
+
+    /* ── Grayed-out read-only field (Curriculum) ── */
+    .field-grayed {
+        background-color: #e9ecef;
+        color: #6c757d;
+        padding: 7px 10px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: not-allowed;
+        border: 1px solid #ced4da;
+        user-select: none;
+    }
+    /* ── Add Another Session button in existing sched modal ── */
+    .btn-add-session {
+        padding: 9px 18px;
+        border: 2px solid #1a6fa0;
+        background: #e8f4fd;
+        color: #1a6fa0;
+        border-radius: 6px;
+        font-weight: 900;
+        font-size: 0.78rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.18s;
+    }
+    .btn-add-session:hover { background: #1a6fa0; color: white; }
 </style>
 {% endblock %}
 
@@ -613,6 +674,28 @@
         <div class="leave-buttons">
             <button class="leave-btn-cancel" onclick="closeLeaveModal()">Stay on Page</button>
             <button class="leave-btn-confirm" onclick="confirmLeave()">Leave Anyway</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Split Choice Modal ── -->
+<div id="splitChoiceModal" class="split-choice-overlay">
+    <div class="split-choice-box">
+        <div class="split-choice-header">
+            <h2>How would you like to schedule this subject?</h2>
+            <p>This subject requires <span id="splitChoiceHours"></span>. Choose how to distribute the time.</p>
+        </div>
+        <div class="split-choice-body">
+            <button class="split-choice-btn" onclick="setSplitMode(false)">
+                <i class="fas fa-clock"></i>
+                <strong>One Continuous Session</strong>
+                <small>Schedule all hours in a single uninterrupted time block</small>
+            </button>
+            <button class="split-choice-btn" onclick="setSplitMode(true)">
+                <i class="fas fa-layer-group"></i>
+                <strong>Split into Multiple Sessions</strong>
+                <small>Divide the hours across different days or time blocks</small>
+            </button>
         </div>
     </div>
 </div>
@@ -644,6 +727,7 @@
             </table>
         </div>
         <div class="existing-sched-footer">
+            <button id="btnAddNewSession" class="btn-add-session" onclick="addAnotherSession()" style="display:none;">+ Add Another Session</button>
             <button class="existing-sched-btn-close" onclick="closeExistingSchedModal()">Close</button>
         </div>
     </div>
@@ -759,7 +843,7 @@
                     <div style="flex: 1;">
                         <label>CURRICULUM</label>
                         <input type="hidden" id="curr_id_hidden">
-                        <div id="display_curr" class="read-only-maroon">------</div>
+                        <div id="display_curr" class="field-grayed" title="Auto-filled based on Program selection">------</div>
                     </div>
                 </div>
 
@@ -768,6 +852,7 @@
                     <select id="sel_subj" class="input-maroon" onchange="triggerDSSLogic()">
                         <option value="">-Select Subject-</option>
                     </select>
+                    <div id="hours_progress_note" class="constraint-note"></div>
                 </div>
 
                 <div class="form-group-editor">
@@ -803,7 +888,6 @@
                         <option value="">— Select Day —</option>
                         <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
                         <option>Thursday</option><option>Friday</option><option>Saturday</option>
-                        <option id="opt_sunday">Sunday</option>
                     </select>
                     <div id="day_constraint_note" class="constraint-note"></div>
                 </div>
@@ -916,6 +1000,7 @@
     let hiddenDbSchedules = new Set();
     let currentBldgId = 'ALL';
     window.currentEditSession = null;
+    let _splitMode = null; // null = not yet chosen, false = continuous, true = split
 
     // ── Constraint state ────────────────────────────────────────────────────────
     let _subjInfo         = null;  // { lecturehours, laboratoryhours, total_hours, is_sunday_allowed }
@@ -932,6 +1017,89 @@
         Wednesday: 'Saturday', Saturday: 'Wednesday'
     };
     const MAN_WEEKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+
+    // ── Split choice modal ────────────────────────────────────────────────────
+    function showSplitChoiceModal(totalHours) {
+        return new Promise(resolve => {
+            document.getElementById('splitChoiceHours').innerHTML = `<strong>${totalHours} hours</strong>`;
+            document.getElementById('splitChoiceModal').classList.add('active');
+            window._splitChoiceResolve = resolve;
+        });
+    }
+
+    function setSplitMode(mode) {
+        _splitMode = mode;
+        document.getElementById('splitChoiceModal').classList.remove('active');
+        if (window._splitChoiceResolve) { window._splitChoiceResolve(mode); window._splitChoiceResolve = null; }
+    }
+
+    // ── Sunday option management ──────────────────────────────────────────────
+    function updateSundayOption() {
+        const daySelect = document.getElementById('sel_day');
+        const isAllowed = _subjInfo && _subjInfo.is_sunday_allowed;
+        const existing  = Array.from(daySelect.options).find(o => o.value === 'Sunday' || o.textContent === 'Sunday');
+        if (isAllowed && !existing) {
+            const opt = document.createElement('option');
+            opt.value = 'Sunday';
+            opt.textContent = 'Sunday';
+            daySelect.appendChild(opt);
+        } else if (!isAllowed && existing) {
+            if (daySelect.value === existing.value) daySelect.value = '';
+            existing.remove();
+        }
+    }
+
+    // ── Subject hours tracking ────────────────────────────────────────────────
+    function getScheduledHoursForSubject() {
+        const subj = document.getElementById('sel_subj').value;
+        const ay   = document.getElementById('sel_ay').value;
+        const sem  = document.getElementById('sel_sem').value;
+        if (!subj) return 0;
+        let hours = 0;
+        for (const c of pendingManualSchedule) {
+            if (c.subject_code !== subj || c.ay !== ay || c.sem !== sem) continue;
+            if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
+            const si = timeSlots.indexOf(c.start_time), ei = timeSlots.indexOf(c.end_time);
+            if (si >= 0 && ei > si) hours += (ei - si) * 0.5;
+        }
+        for (const s of _pendingExistingSessions) {
+            if (window.currentEditSession &&
+                s.subjectcode === window.currentEditSession.subjectcode &&
+                s.daydesc     === window.currentEditSession.daydesc &&
+                s.starttimeid === window.currentEditSession.starttimeid) continue;
+            hours += (s.endtimeid - s.starttimeid) * 0.5;
+        }
+        return hours;
+    }
+
+    function getRemainingHours() {
+        if (!_subjInfo) return null;
+        return Math.max(0, _subjInfo.total_hours - getScheduledHoursForSubject());
+    }
+
+    function updateHoursProgressNote() {
+        const note = document.getElementById('hours_progress_note');
+        if (!note) return;
+        // Only show progress tracking when user explicitly chose split mode
+        if (!_subjInfo || _splitMode !== true) {
+            note.className = 'constraint-note';
+            note.textContent = '';
+            return;
+        }
+        const total = _subjInfo.total_hours;
+        const remaining = getRemainingHours();
+        const scheduled = total - remaining;
+        if (scheduled === 0) {
+            note.className = 'constraint-note info';
+            note.innerHTML = `⚡ Split mode: ${total}h total — select day and time for the first session.`;
+        } else if (remaining <= 0) {
+            note.className = 'constraint-note info';
+            note.innerHTML = `✓ All ${total}h scheduled across sessions.`;
+        } else {
+            note.className = 'constraint-note warn';
+            note.innerHTML = `⚠ ${scheduled}h placed — <strong>${remaining}h remaining</strong>. Add another session to complete.`;
+        }
+    }
 
     // Time boundary indices (0-based into timeSlots)
     const REG_END_IDX        = 18;  // 04:30 PM — regular/PT split for full-time
@@ -956,7 +1124,16 @@
         const endSel   = document.getElementById('sel_end_time');
         const prevEnd  = endSel.value;
         const startIdx = timeSlots.indexOf(startSel.value);
-        const maxIdx   = (maxEndIdx !== undefined) ? maxEndIdx : _getMaxEndIdx();
+        let maxIdx     = (maxEndIdx !== undefined) ? maxEndIdx : _getMaxEndIdx();
+
+        // Limit end time by remaining subject hours
+        if (_subjInfo && startIdx >= 0) {
+            const remaining = getRemainingHours();
+            if (remaining !== null && remaining > 0) {
+                const unitMax = startIdx + Math.round(remaining / 0.5);
+                if (unitMax < maxIdx) maxIdx = unitMax;
+            }
+        }
 
         endSel.innerHTML = '<option value="">— Select End Time —</option>';
         const from = startIdx >= 0 ? startIdx + 1 : 0;
@@ -1106,8 +1283,29 @@
         _pendingExistingSessions = sessions;
         const subj = document.getElementById('sel_subj');
         const subjText = subj.options[subj.selectedIndex]?.text || subj.value;
-        document.getElementById('existingSchedDesc').textContent =
-            `"${subjText}" already has ${sessions.length} scheduled session${sessions.length > 1 ? 's' : ''} for the selected term. Select a session below to edit it.`;
+
+        // Calculate remaining hours to decide whether "Add Another Session" is available
+        const sessHours   = sessions.reduce((sum, s) => sum + (s.endtimeid - s.starttimeid) * 0.5, 0);
+        const totalHours  = _subjInfo ? _subjInfo.total_hours : 0;
+        const remainHours = totalHours > 0 ? Math.max(0, totalHours - sessHours) : 0;
+
+        const addBtn = document.getElementById('btnAddNewSession');
+        if (addBtn) {
+            // Only offer "Add Another Session" when user explicitly chose split mode and hours remain
+            if (_splitMode === true && remainHours > 0.1) {
+                addBtn.style.display = 'inline-block';
+                addBtn.textContent = `+ Add Another Session (${remainHours}h remaining)`;
+                document.getElementById('existingSchedDesc').textContent =
+                    `"${subjText}" has ${sessHours}h of ${totalHours}h scheduled. Edit an existing session or add another to complete.`;
+            } else {
+                addBtn.style.display = 'none';
+                document.getElementById('existingSchedDesc').textContent =
+                    `"${subjText}" already has ${sessions.length} scheduled session${sessions.length > 1 ? 's' : ''} for the selected term. Select a session below to edit it.`;
+            }
+        } else {
+            document.getElementById('existingSchedDesc').textContent =
+                `"${subjText}" already has ${sessions.length} scheduled session${sessions.length > 1 ? 's' : ''} for the selected term. Select a session below to edit it.`;
+        }
 
         const tbody = document.getElementById('existingSchedList');
         tbody.innerHTML = '';
@@ -1135,6 +1333,14 @@
             _hasExistingSchedule = false;
             initDSSMenus();
         }
+    }
+
+    function addAnotherSession() {
+        document.getElementById('existingSchedModal').classList.remove('active');
+        // Allow placing a new session without going through the edit flow
+        _hasExistingSchedule = false;
+        // _pendingExistingSessions stays populated — needed for hours tracking
+        updateHoursProgressNote();
     }
 
     async function editExistingSession(idx) {
@@ -1255,6 +1461,7 @@
         try { initDSSMenus(); } catch(e) { console.error('Menu Init Error:', e); }
         try { renderRooms(); } catch(e) { console.error('Room Render Error:', e); }
         updateTimeDropdowns();
+        updateSundayOption(); // Remove Sunday from day dropdown on initial load
     });
 
     function toggleProgMenu(event) {
@@ -1287,11 +1494,14 @@
 
         _subjInfo = null;
         _hasExistingSchedule = false;
+        _splitMode = null;
         if (subjSel.selectedIndex <= 0) {
             _skipExistingCheck = false;
             labWarn.style.display = 'none';
             initDSSMenus();
             await updateTimeDropdowns();
+            updateSundayOption();
+            updateHoursProgressNote();
             return;
         }
 
@@ -1301,8 +1511,16 @@
             const siResp = await fetch(`/api/manual/subject_info?subject_code=${encodeURIComponent(subjCode)}`).then(r => r.json());
             if (siResp.success) _subjInfo = siResp;
         } catch(e) { _subjInfo = null; }
+
+        // For 5+ hour subjects, ask user to choose: continuous or split (skip when editing a pill)
+        if (_subjInfo && _subjInfo.total_hours >= 5 && !window.currentEditSession) {
+            await showSplitChoiceModal(_subjInfo.total_hours);
+        }
+
         await fetchExistingDays();
         await updateTimeDropdowns();
+        updateSundayOption();
+        updateHoursProgressNote();
 
         // ── Check for existing schedule for this AY/sem/prog/year/subject ──
         if (!_skipExistingCheck) {
@@ -1458,13 +1676,20 @@
     }
 
     async function confirmAndPlace() {
-        // Strict block: if the subject already has a schedule, user MUST go through edit flow
+        // Block if subject is already scheduled and user is not in an explicit edit or split flow
         if (_hasExistingSchedule && !window.currentEditSession) {
-            await showValidationModal(
-                'Edit Required',
-                'This subject already has an existing schedule. You must select "Edit" from the existing sessions list to make changes. Creating a new entry is not allowed.'
-            );
-            return;
+            const remHrs = getRemainingHours();
+            if (_splitMode === true && remHrs !== null && remHrs > 0.1) {
+                // Split mode with remaining hours — allow adding another session
+            } else {
+                await showValidationModal(
+                    'Edit Required',
+                    remHrs !== null && remHrs <= 0.1
+                        ? 'This subject already has its full schedule. Use "Edit" from the existing sessions list to make changes.'
+                        : 'This subject already has a schedule. Use "Edit" from the existing sessions list, or choose "Split into Multiple Sessions" to add more.'
+                );
+                return;
+            }
         }
 
         const ay   = document.getElementById('sel_ay').value;
@@ -1667,11 +1892,12 @@
             time:         `${startVal} - ${endVal}`,
             course:       prog,
             year_level:   yl,
-            units:        3
+            units:        _subjInfo ? _subjInfo.total_hours : 3
         };
 
         pendingManualSchedule.push(newClass);
         unlockFormFields();
+        updateHoursProgressNote();
         renderGrid(newClass.room_id, formAyFilter(), formSemFilter());
     }
 
@@ -1693,6 +1919,11 @@
         document.getElementById('fac_display_name').value = '';
         document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
         _hasExistingSchedule = false;
+        _pendingExistingSessions = [];
+        _subjInfo = null;
+        _splitMode = null;
+        updateSundayOption();
+        updateHoursProgressNote();
         unlockFormFields();
         hiddenDbSchedules.clear();
         updateSummary();

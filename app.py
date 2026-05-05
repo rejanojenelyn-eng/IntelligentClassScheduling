@@ -3787,10 +3787,10 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
                     (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
 
 # ── ROUTES ────────────────────────────────────────────────────────────
-
 @app.route('/schedule/drafts')
 def schedule_drafts_list():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
     return render_template('academic/drafts.html')
 
 @app.route('/schedule/drafts/<int:version_id>')
@@ -3811,9 +3811,172 @@ def schedule_generation_view():
 @app.route('/api/schedule/generate', methods=['POST'])
 def api_generate_schedule():
     data = request.json or {}
-    res = scheduler_engine.generate_draft(data.get('program'), int(data.get('yearLevel', 1)), data.get('term'), data.get('curriculum'), data.get('useHistorical', False))
+    res = scheduler_engine.generate_draft(
+        data.get('program'), int(data.get('yearLevel', 1)),
+        data.get('term'), data.get('curriculum'), False   # never use historical path here
+    )
     if not res['success']: return jsonify({'success': False, 'error': res['error']}), 400
-    return jsonify({'success': True, 'batch_id': 'DRAFT-NEW-001', 'schedule_data': [_serialize_class(cls) for cls in res['schedule_data']], 'conflict_count': res['conflict_count'], 'violations': res.get('violations', [])})
+    return jsonify({
+        'success': True,
+        'batch_id': 'DRAFT-NEW-001',
+        'schedule_data': [_serialize_class(cls) for cls in res['schedule_data']],
+        'conflict_count': res['conflict_count'],
+        'violations': res.get('violations', []),
+    })
+
+
+@app.route('/api/schedule/retrieve-previous', methods=['POST'])
+def api_retrieve_previous_schedule():
+    """
+    Load the most recent Published (then Draft) schedule for the selected
+    program / year level / semester — regardless of academic year.
+    Bypasses the GA engine entirely: pure DB lookup.
+    """
+    try:
+        data       = request.json or {}
+        program    = data.get('program', '')
+        year_level = int(data.get('yearLevel', 1))
+        term       = data.get('term', '')
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Find the most recent Published version first, then Draft
+        cur.execute("""
+            SELECT DISTINCT ON (sv.versionid)
+                   sv.versionid, sv.version_number, sv.status, sv.datecreated,
+                   c.programcode, cs.yearlevel, sem.semestertype AS term,
+                   ay.academicyearid AS acadyear, sc.semesterid,
+                   ay.yearstart, ay.yearend
+            FROM   public.schedule_version sv
+            JOIN   public.schedule sc         ON sv.scheduleid           = sc.scheduleid
+            JOIN   public.curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   public.curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN   public.semester sem         ON sc.semesterid          = sem.semesterid
+            JOIN   public.academicyear ay      ON sem.academicyearid     = ay.academicyearid
+            WHERE  UPPER(c.programcode) = UPPER(%s)
+              AND  cs.yearlevel         = %s
+              AND  sem.semestertype     = %s
+              AND  sv.status IN ('Published', 'Draft')
+            ORDER BY sv.versionid,
+                     CASE sv.status WHEN 'Published' THEN 1 WHEN 'Draft' THEN 2 ELSE 3 END,
+                     sv.datecreated DESC
+            LIMIT 1
+        """, (program, year_level, term))
+        ver = cur.fetchone()
+
+        if not ver:
+            cur.close(); conn.close()
+            return jsonify({
+                'success': False,
+                'error':   (
+                    f'No previous schedule found for {program} — Year {year_level} — '
+                    f'{"1st Semester" if term == "A" else "2nd Semester" if term == "B" else "Summer"}. '
+                    'Generate a new schedule instead.'
+                ),
+            }), 404
+
+        vid = ver['versionid']
+
+        # Load every session row for this version
+        cur.execute("""
+            SELECT sub.subjectcode        AS subject_code,
+                   sub.subjectname        AS description,
+                   sub.lecturehours       AS lec_hours,
+                   sub.laboratoryhours    AS lab_hours,
+                   sub.creditunits        AS credit_units,
+                   c.programcode          AS course,
+                   sc.employeenumber      AS faculty_id,
+                   CONCAT(f.lastname, ', ', f.firstname) AS instructor,
+                   ss.daydesc             AS day,
+                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_str,
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_str,
+                   r.roomname             AS room,
+                   r.roomid               AS room_id
+            FROM   public.schedule_sessions ss
+            JOIN   public.schedule_version sv  ON ss.versionid           = sv.versionid
+            JOIN   public.schedule sc           ON sv.scheduleid          = sc.scheduleid
+            JOIN   public.curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   public.subject sub           ON cs.subjectcode         = sub.subjectcode
+            JOIN   public.curriculum c          ON cs.curriculumid        = c.curriculumid
+            LEFT JOIN public.faculty f          ON sc.employeenumber      = f.employeenumber
+            LEFT JOIN public.room r             ON ss.roomid              = r.roomid
+            LEFT JOIN public.timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN public.timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
+            WHERE  ss.versionid = %s
+            ORDER BY sub.subjectcode, ts_s.timevalue
+        """, (vid,))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        if not rows:
+            return jsonify({
+                'success': False,
+                'error':   'Previous schedule version exists but has no sessions saved.',
+            }), 404
+
+        # Group rows by (subject_code, faculty_id, start, end) — accumulate days
+        _ABBR = {
+            'Monday': 'MON', 'Tuesday': 'TUE', 'Wednesday': 'WED',
+            'Thursday': 'THU', 'Friday': 'FRI', 'Saturday': 'SAT', 'Sunday': 'SUN',
+        }
+        groups = {}
+        for row in rows:
+            key = (row['subject_code'], row['faculty_id'], row['start_str'], row['end_str'])
+            if key not in groups:
+                lh  = row['lec_hours']  or 0
+                lbh = row['lab_hours']  or 0
+                cu  = row['credit_units'] or 0
+                groups[key] = {
+                    'subject_code':  row['subject_code'],
+                    'description':   row['description'],
+                    'lec_hours':     lh,
+                    'lab_hours':     lbh,
+                    'credit_units':  cu,
+                    'units':         cu,
+                    'course':        row['course'],
+                    'faculty_id':    row['faculty_id'],
+                    'instructor':    row['instructor'] or 'TBA',
+                    'room':          row['room'] or 'TBA',
+                    'room_id':       row['room_id'],
+                    'time':          f"{row['start_str']} – {row['end_str']}",
+                    'hours':         str(lh + lbh),
+                    'days_list':     [],
+                    'is_historical': True,
+                }
+            g = groups[key]
+            if row['day'] and row['day'] not in g['days_list']:
+                g['days_list'].append(row['day'])
+
+        schedule_data = []
+        for entry in groups.values():
+            dl = entry['days_list']
+            entry['days'] = '/'.join(_ABBR.get(d, d[:3].upper()) for d in dl)
+            entry['day']  = dl[0] if dl else ''
+            schedule_data.append(entry)
+
+        term_label = ('1st Semester' if term == 'A'
+                      else '2nd Semester' if term == 'B' else 'Summer')
+        ay_label   = f"AY{ver['yearstart']}{str(ver['yearend'])[-2:]}"
+
+        return jsonify({
+            'success':        True,
+            'schedule_data':  schedule_data,
+            'conflict_count': 0,
+            'violations':     [],
+            'retrieved_from': {
+                'version':    ver['version_number'],
+                'status':     ver['status'],
+                'acadYear':   ver['acadyear'],
+                'ay_label':   ay_label,
+                'term':       term_label,
+            },
+        })
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/schedule/save-draft', methods=['POST'])
 def api_save_draft():
@@ -3846,6 +4009,19 @@ def api_approve_schedule():
     try:
         data, ctx = request.json or {}, (request.json or {}).get('context', {})
         program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')
+
+        # ── Server-side CSP guard ── block approval if any hard constraint is violated
+        from scheduler import CSPValidator
+        rehydrated  = _rehydrate_schedule(list(data.get('schedule_data', [])))
+        faculty_map = _load_faculty_map()
+        violations  = CSPValidator().validate(rehydrated, faculty_map)
+        if violations:
+            return jsonify({
+                'success': False,
+                'error':   f'Cannot approve: {len(violations)} unresolved constraint violation(s). '
+                           'Resolve all conflicts in the Manual Editor before approving.',
+                'violations': violations,
+            }), 400
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
 

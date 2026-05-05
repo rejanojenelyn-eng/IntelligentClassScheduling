@@ -463,19 +463,56 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        tbody.innerHTML = scheduleArray.map(cls => `
+        // Merge Lecture + Lab rows for the same subject into one row.
+        // Key: subject_code + instructor so different faculty teaching same subject stay separate.
+        const groups = {};
+        scheduleArray.forEach(cls => {
+            const key = (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
+            if (!groups[key]) {
+                groups[key] = {
+                    instructor:   cls.instructor || '-',
+                    subject_code: cls.subject_code || '-',
+                    description:  cls.subject_name || cls.description || cls.subjectname || '-',
+                    lec_hours:    0,
+                    lab_hours:    0,
+                    credit_units: cls.credit_units || cls.creditunits || 0,
+                    course:       cls.course || '-',
+                    times:        [],
+                    days_set:     [],
+                    rooms:        [],
+                };
+            }
+            const g = groups[key];
+            g.lec_hours += (cls.lec_hours || cls.lecturehours || 0);
+            g.lab_hours += (cls.lab_hours || cls.laboratoryhours || 0);
+
+            // Collect distinct time strings
+            const t = cls.time || '';
+            if (t && !g.times.includes(t)) g.times.push(t);
+
+            // Collect distinct day abbreviations
+            (cls.days || '').split('/').filter(Boolean).forEach(d => {
+                if (!g.days_set.includes(d)) g.days_set.push(d);
+            });
+
+            // Collect distinct rooms
+            const room = cls.room || 'TBA';
+            if (!g.rooms.includes(room)) g.rooms.push(room);
+        });
+
+        tbody.innerHTML = Object.values(groups).map(g => `
             <tr>
-                <td>${cls.instructor || '-'}</td>
-                <td>${cls.subject_code || '-'}</td>
-                <td>${cls.subject_name || cls.description || cls.subjectname || '-'}</td>
-                <td>${cls.lec_hours || cls.lecturehours || 0}</td>
-                <td>${cls.lab_hours || cls.laboratoryhours || 0}</td>
-                <td>${cls.credit_units || cls.creditunits || 0}</td>
-                <td>${cls.course || '-'}</td>
-                <td>${cls.time || '-'}</td>
-                <td>${cls.hours || 0}</td>
-                <td>${cls.days || '-'}</td>
-                <td>${cls.room || 'TBA'}</td>
+                <td>${g.instructor}</td>
+                <td>${g.subject_code}</td>
+                <td>${g.description}</td>
+                <td>${g.lec_hours}</td>
+                <td>${g.lab_hours}</td>
+                <td>${g.credit_units}</td>
+                <td>${g.course}</td>
+                <td>${g.times.join(' / ')}</td>
+                <td>${g.lec_hours + g.lab_hours}</td>
+                <td>${g.days_set.join('/')}</td>
+                <td>${g.rooms.join(' / ')}</td>
             </tr>
         `).join('');
     }
@@ -528,7 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (up === 'MWF') { push('Monday'); push('Wednesday'); push('Friday'); }
             else if (up === 'MW')  { push('Monday'); push('Wednesday'); }
             else if (up === 'TF')  { push('Tuesday'); push('Friday'); }
-            else if (up === 'MTH') { push('Monday'); push('Tuesday'); push('Thursday'); }
+            else if (up === 'MTH') { push('Monday'); push('Thursday'); }   // Mon–Thu pair (not Tue)
         }
         return result;
     }
@@ -644,67 +681,123 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  SHARED: APPLY SCHEDULE DATA TO UI
+    // ══════════════════════════════════════════════════════════════════
+    function applyScheduleResult(data, isRetrieve) {
+        currentScheduleData = data.schedule_data || [];
+        currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
+        canPublish          = (data.conflict_count || 0) === 0;
+
+        renderTable(currentScheduleData);
+        updateTitleBar();
+
+        btnRegenerate.disabled   = false;
+        btnSaveDraft.disabled    = false;
+        btnManualEditor.disabled = false;
+        btnExport.disabled       = false;
+        btnApprove.disabled      = !canPublish;
+
+        if ((data.conflict_count || 0) > 0) {
+            document.getElementById('conflictText').textContent =
+                `Schedule has ${data.conflict_count} unresolved conflict(s). Approve is blocked until resolved.`;
+            document.getElementById('conflictBanner').classList.remove('hidden');
+        } else {
+            document.getElementById('conflictBanner').classList.add('hidden');
+        }
+
+        // Toast label differs for retrieve vs generate
+        const toast = document.getElementById('successToast');
+        if (isRetrieve && data.retrieved_from) {
+            const rf = data.retrieved_from;
+            toast.innerHTML =
+                `<i class="fas fa-check-circle"></i> Previous schedule loaded`
+                + ` — ${rf.status} V${rf.version} (${rf.ay_label} ${rf.term})`;
+        } else {
+            toast.innerHTML = '<i class="fas fa-check-circle"></i> Schedule Generated Successfully!';
+        }
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 4000);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  GENERATE SCHEDULE
     // ══════════════════════════════════════════════════════════════════
     btnGenerate.addEventListener('click', async () => {
         const ctx = getContext();
 
-        // Ensure all fields are filled
         if (!ctx.acadYear || !ctx.term || !ctx.program || !ctx.yearLevel) {
             await showInfo('Missing Fields', 'Please select all required fields before generating.', 'error');
             return;
         }
 
+        const isRetrieve = useHistorical.checked;
+
         btnGenerate.disabled = true;
-        btnGenerate.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+        btnGenerate.innerHTML = isRetrieve
+            ? '<i class="fas fa-spinner fa-spin"></i> Retrieving...'
+            : '<i class="fas fa-spinner fa-spin"></i> Generating...';
+
+        // Update loading modal text based on mode
+        document.querySelector('#loadingModal h2').textContent =
+            isRetrieve ? 'RETRIEVING PREVIOUS SCHEDULE' : 'GENERATING SCHEDULE';
+        document.querySelector('#loadingModal .loading-subtitle').textContent =
+            isRetrieve
+                ? 'Loading saved schedule from database...'
+                : 'Detecting conflicts & applying constraints...';
+
         showLoading();
 
         try {
-            const res = await fetch('/api/schedule/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    program:       ctx.program,
-                    yearLevel:     ctx.yearLevel,
-                    term:          ctx.term,
-                    curriculum:    curriculum.value,
-                    useHistorical: useHistorical.checked,
-                }),
-            });
+            if (isRetrieve) {
+                // ── RETRIEVE PREVIOUS SCHEDULE ──────────────────────────────
+                const res = await fetch('/api/schedule/retrieve-previous', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        program:   ctx.program,
+                        yearLevel: ctx.yearLevel,
+                        term:      ctx.term,
+                    }),
+                });
+                const data = await res.json();
+                completeProgress();
 
-            const data = await res.json();
-            completeProgress();
-
-            if (data.success) {
-                currentScheduleData = data.schedule_data || [];
-                currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
-                canPublish          = data.conflict_count === 0;
-
-                renderTable(currentScheduleData);
-                updateTitleBar();
-
-                // Enable action buttons
-                btnRegenerate.disabled    = false;
-                btnSaveDraft.disabled     = false;
-                btnManualEditor.disabled  = false;
-                btnExport.disabled        = false;
-                btnApprove.disabled       = !canPublish;
-
-                // Show conflict banner if needed
-                if (data.conflict_count > 0) {
-                    document.getElementById('conflictText').textContent =
-                        `Schedule has ${data.conflict_count} unresolved conflict(s). Approve is blocked until resolved.`;
-                    document.getElementById('conflictBanner').classList.remove('hidden');
+                if (data.success) {
+                    applyScheduleResult(data, true);
                 } else {
-                    document.getElementById('conflictBanner').classList.add('hidden');
+                    // No previous schedule found — ask user if they want to generate instead
+                    const proceed = await showInfo(
+                        'No Previous Schedule Found',
+                        (data.error || 'No saved schedule found for this selection.')
+                        + '<br><br>Would you like to <strong>generate a new schedule</strong> instead?',
+                        'confirm'
+                    );
+                    if (proceed) {
+                        // Uncheck the checkbox and trigger normal generation
+                        useHistorical.checked = false;
+                        btnGenerate.click();
+                    }
                 }
-
-                // Show success toast
-                const toast = document.getElementById('successToast');
-                toast.classList.remove('hidden');
-                setTimeout(() => toast.classList.add('hidden'), 3000);
             } else {
-                await showInfo('Generation Failed', data.error || 'Could not generate schedule.', 'error');
+                // ── GENERATE NEW SCHEDULE ───────────────────────────────────
+                const res = await fetch('/api/schedule/generate', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        program:    ctx.program,
+                        yearLevel:  ctx.yearLevel,
+                        term:       ctx.term,
+                        curriculum: curriculum.value,
+                    }),
+                });
+                const data = await res.json();
+                completeProgress();
+
+                if (data.success) {
+                    applyScheduleResult(data, false);
+                } else {
+                    await showInfo('Generation Failed', data.error || 'Could not generate schedule.', 'error');
+                }
             }
         } catch (e) {
             completeProgress();
@@ -712,6 +805,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             btnGenerate.disabled = false;
             btnGenerate.innerHTML = '<i class="fas fa-magic"></i> GENERATE SCHEDULE';
+            // Restore loading modal text defaults
+            document.querySelector('#loadingModal h2').textContent = 'GENERATING SCHEDULE';
+            document.querySelector('#loadingModal .loading-subtitle').textContent =
+                'Detecting conflicts & applying constraints...';
         }
     });
 
