@@ -137,7 +137,9 @@
         </td>
         <td class="emp-status">{{ emp.employeestatus }}</td>
         <td class="action-icons">
-            <i class="fas fa-edit edit" onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
+            <i class="fas fa-edit edit"
+               data-emp="{{ emp | tojson | e }}"
+               onclick="openEditFromEl(this)"></i>
             <i class="fas fa-archive archive" onclick="openArchiveModal('{{ emp.employeenumber }}')"></i>
         </td>
     </tr>

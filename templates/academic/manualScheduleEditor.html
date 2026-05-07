@@ -991,9 +991,9 @@
     </div>
 </div>
 
-<script>
-const allRooms   = {{ rooms_json | safe }};
-const allFaculty = {{ faculty_json | safe }};
-</script>
+<div id="app-init-data"
+     data-rooms="{{ rooms_json | e }}"
+     data-faculty="{{ faculty_json | e }}"
+     hidden></div>
 <script src="{{ url_for('static', filename='js/manualEditor.acad.js') }}"></script>
 {% endblock %}

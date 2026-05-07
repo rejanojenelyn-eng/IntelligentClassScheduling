@@ -134,9 +134,9 @@
                 </td>
                 <td class="emp-status">{{ emp.employeestatus }}</td>
                 <td class="action-icons">
-                    <!-- FIXED: Edit Modal passing all data correctly -->
                     <i class="fas fa-edit edit"
-                        onclick="openEditModal('{{ emp.employeenumber }}', '{{ emp.firstname }}', '{{ emp.middlename or '' }}', '{{ emp.lastname }}', '{{ emp.email }}', '{{ emp.contactnumber }}', '{{ emp.specializationid }}', '{{ emp.employeetypeid }}', '{{ emp.designationid or '' }}', '{{ emp.employeestatus }}')"></i>
+                        data-emp="{{ emp | tojson | e }}"
+                        onclick="openEditFromEl(this)"></i>
                 </td>
             </tr>
             {% endfor %}

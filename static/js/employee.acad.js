@@ -4,6 +4,13 @@ function closeAddModal() { document.getElementById("addEmployeeModal").style.dis
 function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
 function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
 
+function openEditFromEl(el) {
+    const emp = JSON.parse(el.dataset.emp);
+    openEditModal(emp.employeenumber, emp.firstname, emp.middlename || '', emp.lastname,
+                  emp.email, emp.contactnumber, emp.specializationid,
+                  emp.employeetypeid, emp.designationid || '', emp.employeestatus);
+}
+
 function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
     document.getElementById("edit_emp_num").value = empNum;
     document.getElementById("edit_f_name").value = fName;
