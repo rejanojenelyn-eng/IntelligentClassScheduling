@@ -1,7 +1,7 @@
 /* General Styling for the Subject Offerings Page */
 .subject-offerings-wrapper {
     padding: 25px;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 /* Header Section with Title and Buttons */
@@ -63,7 +63,7 @@
     padding: 8px 12px;
     border-radius: 4px;
     border: 1px solid #ccc;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 0.9rem;
 }
 

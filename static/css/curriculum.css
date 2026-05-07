@@ -364,7 +364,7 @@
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 .modal-header-maroon {
@@ -446,7 +446,7 @@
     padding: 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
-    font-family: 'Poppins';
+    font-family: 'Inter', sans-serif;
     font-size: 0.85rem;
 }
 
