@@ -125,16 +125,7 @@
 </div>
 
 <script>
-    function updateFilters(type, val) {
-        const urlParams = new URLSearchParams(window.location.search);
-        urlParams.set(type, val);
-        window.location.search = urlParams.toString();
-    }
-    function handleFilteredExport() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const currYear = urlParams.get('year') || '0';
-        const currSem = urlParams.get('semester') || 'All';
-        window.location.href = `/admin/export/curriculum/{{ info.curriculumid }}?year=${currYear}&semester=${currSem}`;
-    }
+const CURRICULUM_ID = {{ info.curriculumid }};
 </script>
+<script src="{{ url_for('static', filename='js/curriculumView.acad.js') }}"></script>
 {% endblock %}
