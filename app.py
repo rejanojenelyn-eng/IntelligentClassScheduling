@@ -581,8 +581,9 @@ def room():
         total_lec = query_db("SELECT COUNT(*) as count FROM Room WHERE RoomType = 'Lecture'", one=True)
         total_rooms = query_db("SELECT COUNT(*) as count FROM Room", one=True)
         total_bldgs = query_db("SELECT COUNT(*) as count FROM Building WHERE IsActive = TRUE", one=True)
-        buildings = query_db("SELECT BuildingName AS buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
-        
+        raw_buildings = query_db("SELECT BuildingID AS buildingid, BuildingName AS buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
+        buildings = [{k.lower(): v for k, v in row.items()} for row in raw_buildings] if raw_buildings else []
+
         raw_rooms = query_db("""
             SELECT r.RoomID, r.RoomName, r.RoomType, r.RoomCapacity, b.BuildingName
             FROM Room r
@@ -604,6 +605,8 @@ def room():
                                buildings=buildings, rooms=rooms)
     except Exception as e:
         return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[])
+
+
 
 @app.route('/room/view/<int:room_id>')
 def room_view(room_id):
@@ -702,38 +705,59 @@ def schedule():
             active_ay       = acad_years[0]['academicyearid'] if acad_years else ''
 
     status_query = """
-        SELECT DISTINCT
+        SELECT
             p.programname,
             p.programcode,
             sec.yearlevel,
             ay.academicyearid,
-            s.datecreated
+            sem.semestertype,
+            MAX(s.datecreated) AS datecreated
         FROM schedule s
-        JOIN sections sec   ON s.sectionid         = sec.sectionid
-        JOIN cohort c       ON sec.cohortid         = c.cohortid
-        JOIN programs p     ON c.programcode        = p.programcode
-        JOIN semester sem   ON s.semesterid         = sem.semesterid
-        JOIN academicyear ay ON sem.academicyearid  = ay.academicyearid
-        ORDER BY s.datecreated DESC
+        JOIN sections sec    ON s.sectionid          = sec.sectionid
+        JOIN cohort c        ON sec.cohortid          = c.cohortid
+        JOIN programs p      ON c.programcode         = p.programcode
+        JOIN semester sem    ON s.semesterid          = sem.semesterid
+        JOIN academicyear ay ON sem.academicyearid    = ay.academicyearid
+        GROUP BY p.programname, p.programcode, sec.yearlevel, ay.academicyearid, sem.semestertype
+        ORDER BY MAX(s.datecreated) DESC
     """
     status_list = query_db(status_query)
+
+    sem_data = query_db("""
+        SELECT academicyearid, semestertype, semenddate
+        FROM semester
+        WHERE academicyearid IN (SELECT academicyearid FROM academicyear WHERE yearend >= %s)
+        ORDER BY academicyearid, semestertype
+    """, [today.year])
+    import json as _json
+    sem_json = _json.dumps([
+        {'ay': r['academicyearid'], 'type': r['semestertype'],
+         'end': r['semenddate'].isoformat() if r['semenddate'] else None}
+        for r in (sem_data or [])
+    ])
 
     return render_template('academic/schedule.html',
                            programs=programs,
                            acad_years=acad_years,
                            status_list=status_list,
                            active_sem_type=active_sem_type,
-                           active_ay=active_ay)
+                           active_ay=active_ay,
+                           current_year=today.year,
+                           today=today.isoformat(),
+                           sem_json=sem_json)
 
 @app.route('/api/get_offerings_schedule')
 def get_offerings_schedule():
     import re
-    prog = request.args.get('program')
-    yl   = request.args.get('year_level')
-    sem  = request.args.get('semester')
-    ay   = request.args.get('ay')
+    prog          = request.args.get('program')
+    yl            = request.args.get('year_level')
+    sem           = request.args.get('semester')
+    ay            = request.args.get('ay')
+    version_status = request.args.get('status', 'Published')
+    if version_status not in ('Published', 'Draft', 'Archive'):
+        version_status = 'Published'
 
-    print(f"\n[DEBUG get_offerings_schedule] prog={prog!r} yl={yl!r} sem={sem!r} ay={ay!r}")
+    print(f"\n[DEBUG get_offerings_schedule] prog={prog!r} yl={yl!r} sem={sem!r} ay={ay!r} status={version_status!r}")
 
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -753,7 +777,7 @@ def get_offerings_schedule():
                 COALESCE(sub.creditunits,     0)                    AS creditunits,
                 (COALESCE(sub.lecturehours,0) + COALESCE(sub.laboratoryhours,0)) AS total_hours
             FROM schedule_version sv
-            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
+            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid AND sv.status = %s
             JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub           ON cs.subjectcode = sub.subjectcode
             JOIN sections sec          ON sc.sectionid = sec.sectionid
@@ -770,7 +794,7 @@ def get_offerings_schedule():
                   WHERE semestertype = %s AND academicyearid = %s LIMIT 1
               )
             ORDER BY ts_s.timevalue NULLS LAST
-        """, (prog, int(yl), sem, ay))
+        """, (version_status, prog, int(yl), sem, ay))
         normalized_rows = cur.fetchall()
         print(f"[DEBUG] normalized_rows count={len(normalized_rows)}")
         for r in normalized_rows[:3]:
@@ -1619,7 +1643,13 @@ def schedule_generation():
 @app.route('/schedule/manual-editor')
 def manual_schedule_editor():
     if 'loggedin' not in session: return redirect(url_for('login'))
-    
+
+    init_mode = request.args.get('mode', 'subject')
+    init_prog = request.args.get('prog', '')
+    init_yl   = request.args.get('yl', '')
+    init_ay   = request.args.get('ay', '')
+    init_sem  = request.args.get('sem', '')
+
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -1655,7 +1685,9 @@ def manual_schedule_editor():
         return render_template('academic/manualScheduleEditor.html',
                                acad_years=acad_years, programs=programs,
                                faculty=faculty, faculty_json=faculty_json,
-                               buildings=buildings, rooms_json=json.dumps(rooms_list))
+                               buildings=buildings, rooms_json=json.dumps(rooms_list),
+                               init_mode=init_mode, init_prog=init_prog,
+                               init_yl=init_yl, init_ay=init_ay, init_sem=init_sem)
     finally:
         cur.close()
         conn.close()
@@ -2199,7 +2231,20 @@ def api_get_subjects():
 @app.route('/reports')
 def reports():
     if 'loggedin' not in session: return redirect(url_for('login'))
-    return render_template('academic/reports.html')
+    ay_list         = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+    programs        = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    faculty         = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
+    curricula       = query_db("SELECT curriculumid, curriculumcode, curriculumyear, programcode FROM curriculum ORDER BY programcode, curriculumyear DESC")
+    emp_types       = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
+    specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
+    statuses        = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
+    buildings       = query_db("SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
+    room_types      = query_db("SELECT DISTINCT roomtype FROM room WHERE roomtype IS NOT NULL ORDER BY roomtype")
+    return render_template('academic/reports.html',
+                           ay_list=ay_list, programs=programs,
+                           faculty=faculty, curricula=curricula,
+                           emp_types=emp_types, specializations=specializations,
+                           statuses=statuses, buildings=buildings, room_types=room_types)
 
 # ==============================================================================
 # --- ADMIN SPECIFIC ROUTES ---
@@ -2697,7 +2742,11 @@ def delete_building(bldg_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     try:
         conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM Schedule s JOIN Room r ON s.RoomID = r.RoomID WHERE r.BuildingID = %s", (bldg_id,))
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule_sessions ss
+            JOIN room r ON ss.roomid = r.roomid
+            WHERE r.buildingid = %s
+        """, (bldg_id,))
         if cur.fetchone()[0] > 0:
             flash("Deletion Denied: Rooms in this building are currently in a schedule.", "error")
         else:
@@ -2934,9 +2983,6 @@ def import_curriculum():
     file = request.files.get('file')
     prog_code = request.form.get('program_code')
     curr_year = request.form.get('curriculum_year')
-    
-    ui_year = request.form.get('year_level')
-    ui_sem = request.form.get('semester')
 
     try:
         idx = {}
@@ -3003,14 +3049,13 @@ def import_curriculum():
             s_code = get_val(row, 'sc')
             if not s_code: continue
 
-            csv_yl = parse_int(get_val(row, 'yl'))
-            final_yl = csv_yl if csv_yl > 0 else parse_int(ui_year)
-            
+            final_yl = parse_int(get_val(row, 'yl'))
+
             raw_s = get_val(row, 'sem').upper()
             if '1' in raw_s or 'A' in raw_s: final_sem = 'A'
             elif '2' in raw_s or 'B' in raw_s: final_sem = 'B'
             elif 'SUMMER' in raw_s or 'C' in raw_s: final_sem = 'C'
-            else: final_sem = ui_sem if ui_sem != 'All' else 'A'
+            else: final_sem = 'A'
 
             cur.execute("""
                 INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester) 
@@ -3281,6 +3326,43 @@ def format_time(t):
 def format_date_input(d):
     return d.strftime('%Y-%m-%d') if d else ''
 
+@app.route('/admin/user-management')
+def admin_user_management():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        def to_dict(cursor):
+            columns = [col[0].lower() for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        cur.execute("""
+            SELECT a.userid, a.username, a.role, a.isactive, a.datecreated, a.employeenumber,
+                   COALESCE(f.lastname || ', ' || f.firstname, '—') AS fullname
+            FROM   accounts a
+            LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+            ORDER BY a.role ASC, a.username ASC
+        """)
+        accounts = to_dict(cur)
+
+        cur.execute("""
+            SELECT f.employeenumber,
+                   f.lastname || ', ' || f.firstname AS fullname
+            FROM   faculty f
+            WHERE  f.employeenumber NOT IN (
+                       SELECT employeenumber FROM accounts WHERE employeenumber IS NOT NULL
+                   )
+            ORDER BY f.lastname, f.firstname
+        """)
+        unlinked_employees = to_dict(cur)
+
+        return render_template('admin/user_management_admin.html',
+                               accounts=accounts, unlinked_employees=unlinked_employees)
+    except Exception as e:
+        flash(f"Error loading accounts: {e}", "error")
+        return redirect(url_for('admin_dashboard'))
+    finally:
+        cur.close(); conn.close()
+
 @app.route('/admin/settings')
 def admin_settings():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -3320,15 +3402,133 @@ def admin_settings():
         cur.execute("SELECT * FROM Designation ORDER BY DesignationName ASC")
         designations = to_dict(cur)
 
-        return render_template('admin/settings_admin.html', 
-                               ay_list=ay_data, emp_types=emp_types, 
+        from database import load_scheduler_config
+        sched_cfg = load_scheduler_config()
+
+        cur.execute("""
+            SELECT a.userid, a.username, a.role, a.isactive, a.datecreated, a.employeenumber,
+                   COALESCE(f.lastname || ', ' || f.firstname, '—') AS fullname
+            FROM   accounts a
+            LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+            ORDER BY a.role ASC, a.username ASC
+        """)
+        accounts = to_dict(cur)
+
+        cur.execute("""
+            SELECT f.employeenumber,
+                   f.lastname || ', ' || f.firstname AS fullname
+            FROM   faculty f
+            WHERE  f.employeenumber NOT IN (
+                       SELECT employeenumber FROM accounts WHERE employeenumber IS NOT NULL
+                   )
+            ORDER BY f.lastname, f.firstname
+        """)
+        unlinked_employees = to_dict(cur)
+
+        return render_template('admin/settings_admin.html',
+                               ay_list=ay_data, emp_types=emp_types,
                                designations=designations, designee_base=designee_base,
-                               is_locked=is_locked)
+                               is_locked=is_locked, sched_cfg=sched_cfg,
+                               accounts=accounts, unlinked_employees=unlinked_employees)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
         return redirect(url_for('admin_dashboard'))
     finally:
         cur.close(); conn.close()
+
+@app.route('/admin/settings/update_scheduler_config', methods=['POST'])
+def update_scheduler_config():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    keys = ['sc1_daytime','sc2_night','sc3_day_dist','sc4_compact',
+            'sc5_pt_balance','sc6_weekend','sc7_consecutive','hc7_max_night']
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        for key in keys:
+            val = request.form.get(key)
+            if val is not None:
+                cur.execute("""
+                    INSERT INTO scheduler_config (config_key, config_value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (config_key) DO UPDATE SET config_value = EXCLUDED.config_value
+                """, (key, float(val)))
+        conn.commit()
+        flash("Scheduling constraint weights updated successfully.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error saving constraints: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/accounts/add', methods=['POST'])
+def account_add():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    username   = request.form.get('username', '').strip()
+    role       = request.form.get('role', '').strip()
+    emp_number = request.form.get('employeenumber', '').strip() or None
+    if not username or not role:
+        flash("Username and role are required.", "error")
+        return redirect(url_for('admin_settings'))
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM accounts WHERE LOWER(username) = LOWER(%s)", (username,))
+        if cur.fetchone():
+            flash(f"Username '{username}' already exists.", "error")
+        else:
+            default_pw = generate_password_hash(f"PUP@{username}")
+            cur.execute("""
+                INSERT INTO accounts (username, passwordhash, role, isactive, employeenumber)
+                VALUES (%s, %s, %s, TRUE, %s)
+            """, (username, default_pw, role, emp_number))
+            conn.commit()
+            flash(f"Account '{username}' created. Default password: PUP@{username}", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error creating account: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/accounts/reset_password', methods=['POST'])
+def account_reset_password():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    user_id  = request.form.get('user_id')
+    username = request.form.get('username', '').strip()
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        new_pw = generate_password_hash(f"PUP@{username}")
+        cur.execute("UPDATE accounts SET passwordhash = %s WHERE userid = %s", (new_pw, user_id))
+        conn.commit()
+        flash(f"Password for '{username}' reset to: PUP@{username}", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error resetting password: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/accounts/toggle_status', methods=['POST'])
+def account_toggle_status():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    user_id    = request.form.get('user_id')
+    new_status = request.form.get('new_status') == 'true'
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        if not new_status:
+            cur.execute("SELECT COUNT(*) FROM accounts WHERE role = 'Admin' AND isactive = TRUE AND userid != %s", (user_id,))
+            if cur.fetchone()[0] == 0:
+                flash("Cannot deactivate the last active admin account.", "error")
+                return redirect(url_for('admin_settings'))
+        cur.execute("UPDATE accounts SET isactive = %s WHERE userid = %s", (new_status, user_id))
+        conn.commit()
+        label = "activated" if new_status else "deactivated"
+        flash(f"Account {label} successfully.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error updating account status: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
 
 @app.route('/admin/settings/add_designation', methods=['POST'])
 def add_designation():
@@ -3524,9 +3724,300 @@ def update_designation():
 
 @app.route('/admin/reports')
 def admin_reports():
-    if session.get('role') != 'Admin': 
+    if session.get('role') not in ('Admin', 'Academic Head'):
         return redirect(url_for('login'))
-    return render_template('admin/reports_admin.html')
+    ay_list       = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+    programs      = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    faculty       = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
+    curricula     = query_db("SELECT curriculumid, curriculumcode, curriculumyear, programcode FROM curriculum ORDER BY programcode, curriculumyear DESC")
+    emp_types     = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
+    specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
+    statuses      = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
+    buildings     = query_db("SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
+    room_types    = query_db("SELECT DISTINCT roomtype FROM room WHERE roomtype IS NOT NULL ORDER BY roomtype")
+    return render_template('admin/reports_admin.html',
+                           ay_list=ay_list, programs=programs,
+                           faculty=faculty, curricula=curricula,
+                           emp_types=emp_types, specializations=specializations,
+                           statuses=statuses, buildings=buildings, room_types=room_types)
+
+@app.route('/admin/reports/data', methods=['POST'])
+def reports_data():
+    if session.get('role') not in ('Admin', 'Academic Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    rtype      = request.json.get('report_type')
+    ay         = request.json.get('ay')
+    sem        = request.json.get('semester')
+    prog       = request.json.get('program')
+    yl         = request.json.get('year_level')
+    instr      = request.json.get('instructor')
+    curr       = request.json.get('curriculum')
+    fac_type   = request.json.get('faculty_type')
+    fac_status = request.json.get('faculty_status')
+    fac_spec   = request.json.get('specialization')
+    bldg       = request.json.get('building')
+    room_type  = request.json.get('room_type')
+
+    SEM_LABEL = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+    def rows_to_payload(rows):
+        if not rows:
+            return None
+        cols = list(rows[0].keys())
+        data = [[str(v) if v is not None else '—' for v in row.values()] for row in rows]
+        return {'columns': cols, 'rows': data}
+
+    def run_offerings(sem_type, ay_val, prog_val=None):
+        where  = ["sv.status IN ('Published','Archive')"]
+        p      = []
+        if ay_val:
+            where.append("sem.academicyearid = %s"); p.append(ay_val)
+        if sem_type:
+            where.append("sem.semestertype = %s"); p.append(sem_type)
+        effective_prog = prog_val if prog_val else prog
+        if effective_prog and effective_prog != 'All':
+            where.append("p.programcode = %s"); p.append(effective_prog)
+        if yl and yl != 'All':
+            where.append("sec.yearlevel = %s"); p.append(int(yl))
+        cur.execute(f"""
+            SELECT
+                f.lastname || ', ' || f.firstname AS "Instructor",
+                sub.subjectcode AS "Subject Code",
+                sub.subjectname AS "Subject Description",
+                sub.lecturehours AS "Lec",
+                sub.laboratoryhours AS "Lab",
+                sub.creditunits AS "Units",
+                p.programcode || ' ' || sec.yearlevel AS "Course",
+                string_agg(DISTINCT
+                    CASE ss.daydesc
+                        WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
+                        WHEN 'Wednesday' THEN 'WED' WHEN 'Thursday' THEN 'THU'
+                        WHEN 'Friday' THEN 'FRI' WHEN 'Saturday' THEN 'SAT'
+                        WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END, '/') AS "Days",
+                string_agg(
+                    to_char(ts_s.timevalue::interval,'HH12:MI AM') || ' – ' ||
+                    to_char(ts_e.timevalue::interval,'HH12:MI AM'),
+                    '/' ORDER BY ts_s.timevalue) AS "Time",
+                string_agg(COALESCE(r.roomname,'TBA'), '/') AS "Room"
+            FROM schedule_version sv
+            JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
+            JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
+            JOIN timeslot ts_s        ON ss.starttimeid         = ts_s.timeid
+            JOIN timeslot ts_e        ON ss.endtimeid           = ts_e.timeid
+            JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub          ON cs.subjectcode         = sub.subjectcode
+            JOIN sections sec         ON sg.sectionid           = sec.sectionid
+            JOIN cohort c             ON sec.cohortid           = c.cohortid
+            JOIN programs p           ON c.programcode          = p.programcode
+            JOIN faculty f            ON sg.employeenumber      = f.employeenumber
+            JOIN semester sem         ON sg.semesterid          = sem.semesterid
+            LEFT JOIN room r          ON ss.roomid              = r.roomid
+            WHERE {' AND '.join(where)}
+            GROUP BY f.lastname, f.firstname, sub.subjectcode, sub.subjectname,
+                     sub.lecturehours, sub.laboratoryhours, sub.creditunits,
+                     p.programcode, sec.yearlevel
+            ORDER BY f.lastname, p.programcode, sec.yearlevel, sub.subjectcode
+        """, p)
+        return cur.fetchall()
+
+    def run_assignments(sem_type, ay_val):
+        where = ["sv.status IN ('Published','Archive')"]
+        p     = []
+        if ay_val:
+            where.append("sem.academicyearid = %s"); p.append(ay_val)
+        if sem_type:
+            where.append("sem.semestertype = %s"); p.append(sem_type)
+        if instr and instr != 'All':
+            where.append("f.employeenumber = %s"); p.append(instr)
+        cur.execute(f"""
+            SELECT
+                f.lastname || ', ' || f.firstname AS "Faculty Name",
+                sub.subjectcode AS "Subject Code",
+                sub.subjectname AS "Subject Description",
+                p.programcode AS "Program",
+                sec.sectionname AS "Section",
+                (sub.lecturehours + sub.laboratoryhours) AS "Hours"
+            FROM schedule_version sv
+            JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
+            JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub          ON cs.subjectcode         = sub.subjectcode
+            JOIN sections sec         ON sg.sectionid           = sec.sectionid
+            JOIN cohort c             ON sec.cohortid           = c.cohortid
+            JOIN programs p           ON c.programcode          = p.programcode
+            JOIN faculty f            ON sg.employeenumber      = f.employeenumber
+            JOIN semester sem         ON sg.semesterid          = sem.semesterid
+            WHERE {' AND '.join(where)}
+            ORDER BY f.lastname, p.programcode, sub.subjectcode
+        """, p)
+        return cur.fetchall()
+
+    try:
+        # ── Rooms ──────────────────────────────────────────────────
+        if rtype == 'rooms':
+            where, p = [], []
+            if bldg and bldg != 'All':
+                where.append("b.buildingid = %s"); p.append(int(bldg))
+            if room_type and room_type != 'All':
+                where.append("r.roomtype = %s"); p.append(room_type)
+            cur.execute(f"""
+                SELECT r.roomname AS "Room Name", b.buildingname AS "Building",
+                       r.roomtype AS "Type", r.roomcapacity AS "Capacity",
+                       CASE WHEN b.isactive THEN 'Active' ELSE 'Inactive' END AS "Status"
+                FROM room r JOIN building b ON r.buildingid = b.buildingid
+                {'WHERE ' + ' AND '.join(where) if where else ''}
+                ORDER BY b.buildingname, r.roomname
+            """, p)
+            payload = rows_to_payload(cur.fetchall())
+            return jsonify(payload or {'columns': [], 'rows': []})
+
+        # ── Faculty ─────────────────────────────────────────────────
+        elif rtype == 'faculty':
+            where, p = [], []
+            if fac_type and fac_type != 'All':
+                where.append("f.employeetypeid = %s"); p.append(int(fac_type))
+            if fac_status and fac_status != 'All':
+                where.append("f.employeestatus = %s"); p.append(fac_status)
+            if fac_spec and fac_spec != 'All':
+                where.append("f.specializationid = %s"); p.append(int(fac_spec))
+            cur.execute(f"""
+                SELECT f.lastname || ', ' || f.firstname || ' ' || COALESCE(f.middlename,'') AS "Faculty Name",
+                       et.typename AS "Employee Type",
+                       COALESCE(s.specializationname,'—') AS "Specialization",
+                       COALESCE(d.designationname,'—') AS "Designation",
+                       COALESCE(et.regularload::text,'—') AS "Max Load (Units)",
+                       f.employeestatus AS "Status"
+                FROM faculty f
+                LEFT JOIN employeetype et  ON f.employeetypeid   = et.employeetypeid
+                LEFT JOIN designation d    ON f.designationid    = d.designationid
+                LEFT JOIN specialization s ON f.specializationid = s.specializationid
+                {'WHERE ' + ' AND '.join(where) if where else ''}
+                ORDER BY f.lastname, f.firstname
+            """, p)
+            payload = rows_to_payload(cur.fetchall())
+            return jsonify(payload or {'columns': [], 'rows': []})
+
+        # ── Curriculum ──────────────────────────────────────────────
+        elif rtype == 'curriculum':
+            where, p = [], []
+            if prog and prog != 'All':
+                where.append("c.programcode = %s"); p.append(prog)
+            if curr and curr != 'All':
+                where.append("cs.curriculumid = %s"); p.append(int(curr))
+            cur.execute(f"""
+                SELECT c.curriculumcode AS "Curriculum",
+                       cs.yearlevel AS "Year Level",
+                       CASE cs.semester WHEN 'A' THEN '1st Sem' WHEN 'B' THEN '2nd Sem'
+                                        WHEN 'C' THEN 'Summer' ELSE cs.semester END AS "Semester",
+                       sub.subjectcode AS "Subject Code",
+                       sub.subjectname AS "Subject Description",
+                       sub.lecturehours AS "Lec Hours",
+                       sub.laboratoryhours AS "Lab Hours",
+                       sub.creditunits AS "Credit Units",
+                       COALESCE(sub.prerequisite,'—') AS "Pre-requisite"
+                FROM curriculumsubject cs
+                JOIN subject sub  ON cs.subjectcode  = sub.subjectcode
+                JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                {'WHERE ' + ' AND '.join(where) if where else ''}
+                ORDER BY c.curriculumcode, cs.yearlevel, cs.semester, sub.subjectcode
+            """, p)
+            payload = rows_to_payload(cur.fetchall())
+            return jsonify(payload or {'columns': [], 'rows': []})
+
+        # ── Subject Offerings — grouped by Program × AY × Semester ───
+        elif rtype == 'offerings':
+            needs_group = (ay == 'All' or prog == 'All' or sem == 'All')
+            if not needs_group:
+                rows    = run_offerings(sem, ay)
+                payload = rows_to_payload(rows)
+                return jsonify(payload or {'columns': [], 'rows': []})
+
+            # Build distinct combo query
+            combo_where  = ["sv.status IN ('Published','Archive')"]
+            combo_params = []
+            if ay and ay != 'All':
+                combo_where.append("ay.academicyearid = %s"); combo_params.append(ay)
+            if prog and prog != 'All':
+                combo_where.append("p.programcode = %s"); combo_params.append(prog)
+            if sem and sem != 'All':
+                combo_where.append("sem.semestertype = %s"); combo_params.append(sem)
+            if yl and yl != 'All':
+                combo_where.append("sec.yearlevel = %s"); combo_params.append(int(yl))
+
+            cur.execute(f"""
+                SELECT DISTINCT
+                    p.programcode, p.programname,
+                    ay.academicyearid, ay.yearstart, ay.yearend,
+                    sem.semestertype
+                FROM schedule_version sv
+                JOIN schedule sg    ON sv.scheduleid     = sg.scheduleid
+                JOIN semester sem   ON sg.semesterid     = sem.semesterid
+                JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
+                JOIN sections sec   ON sg.sectionid      = sec.sectionid
+                JOIN cohort co      ON sec.cohortid      = co.cohortid
+                JOIN programs p     ON co.programcode    = p.programcode
+                WHERE {' AND '.join(combo_where)}
+                ORDER BY ay.yearstart DESC, p.programcode, sem.semestertype
+            """, combo_params)
+            combos = cur.fetchall()
+
+            sections = []
+            for combo in combos:
+                rows    = run_offerings(combo['semestertype'], combo['academicyearid'], combo['programcode'])
+                payload = rows_to_payload(rows)
+                if payload:
+                    sem_lbl = SEM_LABEL.get(combo['semestertype'], combo['semestertype'])
+                    sections.append({
+                        'title': f"{combo['programname']} — A.Y. {combo['yearstart']}–{combo['yearend']} — {sem_lbl}",
+                        'columns': payload['columns'],
+                        'rows': payload['rows'],
+                    })
+            return jsonify({'grouped': True, 'sections': sections})
+
+        # ── Teaching Assignments — grouped by Semester ──────────────
+        elif rtype == 'assignments':
+            ay_info  = query_db("SELECT yearstart, yearend FROM academicyear WHERE academicyearid = %s",
+                                (ay,), one=True)
+            ay_label = f"A.Y. {ay_info['yearstart']}–{ay_info['yearend']}" if ay_info else str(ay)
+
+            if sem and sem != 'All':
+                rows    = run_assignments(sem, ay)
+                payload = rows_to_payload(rows)
+                return jsonify(payload or {'columns': [], 'rows': []})
+
+            cur.execute("""
+                SELECT DISTINCT sem.semestertype
+                FROM semester sem
+                JOIN schedule sg ON sg.semesterid = sem.semesterid
+                JOIN schedule_version sv ON sv.scheduleid = sg.scheduleid
+                WHERE sem.academicyearid = %s
+                  AND sv.status IN ('Published','Archive')
+                ORDER BY sem.semestertype
+            """, (ay,))
+            sems_with_data = [r['semestertype'] for r in cur.fetchall()]
+
+            sections = []
+            for sem_type in sems_with_data:
+                rows    = run_assignments(sem_type, ay)
+                payload = rows_to_payload(rows)
+                if payload:
+                    sections.append({
+                        'title': f"{ay_label} — {SEM_LABEL.get(sem_type, sem_type)}",
+                        'columns': payload['columns'],
+                        'rows': payload['rows'],
+                    })
+            return jsonify({'grouped': True, 'sections': sections})
+
+        else:
+            return jsonify({'error': 'Unknown report type'}), 400
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
 # ==============================================================================
 # --- FACULTY SPECIFIC ROUTES ---

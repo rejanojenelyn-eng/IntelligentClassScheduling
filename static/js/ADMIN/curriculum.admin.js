@@ -111,20 +111,3 @@ function confirmDeleteCurriculum(id, year) {
 
 function closeDeleteModal() { document.getElementById('deleteCurriculumModal').style.display = "none"; }
 
-function updateYearLevelDropdown() {
-    const progSelect = document.getElementById('modalProgramCode');
-    const ylSelect = document.getElementById('modalYearLevel');
-    const selectedOption = progSelect.options[progSelect.selectedIndex];
-    let maxYears = parseInt(selectedOption.getAttribute('data-years'));
-    if (isNaN(maxYears) || maxYears <= 0) maxYears = 4;
-
-    const currentVal = ylSelect.value;
-    let html = '<option value="0">All Year Levels</option>';
-    for (let i = 1; i <= maxYears; i++) {
-        let suffix = i === 1 ? "st" : i === 2 ? "nd" : i === 3 ? "rd" : "th";
-        html += `<option value="${i}">${i}${suffix} Year</option>`;
-    }
-
-    ylSelect.innerHTML = html;
-    ylSelect.value = (currentVal <= maxYears) ? currentVal : "0";
-}

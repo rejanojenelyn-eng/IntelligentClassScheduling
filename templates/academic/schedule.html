@@ -107,19 +107,26 @@
             <div class="filter-inputs-left">
                 <div class="filter-unit">
                     <label>PROGRAM</label>
-                    <select><option>Type...</option></select>
+                    <select id="sl_prog" onchange="filterStatusList()">
+                        <option value="">All Programs</option>
+                        {% for p in programs %}
+                        <option value="{{ p.programcode }}">{{ p.programcode }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 <div class="filter-unit">
-                    <label>ACAD YEAR</label>
-                    <select>
-                        {% for ay in acad_years %}
-                        <option value="{{ ay.academicyearid }}">{{ ay.academicyearid }}</option>
+                    <label>ACADEMIC YEAR</label>
+                    <select id="sl_ay" onchange="filterStatusList()">
+                        {% for ay in acad_years if ay.yearend >= current_year %}
+                        <option value="{{ ay.academicyearid }}" {% if ay.academicyearid == active_ay %}selected{% endif %}>
+                            AY {{ ay.yearstart }}-{{ ay.yearend }}
+                        </option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="filter-unit">
                     <label>SEMESTER</label>
-                    <select><option value="A">1st semester</option></select>
+                    <select id="sl_sem" onchange="filterStatusList()"></select>
                 </div>
             </div>
             <div class="filter-bar-right-controls">
@@ -132,28 +139,31 @@
             </div>
         </div>
 
-        <table class="status-monitor-table">
-            <thead>
-                <tr>
-                    <th>Program</th>
-                    <th>Year level</th>
-                    <th>Acad year</th>
-                    <th>Semester</th>
-                    <th>Date Generated</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for stat in status_list %}
-                <tr>
-                    <td>{{ stat.programcode }}</td>
-                    <td>{{ stat.yearlevel }}</td>
-                    <td>{{ stat.academicyearid }}</td>
-                    <td>{{ stat.programcode }}-{{ stat.yearlevel }}</td>
-                    <td>{{ stat.datecreated.strftime('%m-%d-%y %H:%M:%S') if stat.datecreated else '—' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="schedule-list-scroll">
+            <table class="status-monitor-table">
+                <thead>
+                    <tr>
+                        <th>Program</th>
+                        <th>Year level</th>
+                        <th>Acad year</th>
+                        <th>Semester</th>
+                        <th>Date Generated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in status_list %}
+                    {% set sem_label = '1st Semester' if stat.semestertype == 'A' else '2nd Semester' if stat.semestertype == 'B' else 'Summer' %}
+                    <tr data-prog="{{ stat.programcode }}" data-ay="{{ stat.academicyearid }}" data-sem="{{ stat.semestertype }}">
+                        <td>{{ stat.programcode }}</td>
+                        <td>{{ stat.yearlevel }}</td>
+                        <td>{{ stat.academicyearid }}</td>
+                        <td>{{ sem_label }}</td>
+                        <td>{{ stat.datecreated.strftime('%m-%d-%y %H:%M:%S') if stat.datecreated else '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
 
         <div class="status-footer-buttons">
             <button class="btn-white-maroon"><i class="fas fa-file-alt"></i> See requests</button>
@@ -363,5 +373,11 @@
     </div>
 </div>
 
+<div id="schedule-init-data"
+     data-sems="{{ sem_json | forceescape }}"
+     data-today="{{ today }}"
+     data-active-ay="{{ active_ay }}"
+     data-active-sem="{{ active_sem_type }}"
+     hidden></div>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
 {% endblock %}

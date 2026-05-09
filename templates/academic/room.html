@@ -30,7 +30,6 @@
 
     <!-- MAIN LAYOUT WRAPPER -->
     <div class="room-main-wrapper">
-
         <div class="room-grid">
 
             <!-- LEFT SIDEBAR: BUILDINGS -->
@@ -75,14 +74,14 @@
 
                     <!-- ACTIONS -->
                     <div class="actions-row">
-                        <button class="btn-room-export" style="background: white; color: var(--pup-maroon); font-weight: 800;" onclick="toggleAvailabilityRow()">
-                            <i class="fas fa-clock"></i> CHECK AVAILABLE ROOMS
-                        </button>
-                        <span style="font-size: 0.85rem; cursor: pointer; font-weight: 600; margin-left: 10px;" onclick="sortRoomTable()">
+                        <span style="font-size: 0.85rem; cursor: pointer; font-weight: 600;" onclick="sortRoomTable()">
                             <span id="roomSortText">Ascending</span> <i class="fas fa-sort"></i>
                         </span>
                         <button class="btn-room-export" onclick="exportRoomExcel()">
                             <i class="fas fa-file-export"></i> Export
+                        </button>
+                        <button class="btn-room-export" style="background: white; color: var(--pup-maroon); font-weight: 800;" onclick="toggleAvailabilityRow()">
+                            <i class="fas fa-clock"></i> Check Available Rooms
                         </button>
                     </div>
                 </div>

@@ -1,25 +1,227 @@
 {% extends "admin/base_admin.html" %}
 
-{% block content %}
-    <h1 style="color: #800000;">User Management</h1>
-    <p>Manage system access for Admin, Academic Head, and Faculty accounts.</p>
-    
-    <button style="background: #800000; color: white; padding: 10px; border: none; margin-top: 10px;">
-        + Add New User
-    </button>
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+<style>
+.role-badge, .status-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+.role-admin    { background: #630100; color: #fff; }
+.role-acadhead { background: #1a4d7a; color: #fff; }
+.role-faculty  { background: #2e7d32; color: #fff; }
+.status-active   { background: #e8f5e9; color: #2e7d32; }
+.status-inactive { background: #ffebee; color: #c62828; }
 
-    <table border="1" style="width: 100%; margin-top: 20px; border-collapse: collapse;">
-        <tr style="background: #eee;">
-            <th>Username</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Action</th>
-        </tr>
-        <tr>
-            <td>acadhead_01</td>
-            <td>Academic Head</td>
-            <td>Active</td>
-            <td><button>Edit</button></td>
-        </tr>
+.acct-btn {
+    background: none;
+    border: 1px solid;
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.acct-btn-reset      { border-color: #630100; color: #630100; margin-right: 4px; }
+.acct-btn-deactivate { border-color: #888;    color: #888; }
+.acct-btn-activate   { border-color: #2e7d32; color: #2e7d32; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="settings-container">
+    <div class="settings-header">
+        <h1>USER ACCOUNTS</h1>
+    </div>
+
+    <div class="section-header-row" style="margin-top: 10px;">
+        <h2 class="section-main-title">SYSTEM ACCOUNTS</h2>
+        <button class="btn-action-maroon" onclick="openModal('modalAddAccount')"
+            style="background:#630100; color:white; border:none; padding:8px 20px; border-radius:4px; font-weight:800; cursor:pointer; font-size:0.7rem;">
+            <i class="fas fa-user-plus"></i> ADD ACCOUNT
+        </button>
+    </div>
+    <p style="font-size:0.72rem; color:#777; margin:-6px 0 14px 0; font-style:italic;">
+        Manage login access for Admin, Academic Head, and Faculty roles.
+    </p>
+
+    <table class="table-pro" style="margin-bottom: 50px;">
+        <thead>
+            <tr>
+                <th style="text-align:left; padding-left:20px;">USERNAME</th>
+                <th style="text-align:left;">FULL NAME</th>
+                <th>ROLE</th>
+                <th>STATUS</th>
+                <th>DATE CREATED</th>
+                <th style="width:110px; border:none;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for acc in accounts %}
+            <tr>
+                <td style="text-align:left; padding-left:20px; font-weight:800; color:#630100;">{{ acc.username }}</td>
+                <td style="text-align:left; padding-left:10px;">{{ acc.fullname }}</td>
+                <td style="text-align:center;">
+                    {% if acc.role == 'Admin' %}
+                    <span class="role-badge role-admin">{{ acc.role }}</span>
+                    {% elif acc.role == 'Academic Head' %}
+                    <span class="role-badge role-acadhead">{{ acc.role }}</span>
+                    {% else %}
+                    <span class="role-badge role-faculty">{{ acc.role }}</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:center;">
+                    {% if acc.isactive %}
+                    <span class="status-badge status-active">Active</span>
+                    {% else %}
+                    <span class="status-badge status-inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:center; font-size:0.78rem; color:#555;">
+                    {{ acc.datecreated.strftime('%b %d, %Y') if acc.datecreated else '—' }}
+                </td>
+                <td style="text-align:center; border:none;">
+                    <button class="acct-btn acct-btn-reset" title="Reset Password"
+                        onclick="prepareReset('{{ acc.userid }}','{{ acc.username }}')">
+                        <i class="fas fa-key"></i>
+                    </button>
+                    {% if acc.isactive %}
+                    <button class="acct-btn acct-btn-deactivate" title="Deactivate"
+                        onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','True')">
+                        <i class="fas fa-user-slash"></i>
+                    </button>
+                    {% else %}
+                    <button class="acct-btn acct-btn-activate" title="Activate"
+                        onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','False')">
+                        <i class="fas fa-user-check"></i>
+                    </button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
     </table>
+</div>
+
+<!-- ADD ACCOUNT MODAL -->
+<div id="modalAddAccount" class="logout-modal" style="display:none;">
+    <div class="modal-content-logout" style="width:480px;">
+        <div class="modal-header-logout">
+            <h2>ADD NEW ACCOUNT</h2>
+        </div>
+        <form action="{{ url_for('account_add') }}" method="POST">
+            <div class="modal-grid-layout" style="grid-template-columns:1fr; padding:20px 25px; gap:14px;">
+                <div class="input-block">
+                    <label>Username</label>
+                    <input type="text" name="username" class="modal-input" required placeholder="e.g. EMP001 or admin2">
+                </div>
+                <div class="input-block">
+                    <label>Role</label>
+                    <select name="role" id="addRoleSelect" class="modal-input" onchange="toggleEmpField()" required>
+                        <option value="">— Select Role —</option>
+                        <option value="Admin">Admin</option>
+                        <option value="Academic Head">Academic Head</option>
+                        <option value="Faculty">Faculty</option>
+                    </select>
+                </div>
+                <div class="input-block" id="empLinkRow" style="display:none;">
+                    <label>Link to Employee</label>
+                    <select name="employeenumber" class="modal-input">
+                        <option value="">— No link —</option>
+                        {% for emp in unlinked_employees %}
+                        <option value="{{ emp.employeenumber }}">{{ emp.employeenumber }} — {{ emp.fullname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <p style="font-size:0.72rem; color:#777; font-style:italic; margin:0;">
+                    Default password will be set to <strong>PUP@{username}</strong>. The user must change it on first login.
+                </p>
+            </div>
+            <div class="modal-footer-logout">
+                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalAddAccount')">Cancel</button>
+                <button type="submit" class="btn-modal btn-confirm-logout">Create Account</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- RESET PASSWORD MODAL -->
+<div id="modalResetPw" class="logout-modal" style="display:none;">
+    <div class="modal-content-logout" style="width:400px;">
+        <div class="modal-header-logout">
+            <i class="fas fa-key" style="font-size:1.4rem; color:#630100;"></i>
+        </div>
+        <div class="modal-body-logout">
+            <h2 style="margin-bottom:8px;">Reset Password</h2>
+            <p>This will reset the password for <strong id="resetUsernameLabel"></strong> to:</p>
+            <div style="background:#fff8f8; border:1px solid #630100; border-radius:4px; padding:8px 16px; text-align:center; font-weight:800; color:#630100; margin:10px 0; font-size:0.9rem;" id="resetPwPreview"></div>
+            <p style="font-size:0.75rem; color:#888;">Make sure to communicate the new password to the user.</p>
+        </div>
+        <form action="{{ url_for('account_reset_password') }}" method="POST">
+            <input type="hidden" name="user_id" id="resetUserId">
+            <input type="hidden" name="username" id="resetUsername">
+            <div class="modal-footer-logout">
+                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalResetPw')">Cancel</button>
+                <button type="submit" class="btn-modal btn-confirm-logout">Reset Password</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- TOGGLE STATUS MODAL -->
+<div id="modalToggleStatus" class="logout-modal" style="display:none;">
+    <div class="modal-content-logout" style="width:380px;">
+        <div class="modal-header-logout">
+            <i id="toggleIcon" class="fas" style="font-size:1.4rem;"></i>
+        </div>
+        <div class="modal-body-logout">
+            <h2 id="toggleTitle" style="margin-bottom:8px;"></h2>
+            <p id="toggleDesc"></p>
+        </div>
+        <form action="{{ url_for('account_toggle_status') }}" method="POST">
+            <input type="hidden" name="user_id" id="toggleUserId">
+            <input type="hidden" name="new_status" id="toggleNewStatus">
+            <div class="modal-footer-logout">
+                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalToggleStatus')">Cancel</button>
+                <button type="submit" class="btn-modal btn-confirm-logout" id="toggleConfirmBtn">Confirm</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+function openModal(id)  { document.getElementById(id).style.display = 'flex'; }
+
+function toggleEmpField() {
+    const role = document.getElementById('addRoleSelect').value;
+    document.getElementById('empLinkRow').style.display =
+        (role === 'Faculty' || role === 'Academic Head') ? 'block' : 'none';
+}
+
+function prepareReset(userId, username) {
+    document.getElementById('resetUserId').value      = userId;
+    document.getElementById('resetUsername').value    = username;
+    document.getElementById('resetUsernameLabel').textContent = username;
+    document.getElementById('resetPwPreview').textContent     = `PUP@${username}`;
+    openModal('modalResetPw');
+}
+
+function prepareToggle(userId, username, isActive) {
+    const active = isActive === 'True';
+    document.getElementById('toggleUserId').value    = userId;
+    document.getElementById('toggleNewStatus').value = active ? 'false' : 'true';
+    document.getElementById('toggleTitle').textContent =
+        active ? `Deactivate ${username}?` : `Activate ${username}?`;
+    document.getElementById('toggleDesc').textContent =
+        active
+            ? `This will prevent ${username} from logging in. You can re-activate them at any time.`
+            : `This will restore login access for ${username}.`;
+    const icon = document.getElementById('toggleIcon');
+    icon.className = active ? 'fas fa-user-slash' : 'fas fa-user-check';
+    icon.style.color = active ? '#c62828' : '#2e7d32';
+    openModal('modalToggleStatus');
+}
+</script>
 {% endblock %}

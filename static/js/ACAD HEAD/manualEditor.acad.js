@@ -9,6 +9,7 @@ let hiddenDbSchedules = new Set();
 let currentBldgId = 'ALL';
 window.currentEditSession = null;
 let _splitMode = null;
+let currentMode = 'subject'; // 'subject' | 'program'
 
 let _subjInfo         = null;
 let _facInfo          = null;
@@ -429,11 +430,215 @@ function initDSSMenus() {
     }]);
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+/* ─────────────────────────────────────────────
+   BY SUBJECT / BY PROGRAM MODE
+───────────────────────────────────────────── */
+
+function switchMode(mode) {
+    if (currentMode === mode) return;
+    currentMode = mode;
+    const isByProg = mode === 'program';
+
+    document.getElementById('btn-mode-subject').classList.toggle('active', !isByProg);
+    document.getElementById('btn-mode-program').classList.toggle('active', isByProg);
+
+    const sidebar  = document.querySelector('.rooms-sidebar');
+    const progLbl  = document.getElementById('prog-view-label');
+    if (sidebar)  sidebar.style.display  = isByProg ? 'none' : '';
+    if (progLbl)  progLbl.style.display  = isByProg ? 'flex'  : 'none';
+
+    if (isByProg) {
+        renderProgramTimetable();
+    } else {
+        const roomId = document.getElementById('sel_room').value;
+        renderGrid(roomId, formAyFilter(), formSemFilter());
+    }
+}
+
+/* Convert "07:30:00" / "07:30" / "07:30 AM" to 1-based timeSlot index */
+function timeStrToSlotIdx(timeStr) {
+    if (!timeStr) return 0;
+    const s = String(timeStr);
+    const parts = s.split(':');
+    if (parts.length < 2) return 0;
+    let h = parseInt(parts[0]), m = parseInt(parts[1]);
+    if (isNaN(h) || isNaN(m)) return 0;
+    if (s.toLowerCase().includes('pm') && h !== 12) h += 12;
+    if (s.toLowerCase().includes('am') && h === 12) h = 0;
+    return Math.round((h * 60 + m - 450) / 30) + 1; // 7:30 AM = slot 1
+}
+
+async function renderProgramTimetable() {
+    const prog = document.getElementById('sel_prog').value;
+    const yl   = document.getElementById('sel_year').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const ay   = document.getElementById('sel_ay').value;
+
+    const wrapper = document.getElementById('gridWrapper');
+    wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+
+    const labelEl = document.getElementById('prog-view-label-text');
+    if (!prog || !yl || !sem || !ay) {
+        if (labelEl) labelEl.textContent = 'SELECT PROGRAM, YEAR LEVEL, AND SEMESTER TO VIEW';
+        return;
+    }
+
+    const semLabels = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' };
+    const yrLabels  = { '1':'1ST YEAR','2':'2ND YEAR','3':'3RD YEAR','4':'4TH YEAR','5':'5TH YEAR' };
+    const progName  = document.getElementById('prog_trigger_text').innerText || prog;
+    if (labelEl) {
+        labelEl.textContent =
+            `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
+    }
+
+    try {
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=Draft&_t=${Date.now()}`;
+        const resp = await fetch(url, { cache: 'no-store' });
+        if (!resp.ok) return;
+        const raw = await resp.json();
+
+        const seen = new Set();
+        const dbSessions = (raw || []).filter(s => {
+            const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
+            if (seen.has(key)) return false;
+            seen.add(key); return true;
+        });
+
+        const localSessions = pendingManualSchedule
+            .filter(c => c.course === prog && String(c.year_level) === String(yl) && c.ay === ay && c.sem === sem)
+            .map(c => ({
+                subjectcode: c.subject_code,
+                subjectname: c.subject_name,
+                instructor:  c.instructor,
+                daydesc:     c.day,
+                starttimeid: getTimeSlotIndex(c.start_time),
+                endtimeid:   getTimeSlotIndex(c.end_time),
+                roomname:    c.room,
+                room_id:     c.room_id,
+                programcode: prog,
+                year_level:  yl,
+                isLocal:     true,
+                temp_id:     c.temp_id,
+                status:      'Draft'
+            }));
+
+        _renderProgPills([...dbSessions, ...localSessions], prog, yl);
+    } catch (e) { console.error('[renderProgramTimetable]', e); }
+}
+
+function _renderProgPills(sessions, prog, yl) {
+    const wrapper = document.getElementById('gridWrapper');
+    const table   = document.getElementById('mainTimetable');
+    wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+
+    const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const firstCell = table.querySelector('tbody td:nth-child(2)');
+    const timeCol   = table.querySelector('.time-col');
+    const thead     = table.querySelector('thead');
+
+    if (!firstCell || firstCell.offsetWidth === 0) {
+        requestAnimationFrame(() => _renderProgPills(sessions, prog, yl));
+        return;
+    }
+
+    const colWidth  = firstCell.offsetWidth;
+    const rowHeight = firstCell.offsetHeight;
+    const leftOff   = timeCol.offsetWidth;
+    const topOff    = thead.offsetHeight;
+
+    const dayGroups = {};
+    sessions.forEach(s => { if (s.daydesc) (dayGroups[s.daydesc] = dayGroups[s.daydesc] || []).push(s); });
+
+    Object.keys(dayGroups).forEach(dayName => {
+        const dayIdx = days.indexOf(dayName);
+        if (dayIdx < 0) return;
+        const daySessions = dayGroups[dayName];
+
+        daySessions.forEach((sess, idx) => {
+            const startIdx = sess.starttimeid || timeStrToSlotIdx(sess.start_time);
+            const endIdx   = sess.endtimeid   || timeStrToSlotIdx(sess.end_time);
+            if (!startIdx || !endIdx || endIdx <= startIdx) return;
+
+            let overlapCount = 0, overlapIndex = 0;
+            daySessions.forEach((other, oIdx) => {
+                const oS = other.starttimeid || timeStrToSlotIdx(other.start_time);
+                const oE = other.endtimeid   || timeStrToSlotIdx(other.end_time);
+                if (startIdx < oE && endIdx > oS) { overlapCount++; if (idx > oIdx) overlapIndex++; }
+            });
+
+            const pill = document.createElement('div');
+            pill.className = 'schedule-pill';
+
+            const isDraft = sess.isLocal || (sess.status && sess.status.toLowerCase() === 'draft');
+            pill.style.backgroundColor = isDraft ? '#8e9ca0' : getSubjectColor(sess.subjectcode);
+            if (isDraft) pill.style.border = '2px dashed #2c3e50';
+
+            if (window.currentEditSession) {
+                const editKey = `${window.currentEditSession.subjectcode}_${window.currentEditSession.daydesc}_${window.currentEditSession.starttimeid}`;
+                const sessKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+                if (editKey === sessKey) pill.classList.add('pill-editing');
+            }
+
+            const w = (colWidth - 6) / (overlapCount || 1);
+            const pillH = (endIdx - startIdx) * rowHeight - 6;
+            pill.style.width  = (w - 2) + 'px';
+            pill.style.height = pillH + 'px';
+            pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
+            pill.style.top    = (topOff  + (startIdx - 1) * rowHeight + 3) + 'px';
+            pill.style.cursor = 'pointer';
+
+            const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+            pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}\n${sess.roomname || ''}`;
+
+            const compact = pillH < 55;
+            let dropBtn = '';
+            if (sess.isLocal) {
+                dropBtn = `<button class="pill-drop-btn" onclick="dropLocalClass('${sess.temp_id}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
+            }
+            pill.innerHTML = `
+                ${dropBtn}
+                <div class="pill-subject" style="margin-top:${sess.isLocal ? '8px' : '0'};">${sess.subjectcode}</div>
+                ${compact ? '' : `<div style="font-size:0.6rem;">${instrLast}</div><div style="font-size:0.55rem;opacity:.8;">${sess.roomname || ''}</div>`}`;
+
+            pill.onclick = (e) => {
+                if (e.target.closest('.pill-drop-btn')) return;
+                const forEdit = {
+                    ...sess,
+                    starttimeid: startIdx,
+                    endtimeid:   endIdx,
+                    programcode: sess.programcode || prog,
+                    year_level:  sess.year_level  || yl
+                };
+                window.handlePillClick(encodeURIComponent(JSON.stringify(forEdit)));
+            };
+
+            wrapper.appendChild(pill);
+        });
+    });
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
     try { initDSSMenus(); } catch(e) { console.error('Menu Init Error:', e); }
     try { renderRooms(); } catch(e) { console.error('Room Render Error:', e); }
     updateTimeDropdowns();
     updateSundayOption();
+
+    const initMode = _initData.dataset.initMode || 'subject';
+    const initProg = _initData.dataset.initProg || '';
+    const initYl   = _initData.dataset.initYl   || '';
+    const initAy   = _initData.dataset.initAy   || '';
+    const initSem  = _initData.dataset.initSem  || '';
+
+    if (initAy)   document.getElementById('sel_ay').value = initAy;
+    if (initSem)  document.getElementById('sel_sem').value = initSem;
+    if (initYl)   document.getElementById('sel_year').value = initYl;
+    if (initProg) {
+        document.getElementById('sel_prog').value = initProg;
+        document.getElementById('prog_trigger_text').innerText = initProg;
+    }
+
+    if (initProg || initAy) await triggerCascade(true);
+    if (initMode === 'program') switchMode('program');
 });
 
 function toggleProgMenu(event) {
@@ -829,15 +1034,23 @@ async function confirmAndPlace() {
     pendingManualSchedule.push(newClass);
     unlockFormFields();
     updateHoursProgressNote();
-    renderGrid(newClass.room_id, formAyFilter(), formSemFilter());
+    if (currentMode === 'program') {
+        renderProgramTimetable();
+    } else {
+        renderGrid(newClass.room_id, formAyFilter(), formSemFilter());
+    }
 }
 
 window.dropLocalClass = function(tempId, event) {
     event.stopPropagation();
     pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== tempId);
     if (window.currentEditSession && window.currentEditSession.temp_id === tempId) unlockFormFields();
-    const currentRoom = document.getElementById('sel_room').value;
-    renderGrid(currentRoom, formAyFilter(), formSemFilter());
+    if (currentMode === 'program') {
+        renderProgramTimetable();
+    } else {
+        const currentRoom = document.getElementById('sel_room').value;
+        renderGrid(currentRoom, formAyFilter(), formSemFilter());
+    }
 };
 
 function resetFormState() {
@@ -890,7 +1103,7 @@ document.getElementById('btnManualSaveDraft').addEventListener('click', async ()
             alert(`Success! Saved as Draft.`);
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             resetFormState();
-            renderGrid(document.getElementById('sel_room').value, ay, sem);
+            if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
             setTimeout(() => window.isLeavingIntentionally = false, 100);
         } else {
             let errorMsg = `Failed: ${data.error || 'Unknown Error'}\n`;
@@ -942,7 +1155,7 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             alert(`Success! Schedule Published.`);
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             resetFormState();
-            renderGrid(document.getElementById('sel_room').value, ay, sem);
+            if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
             setTimeout(() => window.isLeavingIntentionally = false, 100);
         } else {
             let errorMsg = `Failed to Publish due to Constraints:\n\n`;
@@ -1222,8 +1435,12 @@ async function triggerCascade(skipGridRender = false) {
     if (typeof updateSummary === 'function') updateSummary();
 
     if (skipGridRender !== true) {
-        const currentRoomId = document.getElementById('sel_room').value;
-        renderGrid(currentRoomId, ay, sem);
+        if (currentMode === 'program') {
+            renderProgramTimetable();
+        } else {
+            const currentRoomId = document.getElementById('sel_room').value;
+            renderGrid(currentRoomId, ay, sem);
+        }
     }
 }
 

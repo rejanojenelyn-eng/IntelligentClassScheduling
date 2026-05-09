@@ -645,6 +645,44 @@
         border: 1px solid #ced4da;
         user-select: none;
     }
+    /* ── Mode Toggle (By Subject / By Program) — segmented control ── */
+    .mode-toggle-group {
+        display: flex;
+        border: 2px solid #630100;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .mode-toggle-btn {
+        background: white;
+        color: #630100;
+        border: none;
+        padding: 5px 14px;
+        font-size: 0.68rem;
+        font-weight: 900;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        border-radius: 0;
+    }
+    .mode-toggle-btn:first-child { border-right: 1.5px solid #630100; }
+    .mode-toggle-btn.active { background: #630100; color: white; }
+    .mode-toggle-btn:hover:not(.active) { background: #f9f0f0; }
+
+    /* ── Program View Header Bar ── */
+    .prog-view-header {
+        background: linear-gradient(135deg, #7a0000 0%, #5c0000 100%);
+        color: white;
+        padding: 10px 20px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        text-align: center;
+        display: none;
+        align-items: center;
+        justify-content: center;
+    }
+
     /* ── Add Another Session button in existing sched modal ── */
     .btn-add-session {
         padding: 9px 18px;
@@ -775,12 +813,17 @@
     
     <!-- HEADER -->
     <div class="manual-header-row">
-        <div style="width: 150px;"></div> 
-        <h1>MANUAL SCHEDULE EDITOR</h1>
+        <h1>MANUAL SCHEDULE CREATION</h1>
         <div class="header-tools">
-            <i class="fas fa-undo" title="Undo"></i>
-            <i class="fas fa-redo" title="Redo"></i>
-            <i class="fas fa-sync-alt" title="Refresh" onclick="location.reload()"></i>
+            <div class="header-tools-icons">
+                <i class="fas fa-undo" title="Undo"></i>
+                <i class="fas fa-redo" title="Redo"></i>
+                <i class="fas fa-sync-alt" title="Refresh" onclick="location.reload()"></i>
+            </div>
+            <div class="mode-toggle-group">
+                <button id="btn-mode-subject" class="mode-toggle-btn active" onclick="switchMode('subject')">BY SUBJECT</button>
+                <button id="btn-mode-program" class="mode-toggle-btn" onclick="switchMode('program')">BY PROGRAM</button>
+            </div>
         </div>
     </div>
 
@@ -951,6 +994,11 @@
         </div>
     </div>
 
+    <!-- Program view header (By Program mode only) -->
+    <div id="prog-view-label" class="prog-view-header">
+        <span id="prog-view-label-text">SELECT PROGRAM, YEAR LEVEL, AND SEMESTER TO VIEW</span>
+    </div>
+
     <!-- 3. GRID CONTAINER (Calendar View) -->
     <div class="grid-container" id="calendarViewContainer">
         <div class="rooms-sidebar">
@@ -994,6 +1042,12 @@
 <div id="app-init-data"
      data-rooms="{{ rooms_json | e }}"
      data-faculty="{{ faculty_json | e }}"
+     data-init-mode="{{ init_mode }}"
+     data-init-prog="{{ init_prog }}"
+     data-init-yl="{{ init_yl }}"
+     data-init-ay="{{ init_ay }}"
+     data-init-sem="{{ init_sem }}"
      hidden></div>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}"></script>
 {% endblock %}
+

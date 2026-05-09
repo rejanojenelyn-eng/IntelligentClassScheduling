@@ -135,7 +135,7 @@
                 <td class="emp-status">{{ emp.employeestatus }}</td>
                 <td class="action-icons">
                     <i class="fas fa-edit edit"
-                        data-emp="{{ emp | tojson | e }}"
+                        data-emp="{{ emp | tojson | forceescape }}"
                         onclick="openEditFromEl(this)"></i>
                 </td>
             </tr>

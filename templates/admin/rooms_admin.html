@@ -3,59 +3,81 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+    .btn-add-building {
+        width: 100%;
+        background: #fff;
+        color: #7a0000;
+        border: none;
+        border-radius: 6px;
+        padding: 9px 12px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: .4px;
+        cursor: pointer;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        justify-content: center;
+        transition: background .15s, color .15s;
+    }
+    .btn-add-building:hover { background: #FFD700; color: #5c0000; }
+</style>
 {% endblock %}
 
 {% block content %}
 <div class="room-container">
 
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 25px;">
-        <!-- STATS CARDS -->
-        <div class="stats-row" style="flex-grow: 1; margin-bottom: 0;">
-            <div class="stat-card"><span class="stat-label">TOTAL LABORATORIES</span><span class="stat-value">{{
-                    total_labs }}</span></div>
-            <div class="stat-card"><span class="stat-label">TOTAL LECTURE</span><span class="stat-value">{{ total_lec
-                    }}</span></div>
-            <div class="stat-card"><span class="stat-label">TOTAL ROOMS</span><span class="stat-value">{{ total_rooms
-                    }}</span></div>
-            <div class="stat-card white-border"><span class="stat-label">TOTAL BUILDINGS</span><span
-                    class="stat-value">{{ total_bldgs }}</span></div>
-        </div>
-
-        <div style="display: flex; flex-direction: column; gap: 10px; margin-left: 20px;">
-            <button class="btn-add-room-admin" onclick="openModal('modalBldg')"><i class="fas fa-plus-square"></i> ADD
-                NEW BLDG</button>
-            <button class="btn-add-room-admin" onclick="openModal('modalRoom')"><i class="fas fa-plus-square"></i> ADD
-                NEW ROOM</button>
-        </div>
+    <!-- STATS CARDS -->
+    <div class="stats-row">
+        <div class="stat-card"><span class="stat-label">TOTAL LABORATORIES</span><span class="stat-value">{{ total_labs }}</span></div>
+        <div class="stat-card"><span class="stat-label">TOTAL LECTURE</span><span class="stat-value">{{ total_lec }}</span></div>
+        <div class="stat-card"><span class="stat-label">TOTAL ROOMS</span><span class="stat-value">{{ total_rooms }}</span></div>
+        <div class="stat-card white-border"><span class="stat-label">TOTAL BUILDINGS</span><span class="stat-value">{{ total_bldgs }}</span></div>
     </div>
 
     <div class="room-main-wrapper">
         <div class="room-main-header">ROOMS AND BUILDINGS</div>
         <div class="room-grid">
+
+            <!-- LEFT SIDEBAR: BUILDINGS -->
             <div class="building-sidebar">
                 <h3>LIST OF BUILDINGS</h3>
+                <button class="btn-add-building" onclick="openModal('modalBldg')">
+                    <i class="fas fa-plus"></i> Add New Building
+                </button>
                 <button class="btn-building active" onclick="filterBySidebar('')">ALL BUILDINGS</button>
                 {% for bldg in buildings %}
-                <button class="btn-building" onclick="filterBySidebar('{{ bldg.buildingname }}')"
+                <button class="btn-building"
+                    onclick="filterBySidebar('{{ bldg.buildingname }}')"
                     oncontextmenu="showBuildingMenu(event, '{{ bldg.buildingid }}', '{{ bldg.buildingname }}')">
                     {{ bldg.buildingname }}
                 </button>
                 {% endfor %}
             </div>
 
+            <!-- RIGHT AREA: TABLE & FILTERS -->
             <div class="room-content-area">
+
+                <!-- TOP FILTERS -->
                 <div class="room-filters">
                     <div class="filter-group-row">
-                        <div class="filter-item"><label>SEARCH ROOM</label><input type="text" id="searchRoom"
-                                onkeyup="filterRoomTable()" placeholder="Type..."></div>
-                        <div class="filter-item"><label>BUILDING</label>
+                        <div class="filter-item">
+                            <label>SEARCH ROOM</label>
+                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type...">
+                        </div>
+                        <div class="filter-item">
+                            <label>BUILDING</label>
                             <select id="filterBuilding" onchange="filterRoomTable()">
                                 <option value="">All Buildings</option>
-                                {% for bldg in buildings %}<option value="{{ bldg.buildingname }}">{{ bldg.buildingname
-                                    }}</option>{% endfor %}
+                                {% for bldg in buildings %}
+                                <option value="{{ bldg.buildingname }}">{{ bldg.buildingname }}</option>
+                                {% endfor %}
                             </select>
                         </div>
-                        <div class="filter-item"><label>ROOM TYPE</label>
+                        <div class="filter-item">
+                            <label>ROOM TYPE</label>
                             <select id="filterType" onchange="filterRoomTable()">
                                 <option value="">All Types</option>
                                 <option value="Lecture">Lecture</option>
@@ -64,16 +86,19 @@
                         </div>
                     </div>
                     <div class="actions-row">
-                        <button class="btn-room-export"
-                            style="background: white; color: var(--pup-maroon); font-weight: 800;"
-                            onclick="toggleAvailabilityRow()">
-                            CHECK AVAILABLE ROOMS
+                        <button class="btn-room-export" onclick="exportRoomExcel()">
+                            <i class="fas fa-file-export"></i> Export
                         </button>
-                        <button class="btn-room-export" onclick="exportRoomExcel()"><i class="fas fa-file-export"></i>
-                            Export</button>
+                        <button class="btn-room-export" onclick="openModal('modalRoom')">
+                            <i class="fas fa-plus-square"></i> Add New Room
+                        </button>
+                        <button class="btn-room-export" onclick="toggleAvailabilityRow()">
+                            <i class="fas fa-clock"></i> Check Available Rooms
+                        </button>
                     </div>
                 </div>
 
+                <!-- TOGGLEABLE AVAILABILITY ROW -->
                 <div id="availabilityRow" class="availability-filter-row">
                     <div class="avail-item-inline">
                         <label style="color: white; font-size: 0.7rem;">SELECT DAY</label>
@@ -84,20 +109,21 @@
                             <option>Wednesday</option>
                             <option>Thursday</option>
                             <option>Friday</option>
+                            <option>Saturday</option>
+                            <option>Sunday</option>
                         </select>
                     </div>
                     <div class="avail-item-inline">
                         <label style="color: white; font-size: 0.7rem;">SELECT TIME</label>
-                        <input type="text" id="filterTime" placeholder="e.g. 7:30AM - 10:30AM"
-                            onkeyup="filterRoomTable()">
+                        <input type="text" id="filterTime" placeholder="e.g. 7:30AM - 10:30AM" onkeyup="filterRoomTable()">
                     </div>
                 </div>
 
-                <div id="availableBanner" class="available-banner"
-                    style="display: none; opacity: 1; font-size: 1.2rem; color: #800000; margin-top: 15px;">
+                <div id="availableBanner" class="available-banner" style="display: none; opacity: 1; font-size: 1.2rem; color: #800000; margin-top: 15px;">
                     A V A I L A B L E &nbsp; R O O M S
                 </div>
 
+                <!-- TABLE -->
                 <table class="room-table" id="roomTable">
                     <thead>
                         <tr>
@@ -119,11 +145,13 @@
                                 <div class="action-btns-wrapper">
                                     <button class="btn-action view" title="View"><i class="fas fa-eye"></i></button>
                                     <button class="btn-action edit" title="Edit"
-                                        onclick="openEditModal('{{ r.roomid }}', '{{ r.roomname }}', '{{ r.roomtype }}', '{{ r.roomcapacity }}', '{{ r.buildingid }}')"><i
-                                            class="fas fa-pen"></i></button>
+                                        onclick="openEditModal('{{ r.roomid }}', '{{ r.roomname }}', '{{ r.roomtype }}', '{{ r.roomcapacity }}', '{{ r.buildingid }}')">
+                                        <i class="fas fa-pen"></i>
+                                    </button>
                                     <button class="btn-action delete" title="Delete"
-                                        onclick="confirmDelete('{{ r.roomid }}', '{{ r.roomname }}')"><i
-                                            class="fas fa-trash"></i></button>
+                                        onclick="confirmDelete('{{ r.roomid }}', '{{ r.roomname }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -158,8 +186,7 @@
             <div class="modal-header"><i class="fas fa-building"></i>
                 <h2>RENAME BUILDING</h2>
             </div>
-            <div class="modal-group"><label>New Name</label><input type="text" name="bldg_name" id="edit_bldg_name"
-                    required></div>
+            <div class="modal-group"><label>New Name</label><input type="text" name="bldg_name" id="edit_bldg_name" required></div>
             <div class="modal-actions">
                 <button type="button" class="btn-modal-cancel" onclick="closeModal('modalEditBldg')">Cancel</button>
                 <button type="submit" class="btn-modal-confirm">Confirm</button>
@@ -175,16 +202,21 @@
                 <h2>ADD ROOM</h2>
             </div>
             <div class="modal-grid">
-                <div class="modal-group"><label>Building</label><select name="bldg_id">{% for b in raw_buildings %}
-                        <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>{% endfor %}
-                    </select></div>
+                <div class="modal-group"><label>Building</label>
+                    <select name="bldg_id">
+                        {% for b in raw_buildings %}
+                        <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <div class="modal-group"><label>Room number</label><input type="text" name="room_name" required></div>
-                <div class="modal-group"><label>Room type</label><select name="room_type">
+                <div class="modal-group"><label>Room type</label>
+                    <select name="room_type">
                         <option>Lecture</option>
                         <option>Laboratory</option>
-                    </select></div>
-                <div class="modal-group"><label>Room capacity</label><input type="number" name="capacity" required>
+                    </select>
                 </div>
+                <div class="modal-group"><label>Room capacity</label><input type="number" name="capacity" required></div>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn-modal-cancel" onclick="closeModal('modalRoom')">Cancel</button>
@@ -202,17 +234,19 @@
                 <h2>EDIT ROOM</h2>
             </div>
             <div class="modal-grid">
-                <div class="modal-group"><label>Building</label><select name="bldg_id" id="edit_room_bldg_id">{% for b
-                        in raw_buildings %}<option value="{{ b.buildingid }}">{{ b.buildingname }}</option>{% endfor
-                        %}</select></div>
-                <div class="modal-group"><label>Room number</label><input type="text" name="room_name"
-                        id="edit_room_name" required></div>
-                <div class="modal-group"><label>Room type</label><select name="room_type" id="edit_room_type">
+                <div class="modal-group"><label>Building</label>
+                    <select name="bldg_id" id="edit_room_bldg_id">
+                        {% for b in raw_buildings %}<option value="{{ b.buildingid }}">{{ b.buildingname }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="modal-group"><label>Room number</label><input type="text" name="room_name" id="edit_room_name" required></div>
+                <div class="modal-group"><label>Room type</label>
+                    <select name="room_type" id="edit_room_type">
                         <option value="Lecture">Lecture</option>
                         <option value="Laboratory">Laboratory</option>
-                    </select></div>
-                <div class="modal-group"><label>Room capacity</label><input type="number" name="capacity"
-                        id="edit_room_capacity" required></div>
+                    </select>
+                </div>
+                <div class="modal-group"><label>Room capacity</label><input type="number" name="capacity" id="edit_room_capacity" required></div>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn-modal-cancel" onclick="closeModal('modalEditRoom')">Cancel</button>
@@ -226,8 +260,7 @@
     <div class="modal-box delete-confirm">
         <div class="delete-icon-box"><i class="fas fa-exclamation-triangle"></i></div>
         <h2>DELETE ROOM</h2>
-        <p class="delete-warning-text">Delete room <span id="del_room_name"
-                style="font-weight: 800; color: #c0392b;"></span>?<br><small>This action cannot be undone.</small></p>
+        <p class="delete-warning-text">Delete room <span id="del_room_name" style="font-weight: 800; color: #c0392b;"></span>?<br><small>This action cannot be undone.</small></p>
         <div class="modal-actions">
             <button type="button" class="btn-modal-cancel" onclick="closeModal('modalDeleteRoom')">Cancel</button>
             <a id="confirmDeleteLink" href="#" class="btn-modal-delete">Delete</a>
@@ -235,18 +268,13 @@
     </div>
 </div>
 
-<!-- MODAL: DELETE BUILDING CONFIRMATION -->
 <div id="modalDeleteBldg" class="modal-overlay">
     <div class="modal-box delete-confirm">
-        <div class="delete-icon-box">
-            <i class="fas fa-exclamation-triangle"></i>
-        </div>
+        <div class="delete-icon-box"><i class="fas fa-exclamation-triangle"></i></div>
         <h2>DELETE BUILDING</h2>
         <p class="delete-warning-text">
-            Are you sure you want to delete building <span id="del_bldg_name_display"
-                style="font-weight: 800; color: #c0392b;"></span>?<br>
-            <small style="color: #666;">This will also delete all rooms associated with this building. This action
-                cannot be undone.</small>
+            Are you sure you want to delete building <span id="del_bldg_name_display" style="font-weight: 800; color: #c0392b;"></span>?<br>
+            <small style="color: #666;">This will also delete all rooms associated with this building. This action cannot be undone.</small>
         </p>
         <div class="modal-actions">
             <button type="button" class="btn-modal-cancel" onclick="closeModal('modalDeleteBldg')">Cancel</button>

@@ -1,3 +1,50 @@
+/* ---- Schedule List filters ---- */
+const _initEl  = document.getElementById('schedule-init-data');
+const SEM_DATA  = JSON.parse(_initEl.dataset.sems);
+const TODAY_STR = _initEl.dataset.today;
+const ACTIVE_AY = _initEl.dataset.activeAy;
+const ACTIVE_SEM = _initEl.dataset.activeSem;
+
+const SEM_LABELS = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
+
+function populateSemDropdown(selectedAy, preselectSem) {
+    const sel  = document.getElementById('sl_sem');
+    const today = TODAY_STR;
+    sel.innerHTML = '';
+    SEM_DATA
+        .filter(s => s.ay === selectedAy && (!s.end || s.end >= today))
+        .forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.type;
+            opt.textContent = SEM_LABELS[s.type] || s.type;
+            if (s.type === preselectSem) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    filterStatusList();
+}
+
+function onAyChange() {
+    const ay = document.getElementById('sl_ay').value;
+    populateSemDropdown(ay, null);
+}
+
+function filterStatusList() {
+    const prog = document.getElementById('sl_prog').value;
+    const ay   = document.getElementById('sl_ay').value;
+    const sem  = document.getElementById('sl_sem').value;
+    document.querySelectorAll('.status-monitor-table tbody tr').forEach(row => {
+        const match = (!prog || row.dataset.prog === prog)
+                   && (!ay   || row.dataset.ay   === ay)
+                   && (!sem  || row.dataset.sem   === sem);
+        row.style.display = match ? '' : 'none';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('sl_ay').addEventListener('change', onAyChange);
+    populateSemDropdown(ACTIVE_AY, ACTIVE_SEM);
+});
+
 /* ---- Notification dismiss ---- */
 function closeNotif() {
     const el = document.getElementById('notif-overlay');
