@@ -320,10 +320,7 @@ table.rpt-table tbody td:first-child { font-weight: 600; color: #630100; }
                             {% endfor %}
                         </select>
                     </div>
-
-                </div>
-            </div>
-
+        </div>
     </div>
 
     <!-- Preview Area (populated by JS) -->
@@ -353,7 +350,7 @@ const RPT_LABELS = {
 };
 const SUB_FILTERS = {
     offerings:   ['sgProgram','sgYearLevel'],
-    assignments: ['sgInstructor'],
+    assignments: ['sgProgram','sgInstructor'],
     faculty:     ['sgFacultyType','sgFacultyStatus','sgSpecialization'],
     rooms:       ['sgBuilding','sgRoomType'],
     curriculum:  ['sgProgram','sgCurriculum'],
@@ -378,6 +375,27 @@ function onReportTypeChange() {
     document.getElementById('grpSem').classList.toggle('hidden', !needsPeriod);
     debounceApply();
 }
+
+/* ── Auto-select report type + program from URL params ── */
+document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const t    = params.get('type');
+    const prog = params.get('program');
+    if (t) {
+        const sel = document.getElementById('rptType');
+        if (sel && [...sel.options].some(o => o.value === t)) {
+            sel.value = t;
+            onReportTypeChange();
+        }
+    }
+    if (prog) {
+        const pSel = document.getElementById('rptProgram');
+        if (pSel) {
+            const match = [...pSel.options].find(o => o.value.toUpperCase() === prog.toUpperCase());
+            if (match) { pSel.value = match.value; debounceApply(); }
+        }
+    }
+});
 
 /* ── Curriculum depends on Program ── */
 function onProgramChange() {

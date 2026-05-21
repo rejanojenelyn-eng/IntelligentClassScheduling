@@ -420,6 +420,33 @@
     </div>
 </div>
 
+<!-- ── Publish Selection Modal ── -->
+<div id="publishModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:12px;width:min(620px,94vw);max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.22);">
+        <div style="background:#630100;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;">
+            <div>
+                <div style="font-size:0.6rem;font-weight:900;letter-spacing:2px;opacity:0.7;margin-bottom:2px;">ACTION REQUIRED</div>
+                <div style="font-size:1rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;">Select Sessions to Publish</div>
+            </div>
+            <button onclick="document.getElementById('publishModal').style.display='none'" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;opacity:0.7;">✕</button>
+        </div>
+        <div style="padding:14px 22px 6px;font-size:0.78rem;color:#555;border-bottom:1px solid #eee;">
+            Choose which Draft sessions to publish. Unchecked sessions will remain as Draft.
+        </div>
+        <div id="publishSessionList" style="overflow-y:auto;flex:1;padding:12px 22px;"></div>
+        <div style="padding:16px 22px;border-top:1px solid #eee;display:flex;gap:10px;justify-content:flex-end;">
+            <button onclick="document.getElementById('publishModal').style.display='none'"
+                style="padding:10px 22px;border-radius:6px;border:2px solid #630100;background:#fff;color:#630100;font-weight:800;font-size:0.78rem;letter-spacing:0.5px;cursor:pointer;">
+                CANCEL
+            </button>
+            <button id="publishConfirmBtn" onclick="confirmPublishSelected()"
+                style="padding:10px 22px;border-radius:6px;border:none;background:#630100;color:#fff;font-weight:800;font-size:0.78rem;letter-spacing:0.5px;cursor:pointer;">
+                <i class="fas fa-check-circle"></i> PUBLISH SELECTED
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>
 const VERSION_ID        = {{ version_id }};
 const SCHEDULE_GEN_URL  = "{{ url_for('schedule_generation_view') }}";

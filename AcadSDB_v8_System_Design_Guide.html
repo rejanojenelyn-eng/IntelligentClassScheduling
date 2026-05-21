@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AcadSDB v8 — System Design Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --red: #630100;
+    --red-light: #fdf2f2;
+    --red-mid: #e8c8c8;
+    --text: #1e1e1e;
+    --muted: #666;
+    --border: #e5e5e5;
+    --code-bg: #f6f8fa;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    background: #fff;
+    line-height: 1.7;
+    padding: 0;
+  }
+
+  /* ── cover ── */
+  .cover {
+    background: var(--red);
+    color: #fff;
+    padding: 72px 80px 60px;
+    page-break-after: always;
+  }
+
+  .cover-eyebrow {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    margin-bottom: 24px;
+  }
+
+  .cover-title {
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: -0.5px;
+    line-height: 1.15;
+    margin-bottom: 8px;
+  }
+
+  .cover-subtitle {
+    font-size: 16px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-bottom: 56px;
+  }
+
+  .cover-meta {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 32px;
+    width: fit-content;
+  }
+
+  .cover-meta-item label {
+    display: block;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.5;
+    margin-bottom: 3px;
+  }
+
+  .cover-meta-item span { font-size: 13px; font-weight: 700; }
+
+  .cover-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.2);
+    margin: 40px 0;
+  }
+
+  .cover-footer { font-size: 10px; opacity: 0.5; letter-spacing: 0.5px; }
+
+  /* ── changelog badge ── */
+  .changelog {
+    background: rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 32px;
+    display: inline-block;
+  }
+
+  .changelog-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    margin-bottom: 8px;
+  }
+
+  .changelog li {
+    font-size: 11px;
+    opacity: 0.85;
+    margin-bottom: 3px;
+    list-style: none;
+    padding-left: 12px;
+    position: relative;
+  }
+
+  .changelog li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    opacity: 0.5;
+  }
+
+  /* ── body layout ── */
+  .doc-body {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 48px 60px;
+  }
+
+  /* ── toc ── */
+  .toc {
+    background: var(--red-light);
+    border: 1px solid var(--red-mid);
+    border-radius: 10px;
+    padding: 28px 32px;
+    margin-bottom: 48px;
+    page-break-after: always;
+  }
+
+  .toc-title {
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 16px;
+  }
+
+  .toc ol { padding-left: 20px; columns: 2; column-gap: 32px; }
+
+  .toc li {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 6px;
+    break-inside: avoid;
+  }
+
+  .toc a { color: var(--red); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ── headings ── */
+  h2 {
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--red);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin: 48px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 2.5px solid var(--red-mid);
+    page-break-after: avoid;
+  }
+
+  h2 .sec-num {
+    display: inline-block;
+    background: var(--red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 900;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-right: 10px;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+  }
+
+  h3 {
+    font-size: 13px;
+    font-weight: 800;
+    color: #333;
+    margin: 24px 0 10px;
+    letter-spacing: 0.3px;
+    page-break-after: avoid;
+  }
+
+  p { margin-bottom: 12px; }
+
+  /* ── tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 12px;
+  }
+
+  thead tr { background: var(--red); }
+
+  thead th {
+    color: #fff;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    padding: 9px 14px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  tbody tr:nth-child(even) { background: #fafafa; }
+  tbody tr:hover { background: var(--red-light); }
+
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+
+  td strong { color: var(--red); }
+
+  /* ── code ── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+    border-radius: 6px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.65;
+    margin: 12px 0 20px;
+    color: #24292e;
+    white-space: pre;
+    page-break-inside: avoid;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #c0392b;
+  }
+
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+  /* ── callouts ── */
+  blockquote {
+    background: #fffbeb;
+    border-left: 4px solid #f59e0b;
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12px;
+    color: #78350f;
+    font-weight: 600;
+  }
+
+  .callout-info {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12px;
+    color: #1e40af;
+    font-weight: 600;
+  }
+
+  .callout-danger {
+    background: #fff5f5;
+    border-left: 4px solid var(--red);
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 12px;
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  /* ── lists ── */
+  ul, ol { padding-left: 22px; margin: 8px 0 16px; }
+  li { margin-bottom: 5px; }
+
+  /* ── scenario cards ── */
+  .scenario {
+    background: #fff;
+    border: 1px solid var(--red-mid);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 14px;
+    page-break-inside: avoid;
+  }
+
+  .scenario-title {
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 10px;
+  }
+
+  .scenario ol { margin: 0; }
+  .scenario li { font-size: 12px; }
+
+  .state-badge {
+    display: inline-block;
+    background: var(--red-light);
+    color: var(--red);
+    border: 1px solid var(--red-mid);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 8px;
+    margin-top: 8px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── pill legend ── */
+  .pill-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .pill-draft    { background: #fff8e1; color: #946300; border: 1.5px solid #ffe082; }
+  .pill-approved { background: #e8f8ee; color: #1a7a2e; border: 1.5px solid #b2dbb5; }
+  .pill-locked   { background: #eef2ff; color: #3a56b0; border: 1.5px solid #c7d2f8; }
+  .pill-archive  { background: #f4f4f4; color: #777;    border: 1.5px solid #ddd; }
+  .pill-pending  { background: #fff3e0; color: #b45309; border: 1.5px solid #fed7aa; }
+  .pill-active   { background: #f0fdf4; color: #166534; border: 1.5px solid #86efac; }
+
+  /* ── editor cards ── */
+  .editor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0 24px;
+  }
+
+  .editor-card {
+    border-radius: 10px;
+    padding: 20px;
+    border: 2px solid;
+  }
+
+  .editor-card-final {
+    background: #fdf9ff;
+    border-color: #7c3aed;
+  }
+
+  .editor-card-local {
+    background: #f0fdf4;
+    border-color: #16a34a;
+  }
+
+  .editor-card-title {
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .editor-card-final .editor-card-title { color: #7c3aed; }
+  .editor-card-local .editor-card-title { color: #16a34a; }
+
+  .editor-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin: 4px 4px 4px 0;
+  }
+
+  .btn-draft   { background: #fff8e1; color: #946300; border: 1.5px solid #ffe082; }
+  .btn-approve { background: #7c3aed; color: #fff; border: 1.5px solid #7c3aed; }
+  .btn-save-local { background: #16a34a; color: #fff; border: 1.5px solid #16a34a; }
+  .btn-pending { background: #fff3e0; color: #b45309; border: 1.5px solid #fed7aa; }
+
+  .editor-access-note {
+    font-size: 10px;
+    color: #888;
+    margin-top: 10px;
+    font-style: italic;
+  }
+
+  /* ── lifecycle diagram ── */
+  .lifecycle-diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 16px 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .lc-box {
+    text-align: center;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    min-width: 90px;
+  }
+
+  .lc-draft    { background: #fff8e1; color: #946300; border: 2px solid #ffe082; }
+  .lc-approved { background: #e8f8ee; color: #1a7a2e; border: 2px solid #b2dbb5; }
+  .lc-locked   { background: #eef2ff; color: #3a56b0; border: 2px solid #c7d2f8; }
+  .lc-archive  { background: #f4f4f4; color: #777;    border: 2px solid #ddd; }
+
+  .lc-arrow { font-size: 18px; color: #999; font-weight: 300; }
+
+  .lc-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #999;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  /* ── settings box ── */
+  .settings-box {
+    background: #f8f4ff;
+    border: 1.5px solid #c4b5fd;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-size: 12px;
+  }
+
+  .settings-box-title {
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #7c3aed;
+    margin-bottom: 8px;
+  }
+
+  /* ── appendix note ── */
+  .appendix-note {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-style: italic;
+  }
+
+  /* ── print ── */
+  @media print {
+    body { font-size: 11.5px; }
+    .cover { padding: 60px; page-break-after: always; }
+    .doc-body { padding: 32px 48px; }
+    h2 { page-break-before: always; }
+    h2:first-of-type { page-break-before: avoid; }
+    pre, table, .scenario, .editor-grid { page-break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+    .editor-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ COVER ═══ -->
+<div class="cover">
+  <div class="cover-eyebrow">PUPLC Intelligent Class Scheduling System</div>
+  <div class="cover-title">AcadSDB v8<br>System Design Guide</div>
+  <div class="cover-subtitle">Scheduling Logic, Lifecycle Rules &amp; Architecture Reference</div>
+  <div class="cover-meta">
+    <div class="cover-meta-item"><label>Version</label><span>8.2</span></div>
+    <div class="cover-meta-item"><label>Date</label><span>May 2026</span></div>
+    <div class="cover-meta-item"><label>Branch</label><span>jajaBranch</span></div>
+  </div>
+  <div class="changelog">
+    <div class="changelog-label">v8.2 Changes</div>
+    <ul>
+      <li>Replaced single Manual Editor with 2 dedicated editors (Final Schedule + Local Arrangement)</li>
+      <li>Removed Published status — lifecycle is now Draft → Approved → Locked</li>
+      <li>Adjustment Period applies to Final Schedule only — not Local Arrangement</li>
+      <li>Local Arrangement only accessible after an Approved schedule exists</li>
+      <li>Local Arrangement editable until semester ends (independent of Adjustment Period)</li>
+      <li>Local Arrangement statuses: Pending / Active / Expired (auto at semester end)</li>
+    </ul>
+  </div>
+  <div class="cover-divider"></div>
+  <div class="cover-footer">Merged from AcadSDB v7 System Design Guide &amp; New Scheduling System Logic — CAPSTONE 2026</div>
+</div>
+
+<!-- ═══ BODY ═══ -->
+<div class="doc-body">
+
+  <!-- TOC -->
+  <div class="toc">
+    <div class="toc-title">Table of Contents</div>
+    <ol>
+      <li><a href="#s1">Overview</a></li>
+      <li><a href="#s2">The Two Editors</a></li>
+      <li><a href="#s3">Status Definitions</a></li>
+      <li><a href="#s4">Schedule Version Lifecycle</a></li>
+      <li><a href="#s5">Version State Rules</a></li>
+      <li><a href="#s6">Adjustment Period Setting</a></li>
+      <li><a href="#s7">Lifecycle Scenarios</a></li>
+      <li><a href="#s8">Auto-Generation Engine</a></li>
+      <li><a href="#s9">Final Schedule Editor Rules</a></li>
+      <li><a href="#s10">Local Arrangement Editor Rules</a></li>
+      <li><a href="#s11">Constraint System</a></li>
+      <li><a href="#s12">Role Visibility Matrix</a></li>
+      <li><a href="#s13">Database Schema</a></li>
+      <li><a href="#s14">API Endpoints Reference</a></li>
+      <li><a href="#s15">Version History UI</a></li>
+      <li><a href="#s16">Delete &amp; Reset Procedures</a></li>
+      <li><a href="#s17">Appendix: Key Design Decisions</a></li>
+    </ol>
+  </div>
+
+  <!-- ── 1 ── -->
+  <h2 id="s1"><span class="sec-num">01</span> Overview</h2>
+  <p>The PUPLC Intelligent Class Scheduling System automates and manages academic class schedules using a <strong>Case-Based Reasoning (CBR) + Random Forest</strong> AI engine for generation and a <strong>Constraint Satisfaction Problem (CSP)</strong> engine for real-time conflict detection.</p>
+  <p>The system uses <strong>two separate editors</strong> with clearly defined purposes:</p>
+  <ul>
+    <li><strong>Final Schedule Editor</strong> — for building and approving the official schedule that appears in SIS.</li>
+    <li><strong>Local Arrangement Editor</strong> — for managing temporary, day-to-day adjustments on top of the approved schedule.</li>
+  </ul>
+  <p>Schedules go through a <strong>3-status lifecycle</strong> (Draft → Approved → Locked), with an <strong>Adjustment Period</strong> window during which an Approved schedule can still be corrected before it becomes fully locked.</p>
+  <p><strong>Group key</strong> = <code>(programcode, yearlevel, acadyear, term)</code><br>Every version rule applies within this group scope.</p>
+
+  <!-- ── 2 ── -->
+  <h2 id="s2"><span class="sec-num">02</span> The Two Editors</h2>
+
+  <div class="editor-grid">
+    <div class="editor-card editor-card-final">
+      <div class="editor-card-title">Final Schedule Editor</div>
+      <p style="font-size:12px;margin-bottom:12px;">Builds and approves the official class schedule. The approved result is what gets uploaded to SIS and seen by faculty.</p>
+      <div>
+        <span class="editor-btn btn-draft">Save as Draft</span>
+        <span class="editor-btn btn-approve">Approve Schedule</span>
+      </div>
+      <div class="editor-access-note">Access: always available to Academic Head</div>
+    </div>
+    <div class="editor-card editor-card-local">
+      <div class="editor-card-title">Local Arrangement Editor</div>
+      <p style="font-size:12px;margin-bottom:12px;">Manages temporary changes on top of the official schedule (room swaps, cancellations, makeups). Does NOT modify the official schedule.</p>
+      <div>
+        <span class="editor-btn btn-pending">Save as Draft</span>
+        <span class="editor-btn btn-save-local">Save Locally</span>
+      </div>
+      <div class="editor-access-note">Access: unlocked after Approved schedule exists · editable until semester ends</div>
+    </div>
+  </div>
+
+  <div class="callout-danger">
+    Local Arrangement Editor is <strong>locked/hidden</strong> if no Approved schedule exists yet for that program + year level + semester. You must go through the Final Schedule Editor first.
+  </div>
+
+  <!-- ── 3 ── -->
+  <h2 id="s3"><span class="sec-num">03</span> Status Definitions</h2>
+
+  <h3>Final Schedule — Version Statuses</h3>
+  <div class="pill-row">
+    <span class="pill pill-draft">Draft</span>
+    <span class="pill pill-approved">Approved</span>
+    <span class="pill pill-locked">Locked</span>
+    <span class="pill pill-archive">Archive</span>
+  </div>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th><th>Editable?</th><th>Who Sees It</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Draft</strong></td><td>Work-in-progress. Not official yet.</td><td>Yes, freely</td><td>Academic Head only</td></tr>
+      <tr><td><strong>Approved</strong></td><td>Official schedule. Live in SIS. Faculty can see it.</td><td>Yes, during Adjustment Period only</td><td>All roles</td></tr>
+      <tr><td><strong>Locked</strong></td><td>Adjustment Period has expired. Fully frozen.</td><td>No</td><td>All roles</td></tr>
+      <tr><td><strong>Archive</strong></td><td>Superseded by a newer Approved version. Historical record.</td><td>No (restorable to Draft)</td><td>Academic Head only</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Local Arrangement — Entry Statuses</h3>
+  <div class="pill-row">
+    <span class="pill pill-pending">Pending</span>
+    <span class="pill pill-active">Active</span>
+    <span class="pill pill-archive">Expired</span>
+  </div>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th><th>In Effect?</th><th>Editable?</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Pending</strong></td><td>Saved as Draft — being prepared, not yet applied.</td><td>No</td><td>Yes, until semester ends</td></tr>
+      <tr><td><strong>Active</strong></td><td>Saved Locally — confirmed and currently in effect.</td><td>Yes</td><td>Yes, until semester ends</td></tr>
+      <tr><td><strong>Expired</strong></td><td>Semester has ended. Entry is archived automatically.</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table>
+  <div class="callout-info">Local Arrangement entries are <strong>completely independent of the Adjustment Period</strong>. They remain editable as long as the semester is ongoing, regardless of whether the Final Schedule is Approved or Locked.</div>
+
+  <!-- ── 4 ── -->
+  <h2 id="s4"><span class="sec-num">04</span> Schedule Version Lifecycle</h2>
+
+  <div class="lifecycle-diagram">
+    <div>
+      <div class="lc-box lc-draft">Draft</div>
+      <div class="lc-label">Save as Draft</div>
+    </div>
+    <div class="lc-arrow">→</div>
+    <div>
+      <div class="lc-box lc-approved">Approved</div>
+      <div class="lc-label">Approve Schedule</div>
+    </div>
+    <div class="lc-arrow">→</div>
+    <div>
+      <div class="lc-box lc-locked">Locked</div>
+      <div class="lc-label">After Adj. Period</div>
+    </div>
+    <div class="lc-arrow" style="font-size:13px;color:#bbb;">↘</div>
+    <div>
+      <div class="lc-box lc-archive">Archive</div>
+      <div class="lc-label">When Replaced</div>
+    </div>
+  </div>
+
+  <p>When a new version is Approved, the old Approved/Locked version automatically moves to <strong>Archive</strong>. Archived versions can be <strong>restored to Draft</strong> at any time via the Version History page.</p>
+  <p>The <strong>Adjustment Period</strong> is a configurable window (set in Settings) during which an Approved schedule can still be edited and re-approved. Once the window expires, the schedule becomes <strong>Locked</strong> automatically.</p>
+
+  <!-- ── 5 ── -->
+  <h2 id="s5"><span class="sec-num">05</span> Version State Rules</h2>
+  <table>
+    <thead><tr><th>Rule</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Rule 1</strong></td><td>Only <strong>1 Draft</strong> may exist per group key at any time. Saving a new draft overwrites the existing Draft — same version number, updated content.</td></tr>
+      <tr><td><strong>Rule 2</strong></td><td>Only <strong>1 Approved</strong> version may exist per group key. Approving a Draft archives the current Approved/Locked version (if any) before setting the Draft to Approved.</td></tr>
+      <tr><td><strong>Rule 3</strong></td><td>An Approved version is editable <strong>only within the Adjustment Period</strong>. After the period expires, it automatically becomes Locked.</td></tr>
+      <tr><td><strong>Rule 4</strong></td><td>A <strong>Locked</strong> version is fully immutable. To revise it, use Restore in Version History → it creates a new Draft copy.</td></tr>
+      <tr><td><strong>Rule 5</strong></td><td><strong>Restore</strong> archives any existing Draft first, then creates a new Draft from the selected Archive. The archived version is preserved.</td></tr>
+      <tr><td><strong>Rule 6</strong></td><td><code>version_number</code> increments each time a new Draft is committed or a version is restored from Archive.</td></tr>
+      <tr><td><strong>Rule 7</strong></td><td>Local Arrangement entries are <strong>independent</strong> of version status. They are overlaid on top of the active Approved/Locked schedule and do not modify <code>schedule_sessions</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── 6 ── -->
+  <h2 id="s6"><span class="sec-num">06</span> Adjustment Period Setting</h2>
+
+  <div class="callout-danger" style="margin-bottom:16px;">The Adjustment Period applies to the <strong>Final Schedule only</strong>. It has <strong>no effect on Local Arrangements</strong> — those remain editable until the semester ends.</div>
+
+  <div class="settings-box">
+    <div class="settings-box-title">Settings → Schedule → Adjustment Period</div>
+    <p style="margin:0;font-size:12px;">Configurable number of days after Approval during which the <strong>Final Schedule</strong> can still be edited. After this window, the schedule automatically becomes <strong>Locked</strong>.</p>
+  </div>
+
+  <table>
+    <thead><tr><th>Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Adjustment Period = 7 days, today is Day 3</td><td>Approved schedule is still editable in Final Schedule Editor</td></tr>
+      <tr><td>Adjustment Period = 7 days, today is Day 8</td><td>Schedule automatically becomes Locked — no edits allowed</td></tr>
+      <tr><td>Adjustment Period = 0</td><td>Schedule locks immediately upon Approval</td></tr>
+    </tbody>
+  </table>
+
+  <blockquote>Even during the Adjustment Period, "Save as Draft" is still available. Use it for bigger revisions — it saves a Draft copy while the current Approved schedule stays live.</blockquote>
+
+  <h3>How Locking Works</h3>
+  <p>The system checks <code>approved_at + adjustment_period_days &lt; NOW()</code> on every load. No scheduled job needed — it is evaluated at runtime. The status column is updated to <code>'Locked'</code> lazily on first access after expiry, or by a nightly cleanup job.</p>
+
+  <!-- ── 7 ── -->
+  <h2 id="s7"><span class="sec-num">07</span> Lifecycle Scenarios</h2>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 1 — First-Time Schedule Generation</div>
+    <ol>
+      <li>Academic Head generates schedule via AI engine.</li>
+      <li>System creates <code>schedule</code> record + <code>schedule_version</code> (status=<strong>Draft</strong>, v1).</li>
+      <li>Sessions saved to <code>schedule_sessions</code>.</li>
+      <li>Local Arrangement Editor is <strong>not yet accessible</strong> (no Approved version exists).</li>
+    </ol>
+    <div class="state-badge">State: 1 Draft (v1) | Local Arrangement: locked</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 2 — Edit Draft in Final Schedule Editor</div>
+    <ol>
+      <li>Academic Head opens Draft in Final Schedule Editor.</li>
+      <li>Makes changes to session slots.</li>
+      <li>Clicks <strong>Save as Draft</strong> — sessions updated in-place, version number unchanged.</li>
+    </ol>
+    <div class="state-badge">State: 1 Draft (v1, updated) | Local Arrangement: locked</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 3 — Approve the Schedule</div>
+    <ol>
+      <li>Academic Head clicks <strong>Approve Schedule</strong>.</li>
+      <li>System checks: existing Approved/Locked version for this group?
+        <ul>
+          <li><strong>Yes →</strong> Archive the existing Approved/Locked version.</li>
+          <li><strong>No →</strong> Skip.</li>
+        </ul>
+      </li>
+      <li>Draft → <strong>Approved</strong>. Adjustment Period timer starts.</li>
+      <li>Schedule appears in SIS. Faculty can see it.</li>
+      <li><strong>Local Arrangement Editor is now unlocked</strong> for this group.</li>
+    </ol>
+    <div class="state-badge">State: 1 Approved (v1) | Local Arrangement: unlocked</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 4 — Quick Fix During Adjustment Period</div>
+    <ol>
+      <li>Academic Head spots an error in the Approved schedule (within Adjustment Period).</li>
+      <li>Opens it in Final Schedule Editor, makes the fix.</li>
+      <li>Clicks <strong>Approve Schedule</strong> — Approved version is updated in-place. Old Approved moves to Archive.</li>
+    </ol>
+    <div class="state-badge">State: 1 Approved (v1, corrected), 1 Archive (v1 original)</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 5 — Bigger Revision (Save as Draft First)</div>
+    <ol>
+      <li>Academic Head needs to restructure the schedule significantly.</li>
+      <li>Opens Final Schedule Editor, makes changes, clicks <strong>Save as Draft</strong>.</li>
+      <li>Draft v2 is saved. Current Approved v1 stays live for faculty.</li>
+      <li>Reviews Draft v2, makes more edits.</li>
+      <li>Clicks <strong>Approve Schedule</strong> — Draft v2 → Approved. v1 → Archive.</li>
+    </ol>
+    <div class="state-badge">State: 1 Approved (v2), 1 Archive (v1)</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 6 — Adjustment Period Expires</div>
+    <ol>
+      <li>Adjustment Period ends (e.g., 7 days after approval).</li>
+      <li>System automatically marks Approved → <strong>Locked</strong>.</li>
+      <li>Final Schedule Editor shows read-only view for this version.</li>
+      <li>To make changes: use Restore in Version History to create a new Draft.</li>
+    </ol>
+    <div class="state-badge">State: 1 Locked (v2), 1 Archive (v1)</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 7 — Local Arrangement (Temporary Change)</div>
+    <ol>
+      <li>Approved/Locked schedule exists. Local Arrangement Editor is accessible.</li>
+      <li>Academic Head opens Local Arrangement Editor.</li>
+      <li>Enters a temporary change (e.g., room swap on a specific date).</li>
+      <li>Clicks <strong>Save as Draft</strong> → saved as Pending (not yet active).</li>
+      <li>Reviews and confirms → clicks <strong>Save Locally</strong> → status becomes Active.</li>
+      <li>Active local arrangement overlays on the official schedule for that date.</li>
+    </ol>
+    <div class="state-badge">State: Official schedule unchanged | Local arrangement: Active</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 8 — Restore from Archive</div>
+    <ol>
+      <li>Academic Head goes to Version History, selects an archived version, clicks Restore.</li>
+      <li>System archives any existing Draft.</li>
+      <li>Creates a new Draft copy from the archived version (new <code>version_number</code>).</li>
+      <li>Academic Head edits in Final Schedule Editor → Approve when ready.</li>
+    </ol>
+    <div class="state-badge">State: New Draft created | Original Archive preserved</div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario 9 — Multiple Programs, Same Semester</div>
+    <p>Each <code>(programcode, yearlevel, acadyear, term)</code> group is fully independent. BSIT Year 1 and BSCS Year 1 in the same semester each have their own Draft/Approved/Locked lifecycle and their own Local Arrangement entries.</p>
+  </div>
+
+  <!-- ── 8 ── -->
+  <h2 id="s8"><span class="sec-num">08</span> Auto-Generation Engine</h2>
+  <h3>Algorithm: CBR + Random Forest</h3>
+  <table>
+    <thead><tr><th>Component</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Case-Based Reasoning (CBR)</strong></td><td>Retrieves the most similar past schedule (by program, year level, semester, enrollment) from historical data and uses it as the base template.</td></tr>
+      <tr><td><strong>Random Forest</strong></td><td>Predicts optimal time slot assignments based on: room capacity, faculty load, subject type, historical conflict rate, day/time distribution.</td></tr>
+      <tr><td><strong>CSP Post-Processing</strong></td><td>After generation, verifies no Hard Constraint is violated. Violations are logged to <code>schedule_exception_log</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Generation Flow</h3>
+  <pre>Input: (program, year level, acad year, term, subjects, faculty, rooms)
+  │
+  ▼
+CBR Retrieval — find closest past schedule
+  │
+  ▼
+Random Forest Prediction — assign time slots, rooms, faculty
+  │
+  ▼
+CSP Verification — check all Hard Constraints
+  │
+  ├── HC Violations found → log to schedule_exception_log, flag for review
+  │
+  └── No violations → save as Draft (opens in Final Schedule Editor)</pre>
+
+  <h3>Hard Constraint (HC) Types</h3>
+  <table>
+    <thead><tr><th>HC</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>HC-1</strong></td><td>No faculty double-booking (same faculty, same timeslot)</td></tr>
+      <tr><td><strong>HC-2</strong></td><td>No room double-booking (same room, same timeslot)</td></tr>
+      <tr><td><strong>HC-3</strong></td><td>No student group double-booking (same program/year, same timeslot)</td></tr>
+      <tr><td><strong>HC-4</strong></td><td>Subject unit hours must be satisfied within the week</td></tr>
+      <tr><td><strong>HC-5</strong></td><td>NSTP subjects: Sunday-only assignment</td></tr>
+      <tr><td><strong>HC-6</strong></td><td>Room capacity ≥ expected class enrollment</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── 9 ── -->
+  <h2 id="s9"><span class="sec-num">09</span> Final Schedule Editor Rules</h2>
+  <p>Used exclusively for building and approving the official class schedule.</p>
+  <table>
+    <thead><tr><th>Rule</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Buttons</strong></td><td><strong>Save as Draft</strong> and <strong>Approve Schedule</strong> only.</td></tr>
+      <tr><td><strong>Draft editing</strong></td><td>All session slots are freely editable. Real-time CSP runs on each change.</td></tr>
+      <tr><td><strong>Approved editing</strong></td><td>Editable only during Adjustment Period. After expiry, editor is read-only.</td></tr>
+      <tr><td><strong>isDraft check</strong></td><td>If the target version is Locked or Archived, the editor opens in read-only mode. Restore is suggested via a banner.</td></tr>
+      <tr><td><strong>NSTP Rule</strong></td><td>NSTP subjects can only be assigned to Sunday slots. Hard block enforced.</td></tr>
+      <tr><td><strong>Progress Colors</strong></td><td><span style="color:#c0392b;font-weight:700;">Red</span> 0–49% · <span style="color:#946300;font-weight:700;">Amber</span> 50–79% · <span style="color:#1a7a2e;font-weight:700;">Green</span> 80–100%</td></tr>
+      <tr><td><strong>Room Ranking</strong></td><td>Suggestions ranked by: (1) capacity fit, (2) building proximity, (3) equipment.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── 10 ── -->
+  <h2 id="s10"><span class="sec-num">10</span> Local Arrangement Editor Rules</h2>
+  <p>Used for temporary, date-specific changes on top of the official schedule. Does <strong>not</strong> modify <code>schedule_sessions</code>.</p>
+
+  <div class="callout-info">Access gate: Hidden/disabled unless an Approved or Locked schedule exists for the group (programcode + yearlevel + acadyear + term).</div>
+
+  <table>
+    <thead><tr><th>Rule</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Buttons</strong></td><td><strong>Save as Draft</strong> (Pending) and <strong>Save Locally</strong> (Active) only.</td></tr>
+      <tr><td><strong>Save as Draft</strong></td><td>Saves with status = <code>Pending</code>. Not yet in effect. Still editable.</td></tr>
+      <tr><td><strong>Save Locally</strong></td><td>Saves with status = <code>Active</code>. Immediately in effect for the specified date.</td></tr>
+      <tr><td><strong>Editable until</strong></td><td>Both Pending and Active entries remain editable until the <strong>semester ends</strong>. This is <strong>independent of the Adjustment Period</strong> — even if the Final Schedule is Locked, Local Arrangements can still be created and edited.</td></tr>
+      <tr><td><strong>Auto-expire</strong></td><td>When the semester ends, all Pending and Active entries automatically become <code>Expired</code>. This is handled by a runtime check or nightly job against the semester end date.</td></tr>
+      <tr><td><strong>Scope</strong></td><td>Each entry targets a <strong>specific date</strong>. For recurring/permanent changes, use the Final Schedule Editor.</td></tr>
+      <tr><td><strong>Overlay behavior</strong></td><td>Active entries are overlaid on the official schedule when rendering schedule views for that date.</td></tr>
+      <tr><td><strong>Types</strong></td><td>reschedule · cancellation · room_change · makeup</td></tr>
+      <tr><td><strong>Faculty requests</strong></td><td>Faculty requests from <code>schedule_change_request</code> feed into this editor. Academic Head reviews and applies them here. The <code>request_id</code> column links the two tables.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── 11 ── -->
+  <h2 id="s11"><span class="sec-num">11</span> Constraint System</h2>
+  <h3>CSP Engine Triggers</h3>
+  <table>
+    <thead><tr><th>Trigger</th><th>When It Runs</th></tr></thead>
+    <tbody>
+      <tr><td>Auto-generation</td><td>After CBR + Random Forest assigns all slots</td></tr>
+      <tr><td>Final Schedule Editor — slot change</td><td>On every session modification (real-time)</td></tr>
+      <tr><td>Restore to Draft</td><td>After restoring, CSP re-verifies the restored sessions</td></tr>
+    </tbody>
+  </table>
+  <h3>schedule_exception_log</h3>
+  <pre>INSERT INTO schedule_exception_log (
+    versionid, session_id, exception_type, description, detected_at
+) VALUES (...);</pre>
+  <p>Violations appear as red warning banners in the Final Schedule Editor. Academic Head must resolve or override before Approving.</p>
+
+  <!-- ── 12 ── -->
+  <h2 id="s12"><span class="sec-num">12</span> Role Visibility Matrix</h2>
+  <table>
+    <thead><tr><th>Feature</th><th>Faculty</th><th>Academic Head</th><th>Admin</th></tr></thead>
+    <tbody>
+      <tr><td>View Draft</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>View Approved</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>View Locked</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>View Archive</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>Final Schedule Editor</td><td>✗</td><td>✓ (Draft + Approved in adj. period)</td><td>✗</td></tr>
+      <tr><td>Approve Schedule</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>Local Arrangement Editor</td><td>✗</td><td>✓ (only if Approved/Locked exists)</td><td>✗</td></tr>
+      <tr><td>Restore from Archive</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>Version History page</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>Generate Schedule</td><td>✗</td><td>✓</td><td>✗</td></tr>
+      <tr><td>View Reports</td><td>✓ (own)</td><td>✓ (all)</td><td>✓ (all)</td></tr>
+    </tbody>
+  </table>
+  <blockquote>Faculty see the <strong>Approved</strong> or <strong>Locked</strong> schedule as the official class schedule in SIS. Active Local Arrangements are overlaid on their view for the applicable dates.</blockquote>
+
+  <!-- ── 13 ── -->
+  <h2 id="s13"><span class="sec-num">13</span> Database Schema</h2>
+  <h3>Core Tables</h3>
+  <table>
+    <thead><tr><th>Table</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>schedule</code></td><td>Parent record per group key</td></tr>
+      <tr><td><code>schedule_version</code></td><td>Version rows; status ∈ {Draft, Approved, Locked, Archive}</td></tr>
+      <tr><td><code>schedule_sessions</code></td><td>Individual class session slots per version</td></tr>
+      <tr><td><code>local_schedule_adjustment</code></td><td>Temporary changes; status ∈ {Pending, Active}</td></tr>
+      <tr><td><code>schedule_exception_log</code></td><td>HC violations logged on generation/save</td></tr>
+      <tr><td><code>schedule_change_request</code></td><td>Faculty-submitted change requests</td></tr>
+      <tr><td><code>class_meeting_request</code></td><td>Class-specific meeting requests</td></tr>
+      <tr><td><code>system_settings</code></td><td>Stores adjustment_period_days and other config</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Updated CHECK Constraints</h3>
+  <pre>-- schedule_version
+CONSTRAINT schedule_version_status_check
+    CHECK (status IN ('Draft', 'Approved', 'Locked', 'Archive'))
+
+-- local_schedule_adjustment
+CONSTRAINT local_adj_status_check
+    CHECK (status IN ('Pending', 'Active', 'Expired'))</pre>
+
+  <h3>New Columns</h3>
+  <pre>-- schedule_version: track when approved and when it locks
+ALTER TABLE schedule_version
+    ADD COLUMN approved_at TIMESTAMP,
+    ADD COLUMN locked_at   TIMESTAMP;
+
+-- local_schedule_adjustment: track status
+ALTER TABLE local_schedule_adjustment
+    ADD COLUMN status VARCHAR(10) DEFAULT 'Pending'
+        CHECK (status IN ('Pending', 'Active'));</pre>
+
+  <h3>Cascade Behavior</h3>
+  <pre>schedule
+  └── schedule_version  (ON DELETE CASCADE)
+        └── schedule_sessions  (ON DELETE CASCADE)
+
+local_schedule_adjustment  ── references schedule (NO CASCADE)
+schedule_change_request    ── references schedule (NO CASCADE)
+class_meeting_request      ── references schedule (NO CASCADE)</pre>
+
+  <!-- ── 14 ── -->
+  <h2 id="s14"><span class="sec-num">14</span> API Endpoints Reference</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/api/schedule/versions</code></td><td>All versions (all statuses)</td></tr>
+      <tr><td>GET</td><td><code>/api/schedule/drafts</code></td><td>Draft versions only</td></tr>
+      <tr><td>GET</td><td><code>/api/schedule/load-draft/&lt;versionid&gt;</code></td><td>Load sessions for a Draft</td></tr>
+      <tr><td>POST</td><td><code>/api/schedule/save-draft</code></td><td>Save/overwrite Draft</td></tr>
+      <tr><td>POST</td><td><code>/api/schedule/approve</code></td><td>Approve Draft → Approved; archive old Approved/Locked</td></tr>
+      <tr><td>POST</td><td><code>/api/schedule/versions/&lt;id&gt;/restore</code></td><td>Restore Archive → new Draft</td></tr>
+      <tr><td>DELETE</td><td><code>/api/schedule/drafts/&lt;versionid&gt;</code></td><td>Delete a Draft</td></tr>
+      <tr><td>GET</td><td><code>/api/local-arrangement/&lt;group&gt;</code></td><td>Get all local arrangements for a group</td></tr>
+      <tr><td>POST</td><td><code>/api/local-arrangement/save-draft</code></td><td>Save local arrangement as Pending</td></tr>
+      <tr><td>POST</td><td><code>/api/local-arrangement/save-local</code></td><td>Save local arrangement as Active</td></tr>
+      <tr><td>DELETE</td><td><code>/api/local-arrangement/&lt;id&gt;</code></td><td>Delete a local arrangement entry</td></tr>
+      <tr><td>GET</td><td><code>/api/settings/adjustment-period</code></td><td>Get current adjustment period (days)</td></tr>
+      <tr><td>POST</td><td><code>/api/settings/adjustment-period</code></td><td>Update adjustment period setting</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── 15 ── -->
+  <h2 id="s15"><span class="sec-num">15</span> Version History UI</h2>
+  <h3>Page: <code>/schedule/version-history</code></h3>
+  <p>Displays all Final Schedule versions grouped by <strong>Program → Semester → Year Level</strong>, with an interactive accordion.</p>
+
+  <h3>Filter Bar</h3>
+  <ul>
+    <li>Academic Year dropdown (populated from data)</li>
+    <li>Semester dropdown (1st / 2nd / Summer)</li>
+    <li>Program search (text input)</li>
+  </ul>
+
+  <h3>Version Chain per Year Level</h3>
+  <div class="pill-row" style="margin:12px 0;">
+    <span class="pill pill-archive">V1 Archive</span>
+    <span style="color:#ccc;font-size:18px;">→</span>
+    <span class="pill pill-archive">V2 Archive</span>
+    <span style="color:#ccc;font-size:18px;">→</span>
+    <span class="pill pill-locked">V3 Locked</span>
+  </div>
+
+  <h3>Pill Color Coding</h3>
+  <div class="pill-row">
+    <span class="pill pill-draft">Amber = Draft</span>
+    <span class="pill pill-approved">Green = Approved</span>
+    <span class="pill pill-locked">Blue = Locked</span>
+    <span class="pill pill-archive">Gray = Archive (+ Restore)</span>
+  </div>
+  <p style="margin-top:12px;"><strong>Nav:</strong> Schedule submenu → Version History (below Drafts)</p>
+
+  <!-- ── 16 ── -->
+  <h2 id="s16"><span class="sec-num">16</span> Delete &amp; Reset Procedures</h2>
+  <h3>Delete All Schedule Data (Fresh Start)</h3>
+  <pre>-- 1. No-CASCADE tables first
+DELETE FROM local_schedule_adjustment;
+DELETE FROM schedule_change_request;
+DELETE FROM class_meeting_request;
+DELETE FROM schedule_exception_log;
+
+-- 2. Sessions
+DELETE FROM schedule_sessions;
+
+-- 3. Versions
+DELETE FROM schedule_version;
+
+-- 4. Parent
+DELETE FROM schedule;</pre>
+
+  <h3>Reset Identity Sequences</h3>
+  <pre>ALTER TABLE schedule               ALTER COLUMN scheduleid     RESTART WITH 1;
+ALTER TABLE schedule_version       ALTER COLUMN versionid      RESTART WITH 1;
+ALTER TABLE schedule_sessions      ALTER COLUMN sessionid      RESTART WITH 1;
+ALTER TABLE local_schedule_adjustment ALTER COLUMN adjustmentid RESTART WITH 1;
+ALTER TABLE schedule_change_request   ALTER COLUMN requestid    RESTART WITH 1;
+ALTER TABLE class_meeting_request     ALTER COLUMN meetingrequestid RESTART WITH 1;
+ALTER TABLE schedule_exception_log    ALTER COLUMN exceptionid  RESTART WITH 1;</pre>
+
+  <!-- ── 17 ── -->
+  <h2 id="s17"><span class="sec-num">17</span> Appendix: Key Design Decisions</h2>
+  <table>
+    <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+    <tbody>
+      <tr><td>2 separate editors</td><td>Final Schedule and Local Arrangement serve completely different purposes. One editor merging both caused confusion. Separation makes intent clear for the user and the codebase.</td></tr>
+      <tr><td>Removed Published status</td><td>Published added an intermediate step that didn't serve a clear purpose when the Academic Head is the sole approver. Draft → Approved is simpler and direct.</td></tr>
+      <tr><td>Adjustment Period in Settings</td><td>Mirrors real academic practice — there's always a correction window after releasing a schedule. Making it configurable lets the institution decide their own policy.</td></tr>
+      <tr><td>Approved → Locked (not immutable from day 1)</td><td>Small corrections after approval are inevitable. A hard lock from day 1 would force a full restore-edit-approve cycle for a one-field fix. The adjustment period balances flexibility with finality.</td></tr>
+      <tr><td>Local Arrangement gated behind Approved</td><td>You cannot adjust something that doesn't officially exist. Prevents orphaned adjustments referencing no official baseline.</td></tr>
+      <tr><td>Local Arrangement has Pending/Active/Expired</td><td>Pending = drafting a change before it goes live. Active = confirmed and in effect. Expired = auto-set at semester end. Independent of Adjustment Period — Local Arrangements remain editable until the semester ends regardless of whether the Final Schedule is Locked.</td></tr>
+      <tr><td>Archive is restorable</td><td>Safety net for reverting bad approvals without losing history.</td></tr>
+      <tr><td>CSP on every Final Schedule Editor save</td><td>Immediate feedback prevents approving schedules with HC violations.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="appendix-note">
+    AcadSDB v8.1 — Updated design incorporating 2-editor model, Adjustment Period, and revised status lifecycle.<br>
+    Prepared for PUPLC Intelligent Class Scheduling System — CAPSTONE Project 2026.
+  </div>
+
+</div>
+</body>
+</html>

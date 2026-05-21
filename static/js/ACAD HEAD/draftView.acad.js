@@ -201,8 +201,102 @@
         window.location.href = MANUAL_EDITOR_URL;
     };
 
-    window.approveDraft = async function() {
-        if (!confirm('Approve and publish this schedule? The previous published version will be archived.')) return;
+    window.approveDraft = function() {
+        if (!scheduleData.length) { alert('No sessions loaded.'); return; }
+        // Build publish selection modal
+        const list = document.getElementById('publishSessionList');
+        if (!list) { alert('Publish modal not found.'); return; }
+
+        // Group sessions by subject
+        const groups = {};
+        scheduleData.forEach((s, idx) => {
+            const code = s.subject_code || s.subjectcode || '?';
+            if (!groups[code]) groups[code] = { name: s.description || code, sessions: [] };
+            groups[code].sessions.push({ ...s, _idx: idx });
+        });
+
+        list.innerHTML = Object.entries(groups).map(([code, g]) => `
+            <div style="margin-bottom:14px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;font-size:0.8rem;color:#630100;margin-bottom:4px;">
+                    <input type="checkbox" class="pub-subj-chk" data-code="${code}" checked
+                        onchange="this.closest('div').querySelectorAll('.pub-sess-chk').forEach(c=>c.checked=this.checked)">
+                    ${code} — ${g.name}
+                </label>
+                ${g.sessions.map(s => `
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;background:#f9f6f6;margin-bottom:3px;font-size:0.76rem;color:#333;">
+                        <input type="checkbox" class="pub-sess-chk" data-idx="${s._idx}" checked
+                            onchange="(function(el){const all=el.closest('div').querySelectorAll('.pub-sess-chk');const subjChk=el.closest('div').querySelector('.pub-subj-chk');if(subjChk)subjChk.checked=[...all].every(c=>c.checked);})(this)">
+                        <span style="color:#555;"><b>${s.days || (s.day||'').substring(0,3).toUpperCase()}</b> · ${s.time || ''}</span>
+                        <span style="margin-left:auto;color:#888;">${s.room || '—'}</span>
+                        <span style="color:#630100;font-weight:700;">${s.instructor || '—'}</span>
+                    </label>`).join('')}
+            </div>`).join('');
+
+        document.getElementById('publishModal').style.display = 'flex';
+    };
+
+    function _dvConfirm(message, title) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:11000;display:flex;align-items:center;justify-content:center;';
+            const box = document.createElement('div');
+            box.style.cssText = 'background:#fff;border-radius:8px;padding:26px 28px;max-width:440px;width:92%;box-shadow:0 6px 32px rgba(0,0,0,0.22);font-family:inherit;';
+            const t = document.createElement('div');
+            t.style.cssText = 'font-size:0.82rem;font-weight:900;color:#630100;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;';
+            t.textContent = title || 'Confirm';
+            const m = document.createElement('div');
+            m.style.cssText = 'font-size:0.83rem;color:#444;margin-bottom:20px;line-height:1.6;white-space:pre-wrap;';
+            m.textContent = message;
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+            const cancel = document.createElement('button');
+            cancel.textContent = 'Cancel';
+            cancel.style.cssText = 'padding:8px 20px;background:#fff;border:1.5px solid #ccc;border-radius:6px;cursor:pointer;font-size:0.82rem;color:#555;font-family:inherit;';
+            const ok = document.createElement('button');
+            ok.textContent = 'Confirm';
+            ok.style.cssText = 'padding:8px 22px;background:#630100;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;font-family:inherit;';
+            cancel.onclick = () => { overlay.remove(); resolve(false); };
+            ok.onclick     = () => { overlay.remove(); resolve(true);  };
+            row.appendChild(cancel); row.appendChild(ok);
+            box.appendChild(t); box.appendChild(m); box.appendChild(row);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+        });
+    }
+
+    window.confirmPublishSelected = async function() {
+        const modal = document.getElementById('publishModal');
+        const checked = [...document.querySelectorAll('.pub-sess-chk:checked')];
+        const selectedIdx = new Set(checked.map(c => parseInt(c.dataset.idx)));
+        const selectedData = scheduleData.filter((_, i) => selectedIdx.has(i));
+
+        if (!selectedData.length) { alert('No sessions selected.'); return; }
+
+        // Build summary of selected sessions
+        const sessionLines = selectedData.map(s => {
+            const code = s.subject_code || s.subjectcode || '—';
+            const day  = s.day || s.daydesc || '—';
+            const st   = s.start_time || (s.time ? s.time.split(' - ')[0] : '') || '—';
+            const et   = s.end_time   || (s.time ? s.time.split(' - ')[1] : '') || '—';
+            const room = s.room || s.roomname || 'TBA';
+            return `• ${code} | ${day} | ${st} – ${et} | ${room}`;
+        }).join('\n');
+
+        modal.style.display = 'none';
+
+        // Two-step confirmation
+        const ok1 = await _dvConfirm(
+            `You are about to publish ${selectedData.length} schedule${selectedData.length !== 1 ? 's' : ''}:\n\n${sessionLines}`,
+            'Publish Schedule'
+        );
+        if (!ok1) { modal.style.display = 'flex'; return; }
+
+        const ok2 = await _dvConfirm(
+            'Are you sure you want to publish this schedule? This action will make the schedule visible to all users.',
+            'Final Confirmation'
+        );
+        if (!ok2) { modal.style.display = 'flex'; return; }
+
         const btn = document.getElementById('dvBtnApprove');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
@@ -210,21 +304,30 @@
             const res = await fetch('/api/schedule/approve', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ schedule_data: scheduleData, context: draftContext })
+                body: JSON.stringify({ schedule_data: selectedData, context: draftContext })
             });
             const data = await res.json();
             if (data.success) {
-                alert(`Published as V${data.published_version}!`);
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Published';
+                await _dvConfirm(`${selectedData.length} session${selectedData.length !== 1 ? 's' : ''} published successfully!`, 'Schedule Published');
+                window.location.reload();
             } else {
-                alert('Publish failed: ' + (data.error || 'Unknown error'));
+                let msg = data.error || 'Unknown error';
+                if (data.violations && data.violations.length) {
+                    msg = `Cannot publish — ${data.violations.length} constraint violation(s):\n\n` +
+                          data.violations.map(v => `• [${v.rule}] ${v.subject}: ${v.detail}`).join('\n') +
+                          '\n\nOpen the Manual Editor to fix these before approving.';
+                }
+                await _dvConfirm(msg, 'Publish Failed');
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+                modal.style.display = 'flex';
             }
         } catch(e) {
-            alert('Connection error. Please try again.');
+            await _dvConfirm('Connection error. Please try again.', 'Error');
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+            modal.style.display = 'flex';
         }
     };
 

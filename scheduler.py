@@ -354,6 +354,11 @@ class CSPValidator:
         regular_units = defaultdict(int)
         pt_units      = defaultdict(int)
 
+        # Track (faculty, subject) pairs already counted to avoid double-counting
+        # subjects that span multiple time slices.
+        seen_regular = set()
+        seen_pt      = set()
+
         for cls in schedule:
             fnum = cls.get('faculty_id')
             if not fnum or fnum not in faculty_map:
@@ -364,32 +369,48 @@ class CSPValidator:
             if units == 0:
                 continue  # lab part carries 0 units (counted in lecture part)
 
+            subj = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
+
             regular_end = et.get('regular_end') or time(16, 30)
             is_regular  = cls['day'] in WEEKDAYS and cls['end_time'] <= regular_end
             if is_regular:
-                regular_units[fnum] += units
+                key = (fnum, subj)
+                if key not in seen_regular:
+                    seen_regular.add(key)
+                    regular_units[fnum] += units
             else:
-                pt_units[fnum] += units
+                key = (fnum, subj)
+                if key not in seen_pt:
+                    seen_pt.add(key)
+                    pt_units[fnum] += units
 
         for fnum, units in regular_units.items():
             et      = faculty_map[fnum].get('employeetype', {})
             max_reg = et.get('regularload') or 99
             if units > max_reg:
-                violations.append({
-                    'rule': 'HC8',
-                    'subject': 'multiple',
-                    'detail': f'Faculty {fnum} regular load {units} exceeds limit {max_reg}'
-                })
+                ts_hours = et.get('teachingsubstitution', 0) or 0
+                excess   = units - max_reg
+                if excess > ts_hours:
+                    violations.append({
+                        'rule': 'HC8',
+                        'subject': 'multiple',
+                        'detail': f'Faculty {fnum} regular load {units} exceeds limit {max_reg}'
+                                  + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                    })
 
         for fnum, units in pt_units.items():
             et     = faculty_map[fnum].get('employeetype', {})
             max_pt = et.get('parttimeload') or 99
             if units > max_pt:
-                violations.append({
-                    'rule': 'HC8',
-                    'subject': 'multiple',
-                    'detail': f'Faculty {fnum} PT load {units} exceeds limit {max_pt}'
-                })
+                ts_hours = et.get('teachingsubstitution', 0) or 0
+                excess   = units - max_pt
+                if excess > ts_hours:
+                    violations.append({
+                        'rule': 'HC8',
+                        'subject': 'multiple',
+                        'detail': f'Faculty {fnum} PT load {units} exceeds limit {max_pt}'
+                                  + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                    })
 
         return violations
 
@@ -608,7 +629,8 @@ class IntelligentScheduler:
                    et.regular_end,
                    et.parttime_start,
                    et.parttime_end,
-                   d.nightteachingservice
+                   d.nightteachingservice,
+                   COALESCE(d.regularloadunit, 0) AS designation_regular_load
             FROM faculty f
             JOIN employeetype et ON f.employeetypeid = et.employeetypeid
             LEFT JOIN designation d ON f.designationid = d.designationid
@@ -620,6 +642,9 @@ class IntelligentScheduler:
         faculty_list = []
         for row in (faculty_rows or []):
             fnum = row['employeenumber']
+            has_desig    = row['designationid'] is not None
+            eff_regular  = row['designation_regular_load'] if (has_desig and row['designation_regular_load']) else row['regularload']
+            eff_parttime = (row['nightteachingservice'] or 0) if has_desig else row['parttimeload']
             fac = {
                 'employeenumber': fnum,
                 'fullname':       row['fullname'],
@@ -627,8 +652,8 @@ class IntelligentScheduler:
                 'designationid':  row['designationid'],
                 'nightteachingservice': row['nightteachingservice'],
                 'employeetype': {
-                    'regularload':          row['regularload'],
-                    'parttimeload':         row['parttimeload'],
+                    'regularload':          eff_regular,
+                    'parttimeload':         eff_parttime,
                     'teachingsubstitution': row['teachingsubstitution'],
                     'regular_start':        row['regular_start'] or time(7, 30),
                     'regular_end':          row['regular_end']   or time(16, 30),

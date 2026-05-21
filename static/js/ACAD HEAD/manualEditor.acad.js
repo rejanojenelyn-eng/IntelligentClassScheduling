@@ -104,17 +104,63 @@ function updateHoursProgressNote() {
     }
 }
 
-const REG_END_IDX        = 18;
-const DES_START_IDX      =  1;
-const DES_END_IDX        = 19;
-const DES_NIGHT_END_IDX  = 21;
+// Fallback indices used only when DB time values are absent
+const REG_END_IDX        = 18;   // 04:30 PM fallback
+const DES_START_IDX      =  1;   // 08:00 AM fallback
+const DES_END_IDX        = 19;   // 05:00 PM fallback
+const DES_NIGHT_END_IDX  = 21;   // 06:00 PM fallback
+const NIGHT_START_IDX    = 21;   // 06:00 PM — threshold for HC7 (no DB override needed)
+
+// Converts a 'HH:MM' DB time string to a timeSlots array index.
+// timeSlots starts at 07:30 AM (450 min) in 30-min steps.
+// Returns fallback_idx when hhmm is null/undefined or out of range.
+function _hhmm_to_slot_idx(hhmm, fallback_idx) {
+    if (!hhmm) return (fallback_idx !== undefined) ? fallback_idx : 0;
+    const parts = String(hhmm).split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1] || '0', 10);
+    const idx = Math.round((h * 60 + m - 450) / 30);
+    if (isNaN(idx) || idx < 0 || idx >= timeSlots.length) {
+        return (fallback_idx !== undefined) ? fallback_idx : 0;
+    }
+    return idx;
+}
+
+// HC — subject-code prefix → required specialization (null = any faculty allowed)
+const _SUBJ_SPEC_MAP = [
+    [['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'], 'Computer and Information Sciences'],
+    [['ARCH', 'ARCHS'],                                        'Architecture, Design and the Built Environment'],
+    [['CIEN', 'ENSC'],                                         'Engineering'],
+    [['ACCO'],                                                  'Accountancy and Finance'],
+    [['BUMA', 'HRMA'],                                         'Business Administration'],
+    // GEED, NSTP, PATHFIT, PHED, ROTC, MATH → null (unrestricted)
+];
+
+function _getSubjectSpecGroup(subjectCode) {
+    const upper = (subjectCode || '').toUpperCase();
+    for (const [prefixes, specName] of _SUBJ_SPEC_MAP) {
+        for (const pfx of prefixes) {
+            if (upper.startsWith(pfx)) return specName;
+        }
+    }
+    return null;
+}
+
+let _facLoadData = null;             // cached from /api/manual/faculty_load
+let _roomInfo    = null;             // cached from allRooms on room select
+let _dssRecommendedFacultyIds = new Set(); // faculty IDs in DSS recommended list
 
 function _getMaxEndIdx() {
-    const day  = document.getElementById('sel_day').value;
+    const day   = document.getElementById('sel_day').value;
     const isWkd = MAN_WEEKDAYS.has(day);
-    const tn   = _facInfo ? _facInfo.typename : null;
+    const tn    = _facInfo ? _facInfo.typename : null;
     if (tn === 'Designee' && isWkd && day) {
-        return (_facInfo.night_service > 0) ? DES_NIGHT_END_IDX : DES_END_IDX;
+        const hasNS = _facInfo && _facInfo.night_service > 0;
+        if (hasNS) return _hhmm_to_slot_idx(_facInfo.parttime_end, DES_NIGHT_END_IDX);
+        return Math.max(_hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX), REG_END_IDX);
+    }
+    if (tn === 'Regular' && isWkd && day) {
+        return _hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX);
     }
     return timeSlots.length - 1;
 }
@@ -127,9 +173,16 @@ function _populateEndTimes(maxEndIdx) {
     let maxIdx     = (maxEndIdx !== undefined) ? maxEndIdx : _getMaxEndIdx();
 
     if (_subjInfo && startIdx >= 0) {
-        const remaining = getRemainingHours();
-        if (remaining !== null && remaining > 0) {
-            const unitMax = startIdx + Math.round(remaining / 0.5);
+        if (_splitMode === true) {
+            // Split mode: cap each session by remaining hours
+            const remaining = getRemainingHours();
+            if (remaining !== null && remaining > 0) {
+                const remMax = startIdx + Math.round(remaining / 0.5);
+                if (remMax < maxIdx) maxIdx = remMax;
+            }
+        } else {
+            // Single session: cap to exactly total_hours
+            const unitMax = startIdx + Math.round(_subjInfo.total_hours / 0.5);
             if (unitMax < maxIdx) maxIdx = unitMax;
         }
     }
@@ -159,17 +212,8 @@ async function updateTimeDropdowns() {
     const tn     = _facInfo ? _facInfo.typename : null;
     const hasNS  = _facInfo && _facInfo.night_service > 0;
 
-    let minStartIdx = 0;
-    let maxEndIdx   = timeSlots.length - 1;
-
-    if (tn && day) {
-        if (tn === 'Part-Time' && isWkd) {
-            minStartIdx = REG_END_IDX;
-        } else if (tn === 'Designee' && isWkd) {
-            minStartIdx = DES_START_IDX;
-            maxEndIdx   = hasNS ? DES_NIGHT_END_IDX : DES_END_IDX;
-        }
-    }
+    const minStartIdx = 0;
+    const maxEndIdx   = timeSlots.length - 1;
     const maxStartIdx = maxEndIdx - 1;
 
     const prevStart = startSel.value;
@@ -188,14 +232,7 @@ async function updateTimeDropdowns() {
 
     if (!day) {
         note.className = 'constraint-note info';
-        note.textContent = 'ℹ Select a day to filter available times by faculty type.';
-    } else if (tn === 'Part-Time' && isWkd) {
-        note.className = 'constraint-note info';
-        note.textContent = 'ℹ Part-Time faculty on weekdays: 4:30 PM onwards only.';
-    } else if (tn === 'Designee' && isWkd) {
-        const cutoff = hasNS ? '6:00 PM' : '5:00 PM';
-        note.className = 'constraint-note info';
-        note.textContent = `ℹ Designee faculty weekdays: 8:00 AM – ${cutoff} only.`;
+        note.textContent = 'ℹ Select a day to filter available times.';
     }
 }
 
@@ -246,22 +283,6 @@ async function onDayChange() {
     if (day === 'Sunday' && _subjInfo && !_subjInfo.is_sunday_allowed) {
         note.className = 'constraint-note error';
         note.textContent = '⛔ Sunday is only allowed for OU and NSTP subjects.';
-    }
-
-    if (_subjInfo && Math.abs(_subjInfo.total_hours - 1.5) < 0.1 && day && day !== 'Sunday') {
-        if (_existingDays.length > 0 && !_existingDays.includes(day)) {
-            const req = DAY_PAIR_MAP[_existingDays[0]];
-            if (req && day !== req) {
-                note.className = 'constraint-note warn';
-                note.textContent = `⚠ This subject already has a ${_existingDays[0]} session — paired day must be ${req}.`;
-            } else if (req && day === req) {
-                note.className = 'constraint-note info';
-                note.textContent = `✓ Correct paired day for the existing ${_existingDays[0]} session.`;
-            }
-        } else if (_existingDays.length === 0 && DAY_PAIR_MAP[day]) {
-            note.className = 'constraint-note info';
-            note.textContent = `ℹ First session on ${day}. Second session must be on ${DAY_PAIR_MAP[day]}.`;
-        }
     }
 
     await updateTimeDropdowns();
@@ -338,7 +359,7 @@ let pendingLeaveUrl = null;
 window.isLeavingIntentionally = false;
 
 function hasUnsavedChanges() {
-    return pendingManualSchedule.length > 0 || window.currentEditSession !== null;
+    return pendingManualSchedule.some(s => !s.fromExisting) || window.currentEditSession !== null;
 }
 
 document.addEventListener('click', function(e) {
@@ -375,6 +396,22 @@ window.addEventListener('beforeunload', function (e) {
     }
 });
 
+// Show a banner when the user switches away from this tab with unsaved changes
+let _tabWarnBanner = null;
+document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') return; // tab hidden — nothing to show
+    // Tab just became visible again
+    if (_tabWarnBanner) { _tabWarnBanner.remove(); _tabWarnBanner = null; }
+    if (!window.isLeavingIntentionally && hasUnsavedChanges()) {
+        _tabWarnBanner = document.createElement('div');
+        _tabWarnBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#8b1a1a;color:#fff;font-size:0.82rem;font-weight:700;padding:10px 20px;text-align:center;letter-spacing:0.5px;cursor:pointer;';
+        _tabWarnBanner.textContent = '⚠ You have unsaved schedule changes. Click here to dismiss.';
+        _tabWarnBanner.onclick = () => { _tabWarnBanner.remove(); _tabWarnBanner = null; };
+        document.body.appendChild(_tabWarnBanner);
+        setTimeout(() => { if (_tabWarnBanner) { _tabWarnBanner.remove(); _tabWarnBanner = null; } }, 8000);
+    }
+});
+
 function formAyFilter()  { return document.getElementById('sel_ay').value  || ''; }
 function formSemFilter() { return document.getElementById('sel_sem').value || ''; }
 
@@ -383,7 +420,11 @@ function toggleDSSMenu(type, event) {
     const menu = document.getElementById(`${type}_menu`);
     const opening = menu.style.display !== 'block';
     ['fac', 'room'].forEach(t => document.getElementById(`${t}_menu`).style.display = 'none');
-    if (opening) menu.style.display = 'block';
+    if (opening) {
+        menu.style.display = 'block';
+        const searchInput = menu.querySelector('.dss-search-input');
+        if (searchInput) setTimeout(() => searchInput.focus(), 40);
+    }
 }
 
 async function selectDSSOption(type, value, displayText) {
@@ -398,21 +439,84 @@ async function selectDSSOption(type, value, displayText) {
     if (type === 'room') selectRoom(value, displayText);
     if (type === 'fac')  await onFacultySelect(value);
     updateSummary();
+    if (typeof _updateWorkflowBar === 'function') _updateWorkflowBar();
+}
+
+/* Faculty helper utilities */
+function _facInitials(name) {
+    return (name.split(',')[0] || '').trim().substring(0, 2).toUpperCase() || '??';
+}
+function _facTypeCls(typename) {
+    const t = (typename || '').toLowerCase();
+    if (t.includes('part')) return 'fac-pill-pt';
+    if (t.includes('design')) return 'fac-pill-des';
+    return 'fac-pill-reg';
+}
+function _facTypeLabel(typename) {
+    const t = (typename || '').toLowerCase();
+    if (t.includes('part')) return 'Part-Time';
+    if (t.includes('design')) return 'Designee';
+    return 'Regular';
 }
 
 function buildDSSMenu(type, sections) {
     const menu = document.getElementById(`${type}_menu`);
     menu.innerHTML = '';
+
+    // Search box
+    const searchBox = document.createElement('div');
+    searchBox.className = 'dss-search-box';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'dss-search-input';
+    searchInput.placeholder = 'Ex., Dela Cruz, Juan';
+    searchInput.addEventListener('input', function() {
+        const q = this.value.toLowerCase();
+        menu.querySelectorAll('.dss-option').forEach(opt => {
+            const nameEl = opt.querySelector('.fac-opt-name');
+            const text   = nameEl ? nameEl.textContent : opt.textContent;
+            opt.style.display = text.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+    searchBox.appendChild(searchInput);
+    menu.appendChild(searchBox);
+
     sections.forEach(sec => {
         if (!sec.items.length) return;
         const hdr = document.createElement('div');
         hdr.className = `dss-section-header ${sec.cls}`;
         hdr.textContent = sec.label;
         menu.appendChild(hdr);
+        const isRec = sec.cls === 'recommended';
         sec.items.forEach(item => {
             const div = document.createElement('div');
-            div.className = 'dss-option' + (sec.cls === 'recommended' ? ' recommended-item' : '');
-            div.textContent = item.text;
+            div.className = 'dss-option' + (isRec ? ' recommended-item' : '');
+            if (type === 'fac') {
+                const initials  = _facInitials(item.text);
+                const typCls    = _facTypeCls(item.typename);
+                const typLabel  = _facTypeLabel(item.typename);
+                let unitsHtml   = '';
+                if (item.max_units != null) {
+                    const assigned  = item.assigned_units || 0;
+                    const remaining = item.max_units - assigned;
+                    const remCls    = remaining <= 0 ? 'over' : remaining <= 3 ? 'warn' : 'good';
+                    unitsHtml = `<span class="fac-opt-units">${assigned}/${item.max_units}u</span>
+                                 <span class="fac-opt-remaining ${remCls}">${remaining}u left</span>`;
+                }
+                div.innerHTML = `
+                    <div class="fac-opt-inner">
+                        <div class="fac-opt-avatar${isRec ? ' rec' : ''}">${initials}</div>
+                        <div class="fac-opt-info">
+                            <span class="fac-opt-name">${item.text}</span>
+                            <div class="fac-opt-sub">
+                                <span class="fac-type-pill ${typCls}">${typLabel}</span>
+                                ${unitsHtml}
+                            </div>
+                        </div>
+                    </div>`;
+            } else {
+                div.textContent = item.text;
+            }
             div.onclick = () => selectDSSOption(type, item.value, item.text);
             menu.appendChild(div);
         });
@@ -422,7 +526,7 @@ function buildDSSMenu(type, sections) {
 function initDSSMenus() {
     buildDSSMenu('fac', [{
         cls: 'others', label: 'ALL FACULTY',
-        items: allFaculty.map(f => ({ value: f.id, text: f.name }))
+        items: allFaculty.map(f => ({ value: f.id, text: f.name, typename: f.typename }))
     }]);
     buildDSSMenu('room', [{
         cls: 'others', label: 'ALL ROOMS',
@@ -492,34 +596,41 @@ async function renderProgramTimetable() {
     }
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=Draft&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&_t=${Date.now()}`;
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok) return;
         const raw = await resp.json();
 
-        const seen = new Set();
-        const dbSessions = (raw || []).filter(s => {
+        // Dedup: prefer Published over Draft for the same key
+        const sessByKey = new Map();
+        (raw || []).forEach(s => {
             const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
-            if (seen.has(key)) return false;
-            seen.add(key); return true;
+            const existing = sessByKey.get(key);
+            if (!existing || s.status === 'Published') sessByKey.set(key, s);
         });
+        const dbSessions = Array.from(sessByKey.values());
 
         const localSessions = pendingManualSchedule
             .filter(c => c.course === prog && String(c.year_level) === String(yl) && c.ay === ay && c.sem === sem)
             .map(c => ({
-                subjectcode: c.subject_code,
-                subjectname: c.subject_name,
-                instructor:  c.instructor,
-                daydesc:     c.day,
-                starttimeid: getTimeSlotIndex(c.start_time),
-                endtimeid:   getTimeSlotIndex(c.end_time),
-                roomname:    c.room,
-                room_id:     c.room_id,
-                programcode: prog,
-                year_level:  yl,
-                isLocal:     true,
-                temp_id:     c.temp_id,
-                status:      'Draft'
+                subjectcode:  c.subject_code,
+                subjectname:  c.subject_name,
+                instructor:   c.instructor,
+                daydesc:      c.day,
+                starttimeid:  getTimeSlotIndex(c.start_time),
+                endtimeid:    getTimeSlotIndex(c.end_time),
+                start_fmt:    c.start_time,
+                end_fmt:      c.end_time,
+                roomname:     c.room,
+                room_id:      c.room_id,
+                programcode:  prog,
+                year_level:   yl,
+                isLocal:      true,
+                fromExisting: c.fromExisting || false,
+                temp_id:      c.temp_id,
+                versionid:    c.versionid || null,
+                status:       c.fromExisting ? (c.status || 'Draft') : 'Draft',
+                isPreview:    c.isPreview || false
             }));
 
         _renderProgPills([...dbSessions, ...localSessions], prog, yl);
@@ -569,8 +680,8 @@ function _renderProgPills(sessions, prog, yl) {
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
 
-            const isDraft = sess.isLocal || (sess.status && sess.status.toLowerCase() === 'draft');
-            pill.style.backgroundColor = isDraft ? '#8e9ca0' : getSubjectColor(sess.subjectcode);
+            const isDraft = !sess.status || sess.status.toLowerCase() !== 'published';
+            pill.style.backgroundColor = isDraft ? (sess.isPreview ? '#c8d6da' : '#8e9ca0') : getSubjectColor(sess.subjectcode);
             if (isDraft) pill.style.border = '2px dashed #2c3e50';
 
             if (window.currentEditSession) {
@@ -586,18 +697,19 @@ function _renderProgPills(sessions, prog, yl) {
             pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
             pill.style.top    = (topOff  + (startIdx - 1) * rowHeight + 3) + 'px';
             pill.style.cursor = 'pointer';
+            pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
 
             const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
             pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}\n${sess.roomname || ''}`;
 
             const compact = pillH < 55;
-            let dropBtn = '';
-            if (sess.isLocal) {
-                dropBtn = `<button class="pill-drop-btn" onclick="dropLocalClass('${sess.temp_id}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
-            }
+            const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+            const _pLabel = `${sess.subjectcode} — ${sess.daydesc} in ${sess.roomname || 'TBA'}`;
+            const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null }));
+            const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
             pill.innerHTML = `
                 ${dropBtn}
-                <div class="pill-subject" style="margin-top:${sess.isLocal ? '8px' : '0'};">${sess.subjectcode}</div>
+                <div class="pill-subject" style="margin-top:8px;">${sess.subjectcode}</div>
                 ${compact ? '' : `<div style="font-size:0.6rem;">${instrLast}</div><div style="font-size:0.55rem;opacity:.8;">${sess.roomname || ''}</div>`}`;
 
             pill.onclick = (e) => {
@@ -651,6 +763,10 @@ function selectProg(code) {
     document.getElementById('sel_prog').value = code;
     document.getElementById('prog_trigger_text').innerText = code;
     document.getElementById('prog_menu').style.display = 'none';
+    // Enforce year level range based on program's NumYearLevel
+    const progOpt = document.querySelector(`#prog_menu .prog-option[data-code="${CSS.escape(code)}"]`);
+    const maxYl = progOpt ? parseInt(progOpt.dataset.maxYl || 4) : 4;
+    if (typeof _updateYearLevelDropdown === 'function') _updateYearLevelDropdown(maxYl);
     triggerCascade();
 }
 
@@ -689,8 +805,12 @@ async function triggerDSSLogic() {
         if (siResp.success) _subjInfo = siResp;
     } catch(e) { _subjInfo = null; }
 
-    if (_subjInfo && _subjInfo.total_hours >= 5 && !window.currentEditSession) {
-        await showSplitChoiceModal(_subjInfo.total_hours);
+    // Set lab warning immediately from subject info — don't wait for DSS (prevents stale warnings)
+    labWarn.style.display = (_subjInfo && _subjInfo.laboratoryhours > 0) ? 'block' : 'none';
+
+    // Split choice modal removed — default to split mode for multi-hour subjects
+    if (_subjInfo && _subjInfo.total_hours >= 3 && !window.currentEditSession) {
+        _splitMode = true;
     }
 
     await fetchExistingDays();
@@ -708,9 +828,19 @@ async function triggerDSSLogic() {
                 const url = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}`;
                 const er = await fetch(url).then(r => r.json());
                 if (er.success && er.sessions && er.sessions.length > 0) {
-                    _hasExistingSchedule = true;
-                    showExistingSchedModal(er.sessions);
-                    return;
+                    // Exclude any version the user deleted this session
+                    const filteredSessions = er.sessions.filter(
+                        s => !window._deletedVersionIds?.has(String(s.versionid))
+                    );
+                    if (filteredSessions.length > 0) {
+                        _hasExistingSchedule = true;
+                        if (typeof window._loadExistingSessionsIntoSlices === 'function') {
+                            await window._loadExistingSessionsIntoSlices(filteredSessions);
+                        } else {
+                            showExistingSchedModal(filteredSessions);
+                        }
+                        return;
+                    }
                 }
             } catch(e) { /* silent — fall through to normal DSS */ }
         }
@@ -718,12 +848,15 @@ async function triggerDSSLogic() {
     _skipExistingCheck = false;
 
     try {
-        const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}`).then(r => r.json());
+        const _ay  = document.getElementById('sel_ay').value;
+        const _sem = document.getElementById('sel_sem').value;
+        const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(_ay)}&sem=${encodeURIComponent(_sem)}`).then(r => r.json());
         if (!data.success) { initDSSMenus(); return; }
 
+        _dssRecommendedFacultyIds = new Set(data.faculty.recommended.map(f => f.id));
         buildDSSMenu('fac', [
-            { cls: 'recommended', label: 'RECOMMENDATIONS', items: data.faculty.recommended.map(f => ({ value: f.id, text: f.name })) },
-            { cls: 'others',      label: 'OTHERS',          items: data.faculty.others.map(f => ({ value: f.id, text: f.name })) }
+            { cls: 'recommended', label: 'RECOMMENDATIONS', items: data.faculty.recommended.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) },
+            { cls: 'others',      label: 'OTHERS',          items: data.faculty.others.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) }
         ]);
 
         const isPreferredType = (r) => data.is_lab ? r.type === 'Laboratory' : r.type !== 'Laboratory';
@@ -746,6 +879,7 @@ async function triggerDSSLogic() {
     } catch (e) {
         console.error('DSS suggest error:', e);
         initDSSMenus();
+        labWarn.style.display = 'none';
     }
 }
 
@@ -783,6 +917,10 @@ window.handlePillClick = async function(sessJson) {
     subjSel.value = sess.subjectcode;
     subjSel.disabled = true;
 
+    // Skip the "load existing sessions" check — the pill was already rendered from existing data.
+    // Without this, every pill click calls _loadExistingSessionsIntoSlices again, duplicating
+    // pendingManualSchedule entries and resetting the time slice UI unexpectedly.
+    _skipExistingCheck = true;
     await triggerDSSLogic();
 
     const roomNameFromSess = sess.roomname || sess.room || '';
@@ -799,11 +937,18 @@ window.handlePillClick = async function(sessJson) {
     }
 
     const facStr = sess.instructor ? sess.instructor.split(',')[0].trim() : '';
-    const fac = allFaculty.find(f => f.name.includes(facStr));
+    const empFromSess = sess.faculty_id || sess.employeenumber || sess.emp_num || '';
+    const fac = empFromSess
+        ? (allFaculty.find(f => String(f.id) === String(empFromSess)) ||
+           (facStr ? allFaculty.find(f => f.name && f.name.toLowerCase().includes(facStr.toLowerCase())) : null))
+        : (facStr ? allFaculty.find(f => f.name && f.name.toLowerCase().includes(facStr.toLowerCase())) : null);
     if (fac) {
         document.getElementById('sel_faculty').value = fac.id;
         document.getElementById('fac_display_name').value = fac.name;
         document.getElementById('fac_trigger_text').textContent = fac.name;
+        // Lock BEFORE onFacultySelect so the safety-net inside window.onFacultySelect
+        // can restore the panel after triggerDSSLogic resets it mid-chain.
+        if (typeof _setFacultyLock === 'function') _setFacultyLock(String(fac.id), fac.name);
         await onFacultySelect(fac.id);
     } else {
         document.getElementById('sel_faculty').value = '';
@@ -820,6 +965,28 @@ window.handlePillClick = async function(sessJson) {
     if (st && et) updateTimeBlockFromTimes(st, et);
 
     updateSummary();
+
+    // Deferred re-stamp at 200ms — outlasts any chained async resets from triggerDSSLogic
+    if (fac) {
+        const _stampFac = fac;
+        const _stampEmpId = String(fac.id);
+        setTimeout(() => {
+            const avatarEl  = document.getElementById('fac-stats-avatar');
+            const nameEl    = document.getElementById('fac-stats-name');
+            const typeEl    = document.getElementById('fac-stats-type');
+            const chevron   = document.getElementById('fac-stats-chevron');
+            const statsBody = document.getElementById('fac-stats-body');
+            if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = (typeof _facInitialsFromName === 'function' ? _facInitialsFromName(_stampFac.name) : (_stampFac.name || '').slice(0, 2).toUpperCase()); }
+            if (nameEl)   { nameEl.textContent = _stampFac.name; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
+            if (typeEl)   { typeEl.style.color = ''; }
+            if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }
+            if (statsBody) statsBody.style.display = '';
+            if (typeof _updateFacultyUnitDisplay === 'function') {
+                document.getElementById('fac_display_name').value = _stampFac.name;
+                _updateFacultyUnitDisplay(_stampEmpId);
+            }
+        }, 200);
+    }
 };
 
 function unlockFormFields() {
@@ -879,40 +1046,103 @@ async function confirmAndPlace() {
         return;
     }
 
+    // ── Duration: session must not exceed remaining hours ──
+    if (_subjInfo && _subjInfo.total_hours > 0) {
+        const sessionHours = (newEndIdx - newStartIdx) * 0.5;
+        if (_splitMode === true) {
+            const remaining = getRemainingHours();
+            if (remaining !== null && remaining > 0.01) {
+                if (sessionHours > remaining + 0.01) {
+                    await showValidationModal('Duration Exceeded',
+                        `This session is ${sessionHours}h but only ${remaining}h remain to be scheduled for this subject. ` +
+                        `Please shorten the session accordingly.`);
+                    return;
+                }
+            }
+        } else {
+            // Single session — must be exactly total_hours
+            if (Math.abs(sessionHours - _subjInfo.total_hours) > 0.1) {
+                await showValidationModal('Duration Mismatch',
+                    `"${subjSel.value}" requires a ${_subjInfo.total_hours}-hour session, ` +
+                    `but the selected time block is ${sessionHours}h. ` +
+                    `Please adjust the end time to cover exactly ${_subjInfo.total_hours} hour${_subjInfo.total_hours !== 1 ? 's' : ''}.`);
+                return;
+            }
+        }
+    }
+
     if (dayVal === 'Sunday' && _subjInfo && !_subjInfo.is_sunday_allowed) {
         await showValidationModal('Sunday Restriction',
             `Only NSTP and OU subjects may be scheduled on Sunday. "${subjSel.value}" is not allowed on Sunday.`);
         return;
     }
 
-    if (_subjInfo && Math.abs(_subjInfo.total_hours - 1.5) < 0.1 && _existingDays.length > 0) {
-        const firstDay  = _existingDays[0];
-        const pairedDay = DAY_PAIR_MAP[firstDay];
-        if (pairedDay && dayVal !== firstDay && dayVal !== pairedDay) {
-            await showValidationModal('Day Pairing Violation',
-                `This subject already has a "${firstDay}" session. The second session must be on "${pairedDay}", not "${dayVal}".`);
+    if (_facInfo && dayVal) {
+        const isWkd    = MAN_WEEKDAYS.has(dayVal);
+        const startIdx = getTimeSlotIndex(startVal) - 1;
+
+        // ── HC7: Night-class cap for Designee faculty ──
+        if (_facInfo.has_designation && isWkd && startIdx >= NIGHT_START_IDX) {
+            const nightCap = _facInfo.night_service;
+            let pendingNight = 0;
+            for (const c of pendingManualSchedule) {
+                if (String(c.faculty_id) !== String(facVal)) continue;
+                if (c.ay !== ay || c.sem !== sem) continue;
+                if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
+                if (!MAN_WEEKDAYS.has(c.day)) continue;
+                if (getTimeSlotIndex(c.start_time) - 1 >= NIGHT_START_IDX) pendingNight++;
+            }
+            const dbNight  = (_facLoadData && _facLoadData.night_classes) ? _facLoadData.night_classes : 0;
+            const totalNight = dbNight + pendingNight;
+            if (nightCap === 0) {
+                await showValidationModal('Night Class Restriction',
+                    `${facName}'s designation does not allow weekday night classes.`);
+                return;
+            } else if (totalNight >= nightCap) {
+                await showValidationModal('Night Class Limit Reached',
+                    `${facName} already has ${totalNight} night class${totalNight !== 1 ? 'es' : ''} ` +
+                    `(maximum: ${nightCap} for their designation).`);
+                return;
+            }
+        }
+    }
+
+    // ── HC8: Maximum teaching load ──
+    if (_facInfo && _facLoadData) {
+        const subjectUnits = _subjInfo ? (_subjInfo.creditunits || 0) :
+                             ((_subjectMeta && _subjectMeta[subjSel.value]) ? parseFloat(_subjectMeta[subjSel.value].units || 0) : 0);
+        let pendingUnits = 0;
+        for (const c of pendingManualSchedule) {
+            if (String(c.faculty_id) !== String(facVal)) continue;
+            if (c.ay !== ay || c.sem !== sem) continue;
+            if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
+            const uMeta = _subjectMeta && _subjectMeta[c.subject_code];
+            pendingUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
+        }
+        const scheduledUnits = _facLoadData.scheduled_units || 0;
+        const totalAfter     = scheduledUnits + pendingUnits + subjectUnits;
+        const maxLoad        = _facLoadData.total_units || 0;
+        if (maxLoad > 0 && totalAfter > maxLoad) {
+            await showValidationModal('Maximum Load Exceeded',
+                `This assignment would bring ${facName}'s total load to ${totalAfter} unit${totalAfter !== 1 ? 's' : ''}, ` +
+                `exceeding the allowed maximum of ${maxLoad} units.`);
             return;
         }
     }
 
-    if (_facInfo && dayVal) {
-        const isWkd    = MAN_WEEKDAYS.has(dayVal);
-        const startIdx = getTimeSlotIndex(startVal) - 1;
-        const endIdx   = getTimeSlotIndex(endVal) - 1;
-        const tn       = _facInfo.typename;
-        let violation  = null;
-        if (tn === 'Part-Time' && isWkd && startIdx < REG_END_IDX) {
-            violation = 'Part-Time faculty may only teach from 4:30 PM onwards on weekdays.';
-        } else if (tn === 'Designee' && isWkd) {
-            if (startIdx < DES_START_IDX) {
-                violation = 'Designee faculty weekday sessions must start at 8:00 AM or later.';
-            } else if (_facInfo.night_service > 0 && endIdx > DES_NIGHT_END_IDX) {
-                violation = 'Designee faculty with night teaching service may only teach until 6:00 PM on weekdays.';
-            } else if (_facInfo.night_service <= 0 && endIdx > DES_END_IDX) {
-                violation = 'Designee faculty without night teaching service may only teach until 5:00 PM on weekdays.';
+    // ── Specialization: Faculty must match subject's required specialization ──
+    if (_facInfo && _facInfo.specializationname) {
+        const expectedSpec = _getSubjectSpecGroup(subjSel.value);
+        if (expectedSpec !== null) {
+            const facSpec = _facInfo.specializationname || '';
+            if (facSpec !== expectedSpec) {
+                await showValidationModal('Specialization Mismatch',
+                    `${facName}'s specialization (${facSpec}) does not match what is required ` +
+                    `for "${subjSel.value}" (${expectedSpec}). ` +
+                    `Only faculty with the matching specialization may be assigned.`);
+                return;
             }
         }
-        if (violation) { await showValidationModal('Faculty Schedule Restriction', violation); return; }
     }
 
     try {
@@ -985,6 +1215,49 @@ async function confirmAndPlace() {
         }
     }
 
+    // ── Section conflict: a section (program + year level) cannot have overlapping classes ──
+    if (prog && yl) {
+        try {
+            const sResp = await fetch(
+                `/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`
+            );
+            const sSessions = await sResp.json();
+            for (const s of sSessions) {
+                if (s.daydesc !== dayVal) continue;
+                if (window.currentEditSession &&
+                    s.subjectcode === window.currentEditSession.subjectcode &&
+                    s.daydesc     === window.currentEditSession.daydesc &&
+                    s.starttimeid === window.currentEditSession.starttimeid) continue;
+                if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    await showConflictModal(
+                        `Section conflict: "${s.subjectname || s.subjectcode}" is already scheduled ` +
+                        `for ${prog} Year ${yl} on ${dayVal} — ` +
+                        `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
+                        `A section cannot have two classes at the same time.`
+                    );
+                    return;
+                }
+            }
+        } catch(e) { console.error('Section conflict check failed:', e); }
+
+        for (const c of pendingManualSchedule) {
+            if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
+            if (c.course !== prog || String(c.year_level) !== String(yl)) continue;
+            if (c.ay !== ay || c.sem !== sem) continue;
+            if (c.day !== dayVal) continue;
+            const cStart = getTimeSlotIndex(c.start_time);
+            const cEnd   = getTimeSlotIndex(c.end_time);
+            if (newStartIdx < cEnd && newEndIdx > cStart) {
+                await showConflictModal(
+                    `Section conflict: "${c.subject_name}" is already placed for ` +
+                    `${prog} Year ${yl} on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
+                    `A section cannot have two classes at the same time.`
+                );
+                return;
+            }
+        }
+    }
+
     if (window.currentEditSession) {
         const oldRoom   = window.currentEditSession.roomname || window.currentEditSession.room;
         const oldFacStr = (window.currentEditSession.instructor || '').split(',')[0].trim();
@@ -1041,10 +1314,119 @@ async function confirmAndPlace() {
     }
 }
 
+/* ── Two-step session deletion (works for local pending AND saved DB sessions) ── */
+window._dropSession = async function(sessDataEncoded, event) {
+    event.stopPropagation();
+    let sd;
+    try { sd = JSON.parse(decodeURIComponent(sessDataEncoded)); } catch(e) { return; }
+
+    // Step 1
+    const ok1 = await (typeof showConfirmModal === 'function'
+        ? showConfirmModal(`You are about to delete this schedule:\n\n${sd.label}`, 'Delete Schedule')
+        : Promise.resolve(window.confirm(`You are about to delete:\n${sd.label}`)));
+    if (!ok1) return;
+
+    // Step 2
+    const ok2 = await (typeof showConfirmModal === 'function'
+        ? showConfirmModal('Are you sure you want to delete this schedule?\nThis action cannot be undone.', 'Final Confirmation')
+        : Promise.resolve(window.confirm('Are you sure? This action cannot be undone.')));
+    if (!ok2) return;
+
+    // Call DELETE API when a saved version_id is present
+    if (sd.versionid) {
+        try {
+            const resp = await fetch('/api/schedule/delete_session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ version_id: sd.versionid })
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                if (typeof showValidationModal === 'function')
+                    await showValidationModal('Delete Failed', data.error || 'Could not delete session.');
+                return;
+            }
+            // Track deleted version so it won't be reloaded into slices this session
+            if (window._deletedVersionIds) window._deletedVersionIds.add(String(sd.versionid));
+
+            // Immediately clear the subject's saved-status badge and dbScheduled so the
+            // curriculum guide updates before the async _updateSubjectList fetch returns.
+            const _deletedCode = sd.subjectcode || (sd.dbKey || '').split('_')[0] || null;
+            if (_deletedCode) {
+                const _opt = Array.from(document.getElementById('sel_subj')?.options || [])
+                    .find(o => o.value === _deletedCode || (o.value || '').toUpperCase() === _deletedCode.toUpperCase());
+                if (_opt) { _opt.dataset.savedStatus = ''; _opt.dataset.dbScheduled = '0'; }
+                const _card = document.querySelector(`.subj-item[data-code="${_deletedCode}"]`);
+                if (_card) {
+                    const _badge = _card.querySelector('.subj-badge');
+                    if (_badge) _badge.remove();
+                    const _txt = _card.querySelector('.subj-hrs-text');
+                    if (_txt) _txt.textContent = `0/${_opt ? (_opt.dataset.hours || '?') : '?'}h`;
+                    const _fill = _card.querySelector('.subj-hrs-fill');
+                    if (_fill) { _fill.style.width = '0%'; _fill.className = 'subj-hrs-fill incomplete'; }
+                }
+            }
+        } catch(e) {
+            if (typeof showValidationModal === 'function')
+                await showValidationModal('Connection Error', 'Could not reach the server.');
+            return;
+        }
+    }
+
+    // Remove from pendingManualSchedule if it was a local entry
+    if (sd.temp_id) {
+        pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== sd.temp_id);
+        if (window.currentEditSession && window.currentEditSession.temp_id === sd.temp_id) unlockFormFields();
+    }
+
+    // Mask the DB row so it doesn't reappear before page refresh
+    if (sd.dbKey) hiddenDbSchedules.add(sd.dbKey);
+
+    // Remove the matching time-slice row from the UI
+    document.querySelectorAll('.ts-row').forEach(row => {
+        try {
+            const parsed = JSON.parse(row.dataset.existingJson || '{}');
+            if ((parsed._localTempId && parsed._localTempId === sd.temp_id) ||
+                (parsed.versionid    && parsed.versionid    === sd.versionid)) {
+                row.remove();
+            }
+        } catch(e) {}
+    });
+    if (typeof _renumberSlices === 'function') _renumberSlices();
+
+    const currentRoom = document.getElementById('sel_room').value;
+    if (currentMode === 'program') renderProgramTimetable();
+    else renderGrid(currentRoom, formAyFilter(), formSemFilter());
+
+    if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+};
+
 window.dropLocalClass = function(tempId, event) {
     event.stopPropagation();
+    // Delegate to _dropSession for new (unsaved) local sessions — no versionid needed
+    const sess = pendingManualSchedule.find(c => c.temp_id === tempId);
+    if (sess) {
+        const label = `${sess.subject_code} on ${sess.day} at ${sess.start_time} – ${sess.end_time} in ${sess.room || 'TBA'}`;
+        const sd = encodeURIComponent(JSON.stringify({ temp_id: tempId, versionid: null, dbKey: null, label }));
+        window._dropSession(sd, event);
+        return;
+    }
+    // Fallback: direct removal (no DB record)
     pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== tempId);
     if (window.currentEditSession && window.currentEditSession.temp_id === tempId) unlockFormFields();
+
+    // Remove the corresponding time slice row
+    document.querySelectorAll('.ts-row').forEach(row => {
+        try {
+            if (row.dataset.existingJson) {
+                const parsed = JSON.parse(row.dataset.existingJson);
+                if (parsed._localTempId === tempId) { row.remove(); return; }
+            }
+            // Rows added via confirmAndPlace store temp_id directly
+            if (row.dataset.tempId === tempId) row.remove();
+        } catch(e) {}
+    });
+
     if (currentMode === 'program') {
         renderProgramTimetable();
     } else {
@@ -1061,111 +1443,167 @@ function resetFormState() {
     _hasExistingSchedule = false;
     _pendingExistingSessions = [];
     _subjInfo = null;
+    _facInfo = null;
+    _facLoadData = null;
     _splitMode = null;
     updateSundayOption();
     updateHoursProgressNote();
     unlockFormFields();
     hiddenDbSchedules.clear();
     updateSummary();
+    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+    if (typeof _updateWorkflowBar === 'function') _updateWorkflowBar();
 }
 
-document.getElementById('btnManualSaveDraft').addEventListener('click', async () => {
-    const ay = formAyFilter();
-    const sem = formSemFilter();
-    const contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem);
-
-    if (contextDrafts.length === 0) {
-        await showValidationModal('Nothing to Save', 'There are no unsaved classes for the currently selected Academic Year and Semester.');
-        return;
-    }
-
-    const context = {
-        program:   document.getElementById('sel_prog').value,
-        yearLevel: parseInt(document.getElementById('sel_year').value),
-        term:      sem,
-        acadYear:  ay
-    };
-
-    const btn = document.getElementById('btnManualSaveDraft');
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-    btn.disabled = true;
-
-    try {
-        const res = await fetch('/api/schedule/save-draft', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ schedule_data: contextDrafts, context })
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            window.isLeavingIntentionally = true;
-            alert(`Success! Saved as Draft.`);
-            pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-            resetFormState();
-            if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
-            setTimeout(() => window.isLeavingIntentionally = false, 100);
-        } else {
-            let errorMsg = `Failed: ${data.error || 'Unknown Error'}\n`;
-            if (data.violations && data.violations.length > 0) {
-                errorMsg += "\nViolations detected:\n";
-                data.violations.forEach(v => errorMsg += `- ${v.detail}\n`);
-            }
-            alert(errorMsg);
-        }
-    } catch (e) {
-        alert("Connection error while saving draft.");
-    } finally {
-        btn.innerHTML = '<i class="fas fa-save"></i> Save as Draft';
-        btn.disabled = false;
-    }
-});
+// btnManualSaveDraft removed from HTML — guard kept for safety
+const _btnSaveDraftCenter = document.getElementById('btnManualSaveDraft');
+if (_btnSaveDraftCenter) {
+    _btnSaveDraftCenter.addEventListener('click', async () => {
+        if (typeof window._triggerSaveDraft === 'function') await window._triggerSaveDraft();
+    });
+}
 
 document.getElementById('btnManualApprove').addEventListener('click', async () => {
-    const ay = formAyFilter();
-    const sem = formSemFilter();
-    const contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem);
+    const ay   = formAyFilter();
+    const sem  = formSemFilter();
+    const prog = document.getElementById('sel_prog').value;
+    const yl   = document.getElementById('sel_year').value;
 
-    if (contextDrafts.length === 0) {
-        await showValidationModal('Nothing to Publish', 'There are no unsaved classes for the currently selected Academic Year and Semester.');
+    if (!ay || !sem || !prog || !yl) {
+        await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, and Year Level before publishing.');
         return;
     }
 
-    const context = {
-        program:   document.getElementById('sel_prog').value,
-        yearLevel: parseInt(document.getElementById('sel_year').value),
-        term:      sem,
-        acadYear:  ay
-    };
+    let contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem);
+
+    if (contextDrafts.length === 0) {
+        // Try loading saved Draft sessions from DB
+        try {
+            const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+            const dbData = await dbResp.json();
+            if (dbData.success && dbData.sessions && dbData.sessions.length > 0) {
+                contextDrafts = dbData.sessions;
+            }
+        } catch(e) {}
+    }
+
+    if (contextDrafts.length === 0) {
+        // Direct publish: collect from filled UI time slices (no draft save required)
+        const filledRows = Array.from(document.querySelectorAll('.ts-row')).filter(row => {
+            const day   = row.querySelector('.ts-day-sel')?.value || '';
+            const start = row.querySelector('.ts-start-hidden')?.value || '';
+            const end   = row.querySelector('.ts-end-hidden')?.value  || '';
+            const room  = row.querySelector('.ts-room-hidden')?.value  || '';
+            return day && start && end && room;
+        });
+
+        if (!filledRows.length) {
+            await showValidationModal('Nothing to Publish', 'No sessions are scheduled for the selected context. Fill in time slices or save a draft first.');
+            return;
+        }
+
+        for (const row of filledRows) {
+            const day    = row.querySelector('.ts-day-sel').value;
+            const start  = row.querySelector('.ts-start-hidden').value;
+            const end    = row.querySelector('.ts-end-hidden').value;
+            const roomId = row.querySelector('.ts-room-hidden').value;
+            const roomName = (typeof allRooms !== 'undefined' && allRooms.find(r => String(r.id) === String(roomId))?.name)
+                          || row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
+
+            document.getElementById('sel_day').value = day;
+            if (typeof _injectTimeOpt === 'function') { _injectTimeOpt('sel_start_time', start); _injectTimeOpt('sel_end_time', end); }
+            document.getElementById('sel_room').value = roomId;
+            document.getElementById('room_display_name').value = roomName;
+            if (typeof allRooms !== 'undefined') _roomInfo = allRooms.find(r => String(r.id) === String(roomId)) || null;
+            window.currentEditSession = null;
+
+            const prevLen = pendingManualSchedule.length;
+            await confirmAndPlace();
+            if (pendingManualSchedule.length <= prevLen) return; // validation failed in confirmAndPlace
+        }
+        contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem);
+    }
+
+    if (contextDrafts.length === 0) {
+        await showValidationModal('Nothing to Publish', 'No sessions to publish for the selected context.');
+        return;
+    }
+
+    // Show publish slice-selection modal
+    const publishCandidates = contextDrafts.map(c => ({
+        subject:  c.subject_code || c.subjectcode || '—',
+        day:      c.day || c.daydesc || '—',
+        start:    c.start_time || (c.time ? c.time.split(' - ')[0] : '') || '—',
+        end:      c.end_time   || (c.time ? c.time.split(' - ')[1] : '') || '—',
+        roomName: c.room || c.roomname || 'TBA',
+        _raw:     c
+    }));
+
+    const selectedCandidates = await _showPublishSelectModal(publishCandidates);
+    if (!selectedCandidates.length) return;
+
+    const selectedDrafts = selectedCandidates.map(c => c._raw);
+
+    const context = { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay };
+
+    // Two-step publish confirmation
+    const ok1 = await showConfirmModal('You are about to publish this schedule.', 'Publish Schedule');
+    if (!ok1) return;
+    const ok2 = await showConfirmModal('Are you sure you want to publish this schedule? This action will make the schedule visible to all users.', 'Final Confirmation');
+    if (!ok2) return;
 
     const btn = document.getElementById('btnManualApprove');
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
     btn.disabled = true;
 
     try {
         const res = await fetch('/api/schedule/approve', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ schedule_data: contextDrafts, context })
+            body: JSON.stringify({ schedule_data: selectedDrafts, context })
         });
         const data = await res.json();
 
         if (data.success) {
             window.isLeavingIntentionally = true;
-            alert(`Success! Schedule Published.`);
+            await showValidationModal('Schedule Published', 'The schedule has been published successfully.');
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-            resetFormState();
+            hiddenDbSchedules.clear();
+            const currentSubj2 = document.getElementById('sel_subj').value;
+            if (currentSubj2) {
+                try {
+                    const dbResp2 = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+                    const dbData2 = await dbResp2.json();
+                    if (dbData2.success && dbData2.sessions) {
+                        const subjSessions2 = dbData2.sessions.filter(s => s.subjectcode === currentSubj2);
+                        if (subjSessions2.length && typeof _loadExistingSessionsIntoSlices === 'function') {
+                            await _loadExistingSessionsIntoSlices(subjSessions2);
+                        } else {
+                            document.getElementById('time-slots-container').innerHTML = '';
+                            if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+                        }
+                    }
+                } catch(e) {
+                    document.getElementById('time-slots-container').innerHTML = '';
+                    if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+                }
+            } else {
+                resetFormState();
+            }
+            if (typeof _updateSubjectList === 'function') await _updateSubjectList();
             if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
             setTimeout(() => window.isLeavingIntentionally = false, 100);
+        } else if (data.violations && data.violations.length) {
+            let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
+            data.violations.forEach(v => errorMsg += `• ${v.detail}\n`);
+            await showValidationModal('Constraint Violations', errorMsg);
         } else {
-            let errorMsg = `Failed to Publish due to Constraints:\n\n`;
-            (data.violations || []).forEach(v => errorMsg += `- ${v.detail}\n`);
-            alert(errorMsg);
+            await showValidationModal('Publish Failed', data.error || 'An unknown error occurred. Please try again.');
         }
     } catch (e) {
-        alert("Connection error while approving schedule.");
+        await showValidationModal('Connection Error', 'Could not reach the server. Please try again.');
     } finally {
-        btn.innerHTML = '<i class="fas fa-check-circle"></i> Save & Publish';
+        btn.innerHTML = '<i class="fas fa-check-circle"></i> APPROVE SCHEDULE';
         btn.disabled = false;
     }
 });
@@ -1197,18 +1635,23 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             c.ay === ayFilter &&
             c.sem === semFilter
         ).map(c => ({
-            temp_id:     c.temp_id,
-            subjectcode: c.subject_code,
-            subjectname: c.subject_name,
-            instructor:  c.instructor,
-            daydesc:     c.day,
-            starttimeid: getTimeSlotIndex(c.start_time),
-            endtimeid:   getTimeSlotIndex(c.end_time),
-            roomname:    c.room,
-            course:      c.course,
-            year_level:  c.year_level,
-            isLocal:     true,
-            status:      'Draft'
+            temp_id:      c.temp_id,
+            versionid:    c.versionid || null,
+            subjectcode:  c.subject_code,
+            subjectname:  c.subject_name,
+            instructor:   c.instructor,
+            daydesc:      c.day,
+            starttimeid:  getTimeSlotIndex(c.start_time),
+            endtimeid:    getTimeSlotIndex(c.end_time),
+            start_fmt:    c.start_time,
+            end_fmt:      c.end_time,
+            roomname:     c.room,
+            course:       c.course,
+            year_level:   c.year_level,
+            isLocal:      true,
+            fromExisting: c.fromExisting || false,
+            status:       c.status || 'Draft',
+            isPreview:    c.isPreview || false
         }));
 
         sessions = sessions.concat(localForRoom);
@@ -1264,8 +1707,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 const pill = document.createElement('div');
                 pill.className = 'schedule-pill';
 
-                const isDraft = sess.isLocal === true || (sess.status && String(sess.status).toLowerCase() === 'draft');
-                pill.style.backgroundColor = isDraft ? '#8e9ca0' : getSubjectColor(sess.subjectcode);
+                const isDraft = !sess.status || String(sess.status).toLowerCase() !== 'published';
+                pill.style.backgroundColor = isDraft ? (sess.isPreview ? '#c8d6da' : '#8e9ca0') : getSubjectColor(sess.subjectcode);
                 if (isDraft) pill.style.border = "2px dashed #2c3e50";
 
                 if (window.currentEditSession) {
@@ -1281,18 +1724,19 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 pill.style.left   = (leftOffset + (dayIdx * colWidth) + (overlapIndex * w) + 3) + 'px';
                 pill.style.top    = (topOffset + ((start - 1) * rowHeight) + 3) + 'px';
                 pill.style.cursor = 'pointer';
+                pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
 
                 const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
                 pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}`;
 
-                let dropBtn = '';
-                if (sess.isLocal) {
-                    dropBtn = `<button class="pill-drop-btn" onclick="dropLocalClass('${sess.temp_id}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
-                }
+                const _dbKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
+                const _label = `${sess.subjectcode} — ${sess.daydesc} ${sess.start_fmt || ''} – ${sess.end_fmt || ''} in ${sess.roomname || 'TBA'}`;
+                const _sd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _dbKey, label: _label, subjectcode: sess.subjectcode || null }));
+                const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_sd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
 
                 pill.innerHTML = `
                     ${dropBtn}
-                    <div class="pill-subject" style="margin-top: ${sess.isLocal ? '8px' : '0'};">${sess.subjectcode}</div>
+                    <div class="pill-subject" style="margin-top:8px;">${sess.subjectcode}</div>
                     <div style="font-size:0.6rem;">${instrLast}</div>`;
 
                 pill.onclick = (e) => {
@@ -1401,22 +1845,30 @@ async function triggerCascade(skipGridRender = false) {
     document.getElementById('sum_course').innerText = '-';
     document.getElementById('sum_prog').innerText   = prog ? document.getElementById('prog_trigger_text').innerText : '-';
 
-    if (prog) {
-        try {
-            const resp = await fetch(`/api/get_curriculum?program=${prog}`);
-            const data = await resp.json();
+   if (prog) {
+            try {
+                // --- FIX: Ipadala ang ay_id at year_level para makuha ang tamang Cohort Curriculum ---
+                const resp = await fetch(`/api/get_curriculum?program=${encodeURIComponent(prog)}&ay_id=${encodeURIComponent(ay)}&year_level=${encodeURIComponent(year)}`);
+                const data = await resp.json();
 
             if (data.success) {
                 currDisplay.innerText = data.curriculum_code;
                 currHidden.value = data.curriculum_id;
 
                 if (year && sem && !window.currentEditSession) {
-                    const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}`);
+                    const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}&ay_id=${encodeURIComponent(ay)}`);
                     const sData = await sResp.json();
                     subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
                     if (sData.subjects && sData.subjects.length > 0) {
                         sData.subjects.forEach(s => {
-                            subjSelect.innerHTML += `<option value="${s.subjectcode}">${s.subjectname}</option>`;
+                            const opt = document.createElement('option');
+                            opt.value = s.subjectcode;
+                            opt.textContent = s.subjectname;
+                            opt.dataset.units    = s.creditunits    || 0;
+                            opt.dataset.hours    = s.total_hours    || 0;
+                            opt.dataset.labhours = s.laboratoryhours || 0;
+                            opt.dataset.dbScheduled = s.scheduled_hours || 0;
+                            subjSelect.appendChild(opt);
                         });
                     } else {
                         subjSelect.innerHTML = '<option value="">No subjects found</option>';
@@ -1433,6 +1885,11 @@ async function triggerCascade(skipGridRender = false) {
     }
 
     if (typeof updateSummary === 'function') updateSummary();
+
+    // Refresh subject list panel with status badges (Draft/Published) after every cascade
+    if (typeof _updateSubjectList === 'function') {
+        _updateSubjectList().catch(() => {});
+    }
 
     if (skipGridRender !== true) {
         if (currentMode === 'program') {
@@ -1451,6 +1908,7 @@ async function selectRoom(roomId, roomName) {
     document.getElementById('sum_room').innerText      = roomName;
 
     const room = allRooms.find(r => String(r.id) === String(roomId));
+    _roomInfo = room || null;
     if (room) {
         document.querySelectorAll('.bldg-tab').forEach(btn => btn.classList.remove('active'));
         const bldgTab = document.querySelector(`.bldg-tab[data-bldg="${room.bldg_id}"]`);
