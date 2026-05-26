@@ -7,6 +7,10 @@ import io
 import json
 import psycopg2.extras
 from psycopg2.extras import RealDictCursor
+from pdf_curriculum_parser import parse_curriculum_pdf
+from docx_curriculum_parser import parse_curriculum_docx
+from pdf_faculty_parser import parse_faculty_pdf
+from docx_faculty_parser import parse_faculty_docx
 
 # ─────────────────────────────────────────────────────────────
 #  RANDOM FOREST DSS  (Manual Scheduling — see rf_dss.py)
@@ -431,7 +435,7 @@ def bulk_import():
     if 'loggedin' not in session: return redirect(url_for('login'))
     if 'file' not in request.files: return redirect(url_for('employee'))
     file = request.files['file']
-    if file.filename == '' or not file.filename.endswith('.csv'): 
+    if file.filename == '' or not file.filename.endswith('.csv'):
         flash("Invalid file format. Please upload a .csv file.", "error")
         return redirect(url_for('employee'))
 
@@ -441,23 +445,121 @@ def bulk_import():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
+        # Build name → ID lookup dicts so the CSV can use either IDs or names
+        cur.execute("SELECT SpecializationID, SpecializationName FROM Specialization")
+        spec_map  = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+        cur.execute("SELECT EmployeeTypeID, TypeName FROM EmployeeType")
+        etype_map = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+        cur.execute("SELECT DesignationID, DesignationName FROM Designation")
+        desig_map = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+
+        def _fuzzy_lookup(key, name_map):
+            """Try progressively looser matches; return ID or None."""
+            if key in name_map: return name_map[key]
+            m = {k: v for k, v in name_map.items() if k.startswith(key)}
+            if len(m) == 1: return next(iter(m.values()))
+            m = {k: v for k, v in name_map.items() if key.startswith(k)}
+            if len(m) == 1: return next(iter(m.values()))
+            m = {k: v for k, v in name_map.items() if key in k}
+            if len(m) == 1: return next(iter(m.values()))
+            return None
+
+        def resolve_etype(val):
+            """Employee Type must already exist – controlled values with load rules."""
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                result = _fuzzy_lookup(val.strip().lower(), etype_map)
+                if result is not None:
+                    return result
+                avail = ', '.join(f'"{n}"' for n in sorted(etype_map.keys()))
+                raise ValueError(
+                    f"'{val}' is not a recognised Employee Type. "
+                    f"Available: {avail}"
+                )
+
+        def get_or_create_spec(val):
+            """Specialization: fuzzy match first, auto-create if nothing matches."""
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                name = val.strip()
+                key  = name.lower()
+                result = _fuzzy_lookup(key, spec_map)
+                if result is not None:
+                    return result
+                # Not found – insert it automatically
+                cur.execute(
+                    "INSERT INTO Specialization (SpecializationName, IsActive) "
+                    "VALUES (%s, TRUE) ON CONFLICT (SpecializationName) DO NOTHING",
+                    (name,)
+                )
+                cur.execute(
+                    "SELECT SpecializationID FROM Specialization "
+                    "WHERE LOWER(SpecializationName) = LOWER(%s)", (name,)
+                )
+                row = cur.fetchone(); new_id = row[0]
+                spec_map[key] = new_id
+                return new_id
+
+        def get_or_create_desig(val):
+            """Designation: fuzzy match first, auto-create if nothing matches."""
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                name = val.strip()
+                key  = name.lower()
+                result = _fuzzy_lookup(key, desig_map)
+                if result is not None:
+                    return result
+                # Not found – insert it automatically
+                cur.execute(
+                    "INSERT INTO Designation (DesignationName) "
+                    "VALUES (%s) ON CONFLICT (DesignationName) DO NOTHING",
+                    (name,)
+                )
+                cur.execute(
+                    "SELECT DesignationID FROM Designation "
+                    "WHERE LOWER(DesignationName) = LOWER(%s)", (name,)
+                )
+                row = cur.fetchone(); new_id = row[0]
+                desig_map[key] = new_id
+                return new_id
+
         for row_num, row in enumerate(csv_input, 2):
             if len(row) < 10: continue
             try:
-                emp_num, last_name, first_name, middle_name, email, contact, spec_id_str, etype_id_str, status, desig_id_str =[r.strip() for r in row[:10]]
-                
-                middle_name = middle_name if middle_name else None
-                email = email if email else None
-                contact = contact if contact else None
-                spec_id = int(spec_id_str) if spec_id_str else None
-                etype_id = int(etype_id_str) if etype_id_str else None
-                desig_id = None if desig_id_str.upper() == 'NULL' or not desig_id_str else int(desig_id_str)
-                
+                emp_num, last_name, first_name, middle_name, email, contact, \
+                    spec_raw, etype_raw, status, desig_raw = [r.strip() for r in row[:10]]
+
+                spec_id  = get_or_create_spec(spec_raw)
+                etype_id = resolve_etype(etype_raw)
+                desig_id = get_or_create_desig(desig_raw)
+
+                # Normalise status to exact DB-accepted values (case-insensitive)
+                status_norm = status.lower().replace('-', '').replace(' ', '')
+                if status_norm == 'parttime':
+                    status = 'Part-Time'
+                elif status_norm == 'permanent':
+                    status = 'Permanent'
+                elif status_norm == 'temporary':
+                    status = 'Temporary'
+
                 cur.execute("""
-                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) 
+                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                        Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                        DesignationID, EmployeeStatus)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (EmployeeNumber) DO NOTHING
-                """, (emp_num, first_name, middle_name, last_name, email, contact, spec_id, etype_id, desig_id, status))
+                """, (emp_num, first_name, middle_name or None, last_name,
+                      email or None, contact or None,
+                      spec_id, etype_id, desig_id, status))
 
             except ValueError as ve:
                 conn.rollback()
@@ -472,6 +574,379 @@ def bulk_import():
         cur.close()
         conn.close()
     return redirect(url_for('employee'))
+
+
+# ── Shared helper: insert employee list using regular cursor ─────────────────
+def _acad_insert_employees(rows, conn, cur):
+    cur.execute("SELECT SpecializationID, SpecializationName FROM Specialization")
+    spec_map  = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+    cur.execute("SELECT EmployeeTypeID, TypeName FROM EmployeeType")
+    etype_map = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+    cur.execute("SELECT DesignationID, DesignationName FROM Designation")
+    desig_map = {r[1].strip().lower(): r[0] for r in cur.fetchall()}
+
+    def _fuzzy(key, nm):
+        if key in nm: return nm[key]
+        m = {k: v for k, v in nm.items() if k.startswith(key)}
+        if len(m) == 1: return next(iter(m.values()))
+        m = {k: v for k, v in nm.items() if key.startswith(k)}
+        if len(m) == 1: return next(iter(m.values()))
+        m = {k: v for k, v in nm.items() if key in k}
+        if len(m) == 1: return next(iter(m.values()))
+        return None
+
+    def resolve_etype(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            r = _fuzzy(val.strip().lower(), etype_map)
+            if r is not None: return r
+            avail = ', '.join(f'"{n}"' for n in sorted(etype_map.keys()))
+            raise ValueError(f"'{val}' is not a recognised Employee Type. Available: {avail}")
+
+    def get_or_create_spec(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            name = val.strip(); key = name.lower()
+            r = _fuzzy(key, spec_map)
+            if r is not None: return r
+            cur.execute("INSERT INTO Specialization (SpecializationName, IsActive) VALUES (%s, TRUE) ON CONFLICT (SpecializationName) DO NOTHING", (name,))
+            cur.execute("SELECT SpecializationID FROM Specialization WHERE LOWER(SpecializationName) = LOWER(%s)", (name,))
+            new_id = cur.fetchone()[0]; spec_map[key] = new_id; return new_id
+
+    def get_or_create_desig(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            name = val.strip(); key = name.lower()
+            r = _fuzzy(key, desig_map)
+            if r is not None: return r
+            cur.execute("INSERT INTO Designation (DesignationName) VALUES (%s) ON CONFLICT (DesignationName) DO NOTHING", (name,))
+            cur.execute("SELECT DesignationID FROM Designation WHERE LOWER(DesignationName) = LOWER(%s)", (name,))
+            new_id = cur.fetchone()[0]; desig_map[key] = new_id; return new_id
+
+    def norm_status(s):
+        sn = s.lower().replace('-', '').replace(' ', '')
+        if sn == 'parttime': return 'Part-Time'
+        if sn == 'permanent': return 'Permanent'
+        if sn == 'temporary': return 'Temporary'
+        return s
+
+    errors = []
+    for i, emp in enumerate(rows, 1):
+        try:
+            emp_num     = str(emp.get('emp_num',     '') or '').strip()
+            last_name   = str(emp.get('last_name',   '') or '').strip()
+            first_name  = str(emp.get('first_name',  '') or '').strip()
+            middle_name = str(emp.get('middle_name', '') or '').strip()
+            email       = str(emp.get('email',       '') or '').strip()
+            contact     = str(emp.get('contact',     '') or '').strip()
+            spec_id     = get_or_create_spec(emp.get('specialization', ''))
+            etype_id    = resolve_etype(emp.get('emp_type', ''))
+            desig_id    = get_or_create_desig(emp.get('designation', ''))
+            status      = norm_status(str(emp.get('status', 'Permanent') or 'Permanent'))
+            if not emp_num:
+                errors.append(f"Row {i}: missing Employee Number"); continue
+            cur.execute("""
+                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                    Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                    DesignationID, EmployeeStatus)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (EmployeeNumber) DO NOTHING
+            """, (emp_num, first_name, middle_name or None, last_name,
+                  email or None, contact or None, spec_id, etype_id, desig_id, status))
+            hashed_pw = generate_password_hash(emp_num)
+            cur.execute("""
+                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
+                VALUES (%s, %s, 'Faculty', TRUE, %s) ON CONFLICT (Username) DO NOTHING
+            """, (emp_num, hashed_pw, emp_num))
+        except ValueError as ve:
+            errors.append(f"Row {i}: {ve}")
+    return errors
+
+
+# ── Academic Head: XLSX faculty import ───────────────────────────────────────
+@app.route('/faculty/import/xlsx', methods=['POST'])
+def acad_faculty_import_xlsx():
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    if 'file' not in request.files or request.files['file'].filename == '':
+        flash("No file selected.", "error"); return redirect(url_for('employee'))
+
+    file = request.files['file']
+    if not file.filename.endswith('.xlsx'):
+        flash("Please upload a .xlsx file.", "error"); return redirect(url_for('employee'))
+
+    import openpyxl
+    _HEADER_KEYS = {
+        'employeenumber': 'emp_num',   'employee number': 'emp_num',   'emp no': 'emp_num',
+        'lastname':   'last_name',     'last name':   'last_name',     'surname':  'last_name',
+        'firstname':  'first_name',    'first name':  'first_name',
+        'middlename': 'middle_name',   'middle name': 'middle_name',
+        'email': 'email',              'email address': 'email',
+        'contactnumber': 'contact',    'contact number': 'contact',    'contact': 'contact',
+        'specialization': 'specialization',
+        'employeetype':   'emp_type',  'employee type': 'emp_type',    'type': 'emp_type',
+        'employeestatus': 'status',    'employment status': 'status',  'status': 'status',
+        'designation': 'designation',
+    }
+
+    wb = openpyxl.load_workbook(file.stream, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        flash("Excel file is empty.", "error"); return redirect(url_for('employee'))
+
+    col_map = {}
+    for i, cell in enumerate(rows[0]):
+        key = str(cell or '').lower().strip()
+        if key in _HEADER_KEYS:
+            col_map[_HEADER_KEYS[key]] = i
+
+    employees = []
+    for raw in rows[1:]:
+        if not any(c for c in raw if c is not None): continue
+        def gv(field):
+            idx = col_map.get(field)
+            return str(raw[idx] or '').strip() if idx is not None and idx < len(raw) else ''
+        employees.append({
+            'emp_num': gv('emp_num'), 'last_name': gv('last_name'),
+            'first_name': gv('first_name'), 'middle_name': gv('middle_name'),
+            'email': gv('email'), 'contact': gv('contact'),
+            'specialization': gv('specialization'), 'emp_type': gv('emp_type'),
+            'status': gv('status'), 'designation': gv('designation'),
+        })
+
+    conn = get_db_connection()
+    cur  = conn.cursor()
+    try:
+        errs = _acad_insert_employees(employees, conn, cur)
+        conn.commit()
+        if errs:
+            flash("Import completed with errors: " + "; ".join(errs[:3]), "error")
+        else:
+            flash(f"XLSX import successful — {len(employees)} employee(s) processed.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Import error: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(url_for('employee'))
+
+
+# ── Shared helpers: parse CSV / XLSX for analyze-before-import ───────────────
+_STRUCT_HEADER_MAP = {
+    'employeenumber': 'emp_num',  'employee number': 'emp_num',
+    'emp no': 'emp_num',          'emp no.': 'emp_num',
+    'emp_num': 'emp_num',         'employee id': 'emp_num',
+    'lastname':    'last_name',   'last name':    'last_name',
+    'last_name':   'last_name',   'surname':      'last_name',
+    'firstname':   'first_name',  'first name':   'first_name',  'first_name':  'first_name',
+    'middlename':  'middle_name', 'middle name':  'middle_name', 'middle_name': 'middle_name',
+    'middle initial': 'middle_name', 'm.i.': 'middle_name',
+    'email': 'email', 'email address': 'email', 'e-mail': 'email', 'e-mail address': 'email',
+    'contactnumber': 'contact',   'contact number': 'contact',   'contact': 'contact',
+    'mobile number': 'contact',   'mobile': 'contact',
+    'phone number': 'contact',    'phone': 'contact',
+    'specialization': 'specialization', 'specialty': 'specialization', 'speciality': 'specialization',
+    'employeetype': 'emp_type',   'employee type': 'emp_type',   'type': 'emp_type',
+    'employeestatus': 'status',   'employment status': 'status', 'status': 'status',
+    'designation': 'designation',
+}
+
+def _detect_struct_col_map(header_row):
+    col_map = {}
+    for i, cell in enumerate(header_row):
+        key = str(cell or '').strip().lower()
+        if key in _STRUCT_HEADER_MAP and _STRUCT_HEADER_MAP[key] not in col_map:
+            col_map[_STRUCT_HEADER_MAP[key]] = i
+    has_header = any(f in col_map for f in ('emp_num', 'last_name', 'first_name'))
+    return col_map, has_header
+
+_POSITIONAL_MAP = {
+    'emp_num': 0, 'last_name': 1, 'first_name': 2, 'middle_name': 3,
+    'email': 4, 'contact': 5, 'specialization': 6, 'emp_type': 7,
+    'status': 8, 'designation': 9,
+}
+
+_POSITIONAL_LABELS = [
+    'EmployeeNumber', 'LastName', 'FirstName', 'MiddleName',
+    'Email', 'Contact', 'Specialization', 'EmployeeType', 'EmployeeStatus', 'Designation',
+]
+
+def _rows_to_employee_list(data_rows, col_map):
+    fields = ('emp_num','last_name','first_name','middle_name',
+              'email','contact','specialization','emp_type','status','designation')
+    employees = []
+    for row in data_rows:
+        row = list(row)
+        if not any(str(c or '').strip() for c in row):
+            continue
+        def gv(f, _r=row, _m=col_map):
+            idx = _m.get(f)
+            return str(_r[idx] or '').strip() if idx is not None and idx < len(_r) else ''
+        emp = {f: gv(f) for f in fields}
+        if not emp['emp_num'] and not emp['last_name']:
+            continue
+        employees.append(emp)
+    return employees
+
+def _build_struct_result(employees, has_header, col_map):
+    warnings = []
+    if not has_header:
+        warnings.append(
+            "No column headers detected — using fixed positional order "
+            "(EmpNum, LastName, FirstName, MiddleName, Email, Contact, "
+            "Specialization, Type, Status, Designation). Please verify."
+        )
+    else:
+        missing = [f.replace('_', ' ') for f in ('emp_num', 'last_name', 'first_name')
+                   if f not in col_map]
+        if missing:
+            warnings.append(f"Missing expected column(s): {', '.join(missing)}.")
+    if not employees:
+        warnings.append("No employee records found in the file.")
+    confidence = 95 if (has_header and employees and not warnings) else (75 if employees else 0)
+    return {'employees': employees, 'confidence': confidence,
+            'warnings': warnings, 'employee_count': len(employees)}
+
+def _parse_csv_employees(file_bytes):
+    stream = None
+    for enc in ('utf-8-sig', 'utf-8', 'latin-1'):
+        try:
+            stream = io.StringIO(file_bytes.decode(enc), newline=None)
+            break
+        except UnicodeDecodeError:
+            continue
+    rows = list(csv.reader(stream))
+    if not rows:
+        return {'error': 'The CSV file is empty.'}
+    col_map, has_header = _detect_struct_col_map(rows[0])
+    if not has_header:
+        col_map = _POSITIONAL_MAP.copy()
+    data_rows  = rows[1:] if has_header else rows
+    raw_headers = [str(c or '') for c in rows[0]] if has_header else _POSITIONAL_LABELS[:]
+    raw_rows   = [[str(c or '') for c in row] for row in data_rows]
+    employees  = _rows_to_employee_list(data_rows, col_map)
+    result     = _build_struct_result(employees, has_header, col_map)
+    result['raw_rows']   = raw_rows
+    result['raw_headers'] = raw_headers
+    result['col_map']    = col_map
+    result['has_header'] = has_header
+    return result
+
+def _parse_xlsx_employees(file_bytes):
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {'error': 'The Excel file is empty.'}
+    col_map, has_header = _detect_struct_col_map(rows[0])
+    if not has_header:
+        col_map = _POSITIONAL_MAP.copy()
+    data_rows   = rows[1:] if has_header else rows
+    raw_headers = [str(c or '') for c in rows[0]] if has_header else _POSITIONAL_LABELS[:]
+    raw_rows    = [[str(c or '') for c in row] for row in data_rows]
+    employees   = _rows_to_employee_list(data_rows, col_map)
+    result      = _build_struct_result(employees, has_header, col_map)
+    result['raw_rows']    = raw_rows
+    result['raw_headers'] = raw_headers
+    result['col_map']     = col_map
+    result['has_header']  = has_header
+    return result
+
+
+# ── Academic Head: CSV faculty analyze ───────────────────────────────────────
+@app.route('/faculty/import/csv/analyze', methods=['POST'])
+def acad_faculty_csv_analyze():
+    if 'loggedin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename.endswith('.csv'):
+        return jsonify({'error': 'Please upload a .csv file.'}), 400
+    try:
+        result = _parse_csv_employees(f.read())
+        return jsonify(result), (400 if 'error' in result else 200)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Academic Head: XLSX faculty analyze ──────────────────────────────────────
+@app.route('/faculty/import/xlsx/analyze', methods=['POST'])
+def acad_faculty_xlsx_analyze():
+    if 'loggedin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename.endswith('.xlsx'):
+        return jsonify({'error': 'Please upload a .xlsx file.'}), 400
+    try:
+        result = _parse_xlsx_employees(f.read())
+        return jsonify(result), (400 if 'error' in result else 200)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Academic Head: PDF faculty analyze ───────────────────────────────────────
+@app.route('/faculty/import/pdf/analyze', methods=['POST'])
+def acad_faculty_pdf_analyze():
+    if 'loggedin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    try:
+        data = parse_faculty_pdf(request.files['file'].read())
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Academic Head: DOCX faculty analyze ──────────────────────────────────────
+@app.route('/faculty/import/docx/analyze', methods=['POST'])
+def acad_faculty_docx_analyze():
+    if 'loggedin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    try:
+        data = parse_faculty_docx(request.files['file'].read())
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Academic Head: PDF/DOCX faculty confirm ──────────────────────────────────
+@app.route('/faculty/import/doc/confirm', methods=['POST'])
+def acad_faculty_doc_confirm():
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    raw = request.form.get('employees_data', '[]')
+    try:
+        employees = json.loads(raw)
+    except Exception:
+        flash("Invalid data submitted.", "error"); return redirect(url_for('employee'))
+
+    conn = get_db_connection()
+    cur  = conn.cursor()
+    try:
+        errs = _acad_insert_employees(employees, conn, cur)
+        conn.commit()
+        if errs:
+            flash("Import completed with errors: " + "; ".join(errs[:3]), "error")
+        else:
+            flash(f"Import successful — {len(employees)} employee(s) processed.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Import error: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(url_for('employee'))
+
 
 @app.route('/employee/archived')
 def archived_employees():
@@ -2220,6 +2695,560 @@ def admin_dashboard():
     except Exception as e:
         return render_template('admin/dashboard_admin.html', user_count=0, total=0, current_date="N/A")
 
+# ── Employee DOCX Export ──────────────────────────────────────────────────────
+def _build_employee_docx():
+    """Generate a DOCX file from POSTed employee JSON and return a Flask Response."""
+    data = request.get_json(silent=True) or {}
+    employees = data.get('employees', [])
+    title     = data.get('title', 'Employee Records')
+    timestamp = data.get('timestamp', '')
+
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.left_margin = Inches(0.9); sec.right_margin = Inches(0.9)
+    sec.top_margin  = Inches(0.8); sec.bottom_margin = Inches(0.8)
+
+    h = doc.add_heading(title, 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in h.runs:
+        run.font.color.rgb = RGBColor(0x80, 0x00, 0x00)
+
+    if timestamp:
+        p = doc.add_paragraph(timestamp)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in p.runs:
+            run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+            run.font.size = Pt(9)
+
+    doc.add_paragraph()
+
+    has_contact = any(str(e.get('contact', '')).strip() for e in employees)
+    headers = ['#', 'Employee Number', 'Employee Name', 'Specialization', 'Email']
+    if has_contact: headers.append('Contact')
+    headers += ['Employment Type', 'Status']
+
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.style = 'Table Grid'
+
+    hdr = table.rows[0]
+    for i, h_text in enumerate(headers):
+        cell = hdr.cells[i]
+        cell.text = h_text
+        for para in cell.paragraphs:
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in para.runs:
+                run.bold = True; run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        tc = cell._tc; tcp = tc.get_or_add_tcPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:fill'), '800000'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:val'), 'clear')
+        tcp.append(shd)
+
+    for idx, emp in enumerate(employees):
+        row = table.add_row()
+        vals = [str(idx + 1), emp.get('emp_num', ''), emp.get('name', ''),
+                emp.get('spec', ''), emp.get('email', '')]
+        if has_contact: vals.append(emp.get('contact', ''))
+        vals += [emp.get('type', ''), emp.get('status', '')]
+        for j, val in enumerate(vals):
+            cell = row.cells[j]
+            cell.text = val
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(9)
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers={'Content-Disposition': 'attachment; filename="employees.docx"'}
+    )
+
+@app.route('/admin/employee/export/docx', methods=['POST'])
+def admin_export_employees_docx():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_employee_docx()
+
+@app.route('/employee/export/docx', methods=['POST'])
+def export_employees_docx():
+    if session.get('role') not in ('Admin', 'Academic Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_employee_docx()
+
+# ── Employee XLSX Export ──────────────────────────────────────────────────────
+def _build_employee_xlsx():
+    """Generate a styled XLSX file from POSTed employee JSON using openpyxl."""
+    data      = request.get_json(silent=True) or {}
+    employees = data.get('employees', [])
+    title     = data.get('title', 'Employee Records')
+    timestamp = data.get('timestamp', '')
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Employees'
+
+    has_contact = any(str(e.get('contact', '')).strip() for e in employees)
+    headers = ['#', 'Employee Number', 'Employee Name', 'Specialization', 'Email']
+    if has_contact: headers.append('Contact')
+    headers += ['Employment Type', 'Status']
+    ncols = len(headers)
+
+    MAROON = 'FF800000'; WHITE = 'FFFFFFFF'
+    thin   = Side(style='thin', color='FF888888')
+    bdr    = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # ── Row 1: Title ──────────────────────────────────────────────────────────
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    c = ws.cell(row=1, column=1, value=title)
+    c.font      = Font(bold=True, size=14, color=WHITE, name='Calibri')
+    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 30
+
+    # ── Row 2: Subtitle ───────────────────────────────────────────────────────
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+    c = ws.cell(row=2, column=1, value=timestamp)
+    c.font      = Font(size=9, color='FFDDDDDD', italic=True, name='Calibri')
+    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[2].height = 16
+
+    # ── Row 3: Spacer ─────────────────────────────────────────────────────────
+    ws.row_dimensions[3].height = 6
+
+    # ── Row 4: Column headers ─────────────────────────────────────────────────
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=ci, value=h)
+        c.font      = Font(bold=True, size=10, color=WHITE, name='Calibri')
+        c.fill      = PatternFill('solid', fgColor=MAROON)
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        c.border    = bdr
+    ws.row_dimensions[4].height = 22
+    ws.freeze_panes = 'A5'
+
+    # ── Rows 5+: Data ─────────────────────────────────────────────────────────
+    PINK  = PatternFill('solid', fgColor='FFFFF0F0')
+    WHITE_FILL = PatternFill('solid', fgColor='FFFFFFFF')
+    data_font = Font(size=9, name='Calibri')
+
+    for ri, emp in enumerate(employees):
+        rn   = ri + 5
+        vals = [ri + 1, emp.get('emp_num',''), emp.get('name',''),
+                emp.get('spec',''), emp.get('email','')]
+        if has_contact: vals.append(emp.get('contact',''))
+        vals += [emp.get('type',''), emp.get('status','')]
+        fill = PINK if ri % 2 == 1 else WHITE_FILL
+        for ci, val in enumerate(vals, 1):
+            c = ws.cell(row=rn, column=ci, value=val)
+            c.font = data_font; c.fill = fill; c.border = bdr
+            c.alignment = Alignment(vertical='center')
+        ws.row_dimensions[rn].height = 16
+
+    # ── Column widths ─────────────────────────────────────────────────────────
+    widths = [5, 20, 28, 26, 32]
+    if has_contact: widths.append(18)
+    widths += [20, 14]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment; filename="employees.xlsx"'}
+    )
+
+@app.route('/admin/employee/export/xlsx', methods=['POST'])
+def admin_export_employees_xlsx():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_employee_xlsx()
+
+@app.route('/employee/export/xlsx', methods=['POST'])
+def export_employees_xlsx():
+    if session.get('role') not in ('Admin', 'Academic Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_employee_xlsx()
+
+# ── Curriculum Export List & Data ────────────────────────────────────────────
+@app.route('/admin/curriculum/export/list', methods=['GET'])
+def admin_curriculum_export_list():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT p.ProgramCode as program_code, p.ProgramName as program_name,
+               c.CurriculumID as curriculum_id, c.CurriculumCode as curriculum_code,
+               c.CurriculumYear as curriculum_year
+        FROM Programs p
+        LEFT JOIN Curriculum c ON c.ProgramCode = p.ProgramCode
+        WHERE p.IsActive = TRUE
+        ORDER BY p.ProgramName ASC, c.CurriculumYear DESC
+    """)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    from collections import OrderedDict
+    programs = OrderedDict()
+    for row in rows:
+        pc = row['program_code']
+        if pc not in programs:
+            programs[pc] = {'program_code': pc, 'program_name': row['program_name'], 'curricula': []}
+        if row['curriculum_id']:
+            programs[pc]['curricula'].append({
+                'curriculum_id':   row['curriculum_id'],
+                'curriculum_code': row['curriculum_code'],
+                'curriculum_year': row['curriculum_year'],
+            })
+    return jsonify([p for p in programs.values() if p['curricula']])
+
+@app.route('/admin/curriculum/export/data', methods=['POST'])
+def admin_curriculum_export_data():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    payload        = request.get_json(silent=True) or {}
+    curriculum_ids = payload.get('curriculum_ids', [])
+    if not curriculum_ids:
+        return jsonify({'error': 'No curriculum IDs provided'}), 400
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT c.CurriculumID as curriculum_id, c.CurriculumCode as curriculum_code,
+               c.CurriculumYear as curriculum_year, p.ProgramName as program_name
+        FROM Curriculum c
+        JOIN Programs p ON c.ProgramCode = p.ProgramCode
+        WHERE c.CurriculumID = ANY(%s)
+    """, (curriculum_ids,))
+    info_map = {r['curriculum_id']: dict(r) for r in cur.fetchall()}
+    cur.execute("""
+        SELECT cv.CurriculumID as curriculum_id,
+               CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) as year_level,
+               cv.Semester as semester,
+               cv.SubjectCode as subject_code,
+               COALESCE(s.SubjectName, cv."Description", '') as subject_name,
+               COALESCE(cv.LectureHours, 0)    as lecture_hours,
+               COALESCE(cv.LaboratoryHours, 0) as lab_hours,
+               COALESCE(cv.CreditUnits, 0)     as credit_units,
+               COALESCE(cv.TuitionHours, 0)    as tuition_hours,
+               COALESCE(cv."Prerequisite", '')  as prerequisite,
+               COALESCE(cv."Co-requisite", '')  as corequisite
+        FROM Curriculum_View cv
+        LEFT JOIN Subject s ON cv.SubjectCode = s.SubjectCode
+        WHERE cv.CurriculumID = ANY(%s)
+        ORDER BY cv.CurriculumID,
+                 CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT),
+                 cv.Semester, cv.SubjectCode
+    """, (curriculum_ids,))
+    subject_rows = cur.fetchall()
+    cur.close(); conn.close()
+    SEM_LABELS = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+    YL_LABELS  = {1: '1st Year', 2: '2nd Year', 3: '3rd Year', 4: '4th Year', 5: '5th Year'}
+    from collections import defaultdict
+    grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    for row in subject_rows:
+        grouped[row['curriculum_id']][row['year_level']][row['semester']].append({
+            'subject_code':  row['subject_code']   or '',
+            'subject_name':  row['subject_name']   or '',
+            'lecture_hours': int(row['lecture_hours']  or 0),
+            'lab_hours':     int(row['lab_hours']      or 0),
+            'credit_units':  int(row['credit_units']   or 0),
+            'tuition_hours': int(row['tuition_hours']  or 0),
+            'prerequisite':  row['prerequisite']   or '',
+            'corequisite':   row['corequisite']    or '',
+        })
+    result = []
+    for cid in curriculum_ids:
+        if cid not in info_map:
+            continue
+        info    = info_map[cid]
+        yl_data = []
+        for yl in sorted(grouped[cid].keys()):
+            sems = []
+            for sem in sorted(grouped[cid][yl].keys()):
+                subjs = grouped[cid][yl][sem]
+                sems.append({
+                    'semester_code': sem,
+                    'label':         SEM_LABELS.get(sem, sem),
+                    'subjects':      subjs,
+                    'total_units':   sum(s['credit_units']  for s in subjs),
+                    'total_tuition': sum(s['tuition_hours'] for s in subjs),
+                })
+            yl_data.append({
+                'year_level': yl,
+                'label':      YL_LABELS.get(yl, f'Year {yl}'),
+                'semesters':  sems,
+            })
+        result.append({
+            'curriculum_id':   cid,
+            'curriculum_code': info['curriculum_code'],
+            'curriculum_year': info['curriculum_year'],
+            'program_name':    info['program_name'],
+            'year_levels':     yl_data,
+        })
+    return jsonify(result)
+
+# ── Curriculum DOCX Export ────────────────────────────────────────────────────
+def _build_curriculum_docx():
+    """Generate a detailed DOCX export grouped by curriculum → year level → semester."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    payload   = request.get_json(silent=True) or {}
+    curricula = payload.get('curricula', [])
+    timestamp = payload.get('timestamp', '')
+
+    HEADERS    = ['Subject Code', 'Prereq', 'Co-req', 'Description', 'Lec Hrs', 'Lab Hrs', 'Credited Units', 'Tuition Hrs']
+    KEYS       = ['subject_code', 'prerequisite', 'corequisite', 'subject_name', 'lecture_hours', 'lab_hours', 'credit_units', 'tuition_hours']
+    COL_WIDTHS = [Inches(0.9), Inches(0.9), Inches(0.7), Inches(2.5), Inches(0.5), Inches(0.5), Inches(0.5), Inches(0.5)]
+
+    def _shd(cell, hex_color):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), hex_color)
+        tcPr.append(shd)
+
+    def _shade_para(para, fill_hex):
+        pPr = para._p.get_or_add_pPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), fill_hex)
+        pPr.append(shd)
+
+    def _sr(run, bold=False, size=9, color=None, italic=False):
+        run.bold = bold; run.italic = italic
+        run.font.size = Pt(size); run.font.name = 'Calibri'
+        if color: run.font.color.rgb = RGBColor(*color)
+
+    doc = Document()
+    for sec in doc.sections:
+        sec.top_margin = sec.bottom_margin = Inches(0.6)
+        sec.left_margin = sec.right_margin = Inches(0.6)
+
+    first_curr = True
+    for curr in curricula:
+        if not first_curr:
+            doc.add_page_break()
+        first_curr = False
+
+        h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = h.add_run(f"{curr.get('curriculum_code','')}  —  {curr.get('program_name','')}")
+        _sr(r, bold=True, size=16, color=(128, 0, 0))
+
+        h2 = doc.add_paragraph(); h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r2 = h2.add_run(f"Curriculum Year: {curr.get('curriculum_year','')}   |   {timestamp}")
+        _sr(r2, size=9, color=(100, 100, 100), italic=True)
+        doc.add_paragraph()
+
+        for yl_data in curr.get('year_levels', []):
+            yh = doc.add_paragraph()
+            yh.paragraph_format.space_before = Pt(10)
+            yh.paragraph_format.space_after  = Pt(2)
+            _shade_para(yh, 'E8DEDE')
+            _sr(yh.add_run('  ' + yl_data['label'].upper() + '  '), bold=True, size=13, color=(80, 0, 0))
+
+            for sem_data in yl_data.get('semesters', []):
+                sh = doc.add_paragraph()
+                sh.paragraph_format.space_before = Pt(4)
+                sh.paragraph_format.space_after  = Pt(2)
+                _sr(sh.add_run(sem_data['label']), bold=True, size=10, color=(128, 0, 0))
+
+                tbl = doc.add_table(rows=1, cols=len(HEADERS))
+                tbl.style = 'Table Grid'
+                for ci, (cell, hdr) in enumerate(zip(tbl.rows[0].cells, HEADERS)):
+                    cell.text = hdr; _shd(cell, '800000')
+                    _sr(cell.paragraphs[0].runs[0], bold=True, size=9, color=(255, 255, 255))
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.width = COL_WIDTHS[ci]
+
+                subjs = sem_data.get('subjects', [])
+                for ri, subj in enumerate(subjs):
+                    fill = 'FFF0F0' if ri % 2 == 1 else 'FFFFFF'
+                    row_cells = tbl.add_row().cells
+                    for ci, (cell, key) in enumerate(zip(row_cells, KEYS)):
+                        cell.text = str(subj.get(key) or '')
+                        _shd(cell, fill)
+                        if cell.paragraphs[0].runs:
+                            _sr(cell.paragraphs[0].runs[0], size=8)
+                        cell.width = COL_WIDTHS[ci]
+
+                if subjs:
+                    tot_cells = tbl.add_row().cells
+                    for ci in range(len(tot_cells)):
+                        _shd(tot_cells[ci], 'F0F0F0')
+                        if ci < len(COL_WIDTHS): tot_cells[ci].width = COL_WIDTHS[ci]
+                    # Merge cols 0-3 (Subject Code through Description) for the label
+                    merged = tot_cells[0].merge(tot_cells[3])
+                    merged.text = 'TOTAL UNITS'
+                    if merged.paragraphs[0].runs:
+                        _sr(merged.paragraphs[0].runs[0], bold=True, size=9)
+                    merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    # Credited Units column (index 6)
+                    tot_cells[6].text = str(sem_data.get('total_units', 0))
+                    if tot_cells[6].paragraphs[0].runs:
+                        _sr(tot_cells[6].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
+                    tot_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    # Tuition Hours column (index 7)
+                    tot_cells[7].text = str(sem_data.get('total_tuition', 0))
+                    if tot_cells[7].paragraphs[0].runs:
+                        _sr(tot_cells[7].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
+                    tot_cells[7].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                doc.add_paragraph()
+
+    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers={'Content-Disposition': 'attachment; filename="curriculum.docx"'}
+    )
+
+@app.route('/admin/curriculum/export/docx', methods=['POST'])
+def admin_export_curriculum_docx():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_curriculum_docx()
+
+# ── Curriculum XLSX Export ────────────────────────────────────────────────────
+def _build_curriculum_xlsx():
+    """Generate a detailed XLSX export — one sheet per curriculum, grouped by year/semester."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    payload   = request.get_json(silent=True) or {}
+    curricula = payload.get('curricula', [])
+    title     = payload.get('title', 'Curriculum Export')
+    timestamp = payload.get('timestamp', '')
+
+    HEADERS    = ['#', 'Subject Code', 'Prereq', 'Co-req', 'Description', 'Lec Hrs', 'Lab Hrs', 'Credited Units', 'Tuition Hrs']
+    KEYS       = ['subject_code', 'prerequisite', 'corequisite', 'subject_name', 'lecture_hours', 'lab_hours', 'credit_units', 'tuition_hours']
+    COL_WIDTHS = [4, 16, 18, 16, 38, 8, 8, 14, 12]
+    NCOLS      = len(HEADERS)
+    MAROON     = 'FF800000'; WHITE = 'FFFFFFFF'
+    thin       = Side(style='thin', color='FFCCCCCC')
+    bdr        = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    for curr in curricula:
+        sheet_name = (curr.get('curriculum_code') or 'Sheet')[:31]
+        ws = wb.create_sheet(title=sheet_name)
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+        c = ws.cell(row=1, column=1, value=title)
+        c.font = Font(bold=True, size=14, color=WHITE, name='Calibri')
+        c.fill = PatternFill('solid', fgColor=MAROON)
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 28
+
+        curr_label = f"{curr.get('curriculum_code','')}  |  {curr.get('program_name','')}  |  C.Y {curr.get('curriculum_year','')}"
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=NCOLS)
+        c = ws.cell(row=2, column=1, value=curr_label)
+        c.font = Font(bold=True, size=11, color=WHITE, name='Calibri')
+        c.fill = PatternFill('solid', fgColor=MAROON)
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[2].height = 20
+
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=NCOLS)
+        c = ws.cell(row=3, column=1, value=timestamp)
+        c.font = Font(size=8, color='FFDDDDDD', italic=True, name='Calibri')
+        c.fill = PatternFill('solid', fgColor=MAROON)
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[3].height = 14
+
+        rn = 4
+        for yl_data in curr.get('year_levels', []):
+            ws.row_dimensions[rn].height = 8; rn += 1
+
+            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+            c = ws.cell(row=rn, column=1, value=yl_data['label'].upper())
+            c.font = Font(bold=True, size=11, color=WHITE, name='Calibri')
+            c.fill = PatternFill('solid', fgColor='FF333333')
+            c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            ws.row_dimensions[rn].height = 20; rn += 1
+
+            for sem_data in yl_data.get('semesters', []):
+                ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+                c = ws.cell(row=rn, column=1, value=f"  {sem_data['label']}")
+                c.font = Font(bold=True, size=10, color=MAROON, name='Calibri')
+                c.fill = PatternFill('solid', fgColor='FFFFF5F5')
+                c.alignment = Alignment(horizontal='left', vertical='center')
+                ws.row_dimensions[rn].height = 17; rn += 1
+
+                for ci, h in enumerate(HEADERS, 1):
+                    c = ws.cell(row=rn, column=ci, value=h)
+                    c.font = Font(bold=True, size=9, color=WHITE, name='Calibri')
+                    c.fill = PatternFill('solid', fgColor=MAROON)
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    c.border = bdr
+                ws.row_dimensions[rn].height = 18; rn += 1
+
+                subjs = sem_data.get('subjects', [])
+                for si, subj in enumerate(subjs):
+                    fill = PatternFill('solid', fgColor='FFFFF0F0') if si % 2 == 1 else PatternFill('solid', fgColor='FFFFFFFF')
+                    vals = [si + 1] + [subj.get(k, '') for k in KEYS]
+                    for ci, val in enumerate(vals, 1):
+                        c = ws.cell(row=rn, column=ci, value=val)
+                        c.font = Font(size=9, name='Calibri')
+                        c.fill = fill; c.border = bdr
+                        c.alignment = Alignment(vertical='center', wrap_text=(ci == 3))
+                    ws.row_dimensions[rn].height = 15; rn += 1
+
+                if subjs:
+                    fill_tot  = PatternFill('solid', fgColor='FFE8E8E8')
+                    total_tu  = sem_data.get('total_tuition', 0)
+                    # cols: [#, SubjCode, Prereq, Coreq, Description, Lec, Lab, CreditedUnits, TuitionHrs]
+                    #        1   2        3       4      5             6    7    8               9
+                    tot_vals  = ['', '', '', '', 'TOTAL UNITS', '', '', sem_data.get('total_units', 0), total_tu]
+                    for ci, val in enumerate(tot_vals, 1):
+                        c = ws.cell(row=rn, column=ci, value=val)
+                        c.fill = fill_tot; c.border = bdr
+                        if ci == 5:   # Description col — label
+                            c.font = Font(bold=True, size=9, name='Calibri')
+                            c.alignment = Alignment(horizontal='right', vertical='center')
+                        elif ci in (8, 9):   # Credited Units & Tuition Hrs totals
+                            c.font = Font(bold=True, size=10, color=MAROON, name='Calibri')
+                            c.alignment = Alignment(horizontal='center', vertical='center')
+                        else:
+                            c.font = Font(size=9, name='Calibri')
+                    ws.row_dimensions[rn].height = 17; rn += 1
+
+                ws.row_dimensions[rn].height = 5; rn += 1
+
+        for ci, w in enumerate(COL_WIDTHS, 1):
+            ws.column_dimensions[get_column_letter(ci)].width = w
+        ws.freeze_panes = 'A4'
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment; filename="curriculum.xlsx"'}
+    )
+
+@app.route('/admin/curriculum/export/xlsx', methods=['POST'])
+def admin_export_curriculum_xlsx():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_curriculum_xlsx()
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.route('/admin/employee')
 def admin_employee():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -2431,46 +3460,139 @@ def admin_bulk_archive():
 @app.route('/admin/bulk_import', methods=['POST'])
 def admin_bulk_import():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    if 'file' not in request.files: 
+    if 'file' not in request.files:
         flash("No file selected.", "error")
         return redirect(url_for('admin_employee'))
 
     file = request.files['file']
-    if file.filename == '' or not file.filename.endswith('.csv'): 
+    if file.filename == '' or not file.filename.endswith('.csv'):
         flash("Invalid file format. Please upload a .csv file.", "error")
         return redirect(url_for('admin_employee'))
-        
+
     stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
     csv_input = csv.reader(stream)
-    next(csv_input) 
-    
+    next(csv_input)
+
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    
+
     try:
+        # Build name → ID lookup dicts so the CSV can use either IDs or names
+        cur.execute("SELECT SpecializationID, SpecializationName FROM Specialization")
+        spec_map  = {r['specializationname'].strip().lower(): r['specializationid']
+                     for r in cur.fetchall()}
+        cur.execute("SELECT EmployeeTypeID, TypeName FROM EmployeeType")
+        etype_map = {r['typename'].strip().lower(): r['employeetypeid']
+                     for r in cur.fetchall()}
+        cur.execute("SELECT DesignationID, DesignationName FROM Designation")
+        desig_map = {r['designationname'].strip().lower(): r['designationid']
+                     for r in cur.fetchall()}
+
+        def _fuzzy_lookup(key, name_map):
+            if key in name_map: return name_map[key]
+            m = {k: v for k, v in name_map.items() if k.startswith(key)}
+            if len(m) == 1: return next(iter(m.values()))
+            m = {k: v for k, v in name_map.items() if key.startswith(k)}
+            if len(m) == 1: return next(iter(m.values()))
+            m = {k: v for k, v in name_map.items() if key in k}
+            if len(m) == 1: return next(iter(m.values()))
+            return None
+
+        def resolve_etype(val):
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                result = _fuzzy_lookup(val.strip().lower(), etype_map)
+                if result is not None: return result
+                avail = ', '.join(f'"{n}"' for n in sorted(etype_map.keys()))
+                raise ValueError(f"'{val}' is not a recognised Employee Type. Available: {avail}")
+
+        def get_or_create_spec(val):
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                name = val.strip()
+                key = name.lower()
+                result = _fuzzy_lookup(key, spec_map)
+                if result is not None: return result
+                cur.execute(
+                    "INSERT INTO Specialization (SpecializationName, IsActive) VALUES (%s, TRUE) ON CONFLICT (SpecializationName) DO NOTHING",
+                    (name,)
+                )
+                cur.execute(
+                    "SELECT SpecializationID FROM Specialization WHERE LOWER(SpecializationName) = LOWER(%s)",
+                    (name,)
+                )
+                row = cur.fetchone()
+                new_id = row['specializationid']
+                spec_map[key] = new_id
+                return new_id
+
+        def get_or_create_desig(val):
+            if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''):
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                name = val.strip()
+                key = name.lower()
+                result = _fuzzy_lookup(key, desig_map)
+                if result is not None: return result
+                cur.execute(
+                    "INSERT INTO Designation (DesignationName) VALUES (%s) ON CONFLICT (DesignationName) DO NOTHING",
+                    (name,)
+                )
+                cur.execute(
+                    "SELECT DesignationID FROM Designation WHERE LOWER(DesignationName) = LOWER(%s)",
+                    (name,)
+                )
+                row = cur.fetchone()
+                new_id = row['designationid']
+                desig_map[key] = new_id
+                return new_id
+
         for i, row in enumerate(csv_input, 2):
             if len(row) < 10: continue
             try:
-                emp_num, last_name, first_name, middle_name, email, contact, spec_id_str, etype_id_str, status, desig_id_str =[r.strip() for r in row[:10]]
-                
-                middle_name = middle_name if middle_name else None
-                email = email if email else None
-                contact = contact if contact else None
-                spec_id = int(spec_id_str) if spec_id_str else None
-                etype_id = int(etype_id_str) if etype_id_str else None
-                desig_id = None if not desig_id_str or desig_id_str.upper() == 'NULL' else int(desig_id_str)
-                
+                emp_num, last_name, first_name, middle_name, email, contact, \
+                    spec_raw, etype_raw, status, desig_raw = [r.strip() for r in row[:10]]
+
+                spec_id  = get_or_create_spec(spec_raw)
+                etype_id = resolve_etype(etype_raw)
+                desig_id = get_or_create_desig(desig_raw)
+
+                # Normalise status to exact DB-accepted values (case-insensitive)
+                status_norm = status.lower().replace('-', '').replace(' ', '')
+                if status_norm == 'parttime':
+                    status = 'Part-Time'
+                elif status_norm == 'permanent':
+                    status = 'Permanent'
+                elif status_norm == 'temporary':
+                    status = 'Temporary'
+
                 cur.execute("""
-                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) 
+                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                        Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                        DesignationID, EmployeeStatus)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (EmployeeNumber) DO NOTHING
-                """, (emp_num, first_name, middle_name, last_name, email, contact, spec_id, etype_id, desig_id, status))
+                """, (emp_num, first_name, middle_name or None, last_name,
+                      email or None, contact or None,
+                      spec_id, etype_id, desig_id, status))
 
+                # Determine account role from designation name
                 role = 'Faculty'
                 if desig_id:
-                    cur.execute("SELECT DesignationName FROM Designation WHERE DesignationID = %s", (desig_id,))
-                    designation = cur.fetchone()
-                    if designation and designation['designationname'] == 'Academic Head':
+                    cur.execute(
+                        "SELECT DesignationName FROM Designation WHERE DesignationID = %s",
+                        (desig_id,)
+                    )
+                    desig_row = cur.fetchone()
+                    if desig_row and desig_row['designationname'] == 'Academic Head':
                         role = 'Academic Head'
 
                 hashed_password = generate_password_hash(emp_num)
@@ -2480,11 +3602,11 @@ def admin_bulk_import():
                     ON CONFLICT (Username) DO NOTHING
                 """, (emp_num, hashed_password, role, emp_num))
 
-            except ValueError:
+            except ValueError as ve:
                 conn.rollback()
-                flash(f"Import Error: Invalid number format in row {i}. Please check ID columns.", "error")
+                flash(f"Import Error at row {i}: {ve}", "error")
                 return redirect(url_for('admin_employee'))
-                
+
         conn.commit()
         flash("Bulk import completed successfully. New employees have been given accounts.", "success")
     except Exception as e:
@@ -2493,8 +3615,274 @@ def admin_bulk_import():
     finally:
         cur.close()
         conn.close()
-        
+
     return redirect(url_for('admin_employee'))
+
+# ── Shared helper: insert a list of employee dicts using RealDictCursor ──────
+def _admin_insert_employees(rows, conn, cur):
+    """
+    rows: list of dicts with keys emp_num, last_name, first_name, middle_name,
+          email, contact, specialization, emp_type, status, designation.
+    Returns list of error strings (empty = all OK).
+    """
+    cur.execute("SELECT SpecializationID, SpecializationName FROM Specialization")
+    spec_map  = {r['specializationname'].strip().lower(): r['specializationid'] for r in cur.fetchall()}
+    cur.execute("SELECT EmployeeTypeID, TypeName FROM EmployeeType")
+    etype_map = {r['typename'].strip().lower(): r['employeetypeid'] for r in cur.fetchall()}
+    cur.execute("SELECT DesignationID, DesignationName FROM Designation")
+    desig_map = {r['designationname'].strip().lower(): r['designationid'] for r in cur.fetchall()}
+
+    def _fuzzy(key, nm):
+        if key in nm: return nm[key]
+        m = {k: v for k, v in nm.items() if k.startswith(key)}
+        if len(m) == 1: return next(iter(m.values()))
+        m = {k: v for k, v in nm.items() if key.startswith(k)}
+        if len(m) == 1: return next(iter(m.values()))
+        m = {k: v for k, v in nm.items() if key in k}
+        if len(m) == 1: return next(iter(m.values()))
+        return None
+
+    def resolve_etype(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            r = _fuzzy(val.strip().lower(), etype_map)
+            if r is not None: return r
+            avail = ', '.join(f'"{n}"' for n in sorted(etype_map.keys()))
+            raise ValueError(f"'{val}' is not a recognised Employee Type. Available: {avail}")
+
+    def get_or_create_spec(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            name = val.strip(); key = name.lower()
+            r = _fuzzy(key, spec_map)
+            if r is not None: return r
+            cur.execute("INSERT INTO Specialization (SpecializationName, IsActive) VALUES (%s, TRUE) ON CONFLICT (SpecializationName) DO NOTHING", (name,))
+            cur.execute("SELECT SpecializationID FROM Specialization WHERE LOWER(SpecializationName) = LOWER(%s)", (name,))
+            new_id = cur.fetchone()['specializationid']; spec_map[key] = new_id; return new_id
+
+    def get_or_create_desig(val):
+        if not val or val.strip().upper() in ('NULL', 'N/A', '-', ''): return None
+        try: return int(val)
+        except ValueError:
+            name = val.strip(); key = name.lower()
+            r = _fuzzy(key, desig_map)
+            if r is not None: return r
+            cur.execute("INSERT INTO Designation (DesignationName) VALUES (%s) ON CONFLICT (DesignationName) DO NOTHING", (name,))
+            cur.execute("SELECT DesignationID FROM Designation WHERE LOWER(DesignationName) = LOWER(%s)", (name,))
+            new_id = cur.fetchone()['designationid']; desig_map[key] = new_id; return new_id
+
+    def norm_status(s):
+        sn = s.lower().replace('-', '').replace(' ', '')
+        if sn == 'parttime': return 'Part-Time'
+        if sn == 'permanent': return 'Permanent'
+        if sn == 'temporary': return 'Temporary'
+        return s
+
+    errors = []
+    for i, emp in enumerate(rows, 1):
+        try:
+            emp_num     = str(emp.get('emp_num',     '') or '').strip()
+            last_name   = str(emp.get('last_name',   '') or '').strip()
+            first_name  = str(emp.get('first_name',  '') or '').strip()
+            middle_name = str(emp.get('middle_name', '') or '').strip()
+            email       = str(emp.get('email',       '') or '').strip()
+            contact     = str(emp.get('contact',     '') or '').strip()
+            spec_id     = get_or_create_spec(emp.get('specialization', ''))
+            etype_id    = resolve_etype(emp.get('emp_type', ''))
+            desig_id    = get_or_create_desig(emp.get('designation', ''))
+            status      = norm_status(str(emp.get('status', 'Permanent') or 'Permanent'))
+
+            if not emp_num:
+                errors.append(f"Row {i}: missing Employee Number"); continue
+
+            cur.execute("""
+                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                    Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                    DesignationID, EmployeeStatus)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (EmployeeNumber) DO NOTHING
+            """, (emp_num, first_name, middle_name or None, last_name,
+                  email or None, contact or None,
+                  spec_id, etype_id, desig_id, status))
+
+            role = 'Faculty'
+            if desig_id:
+                cur.execute("SELECT DesignationName FROM Designation WHERE DesignationID = %s", (desig_id,))
+                dr = cur.fetchone()
+                if dr and dr['designationname'] == 'Academic Head':
+                    role = 'Academic Head'
+
+            hashed_pw = generate_password_hash(emp_num)
+            cur.execute("""
+                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
+                VALUES (%s, %s, %s, TRUE, %s) ON CONFLICT (Username) DO NOTHING
+            """, (emp_num, hashed_pw, role, emp_num))
+
+        except ValueError as ve:
+            errors.append(f"Row {i}: {ve}")
+    return errors
+
+
+# ── Admin: XLSX faculty import ───────────────────────────────────────────────
+@app.route('/admin/faculty/import/xlsx', methods=['POST'])
+def admin_faculty_import_xlsx():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    if 'file' not in request.files or request.files['file'].filename == '':
+        flash("No file selected.", "error"); return redirect(url_for('admin_employee'))
+
+    file = request.files['file']
+    if not file.filename.endswith('.xlsx'):
+        flash("Please upload a .xlsx file.", "error"); return redirect(url_for('admin_employee'))
+
+    import openpyxl
+    _HEADER_KEYS = {
+        'employeenumber': 'emp_num',   'employee number': 'emp_num',   'emp no': 'emp_num',
+        'lastname':   'last_name',     'last name':   'last_name',     'surname':  'last_name',
+        'firstname':  'first_name',    'first name':  'first_name',
+        'middlename': 'middle_name',   'middle name': 'middle_name',   'middle initial': 'middle_name',
+        'email': 'email',              'email address': 'email',
+        'contactnumber': 'contact',    'contact number': 'contact',    'contact': 'contact',
+        'specialization': 'specialization',
+        'employeetype':   'emp_type',  'employee type': 'emp_type',    'type': 'emp_type',
+        'employeestatus': 'status',    'employment status': 'status',  'status': 'status',
+        'designation': 'designation',
+    }
+
+    wb = openpyxl.load_workbook(file.stream, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        flash("Excel file is empty.", "error"); return redirect(url_for('admin_employee'))
+
+    col_map = {}
+    for i, cell in enumerate(rows[0]):
+        key = str(cell or '').lower().strip()
+        if key in _HEADER_KEYS:
+            col_map[_HEADER_KEYS[key]] = i
+
+    employees = []
+    for raw in rows[1:]:
+        if not any(c for c in raw if c is not None): continue
+        def gv(field):
+            idx = col_map.get(field)
+            return str(raw[idx] or '').strip() if idx is not None and idx < len(raw) else ''
+        employees.append({
+            'emp_num': gv('emp_num'), 'last_name': gv('last_name'),
+            'first_name': gv('first_name'), 'middle_name': gv('middle_name'),
+            'email': gv('email'), 'contact': gv('contact'),
+            'specialization': gv('specialization'), 'emp_type': gv('emp_type'),
+            'status': gv('status'), 'designation': gv('designation'),
+        })
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        errs = _admin_insert_employees(employees, conn, cur)
+        conn.commit()
+        if errs:
+            flash("Import completed with errors: " + "; ".join(errs[:3]), "error")
+        else:
+            flash(f"XLSX import successful — {len(employees)} employee(s) processed.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Import error: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(url_for('admin_employee'))
+
+
+# ── Admin: CSV faculty analyze ───────────────────────────────────────────────
+@app.route('/admin/faculty/import/csv/analyze', methods=['POST'])
+def admin_faculty_csv_analyze():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename.endswith('.csv'):
+        return jsonify({'error': 'Please upload a .csv file.'}), 400
+    try:
+        result = _parse_csv_employees(f.read())
+        return jsonify(result), (400 if 'error' in result else 200)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Admin: XLSX faculty analyze ──────────────────────────────────────────────
+@app.route('/admin/faculty/import/xlsx/analyze', methods=['POST'])
+def admin_faculty_xlsx_analyze():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename.endswith('.xlsx'):
+        return jsonify({'error': 'Please upload a .xlsx file.'}), 400
+    try:
+        result = _parse_xlsx_employees(f.read())
+        return jsonify(result), (400 if 'error' in result else 200)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Admin: PDF faculty analyze ───────────────────────────────────────────────
+@app.route('/admin/faculty/import/pdf/analyze', methods=['POST'])
+def admin_faculty_pdf_analyze():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    try:
+        data = parse_faculty_pdf(request.files['file'].read())
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Admin: DOCX faculty analyze ──────────────────────────────────────────────
+@app.route('/admin/faculty/import/docx/analyze', methods=['POST'])
+def admin_faculty_docx_analyze():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file uploaded'}), 400
+    try:
+        data = parse_faculty_docx(request.files['file'].read())
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Admin: PDF/DOCX faculty confirm ─────────────────────────────────────────
+@app.route('/admin/faculty/import/doc/confirm', methods=['POST'])
+def admin_faculty_doc_confirm():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    raw = request.form.get('employees_data', '[]')
+    try:
+        employees = json.loads(raw)
+    except Exception:
+        flash("Invalid data submitted.", "error"); return redirect(url_for('admin_employee'))
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        errs = _admin_insert_employees(employees, conn, cur)
+        conn.commit()
+        if errs:
+            flash("Import completed with errors: " + "; ".join(errs[:3]), "error")
+        else:
+            flash(f"Import successful — {len(employees)} employee(s) processed.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Import error: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(url_for('admin_employee'))
+
 
 @app.route('/admin/archived_employees')
 def admin_archived_employees():
@@ -2726,6 +4114,285 @@ def edit_building():
     except Exception as e: flash(f"Error: {e}", "error")
     finally: cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
+# ── Room Export Routes ─────────────────────────────────────────────────────────
+@app.route('/admin/rooms/export/list', methods=['GET'])
+def admin_rooms_export_list():
+    if session.get('role') not in ('Admin', 'Acad Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    rows = query_db("""
+        SELECT b.BuildingID AS buildingid, b.BuildingName AS buildingname,
+               COUNT(r.RoomID) AS room_count
+        FROM Building b
+        LEFT JOIN Room r ON r.BuildingID = b.BuildingID
+        WHERE b.IsActive = TRUE
+        GROUP BY b.BuildingID, b.BuildingName
+        ORDER BY b.BuildingName
+    """)
+    return jsonify([{
+        'buildingid':   row['buildingid'],
+        'buildingname': row['buildingname'],
+        'room_count':   int(row['room_count']),
+    } for row in (rows or [])])
+
+@app.route('/admin/rooms/export/data', methods=['POST'])
+def admin_rooms_export_data():
+    if session.get('role') not in ('Admin', 'Acad Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    payload      = request.get_json(silent=True) or {}
+    building_ids = payload.get('building_ids', [])
+    if building_ids:
+        placeholders = ','.join(['%s'] * len(building_ids))
+        rows = query_db(f"""
+            SELECT r.RoomID AS roomid, r.RoomName AS roomname,
+                   r.RoomType AS roomtype, r.RoomCapacity AS roomcapacity,
+                   b.BuildingID AS buildingid, b.BuildingName AS buildingname
+            FROM Room r
+            JOIN Building b ON r.BuildingID = b.BuildingID
+            WHERE b.BuildingID IN ({placeholders})
+            ORDER BY b.BuildingName, r.RoomType, r.RoomName
+        """, tuple(building_ids))
+    else:
+        rows = query_db("""
+            SELECT r.RoomID AS roomid, r.RoomName AS roomname,
+                   r.RoomType AS roomtype, r.RoomCapacity AS roomcapacity,
+                   b.BuildingID AS buildingid, b.BuildingName AS buildingname
+            FROM Room r
+            JOIN Building b ON r.BuildingID = b.BuildingID
+            ORDER BY b.BuildingName, r.RoomType, r.RoomName
+        """)
+    buildings = {}
+    for row in (rows or []):
+        bid = row['buildingid']
+        if bid not in buildings:
+            buildings[bid] = {
+                'buildingid':    bid,
+                'buildingname':  row['buildingname'],
+                'rooms':         [],
+                'total_lecture': 0,
+                'total_lab':     0,
+            }
+        bd = buildings[bid]
+        bd['rooms'].append({
+            'roomid':       row['roomid'],
+            'roomname':     row['roomname'],
+            'roomtype':     row['roomtype'],
+            'roomcapacity': row['roomcapacity'],
+        })
+        if row['roomtype'] == 'Lecture':
+            bd['total_lecture'] += 1
+        else:
+            bd['total_lab'] += 1
+    return jsonify(list(buildings.values()))
+
+def _build_rooms_docx():
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    payload   = request.get_json(silent=True) or {}
+    buildings = payload.get('buildings', [])
+    timestamp = payload.get('timestamp', '')
+
+    HEADERS    = ['#', 'Room Number', 'Room Type', 'Capacity']
+    COL_WIDTHS = [Inches(0.4), Inches(2.9), Inches(2.1), Inches(1.5)]
+
+    def _shd(cell, hex_color):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex_color); tcPr.append(shd)
+
+    def _shade_para(para, fill_hex):
+        pPr = para._p.get_or_add_pPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), fill_hex); pPr.append(shd)
+
+    def _sr(run, bold=False, size=9, color=None, italic=False):
+        run.bold = bold; run.italic = italic
+        run.font.size = Pt(size); run.font.name = 'Calibri'
+        if color: run.font.color.rgb = RGBColor(*color)
+
+    doc = Document()
+    for sec in doc.sections:
+        sec.top_margin = sec.bottom_margin = Inches(0.7)
+        sec.left_margin = sec.right_margin = Inches(0.8)
+
+    h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _sr(h.add_run('PUP LOPEZ CAMPUS  —  ROOMS AND BUILDINGS'),
+        bold=True, size=16, color=(128, 0, 0))
+    h2 = doc.add_paragraph(); h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _sr(h2.add_run(timestamp), size=9, color=(100, 100, 100), italic=True)
+    doc.add_paragraph()
+
+    for idx, bldg in enumerate(buildings):
+        bh = doc.add_paragraph()
+        bh.paragraph_format.space_before = Pt(16 if idx > 0 else 4)
+        bh.paragraph_format.space_after  = Pt(2)
+        _shade_para(bh, 'E8DEDE')
+        _sr(bh.add_run('  ' + bldg.get('buildingname', '').upper() + '  '),
+            bold=True, size=13, color=(80, 0, 0))
+
+        sl = doc.add_paragraph()
+        sl.paragraph_format.space_before = Pt(0)
+        sl.paragraph_format.space_after  = Pt(3)
+        _sr(sl.add_run(
+            f"Lecture Rooms: {bldg.get('total_lecture', 0)}   |   "
+            f"Laboratories: {bldg.get('total_lab', 0)}   |   "
+            f"Total: {len(bldg.get('rooms', []))}"),
+            size=9, color=(100, 100, 100), italic=True)
+
+        rooms = bldg.get('rooms', [])
+        tbl = doc.add_table(rows=1, cols=len(HEADERS))
+        tbl.style = 'Table Grid'
+        for ci, (cell, hdr) in enumerate(zip(tbl.rows[0].cells, HEADERS)):
+            cell.text = hdr; _shd(cell, '800000')
+            _sr(cell.paragraphs[0].runs[0], bold=True, size=9, color=(255, 255, 255))
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cell.width = COL_WIDTHS[ci]
+
+        for ri, room in enumerate(rooms):
+            fill = 'FFF0F0' if ri % 2 == 1 else 'FFFFFF'
+            rc = tbl.add_row().cells
+            vals = [str(ri + 1), room.get('roomname', ''),
+                    room.get('roomtype', ''), str(room.get('roomcapacity', ''))]
+            for ci, (cell, val) in enumerate(zip(rc, vals)):
+                cell.text = val; _shd(cell, fill)
+                if cell.paragraphs[0].runs:
+                    _sr(cell.paragraphs[0].runs[0], size=9)
+                    cell.paragraphs[0].alignment = (
+                        WD_ALIGN_PARAGRAPH.LEFT if ci == 1 else WD_ALIGN_PARAGRAPH.CENTER)
+                cell.width = COL_WIDTHS[ci]
+
+        tot = tbl.add_row().cells
+        for ci in range(len(tot)):
+            _shd(tot[ci], 'F0E8E8')
+            tot[ci].width = COL_WIDTHS[ci]
+        merged = tot[0].merge(tot[2])
+        merged.text = 'TOTAL ROOMS'
+        if merged.paragraphs[0].runs:
+            _sr(merged.paragraphs[0].runs[0], bold=True, size=9, color=(128, 0, 0))
+        merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        tot[3].text = str(len(rooms))
+        if tot[3].paragraphs[0].runs:
+            _sr(tot[3].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
+        tot[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers={'Content-Disposition': 'attachment; filename="rooms.docx"'})
+
+def _build_rooms_xlsx():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    payload   = request.get_json(silent=True) or {}
+    buildings = payload.get('buildings', [])
+    timestamp = payload.get('timestamp', '')
+
+    HEADERS    = ['#', 'Room Number', 'Room Type', 'Capacity']
+    COL_WIDTHS = [6, 30, 18, 12]
+
+    maroon   = PatternFill('solid', fgColor='800000')
+    dk_gray  = PatternFill('solid', fgColor='333333')
+    lt_pink  = PatternFill('solid', fgColor='FFF0F0')
+    tot_fill = PatternFill('solid', fgColor='F0E8E8')
+    wht      = PatternFill('solid', fgColor='FFFFFF')
+    thin     = Side(style='thin', color='E0D0D0')
+    bdr      = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    for bldg in buildings:
+        bname = bldg.get('buildingname', 'Building')[:31]
+        rooms = bldg.get('rooms', [])
+        ws    = wb.create_sheet(title=bname)
+
+        ws.merge_cells('A1:D1')
+        ws['A1'] = 'PUP LOPEZ CAMPUS  —  ROOMS AND BUILDINGS'
+        ws['A1'].font      = Font(bold=True, size=13, color='FFFFFF', name='Calibri')
+        ws['A1'].fill      = maroon
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 24
+
+        ws.merge_cells('A2:D2')
+        ws['A2'] = bldg.get('buildingname', '')
+        ws['A2'].font      = Font(bold=True, size=11, color='FFFFFF', name='Calibri')
+        ws['A2'].fill      = dk_gray
+        ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[2].height = 18
+
+        ws.merge_cells('A3:D3')
+        ws['A3'] = timestamp
+        ws['A3'].font      = Font(italic=True, size=8, color='DDDDDD', name='Calibri')
+        ws['A3'].fill      = dk_gray
+        ws['A3'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[3].height = 14
+
+        for ci, hdr in enumerate(HEADERS, 1):
+            cell = ws.cell(row=4, column=ci, value=hdr)
+            cell.font      = Font(bold=True, size=9, color='FFFFFF', name='Calibri')
+            cell.fill      = maroon
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border    = bdr
+        ws.row_dimensions[4].height = 16
+
+        for ri, room in enumerate(rooms):
+            rn   = ri + 5
+            fill = lt_pink if ri % 2 == 1 else wht
+            vals = [ri + 1, room.get('roomname', ''),
+                    room.get('roomtype', ''), room.get('roomcapacity', '')]
+            for ci, val in enumerate(vals, 1):
+                cell = ws.cell(row=rn, column=ci, value=val)
+                cell.font      = Font(size=9, name='Calibri',
+                                      color='800000' if ci == 2 else '333333')
+                cell.fill      = fill
+                cell.alignment = Alignment(
+                    horizontal='left' if ci == 2 else 'center', vertical='center')
+                cell.border    = bdr
+
+        tot_row = len(rooms) + 5
+        ws.merge_cells(f'A{tot_row}:C{tot_row}')
+        ws[f'A{tot_row}'] = 'TOTAL ROOMS'
+        ws[f'A{tot_row}'].font      = Font(bold=True, size=9, color='800000', name='Calibri')
+        ws[f'A{tot_row}'].fill      = tot_fill
+        ws[f'A{tot_row}'].alignment = Alignment(horizontal='right', vertical='center')
+        ws[f'A{tot_row}'].border    = bdr
+        ws[f'D{tot_row}'] = len(rooms)
+        ws[f'D{tot_row}'].font      = Font(bold=True, size=10, color='800000', name='Calibri')
+        ws[f'D{tot_row}'].fill      = tot_fill
+        ws[f'D{tot_row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'D{tot_row}'].border    = bdr
+
+        for ci, w in enumerate(COL_WIDTHS, 1):
+            ws.column_dimensions[get_column_letter(ci)].width = w
+        ws.freeze_panes = 'A5'
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment; filename="rooms.xlsx"'})
+
+@app.route('/admin/rooms/export/docx', methods=['POST'])
+def admin_export_rooms_docx():
+    if session.get('role') not in ('Admin', 'Acad Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_rooms_docx()
+
+@app.route('/admin/rooms/export/xlsx', methods=['POST'])
+def admin_export_rooms_xlsx():
+    if session.get('role') not in ('Admin', 'Acad Head'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    return _build_rooms_xlsx()
+
+# ── End Room Export Routes ────────────────────────────────────────────────────
 @app.route('/admin/curriculum')
 def admin_curriculum():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -2984,37 +4651,42 @@ def import_curriculum():
 
         for row in csv_data:
             if not row: continue
-            s_code = get_val(row, 'sc')
-            s_name = get_val(row, 'sn')
+            s_code = get_val(row, 'sc')[:15]   # VARCHAR(15) guard
+            s_name = get_val(row, 'sn')[:100]  # VARCHAR(100) guard
             if not s_code: continue
-            
-            # --- FIX: ADDED TUITION HOURS (th) HERE ---
             cur.execute("""
-                INSERT INTO Subject (SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours) 
-                VALUES (%s,%s,%s,%s,%s,%s) 
-                ON CONFLICT (SubjectCode) DO UPDATE SET 
+                INSERT INTO Subject (SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (SubjectCode) DO UPDATE SET
                 SubjectName = EXCLUDED.SubjectName,
                 CreditUnits = EXCLUDED.CreditUnits,
                 TuitionHours = EXCLUDED.TuitionHours
             """, (s_code, s_name or s_code, parse_int(get_val(row, 'u')), parse_int(get_val(row, 'lc')), parse_int(get_val(row, 'lb')), parse_int(get_val(row, 'th'))))
 
+        last_yl  = parse_int(ui_year) if parse_int(ui_year) > 0 else 1
+        last_sem = ui_sem if ui_sem != 'All' else 'A'
+
         for row in csv_data:
             if not row: continue
-            s_code = get_val(row, 'sc')
+            s_code = get_val(row, 'sc')[:15]
             if not s_code: continue
 
             csv_yl = parse_int(get_val(row, 'yl'))
-            final_yl = csv_yl if csv_yl > 0 else parse_int(ui_year)
-            
+            if csv_yl > 0:
+                last_yl = csv_yl
+            final_yl = last_yl  # carry forward when cell is blank
+
             raw_s = get_val(row, 'sem').upper()
-            if '1' in raw_s or 'A' in raw_s: final_sem = 'A'
-            elif '2' in raw_s or 'B' in raw_s: final_sem = 'B'
+            if '1' in raw_s or 'A' in raw_s:        final_sem = 'A'
+            elif '2' in raw_s or 'B' in raw_s:      final_sem = 'B'
             elif 'SUMMER' in raw_s or 'C' in raw_s: final_sem = 'C'
-            else: final_sem = ui_sem if ui_sem != 'All' else 'A'
+            elif raw_s:                              final_sem = last_sem
+            else:                                    final_sem = last_sem
+            last_sem = final_sem
 
             cur.execute("""
-                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester) 
-                VALUES (%s, %s, %s, %s) 
+                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
             """, (target_curr_id, s_code, final_yl, final_sem))
 
@@ -3045,6 +4717,429 @@ def import_curriculum():
     finally:
         cur.close(); conn.close()
     return redirect(request.referrer)
+
+@app.route('/admin/curriculum/import/csv/analyze', methods=['POST'])
+def analyze_curriculum_csv():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    file = request.files.get('file')
+    if not file or not file.filename.lower().endswith('.csv'):
+        return jsonify({'error': 'Please upload a valid CSV file.'}), 400
+
+    idx = {}
+    for i in range(11):
+        v = request.form.get(f'col_{i}', '').strip()
+        if v and v != 'skip':
+            idx[v] = i
+
+    ui_year = request.form.get('year_level', '0')
+    ui_sem  = request.form.get('semester', 'All')
+
+    try:
+        stream = io.StringIO(file.stream.read().decode('UTF8'), newline=None)
+        data_rows = list(csv.reader(stream))[1:]  # skip header
+    except Exception as e:
+        return jsonify({'error': f'Failed to read CSV: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
+
+    def _gv(row, key):
+        if key not in idx or idx[key] >= len(row): return ''
+        return str(row[idx[key]]).strip()
+    def _pi(val):
+        try: return int(float(val)) if val else 0
+        except: return 0
+
+    subjects = []
+    last_yl  = _pi(ui_year) if _pi(ui_year) > 0 else 1
+    last_sem = ui_sem if ui_sem != 'All' else 'A'
+
+    for row in data_rows:
+        if not row: continue
+        sc = _gv(row, 'sc')[:15]
+        if not sc: continue
+        csv_yl = _pi(_gv(row, 'yl'))
+        if csv_yl > 0: last_yl = csv_yl
+        raw_s = _gv(row, 'sem').upper()
+        if   '1' in raw_s or 'A' == raw_s:        last_sem = 'A'
+        elif '2' in raw_s or 'B' == raw_s:        last_sem = 'B'
+        elif 'SUMMER' in raw_s or 'C' == raw_s:   last_sem = 'C'
+        pre = _gv(row, 'pre')
+        co  = _gv(row, 'co')
+        subjects.append({
+            'sc': sc, 'sn': _gv(row, 'sn')[:100] or sc,
+            'yl': last_yl, 'sem': last_sem,
+            'u': _pi(_gv(row, 'u')), 'lc': _pi(_gv(row, 'lc')),
+            'lb': _pi(_gv(row, 'lb')), 'th': _pi(_gv(row, 'th')),
+            'pre': pre if pre.upper() not in ('NONE', '-', 'N/A', '') else '',
+            'co':  co  if co.upper()  not in ('NONE', '-', 'N/A', '') else '',
+        })
+
+    warnings = [] if subjects else ['No subjects could be extracted. Check your column mapping and file format.']
+    return jsonify({'subjects': subjects, 'confidence': 75 if subjects else 0,
+                    'warnings': warnings, 'subject_count': len(subjects)})
+
+
+@app.route('/admin/curriculum/import/xlsx/analyze', methods=['POST'])
+def analyze_curriculum_xlsx():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    file = request.files.get('file')
+    if not file or not file.filename.lower().endswith('.xlsx'):
+        return jsonify({'error': 'Please upload a valid Excel (.xlsx) file.'}), 400
+
+    idx = {}
+    for i in range(11):
+        v = request.form.get(f'col_{i}', '').strip()
+        if v and v != 'skip':
+            idx[v] = i
+
+    ui_year = request.form.get('year_level', '0')
+    ui_sem  = request.form.get('semester', 'All')
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file.stream.read()), data_only=True)
+        data_rows = list(wb.active.iter_rows(values_only=True))[1:]  # skip header
+    except Exception as e:
+        return jsonify({'error': f'Failed to read Excel file: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
+
+    def _gv(row, key):
+        if key not in idx or idx[key] >= len(row): return ''
+        v = row[idx[key]]
+        return str(v).strip() if v is not None else ''
+    def _pi(val):
+        try: return int(float(val)) if val else 0
+        except: return 0
+
+    subjects = []
+    last_yl  = _pi(ui_year) if _pi(ui_year) > 0 else 1
+    last_sem = ui_sem if ui_sem != 'All' else 'A'
+
+    for row in data_rows:
+        if not any(c is not None for c in row): continue
+        sc = _gv(row, 'sc')[:15]
+        if not sc: continue
+        csv_yl = _pi(_gv(row, 'yl'))
+        if csv_yl > 0: last_yl = csv_yl
+        raw_s = _gv(row, 'sem').upper()
+        if   '1' in raw_s or 'A' == raw_s:        last_sem = 'A'
+        elif '2' in raw_s or 'B' == raw_s:        last_sem = 'B'
+        elif 'SUMMER' in raw_s or 'C' == raw_s:   last_sem = 'C'
+        pre = _gv(row, 'pre')
+        co  = _gv(row, 'co')
+        subjects.append({
+            'sc': sc, 'sn': _gv(row, 'sn')[:100] or sc,
+            'yl': last_yl, 'sem': last_sem,
+            'u': _pi(_gv(row, 'u')), 'lc': _pi(_gv(row, 'lc')),
+            'lb': _pi(_gv(row, 'lb')), 'th': _pi(_gv(row, 'th')),
+            'pre': pre if pre.upper() not in ('NONE', '-', 'N/A', '') else '',
+            'co':  co  if co.upper()  not in ('NONE', '-', 'N/A', '') else '',
+        })
+
+    warnings = [] if subjects else ['No subjects could be extracted. Check your column mapping and file format.']
+    return jsonify({'subjects': subjects, 'confidence': 75 if subjects else 0,
+                    'warnings': warnings, 'subject_count': len(subjects)})
+
+
+@app.route('/admin/curriculum/import/pdf/analyze', methods=['POST'])
+def analyze_curriculum_pdf():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    file = request.files.get('file')
+    if not file or not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Please upload a valid PDF file.'}), 400
+
+    _CURR_FIELDS = ['cc', 'yl', 'sem', 'sc', 'pre', 'co', 'sn', 'lc', 'lb', 'u', 'th']
+    override_col_map = None
+    raw_cols = [request.form.get(f'col_{i}', '').strip() for i in range(11)]
+    if any(v and v != 'skip' for v in raw_cols):
+        override_col_map = {}
+        for i, v in enumerate(raw_cols):
+            if v and v != 'skip' and v in _CURR_FIELDS:
+                override_col_map.setdefault(v, i)
+
+    try:
+        result = parse_curriculum_pdf(file.stream.read(), override_col_map)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e), 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 500
+
+
+@app.route('/admin/curriculum/import/pdf/confirm', methods=['POST'])
+def confirm_pdf_import():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+
+    prog_code      = request.form.get('program_code', '').strip()
+    curr_year      = request.form.get('curriculum_year', '').strip()
+    subjects_json  = request.form.get('subjects_data', '[]')
+
+    if not prog_code or not curr_year:
+        flash("Missing required fields.")
+        return redirect(url_for('admin_curriculum'))
+
+    try:
+        subjects = json.loads(subjects_json)
+    except Exception:
+        flash("Invalid subject data format.")
+        return redirect(url_for('admin_curriculum'))
+
+    if not subjects:
+        flash("No subject data to import.")
+        return redirect(url_for('admin_curriculum'))
+
+    def parse_int(val):
+        try: return int(float(val)) if val else 0
+        except: return 0
+
+    def norm_sem(raw):
+        r = str(raw).upper().strip()
+        if r in ('A', '1', '1ST', 'FIRST'): return 'A'
+        if r in ('B', '2', '2ND', 'SECOND'): return 'B'
+        if r in ('C', 'SUMMER', 'S', 'MID', 'MIDYEAR'): return 'C'
+        return 'A'
+
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s", (prog_code, curr_year))
+        if cur.fetchone():
+            flash(f"Import Blocked: Curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
+            return redirect(url_for('admin_curriculum'))
+
+        years = curr_year.split('-')
+        curr_code = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
+
+        cur.execute("""
+            INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear)
+            VALUES (%s, %s, %s) RETURNING CurriculumID
+        """, (curr_code, prog_code, curr_year))
+        curr_id = cur.fetchone()[0]
+
+        for s in subjects:
+            sc = str(s.get('sc', '')).strip()
+            if not sc: continue
+            sn = str(s.get('sn', sc)).strip() or sc
+            cur.execute("""
+                INSERT INTO Subject (SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (SubjectCode) DO UPDATE SET
+                    SubjectName = EXCLUDED.SubjectName,
+                    CreditUnits = EXCLUDED.CreditUnits,
+                    TuitionHours = EXCLUDED.TuitionHours
+            """, (sc, sn, parse_int(s.get('u')), parse_int(s.get('lc')), parse_int(s.get('lb')), parse_int(s.get('th'))))
+
+        for s in subjects:
+            sc = str(s.get('sc', '')).strip()
+            if not sc: continue
+            yl  = parse_int(s.get('yl')) or 1
+            sem = norm_sem(s.get('sem', 'A'))
+            cur.execute("""
+                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
+            """, (curr_id, sc, yl, sem))
+
+            pre = str(s.get('pre', '')).strip()
+            co  = str(s.get('co',  '')).strip()
+            pre_clean = pre if pre.upper() not in ('NONE', '-', 'N/A', '') else None
+            co_clean  = co  if co.upper()  not in ('NONE', '-', 'N/A', '') else None
+            if pre_clean or co_clean:
+                try:
+                    cur.execute("SAVEPOINT prereq_sp")
+                    cur.execute("""
+                        UPDATE Subject SET
+                            Prerequisite = COALESCE(%s, Prerequisite),
+                            Corequisite  = COALESCE(%s, Corequisite)
+                        WHERE SubjectCode = %s
+                    """, (pre_clean, co_clean, sc))
+                    cur.execute("RELEASE SAVEPOINT prereq_sp")
+                except Exception as _e:
+                    cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
+
+        conn.commit()
+        flash(f"PDF Import Successful for {prog_code} C.Y {curr_year} ({len(subjects)} subjects imported)")
+    except Exception as e:
+        conn.rollback()
+        flash(f"System Error: {str(e)}")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(url_for('admin_curriculum'))
+
+
+# ── Excel (.xlsx) curriculum import ──────────────────────────────────────────
+@app.route('/admin/curriculum/import/xlsx', methods=['POST'])
+def import_curriculum_xlsx():
+    file      = request.files.get('file')
+    prog_code = request.form.get('program_code')
+    curr_year = request.form.get('curriculum_year')
+    ui_year   = request.form.get('year_level')
+    ui_sem    = request.form.get('semester')
+
+    try:
+        idx = {}
+        for i in range(11):
+            field_name = request.form.get(f'col_{i}')
+            if field_name and field_name != 'skip':
+                idx[field_name] = i
+    except Exception:
+        flash("Invalid column mapping.")
+        return redirect(request.referrer)
+
+    if not file or not prog_code or not curr_year:
+        flash("Missing required fields.")
+        return redirect(request.referrer)
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file.stream.read()), data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+    except Exception as e:
+        flash(f"Failed to read Excel file: {e}")
+        return redirect(request.referrer)
+
+    if len(rows) < 2:
+        flash("Excel file is empty or has no data rows.")
+        return redirect(request.referrer)
+
+    data_rows = rows[1:]
+
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s",
+            (prog_code, curr_year)
+        )
+        if cur.fetchone():
+            flash(f"Import Blocked: Curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
+            return redirect(request.referrer)
+
+        def get_val(row, key):
+            if key not in idx or idx[key] >= len(row):
+                return ""
+            val = row[idx[key]]
+            return str(val).strip() if val is not None else ""
+
+        def parse_int(val):
+            try: return int(float(val)) if val else 0
+            except: return 0
+
+        csv_cc = get_val(data_rows[0], 'cc') if data_rows and 'cc' in idx else None
+        if csv_cc:
+            curr_code_str = csv_cc[:6]
+        else:
+            years = curr_year.split('-')
+            curr_code_str = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
+
+        cur.execute(
+            "INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear) "
+            "VALUES (%s, %s, %s) RETURNING CurriculumID",
+            (curr_code_str, prog_code, curr_year)
+        )
+        target_curr_id = cur.fetchone()[0]
+
+        for row in data_rows:
+            if not any(c is not None for c in row): continue
+            s_code = get_val(row, 'sc')[:15]   # VARCHAR(15) guard
+            s_name = get_val(row, 'sn')[:100]  # VARCHAR(100) guard
+            if not s_code: continue
+            cur.execute("""
+                INSERT INTO Subject (SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (SubjectCode) DO UPDATE SET
+                    SubjectName = EXCLUDED.SubjectName,
+                    CreditUnits = EXCLUDED.CreditUnits,
+                    TuitionHours = EXCLUDED.TuitionHours
+            """, (s_code, s_name or s_code, parse_int(get_val(row, 'u')),
+                  parse_int(get_val(row, 'lc')), parse_int(get_val(row, 'lb')),
+                  parse_int(get_val(row, 'th'))))
+
+        last_yl  = parse_int(ui_year) if parse_int(ui_year) > 0 else 1
+        last_sem = ui_sem if ui_sem != 'All' else 'A'
+
+        for row in data_rows:
+            if not any(c is not None for c in row): continue
+            s_code = get_val(row, 'sc')[:15]
+            if not s_code: continue
+
+            csv_yl = parse_int(get_val(row, 'yl'))
+            if csv_yl > 0:
+                last_yl = csv_yl
+            final_yl = last_yl  # carry forward when cell is blank
+
+            raw_s = get_val(row, 'sem').upper()
+            if '1' in raw_s or 'A' in raw_s:        final_sem = 'A'
+            elif '2' in raw_s or 'B' in raw_s:      final_sem = 'B'
+            elif 'SUMMER' in raw_s or 'C' in raw_s: final_sem = 'C'
+            elif raw_s:                              final_sem = last_sem
+            else:                                    final_sem = last_sem
+            last_sem = final_sem
+
+            cur.execute("""
+                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
+            """, (target_curr_id, s_code, final_yl, final_sem))
+
+            pre_val   = get_val(row, 'pre') or ''
+            co_val    = get_val(row, 'co')  or ''
+            pre_clean = pre_val.strip() if pre_val.strip().upper() not in ('NONE', '-', 'N/A', '') else None
+            co_clean  = co_val.strip()  if co_val.strip().upper()  not in ('NONE', '-', 'N/A', '') else None
+            if pre_clean is not None or co_clean is not None:
+                try:
+                    cur.execute("SAVEPOINT prereq_sp")
+                    cur.execute("""
+                        UPDATE subject
+                           SET prerequisite = COALESCE(%s, prerequisite),
+                               corequisite  = COALESCE(%s, corequisite)
+                         WHERE subjectcode = %s
+                    """, (pre_clean, co_clean, s_code))
+                    cur.execute("RELEASE SAVEPOINT prereq_sp")
+                except Exception as _e:
+                    cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
+
+        conn.commit()
+        flash(f"Import Successful for {prog_code} C.Y {curr_year}")
+
+    except Exception as e:
+        conn.rollback()
+        flash(f"System Error: {str(e)}")
+    finally:
+        cur.close(); conn.close()
+
+    return redirect(request.referrer)
+
+
+# ── Word (.docx) curriculum import ───────────────────────────────────────────
+@app.route('/admin/curriculum/import/docx/analyze', methods=['POST'])
+def analyze_curriculum_docx_route():
+    if session.get('role') != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    file = request.files.get('file')
+    if not file or not file.filename.lower().endswith('.docx'):
+        return jsonify({'error': 'Please upload a valid Word (.docx) file.'}), 400
+
+    _CURR_FIELDS = ['cc', 'yl', 'sem', 'sc', 'pre', 'co', 'sn', 'lc', 'lb', 'u', 'th']
+    override_col_map = None
+    raw_cols = [request.form.get(f'col_{i}', '').strip() for i in range(11)]
+    if any(v and v != 'skip' for v in raw_cols):
+        override_col_map = {}
+        for i, v in enumerate(raw_cols):
+            if v and v != 'skip' and v in _CURR_FIELDS:
+                override_col_map.setdefault(v, i)
+
+    try:
+        result = parse_curriculum_docx(file.stream.read(), override_col_map)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'error': str(e), 'subjects': [], 'confidence': 0,
+            'warnings': [str(e)], 'subject_count': 0
+        }), 500
+
 
 @app.route('/admin/curriculum/delete/<int:curriculum_id>')
 def admin_delete_curriculum(curriculum_id):

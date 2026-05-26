@@ -497,3 +497,351 @@
     height: 38px !important;
     padding: 0 10px;
 }
+
+/* --- PDF/DOCX UPLOAD MODAL ERROR BOX --- */
+.pdf-analyze-error {
+    background: #fff5f5;
+    border: 1px solid #e74c3c;
+    color: #c0392b;
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    margin-top: 10px;
+}
+
+/* ═══════════════════════════════════════════════════════
+   MODERN LOADING OVERLAY
+═══════════════════════════════════════════════════════ */
+#loadingOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 8, 20, 0.72);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+}
+
+.loa-card {
+    background: #fff;
+    border-radius: 22px;
+    padding: 44px 52px 36px;
+    text-align: center;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+    min-width: 290px;
+    animation: loaAppear 0.28s cubic-bezier(.34,1.56,.64,1) both;
+}
+
+@keyframes loaAppear {
+    from { transform: scale(0.78) translateY(16px); opacity: 0; }
+    to   { transform: scale(1)    translateY(0);    opacity: 1; }
+}
+
+/* — Triple-ring spinner — */
+.loa-spinner {
+    position: relative;
+    width: 78px;
+    height: 78px;
+    margin: 0 auto 20px;
+}
+.loa-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 4px solid transparent;
+}
+.loa-ring-1 {
+    border-top-color: #800000;
+    animation: loaSpin 0.9s linear infinite;
+}
+.loa-ring-2 {
+    inset: 10px;
+    border-right-color: rgba(128,0,0,.45);
+    animation: loaSpin 1.4s linear infinite reverse;
+}
+.loa-ring-3 {
+    inset: 20px;
+    border-bottom-color: rgba(128,0,0,.2);
+    animation: loaSpin 2s linear infinite;
+}
+.loa-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #800000;
+    font-size: 21px;
+}
+@keyframes loaSpin { to { transform: rotate(360deg); } }
+
+/* — Title & status text — */
+.loa-title {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #1a1a2e;
+    letter-spacing: .5px;
+    margin-bottom: 6px;
+}
+.loa-status {
+    font-size: 0.82rem;
+    color: #666;
+    min-height: 18px;
+    margin-bottom: 18px;
+    transition: opacity 0.4s;
+}
+
+/* — Bouncing dots — */
+.loa-dots {
+    display: flex;
+    justify-content: center;
+    gap: 7px;
+    margin-bottom: 22px;
+}
+.loa-dots span {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #800000;
+    animation: loaBounce 1.1s ease-in-out infinite;
+}
+.loa-dots span:nth-child(2) { animation-delay: .18s; }
+.loa-dots span:nth-child(3) { animation-delay: .36s; }
+@keyframes loaBounce {
+    0%,80%,100% { transform: scale(.55); opacity: .35; }
+    40%          { transform: scale(1);   opacity: 1;   }
+}
+
+/* — Progress bar — */
+.loa-bar {
+    height: 5px;
+    background: #f0f0f0;
+    border-radius: 99px;
+    overflow: hidden;
+}
+.loa-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #800000, #cc2222);
+    border-radius: 99px;
+    transition: width .35s ease;
+}
+
+/* ── EXPORT MODAL ──────────────────────────────────────────────────────────── */
+.emp-export-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 9900;
+    display: flex; align-items: center; justify-content: center;
+    animation: empExportFadeIn .2s ease;
+}
+@keyframes empExportFadeIn { from { opacity:0; } to { opacity:1; } }
+
+.emp-export-dialog {
+    background: #fff; border-radius: 18px;
+    width: 100%; max-width: 510px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.22);
+    animation: empExportSlideIn .25s cubic-bezier(.34,1.56,.64,1);
+    max-height: 92vh; overflow-y: auto; overflow-x: hidden;
+}
+@keyframes empExportSlideIn {
+    from { transform: translateY(30px); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+}
+
+.emp-export-header {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 24px 24px 18px; border-bottom: 1px solid #f0f0f0;
+}
+.emp-export-header-icon {
+    width: 44px; height: 44px; flex-shrink: 0;
+    background: linear-gradient(135deg, #800000, #b22222);
+    border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; color: white; font-size: 18px;
+}
+.emp-export-header h2 { font-size: 1.05rem; font-weight: 800; color: #1a1a1a; margin: 0 0 3px; }
+.emp-export-header p  { font-size: 0.8rem; color: #888; margin: 0; }
+.emp-export-close {
+    margin-left: auto; background: none; border: none;
+    font-size: 22px; color: #aaa; cursor: pointer; padding: 0 4px;
+    line-height: 1; flex-shrink: 0;
+}
+.emp-export-close:hover { color: #555; }
+
+.emp-export-summary {
+    margin: 16px 24px;
+    background: linear-gradient(135deg, #800000, #9e0000);
+    border-radius: 12px; padding: 14px 18px;
+    display: flex; align-items: center; gap: 14px; color: white;
+}
+.emp-export-summary-icon { font-size: 22px; opacity: 0.9; }
+.emp-export-count { font-size: 1.7rem; font-weight: 900; line-height: 1; }
+.emp-export-count-label {
+    font-size: 0.72rem; text-transform: uppercase;
+    letter-spacing: 0.5px; opacity: 0.85; display: block; margin-top: 2px;
+}
+.emp-export-summary-info {
+    margin-left: auto; font-size: 0.75rem; opacity: 0.85;
+    background: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 20px;
+    white-space: nowrap;
+}
+
+.emp-export-section { padding: 0 24px 16px; }
+
+.emp-export-section-header {
+    display: flex; align-items: center;
+    justify-content: space-between; margin-bottom: 12px;
+}
+.emp-export-section-title {
+    font-size: 0.78rem; font-weight: 700; color: #555;
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.emp-export-select-all {
+    background: none; border: 1.5px solid #800000; color: #800000;
+    border-radius: 20px; font-size: 0.72rem; font-weight: 700;
+    padding: 3px 12px; cursor: pointer; transition: .2s;
+}
+.emp-export-select-all:hover, .emp-export-select-all.all-selected {
+    background: #800000; color: white;
+}
+
+.emp-export-format-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.emp-export-format-card {
+    border: 2px solid #e8e8e8; border-radius: 12px;
+    padding: 14px 14px 12px; cursor: pointer;
+    position: relative; transition: border-color .2s, box-shadow .2s, background .2s;
+    user-select: none;
+}
+.emp-export-format-card:hover:not(.selected) {
+    border-color: #ccc; box-shadow: 0 4px 14px rgba(0,0,0,0.08); background: #fafafa;
+}
+.emp-format-icon  { font-size: 24px; margin-bottom: 8px; }
+.csv-color  { color: #2a7a2a; }
+.xlsx-color { color: #107c41; }
+.pdf-color  { color: #c62828; }
+.docx-color { color: #1a56b0; }
+.emp-format-name  { font-size: 0.85rem; font-weight: 800; color: #1a1a1a; margin-bottom: 3px; }
+.emp-format-desc  { font-size: 0.72rem; color: #999; }
+.emp-format-check {
+    position: absolute; top: 10px; right: 10px;
+    font-size: 15px; color: #ddd; transition: color .2s;
+}
+.emp-export-format-card.selected { border-color: #800000; background: #fff8f8; }
+.emp-export-format-card.selected .emp-format-check { color: #800000; }
+.emp-export-format-card.csv-sel.selected  { border-color: #2a7a2a; background: #f3fff3; }
+.emp-export-format-card.csv-sel.selected  .emp-format-check { color: #2a7a2a; }
+.emp-export-format-card.xlsx-sel.selected { border-color: #107c41; background: #f0faf5; }
+.emp-export-format-card.xlsx-sel.selected .emp-format-check { color: #107c41; }
+.emp-export-format-card.pdf-sel.selected  { border-color: #c62828; background: #fff5f5; }
+.emp-export-format-card.pdf-sel.selected  .emp-format-check { color: #c62828; }
+.emp-export-format-card.docx-sel.selected { border-color: #1a56b0; background: #f0f5ff; }
+.emp-export-format-card.docx-sel.selected .emp-format-check { color: #1a56b0; }
+.emp-export-format-error { font-size: 0.78rem; color: #c0392b; margin-top: 8px; }
+
+.emp-export-label {
+    font-size: 0.78rem; font-weight: 700; color: #555;
+    text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 8px;
+}
+.emp-export-sublabel { font-size: 0.7rem; color: #aaa; display: block; margin-top: 2px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+.emp-filename-input-wrapper {
+    display: flex; align-items: center;
+    border: 1.5px solid #e0e0e0; border-radius: 10px;
+    padding: 0 12px; gap: 8px; background: #fafafa; transition: border-color .2s;
+}
+.emp-filename-input-wrapper:focus-within { border-color: #800000; background: #fff; }
+.emp-filename-input-wrapper i { color: #bbb; font-size: 14px; }
+.emp-filename-input {
+    border: none; background: transparent; padding: 10px 0;
+    font-size: 0.88rem; color: #333; outline: none; flex: 1;
+}
+
+.emp-export-date-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #fafafa; border: 1.5px solid #e8e8e8;
+    border-radius: 10px; padding: 12px 14px; gap: 12px;
+}
+.emp-toggle-switch {
+    position: relative; display: inline-block;
+    width: 42px; height: 24px; flex-shrink: 0;
+}
+.emp-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.emp-toggle-slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #ccc; border-radius: 34px; transition: .3s;
+}
+.emp-toggle-slider::before {
+    content: ''; position: absolute;
+    width: 18px; height: 18px; left: 3px; bottom: 3px;
+    background: white; border-radius: 50%; transition: .3s;
+}
+.emp-toggle-switch input:checked + .emp-toggle-slider { background: #800000; }
+.emp-toggle-switch input:checked + .emp-toggle-slider::before { transform: translateX(18px); }
+
+.emp-export-footer {
+    display: flex; gap: 10px; justify-content: flex-end;
+    padding: 14px 24px 22px; border-top: 1px solid #f0f0f0;
+}
+.emp-export-cancel {
+    padding: 10px 22px; border: 1.5px solid #e0e0e0;
+    border-radius: 10px; background: white; color: #666;
+    font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: .2s;
+}
+.emp-export-cancel:hover { border-color: #aaa; background: #f5f5f5; }
+.emp-export-confirm {
+    padding: 10px 22px; background: #800000; color: white;
+    border: none; border-radius: 10px; font-weight: 800;
+    font-size: 0.85rem; cursor: pointer; transition: .2s;
+    display: flex; align-items: center; gap: 7px;
+}
+.emp-export-confirm:hover { background: #a00000; }
+.emp-export-confirm:disabled { background: #ccc; cursor: not-allowed; }
+
+/* Export loading overlay */
+.emp-export-loading {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center;
+}
+.emp-export-loading-card {
+    background: white; border-radius: 16px;
+    padding: 32px 36px; text-align: center; min-width: 220px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.2);
+}
+.emp-export-spinner {
+    width: 48px; height: 48px; margin: 0 auto 16px;
+    border: 4px solid #f0e6e6; border-top-color: #800000;
+    border-radius: 50%; animation: empSpin .8s linear infinite;
+}
+@keyframes empSpin { to { transform: rotate(360deg); } }
+.emp-export-loading-text { font-weight: 800; font-size: 0.95rem; color: #1a1a1a; margin-bottom: 4px; }
+.emp-export-loading-sub  { font-size: 0.78rem; color: #888; }
+
+/* Export toast */
+.emp-export-toast {
+    position: fixed; bottom: 28px; right: 28px; z-index: 10000;
+    background: white; border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; min-width: 280px; max-width: 360px;
+    animation: empToastIn .3s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes empToastIn { from { transform: translateX(120%); } to { transform: none; } }
+.emp-export-toast.success { border-left: 4px solid #2e7d32; }
+.emp-export-toast.error   { border-left: 4px solid #c62828; }
+.emp-export-toast-icon { font-size: 20px; flex-shrink: 0; }
+.emp-export-toast.success .emp-export-toast-icon { color: #2e7d32; }
+.emp-export-toast.error   .emp-export-toast-icon { color: #c62828; }
+.emp-export-toast-body { flex: 1; min-width: 0; }
+.emp-export-toast-title { font-weight: 800; font-size: 0.85rem; color: #1a1a1a; margin-bottom: 2px; }
+.emp-export-toast-msg   { font-size: 0.78rem; color: #666; }
+.emp-export-toast-close {
+    margin-left: auto; background: none; border: none;
+    font-size: 16px; color: #bbb; cursor: pointer; flex-shrink: 0;
+}
+.emp-export-toast-close:hover { color: #666; }
+

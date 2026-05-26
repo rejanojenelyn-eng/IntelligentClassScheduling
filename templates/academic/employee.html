@@ -2,7 +2,10 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -37,9 +40,8 @@
 
         <div class="import-container">
             <div class="import-button-wrapper">
-                <button class="btn-import" onclick="openImportModal()">IMPORT <i
-                        class="fas fa-chevron-down"></i></button>
-                <small class="import-subtext">Upload CSV file</small>
+                <button class="btn-import" onclick="openImportTypeModal()">IMPORT <i class="fas fa-chevron-down"></i></button>
+                <small class="import-subtext">CSV, Excel, PDF or Word</small>
             </div>
         </div>
     </div>
@@ -96,7 +98,7 @@
                     <span id="sortDirection">Ascending</span>
                     <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
                 </div>
-                <button class="btn-export-white" onclick="exportToExcel()">
+                <button class="btn-export-white" onclick="openExportModal()">
                     <i class="fas fa-file-export"></i> Export
                 </button>
             </div>
@@ -135,7 +137,7 @@
                 <td class="emp-status">{{ emp.employeestatus }}</td>
                 <td class="action-icons">
                     <i class="fas fa-edit edit"
-                        data-emp="{{ emp | tojson | e }}"
+                        data-emp="{{ emp | tojson | forceescape }}"
                         onclick="openEditFromEl(this)"></i>
                 </td>
             </tr>
@@ -265,27 +267,367 @@
     </div>
 </div>
 
-<!-- IMPORT MODAL -->
-<div id="importEmployeeModal" class="modal">
-    <div class="modal-content" style="width: 550px;">
-        <div class="modal-header">
-            <h2><i class="fas fa-file-csv"></i> BULK IMPORT CSV</h2>
-            <span class="close-btn" onclick="closeImportModal()">&times;</span>
+<!-- IMPORT TYPE SELECTOR MODAL -->
+<div id="importTypeModal" class="custom-modal" style="display:none;">
+    <div class="modal-content-lg" style="width:460px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-file-import"></i> Import Employees</h2>
+            <span class="close-btn" onclick="closeImportTypeModal()">&times;</span>
         </div>
-        <form action="{{ url_for('bulk_import') }}" method="POST" enctype="multipart/form-data">
-            <div class="form-grid" style="display: block; padding: 25px;">
-                <p>Upload a .csv file with standard columns.</p>
-                <div class="form-group" style="margin-top: 20px;">
-                    <label>SELECT CSV FILE</label>
-                    <input type="file" name="file" accept=".csv" required>
+        <div class="modal-body-vertical" style="gap:15px;padding:30px;">
+            <p style="color:#555;font-size:0.9rem;margin:0;">Choose how you would like to import employees:</p>
+            <button class="import-type-btn" onclick="openEmpCsvModal()">
+                <i class="fas fa-file-csv import-type-icon"></i>
+                <div><div class="import-type-title">Import via CSV</div>
+                <div class="import-type-desc">Upload a structured CSV file.</div></div>
+            </button>
+            <button class="import-type-btn" onclick="openEmpXlsxModal()">
+                <i class="fas fa-file-excel import-type-icon" style="color:#1d6f42;"></i>
+                <div><div class="import-type-title">Import via Excel (.xlsx)</div>
+                <div class="import-type-desc">Upload a structured Excel workbook.</div></div>
+            </button>
+            <button class="import-type-btn" onclick="openEmpPdfModal()">
+                <i class="fas fa-file-pdf import-type-icon" style="color:#c0392b;"></i>
+                <div><div class="import-type-title">Import via PDF</div>
+                <div class="import-type-desc">Upload a faculty list PDF and extract employees automatically.</div></div>
+            </button>
+            <button class="import-type-btn" onclick="openEmpDocxModal()">
+                <i class="fas fa-file-word import-type-icon" style="color:#2b5797;"></i>
+                <div><div class="import-type-title">Import via Word (.docx)</div>
+                <div class="import-type-desc">Upload a faculty list Word document.</div></div>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- CSV IMPORT MODAL -->
+<div id="empCsvModal" class="custom-modal" style="display:none;">
+    <div class="modal-content-lg" style="width:540px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-file-csv"></i> Import via CSV</h2>
+            <span class="close-btn" onclick="closeEmpCsvModal()">&times;</span>
+        </div>
+        <input type="hidden" id="emp_csv_col_0" value="emp_num">
+        <input type="hidden" id="emp_csv_col_1" value="last_name">
+        <input type="hidden" id="emp_csv_col_2" value="first_name">
+        <input type="hidden" id="emp_csv_col_3" value="middle_name">
+        <input type="hidden" id="emp_csv_col_4" value="email">
+        <input type="hidden" id="emp_csv_col_5" value="contact">
+        <input type="hidden" id="emp_csv_col_6" value="specialization">
+        <input type="hidden" id="emp_csv_col_7" value="emp_type">
+        <input type="hidden" id="emp_csv_col_8" value="status">
+        <input type="hidden" id="emp_csv_col_9" value="designation">
+        <div style="padding:25px;">
+            <p>Upload a CSV file. The system will detect column headers automatically and let you review the data before importing.</p>
+            <div id="empCsvDefaultColView" style="margin-top:10px;">
+                <div class="column-order-display">Employee Number, Last Name, First Name, Middle Name, Email, Contact Number, Specialization, Employee Type, Employee Status, Designation</div>
+                <button type="button" class="btn-link-maroon" onclick="toggleEmpColCustomization('csv')">Edit default order?</button>
+            </div>
+            <div id="empCsvCustomColView" style="display:none;margin-top:8px;">
+                <p class="mapping-hint">Assign the field that matches each column in your CSV file.</p>
+                <div class="mapping-grid-vertical" id="empCsvMappingGrid"></div>
+                <button type="button" class="btn-link-maroon" style="margin-top:8px;" onclick="resetEmpColCustomization('csv')">Cancel Edit (Use Default)</button>
+            </div>
+            <div id="empCsvError" class="pdf-analyze-error" style="display:none;margin-top:10px;"></div>
+            <div class="form-group" style="margin-top:16px;">
+                <label>SELECT CSV FILE</label>
+                <input type="file" id="empCsvFileInput" accept=".csv">
+            </div>
+        </div>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="closeEmpCsvModal()">CANCEL</button>
+            <button type="button" class="btn-modal btn-confirm" id="empCsvAnalyzeBtn" onclick="analyzeEmpCsv()">
+                <i class="fas fa-search"></i> Analyze CSV
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- XLSX IMPORT MODAL -->
+<div id="empXlsxModal" class="custom-modal" style="display:none;">
+    <div class="modal-content-lg" style="width:540px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-file-excel"></i> Import via Excel (.xlsx)</h2>
+            <span class="close-btn" onclick="closeEmpXlsxModal()">&times;</span>
+        </div>
+        <input type="hidden" id="emp_xlsx_col_0" value="emp_num">
+        <input type="hidden" id="emp_xlsx_col_1" value="last_name">
+        <input type="hidden" id="emp_xlsx_col_2" value="first_name">
+        <input type="hidden" id="emp_xlsx_col_3" value="middle_name">
+        <input type="hidden" id="emp_xlsx_col_4" value="email">
+        <input type="hidden" id="emp_xlsx_col_5" value="contact">
+        <input type="hidden" id="emp_xlsx_col_6" value="specialization">
+        <input type="hidden" id="emp_xlsx_col_7" value="emp_type">
+        <input type="hidden" id="emp_xlsx_col_8" value="status">
+        <input type="hidden" id="emp_xlsx_col_9" value="designation">
+        <div style="padding:25px;">
+            <p>Upload an Excel file. The system will detect column headers automatically and let you review the data before importing.</p>
+            <div id="empXlsxDefaultColView" style="margin-top:10px;">
+                <div class="column-order-display">Employee Number, Last Name, First Name, Middle Name, Email, Contact Number, Specialization, Employee Type, Employee Status, Designation</div>
+                <button type="button" class="btn-link-maroon" onclick="toggleEmpColCustomization('xlsx')">Edit default order?</button>
+            </div>
+            <div id="empXlsxCustomColView" style="display:none;margin-top:8px;">
+                <p class="mapping-hint">Assign the field that matches each column in your Excel file.</p>
+                <div class="mapping-grid-vertical" id="empXlsxMappingGrid"></div>
+                <button type="button" class="btn-link-maroon" style="margin-top:8px;" onclick="resetEmpColCustomization('xlsx')">Cancel Edit (Use Default)</button>
+            </div>
+            <div id="empXlsxError" class="pdf-analyze-error" style="display:none;margin-top:10px;"></div>
+            <div class="form-group" style="margin-top:16px;">
+                <label>SELECT EXCEL FILE</label>
+                <input type="file" id="empXlsxFileInput" accept=".xlsx">
+            </div>
+        </div>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="closeEmpXlsxModal()">CANCEL</button>
+            <button type="button" class="btn-modal btn-confirm" id="empXlsxAnalyzeBtn" onclick="analyzeEmpXlsx()">
+                <i class="fas fa-search"></i> Analyze Excel
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- PDF UPLOAD MODAL -->
+<div id="empPdfModal" class="custom-modal" style="display:none;">
+    <div class="modal-content-lg" style="width:540px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-file-pdf"></i> Import via PDF</h2>
+            <span class="close-btn" onclick="closeEmpPdfModal()">&times;</span>
+        </div>
+        <input type="hidden" id="emp_pdf_col_0" value="emp_num">
+        <input type="hidden" id="emp_pdf_col_1" value="last_name">
+        <input type="hidden" id="emp_pdf_col_2" value="first_name">
+        <input type="hidden" id="emp_pdf_col_3" value="middle_name">
+        <input type="hidden" id="emp_pdf_col_4" value="email">
+        <input type="hidden" id="emp_pdf_col_5" value="contact">
+        <input type="hidden" id="emp_pdf_col_6" value="specialization">
+        <input type="hidden" id="emp_pdf_col_7" value="emp_type">
+        <input type="hidden" id="emp_pdf_col_8" value="status">
+        <input type="hidden" id="emp_pdf_col_9" value="designation">
+        <div style="padding:25px;">
+            <p>Upload a faculty list PDF. The system will extract employee records from tables automatically.</p>
+            <div id="empPdfDefaultColView" style="margin-top:10px;">
+                <div class="column-order-display">Employee Number, Last Name, First Name, Middle Name, Email, Contact Number, Specialization, Employee Type, Employee Status, Designation</div>
+                <button type="button" class="btn-link-maroon" onclick="toggleEmpColCustomization('pdf')">Edit default order?</button>
+            </div>
+            <div id="empPdfCustomColView" style="display:none;margin-top:8px;">
+                <p class="mapping-hint">Assign the field that matches each column in your PDF.</p>
+                <div class="mapping-grid-vertical" id="empPdfMappingGrid"></div>
+                <button type="button" class="btn-link-maroon" style="margin-top:8px;" onclick="resetEmpColCustomization('pdf')">Cancel Edit (Use Default)</button>
+            </div>
+            <div id="empPdfError" class="pdf-analyze-error" style="display:none;margin-top:10px;"></div>
+            <div class="form-group" style="margin-top:16px;">
+                <label>SELECT PDF FILE</label>
+                <input type="file" id="empPdfFileInput" accept=".pdf">
+            </div>
+        </div>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="closeEmpPdfModal()">CANCEL</button>
+            <button type="button" class="btn-modal btn-confirm" id="empPdfAnalyzeBtn" onclick="analyzeEmpPdf()">
+                <i class="fas fa-search"></i> Analyze PDF
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- DOCX UPLOAD MODAL -->
+<div id="empDocxModal" class="custom-modal" style="display:none;">
+    <div class="modal-content-lg" style="width:540px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-file-word"></i> Import via Word (.docx)</h2>
+            <span class="close-btn" onclick="closeEmpDocxModal()">&times;</span>
+        </div>
+        <input type="hidden" id="emp_docx_col_0" value="emp_num">
+        <input type="hidden" id="emp_docx_col_1" value="last_name">
+        <input type="hidden" id="emp_docx_col_2" value="first_name">
+        <input type="hidden" id="emp_docx_col_3" value="middle_name">
+        <input type="hidden" id="emp_docx_col_4" value="email">
+        <input type="hidden" id="emp_docx_col_5" value="contact">
+        <input type="hidden" id="emp_docx_col_6" value="specialization">
+        <input type="hidden" id="emp_docx_col_7" value="emp_type">
+        <input type="hidden" id="emp_docx_col_8" value="status">
+        <input type="hidden" id="emp_docx_col_9" value="designation">
+        <div style="padding:25px;">
+            <p>Upload a faculty list Word document. The system will extract employee records from tables automatically.</p>
+            <div id="empDocxDefaultColView" style="margin-top:10px;">
+                <div class="column-order-display">Employee Number, Last Name, First Name, Middle Name, Email, Contact Number, Specialization, Employee Type, Employee Status, Designation</div>
+                <button type="button" class="btn-link-maroon" onclick="toggleEmpColCustomization('docx')">Edit default order?</button>
+            </div>
+            <div id="empDocxCustomColView" style="display:none;margin-top:8px;">
+                <p class="mapping-hint">Assign the field that matches each column in your Word document.</p>
+                <div class="mapping-grid-vertical" id="empDocxMappingGrid"></div>
+                <button type="button" class="btn-link-maroon" style="margin-top:8px;" onclick="resetEmpColCustomization('docx')">Cancel Edit (Use Default)</button>
+            </div>
+            <div id="empDocxError" class="pdf-analyze-error" style="display:none;margin-top:10px;"></div>
+            <div class="form-group" style="margin-top:16px;">
+                <label>SELECT WORD FILE</label>
+                <input type="file" id="empDocxFileInput" accept=".docx">
+            </div>
+        </div>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="closeEmpDocxModal()">CANCEL</button>
+            <button type="button" class="btn-modal btn-confirm" id="empDocxAnalyzeBtn" onclick="analyzeEmpDocx()">
+                <i class="fas fa-search"></i> Analyze Document
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- EMPLOYEE REVIEW MODAL -->
+<div id="empReviewModal" class="custom-modal" style="display:none;z-index:1100;">
+    <div class="modal-content-lg pdf-review-modal-content">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-clipboard-check"></i> Review Extracted Employees</h2>
+            <span class="close-btn" onclick="closeEmpReviewModal()">&times;</span>
+        </div>
+        <div style="padding:16px 20px 8px;">
+            <div id="empReviewBanner"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                <span id="empReviewCount" style="font-size:0.85rem;color:#555;"></span>
+                <button type="button" class="btn-modal btn-cancel" style="padding:4px 14px;font-size:0.8rem;" onclick="addEmpReviewRow()">
+                    <i class="fas fa-plus"></i> Add Row
+                </button>
+            </div>
+        </div>
+        <div class="pdf-review-table-wrapper">
+            <table class="pdf-review-table">
+                <thead>
+                    <tr>
+                        <th>Emp #</th><th>Last Name</th><th>First Name</th><th>M. Name</th>
+                        <th>Email</th><th>Contact</th><th>Specialization</th>
+                        <th>Type</th><th>Status</th><th>Designation</th><th></th>
+                    </tr>
+                </thead>
+                <tbody id="empReviewTableBody"></tbody>
+            </table>
+        </div>
+        <form id="empConfirmForm" action="{{ url_for('acad_faculty_doc_confirm') }}" method="POST">
+            <input type="hidden" name="employees_data" id="empConfirmData">
+        </form>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="closeEmpReviewModal()">Back</button>
+            <button type="button" class="btn-modal btn-confirm" onclick="confirmEmpImport()">
+                <i class="fas fa-check-circle"></i> Confirm & Import
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- LOADING OVERLAY -->
+<div id="loadingOverlay">
+    <div class="loa-card">
+        <div class="loa-spinner">
+            <div class="loa-ring loa-ring-1"></div>
+            <div class="loa-ring loa-ring-2"></div>
+            <div class="loa-ring loa-ring-3"></div>
+            <div class="loa-icon"><i class="fas fa-file-import"></i></div>
+        </div>
+        <div class="loa-title">Processing</div>
+        <div class="loa-status" id="loadingStatusText">Initializing&hellip;</div>
+        <div class="loa-dots"><span></span><span></span><span></span></div>
+        <div class="loa-bar"><div class="loa-bar-fill" id="loadingBarFill"></div></div>
+    </div>
+</div>
+
+<!-- EXPORT MODAL -->
+<div id="exportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeExportModal()">
+    <div class="emp-export-dialog">
+        <div class="emp-export-header">
+            <div class="emp-export-header-icon"><i class="fas fa-file-export"></i></div>
+            <div>
+                <h2>Export Employee Data</h2>
+                <p>Select format(s) and options below</p>
+            </div>
+            <button class="emp-export-close" onclick="closeExportModal()">&#215;</button>
+        </div>
+        <div class="emp-export-summary">
+            <div class="emp-export-summary-icon"><i class="fas fa-users"></i></div>
+            <div>
+                <span class="emp-export-count" id="exportEmpCount">0</span>
+                <span class="emp-export-count-label">Employees to Export</span>
+            </div>
+            <div class="emp-export-summary-info" id="exportScopeLabel">All visible employees</div>
+        </div>
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Export Format</span>
+                <button class="emp-export-select-all" id="selectAllFormatsBtn" onclick="toggleSelectAllFormats()">Select All</button>
+            </div>
+            <div class="emp-export-format-grid">
+                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
+                    <div class="emp-format-name">CSV</div>
+                    <div class="emp-format-desc">Comma separated values</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
+                    <div class="emp-format-name">Excel (XLSX)</div>
+                    <div class="emp-format-desc">Microsoft Excel workbook</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
+                    <div class="emp-format-name">PDF</div>
+                    <div class="emp-format-desc">Portable document format</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
+                    <div class="emp-format-name">Word (DOCX)</div>
+                    <div class="emp-format-desc">Microsoft Word document</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-cancel" onclick="closeImportModal()">CANCEL</button>
-                <button type="submit" class="btn-save">IMPORT DATA</button>
+            <div class="emp-export-format-error" id="exportFormatError" style="display:none;">
+                Please select at least one export format.
             </div>
-        </form>
+        </div>
+        <div class="emp-export-section">
+            <label class="emp-export-label">Export Filename</label>
+            <div class="emp-filename-input-wrapper">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="exportFilenameInput" class="emp-filename-input" value="Employee_Records" placeholder="Enter filename...">
+            </div>
+        </div>
+        <div class="emp-export-section">
+            <div class="emp-export-date-row">
+                <div>
+                    <span class="emp-export-label">Include Date &amp; Time in Filename</span>
+                    <small class="emp-export-sublabel">e.g. Employee_Records_20240615_143022</small>
+                </div>
+                <label class="emp-toggle-switch">
+                    <input type="checkbox" id="exportDateToggle" checked>
+                    <span class="emp-toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="emp-export-footer">
+            <button class="emp-export-cancel" onclick="closeExportModal()">Cancel</button>
+            <button class="emp-export-confirm" id="exportConfirmBtn" onclick="executeExport()">
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
     </div>
+</div>
+
+<!-- Export Loading Overlay -->
+<div id="exportLoadingOverlay" style="display:none;" class="emp-export-loading">
+    <div class="emp-export-loading-card">
+        <div class="emp-export-spinner"></div>
+        <div class="emp-export-loading-text" id="exportLoadingText">Preparing export...</div>
+        <div class="emp-export-loading-sub" id="exportLoadingSubText">Please wait</div>
+    </div>
+</div>
+
+<!-- Export Toast -->
+<div id="exportToast" class="emp-export-toast" style="display:none;">
+    <div class="emp-export-toast-icon" id="exportToastIcon"></div>
+    <div class="emp-export-toast-body">
+        <div class="emp-export-toast-title" id="exportToastTitle"></div>
+        <div class="emp-export-toast-msg" id="exportToastMsg"></div>
+    </div>
+    <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
 </div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/employee.acad.js') }}"></script>

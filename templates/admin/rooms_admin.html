@@ -2,7 +2,8 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -69,7 +70,7 @@
                             onclick="toggleAvailabilityRow()">
                             CHECK AVAILABLE ROOMS
                         </button>
-                        <button class="btn-room-export" onclick="exportRoomExcel()"><i class="fas fa-file-export"></i>
+                        <button class="btn-room-export" onclick="openRoomExportModal()"><i class="fas fa-file-export"></i>
                             Export</button>
                     </div>
                 </div>
@@ -258,6 +259,107 @@
 <div id="buildingMenu" class="context-menu">
     <div class="context-menu-item" id="ctxEditBldg"><i class="fas fa-edit"></i> Edit Name</div>
     <div class="context-menu-item delete" id="ctxDeleteBldg"><i class="fas fa-trash"></i> Delete Building</div>
+</div>
+
+<!-- ROOM EXPORT MODAL -->
+<div id="roomExportModal" class="room-exp-overlay" style="display:none;">
+  <div class="room-exp-dialog">
+    <div class="room-exp-header">
+      <div class="room-exp-header-icon"><i class="fas fa-door-open"></i></div>
+      <div class="room-exp-header-text">
+        <div class="room-exp-header-title">Export Rooms &amp; Buildings</div>
+        <div class="room-exp-header-sub">Select buildings, formats, and export options</div>
+      </div>
+      <button class="room-exp-close-btn" onclick="closeRoomExportModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="room-exp-body">
+      <!-- Step 1 -->
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-building"></i>&nbsp;Step 1 — Select Buildings</div>
+        <div class="room-exp-bldg-toolbar">
+          <input type="text" class="room-exp-search" id="roomExpSearch"
+            placeholder="Search buildings..." oninput="_filterRoomExpList()">
+          <label class="room-exp-sel-all-wrap">
+            <input type="checkbox" id="roomExpSelectAll" onchange="_toggleRoomExpSelectAll(this.checked)">
+            Select All
+          </label>
+        </div>
+        <div class="room-exp-bldg-list" id="roomExpBldgList">
+          <div class="room-exp-bldg-empty">Loading buildings...</div>
+        </div>
+        <div style="margin-top:6px;font-size:.75rem;color:#555;">
+          <span id="roomExpSelCount" style="font-weight:700;color:#800000;">0</span> building(s) &nbsp;&middot;&nbsp;
+          <span id="roomExpRoomCount" style="font-weight:700;color:#800000;">0</span> rooms
+        </div>
+      </div>
+      <!-- Step 2 -->
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-file-alt"></i>&nbsp;Step 2 — Select Export Formats</div>
+        <div class="room-exp-formats">
+          <div class="room-exp-fmt-card room-exp-csv-card"  data-format="csv"  onclick="_roomToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-csv"></i></div>
+            <div class="fmt-name">CSV</div><div class="fmt-desc">Spreadsheet</div>
+          </div>
+          <div class="room-exp-fmt-card room-exp-xlsx-card" data-format="xlsx" onclick="_roomToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-excel"></i></div>
+            <div class="fmt-name">XLSX</div><div class="fmt-desc">Excel Workbook</div>
+          </div>
+          <div class="room-exp-fmt-card room-exp-pdf-card"  data-format="pdf"  onclick="_roomToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-pdf"></i></div>
+            <div class="fmt-name">PDF</div><div class="fmt-desc">Portable Document</div>
+          </div>
+          <div class="room-exp-fmt-card room-exp-docx-card" data-format="docx" onclick="_roomToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-word"></i></div>
+            <div class="fmt-name">DOCX</div><div class="fmt-desc">Word Document</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <button class="room-exp-fmt-all-btn" id="roomExpFmtAllBtn" onclick="_roomToggleAllFmts()">Select All Formats</button>
+        </div>
+        <div class="room-exp-fmt-error" id="roomExpFmtError">Please select at least one export format.</div>
+      </div>
+      <!-- Step 3 -->
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-cog"></i>&nbsp;Step 3 — Export Settings</div>
+        <div class="room-exp-settings-grid">
+          <div class="room-exp-field">
+            <label>Filename</label>
+            <input type="text" id="roomExpFilename" value="Rooms_Export" oninput="_updateRoomExpFooter()">
+          </div>
+          <div class="room-exp-field">
+            <label>Options</label>
+            <div class="room-exp-toggle-row">
+              <input type="checkbox" id="roomExpDateToggle" checked onchange="_updateRoomExpFooter()">
+              <label for="roomExpDateToggle">Append timestamp to filename</label>
+            </div>
+          </div>
+        </div>
+        <div class="room-exp-summary" id="roomExpSummaryText">Select buildings and formats to see export summary</div>
+      </div>
+    </div>
+    <div class="room-exp-footer">
+      <span class="room-exp-footer-info" id="roomExpFooterInfo"></span>
+      <div class="room-exp-footer-btns">
+        <button class="room-exp-cancel-btn" onclick="closeRoomExportModal()">Cancel</button>
+        <button class="room-exp-confirm-btn" id="roomExpConfirmBtn" onclick="roomExecuteExport()">
+          <i class="fas fa-download"></i>
+          <span id="roomExpBtnLabel">Export</span>
+        </button>
+      </div>
+    </div>
+    <div class="room-exp-loading" id="roomExpLoadingOverlay">
+      <div class="room-exp-spinner"></div>
+      <div class="room-exp-loading-text" id="roomExpLoadingText">Exporting...</div>
+      <div class="room-exp-loading-sub"  id="roomExpLoadingSubText">Please wait</div>
+    </div>
+  </div>
+</div>
+<div class="room-exp-toast" id="roomExpToast">
+  <div class="room-exp-toast-icon" id="roomExpToastIcon"></div>
+  <div class="room-exp-toast-body">
+    <div class="room-exp-toast-title" id="roomExpToastTitle"></div>
+    <div class="room-exp-toast-msg"   id="roomExpToastMsg"></div>
+  </div>
 </div>
 
 <script src="{{ url_for('static', filename='js/ADMIN/rooms.admin.js') }}"></script>

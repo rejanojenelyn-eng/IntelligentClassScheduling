@@ -1,5 +1,306 @@
 let selectedIdsForArchive = [];
 
+// ── Employee CSV/XLSX/PDF/DOCX analyze & review ───────────────────────────────
+let _empExtracted = [];
+let _empRawRows   = [];
+
+async function analyzeEmpCsv() {
+    const fileInput = document.getElementById('empCsvFileInput');
+    const btn       = document.getElementById('empCsvAnalyzeBtn');
+    document.getElementById('empCsvError').style.display = 'none';
+    if (!fileInput.files.length) { _showEmpError('empCsvError', 'Please select a CSV file.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    showLoading('Reading CSV file…');
+
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    try {
+        const res  = await fetch('/admin/faculty/import/csv/analyze', { method: 'POST', body: fd });
+        const data = await res.json();
+        hideLoading();
+        if (!res.ok || data.error) { _showEmpError('empCsvError', data.error || 'Server error.'); return; }
+        _empRawRows = data.raw_rows || [];
+        const _csvPre = _getEmpPreColMap('csv');
+        _empExtracted = _csvPre ? _applyEmpColMapToRows(_empRawRows, _csvPre) : (data.employees || []);
+        closeEmpCsvModal();
+        _renderEmpReviewModal(data);
+    } catch (err) {
+        hideLoading();
+        _showEmpError('empCsvError', 'Network error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Analyze CSV';
+    }
+}
+
+async function analyzeEmpXlsx() {
+    const fileInput = document.getElementById('empXlsxFileInput');
+    const btn       = document.getElementById('empXlsxAnalyzeBtn');
+    document.getElementById('empXlsxError').style.display = 'none';
+    if (!fileInput.files.length) { _showEmpError('empXlsxError', 'Please select an Excel (.xlsx) file.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    showLoading('Reading Excel file…');
+
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    try {
+        const res  = await fetch('/admin/faculty/import/xlsx/analyze', { method: 'POST', body: fd });
+        const data = await res.json();
+        hideLoading();
+        if (!res.ok || data.error) { _showEmpError('empXlsxError', data.error || 'Server error.'); return; }
+        _empRawRows = data.raw_rows || [];
+        const _xlsxPre = _getEmpPreColMap('xlsx');
+        _empExtracted = _xlsxPre ? _applyEmpColMapToRows(_empRawRows, _xlsxPre) : (data.employees || []);
+        closeEmpXlsxModal();
+        _renderEmpReviewModal(data);
+    } catch (err) {
+        hideLoading();
+        _showEmpError('empXlsxError', 'Network error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Analyze Excel';
+    }
+}
+
+function _showEmpError(elId, msg) {
+    const box = document.getElementById(elId);
+    box.textContent = msg;
+    box.style.display = 'block';
+}
+
+// ── Pre-selection column order helpers ────────────────────────────────────────
+const _empColOrderDef = ['emp_num','last_name','first_name','middle_name','email','contact','specialization','emp_type','status','designation'];
+const _empColOrderLabels = [
+    {val:'emp_num',text:'Employee Number'},{val:'last_name',text:'Last Name'},
+    {val:'first_name',text:'First Name'},{val:'middle_name',text:'Middle Name'},
+    {val:'email',text:'Email'},{val:'contact',text:'Contact Number'},
+    {val:'specialization',text:'Specialization'},{val:'emp_type',text:'Employee Type'},
+    {val:'status',text:'Employee Status'},{val:'designation',text:'Designation'},
+    {val:'skip',text:'— Skip —'},
+];
+
+function toggleEmpColCustomization(fmt) {
+    const cap = fmt.charAt(0).toUpperCase() + fmt.slice(1);
+    document.getElementById(`emp${cap}DefaultColView`).style.display = 'none';
+    document.getElementById(`emp${cap}CustomColView`).style.display = 'block';
+    const grid = document.getElementById(`emp${cap}MappingGrid`);
+    grid.innerHTML = '';
+    for (let i = 0; i < 10; i++) {
+        const cur = document.getElementById(`emp_${fmt}_col_${i}`).value;
+        let html = `<div class="map-item-vert"><label>Col ${i + 1}</label><select onchange="updateEmpHiddenCol('${fmt}',${i},this.value)">`;
+        _empColOrderLabels.forEach(opt => {
+            html += `<option value="${opt.val}"${cur === opt.val ? ' selected' : ''}>${opt.text}</option>`;
+        });
+        grid.innerHTML += html + `</select></div>`;
+    }
+}
+function resetEmpColCustomization(fmt) {
+    const cap = fmt.charAt(0).toUpperCase() + fmt.slice(1);
+    document.getElementById(`emp${cap}DefaultColView`).style.display = 'block';
+    document.getElementById(`emp${cap}CustomColView`).style.display = 'none';
+    for (let i = 0; i < 10; i++) {
+        const el = document.getElementById(`emp_${fmt}_col_${i}`);
+        if (el) el.value = _empColOrderDef[i];
+    }
+}
+function updateEmpHiddenCol(fmt, idx, val) {
+    document.getElementById(`emp_${fmt}_col_${idx}`).value = val;
+}
+function _getEmpPreColMap(fmt) {
+    const cap = fmt.charAt(0).toUpperCase() + fmt.slice(1);
+    if (document.getElementById(`emp${cap}CustomColView`).style.display === 'none') return null;
+    const cm = {};
+    for (let i = 0; i < 10; i++) {
+        const v = document.getElementById(`emp_${fmt}_col_${i}`).value;
+        if (v && v !== 'skip') cm[v] = i;
+    }
+    return Object.keys(cm).length ? cm : null;
+}
+
+// ── Column Mapping Modal ──────────────────────────────────────────────────────
+const _EMP_FIELD_LABELS = {
+    emp_num:        'Employee Number',
+    last_name:      'Last Name',
+    first_name:     'First Name',
+    middle_name:    'Middle Name',
+    email:          'Email',
+    contact:        'Contact Number',
+    specialization: 'Specialization',
+    emp_type:       'Employee Type',
+    status:         'Employee Status',
+    designation:    'Designation',
+};
+
+function _applyEmpColMapToRows(rawRows, colMap) {
+    const fields = ['emp_num','last_name','first_name','middle_name','email','contact','specialization','emp_type','status','designation'];
+    const result = [];
+    for (const row of rawRows) {
+        if (!row.some(c => (c || '').trim())) continue;
+        const emp = {};
+        for (const f of fields) {
+            const idx = colMap[f];
+            emp[f] = (idx !== undefined && idx < row.length) ? (row[idx] || '').trim() : '';
+        }
+        if (!emp.emp_num && !emp.last_name) continue;
+        result.push(emp);
+    }
+    return result;
+}
+
+async function analyzeEmpPdf() {
+    const fileInput = document.getElementById('empPdfFileInput');
+    const btn       = document.getElementById('empPdfAnalyzeBtn');
+    document.getElementById('empPdfError').style.display = 'none';
+    if (!fileInput.files.length) { _showEmpError('empPdfError', 'Please select a PDF file.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    showLoading('Reading PDF file…');
+
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    try {
+        const res  = await fetch('/admin/faculty/import/pdf/analyze', { method: 'POST', body: fd });
+        const data = await res.json();
+        hideLoading();
+        if (!res.ok || data.error) { _showEmpError('empPdfError', data.error || 'Server error.'); return; }
+        _empRawRows = data.raw_rows || [];
+        const _pdfPre = _getEmpPreColMap('pdf');
+        _empExtracted = _pdfPre ? _applyEmpColMapToRows(_empRawRows, _pdfPre) : (data.employees || []);
+        closeEmpPdfModal();
+        _renderEmpReviewModal(data);
+    } catch (err) {
+        hideLoading();
+        _showEmpError('empPdfError', 'Network error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Analyze PDF';
+    }
+}
+
+async function analyzeEmpDocx() {
+    const fileInput = document.getElementById('empDocxFileInput');
+    const btn       = document.getElementById('empDocxAnalyzeBtn');
+    document.getElementById('empDocxError').style.display = 'none';
+    if (!fileInput.files.length) { _showEmpError('empDocxError', 'Please select a Word (.docx) file.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    showLoading('Reading Word document…');
+
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    try {
+        const res  = await fetch('/admin/faculty/import/docx/analyze', { method: 'POST', body: fd });
+        const data = await res.json();
+        hideLoading();
+        if (!res.ok || data.error) { _showEmpError('empDocxError', data.error || 'Server error.'); return; }
+        _empRawRows = data.raw_rows || [];
+        const _docxPre = _getEmpPreColMap('docx');
+        _empExtracted = _docxPre ? _applyEmpColMapToRows(_empRawRows, _docxPre) : (data.employees || []);
+        closeEmpDocxModal();
+        _renderEmpReviewModal(data);
+    } catch (err) {
+        hideLoading();
+        _showEmpError('empDocxError', 'Network error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Analyze Document';
+    }
+}
+
+function _renderEmpReviewModal(data) {
+    const confidence = data.confidence || 0;
+    const warnings   = data.warnings   || [];
+    const rawText    = data.raw_text   || '';
+    const banner     = document.getElementById('empReviewBanner');
+    const badgeClass = confidence >= 75 ? 'conf-high' : confidence >= 40 ? 'conf-medium' : 'conf-low';
+
+    let warnHtml = warnings.length
+        ? '<ul class="pdf-warn-list">' + warnings.map(w => `<li>${w}</li>`).join('') + '</ul>'
+        : '';
+
+    let rawHtml = '';
+    if (confidence === 0 && rawText.trim()) {
+        const escaped = rawText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        rawHtml = `<details class="pdf-raw-details">
+            <summary>Show raw text from document (use this to check column headers)</summary>
+            <pre class="pdf-raw-pre">${escaped}</pre>
+        </details>`;
+    } else if (confidence === 0 && !rawText.trim()) {
+        rawHtml = `<div class="pdf-scanned-warn">
+            <i class="fas fa-exclamation-triangle"></i>
+            No text could be read. The PDF may be a scanned image.
+        </div>`;
+    }
+
+    banner.innerHTML = `
+        <div class="pdf-conf-row">
+            <span class="conf-badge ${badgeClass}">Extraction Confidence: ${confidence}%</span>
+            ${confidence < 75 ? '<span class="conf-note">Please review the data below before importing.</span>' : ''}
+        </div>${warnHtml}${rawHtml}`;
+
+    _rebuildEmpReviewTable();
+    document.getElementById('empReviewModal').style.display = 'flex';
+}
+
+function _esc(v) {
+    return String(v || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function _rebuildEmpReviewTable() {
+    const tbody = document.getElementById('empReviewTableBody');
+    tbody.innerHTML = '';
+    _empExtracted.forEach((emp, i) => tbody.appendChild(_buildEmpRow(emp, i)));
+    document.getElementById('empReviewCount').textContent =
+        `${_empExtracted.length} employee${_empExtracted.length !== 1 ? 's' : ''} extracted`;
+}
+
+function _buildEmpRow(emp, idx) {
+    const tr = document.createElement('tr');
+    const fields = ['emp_num','last_name','first_name','middle_name','email','contact','specialization','emp_type','status','designation'];
+    const missing = !emp.emp_num && !emp.last_name;
+    if (missing) tr.classList.add('row-warning');
+
+    tr.innerHTML = fields.map(f => `
+        <td><input class="rev-input ${(!emp.emp_num && f==='emp_num') ? 'rev-missing' : ''}" type="text"
+            value="${_esc(emp[f])}" placeholder="${f.replace('_',' ')}"
+            onchange="_updateEmpField(${idx},'${f}',this.value)"></td>`
+    ).join('') + `
+        <td><button type="button" class="btn-row-delete" onclick="_deleteEmpRow(${idx})" title="Remove">
+            <i class="fas fa-times"></i></button></td>`;
+    return tr;
+}
+
+function _updateEmpField(idx, field, value) {
+    if (_empExtracted[idx]) _empExtracted[idx][field] = value;
+}
+
+function _deleteEmpRow(idx) {
+    _empExtracted.splice(idx, 1);
+    _rebuildEmpReviewTable();
+}
+
+function addEmpReviewRow() {
+    _empExtracted.push({ emp_num:'', last_name:'', first_name:'', middle_name:'',
+        email:'', contact:'', specialization:'', emp_type:'', status:'Permanent', designation:'' });
+    _rebuildEmpReviewTable();
+    const rows = document.querySelectorAll('#empReviewTableBody tr');
+    if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function confirmEmpImport() {
+    const valid = _empExtracted.filter(e => e.emp_num && e.emp_num.trim());
+    if (!valid.length) { alert('No valid employees to import. Each row must have an Employee Number.'); return; }
+    document.getElementById('empConfirmData').value = JSON.stringify(valid);
+    showLoading('Saving employees to database…');
+    document.getElementById('empConfirmForm').submit();
+}
+
 function updateBulkActions() {
     const checkboxes = document.querySelectorAll('.row-check:checked');
     const archiveBtn = document.getElementById('btnBulkArchive');
@@ -17,11 +318,91 @@ document.addEventListener('change', (e) => {
     if (e.target.classList.contains('row-check')) updateBulkActions();
 });
 
+// --- LOADING OVERLAY ---
+const _LOA_STEPS = [
+    'Reading file…',
+    'Detecting columns…',
+    'Extracting records…',
+    'Validating data…',
+    'Preparing results…',
+];
+const _LOA_PROGRESS = [12, 32, 58, 78, 92];
+let _loaTimer = null, _loaStep = 0;
+
+function showLoading(firstMsg) {
+    const ov  = document.getElementById('loadingOverlay');
+    if (!ov) return;
+    ov.style.display = 'flex';
+    _loaStep = 0;
+    _setLoaStep(firstMsg || _LOA_STEPS[0], _LOA_PROGRESS[0]);
+    _loaTimer = setInterval(() => {
+        _loaStep = Math.min(_loaStep + 1, _LOA_STEPS.length - 1);
+        _setLoaStep(_LOA_STEPS[_loaStep], _LOA_PROGRESS[_loaStep]);
+    }, 1600);
+}
+function _setLoaStep(msg, pct) {
+    const txt = document.getElementById('loadingStatusText');
+    const bar = document.getElementById('loadingBarFill');
+    if (txt) { txt.style.opacity = '0'; setTimeout(() => { txt.textContent = msg; txt.style.opacity = '1'; }, 220); }
+    if (bar) bar.style.width = (pct || 0) + '%';
+}
+function hideLoading() {
+    const ov = document.getElementById('loadingOverlay');
+    if (ov) ov.style.display = 'none';
+    if (_loaTimer) { clearInterval(_loaTimer); _loaTimer = null; }
+    const bar = document.getElementById('loadingBarFill');
+    if (bar) bar.style.width = '0%';
+}
+window.addEventListener('pageshow', hideLoading);
+
+// --- IMPORT TYPE SELECTOR ---
+function openImportTypeModal()  { document.getElementById('importTypeModal').style.display = 'flex'; }
+function closeImportTypeModal() { document.getElementById('importTypeModal').style.display = 'none'; }
+function openImportModal() { openImportTypeModal(); }  // legacy alias
+
+// CSV
+function openEmpCsvModal()  {
+    closeImportTypeModal();
+    resetEmpColCustomization('csv');
+    document.getElementById('empCsvError').style.display = 'none';
+    document.getElementById('empCsvModal').style.display = 'flex';
+}
+function closeEmpCsvModal() { document.getElementById('empCsvModal').style.display = 'none'; }
+
+// XLSX
+function openEmpXlsxModal()  {
+    closeImportTypeModal();
+    resetEmpColCustomization('xlsx');
+    document.getElementById('empXlsxError').style.display = 'none';
+    document.getElementById('empXlsxModal').style.display = 'flex';
+}
+function closeEmpXlsxModal() { document.getElementById('empXlsxModal').style.display = 'none'; }
+
+// PDF
+function openEmpPdfModal()  {
+    closeImportTypeModal();
+    resetEmpColCustomization('pdf');
+    document.getElementById('empPdfError').style.display = 'none';
+    document.getElementById('empPdfModal').style.display = 'flex';
+}
+function closeEmpPdfModal() { document.getElementById('empPdfModal').style.display = 'none'; }
+
+// DOCX
+function openEmpDocxModal()  {
+    closeImportTypeModal();
+    resetEmpColCustomization('docx');
+    document.getElementById('empDocxError').style.display = 'none';
+    document.getElementById('empDocxModal').style.display = 'flex';
+}
+function closeEmpDocxModal() { document.getElementById('empDocxModal').style.display = 'none'; }
+
+// Review
+function closeEmpReviewModal() { document.getElementById('empReviewModal').style.display = 'none'; }
+
 // --- MODAL CONTROLS ---
 function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
 function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
-function openImportModal() { document.getElementById("importEmployeeModal").style.display = "block"; }
-function closeImportModal() { document.getElementById("importEmployeeModal").style.display = "none"; }
+function closeImportModal() { closeImportTypeModal(); }
 
 function openEditFromEl(el) {
     const emp = JSON.parse(el.dataset.emp);
@@ -132,35 +513,247 @@ function sortTable() {
     rows.forEach(row => tbody.appendChild(row));
 }
 
-// --- EXPORT ---
-function exportToExcel() {
-    const table = document.querySelector(".employee-table");
-    if (!table) return;
+// ── EXPORT ENGINE ────────────────────────────────────────────────────────────
+const _EMP_DOCX_ROUTE = '/admin/employee/export/docx';
 
-    const checkedBoxes = table.querySelectorAll(".row-check:checked");
-    let rowsToExport = checkedBoxes.length > 0
-        ? Array.from(checkedBoxes).map(cb => cb.closest("tr"))
-        : Array.from(table.querySelectorAll("tbody tr")).filter(r => r.style.display !== 'none');
+function _getExportRows() {
+    const table = document.querySelector('.employee-table');
+    if (!table) return [];
+    const checked = Array.from(table.querySelectorAll('.row-check:checked'));
+    if (checked.length > 0) return checked.map(cb => cb.closest('tr'));
+    return Array.from(table.querySelectorAll('tbody tr')).filter(r => r.style.display !== 'none');
+}
 
-    const excelData = [["Employee Number", "Name", "Specialization", "Type", "Status"]];
+function _rowsToEmpData(rows) {
+    // Admin table has Contact column (9 cells); detect by cell count
+    const hasContact = rows.length > 0 && rows[0].cells.length >= 9;
+    return rows.map(row => ({
+        emp_num: row.cells[1]?.innerText.trim() || '',
+        name:    row.querySelector('.emp-name')?.innerText.trim()   || '',
+        spec:    row.querySelector('.emp-spec')?.innerText.trim()   || '',
+        email:   row.cells[4]?.innerText.trim() || '',
+        contact: hasContact ? (row.cells[5]?.innerText.trim() || '') : '',
+        type:    row.querySelector('.emp-type')?.innerText.trim()   || '',
+        status:  row.querySelector('.emp-status')?.innerText.trim() || '',
+    }));
+}
 
-    rowsToExport.forEach(row => {
-        excelData.push([
-            row.cells[1] ? row.cells[1].innerText.trim() : "",
-            row.querySelector(".emp-name")   ? row.querySelector(".emp-name").innerText.trim()   : "",
-            row.querySelector(".emp-spec")   ? row.querySelector(".emp-spec").innerText.trim()   : "",
-            row.querySelector(".emp-type")   ? row.querySelector(".emp-type").innerText.trim()   : "",
-            row.querySelector(".emp-status") ? row.querySelector(".emp-status").innerText.trim() : "",
-        ]);
+function _buildExportFilename() {
+    const raw = (document.getElementById('exportFilenameInput').value.trim() || 'Employee_Records')
+        .replace(/[\/\\:*?"<>|]/g, '_');
+    if (document.getElementById('exportDateToggle').checked) {
+        const n = new Date();
+        const ts = n.getFullYear()
+            + String(n.getMonth() + 1).padStart(2, '0')
+            + String(n.getDate()).padStart(2, '0')
+            + '_'
+            + String(n.getHours()).padStart(2, '0')
+            + String(n.getMinutes()).padStart(2, '0')
+            + String(n.getSeconds()).padStart(2, '0');
+        return `${raw}_${ts}`;
+    }
+    return raw;
+}
+
+function openExportModal() {
+    const rows = _getExportRows();
+    const checked = document.querySelector('.employee-table')?.querySelectorAll('.row-check:checked') || [];
+    document.getElementById('exportEmpCount').textContent = rows.length;
+    document.getElementById('exportScopeLabel').textContent = checked.length > 0 ? 'Selected employees' : 'All visible employees';
+    document.getElementById('exportFormatError').style.display = 'none';
+    document.getElementById('exportModal').style.display = 'flex';
+}
+function closeExportModal() { document.getElementById('exportModal').style.display = 'none'; }
+
+function toggleFormatCard(el) {
+    el.classList.toggle('selected');
+    const all = document.querySelectorAll('.emp-export-format-card');
+    const allSel = Array.from(all).every(c => c.classList.contains('selected'));
+    const btn = document.getElementById('selectAllFormatsBtn');
+    btn.textContent = allSel ? 'Deselect All' : 'Select All';
+    btn.classList.toggle('all-selected', allSel);
+}
+
+function toggleSelectAllFormats() {
+    const cards = document.querySelectorAll('.emp-export-format-card');
+    const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
+    cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
+    const btn = document.getElementById('selectAllFormatsBtn');
+    btn.textContent = !allSel ? 'Deselect All' : 'Select All';
+    btn.classList.toggle('all-selected', !allSel);
+}
+
+function _showExportLoading(text, sub) {
+    document.getElementById('exportLoadingText').textContent = text || 'Exporting...';
+    document.getElementById('exportLoadingSubText').textContent = sub || 'Please wait';
+    document.getElementById('exportLoadingOverlay').style.display = 'flex';
+}
+function _hideExportLoading() { document.getElementById('exportLoadingOverlay').style.display = 'none'; }
+
+function _showExportToast(type, title, msg) {
+    const toast = document.getElementById('exportToast');
+    toast.className = `emp-export-toast ${type}`;
+    document.getElementById('exportToastIcon').innerHTML = type === 'success'
+        ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
+    document.getElementById('exportToastTitle').textContent = title;
+    document.getElementById('exportToastMsg').textContent   = msg;
+    toast.style.display = 'flex';
+    setTimeout(() => { toast.style.display = 'none'; }, 5000);
+}
+function closeExportToast() { document.getElementById('exportToast').style.display = 'none'; }
+
+function _exportCSV(data, filename) {
+    const hasContact = data.some(e => e.contact);
+    const now = new Date().toLocaleString();
+    const headers = ['Employee Number', 'Employee Name', 'Specialization', 'Email'];
+    if (hasContact) headers.push('Contact');
+    headers.push('Employment Type', 'Status');
+    const dataRows = data.map(e => {
+        const r = [e.emp_num, e.name, e.spec, e.email];
+        if (hasContact) r.push(e.contact);
+        r.push(e.type, e.status);
+        return r;
+    });
+    const q = v => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [
+        `"Employee Records"`,
+        `"Generated: ${now}"`,
+        `"Total: ${data.length} employee(s)"`,
+        '',
+        headers.map(q).join(','),
+        ...dataRows.map(r => r.map(q).join(',')),
+    ];
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _exportXLSX(data, filename) {
+    const payload = {
+        employees: data,
+        title: 'Employee Records',
+        timestamp: 'Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
+    };
+    const res = await fetch('/admin/employee/export/xlsx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text() || 'Server error generating XLSX');
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _exportPDF(data, filename) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const hasContact = data.some(e => e.contact);
+    const now = new Date();
+    const genStr = 'Generated: ' + now.toLocaleString();
+
+    doc.setFillColor(128, 0, 0);
+    doc.rect(0, 0, 297, 32, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
+    doc.text('Employee Records', 148.5, 16, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(genStr, 148.5, 25, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+
+    const columns = [
+        { header: '#',               dataKey: 'no'      },
+        { header: 'Employee Number', dataKey: 'emp_num' },
+        { header: 'Employee Name',   dataKey: 'name'    },
+        { header: 'Specialization',  dataKey: 'spec'    },
+        { header: 'Email',           dataKey: 'email'   },
+    ];
+    if (hasContact) columns.push({ header: 'Contact', dataKey: 'contact' });
+    columns.push({ header: 'Type', dataKey: 'type' }, { header: 'Status', dataKey: 'status' });
+
+    const body = data.map((e, i) => {
+        const row = { no: i + 1, emp_num: e.emp_num, name: e.name, spec: e.spec, email: e.email };
+        if (hasContact) row.contact = e.contact;
+        row.type = e.type; row.status = e.status;
+        return row;
     });
 
-    try {
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(excelData);
-        XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-        XLSX.writeFile(wb, checkedBoxes.length > 0 ? "Selected_Employees.xlsx" : "Employee_Records.xlsx");
-    } catch (e) {
-        console.error("Export Error:", e);
-        alert("Excel library not loaded. Please refresh the page.");
+    doc.autoTable({
+        columns, body, startY: 37,
+        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+        headStyles: { fillColor: [128, 0, 0], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [253, 245, 245] },
+        margin: { left: 10, right: 10 },
+    });
+
+    const total = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+        doc.text(`Page ${i} of ${total}`, 287, 205, { align: 'right' });
+    }
+    doc.save(filename + '.pdf');
+}
+
+async function _exportDOCX(data, filename) {
+    const payload = {
+        employees: data,
+        title: 'Employee Records',
+        timestamp: 'Generated: ' + new Date().toLocaleString(),
+    };
+    const res = await fetch(_EMP_DOCX_ROUTE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text() || 'Server error generating DOCX');
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.docx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function executeExport() {
+    const selected = Array.from(document.querySelectorAll('.emp-export-format-card.selected'))
+        .map(c => c.dataset.format);
+    if (selected.length === 0) {
+        document.getElementById('exportFormatError').style.display = 'block'; return;
+    }
+    document.getElementById('exportFormatError').style.display = 'none';
+
+    const rows = _getExportRows();
+    if (rows.length === 0) {
+        _showExportToast('error', 'No Data', 'There are no employees to export.'); return;
+    }
+    const data     = _rowsToEmpData(rows);
+    const filename = _buildExportFilename();
+    const btn      = document.getElementById('exportConfirmBtn');
+    btn.disabled   = true;
+
+    closeExportModal();
+    _showExportLoading('Preparing Export', `Generating ${selected.length} file(s)…`);
+
+    const errors = [];
+    for (const fmt of selected) {
+        _showExportLoading(`Exporting ${fmt.toUpperCase()}`, `Processing ${data.length} employees…`);
+        try {
+            if (fmt === 'csv')  _exportCSV(data, filename);
+            if (fmt === 'xlsx') await _exportXLSX(data, filename);
+            if (fmt === 'pdf')  await _exportPDF(data, filename);
+            if (fmt === 'docx') await _exportDOCX(data, filename);
+            await new Promise(r => setTimeout(r, 400));
+        } catch (e) {
+            console.error(`Export ${fmt} error:`, e);
+            errors.push(fmt.toUpperCase() + ': ' + e.message);
+        }
+    }
+
+    _hideExportLoading();
+    btn.disabled = false;
+    if (errors.length === 0) {
+        _showExportToast('success', 'Export Complete', `${selected.length} file(s) downloaded successfully.`);
+    } else if (errors.length < selected.length) {
+        _showExportToast('error', 'Partial Export', 'Some files failed: ' + errors.join('; '));
+    } else {
+        _showExportToast('error', 'Export Failed', errors.join('; '));
     }
 }
