@@ -19,7 +19,29 @@ from rf_dss import rf_score_faculty as _rf_score_faculty, rf_score_room as _rf_s
 app = Flask(__name__)
 app.secret_key = 'pup_lopez_super_secret_key' # Required for Login Sessions
 
-# --- CONTEXT PROCESSOR FOR DYNAMIC ACADEMIC YEAR ---
+# --- CONTEXT PROCESSOR FOR LOGGED-IN USER DISPLAY NAME ---
+@app.context_processor
+def inject_user_display():
+    try:
+        username = session.get('username')
+        if not username:
+            return {'current_user_display': 'User'}
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT f.firstname, f.lastname
+            FROM accounts a
+            LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+            WHERE a.username = %s
+        """, (username,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row and row.get('lastname'):
+            return {'current_user_display': f"{row['firstname']} {row['lastname']}"}
+        return {'current_user_display': username.title()}
+    except:
+        return {'current_user_display': session.get('username', 'User')}
+
 # --- CONTEXT PROCESSOR FOR DYNAMIC ACADEMIC YEAR ---
 @app.context_processor
 def inject_active_period():
@@ -239,6 +261,12 @@ def academic_my_teaching_assignment():
                            own_emp_num=own_emp_num,
                            active_ay_id=active_ay_id,
                            active_sem=active_sem)
+
+@app.route('/requests')
+def requests_view():
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
+    return redirect(url_for('dashboard'))
 
 @app.route('/dashboard')
 def dashboard():
@@ -1659,6 +1687,11 @@ def schedule_generation():
 def manual_schedule_editor():
     if 'loggedin' not in session: return redirect(url_for('login'))
 
+    scheduler_mode = request.args.get('scheduler', 'official')   # 'official' | 'local'
+    if scheduler_mode not in ('official', 'local'):
+        scheduler_mode = 'official'
+    is_acad_head = session.get('role') == 'Academic Head'
+
     init_mode = request.args.get('mode', 'subject')
     init_prog = request.args.get('prog', '')
     init_yl   = request.args.get('yl', '')
@@ -1729,6 +1762,8 @@ def manual_schedule_editor():
         
         faculty_json = json.dumps([{"id": f[0], "name": f[1], "typename": f[2]} for f in faculty])
         return render_template('academic/manualScheduleEditor.html',
+                               scheduler_mode=scheduler_mode,
+                               is_acad_head=is_acad_head,
                                acad_years=acad_years, programs=programs,
                                faculty=faculty, faculty_json=faculty_json,
                                buildings=buildings, rooms_json=json.dumps(rooms_list),
@@ -1738,6 +1773,13 @@ def manual_schedule_editor():
     finally:
         cur.close()
         conn.close()
+
+
+@app.route('/schedule/local-editor')
+def local_schedule_editor():
+    """Backward-compat redirect — all scheduler modes now share one route."""
+    return redirect(url_for('manual_schedule_editor', scheduler='local'))
+
 
 @app.route('/api/get_room_schedule/<int:room_id>')
 def get_room_schedule(room_id):
@@ -2453,23 +2495,19 @@ def api_manual_existing_sessions():
         ORDER BY ts_s.timevalue, ss.daydesc
     """
 
-    # Fetch Draft sessions first
     draft_rows = query_db(
         session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Draft'"])),
         base_params) or []
 
-    # Fetch Published sessions — keep only those whose day+starttime is NOT covered by any Draft.
-    # This preserves Published slices that aren't superseded by a Draft slot (different day/time),
-    # while preventing removed sessions from reappearing when Draft covers the same slot.
-    pub_rows = query_db(
-        session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Published'"])),
-        base_params) or []
-
-    draft_slot_keys = {(r['daydesc'], r['starttimeid']) for r in draft_rows}
-    non_overlapping_pub = [r for r in pub_rows
-                           if (r['daydesc'], r['starttimeid']) not in draft_slot_keys]
-
-    rows = list(draft_rows) + non_overlapping_pub
+    # Draft is a complete replacement of Published for this subject — save_draft archives
+    # the old Draft and inserts the full new session set. Never mix: sessions intentionally
+    # removed in the Draft would ghost-reappear from Published if we merged by slot key.
+    if draft_rows:
+        rows = draft_rows
+    else:
+        rows = query_db(
+            session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Published'"])),
+            base_params) or []
     return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
 
 
@@ -4786,6 +4824,11 @@ def schedule_version_history():
     if 'loggedin' not in session: return redirect(url_for('login'))
     return render_template('academic/versionHistory.html')
 
+@app.route('/schedule/room-schedule')
+def room_schedule_view():
+    if 'loggedin' not in session: return redirect(url_for('login'))
+    return render_template('academic/roomScheduleView.html')
+
 @app.route('/academic/schedule-generation')
 def schedule_generation_view():
     if 'loggedin' not in session: return redirect(url_for('login'))
@@ -5348,25 +5391,55 @@ def api_list_versions():
                 ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
             """)
         else:
+            # CTE groups all subjects per section per version_number into one row with
+            # an aggregated status (any Draft → Draft; all Published → Published; else Archive).
+            # Window function then counts Published revisions in order to assign Version numbers
+            # (only Published revisions get a Version label; all revisions get a Revision label).
             rows = query_db("""
-                SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number)
-                       sv.versionid, sv.version_number, sv.status, sv.datecreated,
-                       c.programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
-                FROM   public.schedule_version sv
-                JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
-                JOIN   public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN   public.curriculum c ON cs.curriculumid = c.curriculumid
-                JOIN   public.semester sem ON sg.semesterid = sem.semesterid
-                JOIN   public.academicyear ay ON sem.academicyearid = ay.academicyearid
-                ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
+                WITH versioned AS (
+                    SELECT MAX(sv.versionid)   AS versionid,
+                           sv.version_number,
+                           CASE
+                               WHEN bool_or(sv.status = 'Draft')      THEN 'Draft'
+                               WHEN bool_and(sv.status = 'Published') THEN 'Published'
+                               ELSE 'Archive'
+                           END                 AS status,
+                           MAX(sv.datecreated) AS datecreated,
+                           c.programcode,
+                           cs.yearlevel,
+                           cs.semester         AS term,
+                           ay.academicyearid   AS acadyear
+                    FROM   public.schedule_version sv
+                    JOIN   public.schedule sg          ON sv.scheduleid           = sg.scheduleid
+                    JOIN   public.curriculumsubject cs  ON sg.curriculumsubjectid  = cs.curriculumsubjectid
+                    JOIN   public.curriculum c          ON cs.curriculumid         = c.curriculumid
+                    JOIN   public.semester sem          ON sg.semesterid           = sem.semesterid
+                    JOIN   public.academicyear ay       ON sem.academicyearid      = ay.academicyearid
+                    GROUP BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number
+                )
+                SELECT *,
+                       CASE WHEN status = 'Published' THEN
+                           SUM(CASE WHEN status = 'Published' THEN 1 ELSE 0 END)
+                               OVER (PARTITION BY programcode, yearlevel, term, acadyear
+                                     ORDER BY version_number
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                       END AS published_version_number
+                FROM versioned
+                ORDER BY programcode, yearlevel, term, acadyear, version_number
             """)
         output = []
         for r in (rows or []):
             dt = r['datecreated']
             output.append({
-                'versionid': r['versionid'], 'version_number': r['version_number'], 'status': r['status'],
-                'datecreated': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
-                'programcode': r['programcode'], 'yearlevel': r['yearlevel'], 'term': r['term'], 'acadyear': r['acadyear']
+                'versionid':               r['versionid'],
+                'version_number':          r['version_number'],
+                'published_version_number': r.get('published_version_number'),
+                'status':                  r['status'],
+                'datecreated':             dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                'programcode':             r['programcode'],
+                'yearlevel':               r['yearlevel'],
+                'term':                    r['term'],
+                'acadyear':                r['acadyear'],
             })
         return jsonify(sorted(output, key=lambda x: x['datecreated'], reverse=True))
     except Exception as e: return jsonify({"error": str(e)}), 500
@@ -5394,6 +5467,95 @@ def api_restore_version(version_id):
         cur.execute("UPDATE schedule_version SET status = 'Draft' WHERE versionid = %s", (version_id,))
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/schedule/versions/<int:version_id>/sessions')
+def api_overlay_sessions(version_id):
+    """Return all schedule sessions for a historical versionid for timetable overlay comparison."""
+    try:
+        rows = query_db("""
+            WITH ref AS (
+                SELECT sv.version_number, c.programcode, cs.yearlevel, sg.semesterid
+                FROM   schedule_version sv
+                JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
+                JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+                WHERE  sv.versionid = %s
+                LIMIT  1
+            )
+            SELECT sub.subjectcode, sub.subjectname,
+                   COALESCE(f.lastname || ', ' || f.firstname, 'TBA') AS instructor,
+                   COALESCE(r.roomname, 'TBA')                        AS roomname,
+                   ss.daydesc,
+                   TO_CHAR(ts_s.timevalue, 'HH24:MI')                AS start_time,
+                   TO_CHAR(ts_e.timevalue, 'HH24:MI')                AS end_time,
+                   COALESCE(sub.lecturehours,    0)                   AS lecturehours,
+                   COALESCE(sub.laboratoryhours, 0)                   AS laboratoryhours,
+                   COALESCE(sub.creditunits,     0)                   AS creditunits,
+                   sv.status, sv.versionid, sv.version_number
+            FROM   ref
+            JOIN   schedule_version sv  ON sv.version_number = ref.version_number
+            JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
+            JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   subject sub           ON cs.subjectcode         = sub.subjectcode
+            JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+            LEFT JOIN faculty f          ON sg.employeenumber      = f.employeenumber
+            LEFT JOIN schedule_sessions ss ON ss.versionid         = sv.versionid
+            LEFT JOIN room r             ON ss.roomid              = r.roomid
+            LEFT JOIN timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
+            WHERE  c.programcode = ref.programcode
+              AND  cs.yearlevel  = ref.yearlevel
+              AND  sg.semesterid = ref.semesterid
+            ORDER BY sub.subjectname, ts_s.timevalue NULLS LAST, ss.daydesc
+        """, (version_id,)) or []
+        return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/schedule/version_sessions')
+def api_version_sessions():
+    """Fetch all sessions for every subject at a specific version_number for a section."""
+    prog    = request.args.get('program', '').strip()
+    yl      = request.args.get('year_level', '').strip()
+    ay_id   = request.args.get('ay_id', '').strip()
+    sem     = request.args.get('semester', '').strip()
+    ver_num = request.args.get('version_number', '').strip()
+    if not (prog and yl and ay_id and sem and ver_num):
+        return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+    try:
+        rows = query_db("""
+            SELECT sub.subjectcode, sub.subjectname,
+                   COALESCE(f.lastname || ', ' || f.firstname, 'TBA') AS instructor,
+                   COALESCE(r.roomname, 'TBA') AS roomname,
+                   ss.daydesc,
+                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                   sv.status
+            FROM schedule_version sv
+            JOIN schedule sc          ON sv.scheduleid           = sc.scheduleid
+            JOIN curriculumsubject cs  ON sc.curriculumsubjectid  = cs.curriculumsubjectid
+            JOIN subject sub           ON cs.subjectcode          = sub.subjectcode
+            JOIN sections sec          ON sc.sectionid            = sec.sectionid
+            JOIN cohort co             ON sec.cohortid            = co.cohortid
+            LEFT JOIN faculty f        ON sc.employeenumber       = f.employeenumber
+            LEFT JOIN schedule_sessions ss ON ss.versionid        = sv.versionid
+            LEFT JOIN room r           ON ss.roomid               = r.roomid
+            LEFT JOIN timeslot ts_s    ON ss.starttimeid          = ts_s.timeid
+            LEFT JOIN timeslot ts_e    ON ss.endtimeid            = ts_e.timeid
+            WHERE UPPER(co.programcode) = UPPER(%s)
+              AND sec.yearlevel          = %s
+              AND sv.version_number      = %s
+              AND sc.semesterid = (
+                  SELECT semesterid FROM semester
+                  WHERE academicyearid = %s AND semestertype = %s LIMIT 1
+              )
+            ORDER BY sub.subjectname, ts_s.timevalue NULLS LAST, ss.daydesc
+        """, (prog, int(yl), int(ver_num), ay_id, sem)) or []
+        return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

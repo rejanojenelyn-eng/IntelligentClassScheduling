@@ -13,16 +13,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // Sub-menu toggle function (Only drops down, does not navigate)
-        function toggleSubMenu(event, menuId, arrowId) {
+        function toggleDropdown(event, menuId, arrowId) {
             event.preventDefault();
-            event.stopPropagation(); // Stops the click from affecting the main link
-
+            event.stopPropagation();
             const menu = document.getElementById(menuId);
             const arrow = document.getElementById(arrowId);
-
             if (menu) menu.classList.toggle('show-submenu');
-            if (arrow) arrow.classList.toggle('rotate-arrow');
+            if (arrow) arrow.classList.toggle('rotated');
+        }
+
+        // Legacy alias kept for any other callers
+        function toggleSubMenu(event, menuId, arrowId) {
+            toggleDropdown(event, menuId, arrowId);
         }
 
         // Logout Modal Functions

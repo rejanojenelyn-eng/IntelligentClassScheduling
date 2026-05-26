@@ -2,7 +2,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}?v=20260519">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20260521d">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20260525a">
 <style>
     /* ── DSS dropdown styles ── */
     .dss-select-wrapper { position: relative; width: 100%; }
@@ -236,7 +236,205 @@
     .prog-option:hover { background:#fff8f0; color:#630100; }
     .prog-option strong { color:#630100; font-weight:900; }
     .prog-option-name { color:#777; font-size:0.72rem; }
+/* ==========================================================
+       LOCAL SCHEDULER THEME OVERRIDES (COMPLETE)
+       ========================================================== */
 
+    /* 1. PURPLE: #8c52ff (Academic Year and Semester block) */
+    .local-mode .lp-ay-sem-row {
+        background-color: #8c52ff !important;
+        padding: 10px 14px !important;
+        border-radius: 6px !important;
+    }
+    .local-mode .lp-ay-label {
+        color: #ffffff !important;
+        font-weight: 900 !important;
+        margin-bottom: 6px !important;
+    }
+    .local-mode .lp-ay-box {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border: 1px solid #ffffff !important;
+        border-radius: 4px !important;
+        font-weight: 700 !important;
+    }
+    .local-mode .lp-ay-box:hover {
+        background-color: #f5f5f5 !important;
+    }
+
+    /* 2. BUILDING TABS & ROOM SELECTOR */
+    .bldg-room-bar {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 12px;
+        overflow-x: auto;
+    }
+    .building-tabs-container {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #b5b5b5 !important;
+        border-radius: 6px !important;
+        padding: 4px !important;
+        gap: 2px;
+        background: #ffffff;
+    }
+    .bldg-tab {
+        background: transparent !important;
+        color: #630100 !important; 
+        border: none !important;
+        padding: 6px 14px !important;
+        font-size: 0.75rem !important;
+        font-weight: 900 !important;
+        border-radius: 4px !important;
+        cursor: pointer;
+        white-space: nowrap;
+        text-transform: uppercase;
+    }
+    .bldg-tab:hover {
+        background-color: #fdf0f0 !important;
+    }
+    .bldg-tab.active {
+        background-color: #630100 !important;
+        color: #ffffff !important;
+    }
+    .room-hdr-wrap {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #b5b5b5 !important;
+        border-radius: 6px !important;
+        padding: 5px 12px !important;
+        background: #ffffff;
+    }
+    .room-hdr-sel {
+        border: none !important;
+        outline: none !important;
+        color: #630100 !important;
+        font-weight: 900 !important;
+        font-size: 0.8rem !important;
+        background: transparent !important;
+        cursor: pointer;
+        padding-right: 8px;
+    }
+    .room-hdr-caret {
+        color: #630100 !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* 3. BLUE: #1c60d5 (Days Header & TIME column) */
+    .local-mode .timetable thead th {
+        background-color: #1c60d5 !important;
+        color: white !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+    }
+    /* Only the TIME header gets the darker blue */
+    .local-mode .timetable thead th:first-child {
+        background-color: #154bb0 !important; 
+        color: white !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+    }
+    /* 7:30 AM onwards (time cells) get a white background with dark text */
+    .local-mode .timetable tbody td.time-col {
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border-color: #e8d0d0 !important;
+    }
+
+    /* 4. LIGHT PURPLE 2: #e4d6ff (Unselected CALENDAR PILLS) */
+    .local-mode .schedule-pill {
+        background-color: #e4d6ff !important;
+        border: 1px solid #c8acff !important;
+    }
+    .local-mode .schedule-pill .pill-subject,
+    .local-mode .schedule-pill .pill-instructor,
+    .local-mode .schedule-pill .pill-room {
+        color: #3b2273 !important; 
+    }
+
+    /* 5. LIGHT PURPLE 1: #c8acff (Selected CALENDAR PILLS) */
+    .local-mode .schedule-pill.pill-slice-active {
+        background-color: #c8acff !important;
+        outline: 2.5px solid #8c52ff !important;
+        box-shadow: 0 0 0 4px rgba(140, 82, 255, 0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
+    }
+    .local-mode .schedule-pill.pill-slice-active .pill-subject,
+    .local-mode .schedule-pill.pill-slice-active .pill-instructor,
+    .local-mode .schedule-pill.pill-slice-active .pill-room {
+        color: #271452 !important; 
+    }
+
+    /* 6. ADD SCHEDULE HEADER (Transparent background, purple +, maroon text) */
+    .local-mode .right-panel-add-hdr {
+        background-color: transparent !important;
+        color: #630100 !important; 
+        border-bottom: 2px solid #630100 !important; 
+        padding: 5px 0 10px 0 !important;
+        justify-content: flex-start !important; 
+        gap: 10px !important;
+    }
+    .local-mode .right-panel-add-title {
+        color: #630100 !important; 
+        font-size: 1.1rem !important;
+    }
+    .local-mode .right-panel-add-icon {
+        margin-left: 8px !important; 
+        background-color: #8c52ff !important; 
+        color: white !important;
+        border-radius: 50% !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 26px !important;
+        height: 26px !important;
+    }
+    .local-mode .right-panel-add-icon i {
+        font-size: 14px !important;
+    }
+
+    /* 7. TIME ALLOTMENT HEADER & SLICES */
+    .local-mode .time-allot-hdr span {
+        color: #8c52ff !important; 
+    }
+    .local-mode .btn-add-ts {
+        background-color: #8c52ff !important;
+        color: white !important;
+    }
+    .local-mode .btn-add-ts:hover {
+        background-color: #7b40f2 !important;
+    }
+    /* Unselected Slices (Light Purple 2) */
+    .local-mode .ts-row {
+        background-color: #e4d6ff !important;
+        border: 1px solid #c8acff !important;
+        border-left: 4px solid #c8acff !important;
+    }
+    .local-mode .ts-row .ts-row-num {
+        color: #6a40bf !important; 
+    }
+    .local-mode .ts-label {
+        color: #6a40bf !important; 
+    }
+    /* Selected Active Slice (Light Purple 1 + Darker Outline) */
+    .local-mode .ts-row.ts-row-active {
+        background-color: #c8acff !important;
+        border-color: #8c52ff !important;
+        border-left: 4px solid #8c52ff !important;
+        box-shadow: 0 0 0 2px rgba(140, 82, 255, 0.2) !important;
+    }
+    .local-mode .ts-row.ts-row-active .ts-row-num,
+    .local-mode .ts-row.ts-row-active .ts-label {
+        color: #3b2273 !important; 
+    }
+    /* Input dropdowns inside the slices */
+    .local-mode .ts-row .ts-ss-input,
+    .local-mode .ts-row .ts-day-sel {
+        border-color: rgba(140, 82, 255, 0.3) !important;
+        color: #333 !important;
+    }
+    .local-mode .ts-row .ts-ss-input:focus,
+    .local-mode .ts-row .ts-day-sel:focus {
+        border-color: #8c52ff !important;
+    }
 </style>
 {% endblock %}
 
@@ -354,11 +552,43 @@
     </div>
 </div>
 
-<div class="schedule-container" style="padding: 8px 16px 0;">
+<div class="schedule-container{{ ' local-mode' if scheduler_mode == 'local' else '' }}" style="padding: 8px 16px 0;">
 
-    <!-- Page title -->
-    <div class="editor-page-title">
-        <i class="fas fa-calendar-plus"></i> Manual Schedule Creation
+    <!-- ── Editor Header Bar ── -->
+    <div class="editor-header-bar">
+        <div class="editor-header-left">
+            <i class="fas fa-calendar-alt editor-hdr-icon"></i>
+            <span class="editor-hdr-title">MANUAL SCHEDULE CREATION</span>
+            <span class="editor-hdr-sep">–</span>
+            <span class="editor-hdr-mode" id="editorModeLabel">
+                {{ 'LOCAL SCHEDULER' if scheduler_mode == 'local' else 'OFFICIAL SCHEDULER' }}
+            </span>
+        </div>
+        <div class="editor-header-right">
+            <div class="sched-mode-toggle">
+                <button class="btn-sched-mode {{ 'sched-mode-active' if scheduler_mode != 'local' else '' }}"
+                        id="btnModeOfficial"
+                        {% if scheduler_mode == 'local' %}
+                        onclick="window.location.href=this.dataset.href"
+                        data-href="{{ url_for('manual_schedule_editor', scheduler='official') }}"
+                        {% endif %}>
+                    OFFICIAL SCHEDULER
+                </button>
+                <button class="btn-sched-mode {{ 'sched-mode-active' if scheduler_mode == 'local' else '' }}"
+                        id="btnModeLocal"
+                        {% if scheduler_mode != 'local' %}
+                        onclick="window.location.href=this.dataset.href"
+                        data-href="{{ url_for('manual_schedule_editor', scheduler='local') }}"
+                        {% endif %}>
+                    LOCAL SCHEDULER
+                </button>
+            </div>
+            <button class="btn-hdr-autogen"
+                    onclick="window.location.href=this.dataset.href"
+                    data-href="{{ url_for('schedule_generation') }}">
+                <i class="fas fa-robot"></i> GO TO AUTO-GENERATE
+            </button>
+        </div>
     </div>
 
     <!-- bc-summary compat (hidden — context now shown in left panel) -->
@@ -535,15 +765,11 @@
                     <i class="fas fa-sync-alt mnav-icon" title="Refresh" onclick="location.reload()"></i>
                 </div>
                 <div class="manual-nav-tabs">
-                    <a href="#" class="mnav-tab mnav-active" id="tab-main" onclick="switchEditorTab('main',this);return false;">MAIN SCHEDULER</a>
+                    <a href="#" class="mnav-tab mnav-active" id="tab-room" onclick="switchEditorTab('room',this);return false;">ROOM VIEW</a>
+                    <a href="#" class="mnav-tab" id="tab-main" onclick="switchEditorTab('main',this);return false;">PROGRAM VIEW</a>
                     <a href="#" class="mnav-tab" id="tab-faculty" onclick="switchEditorTab('faculty',this);return false;">FACULTY LOAD</a>
                     <a href="#" class="mnav-tab" id="tab-drafts" onclick="switchEditorTab('drafts',this);return false;">DRAFTS</a>
                     <a href="#" class="mnav-tab" id="tab-history" onclick="switchEditorTab('history',this);return false;">VERSION HISTORY</a>
-                </div>
-                <div class="manual-nav-actions">
-                    <button class="btn-mnav-viewall" onclick="_viewAllReports()">VIEW ALL</button>
-                    <button class="btn-mnav-autogen" onclick="window.location.href=this.dataset.href"
-                        data-href="{{ url_for('schedule_generation') }}">GO TO AUTO-GENERATE</button>
                 </div>
             </div>
 
@@ -569,6 +795,15 @@
         <!--  CENTER PANEL: Calendar Grid    -->
         <!-- ═══════════════════════════════ -->
         <div class="editor-center-panel">
+
+            <!-- ── Program View Panel (shown when PROGRAM VIEW tab active) ── -->
+            <div id="programViewPanel" class="room-view-panel" style="display:none;">
+                <div class="rvp-coming-soon">
+                    <i class="fas fa-th-list rvp-icon"></i>
+                    <div class="rvp-title">PROGRAM VIEW</div>
+                    <div class="rvp-sub">Select a program and year level from the left panel</div>
+                </div>
+            </div>
 
             <!-- ── Faculty Load Panel (shown when FACULTY LOAD tab active) ── -->
             <div id="facultyLoadPanel" class="faculty-load-panel" style="display:none;">
@@ -875,14 +1110,33 @@
                 <span id="summary_period">-</span>
             </div>
 
-            <!-- Save or Approve -->
+            <!-- Save actions — rendered per scheduler mode + role -->
             <div class="right-save-section">
-                <button class="btn-confirm-right" id="btnSaveDraftRight" onclick="confirmAllSlots()">
-                    <i class="fas fa-save"></i> SAVE AS DRAFT
-                </button>
-                <button id="btnManualApprove" class="btn-approve-right">
-                    <i class="fas fa-check-circle"></i> APPROVE SCHEDULE
-                </button>
+                {% if scheduler_mode == 'local' %}
+                    {# Local Scheduler buttons #}
+                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement()">
+                        SAVE AS LOCAL ARRANGEMENT
+                    </button>
+                    <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="confirmAllSlots()">
+                        SAVE AS DRAFT
+                    </button>
+                    {# MAKE UP CLASS: Academic Head only #}
+                    {% if is_acad_head %}
+                    <button class="btn-save-outlined" id="btnSaveMakeupClass" onclick="saveAsMakeupClass()">
+                        SAVE AS MAKE UP CLASS
+                    </button>
+                    {% endif %}
+                {% else %}
+                    {# Official Scheduler buttons #}
+                    <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="confirmAllSlots()">
+                        SAVE AS DRAFT
+                    </button>
+                    <button class="btn-save-outlined btn-approve" id="btnApproveSchedule" onclick="approveSchedule()">
+                        APPROVE SCHEDULE
+                    </button>
+                {% endif %}
+                <!-- Hidden: satisfies external JS listener in manualEditor.acad.js -->
+                <button id="btnManualApprove" style="display:none;" aria-hidden="true"></button>
             </div>
 
         </div><!-- /editor-right-panel-new -->
@@ -903,9 +1157,39 @@
      data-init-ay="{{ init_ay }}"
      data-init-sem="{{ init_sem }}"
      data-available-sems="{{ available_sems_json | e }}"
+     data-scheduler-mode="{{ scheduler_mode }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260521"></script>
+
+<script>
+/* ── Scheduler mode config ─────────────────────────────────────
+   SCHED_MODE is set server-side; SCHED_CONFIG defines what changes
+   per mode. All shared JS reads these constants — never hard-codes
+   mode assumptions.
+   ────────────────────────────────────────────────────────────── */
+const SCHED_MODE = "{{ scheduler_mode }}";
+const IS_LOCAL   = SCHED_MODE === 'local';
+
+const SCHED_CONFIG = {
+    official: {
+        label:          'OFFICIAL SCHEDULER',
+        canApprove:     true,
+        canMakeup:      false,                          // Make Up Class not available in official
+        saveEndpoint:   '/api/manual/save_draft',
+        localEndpoint:  null,
+        validationMode: 'strict',
+    },
+    local: {
+        label:          'LOCAL SCHEDULER',
+        canApprove:     false,
+        canMakeup:      {{ 'true' if is_acad_head else 'false' }},   // Acad Head only
+        saveEndpoint:   '/api/manual/save_draft',
+        localEndpoint:  '/api/manual/save_local_arrangement',
+        validationMode: 'relaxed',
+    }
+}[SCHED_MODE] || {};
+</script>
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
@@ -2425,8 +2709,15 @@ function tsClose(p, id) {
 }
 function tsFilter(p, id) {
     const q = (document.getElementById(`${p}-txt-${id}`)?.value || '').toLowerCase();
-    document.querySelectorAll(`#${p}-list-${id} .ts-ss-item`).forEach(item =>
-        item.classList.toggle('dim', q !== '' && !item.textContent.toLowerCase().includes(q)));
+    document.querySelectorAll(`#${p}-list-${id} .ts-ss-item`).forEach(item => {
+        const matchesQuery = q === '' || item.textContent.toLowerCase().includes(q);
+        // Never un-hide items blocked by occupancy filter
+        if (!matchesQuery) {
+            item.classList.add('dim');
+        } else if (!item.classList.contains('occ-dim')) {
+            item.classList.remove('dim');
+        }
+    });
     tsOpen(p, id);
 }
 function tsSel(p, id, val) {
@@ -2463,6 +2754,14 @@ function tsSel(p, id, val) {
         // Also update pendingManualSchedule entry so grid shows the pill in the right room
         _syncSliceToPending(id);
         _updateWorkflowBar();
+        // Prefetch room occupancy then filter start times for this slice
+        if (val) {
+            const _rfAy  = document.getElementById('sel_ay')?.value  || '';
+            const _rfSem = document.getElementById('sel_sem')?.value || '';
+            _prefetchRoomOccupancy(val, _rfAy, _rfSem).then(() => _applyRoomOccupancyFilter(id));
+        } else {
+            _applyRoomOccupancyFilter(id);
+        }
     }
 }
 
@@ -2761,6 +3060,7 @@ function onTsDayChange(id) {
     _markSliceModified(id);
     _syncSliceToPending(id);
     _updateWorkflowBar();
+    _applyRoomOccupancyFilter(id);
 }
 
 function onTsStartChange(id) {
@@ -3783,7 +4083,138 @@ _filterEndTimeItems = function(id, startVal) {
         const timeIdx = _TS_TIMES.indexOf(item.dataset.val);
         if (timeIdx > maxEndIdx) item.classList.add('dim');
     });
+
+    // Occupancy-based end-time filter: block end times that would cause a room conflict
+    endList.querySelectorAll('.ts-ss-item.occ-dim').forEach(i => i.classList.remove('occ-dim'));
+    const _occRow = document.getElementById(`ts-row-${id}`);
+    if (_occRow && typeof _getOccupiedRanges === 'function') {
+        const _occRoomId = _occRow.querySelector('.ts-room-hidden')?.value || '';
+        const _occDay    = _occRow.querySelector('.ts-day-sel')?.value    || '';
+        const _occAy     = document.getElementById('sel_ay')?.value       || '';
+        const _occSem    = document.getElementById('sel_sem')?.value      || '';
+        let _occExcId = 'PREVIEW_' + id;
+        if (_occRow.dataset.existingJson) {
+            try { _occExcId = JSON.parse(_occRow.dataset.existingJson)._localTempId; } catch(e) {}
+        }
+        if (_occRoomId && _occDay && startIdx >= 0) {
+            const _occRanges = _getOccupiedRanges(_occRoomId, _occDay, _occAy, _occSem, _occExcId);
+            let _minOccAfter = Infinity;
+            _occRanges.forEach(r => { if (r.startIdx >= startIdx && r.startIdx < _minOccAfter) _minOccAfter = r.startIdx; });
+            if (_minOccAfter < Infinity) {
+                endList.querySelectorAll('.ts-ss-item').forEach(item => {
+                    if (_TS_TIMES.indexOf(item.dataset.val) > _minOccAfter)
+                        item.classList.add('dim', 'occ-dim');
+                });
+            }
+        }
+    }
 };
+
+/* ══════════════════════════════════════════════════════════════
+   ROOM OCCUPANCY FILTER
+   Hides start/end time options that would overlap a session
+   already occupying the selected room + day, so the calendar
+   never shows visually overlapping pills.
+   ══════════════════════════════════════════════════════════════ */
+
+// DB sessions cache keyed by `${roomId}|${ay}|${sem}`
+window._roomDbCache = window._roomDbCache || {};
+
+async function _prefetchRoomOccupancy(roomId, ay, sem) {
+    if (!roomId || !ay || !sem) return;
+    const key = `${roomId}|${ay}|${sem}`;
+    try {
+        const resp = await fetch(`/api/get_room_schedule/${roomId}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+        const sessions = await resp.json();
+        const _hdb = (typeof hiddenDbSchedules !== 'undefined') ? hiddenDbSchedules : new Set();
+        window._roomDbCache[key] = sessions
+            .filter(s => !_hdb.has(`${s.subjectcode}_${s.daydesc}_${s.starttimeid}`))
+            .map(s => ({
+                daydesc:  s.daydesc,
+                startIdx: (s.starttimeid || 1) - 1,
+                endIdx:   (s.endtimeid   || 1) - 1,
+            }));
+    } catch(e) {
+        window._roomDbCache[key] = [];
+    }
+    // Re-apply start-time filter for every open slice
+    document.querySelectorAll('.ts-row').forEach(row => {
+        const rowId = parseInt(row.id.replace('ts-row-', ''));
+        if (!isNaN(rowId)) _applyRoomOccupancyFilter(rowId);
+    });
+}
+
+function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId) {
+    const ranges = [];
+    if (!roomId || !day) return ranges;
+
+    // From DB cache
+    const dbItems = (window._roomDbCache[`${roomId}|${ay}|${sem}`] || []);
+    dbItems.forEach(s => {
+        if (s.daydesc === day && s.startIdx >= 0 && s.endIdx > s.startIdx)
+            ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx });
+    });
+
+    // From local pending schedule (other slices / other subjects in this room+day)
+    const pending = (typeof pendingManualSchedule !== 'undefined') ? pendingManualSchedule : [];
+    pending.forEach(c => {
+        if (String(c.room_id) !== String(roomId)) return;
+        if (c.day !== day || c.ay !== ay || c.sem !== sem) return;
+        if (c.temp_id === excludeTempId) return;
+        if (c.isPreview) return;
+        const si = _TS_TIMES.indexOf(c.start_time);
+        const ei = _TS_TIMES.indexOf(c.end_time);
+        if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei });
+    });
+
+    return ranges;
+}
+
+function _applyRoomOccupancyFilter(sliceId) {
+    const row = document.getElementById(`ts-row-${sliceId}`);
+    if (!row) return;
+
+    const roomId = row.querySelector('.ts-room-hidden')?.value || '';
+    const day    = row.querySelector('.ts-day-sel')?.value     || '';
+    const ay     = document.getElementById('sel_ay')?.value    || '';
+    const sem    = document.getElementById('sel_sem')?.value   || '';
+
+    let excludeTempId = 'PREVIEW_' + sliceId;
+    if (row.dataset.existingJson) {
+        try { excludeTempId = JSON.parse(row.dataset.existingJson)._localTempId; } catch(e) {}
+    }
+
+    const startList = document.getElementById(`tsst-list-${sliceId}`);
+    if (!startList) return;
+
+    // Clear previously-set occupancy dims
+    startList.querySelectorAll('.ts-ss-item.occ-dim').forEach(i => i.classList.remove('dim', 'occ-dim'));
+
+    if (!roomId || !day) return;
+
+    const ranges = _getOccupiedRanges(roomId, day, ay, sem, excludeTempId);
+    if (!ranges.length) return;
+
+    startList.querySelectorAll('.ts-ss-item').forEach(item => {
+        const tIdx = _TS_TIMES.indexOf(item.dataset.val);
+        if (ranges.some(r => tIdx >= r.startIdx && tIdx < r.endIdx))
+            item.classList.add('dim', 'occ-dim');
+    });
+
+    // Re-apply end-time filter now that start occupancy may have changed
+    const startVal = row.querySelector('.ts-start-hidden')?.value || '';
+    if (startVal) _filterEndTimeItems(sliceId, startVal);
+}
+
+/* Invalidate the DB cache for a room whenever renderGrid re-fetches it */
+(function _patchRenderGridForOccupancyCache() {
+    const _ogRG = renderGrid;
+    renderGrid = async function(roomId, ayFilter, semFilter) {
+        delete window._roomDbCache[`${roomId}|${ayFilter}|${semFilter}`];
+        await _ogRG.call(this, roomId, ayFilter, semFilter);
+        await _prefetchRoomOccupancy(roomId, ayFilter, semFilter);
+    };
+})();
 
 /* ══════════════════════════════════════════════════════════════
    CONTEXT PRESERVATION  (localStorage)
@@ -3885,22 +4316,32 @@ function switchEditorTab(tab, el) {
     document.querySelectorAll('.mnav-tab').forEach(t => t.classList.remove('mnav-active'));
     if (el) el.classList.add('mnav-active');
 
-    const bldgBar  = document.querySelector('.bldg-room-bar');
-    const calGrid  = document.getElementById('calendarViewContainer');
-    const wfBar    = document.getElementById('workflowBar');
-    const flPanel  = document.getElementById('facultyLoadPanel');
-    const dlPanel  = document.getElementById('draftListPanel');
-    const vhPanel  = document.getElementById('versionHistoryPanel');
+    const bldgBar   = document.querySelector('.bldg-room-bar');
+    const calGrid   = document.getElementById('calendarViewContainer');
+    const wfBar     = document.getElementById('workflowBar');
+    const pvPanel   = document.getElementById('programViewPanel');
+    const flPanel   = document.getElementById('facultyLoadPanel');
+    const dlPanel   = document.getElementById('draftListPanel');
+    const vhPanel   = document.getElementById('versionHistoryPanel');
 
     // Hide all panels first
-    if (bldgBar) bldgBar.style.display = 'none';
-    if (calGrid) calGrid.style.display = 'none';
-    if (wfBar)   wfBar.style.display   = 'none';
-    if (flPanel) flPanel.style.display = 'none';
-    if (dlPanel) dlPanel.style.display = 'none';
-    if (vhPanel) vhPanel.style.display = 'none';
+    if (bldgBar)  bldgBar.style.display  = 'none';
+    if (calGrid)  calGrid.style.display  = 'none';
+    if (wfBar)    wfBar.style.display    = 'none';
+    if (pvPanel)  pvPanel.style.display  = 'none';
+    if (flPanel)  flPanel.style.display  = 'none';
+    if (dlPanel)  dlPanel.style.display  = 'none';
+    if (vhPanel)  vhPanel.style.display  = 'none';
 
-    if (tab === 'faculty') {
+    if (tab === 'room') {
+        // ROOM VIEW — the working room-based calendar grid
+        if (bldgBar) bldgBar.style.display = '';
+        if (calGrid) calGrid.style.display = '';
+        if (wfBar)   wfBar.style.display   = '';
+    } else if (tab === 'main') {
+        // PROGRAM VIEW — program-filtered timetable (coming soon)
+        if (pvPanel) pvPanel.style.display = 'flex';
+    } else if (tab === 'faculty') {
         if (flPanel) flPanel.style.display = 'flex';
         _initFlFacultyMenu();
     } else if (tab === 'drafts') {
@@ -3909,12 +4350,22 @@ function switchEditorTab(tab, el) {
     } else if (tab === 'history') {
         if (vhPanel) vhPanel.style.display = 'flex';
         _loadVersionHistoryPanel();
-    } else {
-        // main scheduler
-        if (bldgBar) bldgBar.style.display = '';
-        if (calGrid) calGrid.style.display = '';
-        if (wfBar)   wfBar.style.display   = '';
     }
+}
+
+function saveLocalArrangement() {
+    // Local scheduler publish = same approve flow as official
+    document.getElementById('btnManualApprove').click();
+}
+
+function saveAsMakeupClass() {
+    // TODO: implement make-up class save
+    console.log('Save as Make Up Class');
+}
+
+function approveSchedule() {
+    // Delegate to the hidden btnManualApprove which owns the full approve/publish flow
+    document.getElementById('btnManualApprove').click();
 }
 
 function _initFlFacultyMenu() {
@@ -4105,7 +4556,12 @@ async function confirmDlpDelete() {
 async function _loadVersionHistoryPanel() {
     const cards    = document.getElementById('vhpCards');
     const subtitle = document.getElementById('vhpSubtitle');
-    const prog     = document.getElementById('sel_prog')?.value?.toUpperCase() || '';
+
+    // Read all four left-side filters
+    const prog = (document.getElementById('sel_prog')?.value || '').toUpperCase();
+    const ay   = document.getElementById('sel_ay')?.value  || '';
+    const sem  = document.getElementById('sel_sem')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
 
     if (cards)    cards.innerHTML = '<div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading versions&hellip;</div>';
     if (subtitle) subtitle.textContent = 'Loading…';
@@ -4119,62 +4575,69 @@ async function _loadVersionHistoryPanel() {
             return;
         }
 
-        // Filter by selected program if one is set
-        let filtered = prog ? data.filter(v => (v.programcode||'').toUpperCase() === prog) : data;
+        // Filter by whichever left-side selectors are set
+        let filtered = data;
+        if (prog) filtered = filtered.filter(v => (v.programcode||'').toUpperCase() === prog);
+        if (ay)   filtered = filtered.filter(v => String(v.acadyear||'') === String(ay));
+        if (sem)  filtered = filtered.filter(v => (v.term||'') === sem);
+        if (yl)   filtered = filtered.filter(v => String(v.yearlevel||'') === String(yl));
 
-        // Sort: Draft first, then Published, then Archive; within each by datecreated desc
-        const statusOrder = { 'Draft': 0, 'Published': 1, 'Archive': 2 };
-        filtered.sort((a, b) => {
-            const sd = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
-            if (sd !== 0) return sd;
-            return (b.datecreated || '').localeCompare(a.datecreated || '');
-        });
+        // Sort by version number descending (newest first)
+        filtered.sort((a, b) => (b.version_number||0) - (a.version_number||0));
 
         if (!filtered.length) {
-            const msg = prog ? `No versions found for ${prog}.` : 'No versions found.';
+            const hasFilter = prog || ay || sem || yl;
+            const msg = hasFilter ? 'No revisions match the selected filters.' : 'No revisions found.';
             cards.innerHTML = `<div class="vhp-empty"><i class="fas fa-history"></i><div>${msg}</div></div>`;
-            if (subtitle) subtitle.textContent = prog ? `Filtered: ${prog}` : 'No versions';
+            if (subtitle) subtitle.textContent = hasFilter ? 'No match' : 'No revisions';
             return;
         }
 
-        if (subtitle) subtitle.textContent = `${filtered.length} version${filtered.length !== 1 ? 's' : ''}${prog ? ' · ' + prog : ''}`;
+        if (subtitle) subtitle.textContent = `${filtered.length} revision${filtered.length !== 1 ? 's' : ''}`;
+
+        // The highest version_number in this filtered set is the active/latest revision
+        const maxVNum = filtered[0]?.version_number || 0;
 
         cards.innerHTML = filtered.map(v => {
-            const dt = v.datecreated ? new Date(v.datecreated) : null;
-            const dateStr = (dt && !isNaN(dt)) ? dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '—';
-            const semLabel = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
-            const ayRaw  = String(v.acadyear || '');
-            const ayDisp = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
-            const letters = (v.programcode||'').split('').join(' ');
-            const status = v.status || 'Archive';
-            const statusLower = status.toLowerCase();
-            const isDraft     = status === 'Draft';
-            const isPublished = status === 'Published';
-            const isArchive   = status === 'Archive';
-            const badgeClass  = isDraft ? 'vhp-badge-draft' : isPublished ? 'vhp-badge-published' : 'vhp-badge-archive';
-            const cardClass   = isDraft ? 'is-draft' : isPublished ? 'is-published' : 'is-archive';
-            const badgeIcon   = isDraft ? 'fa-file-alt' : isPublished ? 'fa-check-circle' : 'fa-archive';
-            const canRestore  = !isDraft;  // Only allow restoring non-Draft versions back to Draft
+            const dt         = v.datecreated ? new Date(v.datecreated) : null;
+            const dateStr    = (dt && !isNaN(dt)) ? dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '—';
+            const semLabel   = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
+            const ayRaw      = String(v.acadyear || '');
+            const ayDisp     = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
+            const letters    = (v.programcode||'').split('').join(' ');
+            const isLatest   = (v.version_number||0) === maxVNum;
+            const isDraft    = (v.status || '') === 'Draft';
+            const isPublished= (v.status || '') === 'Published';
+            const statusChip = isDraft
+                ? '<span class="vhp-draft-chip"><i class="fas fa-file-alt"></i> DRAFT</span>'
+                : isPublished
+                    ? '<span class="vhp-published-chip"><i class="fas fa-check-circle"></i> PUBLISHED</span>'
+                    : '';
             return `
-            <div class="vhp-card ${cardClass}" data-vid="${v.versionid}" id="vhpc-${v.versionid}">
-                <div class="vhp-version-badge">V${v.version_number||1}</div>
+            <div class="vhp-card${isLatest ? ' is-latest' : ''}" data-vid="${v.versionid}" id="vhpc-${v.versionid}">
+                <div class="vhp-version-badge">R${v.version_number||1}</div>
                 <div class="vhp-card-meta">
                     <div class="vhp-card-eyebrow">
                         A.Y ${ayDisp} &bull; ${semLabel}
-                        <span class="vhp-status-badge ${badgeClass}"><i class="fas ${badgeIcon}"></i> ${status}</span>
+                        ${isLatest ? '<span class="vhp-active-chip"><i class="fas fa-circle" style="font-size:0.45rem;vertical-align:middle;margin-right:3px;"></i>ACTIVE</span>' : ''}
+                        ${statusChip}
                     </div>
                     <div class="vhp-card-prog">${letters} &ndash; ${v.yearlevel||'—'}</div>
                     <div class="vhp-card-date"><i class="fas fa-clock" style="margin-right:3px;"></i>${dateStr}</div>
                 </div>
                 <div class="vhp-card-actions">
-                    ${canRestore ? `
+                    ${!isLatest ? `
                     <button class="vhp-btn vhp-btn-restore" id="vhpr-${v.versionid}"
                         onclick="restoreVersion(${v.versionid}, this)">
                         <i class="fas fa-undo-alt"></i> RESTORE
                     </button>` : ''}
-                    <a href="/schedule/drafts/${v.versionid}" class="vhp-btn vhp-btn-view">
+                    <button class="vhp-btn vhp-btn-view"
+                        data-vn="${v.version_number}"
+                        data-prog="${v.programcode}" data-yl="${v.yearlevel}"
+                        data-ay="${v.acadyear}" data-term="${v.term}"
+                        onclick="viewVersionInline(this)">
                         <i class="fas fa-eye"></i> VIEW
-                    </a>
+                    </button>
                 </div>
             </div>`;
         }).join('');
@@ -4183,6 +4646,25 @@ async function _loadVersionHistoryPanel() {
         if (cards) cards.innerHTML = `<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`;
         if (subtitle) subtitle.textContent = 'Error';
     }
+}
+
+function viewVersionInline(btn) {
+    // Navigate to the overlay calendar on the Class Schedule (SIS) page so the
+    // selected revision is shown as a dashed overlay on top of the current schedule.
+    const vid  = btn.closest('.vhp-card').dataset.vid;
+    const vn   = btn.dataset.vn;
+    const prog = btn.dataset.prog;
+    const yl   = btn.dataset.yl;
+    const ay   = btn.dataset.ay;
+    const term = btn.dataset.term;
+
+    window.location.href =
+        `/schedule?overlay_id=${encodeURIComponent(vid)}` +
+        `&prog=${encodeURIComponent(prog)}` +
+        `&yl=${encodeURIComponent(yl)}` +
+        `&sem=${encodeURIComponent(term)}` +
+        `&ay=${encodeURIComponent(ay)}` +
+        `&vnum=${encodeURIComponent(vn)}`;
 }
 
 async function restoreVersion(versionId, btn) {

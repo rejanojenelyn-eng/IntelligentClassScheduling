@@ -54,22 +54,44 @@
     }
 
     // ── render one version chain ───────────────────────────────────────────────
+    // versions is sorted oldest→newest; the last entry is the active revision
     function renderChain(versions) {
+        const maxVNum = versions.length ? versions[versions.length - 1].version_number : -1;
         let html = '<div class="vh-version-chain">';
         versions.forEach((v, i) => {
             if (i > 0) html += '<span class="vh-version-arrow"><i class="fas fa-chevron-right"></i></span>';
-            const isArchive = (v.status || '').toLowerCase() === 'archive';
-            const progSafe  = (v.programcode || '').replace(/'/g, "\\'");
+            const isLatest   = v.version_number === maxVNum;
+            const progSafe   = (v.programcode || '').replace(/'/g, "\\'");
+
+            const overlayUrl = !isLatest
+                ? `/schedule?overlay_id=${v.versionid}` +
+                  `&prog=${encodeURIComponent(v.programcode || '')}` +
+                  `&yl=${v.yearlevel}` +
+                  `&sem=${encodeURIComponent(v.term || '')}` +
+                  `&ay=${encodeURIComponent(v.acadyear || '')}` +
+                  `&vnum=${v.version_number}`
+                : null;
+
+            const pillCls = isLatest ? 'vh-pill-published' : 'vh-pill-archive';
+
             html += `
             <div class="vh-version-unit">
-                <span class="vh-version-pill ${pillClass(v.status)}">
-                    <i class="fas ${pillIcon(v.status)}"></i> V${v.version_number} ${v.status}
-                </span>
-                ${isArchive ? `<button class="btn-vh-restore"
-                    onclick="vhOpenRestoreModal(${v.versionid},'V${v.version_number}','${progSafe}',${v.yearlevel})"
-                    title="Restore this version to Draft">
-                    <i class="fas fa-undo"></i> Restore
-                </button>` : ''}
+                <div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
+                    <span class="vh-version-pill ${pillCls}">
+                        R${v.version_number}${isLatest ? ' &bull; ACTIVE' : ''}
+                    </span>
+                </div>
+                <div style="display:flex;gap:4px;align-items:center;">
+                    ${!isLatest ? `<a class="btn-vh-view" href="${overlayUrl}"
+                        title="Compare this revision against the current schedule">
+                        <i class="fas fa-eye"></i> View
+                    </a>` : ''}
+                    ${!isLatest ? `<button class="btn-vh-restore"
+                        onclick="vhOpenRestoreModal(${v.versionid},'R${v.version_number}','${progSafe}',${v.yearlevel})"
+                        title="Restore this revision">
+                        <i class="fas fa-undo"></i> Restore
+                    </button>` : ''}
+                </div>
             </div>`;
         });
         html += '</div>';

@@ -5,18 +5,119 @@
 /* ── Override schedule.css defaults ────────────────────────── */
 .editor-action-bar { margin-top: 0 !important; }
 
-/* ── Static page title ── */
-.editor-page-title {
-    font-size: 1.05rem;
-    font-weight: 900;
-    color: #630100;
-    letter-spacing: 0.4px;
-    padding: 4px 0 10px;
+/* ── Editor Header Bar ──────────────────────────────────────── */
+.editor-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    flex-shrink: 0;
+    gap: 12px;
+    background: white;
+    /* Updated to the full dark red border */
+    border: 2px solid #630100;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+.editor-header-left {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
 }
-.editor-page-title i { font-size: 0.9rem; opacity: 0.75; }
+.editor-hdr-icon {
+    display: none !important; /* Hidden to match your mockup */
+}
+.editor-hdr-title {
+    font-size: 1rem;
+    font-weight: 900;
+    color: #630100;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.editor-hdr-sep {
+    font-size: 1rem;
+    font-weight: 400;
+    color: #630100;
+    opacity: 0.45;
+    flex-shrink: 0;
+}
+.editor-hdr-mode {
+    font-size: 1rem;
+    font-weight: 900;
+    color: #630100;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.editor-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+/* Mode toggle pill group */
+.sched-mode-toggle {
+    display: flex;
+    align-items: center;
+    background: #fff; /* Updated to white */
+    border: 1px solid #ccc; /* Updated border */
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+}
+.btn-sched-mode {
+    padding: 6px 14px;
+    border: none;
+    background: transparent;
+    color: #666; /* Darker grey text */
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.btn-sched-mode:hover:not(.sched-mode-active) {
+    background: #f4f4f4;
+    color: #630100;
+}
+.sched-mode-active {
+    background: #630100 !important;
+    color: #f0c030 !important; /* Gold text */
+    cursor: default;
+}
+
+/* Auto-generate button in header */
+.btn-hdr-autogen {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 14px;
+    border: 1.5px solid #630100;
+    background: white;
+    color: #630100;
+    border-radius: 4px;
+    font-size: 0.67rem;
+    font-weight: 900;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.btn-hdr-autogen:hover {
+    background: #630100;
+    color: white;
+}
+.btn-hdr-autogen i { font-size: 0.72rem; }
+
+/* Legacy title — keep for compat, hidden */
+.editor-page-title { display: none !important; }
 
 /* Dynamic bc-summary-wrap (context now in left panel — keep hidden) */
 #bc-summary-wrap { display: none !important; }
@@ -25,64 +126,67 @@
 .manual-nav-bar {
     display: flex;
     align-items: center;
-    background: white;
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
-    padding: 0 10px;
+    background: transparent; /* Removed white background */
+    border: none; /* Removed full border */
+    padding: 0;
     height: 38px;
     flex-shrink: 0;
-    gap: 4px;
+    margin-bottom: 12px;
 }
 
 /* Left tools (undo / redo / refresh) */
 .mnav-left-tools {
     display: flex;
     align-items: center;
-    gap: 2px;
-    border-right: 1px solid #e8e8e8;
-    padding-right: 8px;
-    margin-right: 2px;
-    height: 100%;
-    margin-left: auto;
+    gap: 8px;
+    border-right: 2px solid #ccc; /* Thicker vertical separator */
+    padding-right: 16px;
+    margin-right: 16px;
+    height: 24px; /* Adjust height to match the line in mockup */
 }
 .mnav-icon {
-    font-size: 0.78rem;
+    font-size: 0.9rem;
     color: #630100;
     cursor: pointer;
-    padding: 5px 6px;
+    padding: 4px;
     border-radius: 4px;
-    transition: background 0.15s;
+    transition: transform 0.15s;
 }
-.mnav-icon:hover { background: #fdf2f2; }
+.mnav-icon:hover { transform: scale(1.1); }
 
 .manual-nav-tabs {
     display: flex;
-    gap: 0;
+    align-items: center;
+    gap: 2px;
     height: 100%;
     flex: 0 0 auto;
+    background: #f1f3f4; /* Light grey pill background */
+    border-radius: 30px; /* Fully rounded container */
+    padding: 4px;
 }
 
 .mnav-tab {
     display: flex;
     align-items: center;
-    padding: 0 16px;
+    padding: 6px 16px;
     font-size: 0.72rem;
     font-weight: 800;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.5px;
     text-transform: uppercase;
     color: #555;
     text-decoration: none;
-    border-bottom: 3px solid transparent;
-    transition: color 0.15s, border-color 0.15s;
+    border-radius: 20px; /* Fully rounded tabs */
+    transition: all 0.2s ease;
     white-space: nowrap;
 }
 
-.mnav-tab:hover { color: #630100; }
+.mnav-tab:hover { color: #000; }
 
 .mnav-active {
     color: #630100;
-    border-bottom-color: #630100;
     font-weight: 900;
+    background: #ffffff; /* White background for active tab */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* Subtle shadow */
 }
 
 .manual-nav-actions {
@@ -119,6 +223,40 @@
     transition: background 0.15s;
 }
 .btn-mnav-autogen:hover { background: #7a0100; }
+
+/* ── Room View Panel placeholder ──────────────────────────── */
+.room-view-panel {
+    flex: 1;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+    background: #fafafa;
+    border: 1.5px dashed #d0c0c0;
+    border-radius: 10px;
+    padding: 48px 24px;
+    color: #999;
+    text-align: center;
+}
+.rvp-icon {
+    font-size: 2.8rem;
+    color: #d4b0b0;
+    margin-bottom: 4px;
+}
+.rvp-title {
+    font-size: 0.95rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #888;
+}
+.rvp-sub {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #b0b0b0;
+    letter-spacing: 0.3px;
+}
 
 /* ── Main wrapper ──────────────────────────────────────────── */
 .editor-wrapper {
@@ -1135,39 +1273,108 @@
     flex-direction: column;
 }
 
-/* Action buttons */
-.btn-confirm-right {
-    width: 100%;
-    background: #630100;
-    color: white;
-    border: none;
-    padding: 11px;
-    border-radius: 4px;
-    font-weight: 900;
-    font-size: 0.82rem;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: background 0.18s;
-    margin-top: auto;
-}
-.btn-confirm-right:hover { background: #7a0100; }
-
-.btn-approve-right {
+/* Action buttons — outlined save buttons */
+.btn-save-outlined {
     width: 100%;
     background: white;
     color: #630100;
     border: 2px solid #630100;
-    padding: 9px;
+    padding: 10px;
     border-radius: 4px;
     font-weight: 900;
-    font-size: 0.82rem;
-    letter-spacing: 1px;
+    font-size: 0.73rem;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
     cursor: pointer;
     transition: all 0.18s;
 }
-.btn-approve-right:hover { background: #630100; color: white; }
+.btn-save-outlined:hover { background: #630100; color: white; }
+
+/* Approve Schedule — filled maroon, official mode only */
+.btn-save-outlined.btn-approve {
+    background: #630100;
+    color: white;
+    border-color: #630100;
+}
+.btn-save-outlined.btn-approve:hover { background: #7a0100; border-color: #7a0100; }
+
+/* Keep old classes for JS compat — hidden */
+.btn-confirm-right, .btn-approve-right { display: none; }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   LOCAL SCHEDULER MODE  (purple: #8c52ff #c8acff | blue: #1c60d5 #003693)
+   Added via .local-mode class on .schedule-container
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Header bar accent */
+.local-mode .editor-header-bar { border-left-color: #8c52ff; }
+.local-mode .editor-hdr-mode   { color: #8c52ff; }
+
+/* Mode toggle active button */
+.local-mode #btnModeLocal.sched-mode-active  { background: #8c52ff !important; }
+.local-mode #btnModeOfficial.sched-mode-active { background: #630100 !important; }
+
+/* Nav tabs */
+.local-mode .mnav-active              { color: #1c60d5; border-bottom-color: #1c60d5; }
+.local-mode .mnav-tab:hover           { color: #8c52ff; }
+.local-mode .mnav-icon                { color: #1c60d5; }
+.local-mode .mnav-icon:hover          { background: #f0eaff; }
+
+/* Building tabs */
+.local-mode .bldg-tab {
+    border-color: #8c52ff;
+    color: #3a1a8a;
+}
+.local-mode .bldg-tab:hover { background: #f0eaff; border-color: #8c52ff; color: #5a2bc0; }
+.local-mode .bldg-tab.active {
+    background: #003693;
+    border-color: #1c60d5;
+    box-shadow: 0 2px 6px rgba(0,54,147,0.3);
+}
+.local-mode .bldg-tab.active:hover { background: #1c60d5; }
+
+/* Room dropdown trigger */
+.local-mode .dss-select-trigger            { background: #1c60d5; }
+.local-mode .dss-select-trigger:hover      { background: #003693; }
+.local-mode .dss-search-input:focus        { border-color: #8c52ff; }
+
+/* Right panel title icon */
+.local-mode .right-title-icon {
+    background: linear-gradient(135deg, #8c52ff 0%, #1c60d5 100%);
+    color: white;
+}
+
+/* Right panel divider */
+.local-mode .editor-right-panel-new::after {
+    background: linear-gradient(90deg, #8c52ff, #1c60d5);
+}
+.local-mode .editor-right-panel-new .rp-divider { background: #c8acff; }
+
+/* Time slot cards */
+.local-mode .ts-row {
+    background: #f3eeff;
+    border-color: #c8acff;
+}
+.local-mode .ts-label  { color: #5a2bc0; }
+.local-mode .ts-sel:focus { border-color: #8c52ff; }
+
+/* + Add time slot button */
+.local-mode .btn-add-ts {
+    border-color: #8c52ff;
+    color: #8c52ff;
+}
+.local-mode .btn-add-ts:hover { background: #8c52ff; color: white; }
+
+/* Time allotment header */
+.local-mode .time-allot-hdr { color: #3a1a8a; }
+
+/* Save buttons in local mode */
+.local-mode .btn-save-outlined {
+    color: #1c60d5;
+    border-color: #1c60d5;
+}
+.local-mode .btn-save-outlined:hover { background: #1c60d5; color: white; }
 
 /* ── Rooms sidebar (hidden, kept for JS compat) ── */
 .rooms-sidebar-header { background:#630100; color:white; font-size:0.7rem; font-weight:900; letter-spacing:1px; padding:7px 10px; text-transform:uppercase; }
@@ -2378,9 +2585,7 @@
     transition: box-shadow 0.15s, transform 0.15s;
 }
 .vhp-card:hover { box-shadow: 0 4px 14px rgba(99,1,0,0.1); transform: translateY(-1px); }
-.vhp-card.is-draft  { border-left-color: #c8860a; }
-.vhp-card.is-published { border-left-color: #1a7a2e; }
-.vhp-card.is-archive { border-left-color: #aaa; opacity: 0.75; }
+.vhp-card.is-latest { border-left-color: #1a7a2e; }
 
 .vhp-version-badge {
     width: 48px;
@@ -2399,9 +2604,7 @@
     line-height: 1.2;
     text-transform: uppercase;
 }
-.vhp-card.is-draft .vhp-version-badge   { background: #fff8e1; color: #946300; }
-.vhp-card.is-published .vhp-version-badge { background: #f0faf0; color: #1a7a2e; }
-.vhp-card.is-archive .vhp-version-badge  { background: #f5f5f5; color: #888; }
+.vhp-card.is-latest .vhp-version-badge { background: #f0faf0; color: #1a7a2e; }
 
 .vhp-card-meta { flex: 1; min-width: 0; }
 .vhp-card-eyebrow {
@@ -2412,9 +2615,7 @@
     text-transform: uppercase;
     margin-bottom: 4px;
 }
-.vhp-card.is-draft .vhp-card-eyebrow   { color: #946300; }
-.vhp-card.is-published .vhp-card-eyebrow { color: #1a7a2e; }
-.vhp-card.is-archive .vhp-card-eyebrow  { color: #888; }
+.vhp-card.is-latest .vhp-card-eyebrow { color: #1a7a2e; }
 
 .vhp-card-prog {
     font-size: 1.45rem;
@@ -2430,22 +2631,39 @@
     font-weight: 600;
 }
 
-.vhp-status-badge {
+.vhp-active-chip,
+.vhp-draft-chip,
+.vhp-published-chip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    font-size: 0.58rem;
+    gap: 3px;
+    font-size: 0.56rem;
     font-weight: 800;
     letter-spacing: 1px;
-    padding: 3px 9px;
+    padding: 2px 9px;
     border-radius: 20px;
     text-transform: uppercase;
     white-space: nowrap;
     margin-left: 6px;
 }
-.vhp-badge-draft     { background: #fff8e1; color: #946300; border: 1px solid #ffe082; }
-.vhp-badge-published { background: #f0faf0; color: #1a7a2e; border: 1px solid #b2dbb5; }
-.vhp-badge-archive   { background: #f5f5f5; color: #888;    border: 1px solid #ddd; }
+
+.vhp-active-chip {
+    background: #e8f8ee;
+    color: #1a7a2e;
+    border: 1px solid #b2dbb5;
+}
+
+.vhp-draft-chip {
+    background: #fff8e1;
+    color: #946300;
+    border: 1px solid #ffe082;
+}
+
+.vhp-published-chip {
+    background: #e8f8ee;
+    color: #1a7a2e;
+    border: 1px solid #b2dbb5;
+}
 
 .vhp-card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .vhp-btn {

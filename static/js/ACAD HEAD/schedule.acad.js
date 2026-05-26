@@ -1,3 +1,15 @@
+/* ---- Overlay mode URL params (parsed before anything else) ---- */
+(function () {
+    const p = new URLSearchParams(window.location.search);
+    window._OVERLAY_ID   = p.get('overlay_id');
+    window._OVERLAY_PROG = p.get('prog');
+    window._OVERLAY_YL   = p.get('yl');
+    window._OVERLAY_SEM  = p.get('sem');
+    window._OVERLAY_AY   = p.get('ay');
+    window._OVERLAY_VNUM = p.get('vnum');
+    window._overlaySessions = [];
+})();
+
 /* ---- Schedule List filters ---- */
 const _initEl  = document.getElementById('schedule-init-data');
 const SEM_DATA  = JSON.parse(_initEl.dataset.sems);
@@ -138,16 +150,21 @@ function fmtTime(t) {
 }
 
 function renderCurrentView(sessions) {
-    if (currentView === 'calendar') renderCalendar(sessions);
-    else renderTable(sessions);
+    if (currentView === 'calendar') {
+        renderCalendar(sessions);
+        if (window._OVERLAY_ID && window._overlaySessions.length > 0) {
+            renderOverlayPills(window._overlaySessions, sessions);
+        }
+    } else {
+        renderTable(sessions);
+    }
 }
 
 /* ---- Calendar render ---- */
 function renderCalendar(sessions) {
     const wrapper = document.getElementById('gridWrapper');
     const table   = document.getElementById('mainTimetable');
-    wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
-    wrapper.querySelectorAll('.cal-no-data').forEach(el => el.remove());
+    wrapper.querySelectorAll('.schedule-pill, .historical-pill, .cal-no-data').forEach(p => p.remove());
 
     if (!sessions || sessions.length === 0) {
         const msg = document.createElement('div');
@@ -313,10 +330,172 @@ function exportSchedule() {
     window.location.href = `/api/export_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}`;
 }
 
+/* ---- Overlay mode ---- */
+function initOverlayMode() {
+    if (!window._OVERLAY_ID) return;
+
+    // Show banner
+    const banner = document.getElementById('overlayBanner');
+    if (banner) banner.style.display = 'flex';
+
+    const label = document.getElementById('overlayVersionLabel');
+    if (label) {
+        label.textContent =
+            `R${window._OVERLAY_VNUM || '?'} — ${window._OVERLAY_PROG || ''} · Year ${window._OVERLAY_YL || ''}`;
+    }
+
+    // Pre-select filter dropdowns from URL params
+    const ayEl   = document.getElementById('view_ay');
+    const semEl  = document.getElementById('view_sem');
+    const progEl = document.getElementById('view_prog');
+    const ylEl   = document.getElementById('view_yl');
+
+    if (window._OVERLAY_AY  && ayEl)   ayEl.value  = window._OVERLAY_AY;
+    if (window._OVERLAY_SEM && semEl)  semEl.value = window._OVERLAY_SEM;
+    if (window._OVERLAY_PROG && progEl) {
+        progEl.value = window._OVERLAY_PROG;
+        updateYearLevels();
+    }
+    if (window._OVERLAY_YL && ylEl) ylEl.value = window._OVERLAY_YL;
+
+    // Lock filter controls so the overlay context stays consistent
+    ['view_ay', 'view_sem', 'view_prog', 'view_yl', 'view_instructor'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.disabled = true; el.style.opacity = '0.65'; }
+    });
+
+    // Hide import button (editing not allowed in overlay mode)
+    const importGroup = document.querySelector('.pill-import-group');
+    if (importGroup) importGroup.style.display = 'none';
+
+    // Load the current active (Published) schedule as base
+    refreshOfferings();
+
+    // Fetch the historical overlay sessions
+    _fetchOverlaySessions();
+}
+
+async function _fetchOverlaySessions() {
+    try {
+        const resp = await fetch(`/api/schedule/versions/${window._OVERLAY_ID}/sessions`);
+        const data = await resp.json();
+        if (data.success) {
+            window._overlaySessions = data.sessions;
+            // If the current schedule is already rendered, add the overlay now
+            if (window._lastSessions && currentView === 'calendar') {
+                renderOverlayPills(window._overlaySessions, window._lastSessions);
+            }
+        } else {
+            console.warn('[Overlay] sessions fetch failed:', data.error);
+        }
+    } catch (e) {
+        console.error('[Overlay] fetch error:', e);
+    }
+}
+
+function renderOverlayPills(historicalSessions, currentSessions) {
+    const wrapper  = document.getElementById('gridWrapper');
+    const table    = document.getElementById('mainTimetable');
+    wrapper.querySelectorAll('.historical-pill').forEach(p => p.remove());
+
+    if (!historicalSessions || historicalSessions.length === 0) return;
+
+    const days      = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const firstCell = table.querySelector('tbody td:nth-child(2)');
+    const timeCol   = table.querySelector('.time-cell');
+    const thead     = table.querySelector('thead');
+    if (!firstCell || firstCell.offsetWidth === 0) return;
+
+    const colWidth   = firstCell.offsetWidth;
+    const pxPerMin   = firstCell.offsetHeight / 30;
+    const GRID_ORIGIN = 7 * 60 + 30;
+
+    // Build match set: current slots keyed by daydesc|start_time|roomname
+    const matchSet = new Set();
+    (currentSessions || []).forEach(s => {
+        if (s.daydesc && s.start_time) {
+            matchSet.add(`${s.daydesc}|${s.start_time}|${(s.roomname || '').trim().toLowerCase()}`);
+        }
+    });
+
+    const seen = new Set();
+    historicalSessions.forEach(sess => {
+        if (!sess.daydesc || !sess.start_time) return;
+        const dedupeKey = `${sess.subjectcode}|${sess.daydesc}|${sess.start_time}`;
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+
+        const dayIdx = days.indexOf(sess.daydesc);
+        if (dayIdx < 0) return;
+
+        let start = timeStrToMins(sess.start_time);
+        let end   = timeStrToMins(sess.end_time);
+        if (start === null) return;
+        if (start < GRID_ORIGIN) start += 12 * 60;
+        if (end === null) end = start + 60;
+        else if (end <= start) end += 12 * 60;
+
+        const matchKey = `${sess.daydesc}|${sess.start_time}|${(sess.roomname || '').trim().toLowerCase()}`;
+        const isMatch  = matchSet.has(matchKey);
+
+        const pill   = document.createElement('div');
+        pill.className = 'historical-pill' + (isMatch ? ' historical-pill--match' : '');
+
+        const pillH = (end - start) * pxPerMin - 2;
+        pill.style.width  = (colWidth - 8) + 'px';
+        pill.style.height = pillH + 'px';
+        pill.style.left   = (timeCol.offsetWidth + dayIdx * colWidth + 2) + 'px';
+        pill.style.top    = (thead.offsetHeight + (start - GRID_ORIGIN) * pxPerMin + 1) + 'px';
+
+        const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+        pill.title = `[HISTORICAL] ${sess.subjectcode} — ${sess.subjectname}\n`
+                   + `${sess.instructor}\n`
+                   + `${fmtTime(sess.start_time)} – ${fmtTime(sess.end_time)}\n`
+                   + `${sess.roomname}`;
+
+        const badgeText = isMatch ? 'MATCH' : 'HISTORICAL';
+        pill.innerHTML =
+            `<div class="hist-pill-badge">${badgeText}</div>`
+          + `<div class="pill-subject">${sess.subjectname}</div>`
+          + (pillH >= 45 ? `<div class="pill-instructor">${instrLast}</div>` : '')
+          + (pillH >= 60 ? `<div class="pill-room">${sess.roomname}</div>` : '');
+
+        wrapper.appendChild(pill);
+    });
+}
+
+function exitOverlayMode() {
+    window.location.href = '/schedule/version-history';
+}
+
+async function restoreFromOverlay() {
+    if (!window._OVERLAY_ID) return;
+    const ok = confirm(
+        'Restore this revision to Draft?\n\n' +
+        'Any existing Draft for this program / year level / semester will be archived first.\n\n' +
+        'Continue?'
+    );
+    if (!ok) return;
+
+    try {
+        const resp = await fetch(`/api/schedule/versions/${window._OVERLAY_ID}/restore`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            alert('Revision successfully restored to Draft.');
+            window.location.href = '/schedule/version-history';
+        } else {
+            alert('Restore failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Restore failed: ' + e.message);
+    }
+}
+
 /* ---- Init ---- */
 window.onload = function () {
     document.getElementById('calendarViewWrapper').style.display = 'block';
     document.getElementById('tableViewWrapper').style.display    = 'none';
     document.getElementById('table-sort-controls').style.display = 'none';
     updateYearLevels();
+    initOverlayMode();
 };

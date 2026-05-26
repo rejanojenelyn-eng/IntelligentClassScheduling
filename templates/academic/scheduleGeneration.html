@@ -10,8 +10,7 @@
 
     <!-- Top Action Links -->
     <div class="top-action-links">
-        <button class="outline-btn" onclick="openDraftsModal()"><i class="fas fa-edit"></i> View Drafts</button>
-        <button class="outline-btn" onclick="openVersionHistoryModal()"><i class="fas fa-history"></i> Version History</button>
+        <a href="{{ url_for('schedule_drafts_list') }}" class="outline-btn"><i class="fas fa-layer-group"></i> Draft List</a>
     </div>
 
     <!-- Filter and Generate Section -->

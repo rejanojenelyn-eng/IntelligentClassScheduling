@@ -93,7 +93,7 @@
 .room-content-area { flex-grow: 1; padding: 0 20px 20px 20px; }
 
 .room-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-.room-table th { background-color: #f8f9fa; color: #333; padding: 15px; border-bottom: 2px solid var(--pup-maroon); text-align: left; }
+.room-table th { background-color: var(--pup-maroon); color: white; padding: 11px 14px; text-align: left; font-size: .76rem; font-weight: 700; }
 .room-table td { padding: 12px; border-bottom: 1px solid #eee; color: #333; }
 .btn-view { background-color: var(--pup-maroon); color: white; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer; }
 .btn-view:hover { background-color: #5d0000; }
@@ -177,11 +177,14 @@
 }
 
 .room-table th {
-    background-color: #6a0000;
+    background-color: var(--pup-maroon);
     color: white;
-    padding: 12px;
-    font-size: 0.85rem;
+    padding: 11px 14px;
+    font-size: .76rem;
+    font-weight: 700;
     text-align: center;
+    text-transform: uppercase;
+    letter-spacing: .3px;
 }
 
 .room-table td {

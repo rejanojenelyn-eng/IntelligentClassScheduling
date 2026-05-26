@@ -1,5 +1,11 @@
 /* static/css/curriculum.css */
 
+:root {
+    --pup-maroon: #800000;
+    --pup-maroon-dark: #4b0a0a;
+    --pup-maroon-mid: #630100;
+}
+
 /* =========================================================
    CURRICULUM & CURRICULUM VIEW MAIN UI
    ========================================================= */
@@ -13,10 +19,10 @@
 
 .curr-header h1 {
     font-weight: 800;
-    color: #630100;
-    font-size: 2.5rem;
+    color: var(--pup-maroon);
+    font-size: 1.8rem;
     margin: 0;
-    letter-spacing: -1px;
+    letter-spacing: -.5px;
 }
 
 /* Import Button */
@@ -231,11 +237,14 @@
 }
 
 .curr-list-table thead th {
-    background: #630100;
+    background: var(--pup-maroon);
     color: white;
-    padding: 10px 15px;
+    padding: 11px 14px;
     text-align: left;
-    font-size: 0.85rem;
+    font-size: .76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
 }
 
 .curr-list-table tbody td {
@@ -615,23 +624,22 @@
 }
 
 .section-header-row h2 {
-    color: #630100;
-    font-weight: 800;
+    color: var(--pup-maroon);
+    font-weight: 700;
     margin: 0;
-    font-size: 1.6rem;
-    letter-spacing: -0.5px;
-    text-transform: uppercase;
+    font-size: 1.1rem;
+    letter-spacing: 0;
 }
 
 .filter-bar-dark {
-    background: #630100;
-    padding: 10px 15px;
-    border-radius: 2px;
+    background: var(--pup-maroon);
+    padding: 10px 16px;
+    border-radius: 6px 6px 0 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,.12);
 }
 
 .filter-group-row {
@@ -712,7 +720,7 @@
     /* Precisely enough for ~3-4 rows */
     overflow-y: auto;
     overflow-x: hidden;
-    border: 2px solid #630100;
+    border: 1px solid var(--pup-maroon);
     border-radius: 5px;
     margin-bottom: 35px;
     background: #fff;
@@ -731,8 +739,7 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    background-color: #630100 !important;
-    /* Matches your maroon theme */
+    background-color: var(--pup-maroon) !important;
     box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
 }
 
