@@ -2,7 +2,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}?v=20260519">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20260525a">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20260527a">
 <style>
     /* ── DSS dropdown styles ── */
     .dss-select-wrapper { position: relative; width: 100%; }
@@ -53,6 +53,30 @@
     .constraint-note.warn  { background:#fff3e0; color:#c8860a; border:1px solid #ffe082; display:block; }
     .constraint-note.error { background:#fff5f5; color:#c0392b; border:1px solid #e8c8c8; display:block; }
     .constraint-note.info  { background:#e8f4fd; color:#1a6fa0; border:1px solid #b3d9f0; display:block; }
+
+    /* ── Assign Faculty button ── */
+    .btn-assign-faculty {
+        margin-top: 6px; width: 100%; padding: 6px 10px;
+        background: #2980b9; color: white; border: none; border-radius: 4px;
+        font-size: 0.74rem; font-weight: 700; cursor: pointer;
+        letter-spacing: 0.4px; text-align: center; transition: background 0.18s;
+    }
+    .btn-assign-faculty:hover { background: #1f6fa0; }
+    .btn-assign-faculty.assigned { background: #27ae60; }
+    .btn-assign-faculty.assigned:hover { background: #1e9152; }
+    .btn-assign-faculty.reassign { background: #7f8c8d; }
+    .btn-assign-faculty.reassign:hover { background: #6c7a7d; }
+
+    /* ── Soft faculty-assignment lock badge ── */
+    #fac-soft-badge {
+        display: none; margin-top: 6px; width: 100%; box-sizing: border-box;
+        padding: 7px 10px; background: #1565c0; color: white;
+        border-radius: 4px; font-size: 0.74rem; font-weight: 700;
+        cursor: pointer; letter-spacing: 0.3px; text-align: center;
+        transition: background 0.18s;
+    }
+    #fac-soft-badge:hover { background: #0d47a1; }
+    #fac-soft-badge.visible { display: block; }
 
     /* ── Pill drop button ── */
     .pill-drop-btn {
@@ -129,7 +153,7 @@
 
     /* ── Leave Confirmation Modal ── */
     .leave-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4);
-        backdrop-filter:blur(3px); z-index:10000; align-items:center; justify-content:center; }
+        backdrop-filter:blur(3px); z-index:99999; align-items:center; justify-content:center; }
     .leave-overlay.active { display:flex; }
     .leave-box { background:#ffffff; border-radius:14px; padding:30px; max-width:400px; width:90%;
         text-align:center; box-shadow:0 15px 40px rgba(0,0,0,0.3);
@@ -458,7 +482,7 @@
     <div class="leave-box">
         <div class="leave-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h2 class="leave-title">Unsaved Changes</h2>
-        <p class="leave-message">You have unsaved schedule changes on the board. Are you sure you want to leave this page without saving?</p>
+        <p class="leave-message">You have unsaved changes (schedule entries or unconfirmed faculty assignments). Are you sure you want to leave this page without saving?</p>
         <div class="leave-buttons">
             <button class="leave-btn-cancel" onclick="closeLeaveModal()">Stay on Page</button>
             <button class="leave-btn-confirm" onclick="confirmLeave()">Leave Anyway</button>
@@ -1035,6 +1059,14 @@
                     </div>
                     <i class="fas fa-search fac-stats-chevron" id="fac-stats-chevron" style="color:#bbb;"></i>
                 </div>
+                <!-- Assign Faculty: confirms the selected faculty for this subject -->
+                <button id="btnAssignFaculty" class="btn-assign-faculty" onclick="_handleAssignFacultyBtnClick()" style="display:none;" title="Confirm this faculty for the current subject">
+                    <i class="fas fa-user-check"></i> Assign Faculty
+                </button>
+                <!-- Soft-assignment lock badge (shown after faculty confirmed via Assign) -->
+                <div id="fac-soft-badge" onclick="startReassignFaculty()" title="Click to reassign this faculty">
+                    <i class="fas fa-lock"></i> Faculty Assigned — Click to Reassign
+                </div>
                 <div id="fac-stats-body">
                     <div class="fac-stats-metrics">
                         <div class="fac-metric-box fac-metric-max">
@@ -1160,7 +1192,7 @@
      data-scheduler-mode="{{ scheduler_mode }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260521"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260527"></script>
 
 <script>
 /* ── Scheduler mode config ─────────────────────────────────────
@@ -1249,6 +1281,12 @@ let _subjectMeta = {}; // code → {name, units, total_hours}
 let _lockedFacultyId   = null;   // faculty locked once slices exist for subject
 let _lockedFacultyName = null;
 let _currentSubjectCode = null;  // tracks currently-selected subject for switch prompt
+// Persists faculty→subject assignments across subject switches within the same session.
+// Allows a faculty to remain assigned to a subject even when the schedule has unresolved conflicts.
+let _subjectFacultyAssignments = {};
+// true when a faculty has been selected in the dropdown but not yet confirmed via "Assign Faculty".
+// Drives the unsaved-changes guard on subject switch and page leave.
+window._pendingFacultyAssignment = false;
 window._deletedSubjectCodes = window._deletedSubjectCodes || new Set();
 window._deletedVersionIds   = window._deletedVersionIds   || new Set();
 
@@ -1658,6 +1696,16 @@ window.onFacultySelect = async function(empNum) {
         document.getElementById('fac_trigger_text').textContent = _lockedFacultyName;
         await _updateFacultyUnitDisplay(_lockedFacultyId);
     }
+    // Show "Assign Faculty" button when a faculty is newly selected
+    if (typeof _updateAssignFacultyBtn === 'function') _updateAssignFacultyBtn();
+
+    // Mark as pending only when the user actively chose a new faculty (not locked, not a restoration)
+    const _selFacId = document.getElementById('sel_faculty').value;
+    const _alreadySaved = _subjectFacultyAssignments[_currentSubjectCode];
+    if (_selFacId && !_lockedFacultyId && _currentSubjectCode &&
+        !(_alreadySaved && String(_alreadySaved.id) === String(_selFacId))) {
+        window._pendingFacultyAssignment = true;
+    }
 };
 
 /* ── Pill click: sync right panel time slots + subject display ── */
@@ -1755,6 +1803,25 @@ window.confirmAndPlace = async function() {
                 `This slice is ${sessionHours}h. Combined with other slices, it totals ${totalAfter}h. ` +
                 `However, "${subjSel.value}" only requires ${_subjInfo.total_hours}h. Please shorten the time.`
             );
+            return;
+        }
+    }
+
+    // ── HC3: Part-Time faculty weekday time window ──
+    // Part-time faculty may only be scheduled within their allowed window on weekdays.
+    // This mirrors the HC3 rule in scheduler.py (default 16:30–21:00).
+    if (typeof _facInfo !== 'undefined' && _facInfo && _facInfo.typename === 'Part-Time' &&
+        typeof MAN_WEEKDAYS !== 'undefined' && MAN_WEEKDAYS.has(dayVal)) {
+        const ptStartIdx = typeof _hhmm_to_slot_idx === 'function'
+            ? _hhmm_to_slot_idx(_facInfo.parttime_start, 19) : 19; // fallback 04:30 PM
+        const ptEndIdx   = typeof _hhmm_to_slot_idx === 'function'
+            ? _hhmm_to_slot_idx(_facInfo.parttime_end, 27)   : 27; // fallback 09:00 PM
+        if ((newStartIdx - 1) < ptStartIdx || (newEndIdx - 1) > ptEndIdx) {
+            await showValidationModal('Part-Time Time Restriction',
+                `${facName} is a part-time faculty and may only be scheduled ` +
+                `from ${typeof timeSlots !== 'undefined' ? timeSlots[ptStartIdx] : '04:30 PM'} ` +
+                `to ${typeof timeSlots !== 'undefined' ? timeSlots[ptEndIdx] : '09:00 PM'} on weekdays. ` +
+                `The selected slot is outside this allowed window and cannot be saved.`);
             return;
         }
     }
@@ -1953,6 +2020,13 @@ async function _updateSubjectList() {
     _collapseSection('course-filters-body', 'caret-cf');
     _expandSection('curr-guide-body', 'caret-cg');
     _updateWorkflowBar();
+
+    // Reliable hook: dropdowns are guaranteed to have values here, so load faculty
+    // assignments from DB. Covers F5 refresh (waits for triggerCascade), initial nav
+    // with server values, and AY/Sem/Year changes within the same session.
+    if (typeof _loadFacultyAssignments === 'function') {
+        _loadFacultyAssignments().catch(() => {});
+    }
 }
 
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
@@ -2095,7 +2169,17 @@ async function _onSubjectClick(code, name, units, hours) {
             !c.fromExisting
         );
         const nonExistingRows = document.querySelectorAll('.ts-row:not(.ts-existing)');
-        if ((pendingForCurrent.length || nonExistingRows.length) && !(await _confirmSubjectSwitch())) return;
+        // Only count non-existing rows that actually have content — empty auto-placeholder rows
+        // (added when clicking a subject with no sessions) must NOT trigger the warning.
+        const _hasFilledRows = Array.from(nonExistingRows).some(row => {
+            const dayVal   = row.querySelector('.ts-day-sel')?.value;
+            const startVal = row.querySelector('.ts-start-hidden')?.value;
+            return !!(dayVal || startVal);
+        });
+        const _hasPendingSlices  = pendingForCurrent.length > 0 || _hasFilledRows;
+        const _hasPendingFaculty = !!window._pendingFacultyAssignment;
+        if ((_hasPendingSlices || _hasPendingFaculty) &&
+            !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
 
         // Un-hide DB sessions that were masked for the old subject so the room calendar shows them
         const _oldCode = _currentSubjectCode;
@@ -2115,7 +2199,7 @@ async function _onSubjectClick(code, name, units, hours) {
         document.getElementById('time-slots-container').innerHTML = '';
         _activeSliceId = null;
         _dirtySliceIds.clear();
-        _clearFacultyLock();
+        _clearFacultyLock(); // also clears _pendingFacultyAssignment
         // Reset faculty selection
         document.getElementById('sel_faculty').value = '';
         document.getElementById('fac_display_name').value = '';
@@ -2186,11 +2270,25 @@ async function _onSubjectClick(code, name, units, hours) {
         await _updateFacultyUnitDisplay(_lockedFacultyId);
     }
 
+    // Restore a previously "Assigned" faculty if no DB-locked faculty was loaded.
+    // This preserves the faculty selection across subject switches even when the
+    // schedule has unresolved conflicts and was never fully saved.
+    if (!_lockedFacultyId && _subjectFacultyAssignments[code]) {
+        const stored = _subjectFacultyAssignments[code];
+        document.getElementById('sel_faculty').value = stored.id;
+        document.getElementById('fac_display_name').value = stored.name;
+        document.getElementById('fac_trigger_text').textContent = stored.name;
+        if (typeof onFacultySelect === 'function') await onFacultySelect(stored.id);
+        if (typeof _updateFacultyUnitDisplay === 'function') await _updateFacultyUnitDisplay(stored.id);
+    }
+
     // Auto-add one empty slice if no slices were loaded (no existing sessions).
     // Pass skipFullCheck=true so selecting a fully-scheduled subject doesn't trigger the warning.
     if (!document.querySelectorAll('.ts-row').length) {
         if (typeof addNewTimeSlot === 'function') addNewTimeSlot('', '', '', '', '', true);
     }
+
+    _updateAssignFacultyBtn();
 
     // Late-arriving safety net: 600 ms after subject click, re-confirm faculty panel is correct.
     // Outlasts any background async work (renderGrid, _updateSubjectList, DSS fetches) that might
@@ -2215,11 +2313,16 @@ async function _onSubjectClick(code, name, units, hours) {
     }
 }
 
-async function _confirmSubjectSwitch() {
-    return await showConfirmModal(
-        'You have unsaved changes for the current subject.\nSwitch subject and discard them?',
-        'Unsaved Changes'
-    );
+async function _confirmSubjectSwitch(hasSlices, hasFaculty) {
+    let msg;
+    if (hasSlices && hasFaculty) {
+        msg = 'You have unsaved schedule changes and an unconfirmed faculty assignment for this subject.\nSwitch subject and discard them?';
+    } else if (hasFaculty) {
+        msg = 'You selected a faculty for this subject but did not click "Assign Faculty" to confirm it.\nSwitch subject and discard the assignment?';
+    } else {
+        msg = 'You have unsaved changes for the current subject.\nSwitch subject and discard them?';
+    }
+    return await showConfirmModal(msg, 'Unsaved Changes');
 }
 
 function _updateUnitProgress(code, ay, sem, units, hours) {
@@ -2319,14 +2422,195 @@ function _clearFacultyLock() {
     if (_facNameObserver) { _facNameObserver.disconnect(); _facNameObserver = null; }
     const badge = document.getElementById('fac-lock-badge');
     if (badge) badge.classList.remove('visible');
-    
+
     // --- FIX: Restore the search dropdown visibility ---
     const facWrapper = document.getElementById('fac_wrapper');
     if (facWrapper) facWrapper.style.display = 'block';
-    
+
     const trigger = document.getElementById('fac_trigger');
     if (trigger) { trigger.style.pointerEvents = ''; trigger.style.opacity = ''; }
+    window._pendingFacultyAssignment = false;
+    _updateAssignFacultyBtn();
 }
+
+/* ── Assign Faculty helpers ─────────────────────────────────── */
+
+// Controls the Assign/Re-Assign button and dropdown visibility based on current state.
+// States: locked (has sessions) → hidden; confirmed-same → Re-Assign; new-pick → Assign/Confirm; none → hidden.
+function _updateAssignFacultyBtn() {
+    const btn        = document.getElementById('btnAssignFaculty');
+    const softBadge  = document.getElementById('fac-soft-badge');
+    const facWrapper = document.getElementById('fac_wrapper');
+    if (!btn) return;
+    const hasSubject    = !!_currentSubjectCode;
+    const selectedFacId = document.getElementById('sel_faculty').value;
+    const hasFaculty    = !!selectedFacId;
+    const stored        = hasSubject ? _subjectFacultyAssignments[_currentSubjectCode] : null;
+    const sameAsStored  = !!(stored && String(stored.id) === String(selectedFacId));
+
+    // Always hide soft badge first; will re-show selectively
+    if (softBadge) softBadge.classList.remove('visible');
+
+    if (_lockedFacultyId) {
+        btn.style.display = 'none';
+        return;
+    }
+    if (!hasSubject) {
+        btn.style.display = 'none';
+        return;
+    }
+    if (stored && (sameAsStored || !hasFaculty)) {
+        // Faculty confirmed and unchanged — show lock badge, hide button + dropdown
+        btn.style.display = 'none';
+        if (softBadge) softBadge.classList.add('visible');
+        if (facWrapper) facWrapper.style.display = 'none';
+        return;
+    }
+    btn.classList.remove('reassign');
+    if (hasFaculty) {
+        // New (or first) pick pending confirmation
+        btn.style.display = 'block';
+        btn.innerHTML     = stored
+            ? '<i class="fas fa-user-check"></i> Confirm Re-Assignment'
+            : '<i class="fas fa-user-check"></i> Assign Faculty';
+        if (facWrapper) facWrapper.style.display = 'block';
+        return;
+    }
+    // No faculty, no assignment — hide button, show dropdown
+    btn.style.display = 'none';
+    if (facWrapper) facWrapper.style.display = 'block';
+}
+
+// Dispatches to either startReassignFaculty or assignFacultyToSubject based on button state
+function _handleAssignFacultyBtnClick() {
+    const btn = document.getElementById('btnAssignFaculty');
+    if (btn && btn.classList.contains('reassign')) {
+        startReassignFaculty();
+    } else {
+        assignFacultyToSubject();
+    }
+}
+
+// Opens the dropdown so user can pick a new faculty (for reassignment flow)
+function startReassignFaculty() {
+    if (!_currentSubjectCode) return;
+    const ay   = document.getElementById('sel_ay').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const yl   = document.getElementById('sel_year').value;
+    const prog = document.getElementById('sel_prog').value;
+
+    // Remove current assignment from memory and DB so a fresh pick can replace it
+    delete _subjectFacultyAssignments[_currentSubjectCode];
+    window._pendingFacultyAssignment = false;
+    fetch(`/api/manual/assign_faculty/${encodeURIComponent(_currentSubjectCode)}` +
+          `?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}` +
+          `&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`,
+          { method: 'DELETE' }).catch(() => {});
+
+    // Show dropdown and reset selection display
+    const facWrapper = document.getElementById('fac_wrapper');
+    if (facWrapper) facWrapper.style.display = 'block';
+
+    // Restore trigger pointer-events in case it was disabled by a prior lock
+    const facTrigger = document.getElementById('fac_trigger');
+    if (facTrigger) { facTrigger.style.pointerEvents = ''; facTrigger.style.opacity = ''; }
+
+    document.getElementById('sel_faculty').value          = '';
+    document.getElementById('fac_display_name').value     = '';
+    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+
+    // Reset the faculty stats panel to the "no faculty selected" default state
+    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+
+    _updateAssignFacultyBtn();
+
+    // Open the DSS search dropdown immediately
+    const facMenu = document.getElementById('fac_menu');
+    if (facMenu) {
+        facMenu.style.display = 'block';
+        const si = facMenu.querySelector('.dss-search-input');
+        if (si) setTimeout(() => si.focus(), 40);
+    }
+}
+
+// Confirms the currently-selected faculty for this subject.
+// Persists to DB so the assignment survives page refresh, and refreshes the Currently Assigned list.
+function assignFacultyToSubject() {
+    const code    = _currentSubjectCode || document.getElementById('sel_subj').value;
+    const facId   = document.getElementById('sel_faculty').value;
+    const facName = document.getElementById('fac_display_name').value;
+    if (!code || !facId || !facName) {
+        showValidationModal('No Faculty Selected', 'Please select a faculty before assigning.');
+        return;
+    }
+    _subjectFacultyAssignments[code] = { id: facId, name: facName };
+    window._pendingFacultyAssignment = false;
+
+    // Persist to DB so the assignment survives page refresh
+    const ay   = document.getElementById('sel_ay').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const yl   = document.getElementById('sel_year').value;
+    const prog = document.getElementById('sel_prog').value;
+    fetch('/api/manual/assign_faculty', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            program: prog, year_level: parseInt(yl) || 0,
+            acadYear: ay, term: sem,
+            subjectcode: code, employeenumber: facId
+        })
+    }).catch(() => {}); // non-blocking; memory state is already updated
+
+    // Refresh the Currently Assigned list immediately
+    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(facId);
+    // Update button to "Re-Assign Faculty" state
+    _updateAssignFacultyBtn();
+
+    const btn = document.getElementById('btnAssignFaculty');
+    if (btn) {
+        const _prevHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check"></i> Assigned!';
+        btn.classList.add('assigned');
+        setTimeout(() => {
+            btn.classList.remove('assigned');
+            _updateAssignFacultyBtn(); // restores Re-Assign label
+        }, 1800);
+    }
+}
+
+// Loads persisted faculty assignments from DB into _subjectFacultyAssignments.
+// Called on page load so assignments survive refresh.
+async function _loadFacultyAssignments() {
+    const ay   = document.getElementById('sel_ay')?.value;
+    const sem  = document.getElementById('sel_sem')?.value;
+    const yl   = document.getElementById('sel_year')?.value;
+    const prog = document.getElementById('sel_prog')?.value;
+    if (!ay || !sem || !yl || !prog) return;
+    try {
+        const resp = await fetch(
+            `/api/manual/assign_faculty?program=${encodeURIComponent(prog)}` +
+            `&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}` +
+            `&sem=${encodeURIComponent(sem)}`
+        );
+        const data = await resp.json();
+        if (data.success && Array.isArray(data.assignments)) {
+            data.assignments.forEach(a => {
+                const code = (a.subjectcode || '').toUpperCase();
+                // Only populate if no in-memory entry already exists (prefer fresh state)
+                if (code && !_subjectFacultyAssignments[code]) {
+                    _subjectFacultyAssignments[code] = {
+                        id:   a.employeenumber,
+                        name: a.facultyname || ''
+                    };
+                }
+            });
+        }
+    } catch(e) {}
+}
+
+// Faculty assignments are now loaded from _updateSubjectList (guaranteed timing).
+// No load-event hook needed here.
+
 window.unlockFacultyChoice = async function() {
     const sliceCount = document.querySelectorAll('.ts-row').length;
     if (!sliceCount) { _clearFacultyLock(); return; }
@@ -2466,17 +2750,37 @@ async function _updateFacultyUnitDisplay(empNum) {
                 for (const c of pendingManualSchedule) {
                     if (String(c.faculty_id) !== String(empNum)) continue;
                     if (c.ay !== _facAy || c.sem !== _facSem) continue;
-                    if (c.fromExisting) continue; 
+                    if (c.fromExisting) continue;
                     if (_pendingSubjsSeen.has(c.subject_code)) continue;
                     _pendingSubjsSeen.add(c.subject_code);
                     const uMeta = _subjectMeta[c.subject_code];
                     // FIX: Gamitin ang total_hours bilang "uVal" para tama ang dagdag sa progress bar
-                    const uVal  = uMeta ? parseFloat(uMeta.total_hours || 0) : 0; 
+                    const uVal  = uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
                     _pendingExtraUnits += uVal;
                     _pendingSubjsList.push({ subjectname: c.subject_code, creditunits: uVal, pending: true });
                 }
             }
-            const _effectiveAssigned  = data.scheduled_units + _pendingExtraUnits;
+
+            // Include subjects that have been "Assigned" via the button but have no schedule slices yet.
+            // These are confirmed intent (not just a dropdown hover) so they should show in the list.
+            let _assignedExtraUnits = 0;
+            const _assignedSubjsList = [];
+            if (typeof _subjectFacultyAssignments !== 'undefined' && typeof _subjectMeta !== 'undefined') {
+                for (const [subjCode, facData] of Object.entries(_subjectFacultyAssignments)) {
+                    if (String(facData.id) !== String(empNum)) continue;
+                    // Skip subjects already counted in pending or already saved to DB
+                    if (_pendingSubjsSeen.has(subjCode)) continue;
+                    const dbCodes = (data.assigned_subjects || []).map(s =>
+                        (s.subjectcode || s.subjectname || '').toUpperCase());
+                    if (dbCodes.includes(subjCode.toUpperCase())) continue;
+                    const uMeta = _subjectMeta[subjCode];
+                    const uVal  = uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
+                    _assignedExtraUnits += uVal;
+                    _assignedSubjsList.push({ subjectname: subjCode, creditunits: uVal, assigned: true });
+                }
+            }
+
+            const _effectiveAssigned  = data.scheduled_units + _pendingExtraUnits + _assignedExtraUnits;
             const _effectiveRemaining = Math.max(0, data.total_units - _effectiveAssigned);
 
             const maxEl  = document.getElementById('fac-metric-max');
@@ -2495,8 +2799,9 @@ async function _updateFacultyUnitDisplay(empNum) {
             if (listEl) {
                 listEl.innerHTML = '';
                 const allAssigned = [
-                    ...(data.assigned_subjects || []).map(s => ({ ...s, pending: false })),
-                    ..._pendingSubjsList
+                    ...(data.assigned_subjects || []).map(s => ({ ...s, pending: false, assigned: false })),
+                    ..._pendingSubjsList,
+                    ..._assignedSubjsList
                 ];
                 if (allAssigned.length > 0) {
                     const hdr = document.createElement('div');
@@ -2506,8 +2811,12 @@ async function _updateFacultyUnitDisplay(empNum) {
                     allAssigned.forEach(s => {
                         const row = document.createElement('div');
                         row.className = 'fac-assigned-row';
-                        const pendingBadge = s.pending ? ' <span style="font-size:0.6rem;color:#e65100;font-weight:900;">(pending)</span>' : '';
-                        row.innerHTML = `<span class="fac-assigned-code">${s.subjectname}${pendingBadge}</span><span class="fac-assigned-units">${s.creditunits}u</span>`;
+                        const badge = s.pending
+                            ? ' <span style="font-size:0.6rem;color:#e65100;font-weight:900;">(pending)</span>'
+                            : s.assigned
+                                ? ' <span style="font-size:0.6rem;color:#2980b9;font-weight:900;"</span>'
+                                : '';
+                        row.innerHTML = `<span class="fac-assigned-code">${s.subjectname}${badge}</span><span class="fac-assigned-units">${s.creditunits}u</span>`;
                         listEl.appendChild(row);
                     });
                 }
@@ -2711,10 +3020,9 @@ function tsFilter(p, id) {
     const q = (document.getElementById(`${p}-txt-${id}`)?.value || '').toLowerCase();
     document.querySelectorAll(`#${p}-list-${id} .ts-ss-item`).forEach(item => {
         const matchesQuery = q === '' || item.textContent.toLowerCase().includes(q);
-        // Never un-hide items blocked by occupancy filter
         if (!matchesQuery) {
             item.classList.add('dim');
-        } else if (!item.classList.contains('occ-dim')) {
+        } else if (!item.classList.contains('occ-dim') && !item.classList.contains('before-start')) {
             item.classList.remove('dim');
         }
     });
@@ -2844,8 +3152,16 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             <button class="ts-action-icon ts-rem-icon" onclick="removeTimeSlot(${id})" title="Remove Slice">×</button>
         </div>
 
-        <div class="ts-room-bldg-row">
-            <div class="ts-room-field" style="width: 100%;">
+        <div class="ts-day-room-pair">
+            <div class="ts-day-field">
+                <div class="ts-label">DAY</div>
+                <div class="ts-sel-wrap">
+                    <select class="ts-day-sel ts-sel" id="ts-day-${id}"
+                        onchange="onTsDayChange(${id})">${_buildDayOpts(dayVal)}</select>
+                    <span class="ts-caret">▼</span>
+                </div>
+            </div>
+            <div class="ts-room-field">
                 <div class="ts-label">ROOM</div>
                 <div class="ts-ss-wrap">
                     <input type="text" id="tsr-txt-${id}" class="ts-ss-input"
@@ -2854,15 +3170,6 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                     <input type="hidden" id="tsr-hid-${id}" class="ts-room-hidden" value="${roomId}">
                     <div class="ts-ss-list" id="tsr-list-${id}">${roomItems}</div>
                 </div>
-            </div>
-        </div>
-
-        <div class="ts-day-field">
-            <div class="ts-label">DAY</div>
-            <div class="ts-sel-wrap">
-                <select class="ts-day-sel ts-sel" id="ts-day-${id}"
-                    onchange="onTsDayChange(${id})">${_buildDayOpts(dayVal)}</select>
-                <span class="ts-caret">▼</span>
             </div>
         </div>
 
@@ -3081,7 +3388,9 @@ function _filterEndTimeItems(id, startVal) {
     if (!endList) return;
     endList.querySelectorAll('.ts-ss-item').forEach(item => {
         const timeIdx = _TS_TIMES.indexOf(item.dataset.val);
-        item.classList.toggle('dim', startIdx >= 0 && timeIdx <= startIdx);
+        const blocked = startIdx >= 0 && timeIdx <= startIdx;
+        item.classList.toggle('dim', blocked);
+        item.classList.toggle('before-start', blocked);
     });
 }
 
@@ -3566,6 +3875,15 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
 
 /* ── Confirm + Validate selected time slots, then save ── */
 async function confirmAllSlots() {
+    if (window._pendingFacultyAssignment) {
+        const ok = await showConfirmModal(
+            'The selected faculty has not been confirmed yet. Saving this schedule will automatically confirm and assign the selected faculty to this subject.',
+            'Unconfirmed Faculty Assignment'
+        );
+        if (!ok) return;
+        if (typeof assignFacultyToSubject === 'function') await assignFacultyToSubject();
+    }
+
     const rows = Array.from(document.querySelectorAll('.ts-row'));
 
     if (!rows.length && window._deletedSubjectCodes.size === 0) {
@@ -4111,6 +4429,21 @@ _filterEndTimeItems = function(id, startVal) {
 };
 
 /* ══════════════════════════════════════════════════════════════
+   END-TIME DROPDOWN GUARD
+   Apply the before-start filter whenever the end-time list is opened,
+   so times before/at the current start are always hidden regardless
+   of whether the start changed via keyboard or load from existing.
+   ══════════════════════════════════════════════════════════════ */
+const _origTsOpen = tsOpen;
+tsOpen = function(p, id) {
+    _origTsOpen.call(this, p, id);
+    if (p === 'tset') {
+        const startVal = document.getElementById(`tsst-hid-${id}`)?.value || '';
+        if (startVal) _filterEndTimeItems(id, startVal);
+    }
+};
+
+/* ══════════════════════════════════════════════════════════════
    ROOM OCCUPANCY FILTER
    Hides start/end time options that would overlap a session
    already occupying the selected room + day, so the calendar
@@ -4363,8 +4696,15 @@ function saveAsMakeupClass() {
     console.log('Save as Make Up Class');
 }
 
-function approveSchedule() {
-    // Delegate to the hidden btnManualApprove which owns the full approve/publish flow
+async function approveSchedule() {
+    if (window._pendingFacultyAssignment) {
+        const ok = await showConfirmModal(
+            'The selected faculty has not been confirmed yet. Proceeding will automatically confirm and assign the selected faculty to this subject.',
+            'Unconfirmed Faculty Assignment'
+        );
+        if (!ok) return;
+        if (typeof assignFacultyToSubject === 'function') await assignFacultyToSubject();
+    }
     document.getElementById('btnManualApprove').click();
 }
 
@@ -4557,7 +4897,6 @@ async function _loadVersionHistoryPanel() {
     const cards    = document.getElementById('vhpCards');
     const subtitle = document.getElementById('vhpSubtitle');
 
-    // Read all four left-side filters
     const prog = (document.getElementById('sel_prog')?.value || '').toUpperCase();
     const ay   = document.getElementById('sel_ay')?.value  || '';
     const sem  = document.getElementById('sel_sem')?.value || '';
@@ -4575,15 +4914,11 @@ async function _loadVersionHistoryPanel() {
             return;
         }
 
-        // Filter by whichever left-side selectors are set
         let filtered = data;
         if (prog) filtered = filtered.filter(v => (v.programcode||'').toUpperCase() === prog);
         if (ay)   filtered = filtered.filter(v => String(v.acadyear||'') === String(ay));
         if (sem)  filtered = filtered.filter(v => (v.term||'') === sem);
         if (yl)   filtered = filtered.filter(v => String(v.yearlevel||'') === String(yl));
-
-        // Sort by version number descending (newest first)
-        filtered.sort((a, b) => (b.version_number||0) - (a.version_number||0));
 
         if (!filtered.length) {
             const hasFilter = prog || ay || sem || yl;
@@ -4593,46 +4928,55 @@ async function _loadVersionHistoryPanel() {
             return;
         }
 
-        if (subtitle) subtitle.textContent = `${filtered.length} revision${filtered.length !== 1 ? 's' : ''}`;
+        // Split into independent Published and Draft chains
+        const pubVers   = filtered.filter(v => v.published_version_number)
+            .sort((a, b) => a.published_version_number - b.published_version_number);
+        const draftVers = filtered.filter(v => v.draft_version_number)
+            .sort((a, b) => a.draft_version_number - b.draft_version_number);
 
-        // The highest version_number in this filtered set is the active/latest revision
-        const maxVNum = filtered[0]?.version_number || 0;
+        const maxPubVn   = pubVers.length   ? Math.max(...pubVers.map(v => v.published_version_number))   : 0;
+        const maxDraftVn = draftVers.length ? Math.max(...draftVers.map(v => v.draft_version_number)) : 0;
 
-        cards.innerHTML = filtered.map(v => {
+        const totalCount = pubVers.length + draftVers.length;
+        if (subtitle) subtitle.textContent = `${totalCount} revision${totalCount !== 1 ? 's' : ''}`;
+
+        function renderCard(v, chainType, typeVn, maxVn) {
+            const isCurrent  = typeVn > 0 && typeVn === maxVn;
             const dt         = v.datecreated ? new Date(v.datecreated) : null;
             const dateStr    = (dt && !isNaN(dt)) ? dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '—';
-            const semLabel   = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
+            const semLbl     = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
             const ayRaw      = String(v.acadyear || '');
             const ayDisp     = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
             const letters    = (v.programcode||'').split('').join(' ');
-            const isLatest   = (v.version_number||0) === maxVNum;
-            const isDraft    = (v.status || '') === 'Draft';
-            const isPublished= (v.status || '') === 'Published';
-            const statusChip = isDraft
-                ? '<span class="vhp-draft-chip"><i class="fas fa-file-alt"></i> DRAFT</span>'
-                : isPublished
-                    ? '<span class="vhp-published-chip"><i class="fas fa-check-circle"></i> PUBLISHED</span>'
-                    : '';
+            const origStatus = v.original_status || chainType;
+            const chipHtml   = chainType === 'Published'
+                ? '<span class="vhp-published-chip"><i class="fas fa-check-circle"></i> PUBLISHED</span>'
+                : '<span class="vhp-draft-chip"><i class="fas fa-file-alt"></i> DRAFT</span>';
             return `
-            <div class="vhp-card${isLatest ? ' is-latest' : ''}" data-vid="${v.versionid}" id="vhpc-${v.versionid}">
-                <div class="vhp-version-badge">R${v.version_number||1}</div>
+            <div class="vhp-card${isCurrent ? ' is-latest' : ''}"
+                 data-vid="${v.versionid}"
+                 data-original-status="${origStatus}"
+                 id="vhpc-${v.versionid}">
+                <div class="vhp-version-badge">R${typeVn}</div>
                 <div class="vhp-card-meta">
                     <div class="vhp-card-eyebrow">
-                        A.Y ${ayDisp} &bull; ${semLabel}
-                        ${isLatest ? '<span class="vhp-active-chip"><i class="fas fa-circle" style="font-size:0.45rem;vertical-align:middle;margin-right:3px;"></i>ACTIVE</span>' : ''}
-                        ${statusChip}
+                        A.Y ${ayDisp} &bull; ${semLbl}
+                        ${isCurrent ? '<span class="vhp-active-chip"><i class="fas fa-circle" style="font-size:0.45rem;vertical-align:middle;margin-right:3px;"></i>CURRENT</span>' : ''}
+                        ${chipHtml}
                     </div>
                     <div class="vhp-card-prog">${letters} &ndash; ${v.yearlevel||'—'}</div>
                     <div class="vhp-card-date"><i class="fas fa-clock" style="margin-right:3px;"></i>${dateStr}</div>
                 </div>
                 <div class="vhp-card-actions">
-                    ${!isLatest ? `
+                    ${!isCurrent ? `
                     <button class="vhp-btn vhp-btn-restore" id="vhpr-${v.versionid}"
                         onclick="restoreVersion(${v.versionid}, this)">
                         <i class="fas fa-undo-alt"></i> RESTORE
                     </button>` : ''}
                     <button class="vhp-btn vhp-btn-view"
                         data-vn="${v.version_number}"
+                        data-type-vn="${typeVn}"
+                        data-chain-type="${chainType}"
                         data-prog="${v.programcode}" data-yl="${v.yearlevel}"
                         data-ay="${v.acadyear}" data-term="${v.term}"
                         onclick="viewVersionInline(this)">
@@ -4640,7 +4984,25 @@ async function _loadVersionHistoryPanel() {
                     </button>
                 </div>
             </div>`;
-        }).join('');
+        }
+
+        let html = '';
+
+        if (pubVers.length) {
+            html += `<div style="margin:0 0 8px;padding:6px 10px;background:#e8f8ee;border-left:3px solid #1a7a2e;border-radius:0 4px 4px 0;font-size:0.68rem;font-weight:800;letter-spacing:0.7px;color:#1a7a2e;text-transform:uppercase;">
+                <i class="fas fa-check-circle" style="margin-right:5px;"></i>Published History
+            </div>`;
+            html += pubVers.map(v => renderCard(v, 'Published', v.published_version_number, maxPubVn)).join('');
+        }
+
+        if (draftVers.length) {
+            html += `<div style="margin:${pubVers.length ? '16px' : '0'} 0 8px;padding:6px 10px;background:#fff8e1;border-left:3px solid #946300;border-radius:0 4px 4px 0;font-size:0.68rem;font-weight:800;letter-spacing:0.7px;color:#946300;text-transform:uppercase;">
+                <i class="fas fa-file-alt" style="margin-right:5px;"></i>Draft History
+            </div>`;
+            html += draftVers.map(v => renderCard(v, 'Draft', v.draft_version_number, maxDraftVn)).join('');
+        }
+
+        cards.innerHTML = html;
 
     } catch(e) {
         if (cards) cards.innerHTML = `<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`;
@@ -4648,41 +5010,165 @@ async function _loadVersionHistoryPanel() {
     }
 }
 
-function viewVersionInline(btn) {
-    // Navigate to the overlay calendar on the Class Schedule (SIS) page so the
-    // selected revision is shown as a dashed overlay on top of the current schedule.
-    const vid  = btn.closest('.vhp-card').dataset.vid;
-    const vn   = btn.dataset.vn;
-    const prog = btn.dataset.prog;
-    const yl   = btn.dataset.yl;
-    const ay   = btn.dataset.ay;
-    const term = btn.dataset.term;
+async function viewVersionInline(btn) {
+    const card      = btn.closest('.vhp-card');
+    const vid       = card.dataset.vid;
+    const typeVn    = btn.dataset.typeVn || btn.dataset.vn;
+    const chainType = btn.dataset.chainType || '';
+    const isCurrent = card.classList.contains('is-latest');
 
-    window.location.href =
-        `/schedule?overlay_id=${encodeURIComponent(vid)}` +
-        `&prog=${encodeURIComponent(prog)}` +
-        `&yl=${encodeURIComponent(yl)}` +
-        `&sem=${encodeURIComponent(term)}` +
-        `&ay=${encodeURIComponent(ay)}` +
-        `&vnum=${encodeURIComponent(vn)}`;
+    const labelPrefix = chainType ? `${chainType} R${typeVn}` : `Revision R${typeVn}`;
+
+    // Build overlay modal
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.52);z-index:99998;display:flex;align-items:center;justify-content:center;';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:10px;max-width:700px;width:94%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.28);font-family:inherit;overflow:hidden;';
+
+    // Header
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:14px 20px;background:#8b1a1a;color:white;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;';
+    hdr.innerHTML = `<div style="font-size:0.83rem;font-weight:900;letter-spacing:0.5px;text-transform:uppercase;">
+        <i class="fas fa-history" style="margin-right:7px;"></i> ${labelPrefix}
+        ${isCurrent ? '<span style="background:rgba(255,255,255,0.18);padding:2px 9px;border-radius:10px;font-size:0.68rem;margin-left:8px;letter-spacing:0.3px;">CURRENT</span>' : '<span style="background:rgba(255,255,255,0.1);padding:2px 9px;border-radius:10px;font-size:0.68rem;margin-left:8px;letter-spacing:0.3px;">ARCHIVED</span>'}
+    </div>
+    <button style="background:none;border:none;color:rgba(255,255,255,0.75);font-size:1.3rem;cursor:pointer;line-height:1;padding:0 2px;" title="Close">&#x2715;</button>`;
+    hdr.querySelector('button').onclick = () => overlay.remove();
+
+    // Body
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:18px 20px;overflow-y:auto;flex:1;';
+    body.innerHTML = '<div style="text-align:center;padding:24px;color:#aaa;font-size:0.85rem;"><i class="fas fa-spinner fa-spin" style="font-size:1.1rem;margin-bottom:8px;display:block;"></i>Loading sessions…</div>';
+
+    // Footer
+    const foot = document.createElement('div');
+    foot.style.cssText = 'padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:#fafafa;';
+
+    if (!isCurrent) {
+        const restoreBtn = document.createElement('button');
+        restoreBtn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore This Version';
+        restoreBtn.style.cssText = 'padding:8px 18px;background:#8b1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;font-family:inherit;';
+        restoreBtn.onclick = async () => {
+            overlay.remove();
+            const dummy = document.createElement('button');
+            dummy.dataset.originalStatus = card.dataset.originalStatus;
+            await restoreVersion(parseInt(vid), dummy);
+        };
+        foot.appendChild(restoreBtn);
+    }
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = 'padding:8px 18px;background:#fff;border:1.5px solid #ccc;border-radius:6px;cursor:pointer;font-size:0.82rem;font-family:inherit;';
+    closeBtn.onclick = () => overlay.remove();
+    foot.appendChild(closeBtn);
+
+    box.appendChild(hdr);
+    box.appendChild(body);
+    box.appendChild(foot);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    // Fetch and render sessions
+    try {
+        const res  = await fetch(`/api/schedule/versions/${vid}/sessions`);
+        const data = await res.json();
+        if (!data.success || !data.sessions?.length) {
+            body.innerHTML = '<div style="text-align:center;padding:24px;color:#aaa;"><i class="fas fa-inbox"></i><br>No sessions found for this revision.</div>';
+            return;
+        }
+
+        // Group sessions by subject code
+        const bySubj = {};
+        data.sessions.forEach(s => {
+            const code = s.subjectcode || '—';
+            if (!bySubj[code]) bySubj[code] = { name: s.subjectname || code, instructor: s.instructor || 'TBA', rows: [] };
+            if (s.daydesc || s.start_time) bySubj[code].rows.push(s);
+        });
+
+        let html = `<table style="width:100%;border-collapse:collapse;font-size:0.79rem;">
+            <thead><tr style="background:#f5f5f5;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:#666;">
+                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Subject</th>
+                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Day</th>
+                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Time</th>
+                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Room</th>
+                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Faculty</th>
+            </tr></thead><tbody>`;
+
+        Object.entries(bySubj).forEach(([code, info]) => {
+            const sessList = info.rows;
+            if (!sessList.length) {
+                html += `<tr><td colspan="5" style="padding:8px 10px;color:#aaa;border-bottom:1px solid #f0f0f0;font-style:italic;">${info.name} — no sessions</td></tr>`;
+                return;
+            }
+            sessList.forEach((s, i) => {
+                const st = s.start_time ? _fmt12(s.start_time) : '—';
+                const et = s.end_time   ? _fmt12(s.end_time)   : '—';
+                html += `<tr style="border-bottom:1px solid #f0f0f0;">
+                    ${i === 0 ? `<td style="padding:9px 10px;vertical-align:top;font-weight:700;color:#2c3e50;" rowspan="${sessList.length}">
+                        ${info.name}<br><span style="font-size:0.67rem;color:#999;font-weight:400;">${code}</span>
+                    </td>` : ''}
+                    <td style="padding:8px 10px;">${s.daydesc || '—'}</td>
+                    <td style="padding:8px 10px;white-space:nowrap;">${st} – ${et}</td>
+                    <td style="padding:8px 10px;">${s.roomname || 'TBA'}</td>
+                    ${i === 0 ? `<td style="padding:9px 10px;vertical-align:top;color:#555;" rowspan="${sessList.length}">${info.instructor || 'TBA'}</td>` : ''}
+                </tr>`;
+            });
+        });
+
+        html += '</tbody></table>';
+        body.innerHTML = html;
+    } catch(e) {
+        body.innerHTML = `<div style="text-align:center;padding:24px;color:#c0392b;"><i class="fas fa-exclamation-circle"></i><br>${e.message}</div>`;
+    }
+}
+
+function _fmt12(t24) {
+    if (!t24) return t24;
+    const [h, m] = t24.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return t24;
+    const ap = h < 12 ? 'AM' : 'PM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${String(h12).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`;
 }
 
 async function restoreVersion(versionId, btn) {
-    if (!confirm('Restore this version to Draft? The current Draft (if any) will be archived.')) return;
+    // Block restore when there are unsaved pending entries to prevent accidental overwrites
+    if (typeof pendingManualSchedule !== 'undefined' && pendingManualSchedule.some(s => !s.fromExisting)) {
+        await showValidationModal('Unsaved Changes',
+            'You have unsaved schedule changes on the board. Save or discard them before restoring a version.');
+        return;
+    }
+
+    // Determine the type being restored (Draft or Published)
+    const card = btn.closest?.('.vhp-card')
+        || document.querySelector(`[data-vid="${versionId}"]`);
+    const origStatus = card?.dataset?.originalStatus
+        || btn?.dataset?.originalStatus
+        || 'Draft';
+    const typeLabel = origStatus === 'Published' ? 'Published' : 'Draft';
+
+    const ok = await showConfirmModal(
+        `This will create a new ${typeLabel} revision based on this version. The current ${typeLabel}, if any, will be archived. All other history is preserved.`,
+        'Restore Version'
+    );
+    if (!ok) return;
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     try {
         const res  = await fetch(`/api/schedule/versions/${versionId}/restore`, { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            _loadVersionHistoryPanel();  // Reload to reflect new statuses
+            _loadVersionHistoryPanel();
         } else {
-            alert('Restore failed: ' + (data.error || 'Unknown error'));
+            await showValidationModal('Restore Failed', data.error || 'An unknown error occurred.');
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE';
         }
     } catch(e) {
-        alert('Restore failed: ' + e.message);
+        await showValidationModal('Restore Failed', e.message);
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE';
     }

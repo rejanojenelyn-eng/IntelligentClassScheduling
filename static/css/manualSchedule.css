@@ -1257,6 +1257,20 @@
     pointer-events: none;
 }
 
+.ts-day-room-pair {
+    display: flex;
+    gap: 6px;
+}
+.ts-day-room-pair .ts-day-field {
+    flex: 0 0 44%;
+    display: flex;
+    flex-direction: column;
+}
+.ts-day-room-pair .ts-room-field {
+    flex: 1;
+    min-width: 0;
+}
+
 .ts-day-field {
     display: flex;
     flex-direction: column;
@@ -1449,6 +1463,7 @@
 .ts-ss-item:last-child { border-bottom: none; }
 .ts-ss-item:hover, .ts-ss-item.active { background: #fef2f2; color: #630100; font-weight: 700; }
 .ts-ss-item.dim { display: none; }
+.ts-ss-item.before-start { display: none !important; }
 
 /* Section headers inside the per-slice room dropdown */
 .ts-ss-sect-hdr {

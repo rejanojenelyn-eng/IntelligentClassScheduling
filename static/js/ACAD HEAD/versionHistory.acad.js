@@ -53,17 +53,32 @@
         return groups;
     }
 
-    // ── render one version chain ───────────────────────────────────────────────
-    // versions is sorted oldest→newest; the last entry is the active revision
-    function renderChain(versions) {
-        const maxVNum = versions.length ? versions[versions.length - 1].version_number : -1;
+    // ── render one typed version chain (Draft or Published) ──────────────────
+    // versions: pre-filtered array for one chain type, sorted oldest→newest.
+    // chainType: 'Draft' | 'Published'
+    function renderChain(versions, chainType) {
+        if (!versions.length)
+            return '<span style="color:#bbb;font-size:0.7rem;font-style:italic;">None yet</span>';
+
+        const getVNum  = v => chainType === 'Draft'
+            ? (v.draft_version_number || 0)
+            : (v.published_version_number || 0);
+        const maxNum   = Math.max(...versions.map(getVNum));
+
         let html = '<div class="vh-version-chain">';
         versions.forEach((v, i) => {
             if (i > 0) html += '<span class="vh-version-arrow"><i class="fas fa-chevron-right"></i></span>';
-            const isLatest   = v.version_number === maxVNum;
-            const progSafe   = (v.programcode || '').replace(/'/g, "\\'");
 
-            const overlayUrl = !isLatest
+            const vNum      = getVNum(v);
+            const isCurrent = vNum > 0 && vNum === maxNum;
+            const progSafe  = (v.programcode || '').replace(/'/g, "\\'");
+            const label     = `${chainType} R${vNum}`;
+            const badge     = isCurrent ? ` &bull; Current ${chainType}` : '';
+            const pillCls   = isCurrent
+                ? (chainType === 'Published' ? 'vh-pill-published' : 'vh-pill-draft')
+                : 'vh-pill-archive';
+
+            const overlayUrl = !isCurrent
                 ? `/schedule?overlay_id=${v.versionid}` +
                   `&prog=${encodeURIComponent(v.programcode || '')}` +
                   `&yl=${v.yearlevel}` +
@@ -72,22 +87,22 @@
                   `&vnum=${v.version_number}`
                 : null;
 
-            const pillCls = isLatest ? 'vh-pill-published' : 'vh-pill-archive';
+            const labelSafe = label.replace(/'/g, "\\'");
 
             html += `
             <div class="vh-version-unit">
                 <div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
                     <span class="vh-version-pill ${pillCls}">
-                        R${v.version_number}${isLatest ? ' &bull; ACTIVE' : ''}
+                        ${label}${badge}
                     </span>
                 </div>
                 <div style="display:flex;gap:4px;align-items:center;">
-                    ${!isLatest ? `<a class="btn-vh-view" href="${overlayUrl}"
+                    ${!isCurrent ? `<a class="btn-vh-view" href="${overlayUrl}"
                         title="Compare this revision against the current schedule">
                         <i class="fas fa-eye"></i> View
                     </a>` : ''}
-                    ${!isLatest ? `<button class="btn-vh-restore"
-                        onclick="vhOpenRestoreModal(${v.versionid},'R${v.version_number}','${progSafe}',${v.yearlevel})"
+                    ${!isCurrent ? `<button class="btn-vh-restore"
+                        onclick="vhOpenRestoreModal(${v.versionid},'${labelSafe}','${progSafe}',${v.yearlevel})"
                         title="Restore this revision">
                         <i class="fas fa-undo"></i> Restore
                     </button>` : ''}
@@ -96,6 +111,14 @@
         });
         html += '</div>';
         return html;
+    }
+
+    // Small inline type-label badge matching the pill palette
+    function chainTypeLabel(text, bg, fg, bd) {
+        return `<span style="display:inline-flex;align-items:center;min-width:62px;padding:3px 8px;` +
+               `border-radius:4px;font-size:0.6rem;font-weight:800;letter-spacing:0.7px;` +
+               `text-transform:uppercase;background:${bg};color:${fg};border:1px solid ${bd};` +
+               `white-space:nowrap;flex-shrink:0;">${text}</span>`;
     }
 
     // ── main render ────────────────────────────────────────────────────────────
@@ -162,10 +185,32 @@
                             <tbody>`;
 
                 ylKeys.forEach(yl => {
+                    const allVers = sg.levels[yl];
+
+                    // Split by original_status (set by backend); fall back to computed counters
+                    const draftVers = allVers
+                        .filter(v => v.draft_version_number)
+                        .sort((a, b) => a.draft_version_number - b.draft_version_number);
+                    const publishedVers = allVers
+                        .filter(v => v.published_version_number)
+                        .sort((a, b) => a.published_version_number - b.published_version_number);
+
+                    const draftRow = draftVers.length ? `
+                        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                            ${chainTypeLabel('Draft','#fff8e1','#946300','#ffe082')}
+                            ${renderChain(draftVers, 'Draft')}
+                        </div>` : '';
+
+                    const publishedRow = publishedVers.length ? `
+                        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;${draftVers.length ? 'margin-top:7px;' : ''}">
+                            ${chainTypeLabel('Published','#e8f8ee','#1a7a2e','#b2dbb5')}
+                            ${renderChain(publishedVers, 'Published')}
+                        </div>` : '';
+
                     html += `
                                 <tr>
                                     <td class="vh-year-cell">${yrLabel(yl)}</td>
-                                    <td>${renderChain(sg.levels[yl])}</td>
+                                    <td>${draftRow}${publishedRow}</td>
                                 </tr>`;
                 });
 

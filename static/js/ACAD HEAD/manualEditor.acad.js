@@ -162,6 +162,10 @@ function _getMaxEndIdx() {
     if (tn === 'Regular' && isWkd && day) {
         return _hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX);
     }
+    // HC3: Part-Time faculty on weekdays are restricted to their allowed end time
+    if (tn === 'Part-Time' && isWkd && day) {
+        return _hhmm_to_slot_idx(_facInfo.parttime_end, 27); // default 21:00 = index 27
+    }
     return timeSlots.length - 1;
 }
 
@@ -212,8 +216,10 @@ async function updateTimeDropdowns() {
     const tn     = _facInfo ? _facInfo.typename : null;
     const hasNS  = _facInfo && _facInfo.night_service > 0;
 
-    const minStartIdx = 0;
-    const maxEndIdx   = timeSlots.length - 1;
+    // HC3: Part-Time faculty on weekdays are restricted to parttime_start–parttime_end
+    const isPT        = tn === 'Part-Time' && isWkd && day;
+    const minStartIdx = isPT ? _hhmm_to_slot_idx(_facInfo.parttime_start, 19) : 0; // 19 = 04:30 PM
+    const maxEndIdx   = _getMaxEndIdx();
     const maxStartIdx = maxEndIdx - 1;
 
     const prevStart = startSel.value;
@@ -230,6 +236,10 @@ async function updateTimeDropdowns() {
 
     _populateEndTimes(maxEndIdx);
 
+    if (isPT) {
+        note.className = 'constraint-note warn';
+        note.textContent = `⚠ Part-time faculty: weekday slots restricted to ${timeSlots[minStartIdx]}–${timeSlots[maxEndIdx]}.`;
+    }
     if (!day) {
         note.className = 'constraint-note info';
         note.textContent = 'ℹ Select a day to filter available times.';
@@ -359,7 +369,9 @@ let pendingLeaveUrl = null;
 window.isLeavingIntentionally = false;
 
 function hasUnsavedChanges() {
-    return pendingManualSchedule.some(s => !s.fromExisting) || window.currentEditSession !== null;
+    // Only count genuinely new/modified entries — do NOT count currentEditSession alone
+    // (clicking a pill to view it sets currentEditSession but is not a real change)
+    return pendingManualSchedule.some(s => !s.fromExisting) || !!window._pendingFacultyAssignment;
 }
 
 document.addEventListener('click', function(e) {
