@@ -928,7 +928,15 @@
                 </div>
             </div><!-- /versionHistoryPanel -->
 
-            <!-- Building tabs + Room dropdown -->
+            <!-- Program View Header (visible only in Program View tab) -->
+            <div id="pvTimetableHeader" style="display:none;align-items:center;justify-content:space-between;padding:8px 16px;background:#fff;border-bottom:1px solid #e0e0e0;min-height:44px;">
+                <div id="pvTimetableLabel" style="font-size:0.8rem;font-weight:900;color:#800000;letter-spacing:0.5px;text-transform:uppercase;">
+                    — Select Program, Year Level &amp; Semester —
+                </div>
+                <div style="font-size:0.68rem;color:#888;font-style:italic;">All sessions for this section</div>
+            </div>
+
+            <!-- Building tabs + Room dropdown (Room View only) -->
             <div class="bldg-room-bar">
                 <div class="building-tabs-container">
                     {% for b in buildings %}
@@ -1190,6 +1198,7 @@
      data-init-sem="{{ init_sem }}"
      data-available-sems="{{ available_sems_json | e }}"
      data-scheduler-mode="{{ scheduler_mode }}"
+     data-is-acad-head="{{ 'true' if is_acad_head else 'false' }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260527"></script>
@@ -1215,7 +1224,7 @@ const SCHED_CONFIG = {
     local: {
         label:          'LOCAL SCHEDULER',
         canApprove:     false,
-        canMakeup:      {{ 'true' if is_acad_head else 'false' }},   // Acad Head only
+        canMakeup:      document.getElementById('app-init-data').dataset.isAcadHead === 'true',
         saveEndpoint:   '/api/manual/save_draft',
         localEndpoint:  '/api/manual/save_local_arrangement',
         validationMode: 'relaxed',
@@ -1706,6 +1715,11 @@ window.onFacultySelect = async function(empNum) {
         !(_alreadySaved && String(_alreadySaved.id) === String(_selFacId))) {
         window._pendingFacultyAssignment = true;
     }
+
+    // Sync Faculty Load tab with the newly-selected/locked faculty
+    const _flEid  = _lockedFacultyId || _selFacId || '';
+    const _flName = _lockedFacultyName || document.getElementById('fac_display_name')?.value || '';
+    if (_flEid && typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible(_flEid, _flName);
 };
 
 /* ── Pill click: sync right panel time slots + subject display ── */
@@ -2199,12 +2213,18 @@ async function _onSubjectClick(code, name, units, hours) {
         document.getElementById('time-slots-container').innerHTML = '';
         _activeSliceId = null;
         _dirtySliceIds.clear();
-        _clearFacultyLock(); // also clears _pendingFacultyAssignment
-        // Reset faculty selection
-        document.getElementById('sel_faculty').value = '';
-        document.getElementById('fac_display_name').value = '';
-        document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
-        if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+        // When a pill click is in progress (currentEditSession is set), handlePillClick already
+        // populated faculty from the session data — clearing here would blank it before the async
+        // reload, causing a visible flash. Skip the clear; _loadExistingSessionsIntoSlices will
+        // restore the correct state once it runs.
+        if (!window.currentEditSession) {
+            _clearFacultyLock(); // also clears _pendingFacultyAssignment
+            // Reset faculty selection
+            document.getElementById('sel_faculty').value = '';
+            document.getElementById('fac_display_name').value = '';
+            document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+            if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+        }
     }
 
     _currentSubjectCode = code;
@@ -2631,7 +2651,9 @@ window.unlockFacultyChoice = async function() {
     document.querySelectorAll('.ts-row').forEach(row => {
         row.classList.remove('ts-existing');
         const numEl = row.querySelector('.ts-row-num');
-        if (numEl) numEl.textContent = numEl.textContent.replace(' · EXISTING', '');
+        if (numEl && !numEl.querySelector('.slice-status-tag')) {
+            numEl.textContent = numEl.textContent.replace(/\s*[·•]\s*EXISTING/i, '');
+        }
     });
     
     _clearFacultyLock();
@@ -3135,16 +3157,10 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     ).join('');
 
     // Compute slice status label for EXISTING rows
-    let _sliceStatusHtml = '';
-    if (existingJson) {
-        let _sliceSt = 'Draft';
-        try { _sliceSt = JSON.parse(existingJson).status || 'Draft'; } catch(e) {}
-        const _sliceCls = _sliceSt.toLowerCase().replace('/', '_');
-        _sliceStatusHtml = ` · <span class="slice-status-tag slice-status-${_sliceCls}">${_sliceSt.toUpperCase()}</span>`;
-    }
+    const _sliceStatusHtml = existingJson ? _sliceStatusHtmlFor(existingJson) : '';
 
     div.innerHTML = `
-        <div class="ts-row-num">SLICE ${num}${_sliceStatusHtml}</div>
+        <div class="ts-row-num"><span>SLICE ${num}</span>${_sliceStatusHtml}</div>
         
         <!-- BAGONG TOP ACTIONS (COPY AT X) -->
         <div class="ts-top-actions">
@@ -3354,10 +3370,20 @@ async function removeTimeSlot(id) {
     }
 }
 
+function _sliceStatusHtmlFor(existingJson) {
+    if (!existingJson) return '';
+    let st = 'Draft';
+    try { st = JSON.parse(existingJson).status || 'Draft'; } catch(e) {}
+    const cls = st.toLowerCase().replace('/', '_');
+    return `<span style="color:#bbb;">&middot;</span><span class="slice-status-tag slice-status-${cls}">${st.toUpperCase()}</span>`;
+}
+
 function _renumberSlices() {
     document.querySelectorAll('.ts-row').forEach((row, idx) => {
         const numEl = row.querySelector('.ts-row-num');
-        if (numEl) numEl.textContent = `SLICE ${idx + 1}${row.classList.contains('ts-existing') ? ' · EXISTING' : ''}`;
+        if (!numEl) return;
+        const label = `SLICE ${idx + 1}`;
+        numEl.innerHTML = `<span>${label}</span>${_sliceStatusHtmlFor(row.dataset.existingJson)}`;
     });
 }
 
@@ -3394,14 +3420,17 @@ function _filterEndTimeItems(id, startVal) {
     });
 }
 
-/* ── Strip "· EXISTING" label once user modifies a slice ── */
+/* ── When a slice is modified, keep the status badge but remove ts-existing class ── */
 function _markSliceModified(id) {
     const row = document.getElementById(`ts-row-${id}`);
     if (!row) return;
     if (row.classList.contains('ts-existing')) {
         row.classList.remove('ts-existing');
+        // Preserve the status badge — just remove the old plain-text "· EXISTING" if present
         const numEl = row.querySelector('.ts-row-num');
-        if (numEl) numEl.textContent = numEl.textContent.replace(' · EXISTING', '');
+        if (numEl && !numEl.querySelector('.slice-status-tag')) {
+            numEl.textContent = numEl.textContent.replace(/\s*[·•]\s*EXISTING/i, '');
+        }
     }
     _markSliceDirty(id);
 }
@@ -3507,30 +3536,38 @@ function _syncSliceToPending(id) {
 
 /* ── Auto-load existing sessions into slice rows ── */
 window._loadExistingSessionsIntoSlices = async function(sessions) {
-    document.getElementById('time-slots-container').innerHTML = '';
     // Reset selection and dirty tracking — loaded sessions are clean
     _activeSliceId = null;
     _dirtySliceIds.clear();
 
-    // Before adding, purge stale fromExisting AND orphaned preview entries for these subjects
+    // Purge ALL fromExisting entries for this ay+sem, not just for the incoming subject.
+    // Stale fromExisting entries from previously-viewed subjects linger in pendingManualSchedule
+    // and contaminate submitted_codes on the next save (causing their Published baseline to bleed
+    // into the Draft snapshot). Clearing all fromExisting here prevents cross-subject contamination.
+    // Genuinely-new (not fromExisting) entries for other subjects are preserved intact.
     const incomingCodes = new Set(sessions.map(s => s.subjectcode));
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
     pendingManualSchedule = pendingManualSchedule.filter(c => {
         if (c.ay !== ay || c.sem !== sem) return true;
-        if (!incomingCodes.has(c.subject_code)) return true;
-        if (c.fromExisting) return false;  // stale from-existing
-        if (c.isPreview) return false;     // orphaned preview (UI row was cleared)
+        if (c.fromExisting) return false;  // clear ALL fromExisting for this ay+sem
+        if (c.isPreview && incomingCodes.has(c.subject_code)) return false;  // clear preview for incoming subject
         return true;
     });
 
-    // Deduplicate by subjectcode+day+starttime key — prefer Draft over Published
-    // Also exclude any session whose versionid was explicitly deleted this session
+    // Deduplicate by subjectcode+day+starttime key — prefer Published over Draft for same slot
+    // (slots that exist in both Published and Draft were already approved and keep green color)
     const seen = new Map();
     for (const sess of sessions) {
         if (window._deletedVersionIds?.has(String(sess.versionid))) continue;
         const key = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
-        if (!seen.has(key) || (sess.status || '').toLowerCase() === 'draft') seen.set(key, sess);
+        const existing = seen.get(key);
+        if (!existing) {
+            seen.set(key, sess);
+        } else if ((sess.status || '').toLowerCase() === 'published' && (existing.status || '').toLowerCase() !== 'published') {
+            // Prefer Published status so already-approved slots render green, not gray
+            seen.set(key, sess);
+        }
     }
     const uniqueSessions = Array.from(seen.values());
 
@@ -3565,6 +3602,10 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         if (_fsCaret)  { _fsCaret.className = 'fas fa-chevron-down fac-stats-chevron'; _fsCaret.style.color = ''; }
         if (_fsBody)   { _fsBody.style.display = ''; }
     }
+
+    // Clear the container here — after all async work — so existing slices stay visible
+    // during the faculty fetch instead of showing a blank flash.
+    document.getElementById('time-slots-container').innerHTML = '';
 
     for (const sess of uniqueSessions) {
         const st = sess.start_time || sess.start_fmt
@@ -3635,8 +3676,11 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         }, 700);
     }
 
-    // Render grid with the now-pending sessions
-    if (typeof renderProgramTimetable === 'function' && currentMode === 'program') {
+    // Render grid with the now-pending sessions.
+    // Skip renderProgramTimetable when a pill click is in progress (currentEditSession is set):
+    // the pill is already visible, and re-fetching would clear it then re-add it, causing a flicker.
+    if (typeof renderProgramTimetable === 'function' && currentMode === 'program'
+            && !window.currentEditSession) {
         renderProgramTimetable();
     } else if (typeof renderGrid === 'function') {
         const ay  = document.getElementById('sel_ay').value;
@@ -3764,8 +3808,15 @@ function _syncBcFromSelects() {
 window._triggerSaveDraft = async function _triggerSaveDraft() {
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
-    // Exclude preview (unsaved temp calendar entries) from what gets sent to the API
-    const contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem && !c.isPreview);
+    // Exclude preview entries and already-Published unchanged sessions.
+    // Sessions that are fromExisting+Published are already saved as Published and must NOT
+    // be re-saved into the Draft snapshot (that would pollute Draft history with Published content).
+    // If a Published session was modified, confirmAllSlots removed it from pending and re-added it
+    // WITHOUT fromExisting, so it will pass through correctly as a new Draft entry.
+    const contextDrafts = pendingManualSchedule.filter(c =>
+        c.ay === ay && c.sem === sem && !c.isPreview &&
+        !(c.fromExisting && (c.status || '').toLowerCase() === 'published')
+    );
 
     // --- FIX: Bypass blocking kung may na-delete na subject ---
     if (!contextDrafts.length && window._deletedSubjectCodes.size === 0) {
@@ -3803,45 +3854,31 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             // --- FIX: I-clear ang tracker kapag successful ---
             window._deletedSubjectCodes.clear();
 
-            const savedCount = contextDrafts.length;
+            // Count only newly added slices — fromExisting entries were already in the DB
+            const newSliceCount = contextDrafts.filter(c => !c.fromExisting).length;
             const deletedNote = deletedCount > 0 ? ' Any removed sessions were deleted from the Draft.' : '';
-            await showValidationModal('Saved as Draft',
-                `${savedCount} session${savedCount !== 1 ? 's' : ''} saved successfully.${deletedNote}`);
+            const savedMsg = newSliceCount > 0
+                ? `${newSliceCount} new session${newSliceCount !== 1 ? 's' : ''} saved to draft.`
+                : 'Draft updated successfully.';
+            await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
 
             // Clear pending — sessions are now persisted in DB
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             hiddenDbSchedules.clear();
 
-            // Reload current subject's saved sessions from DB (preserves form selections)
-            const prog       = document.getElementById('sel_prog').value;
-            const yl         = document.getElementById('sel_year').value;
+            // Reload current subject's saved sessions from DB.
+            // Use existing_sessions (returns both Draft and Published with correct statuses)
+            // so Published slots remain green and new Draft-only slots appear gray.
+            const prog        = document.getElementById('sel_prog').value;
+            const yl          = document.getElementById('sel_year').value;
             const currentSubj = document.getElementById('sel_subj').value;
             if (currentSubj) {
                 try {
-                    // Try draft sessions first; fall back to all existing sessions (includes published)
-                    // so subjects like GEED 006 with published-only sessions still show their slices.
-                    const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
-                    const dbData = await dbResp.json();
-                    let loaded = false;
-                    if (dbData.success && dbData.sessions) {
-                        const subjSessions = dbData.sessions.filter(s => s.subjectcode === currentSubj);
-                        if (subjSessions.length) {
-                            await _loadExistingSessionsIntoSlices(subjSessions);
-                            loaded = true;
-                        }
-                    }
-                    if (!loaded) {
-                        // No draft sessions — check all sessions (draft + published)
-                        try {
-                            const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
-                            const exData = await exResp.json();
-                            if (exData.success && exData.sessions && exData.sessions.length) {
-                                await _loadExistingSessionsIntoSlices(exData.sessions);
-                                loaded = true;
-                            }
-                        } catch(_) {}
-                    }
-                    if (!loaded) {
+                    const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+                    const exData = await exResp.json();
+                    if (exData.success && exData.sessions && exData.sessions.length) {
+                        await _loadExistingSessionsIntoSlices(exData.sessions);
+                    } else {
                         document.getElementById('time-slots-container').innerHTML = '';
                         addNewTimeSlot('','','','','',true);
                     }
@@ -3858,6 +3895,9 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const gridRoom = document.getElementById('sel_room').value;
             if (currentMode === 'program') renderProgramTimetable();
             else renderGrid(gridRoom, ay, sem);
+            // Rebuild FL dropdown (new faculty may now have assignments) and refresh if visible
+            await _initFlFacultyMenu();
+            _refreshFlIfVisible();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
         } else {
             let msg = data.error || 'Unknown error occurred.';
@@ -3941,6 +3981,26 @@ async function confirmAllSlots() {
                 ? `Slice ${i + 1}: "${typedRoom}" not found — pick a room from the list.`
                 : `Slice ${i + 1}: please select a room.`);
             return;
+        }
+    }
+
+    // Cross-slice duplicate check: same room + day + overlapping time among the selected slices
+    for (let i = 0; i < rowsToSave.length; i++) {
+        const a = rowsToSave[i];
+        const aS = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(a.start) : 0;
+        const aE = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(a.end)   : 0;
+        for (let j = i + 1; j < rowsToSave.length; j++) {
+            const b = rowsToSave[j];
+            if (a.day !== b.day || a.roomId !== b.roomId) continue;
+            const bS = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(b.start) : 0;
+            const bE = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(b.end)   : 0;
+            if (aS < bE && aE > bS) {
+                await showValidationModal('Duplicate Schedule Detected',
+                    `Slice ${i + 1} and Slice ${j + 1} conflict: both use room "${a.roomName}" ` +
+                    `on ${a.day} with overlapping times. ` +
+                    `Change the time, day, or room before saving.`);
+                return;
+            }
         }
     }
 
@@ -4129,8 +4189,9 @@ async function saveIndividualSlice(id) {
     row.classList.add('ts-saved');
     const numEl = row.querySelector('.ts-row-num');
     if (numEl) {
-        const sliceNum = numEl.textContent.match(/SLICE\s+\d+/i)?.[0] || numEl.textContent.split('·')[0].trim();
-        numEl.innerHTML = `${sliceNum} &middot; <span class="slice-status-tag slice-status-draft">DRAFT</span>`;
+        const sliceNum = numEl.querySelector('span')?.textContent?.match(/SLICE\s+\d+/i)?.[0]
+            || numEl.textContent.match(/SLICE\s+\d+/i)?.[0] || 'SLICE';
+        numEl.innerHTML = `<span>${sliceNum}</span><span style="color:#bbb;">&middot;</span><span class="slice-status-tag slice-status-draft">DRAFT</span>`;
     }
 
     // Update the existingJson to reflect the new values
@@ -4262,6 +4323,40 @@ window.triggerCascade = async function(skipGridRender) {
     await _origTriggerCascade.call(this, skipGridRender);
     _updateCurrYearTag();
     await _updateSubjectList();
+
+    // ── Real-time context sync for all visible panels ──────────────────
+    // When program/year/sem/ay changes, stale data in open panels must refresh.
+
+    // Faculty Load: reset header and rebuild dropdown for new AY/sem
+    const flPanel = document.getElementById('facultyLoadPanel');
+    if (flPanel && flPanel.style.display !== 'none') {
+        const _cascAy   = document.getElementById('sel_ay')?.value   || '';
+        const _cascProg = document.getElementById('sel_prog')?.value || '';
+        const _cascYl   = document.getElementById('sel_year')?.value || '';
+        const flText = document.getElementById('flFacText');
+        if (flText) flText.textContent = '— Select Faculty —';
+        document.getElementById('fl-emp-type').textContent    = '—';
+        document.getElementById('fl-total-units').textContent = '—';
+        document.getElementById('fl-avail-units').textContent = '—';
+        if (!_cascAy || !_cascProg || !_cascYl) {
+            _flShowMsg('Select Academic Year, Semester, Program &amp; Year Level to view faculty load.');
+        } else {
+            _flShowMsg('Select a faculty member above');
+            await _initFlFacultyMenu();
+        }
+    }
+
+    // Drafts: reload showing only drafts for current context
+    const dlPanel = document.getElementById('draftListPanel');
+    if (dlPanel && dlPanel.style.display !== 'none') {
+        _loadDraftListPanel();
+    }
+
+    // Version History: reload filtered to new context
+    const vhPanel = document.getElementById('versionHistoryPanel');
+    if (vhPanel && vhPanel.style.display !== 'none') {
+        _loadVersionHistoryPanel();
+    }
 };
 
 // Initialize workflow bar on page load
@@ -4303,6 +4398,8 @@ const _origSetFacultyLock = _setFacultyLock;
 _setFacultyLock = function(facId, facName) {
     _origSetFacultyLock.call(this, facId, facName);
     _setFacultyHighlight(false);
+    // Keep Faculty Load tab in sync whenever a faculty is locked from the right panel
+    if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible(facId, facName);
 };
 
 /* Hook _clearFacultyLock to restore highlight if subject is still selected */
@@ -4320,6 +4417,12 @@ _onSubjectClick = async function(code, name, units, hours) {
     // Show highlight only if no faculty is locked after the click resolves
     if (!_lockedFacultyId) _setFacultyHighlight(true);
     else                    _setFacultyHighlight(false);
+    // Sync Faculty Load tab with the newly-loaded subject's faculty
+    if (typeof _refreshFlIfVisible === 'function') {
+        const eid  = _lockedFacultyId || document.getElementById('sel_faculty')?.value || '';
+        const enm  = _lockedFacultyName || document.getElementById('fac_display_name')?.value || '';
+        if (eid) _refreshFlIfVisible(eid, enm);
+    }
 };
 
 /* ══════════════════════════════════════════════════════════════
@@ -4335,8 +4438,10 @@ window.handlePillClick = async function(sessJson) {
     const roomName = sess.roomname || sess.room || '';
     const roomId   = sess.roomid   || sess.room_id || '';
 
-    // Auto-select the room from this pill in the header
-    if (roomId || roomName) {
+    // Auto-select the room from this pill in the header (room mode only).
+    // In program mode, selectRoom() would update the room dropdown and highlight but also
+    // trigger renderGrid() for Room View — wrong view context, so skip it entirely.
+    if (currentMode !== 'program' && (roomId || roomName)) {
         const matched = allRooms.find(r =>
             (roomId   && String(r.id)   === String(roomId)) ||
             (roomName && r.name === roomName)
@@ -4650,6 +4755,7 @@ function switchEditorTab(tab, el) {
     if (el) el.classList.add('mnav-active');
 
     const bldgBar   = document.querySelector('.bldg-room-bar');
+    const pvHdr     = document.getElementById('pvTimetableHeader');
     const calGrid   = document.getElementById('calendarViewContainer');
     const wfBar     = document.getElementById('workflowBar');
     const pvPanel   = document.getElementById('programViewPanel');
@@ -4659,6 +4765,7 @@ function switchEditorTab(tab, el) {
 
     // Hide all panels first
     if (bldgBar)  bldgBar.style.display  = 'none';
+    if (pvHdr)    pvHdr.style.display    = 'none';
     if (calGrid)  calGrid.style.display  = 'none';
     if (wfBar)    wfBar.style.display    = 'none';
     if (pvPanel)  pvPanel.style.display  = 'none';
@@ -4667,16 +4774,45 @@ function switchEditorTab(tab, el) {
     if (vhPanel)  vhPanel.style.display  = 'none';
 
     if (tab === 'room') {
-        // ROOM VIEW — the working room-based calendar grid
+        // ROOM VIEW — room/building-filtered timetable + save controls
         if (bldgBar) bldgBar.style.display = '';
         if (calGrid) calGrid.style.display = '';
         if (wfBar)   wfBar.style.display   = '';
+        // Eagerly clear program pills before the room grid renders
+        document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        // Re-enter room mode so room grid (not program timetable) renders
+        currentMode = 'room';
+        const roomId = document.getElementById('sel_room').value;
+        renderGrid(roomId, formAyFilter(), formSemFilter());
     } else if (tab === 'main') {
-        // PROGRAM VIEW — program-filtered timetable (coming soon)
-        if (pvPanel) pvPanel.style.display = 'flex';
+        // PROGRAM VIEW — section-based timetable; no building/room filter
+        if (pvHdr)   pvHdr.style.display  = 'flex';
+        if (calGrid) calGrid.style.display = '';
+        currentMode = 'program';
+        // Eagerly clear any Room View pills so there is no flash of stale content
+        // while the async fetch in renderProgramTimetable is in-flight.
+        document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        renderProgramTimetable();
     } else if (tab === 'faculty') {
         if (flPanel) flPanel.style.display = 'flex';
-        _initFlFacultyMenu();
+        const _flAy   = document.getElementById('sel_ay')?.value   || '';
+        const _flProg = document.getElementById('sel_prog')?.value || '';
+        const _flYl   = document.getElementById('sel_year')?.value || '';
+        if (!_flAy || !_flProg || !_flYl) {
+            // No context — show placeholder instead of unfiltered faculty list
+            _flShowMsg('Select Academic Year, Semester, Program &amp; Year Level to view faculty load.');
+            document.getElementById('fl-emp-type').textContent    = '—';
+            document.getElementById('fl-total-units').textContent = '—';
+            document.getElementById('fl-avail-units').textContent = '—';
+            document.getElementById('flFacText').textContent      = '— Select Faculty —';
+        } else {
+            _initFlFacultyMenu().then(() => {
+                // Auto-load current faculty when tab is opened
+                const _eid  = _lockedFacultyId || document.getElementById('sel_faculty')?.value || '';
+                const _name = _lockedFacultyName || document.getElementById('fac_display_name')?.value || '';
+                if (_eid) selectFlFaculty(_eid, _name);
+            });
+        }
     } else if (tab === 'drafts') {
         if (dlPanel) dlPanel.style.display = 'flex';
         _loadDraftListPanel();
@@ -4708,22 +4844,55 @@ async function approveSchedule() {
     document.getElementById('btnManualApprove').click();
 }
 
-function _initFlFacultyMenu() {
-    const menu = document.getElementById('flFacMenu');
-    if (!menu || menu.dataset.loaded === '1') return;
-    const raw = document.getElementById('app-init-data')?.dataset.faculty || '[]';
-    let faculty = [];
-    try { faculty = JSON.parse(raw); } catch(e) {}
-    if (!faculty.length) {
-        menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty data</div>';
-    } else {
-        menu.innerHTML = faculty.map(f =>
-            `<div class="fl-fac-opt" onclick="selectFlFaculty('${(f.emp_num||f.employeenumber||'').toString().replace(/'/g,"\\'")}','${(f.name||f.fullname||'').replace(/'/g,"\\'")}')">
-                ${f.name || f.fullname || f.emp_num || '—'}
-            </div>`
-        ).join('');
+async function _initFlFacultyMenu() {
+    const menu  = document.getElementById('flFacMenu');
+    if (!menu) return;
+    const ayId = document.getElementById('sel_ay')?.value   || '';
+    const sem  = document.getElementById('sel_sem')?.value  || '';
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+
+    menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;font-style:italic;">Loading…</div>';
+
+    let facultyList = [];
+    if (ayId && sem) {
+        try {
+            let url = `/api/faculty/assigned_list?ay_id=${encodeURIComponent(ayId)}&sem=${encodeURIComponent(sem)}`;
+            if (prog) url += `&prog=${encodeURIComponent(prog)}`;
+            if (yl)   url += `&year_level=${encodeURIComponent(yl)}`;
+            const res  = await fetch(url);
+            const data = await res.json();
+            if (data.success) facultyList = data.faculty;
+        } catch(e) {}
     }
-    menu.dataset.loaded = '1';
+
+    if (!facultyList.length) {
+        menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty with assignments for this period</div>';
+        return;
+    }
+
+    menu.innerHTML = facultyList.map(f =>
+        `<div class="fl-fac-opt" onclick="selectFlFaculty('${(f.emp_num||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
+            ${f.name || f.emp_num || '—'}
+        </div>`
+    ).join('');
+}
+
+/* Returns true when the Faculty Load panel is currently visible */
+function _flPanelIsVisible() {
+    const p = document.getElementById('facultyLoadPanel');
+    return p && p.style.display !== 'none';
+}
+
+/* Refresh the Faculty Load panel with the given (or currently active) faculty */
+async function _refreshFlIfVisible(empNum, name) {
+    if (!_flPanelIsVisible()) return;
+    const eid   = empNum || _lockedFacultyId || document.getElementById('sel_faculty')?.value || '';
+    const ename = name   || _lockedFacultyName || document.getElementById('fac_display_name')?.value || '';
+    if (!eid) return;
+    const trigEl = document.getElementById('flFacText');
+    if (trigEl && ename) trigEl.textContent = ename;
+    await selectFlFaculty(eid, ename);
 }
 
 function toggleFlFacMenu(e) {
@@ -4790,13 +4959,66 @@ function _flShowMsg(msg) {
 /* ══════════════════════════════════════════════════════════════
    DRAFT LIST PANEL
    ══════════════════════════════════════════════════════════════ */
+
+/* Switch to Program View, load the draft's context, and auto-select the first saved subject */
+async function _viewDraftInEditor(prog, yl, ay, sem) {
+    // Set all filter dropdowns to match the draft
+    if (ay)   document.getElementById('sel_ay').value  = ay;
+    if (sem)  document.getElementById('sel_sem').value = sem;
+    if (yl)   document.getElementById('sel_year').value = yl;
+    if (prog) {
+        document.getElementById('sel_prog').value = prog;
+        document.getElementById('prog_trigger_text').innerText = prog;
+    }
+
+    // Cascade loads subjects into sel_subj without rendering the grid yet
+    await triggerCascade(true);
+
+    // Explicitly await subject list so savedStatus badges (Draft/Published) are populated
+    if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+
+    // Switch to Program View (renders the timetable)
+    const tabEl = document.getElementById('tab-main');
+    switchEditorTab('main', tabEl);
+
+    // Auto-select the first subject that has a saved draft/published status,
+    // falling back to the first available subject if none are saved yet
+    const subjSel = document.getElementById('sel_subj');
+    const firstSaved = Array.from(subjSel.options).find(o =>
+        o.value && ['Draft', 'Published', 'Published/Draft'].includes(o.dataset.savedStatus)
+    ) || Array.from(subjSel.options).find(o => o.value);
+
+    if (firstSaved && typeof _onSubjectClick === 'function') {
+        subjSel.value = firstSaved.value;
+        await _onSubjectClick(
+            firstSaved.value,
+            firstSaved.text,
+            parseFloat(firstSaved.dataset.units || 0),
+            parseFloat(firstSaved.dataset.hours || 0)
+        );
+    }
+}
+
 let _dlpPendingId   = null;
 let _dlpPendingCard = null;
 
 async function _loadDraftListPanel() {
     const cards   = document.getElementById('dlpCards');
     const subtitle = document.getElementById('dlpSubtitle');
-    const prog    = document.getElementById('sel_prog')?.value?.toUpperCase() || '';
+
+    // Require AY + program + year level to be selected before showing drafts
+    const _ctxAy   = document.getElementById('sel_ay')?.value   || '';
+    const _ctxProg = document.getElementById('sel_prog')?.value || '';
+    const _ctxYl   = document.getElementById('sel_year')?.value || '';
+    if (!_ctxAy || !_ctxProg || !_ctxYl) {
+        if (cards) cards.innerHTML = `
+            <div class="dlp-empty">
+                <i class="fas fa-filter" style="font-size:2rem;opacity:0.3;display:block;margin-bottom:10px;"></i>
+                <div style="font-size:0.8rem;font-weight:700;color:#888;">Select Academic Year, Semester, Program &amp; Year Level to view drafts.</div>
+            </div>`;
+        if (subtitle) subtitle.textContent = 'No context selected';
+        return;
+    }
 
     if (cards)   cards.innerHTML = '<div class="dlp-loading"><i class="fas fa-spinner fa-spin"></i> Loading drafts&hellip;</div>';
     if (subtitle) subtitle.textContent = 'Loading…';
@@ -4809,25 +5031,31 @@ async function _loadDraftListPanel() {
             return;
         }
 
-        // Group by program+year, keep latest
+        // Filter to only show drafts matching the selected program + year level + AY
+        const _schedMode = document.getElementById('app-init-data')?.dataset.schedulerMode || 'official';
+        const ctxData = data.filter(d =>
+            (d.source === 'local' ? 'local' : 'official') === _schedMode &&
+            (d.programcode || '').toUpperCase() === _ctxProg.toUpperCase() &&
+            String(d.yearlevel || '') === String(_ctxYl) &&
+            String(d.acadyear  || '') === String(_ctxAy)
+        );
+
+        // Deduplicate: keep latest per program+year+source for this context
         const groups = {};
-        data.forEach(d => {
-            const key = `${d.programcode||''}-${d.yearlevel||''}`;
+        ctxData.forEach(d => {
+            const src = d.source === 'local' ? 'local' : 'official';
+            const key = `${d.programcode||''}-${d.yearlevel||''}-${src}`;
             if (!groups[key] || (d.datecreated||'') > (groups[key].datecreated||'')) groups[key] = d;
         });
-        let sorted = Object.values(groups).sort((a,b) => (b.datecreated||'').localeCompare(a.datecreated||''));
-
-        // Filter by selected program
-        if (prog) sorted = sorted.filter(d => (d.programcode||'').toUpperCase() === prog);
+        const sorted = Object.values(groups).sort((a,b) => (b.datecreated||'').localeCompare(a.datecreated||''));
 
         if (!sorted.length) {
-            const msg = prog ? `No drafts found for ${prog}.` : 'No drafts saved yet.';
-            cards.innerHTML = `<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>${msg}</div></div>`;
-            if (subtitle) subtitle.textContent = prog ? `Filtered: ${prog}` : 'No drafts';
+            cards.innerHTML = `<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>No drafts saved yet.</div></div>`;
+            if (subtitle) subtitle.textContent = 'No drafts';
             return;
         }
 
-        if (subtitle) subtitle.textContent = `${sorted.length} draft${sorted.length !== 1 ? 's' : ''}${prog ? ' · ' + prog : ''}`;
+        if (subtitle) subtitle.textContent = `${sorted.length} draft${sorted.length !== 1 ? 's' : ''}`;
 
         cards.innerHTML = sorted.map(d => {
             const dt = d.datecreated ? new Date(d.datecreated) : null;
@@ -4837,14 +5065,22 @@ async function _loadDraftListPanel() {
             const ayDisp = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
             const letters = (d.programcode||'').split('').join(' ');
             const label = `${d.programcode||'—'} – Year ${d.yearlevel||'—'}`;
+            const isLocal = d.source === 'local';
+            const srcBadge = isLocal
+                ? `<span style="font-size:0.55rem;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:10px;padding:1px 7px;font-weight:900;margin-left:6px;vertical-align:middle;">LOCAL</span>`
+                : `<span style="font-size:0.55rem;background:#e8f0fe;color:#1a56db;border:1px solid #b6ccfc;border-radius:10px;padding:1px 7px;font-weight:900;margin-left:6px;vertical-align:middle;">OFFICIAL</span>`;
             return `
             <div class="dlp-card" data-vid="${d.versionid}">
                 <div class="dlp-card-meta">
-                    <span class="dlp-card-eyebrow">A.Y ${ayDisp} | <span style="font-variant:small-caps;">${semLabel}</span></span>
+                    <span class="dlp-card-eyebrow">A.Y ${ayDisp} | <span style="font-variant:small-caps;">${semLabel}</span>${srcBadge}</span>
                     <div class="dlp-card-prog">${letters} &ndash; ${d.yearlevel||'—'}</div>
                     <div class="dlp-card-date">${dateStr}</div>
                 </div>
                 <div class="dlp-card-actions">
+                    <button class="dlp-btn dlp-btn-view"
+                        onclick="_viewDraftInEditor('${(d.programcode||'').replace(/'/g,"\\'")}','${d.yearlevel||''}','${d.acadyear||''}','${d.term||''}')">
+                        <i class="fas fa-eye"></i> VIEW
+                    </button>
                     <a href="/schedule/drafts/${d.versionid}" class="dlp-btn dlp-btn-approve">
                         <i class="fas fa-check-circle"></i> APPROVE
                     </a>
@@ -4902,6 +5138,17 @@ async function _loadVersionHistoryPanel() {
     const sem  = document.getElementById('sel_sem')?.value || '';
     const yl   = document.getElementById('sel_year')?.value || '';
 
+    // Require AY + program + year level before loading version history
+    if (!ay || !prog || !yl) {
+        if (cards) cards.innerHTML = `
+            <div class="vhp-empty">
+                <i class="fas fa-filter" style="font-size:2rem;opacity:0.3;display:block;margin-bottom:10px;"></i>
+                <div style="font-size:0.8rem;font-weight:700;color:#888;">Select Academic Year, Semester, Program &amp; Year Level to view revision history.</div>
+            </div>`;
+        if (subtitle) subtitle.textContent = 'No context selected';
+        return;
+    }
+
     if (cards)    cards.innerHTML = '<div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading versions&hellip;</div>';
     if (subtitle) subtitle.textContent = 'Loading…';
 
@@ -4928,11 +5175,11 @@ async function _loadVersionHistoryPanel() {
             return;
         }
 
-        // Split into independent Published and Draft chains
+        // Split into independent Published and Draft chains — newest (current) first
         const pubVers   = filtered.filter(v => v.published_version_number)
-            .sort((a, b) => a.published_version_number - b.published_version_number);
+            .sort((a, b) => b.published_version_number - a.published_version_number);
         const draftVers = filtered.filter(v => v.draft_version_number)
-            .sort((a, b) => a.draft_version_number - b.draft_version_number);
+            .sort((a, b) => b.draft_version_number - a.draft_version_number);
 
         const maxPubVn   = pubVers.length   ? Math.max(...pubVers.map(v => v.published_version_number))   : 0;
         const maxDraftVn = draftVers.length ? Math.max(...draftVers.map(v => v.draft_version_number)) : 0;
@@ -4941,7 +5188,10 @@ async function _loadVersionHistoryPanel() {
         if (subtitle) subtitle.textContent = `${totalCount} revision${totalCount !== 1 ? 's' : ''}`;
 
         function renderCard(v, chainType, typeVn, maxVn) {
-            const isCurrent  = typeVn > 0 && typeVn === maxVn;
+            // A revision is "current" only if it has the highest sequence number in its chain AND
+            // is still actively in that status. An archived Draft (all sessions published/replaced)
+            // must show Restore instead of CURRENT — it is no longer the active working Draft.
+            const isCurrent  = typeVn > 0 && typeVn === maxVn && v.status === chainType;
             const dt         = v.datecreated ? new Date(v.datecreated) : null;
             const dateStr    = (dt && !isNaN(dt)) ? dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '—';
             const semLbl     = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
@@ -5134,6 +5384,106 @@ function _fmt12(t24) {
     return `${String(h12).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`;
 }
 
+/* Show a two-option restore choice modal. Resolves to 'draft', 'replace', or null (cancel). */
+function _showRestoreChoiceModal(typeLabel, origStatus) {
+    // Type-aware defaults:
+    //   Published revision → recommend "Restore as Published" (Full Replace creates new active Published)
+    //   Draft revision     → recommend "Restore as Draft" (safe, leaves Published untouched)
+    const isPublished  = origStatus === 'Published';
+    const defaultMode  = isPublished ? 'replace' : 'draft';
+
+    const optATitle    = 'Restore as Draft';
+    const optABadge    = isPublished ? '' : '<span style="background:#8b1a1a;color:#fff;padding:1px 7px;border-radius:10px;font-size:0.62rem;letter-spacing:0.5px;">RECOMMENDED</span>';
+    const optADesc     = 'Creates a new Draft from this snapshot. The current Published is untouched. Subject may appear as PUB/DRAFT if a Published revision also exists.';
+    const optBTitle    = isPublished ? 'Restore as Published' : 'Full Replace (Draft)';
+    const optBBadge    = isPublished ? '<span style="background:#8b1a1a;color:#fff;padding:1px 7px;border-radius:10px;font-size:0.62rem;letter-spacing:0.5px;">RECOMMENDED</span>' : '';
+    const optBDesc     = isPublished
+        ? 'The restored snapshot becomes the new current active Published revision. The current Published is archived first.'
+        : `Archive the current Draft and replace it with this snapshot.`;
+
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.52);z-index:99998;display:flex;align-items:center;justify-content:center;';
+
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;border-radius:10px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.28);font-family:inherit;overflow:hidden;';
+
+        const selStyle   = 'border:2px solid #8b1a1a;border-radius:8px;padding:14px 16px;margin-bottom:10px;cursor:pointer;background:#fdf2f2;transition:border-color 0.15s,background 0.15s;';
+        const unselStyle = 'border:2px solid #ddd;border-radius:8px;padding:14px 16px;margin-bottom:18px;cursor:pointer;background:#fff;transition:border-color 0.15s,background 0.15s;';
+
+        box.innerHTML = `
+        <div style="padding:14px 20px;background:#8b1a1a;color:#fff;display:flex;align-items:center;gap:10px;">
+            <i class="fas fa-undo-alt"></i>
+            <span style="font-size:0.9rem;font-weight:900;letter-spacing:0.3px;text-transform:uppercase;">Restore Revision</span>
+        </div>
+        <div style="padding:20px 24px 8px;">
+            <p style="font-size:0.82rem;color:#444;line-height:1.6;margin:0 0 18px;">
+                You are about to restore this revision. Choose what to do with the current schedules:
+            </p>
+            <!-- Option A: Restore as Draft -->
+            <div id="rcm-opt-draft" class="rcm-option" onclick="_rcmSelect(this,'draft')"
+                 style="${defaultMode === 'draft' ? selStyle : unselStyle.replace('margin-bottom:18px','margin-bottom:10px')}">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div style="width:16px;height:16px;border-radius:50%;border:2px solid ${defaultMode==='draft'?'#8b1a1a':'#bbb'};background:${defaultMode==='draft'?'#8b1a1a':'#fff'};flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+                        ${defaultMode==='draft' ? '<div style="width:6px;height:6px;border-radius:50%;background:#fff;"></div>' : ''}
+                    </div>
+                    <div>
+                        <div style="font-size:0.82rem;font-weight:900;color:${defaultMode==='draft'?'#8b1a1a':'#333'};">${optATitle} ${optABadge}</div>
+                        <div style="font-size:0.73rem;color:#666;margin-top:3px;line-height:1.5;">${optADesc}</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Option B: Restore as Published / Full Replace -->
+            <div id="rcm-opt-replace" class="rcm-option" onclick="_rcmSelect(this,'replace')"
+                 style="${defaultMode === 'replace' ? selStyle.replace('margin-bottom:10px','margin-bottom:18px') : unselStyle}">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div style="width:16px;height:16px;border-radius:50%;border:2px solid ${defaultMode==='replace'?'#8b1a1a':'#bbb'};background:${defaultMode==='replace'?'#8b1a1a':'#fff'};flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+                        ${defaultMode==='replace' ? '<div style="width:6px;height:6px;border-radius:50%;background:#fff;"></div>' : ''}
+                    </div>
+                    <div>
+                        <div style="font-size:0.82rem;font-weight:900;color:${defaultMode==='replace'?'#8b1a1a':'#333'};">${optBTitle} ${optBBadge}</div>
+                        <div style="font-size:0.73rem;color:#666;margin-top:3px;line-height:1.5;">${optBDesc}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div style="padding:10px 24px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #f0f0f0;">
+            <button id="rcm-cancel" style="padding:9px 20px;border:1.5px solid #ddd;border-radius:6px;background:#fff;color:#555;font-size:0.78rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;cursor:pointer;">Cancel</button>
+            <button id="rcm-confirm" style="padding:9px 22px;border:none;border-radius:6px;background:#8b1a1a;color:#fff;font-size:0.78rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                <i class="fas fa-undo-alt"></i> Restore
+            </button>
+        </div>`;
+
+        let selectedMode = defaultMode;
+        window._rcmSelect = function(el, mode) {
+            selectedMode = mode;
+            document.querySelectorAll('.rcm-option').forEach(o => {
+                const radio = o.querySelector('div > div:first-child');
+                if (o === el) {
+                    o.style.border = '2px solid #8b1a1a';
+                    o.style.background = '#fdf2f2';
+                    radio.style.background = '#8b1a1a';
+                    radio.style.borderColor = '#8b1a1a';
+                    radio.innerHTML = '<div style="width:6px;height:6px;border-radius:50%;background:#fff;margin:auto;"></div>';
+                } else {
+                    o.style.border = '2px solid #ddd';
+                    o.style.background = '#fff';
+                    radio.style.background = '#fff';
+                    radio.style.borderColor = '#bbb';
+                    radio.innerHTML = '';
+                }
+            });
+        };
+
+        box.querySelector('#rcm-cancel').onclick  = () => { overlay.remove(); resolve(null); };
+        box.querySelector('#rcm-confirm').onclick = () => { overlay.remove(); resolve(selectedMode); };
+        overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+    });
+}
+
 async function restoreVersion(versionId, btn) {
     // Block restore when there are unsaved pending entries to prevent accidental overwrites
     if (typeof pendingManualSchedule !== 'undefined' && pendingManualSchedule.some(s => !s.fromExisting)) {
@@ -5142,26 +5492,48 @@ async function restoreVersion(versionId, btn) {
         return;
     }
 
-    // Determine the type being restored (Draft or Published)
-    const card = btn.closest?.('.vhp-card')
-        || document.querySelector(`[data-vid="${versionId}"]`);
-    const origStatus = card?.dataset?.originalStatus
-        || btn?.dataset?.originalStatus
-        || 'Draft';
-    const typeLabel = origStatus === 'Published' ? 'Published' : 'Draft';
+    const card = btn.closest?.('.vhp-card') || document.querySelector(`[data-vid="${versionId}"]`);
+    const origStatus = card?.dataset?.originalStatus || btn?.dataset?.originalStatus || 'Draft';
+    const typeLabel  = origStatus === 'Published' ? 'Published' : 'Draft';
 
-    const ok = await showConfirmModal(
-        `This will create a new ${typeLabel} revision based on this version. The current ${typeLabel}, if any, will be archived. All other history is preserved.`,
-        'Restore Version'
-    );
-    if (!ok) return;
+    // For Draft revisions both modal options produce identical output (both restore as Draft).
+    // Skip the modal and auto-proceed. Only Published revisions need the choice:
+    //   • Restore as Draft   — safe, leaves active Published untouched
+    //   • Restore as Published — replaces the current Published baseline
+    let mode;
+    if (origStatus === 'Published') {
+        mode = await _showRestoreChoiceModal(typeLabel, origStatus);
+        if (!mode) return;
+    } else {
+        mode = 'draft';   // only meaningful option for a Draft revision
+    }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     try {
-        const res  = await fetch(`/api/schedule/versions/${versionId}/restore`, { method: 'POST' });
+        const res  = await fetch(`/api/schedule/versions/${versionId}/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ restore_mode: mode })
+        });
         const data = await res.json();
         if (data.success) {
-            _loadVersionHistoryPanel();
+            const restoredAs = data.restore_as || typeLabel;
+            const modeMsg = mode === 'draft'
+                ? 'The revision has been restored as a new Draft. Your Published schedules are untouched.'
+                : `The revision has been restored as a new active ${restoredAs} revision. The previous ${restoredAs} is now archived.`;
+            await showValidationModal('Restore Complete', modeMsg);
+            await _loadVersionHistoryPanel();
+            _loadDraftListPanel();   // keep Draft List in sync (runs in background)
+            // Refresh left panel subject list and grid without full page reload
+            if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+            const ay  = document.getElementById('sel_ay')?.value  || '';
+            const sem = document.getElementById('sel_sem')?.value || '';
+            if (currentMode === 'program') renderProgramTimetable();
+            else renderGrid(document.getElementById('sel_room')?.value || '', ay, sem);
+            // Rebuild FL dropdown and refresh if visible
+            await _initFlFacultyMenu();
+            _refreshFlIfVisible();
         } else {
             await showValidationModal('Restore Failed', data.error || 'An unknown error occurred.');
             btn.disabled = false;

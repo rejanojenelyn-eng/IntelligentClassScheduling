@@ -2650,16 +2650,31 @@ def api_manual_existing_sessions():
         session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Draft'"])),
         base_params) or []
 
-    # Draft is a complete replacement of Published for this subject — save_draft archives
-    # the old Draft and inserts the full new session set. Never mix: sessions intentionally
-    # removed in the Draft would ghost-reappear from Published if we merged by slot key.
+    pub_rows = query_db(
+        session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Published'"])),
+        base_params) or []
+
     if draft_rows:
-        rows = draft_rows
+        # Mark Draft slots that share a slot key with Published as 'Published' —
+        # they were approved before and keep their green color.
+        pub_slot_keys = {(r['daydesc'], r['starttimeid']) for r in pub_rows}
+        rows = []
+        for r in draft_rows:
+            r = dict(r)
+            if (r['daydesc'], r['starttimeid']) in pub_slot_keys:
+                r['status'] = 'Published'
+            rows.append(r)
+
+        # With draft_only=True carry-forward, Published slots that are NOT in the Draft
+        # snapshot were never "removed" — they still exist and must be shown alongside the
+        # Draft additions. Include them here unless they were explicitly deleted this session.
+        draft_slot_keys = {(r['daydesc'], r['starttimeid']) for r in draft_rows}
+        for r in pub_rows:
+            if (r['daydesc'], r['starttimeid']) not in draft_slot_keys:
+                rows.append(dict(r))
     else:
-        rows = query_db(
-            session_query.format(status_clause=' AND '.join(base_filters + ["sv.status = 'Published'"])),
-            base_params) or []
-    return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
+        rows = [dict(r) for r in pub_rows]
+    return jsonify({'success': True, 'sessions': rows})
 
 
 @app.route('/api/manual/section_schedule')
@@ -4965,13 +4980,67 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
                     (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
 
-def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None):
+def _build_published_baseline(cur, program, year_level, sem_id, subject_codes, priority_sessions):
+    """Return existing Published slots for subject_codes that are NOT already covered by priority_sessions.
+
+    Used by both save-draft and approve to carry Published baseline slots forward so that adding
+    a new slice to a multi-slice subject never replaces the existing slots.
+
+    priority_sessions: list of sessions (rehydrated or sched_data) whose slot keys take precedence.
+    Returns a list in the same shape as _fetch_section_sessions output.
+    """
+    if not subject_codes:
+        return []
+    upper_codes = set(c.upper() for c in subject_codes)
+
+    # Build slot keys already covered by the priority (new) sessions so we don't duplicate
+    priority_keys = set()
+    for s in priority_sessions:
+        sc  = (s.get('subjectcode') or s.get('subject_code') or '').upper()
+        day = s.get('daydesc') or s.get('day') or ''
+        st  = str(s.get('start_time', '')).split('.')[0]
+        priority_keys.add((sc, day, st))
+
+    all_published = _fetch_section_sessions(cur, program, year_level, sem_id, published_only=True)
+    baseline = []
+    for s in all_published:
+        sc  = (s.get('subjectcode') or '').upper()
+        if sc not in upper_codes:
+            continue
+        day = s.get('daydesc') or ''
+        st  = str(s.get('start_time', '')).split('.')[0]
+        if (sc, day, st) not in priority_keys:
+            baseline.append(s)
+    return baseline
+
+
+def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None,
+                            published_only=False, draft_only=False):
     """Return active manual_editor sessions for a section, excluding specified subject codes.
-    For each subject, Draft takes precedence over Published; highest version_number wins.
-    Returns list of dicts compatible with _insert_batch."""
+
+    Default (save-draft carry-forward):
+        Draft-preferred: for each subject, Draft takes priority over Published.
+        Subjects with only a Draft are included. Subjects with only Published are included
+        via fallback — but see draft_only for a stricter carry-forward.
+
+    published_only=True (used by approve/publish):
+        Only subjects that have a current Published version are returned.
+        Draft-only subjects are excluded entirely so they don't bleed into Published snapshots.
+
+    draft_only=True (used by save-draft carry-forward):
+        Only subjects that have an active Draft version are carried forward.
+        Subjects with only Published (never drafted) are excluded so Published content
+        doesn't pollute the new Draft snapshot.
+    """
     upper_excl = [c.upper() for c in (exclude_codes or [])]
     ph = ','.join(['%s'] * len(upper_excl)) if upper_excl else None
     excl_sql = f"AND UPPER(cs.subjectcode) NOT IN ({ph})" if ph else ""
+    if published_only:
+        status_filter = "'Published'"
+    elif draft_only:
+        status_filter = "'Draft'"
+    else:
+        status_filter = "'Draft', 'Published'"
 
     cur.execute(f"""
         SELECT cs.subjectcode, cs.semester, sg.employeenumber,
@@ -4989,7 +5058,7 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
         WHERE  UPPER(c.programcode) = UPPER(%s)
           AND  cs.yearlevel         = %s
           AND  sg.semesterid        = %s
-          AND  sv.status IN ('Draft', 'Published')
+          AND  sv.status IN ({status_filter})
           AND  sv.source            = 'manual_editor'
           {excl_sql}
     """, [program, year_level, sem_id] + upper_excl)
@@ -5004,8 +5073,15 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
 
     result = []
     for rows_for_code in subj_groups.values():
-        draft_rows = [r for r in rows_for_code if r['status'] == 'Draft']
-        chosen = draft_rows or [r for r in rows_for_code if r['status'] == 'Published']
+        if published_only:
+            chosen = [r for r in rows_for_code if r['status'] == 'Published']
+        elif draft_only:
+            # Only subjects with an actual Draft; subjects with only Published are skipped
+            chosen = [r for r in rows_for_code if r['status'] == 'Draft']
+        else:
+            # Draft-preferred: use Draft if available, otherwise fall back to Published
+            draft_rows = [r for r in rows_for_code if r['status'] == 'Draft']
+            chosen = draft_rows or [r for r in rows_for_code if r['status'] == 'Published']
         if not chosen:
             continue
         best_v = max(r['version_number'] for r in chosen)
@@ -5301,14 +5377,20 @@ def api_save_draft():
                             'error': (f"Section conflict: {inc['code']} overlaps with "
                                       f"{sess['subjectcode']} already scheduled on {sess['daydesc']}.")})
 
-        # Collect other subjects' active sessions to carry forward into the cumulative snapshot.
-        # Exclude submitted + deleted codes — we'll supply fresh data for those below.
-        other_sessions = _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=all_codes_to_archive)
+        # Carry forward only subjects that have an active Draft (not Published-only ones).
+        # This keeps the Draft snapshot pure — it only contains genuine Draft-state content.
+        # Published-only subjects stay in their Published version and are NOT duplicated into Draft.
+        # The UI merges Draft + Published for display via existing_sessions; the snapshot must not.
+        other_sessions = _fetch_section_sessions(cur, program, year_level, sem_id,
+                                                  exclude_codes=all_codes_to_archive,
+                                                  draft_only=True)
 
         # Archive ALL manual_editor Draft records for this section before writing new snapshot.
         _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor')
 
-        # Insert complete snapshot = previously-active subjects + submitted subjects.
+        # Draft snapshot = other subjects' Drafts (carry-forward) + newly submitted Draft slices.
+        # NOTE: Published baseline is intentionally excluded — Draft must only contain Draft content.
+        #       The Published slices are shown in the UI via existing_sessions without being in Draft.
         complete_snapshot = other_sessions + rehydrated
         if complete_snapshot:
             _insert_batch(cur, complete_snapshot, sem_id, 'Draft', new_v, program, year_level)
@@ -5479,16 +5561,59 @@ def api_approve_schedule():
             for cls in sched_data
             if cls.get('subject_code') or cls.get('subjectcode')
         })
-        # Collect other subjects' active sessions to carry forward into the cumulative snapshot.
-        other_sessions = _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=submitted_codes)
+        # Carry forward only currently Published subjects (not Draft-only ones).
+        # Draft-only subjects must NOT appear in a Published snapshot unless explicitly published.
+        other_sessions = _fetch_section_sessions(
+            cur, program, year_level, sem_id,
+            exclude_codes=submitted_codes,
+            published_only=True
+        )
+
+        # When publishing new Draft slices for a subject that already has Published slices,
+        # the existing Published slots (e.g. Friday) must survive in the new Published snapshot
+        # alongside the newly published slots (e.g. Tuesday). Without this, publishing one slice
+        # replaces the entire Published schedule for that subject.
+        published_baseline = _build_published_baseline(cur, program, year_level, sem_id,
+                                                        submitted_codes, sched_data)
 
         # Archive only the existing Published revisions — Draft history must remain intact.
         # Publishing creates a new independent Published snapshot; it does not consume the Draft.
         _archive_status(cur, program, year_level, term, sem_id, 'Published', source='manual_editor')
 
-        # Insert complete Published snapshot — entire section state at this moment.
-        complete_snapshot = other_sessions + sched_data
+        # Insert Published snapshot: other subjects' Published sessions + existing Published baseline
+        # for the submitted subject + the newly published sessions.
+        complete_snapshot = other_sessions + published_baseline + sched_data
         _insert_batch(cur, complete_snapshot, sem_id, 'Published', max_v + 1, program, year_level)
+
+        # Auto-cleanup: remove ONLY the exact slots that were just published from the active Draft.
+        # Use slot-level keys (subject+day+time), NOT subject codes — a subject can have multiple
+        # slices and publishing one slot (e.g. Thursday) must NOT wipe unrelated Draft slots for
+        # the same subject (e.g. Monday Draft).
+        published_slot_keys = set()
+        for s in sched_data:
+            sc  = (s.get('subjectcode') or s.get('subject_code') or '').upper()
+            day = s.get('daydesc') or s.get('day') or ''
+            st  = str(s.get('start_time', '')).split('.')[0]
+            published_slot_keys.add((sc, day, st))
+
+        all_current_draft = _fetch_section_sessions(
+            cur, program, year_level, sem_id,
+            draft_only=True
+        )
+        remaining_draft = [
+            s for s in all_current_draft
+            if ((s.get('subjectcode') or '').upper(),
+                s.get('daydesc') or '',
+                str(s.get('start_time', '')).split('.')[0]) not in published_slot_keys
+        ]
+
+        # Only rebuild Draft if at least one slot was actually removed (i.e. a Draft slot was
+        # published). If the published slots were already Published (not in Draft), leave Draft
+        # completely untouched — no new revision, no data loss.
+        if len(remaining_draft) < len(all_current_draft):
+            _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor')
+            if remaining_draft:
+                _insert_batch(cur, remaining_draft, sem_id, 'Draft', max_v + 2, program, year_level)
 
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True, 'published_version': max_v + 1})
@@ -5532,17 +5657,38 @@ def api_faculty_teaching_assignments():
         cur.execute("""
             SELECT f.employeenumber,
                    f.lastname || ', ' || f.firstname AS fullname,
-                   COALESCE(et.typename, f.employeestatus, 'Regular') AS employee_type,
-                   COALESCE(et.regularload, 0) AS reg_load,
-                   COALESCE(et.parttimeload, 0) AS pt_load
+                   COALESCE(et.typename, f.employeestatus, 'Regular')  AS employee_type,
+                   f.employeestatus,
+                   f.designationid,
+                   COALESCE(et.regularload,          0) AS reg_load,
+                   COALESCE(et.parttimeload,          0) AS pt_load,
+                   COALESCE(et.teachingsubstitution,  0) AS teach_sub,
+                   COALESCE(d.regularloadunit,        0) AS desig_reg_load,
+                   COALESCE(d.nightteachingservice,   0) AS desig_night_service
             FROM faculty f
-            LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+            LEFT JOIN employeetype et  ON f.employeetypeid = et.employeetypeid
+            LEFT JOIN designation  d   ON f.designationid  = d.designationid
             WHERE f.employeenumber = %s
         """, (emp_num,))
         fac = cur.fetchone()
         if not fac:
             cur.close(); conn.close()
             return jsonify({'success': False, 'error': 'Faculty not found'}), 404
+
+        # Mirror the same max-load logic used by /api/manual/faculty_load
+        _status    = (fac['employeestatus'] or '').lower()
+        _has_desig = fac['designationid'] is not None
+        _teach_sub = int(fac['teach_sub'] or 0)
+        if _has_desig:
+            _reg  = int(fac['desig_reg_load']    or 0)
+            _pt   = int(fac['desig_night_service'] or 0)
+        elif 'part' in _status:
+            _reg  = 0
+            _pt   = int(fac['pt_load'] or 0)
+        else:
+            _reg  = int(fac['reg_load'] or 0)
+            _pt   = int(fac['pt_load']  or 0)
+        max_units = _reg + _pt + _teach_sub
         cur.execute("""
             SELECT
                 sub.subjectcode,
@@ -5556,7 +5702,7 @@ def api_faculty_teaching_assignments():
                 LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
                 ss.daydesc AS days,
                 COALESCE(r.roomname,'—') AS room,
-                COALESCE(TO_CHAR(sem.startdate,'MM/DD/YYYY'),'—') AS effectivity,
+                COALESCE(TO_CHAR(sem.semstartdate,'MM/DD/YYYY'),'—') AS effectivity,
                 sv.status
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
@@ -5591,7 +5737,6 @@ def api_faculty_teaching_assignments():
         """, (emp_num, ay_id, sem))
         total_row = cur.fetchone()
         assigned  = int(total_row['total'] or 0) if total_row else 0
-        max_units = int(fac['reg_load'] or 0) + int(fac['pt_load'] or 0)
         cur.close(); conn.close()
         return jsonify({
             'success': True,
@@ -5605,16 +5750,69 @@ def api_faculty_teaching_assignments():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/faculty/assigned_list')
+def api_faculty_assigned_list():
+    """Return faculty who have assignments for the given AY/sem, optionally filtered by program + year level."""
+    ay_id      = request.args.get('ay_id',      '').strip()
+    sem        = request.args.get('sem',        '').strip()
+    prog       = request.args.get('prog',       '').strip()
+    year_level = request.args.get('year_level', '').strip()
+    if not ay_id or not sem:
+        return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        extra_where = ''
+        params = [ay_id, sem]
+        if prog:
+            extra_where += ' AND UPPER(c.programcode) = UPPER(%s)'
+            params.append(prog)
+        if year_level:
+            extra_where += ' AND cs.yearlevel = %s'
+            params.append(year_level)
+
+        cur.execute(f"""
+            SELECT DISTINCT
+                f.employeenumber AS emp_num,
+                f.lastname || ', ' || f.firstname
+                    || COALESCE(' ' || LEFT(f.middlename, 1) || '.', '') AS name
+            FROM faculty f
+            JOIN schedule sc         ON sc.employeenumber = f.employeenumber
+            JOIN semester s          ON sc.semesterid     = s.semesterid
+            JOIN schedule_version sv ON sv.scheduleid     = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            WHERE s.academicyearid = %s
+              AND s.semestertype   = %s
+              AND sv.status IN ('Draft', 'Published')
+              {extra_where}
+            ORDER BY name
+        """, params)
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify({'success': True, 'faculty': [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/schedule/drafts')
 @app.route('/api/schedule/versions')
 def api_list_versions():
     try:
+        # Idempotent: add source column if it doesn't exist yet
+        try:
+            query_db("ALTER TABLE public.schedule_version "
+                     "ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'official'")
+        except Exception:
+            pass
         is_drafts = 'drafts' in request.path
         if is_drafts:
             # One consolidated entry per program/year/semester — use the latest versionid/version_number
             rows = query_db("""
                 SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid)
                        sv.versionid, sv.version_number, sv.status, sv.datecreated,
+                       COALESCE(sv.source, 'official') AS source,
                        c.programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
                 FROM   public.schedule_version sv
                 JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
@@ -5685,19 +5883,32 @@ def api_list_versions():
                 'yearlevel':               r['yearlevel'],
                 'term':                    r['term'],
                 'acadyear':                r['acadyear'],
+                'source':                  r.get('source', 'official'),
             })
         return jsonify(sorted(output, key=lambda x: x['datecreated'], reverse=True))
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/api/schedule/versions/<int:version_id>/restore', methods=['POST'])
 def api_restore_version(version_id):
-    """Restore a revision as a new entry of the same type (Draft→Draft, Published→Published)."""
+    """Restore a historical revision with two modes:
+
+    restore_mode='draft'   (Recommended): Always create a new Draft revision from the snapshot.
+                           The current Published history is never touched — only existing Draft
+                           is archived first. Safe: nothing is permanently lost.
+
+    restore_mode='replace' (default/legacy): Archive the matching active type (same as original_status)
+                           and create a new revision of the same type. Replaces the current active
+                           schedules for that type.
+    """
     try:
+        body         = request.json or {}
+        restore_mode = body.get('restore_mode', 'replace')   # 'draft' | 'replace'
+
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         _ensure_source_col(cur)
         _ensure_original_status_col(cur)
 
-        # Get context, source version_number, and original_status from the target versionid
+        # Fetch context from any versionid that belongs to this snapshot group
         cur.execute("""
             SELECT c.programcode, cs.yearlevel, cs.semester AS term, sg.semesterid,
                    sv.version_number AS src_vn,
@@ -5717,16 +5928,23 @@ def api_restore_version(version_id):
             row['programcode'], row['yearlevel'], row['term'],
             row['semesterid'], row['src_vn']
         )
-        # Restore as the same type as the source revision; fall back to 'Draft'
-        restore_as = row['src_orig'] or 'Draft'
 
-        # Archive the matching active type — keep the other type's history intact
-        if restore_as == 'Published':
-            _archive_status(cur, prog, year_level, term, sem_id, 'Published', source='manual_editor')
-        else:
+        if restore_mode == 'draft':
+            # Restore as Draft: only archive the current Draft (if any). Published is untouched.
+            # The subject may show PUB/DRAFT if it also has an active Published version — that
+            # is correct: the Published approved baseline coexists with the new Draft working copy.
             _archive_status(cur, prog, year_level, term, sem_id, 'Draft', source='manual_editor')
+            target_status = 'Draft'
+        else:
+            # Full replace: archive the same type as the source, create new same-type revision.
+            restore_as = row['src_orig'] or 'Draft'
+            if restore_as == 'Published':
+                _archive_status(cur, prog, year_level, term, sem_id, 'Published', source='manual_editor')
+            else:
+                _archive_status(cur, prog, year_level, term, sem_id, 'Draft', source='manual_editor')
+            target_status = restore_as
 
-        # New version_number = max manual_editor version + 1
+        # New version_number = max manual_editor version for this section + 1
         cur.execute("""
             SELECT COALESCE(MAX(sv.version_number), 0) AS max_v
             FROM   schedule_version sv
@@ -5755,7 +5973,7 @@ def api_restore_version(version_id):
                 INSERT INTO public.schedule_version
                     (scheduleid, version_number, status, datecreated, source, original_status)
                 VALUES (%s, %s, %s, NOW(), 'manual_editor', %s) RETURNING versionid
-            """, (src['scheduleid'], new_v, restore_as, restore_as))
+            """, (src['scheduleid'], new_v, target_status, target_status))
             new_vid = cur.fetchone()['versionid']
 
             cur.execute("""
@@ -5766,7 +5984,7 @@ def api_restore_version(version_id):
             """, (new_vid, src['versionid']))
 
         conn.commit(); cur.close(); conn.close()
-        return jsonify({'success': True, 'new_version': new_v, 'restore_as': restore_as})
+        return jsonify({'success': True, 'new_version': new_v, 'restore_as': target_status})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -5866,6 +6084,7 @@ def api_load_draft(version_id):
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
             SELECT sv.version_number, sv.status, sv.scheduleid,
+                   COALESCE(sv.source, 'official') AS source,
                    c.programcode, cs.yearlevel, sem.semestertype AS term,
                    ay.academicyearid AS acadyear, sc.semesterid
             FROM schedule_version sv
@@ -5911,7 +6130,7 @@ def api_load_draft(version_id):
             'time': f"{_fmt_12h(r['start_time'])} – {_fmt_12h(r['end_time'])}" if r['start_time'] else '',
             'hours': str((r['lec_hours'] or 0) + (r['lab_hours'] or 0)), 'room': r['room'], 'room_id': r['roomid']
         } for r in rows]
-        return jsonify({'success': True, 'schedule_data': sched, 'version': max_v, 'context': {'program': m['programcode'], 'yearLevel': m['yearlevel'], 'term': m['term'], 'acadYear': m['acadyear']}})
+        return jsonify({'success': True, 'schedule_data': sched, 'version': max_v, 'context': {'program': m['programcode'], 'yearLevel': m['yearlevel'], 'term': m['term'], 'acadYear': m['acadyear'], 'source': m['source']}})
     except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/curriculum-by-year')

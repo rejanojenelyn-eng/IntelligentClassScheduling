@@ -1,8 +1,115 @@
+let _allDrafts           = [];
+let _currentDraftFilter  = 'official';   // 'official' | 'local'
+
+/* ── Scheduler filter toggle ── */
+window.setDraftSchedulerFilter = function(mode, btnEl) {
+    _currentDraftFilter = mode;
+    document.querySelectorAll('.drafts-mode-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    _renderDrafts(_allDrafts);
+};
+
+/* ── Build one draft card ── */
+function _buildDraftCard(d) {
+    const dt      = d.datecreated ? new Date(d.datecreated) : null;
+    const dateStr = (dt && !isNaN(dt.getTime()))
+        ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+        : '—';
+
+    const semLabel = d.term === 'A' ? '1st Semester'
+                   : d.term === 'B' ? '2nd Semester'
+                   : d.term === 'C' ? 'Summer'
+                   : d.term || '—';
+
+    const ayRaw     = String(d.acadyear || '');
+    const ayDisplay = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
+    const prog      = d.programcode || '—';
+    const yr        = d.yearlevel   || '—';
+    const label     = `${prog} – Year ${yr}`;
+    const source    = d.source || 'official';
+    const isLocal   = source === 'local';
+
+    return `
+    <div class="draft-card" data-vid="${d.versionid}" data-source="${source}">
+        <div class="draft-card-icon" style="${isLocal ? 'background:#fff3e0;color:#e65100;' : ''}">
+            <i class="fas ${isLocal ? 'fa-tools' : 'fa-calendar-alt'}"></i>
+        </div>
+        <div class="draft-card-info">
+            <div class="draft-card-eyebrow">${prog} &bull; Year ${yr}
+                ${isLocal ? '<span style="margin-left:6px;font-size:0.55rem;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:10px;padding:1px 7px;font-weight:900;letter-spacing:0.8px;">LOCAL</span>' : ''}
+            </div>
+            <div class="draft-card-title">${prog} &mdash; Year ${yr}</div>
+            <div class="draft-card-badges">
+                <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft v${d.version_number || 1}</span>
+                <span class="dc-badge dc-badge-ay"><i class="fas fa-graduation-cap"></i> AY ${ayDisplay}</span>
+                <span class="dc-badge dc-badge-sem"><i class="fas fa-book-open"></i> ${semLabel}</span>
+            </div>
+            <div class="draft-card-date"><i class="fas fa-clock" style="margin-right:4px;"></i>Saved ${dateStr}</div>
+        </div>
+        <div class="draft-card-actions">
+            <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
+                <i class="fas fa-eye"></i> View
+            </a>
+            <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">
+                <i class="fas fa-check-circle"></i> Approve
+            </a>
+            <button class="btn-dc btn-dc-delete"
+                onclick="openDeleteModal(${d.versionid}, '${label.replace(/'/g, "\\'")}', this.closest('.draft-card'))">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+        </div>
+    </div>`;
+}
+
+/* ── Render the filtered + deduplicated draft list ── */
+function _renderDrafts(rawData) {
+    const container = document.getElementById('draftsList');
+    const subtitle  = document.getElementById('draftsSubtitle');
+    const setSubtitle = t => { if (subtitle) subtitle.textContent = t; };
+
+    // Normalise source: anything that is not explicitly 'local' is treated as 'official'.
+    // This ensures old drafts (null/undefined source) always appear under Official Scheduler.
+    const filtered = rawData.filter(d => (d.source === 'local' ? 'local' : 'official') === _currentDraftFilter);
+
+    // Deduplicate within the filtered set: keep most recent per program+year
+    const groups = {};
+    filtered.forEach(d => {
+        const key = `${d.programcode || ''}-${d.yearlevel || ''}`;
+        if (!groups[key] || (d.datecreated || '') > (groups[key].datecreated || '')) groups[key] = d;
+    });
+
+    const sorted = Object.values(groups).sort((a, b) =>
+        (b.datecreated || '').localeCompare(a.datecreated || ''));
+
+    if (!sorted.length) {
+        const modeLabel = _currentDraftFilter === 'local' ? 'Local Scheduler' : 'Official Scheduler';
+        container.innerHTML = `
+            <div class="drafts-empty">
+                <div class="drafts-empty-icon"><i class="fas fa-folder-open"></i></div>
+                <div class="drafts-empty-title">No Drafts Yet</div>
+                <div class="drafts-empty-sub">No ${modeLabel} drafts saved yet.</div>
+            </div>`;
+        setSubtitle(`No ${modeLabel} drafts`);
+        const viewAllBtn = document.getElementById('btnDraftsViewAll');
+        if (viewAllBtn) viewAllBtn.style.display = 'none';
+        return;
+    }
+
+    setSubtitle(`${sorted.length} saved draft${sorted.length !== 1 ? 's' : ''}`);
+
+    const firstProg = sorted[0]?.programcode || '';
+    window._draftPrograms  = sorted.map(d => d.programcode).filter(Boolean);
+    window._draftFirstProg = firstProg;
+    const viewAllBtn = document.getElementById('btnDraftsViewAll');
+    if (viewAllBtn) viewAllBtn.style.display = 'flex';
+
+    container.innerHTML = sorted.map(_buildDraftCard).join('');
+}
+
+/* ── Bootstrap ── */
 document.addEventListener('DOMContentLoaded', async () => {
     const container = document.getElementById('draftsList');
     const subtitle  = document.getElementById('draftsSubtitle');
-
-    const setSubtitle = (text) => { if (subtitle) subtitle.textContent = text; };
 
     // ── Delete modal state ──
     let pendingDeleteId   = null;
@@ -28,18 +135,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting…';
         try {
-            const res = await fetch(`/api/schedule/drafts/${pendingDeleteId}`, { method: 'DELETE' });
+            const res  = await fetch(`/api/schedule/drafts/${pendingDeleteId}`, { method: 'DELETE' });
             const text = await res.text();
             let data;
             try { data = JSON.parse(text); }
-            catch { data = { success: false, error: `Server returned HTTP ${res.status}. Try restarting the server.` }; }
+            catch { data = { success: false, error: `Server returned HTTP ${res.status}.` }; }
+
             if (data.success) {
-                pendingDeleteCard && pendingDeleteCard.remove();
+                // Remove from master list and re-render
+                _allDrafts = _allDrafts.filter(d => d.versionid !== pendingDeleteId);
                 closeDcModal();
-                // Update subtitle count
-                const remaining = document.querySelectorAll('.draft-card').length;
-                setSubtitle(`${remaining} saved draft${remaining !== 1 ? 's' : ''}`);
-                if (!remaining) renderEmpty();
+                _renderDrafts(_allDrafts);
             } else {
                 alert('Delete failed: ' + (data.error || 'Unknown error'));
             }
@@ -51,16 +157,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    function renderEmpty() {
-        container.innerHTML = `
-            <div class="drafts-empty">
-                <div class="drafts-empty-icon"><i class="fas fa-folder-open"></i></div>
-                <div class="drafts-empty-title">No Drafts Yet</div>
-                <div class="drafts-empty-sub">Generate a schedule and save it as a draft to see it here.</div>
-            </div>`;
-        setSubtitle('No drafts saved yet');
-    }
-
     // ── Load drafts ──
     try {
         const res  = await fetch('/api/schedule/drafts');
@@ -68,7 +164,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!res.ok || !Array.isArray(data)) {
             const errMsg = (data && data.error) ? data.error : `Server error (${res.status})`;
-            setSubtitle('Could not load drafts');
+            if (subtitle) subtitle.textContent = 'Could not load drafts';
             container.innerHTML = `
                 <div class="drafts-error">
                     <i class="fas fa-exclamation-circle"></i>
@@ -77,83 +173,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        if (!data.length) {
-            renderEmpty();
-            return;
-        }
-
-        // Keep the most recent draft per program + year level
-        const groups = {};
-        data.forEach(d => {
-            const key = `${d.programcode || ''}-${d.yearlevel || ''}`;
-            if (!groups[key] || (d.datecreated || '') > (groups[key].datecreated || '')) {
-                groups[key] = d;
-            }
-        });
-
-        const sorted = Object.values(groups).sort((a, b) =>
-            (b.datecreated || '').localeCompare(a.datecreated || ''));
-
-        const count = sorted.length;
-        setSubtitle(`${count} saved draft${count !== 1 ? 's' : ''}`);
-
-        // Show VIEW ALL button — uses the first (most recent) draft's program as default filter
-        const firstProg = sorted[0]?.programcode || '';
-        window._draftPrograms = sorted.map(d => d.programcode).filter(Boolean);
-        window._draftFirstProg = firstProg;
-        const viewAllBtn = document.getElementById('btnDraftsViewAll');
-        if (viewAllBtn) viewAllBtn.style.display = 'flex';
-
-        container.innerHTML = sorted.map(d => {
-            const dt = d.datecreated ? new Date(d.datecreated) : null;
-            const dateStr = (dt && !isNaN(dt.getTime()))
-                ? dt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-                : '—';
-
-            const semLabel = d.term === 'A' ? '1st Semester'
-                           : d.term === 'B' ? '2nd Semester'
-                           : d.term === 'C' ? 'Summer'
-                           : d.term || '—';
-
-            const ayRaw     = String(d.acadyear || '');
-            const ayDisplay = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
-            const prog      = d.programcode || '—';
-            const yr        = d.yearlevel   || '—';
-            const label     = `${prog} – Year ${yr}`;
-
-            return `
-            <div class="draft-card" data-vid="${d.versionid}">
-                <div class="draft-card-icon">
-                    <i class="fas fa-calendar-alt"></i>
-                </div>
-                <div class="draft-card-info">
-                    <div class="draft-card-eyebrow">${prog} &bull; Year ${yr}</div>
-                    <div class="draft-card-title">${prog} &mdash; Year ${yr}</div>
-                    <div class="draft-card-badges">
-                        <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft v${d.version_number || 1}</span>
-                        <span class="dc-badge dc-badge-ay"><i class="fas fa-graduation-cap"></i> AY ${ayDisplay}</span>
-                        <span class="dc-badge dc-badge-sem"><i class="fas fa-book-open"></i> ${semLabel}</span>
-                    </div>
-                    <div class="draft-card-date"><i class="fas fa-clock" style="margin-right:4px;"></i>Saved ${dateStr}</div>
-                </div>
-                <div class="draft-card-actions">
-                    <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">
-                        <i class="fas fa-check-circle"></i> Approve
-                    </a>
-                    <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
-                        <i class="fas fa-eye"></i> View
-                    </a>
-                    <button class="btn-dc btn-dc-delete"
-                        onclick="openDeleteModal(${d.versionid}, '${label.replace(/'/g, "\\'")}', this.closest('.draft-card'))">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </div>
-            </div>`;
-        }).join('');
+        _allDrafts = data;
+        _renderDrafts(_allDrafts);
 
     } catch (e) {
         console.error('Drafts load error:', e);
-        setSubtitle('Could not load drafts');
+        if (subtitle) subtitle.textContent = 'Could not load drafts';
         container.innerHTML = `
             <div class="drafts-error">
                 <i class="fas fa-exclamation-circle"></i>

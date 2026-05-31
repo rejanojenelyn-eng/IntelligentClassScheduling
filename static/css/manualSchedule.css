@@ -1545,6 +1545,7 @@
 .ts-row-num {
     font-size: 0.55rem; font-weight: 900; color: #bbb;
     letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 1px;
+    display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
 }
 
 /* ── DSS search ── */
@@ -2308,6 +2309,12 @@
     border: none;
     transition: background 0.15s, transform 0.1s;
 }
+.dlp-btn-view {
+    background: #630100;
+    color: white;
+}
+.dlp-btn-view:hover { background: #8b0000; color: white; }
+
 .dlp-btn-approve {
     background: #1a7a2e;
     color: white;
@@ -2337,6 +2344,7 @@
     text-align: center;
 }
 .dlp-loading { color: #630100; }
+.dlp-error { color: #c0392b !important; background: #fff5f5; border: 1px solid #fcc; border-radius: 6px; padding: 16px 20px !important; }
 .dlp-empty i, .dlp-error i { font-size: 2rem; opacity: 0.4; }
 
 /* ── Delete modal ── */

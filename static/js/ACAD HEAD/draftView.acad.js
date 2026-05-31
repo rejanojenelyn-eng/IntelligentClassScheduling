@@ -198,7 +198,13 @@
     };
 
     window.goManual = function() {
-        window.location.href = MANUAL_EDITOR_URL;
+        const ctx  = draftContext;
+        const prog = encodeURIComponent(ctx.program   || '');
+        const yl   = encodeURIComponent(ctx.yearLevel || '');
+        const ay   = encodeURIComponent(ctx.acadYear  || '');
+        const sem  = encodeURIComponent(ctx.term      || '');
+        const src  = ctx.source === 'local' ? 'local' : 'official';
+        window.location.href = `${MANUAL_EDITOR_URL}?mode=program&prog=${prog}&yl=${yl}&ay=${ay}&sem=${sem}&scheduler=${src}`;
     };
 
     window.approveDraft = function() {
@@ -371,6 +377,17 @@
         document.getElementById('dvProgram').textContent   = ctx.program    || '—';
         document.getElementById('dvYearLevel').textContent = yearLabel       || '—';
         document.getElementById('dvVersionBadge').textContent = `DRAFT V${draftVersion}`;
+
+        // Show scheduler type badge
+        const srcLabel = (draftContext.source === 'local') ? 'LOCAL SCHEDULER' : 'OFFICIAL SCHEDULER';
+        const srcColor = (draftContext.source === 'local') ? '#e65100' : '#1a56db';
+        const srcBg    = (draftContext.source === 'local') ? '#fff3e0' : '#e8f0fe';
+        const srcBorder= (draftContext.source === 'local') ? '#ffcc80' : '#b6ccfc';
+        const badge = document.getElementById('dvVersionBadge');
+        badge.insertAdjacentHTML('beforebegin',
+            `<span style="display:inline-block;background:${srcBg};color:${srcColor};border:1.5px solid ${srcBorder};border-radius:12px;padding:3px 12px;font-size:0.68rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;align-self:center;">${srcLabel}</span>`
+        );
+
         document.getElementById('dvContextBar').style.display = 'flex';
 
         document.getElementById('dvLoading').classList.add('hidden');

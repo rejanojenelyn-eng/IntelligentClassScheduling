@@ -9,7 +9,7 @@ let hiddenDbSchedules = new Set();
 let currentBldgId = 'ALL';
 window.currentEditSession = null;
 let _splitMode = null;
-let currentMode = 'subject'; // 'subject' | 'program'
+let currentMode = 'room'; // 'room' (Room View tab) | 'program' (Program View tab)
 
 let _subjInfo         = null;
 let _facInfo          = null;
@@ -555,9 +555,13 @@ function switchMode(mode) {
     currentMode = mode;
     const isByProg = mode === 'program';
 
-    document.getElementById('btn-mode-subject').classList.toggle('active', !isByProg);
-    document.getElementById('btn-mode-program').classList.toggle('active', isByProg);
+    // Legacy mode-toggle buttons (still update their CSS for Room View's internal toggle)
+    const msBtnS = document.getElementById('btn-mode-subject');
+    const msBtnP = document.getElementById('btn-mode-program');
+    if (msBtnS) msBtnS.classList.toggle('active', !isByProg);
+    if (msBtnP) msBtnP.classList.toggle('active', isByProg);
 
+    // In Room View, show/hide legacy sidebar label
     const sidebar  = document.querySelector('.rooms-sidebar');
     const progLbl  = document.getElementById('prog-view-label');
     if (sidebar)  sidebar.style.display  = isByProg ? 'none' : '';
@@ -593,19 +597,24 @@ async function renderProgramTimetable() {
     const wrapper = document.getElementById('gridWrapper');
     wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
 
-    const labelEl = document.getElementById('prog-view-label-text');
+    // Update the standalone Program View header label (shown when in PROGRAM VIEW tab)
+    const pvLabelEl = document.getElementById('pvTimetableLabel');
+    // Legacy in-grid label (for Room View program mode, if still used)
+    const labelEl   = document.getElementById('prog-view-label-text');
+
     if (!prog || !yl || !sem || !ay) {
-        if (labelEl) labelEl.textContent = 'SELECT PROGRAM, YEAR LEVEL, AND SEMESTER TO VIEW';
+        const noSelMsg = '— Select Program, Year Level &amp; Semester —';
+        if (pvLabelEl) pvLabelEl.innerHTML = noSelMsg;
+        if (labelEl)   labelEl.textContent  = 'SELECT PROGRAM, YEAR LEVEL, AND SEMESTER TO VIEW';
         return;
     }
 
     const semLabels = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' };
     const yrLabels  = { '1':'1ST YEAR','2':'2ND YEAR','3':'3RD YEAR','4':'4TH YEAR','5':'5TH YEAR' };
     const progName  = document.getElementById('prog_trigger_text').innerText || prog;
-    if (labelEl) {
-        labelEl.textContent =
-            `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
-    }
+    const headerTxt = `${progName.toUpperCase()} &mdash; ${yrLabels[yl] || yl} &nbsp;|&nbsp; A.Y ${ay} &nbsp;|&nbsp; ${semLabels[sem] || sem}`;
+    if (pvLabelEl) pvLabelEl.innerHTML  = headerTxt;
+    if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
 
     try {
         const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&_t=${Date.now()}`;
@@ -613,43 +622,33 @@ async function renderProgramTimetable() {
         if (!resp.ok) return;
         const raw = await resp.json();
 
-        // Dedup: prefer Published over Draft for the same key
+        // Program View is a READ-ONLY section schedule visualizer.
+        // It shows only what is actually saved in the DB (Published + active Draft).
+        // Unsaved/pending entries from pendingManualSchedule are intentionally excluded:
+        // they are incomplete, may belong to a different subject's edit session, and cause
+        // phantom pills for sessions that were never saved. Users see their unsaved work
+        // in Room View while they are actively editing.
         const sessByKey = new Map();
         (raw || []).forEach(s => {
             const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
             const existing = sessByKey.get(key);
+            // Prefer Published over Draft for the same slot; otherwise keep first seen
             if (!existing || s.status === 'Published') sessByKey.set(key, s);
         });
-        const dbSessions = Array.from(sessByKey.values());
 
-        const localSessions = pendingManualSchedule
-            .filter(c => c.course === prog && String(c.year_level) === String(yl) && c.ay === ay && c.sem === sem)
-            .map(c => ({
-                subjectcode:  c.subject_code,
-                subjectname:  c.subject_name,
-                instructor:   c.instructor,
-                daydesc:      c.day,
-                starttimeid:  getTimeSlotIndex(c.start_time),
-                endtimeid:    getTimeSlotIndex(c.end_time),
-                start_fmt:    c.start_time,
-                end_fmt:      c.end_time,
-                roomname:     c.room,
-                room_id:      c.room_id,
-                programcode:  prog,
-                year_level:   yl,
-                isLocal:      true,
-                fromExisting: c.fromExisting || false,
-                temp_id:      c.temp_id,
-                versionid:    c.versionid || null,
-                status:       c.fromExisting ? (c.status || 'Draft') : 'Draft',
-                isPreview:    c.isPreview || false
-            }));
-
-        _renderProgPills([...dbSessions, ...localSessions], prog, yl);
+        _renderProgPills(Array.from(sessByKey.values()), prog, yl);
     } catch (e) { console.error('[renderProgramTimetable]', e); }
 }
 
+// Render-token guard: each call to _renderProgPills increments this counter.
+// A deferred RAF callback checks if its token still matches — if not, a newer
+// call already ran and the stale RAF is cancelled. Prevents duplicate pills
+// from stacked RAF calls when switching tabs rapidly.
+let _progPillsToken = 0;
+
 function _renderProgPills(sessions, prog, yl) {
+    const token = ++_progPillsToken;
+
     const wrapper = document.getElementById('gridWrapper');
     const table   = document.getElementById('mainTimetable');
     wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
@@ -660,7 +659,11 @@ function _renderProgPills(sessions, prog, yl) {
     const thead     = table.querySelector('thead');
 
     if (!firstCell || firstCell.offsetWidth === 0) {
-        requestAnimationFrame(() => _renderProgPills(sessions, prog, yl));
+        // Defer until the grid is laid out; abort if a newer render has been requested
+        requestAnimationFrame(() => {
+            if (token !== _progPillsToken) return;
+            _renderProgPills(sessions, prog, yl);
+        });
         return;
     }
 
@@ -712,17 +715,27 @@ function _renderProgPills(sessions, prog, yl) {
             pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
 
             const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
-            pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${sess.instructor || ''}\n${sess.roomname || ''}`;
+            const roomDisp  = sess.roomname || 'TBA';
+            const subjName  = sess.subjectname || sess.subjectcode;
+            pill.title = `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}`;
 
-            const compact = pillH < 55;
+            // Pill height thresholds for progressive info density
+            const compact   = pillH < 42;   // code only
+            const medium    = pillH < 70;   // code + room
             const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
-            const _pLabel = `${sess.subjectcode} — ${sess.daydesc} in ${sess.roomname || 'TBA'}`;
+            const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
             const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null }));
             const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
-            pill.innerHTML = `
-                ${dropBtn}
-                <div class="pill-subject" style="margin-top:8px;">${sess.subjectcode}</div>
-                ${compact ? '' : `<div style="font-size:0.6rem;">${instrLast}</div><div style="font-size:0.55rem;opacity:.8;">${sess.roomname || ''}</div>`}`;
+            pill.innerHTML = compact
+                ? `${dropBtn}<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
+                : medium
+                    ? `${dropBtn}
+                       <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                       <div style="font-size:0.55rem;opacity:0.85;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`
+                    : `${dropBtn}
+                       <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                       <div style="font-size:0.6rem;margin-top:1px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${instrLast}</div>
+                       <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
 
             pill.onclick = (e) => {
                 if (e.target.closest('.pill-drop-btn')) return;
@@ -1411,6 +1424,7 @@ window._dropSession = async function(sessDataEncoded, event) {
     else renderGrid(currentRoom, formAyFilter(), formSemFilter());
 
     if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+    if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
 };
 
 window.dropLocalClass = function(tempId, event) {
@@ -1584,16 +1598,17 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             const currentSubj2 = document.getElementById('sel_subj').value;
             if (currentSubj2) {
                 try {
-                    const dbResp2 = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
-                    const dbData2 = await dbResp2.json();
-                    if (dbData2.success && dbData2.sessions) {
-                        const subjSessions2 = dbData2.sessions.filter(s => s.subjectcode === currentSubj2);
-                        if (subjSessions2.length && typeof _loadExistingSessionsIntoSlices === 'function') {
-                            await _loadExistingSessionsIntoSlices(subjSessions2);
-                        } else {
-                            document.getElementById('time-slots-container').innerHTML = '';
-                            if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+                    // Use existing_sessions (returns both Draft and Published with correct statuses)
+                    // so the editor immediately shows the correct Published/remaining-Draft state.
+                    const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+                    const exData2 = await exResp2.json();
+                    if (exData2.success && exData2.sessions && exData2.sessions.length) {
+                        if (typeof _loadExistingSessionsIntoSlices === 'function') {
+                            await _loadExistingSessionsIntoSlices(exData2.sessions);
                         }
+                    } else {
+                        document.getElementById('time-slots-container').innerHTML = '';
+                        if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
                     }
                 } catch(e) {
                     document.getElementById('time-slots-container').innerHTML = '';
@@ -1604,6 +1619,9 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             }
             if (typeof _updateSubjectList === 'function') await _updateSubjectList();
             if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
+            // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
+            if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
+            if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
         } else if (data.violations && data.violations.length) {
             let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
@@ -1626,6 +1644,7 @@ function getTimeSlotIndex(timeStr) {
 }
 
 async function renderGrid(roomId, ayFilter = '', semFilter = '') {
+    if (currentMode === 'program') return;
     const wrapper = document.getElementById('gridWrapper');
     const table = document.getElementById('mainTimetable');
     wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
@@ -1766,6 +1785,24 @@ function filterByBuilding(bldgId, btnElement) {
     currentBldgId = String(bldgId);
     document.querySelectorAll('.bldg-tab').forEach(btn => btn.classList.remove('active'));
     btnElement.classList.add('active');
+
+    // If the currently selected room doesn't belong to this building, clear the selection
+    const currentRoomId = document.getElementById('sel_room').value;
+    if (currentRoomId) {
+        const currentRoom = allRooms.find(r => String(r.id) === String(currentRoomId));
+        const stillVisible = currentRoom &&
+            (bldgId === 'ALL' || String(currentRoom.bldg_id) === String(bldgId));
+        if (!stillVisible) {
+            document.getElementById('sel_room').value          = '';
+            document.getElementById('room_display_name').value = '';
+            const trigger = document.getElementById('room_trigger_text');
+            if (trigger) trigger.textContent = '-- Select Room --';
+            _roomInfo = null;
+            // Clear pills — renderGrid returns early when roomId is empty
+            renderGrid('', formAyFilter(), formSemFilter());
+        }
+    }
+
     renderRooms();
 }
 

@@ -2,6 +2,7 @@
     let allVersions = [];
     let pendingRestoreId = null;
     let pendingRestoreLabel = '';
+    let pendingRestoreOrigStatus = 'Draft';  // 'Draft' | 'Published'
 
     // ── label helpers ──────────────────────────────────────────────────────────
     const semLabel = t =>
@@ -70,7 +71,10 @@
             if (i > 0) html += '<span class="vh-version-arrow"><i class="fas fa-chevron-right"></i></span>';
 
             const vNum      = getVNum(v);
-            const isCurrent = vNum > 0 && vNum === maxNum;
+            // Only mark as current if this revision is still actively in the right status.
+            // An archived Draft (fully published) must show Restore, not "Current Draft".
+            const isCurrent = vNum > 0 && vNum === maxNum
+                && (v.status || '').toLowerCase() === chainType.toLowerCase();
             const progSafe  = (v.programcode || '').replace(/'/g, "\\'");
             const label     = `${chainType} R${vNum}`;
             const badge     = isCurrent ? ` &bull; Current ${chainType}` : '';
@@ -102,7 +106,7 @@
                         <i class="fas fa-eye"></i> View
                     </a>` : ''}
                     ${!isCurrent ? `<button class="btn-vh-restore"
-                        onclick="vhOpenRestoreModal(${v.versionid},'${labelSafe}','${progSafe}',${v.yearlevel})"
+                        onclick="vhOpenRestoreModal(${v.versionid},'${labelSafe}','${progSafe}',${v.yearlevel},'${v.original_status || chainType}')"
                         title="Restore this revision">
                         <i class="fas fa-undo"></i> Restore
                     </button>` : ''}
@@ -252,12 +256,46 @@
     };
 
     // ── restore modal ─────────────────────────────────────────────────────────
-    window.vhOpenRestoreModal = function (versionId, vLabel, prog, yl) {
-        pendingRestoreId    = versionId;
-        pendingRestoreLabel = `${vLabel} of ${prog} — Year ${yl}`;
-        document.getElementById('vhRestoreModalBody').textContent =
-            `This will restore ${pendingRestoreLabel} to Draft status. ` +
-            `Any existing Draft for this program/year/semester will be archived first.`;
+    let selectedRestoreMode = 'draft';  // 'draft' | 'replace'
+
+    window.vhSelectMode = function (mode) {
+        selectedRestoreMode = mode;
+        const draftEl   = document.getElementById('vhOptDraft');
+        const replaceEl = document.getElementById('vhOptReplace');
+        if (!draftEl || !replaceEl) return;
+        [draftEl, replaceEl].forEach(el => el.classList.remove('selected'));
+        (mode === 'draft' ? draftEl : replaceEl).classList.add('selected');
+    };
+
+    window.vhOpenRestoreModal = function (versionId, vLabel, prog, yl, origStatus) {
+        pendingRestoreId         = versionId;
+        pendingRestoreLabel      = `${vLabel} of ${prog} — Year ${yl}`;
+        pendingRestoreOrigStatus  = origStatus || 'Draft';
+
+        // Default recommendation is type-aware:
+        // Published revisions → recommend "Restore as Published" (Full Replace mode)
+        //   → archives current Published, creates new current active Published from this snapshot
+        // Draft revisions     → recommend "Restore as Draft"
+        //   → archives current Draft, creates new Draft; Published is untouched
+        const isPublished = pendingRestoreOrigStatus === 'Published';
+        const defaultMode = isPublished ? 'replace' : 'draft';
+        selectedRestoreMode = defaultMode;
+        vhSelectMode(defaultMode);
+
+        // Show RECOMMENDED badge on the appropriate option
+        const draftBadge   = document.getElementById('vhDraftBadge');
+        const replaceBadge = document.getElementById('vhReplaceBadge');
+        const replaceTitle = document.getElementById('vhReplaceTitle');
+        const replaceDesc  = document.getElementById('vhReplaceDesc');
+        if (draftBadge)   draftBadge.style.display   = isPublished ? 'none' : '';
+        if (replaceBadge) replaceBadge.style.display  = isPublished ? '' : 'none';
+        if (replaceTitle) replaceTitle.textContent     = isPublished ? 'Restore as Published' : 'Full Replace (Draft)';
+        if (replaceDesc) {
+            replaceDesc.textContent = isPublished
+                ? 'The restored snapshot becomes the new current active Published revision. The current Published is archived first.'
+                : 'Archive the current Draft and create a new Draft from this snapshot. Same effect as Restore as Draft for a Draft revision.';
+        }
+
         document.getElementById('vhRestoreModal').classList.add('active');
     };
 
@@ -274,7 +312,11 @@
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Restoring&hellip;';
 
         try {
-            const res  = await fetch(`/api/schedule/versions/${pendingRestoreId}/restore`, { method: 'POST' });
+            const res  = await fetch(`/api/schedule/versions/${pendingRestoreId}/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ restore_mode: selectedRestoreMode })
+            });
             const data = await res.json();
             if (data.success) {
                 vhCloseRestoreModal();
