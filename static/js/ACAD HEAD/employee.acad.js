@@ -36,11 +36,14 @@ function hideLoading() {
 window.addEventListener('pageshow', hideLoading);
 
 // --- IMPORT TYPE SELECTOR ---
+let _currentImportFmt = null;  // tracks which format modal opened the review
+
 function openImportTypeModal()  { document.getElementById('importTypeModal').style.display = 'flex'; }
 function closeImportTypeModal() { document.getElementById('importTypeModal').style.display = 'none'; }
 function openImportModal() { openImportTypeModal(); }
 
 function openEmpCsvModal()  {
+    _currentImportFmt = 'csv';
     closeImportTypeModal();
     resetEmpColCustomization('csv');
     document.getElementById('empCsvError').style.display = 'none';
@@ -49,6 +52,7 @@ function openEmpCsvModal()  {
 function closeEmpCsvModal() { document.getElementById('empCsvModal').style.display = 'none'; }
 
 function openEmpXlsxModal()  {
+    _currentImportFmt = 'xlsx';
     closeImportTypeModal();
     resetEmpColCustomization('xlsx');
     document.getElementById('empXlsxError').style.display = 'none';
@@ -57,6 +61,7 @@ function openEmpXlsxModal()  {
 function closeEmpXlsxModal() { document.getElementById('empXlsxModal').style.display = 'none'; }
 
 function openEmpPdfModal()  {
+    _currentImportFmt = 'pdf';
     closeImportTypeModal();
     resetEmpColCustomization('pdf');
     document.getElementById('empPdfError').style.display = 'none';
@@ -65,6 +70,7 @@ function openEmpPdfModal()  {
 function closeEmpPdfModal() { document.getElementById('empPdfModal').style.display = 'none'; }
 
 function openEmpDocxModal()  {
+    _currentImportFmt = 'docx';
     closeImportTypeModal();
     resetEmpColCustomization('docx');
     document.getElementById('empDocxError').style.display = 'none';
@@ -72,7 +78,13 @@ function openEmpDocxModal()  {
 }
 function closeEmpDocxModal() { document.getElementById('empDocxModal').style.display = 'none'; }
 
-function closeEmpReviewModal() { document.getElementById('empReviewModal').style.display = 'none'; }
+function closeEmpReviewModal() {
+    document.getElementById('empReviewModal').style.display = 'none';
+    // Return to the format-specific modal that was open before the review
+    const prevModal = { csv: 'empCsvModal', xlsx: 'empXlsxModal', pdf: 'empPdfModal', docx: 'empDocxModal' };
+    const mid = _currentImportFmt && prevModal[_currentImportFmt];
+    if (mid) document.getElementById(mid).style.display = 'flex';
+}
 
 // --- MODAL CONTROLS ---
 function openAddModal() { document.getElementById("addEmployeeModal").style.display = "block"; }
@@ -222,7 +234,8 @@ function _applyEmpColMapToRows(rawRows, colMap) {
         const emp = {};
         for (const f of fields) {
             const idx = colMap[f];
-            emp[f] = (idx !== undefined && idx < row.length) ? (row[idx] || '').trim() : '';
+            const raw = (idx !== undefined && idx < row.length) ? (row[idx] || '') : '';
+            emp[f] = _normCell(raw);
         }
         if (!emp.emp_num && !emp.last_name) continue;
         result.push(emp);
@@ -331,6 +344,18 @@ function _esc(v) {
     return String(v || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+const _NORM_SUFFIX_RE = /([A-Za-z]) (tion|sion|ment|ness|ary|ery|ory|ive|ful|ism|ist|ity|age|ogy|ics|ies|ees|ers|ons|ings|ry|ty|ny|gy|cy|dy|py|nt|nd|ng|ct|pt|lt|st|xt|ss|ff|ll|al|el|er|or|ar|ed|en|es|rs|ts|ns|ls|ds|ee|oo)(?=[ \t,;.:()\-\/']|$)/gi;
+function _normCell(text) {
+    if (!text) return '';
+    let s = String(text).replace(/\s+/g, ' ').trim();
+    for (let i = 0; i < 6; i++) {
+        const prev = s;
+        s = s.replace(_NORM_SUFFIX_RE, (_, a, b) => a + b);
+        if (s === prev) break;
+    }
+    return s.replace(/\s+/g, ' ').trim();
+}
+
 function _rebuildEmpReviewTable() {
     const tbody = document.getElementById('empReviewTableBody');
     tbody.innerHTML = '';
@@ -344,11 +369,12 @@ function _buildEmpRow(emp, idx) {
     const fields = ['emp_num','last_name','first_name','middle_name','email','contact','specialization','emp_type','status','designation'];
     if (!emp.emp_num && !emp.last_name) tr.classList.add('row-warning');
 
-    tr.innerHTML = fields.map(f => `
-        <td><input class="rev-input ${(!emp.emp_num && f==='emp_num') ? 'rev-missing' : ''}" type="text"
-            value="${_esc(emp[f])}" placeholder="${f.replace('_',' ')}"
-            onchange="_updateEmpField(${idx},'${f}',this.value)"></td>`
-    ).join('') + `
+    tr.innerHTML = fields.map(f => {
+        const raw = _normCell(emp[f]);
+        return `<td><input class="rev-input ${(!emp.emp_num && f==='emp_num') ? 'rev-missing' : ''}" type="text"
+            value="${_esc(raw)}" placeholder="${f.replace(/_/g,' ')}"
+            onchange="_updateEmpField(${idx},'${f}',_normCell(this.value))"></td>`;
+    }).join('') + `
         <td><button type="button" class="btn-row-delete" onclick="_deleteEmpRow(${idx})" title="Remove">
             <i class="fas fa-times"></i></button></td>`;
     return tr;
@@ -371,36 +397,218 @@ function addEmpReviewRow() {
     if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-function confirmEmpImport() {
+// ── Conflict modal state ──────────────────────────────────────────────────────
+let _conflictData      = { active: [], archived: [] };
+let _archivedDecisions = {};   // emp_num → { action: 'restore'|'skip', archiveid }
+
+async function confirmEmpImport() {
     const valid = _empExtracted.filter(e => e.emp_num && e.emp_num.trim());
-    if (!valid.length) { alert('No valid employees to import. Each row must have an Employee Number.'); return; }
-    document.getElementById('empConfirmData').value = JSON.stringify(valid);
+    if (!valid.length) {
+        _showImportAlert('No valid employees to import. Each row must have an Employee Number.');
+        return;
+    }
+    const empNums = valid.map(e => e.emp_num.trim());
+    try {
+        const resp = await fetch('/faculty/import/check-duplicates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emp_nums: empNums }),
+        });
+        const dup = await resp.json();
+        if ((dup.archived || []).length > 0 || (dup.active || []).length > 0) {
+            _conflictData      = dup;
+            _archivedDecisions = {};
+            (dup.archived || []).forEach(e => {
+                _archivedDecisions[e.emp_num] = { action: 'skip', archiveid: e.archiveid };
+            });
+            _openConflictModal();
+            return;
+        }
+    } catch (e) { console.warn('Duplicate check failed, proceeding:', e); }
+    _submitImport(_empExtracted.filter(e => e.emp_num && e.emp_num.trim()));
+}
+
+function _openConflictModal() {
+    const archived = _conflictData.archived || [];
+    const active   = _conflictData.active   || [];
+    const total    = archived.length + active.length;
+
+    document.getElementById('conflictSummaryText').textContent =
+        `${total} conflict${total !== 1 ? 's' : ''} found — review each before continuing.`;
+
+    const list = document.getElementById('conflictCardList');
+    list.innerHTML = '';
+
+    archived.forEach(emp => {
+        const div = document.createElement('div');
+        div.className = 'conflict-card archived-conflict decided-skip';
+        div.id = `ccard-${emp.emp_num}`;
+        div.innerHTML = `
+            <div class="conflict-card-info">
+                <span class="conflict-card-badge badge-archived-emp">IN ARCHIVE</span>
+                <div class="conflict-card-name">${_esc(emp.name || emp.emp_num)}</div>
+                <div class="conflict-card-meta">
+                    <span><i class="fas fa-id-badge"></i>${_esc(emp.emp_num)}</span>
+                    ${emp.typename ? `<span><i class="fas fa-briefcase"></i>${_esc(emp.typename)}</span>` : ''}
+                    ${emp.status   ? `<span><i class="fas fa-circle"></i>${_esc(emp.status)}</span>`   : ''}
+                </div>
+                <div class="conflict-card-note">This employee exists in the archive. Choose an action:</div>
+            </div>
+            <div class="conflict-card-actions" id="cact-${emp.emp_num}">
+                <button class="btn-conflict-restore" onclick="_markRestore('${emp.emp_num}',${emp.archiveid})">
+                    <i class="fas fa-undo-alt"></i> Restore Employee
+                </button>
+                <button class="btn-conflict-skip" onclick="_markSkip('${emp.emp_num}',${emp.archiveid})">
+                    <i class="fas fa-forward"></i> Skip Import
+                </button>
+            </div>`;
+        list.appendChild(div);
+    });
+
+    active.forEach(emp => {
+        const div = document.createElement('div');
+        div.className = 'conflict-card active-conflict';
+        div.innerHTML = `
+            <div class="conflict-card-info">
+                <span class="conflict-card-badge badge-active-emp">ACTIVE EMPLOYEE</span>
+                <div class="conflict-card-name">${_esc(emp.name || emp.emp_num)}</div>
+                <div class="conflict-card-meta">
+                    <span><i class="fas fa-id-badge"></i>${_esc(emp.emp_num)}</span>
+                    ${emp.typename ? `<span><i class="fas fa-briefcase"></i>${_esc(emp.typename)}</span>` : ''}
+                    ${emp.status   ? `<span><i class="fas fa-circle"></i>${_esc(emp.status)}</span>`   : ''}
+                </div>
+                <div class="conflict-card-note">
+                    This employee already exists in the active employee list. Import will be skipped automatically.
+                </div>
+            </div>
+            <div class="conflict-auto-skip"><i class="fas fa-ban"></i> Will be skipped</div>`;
+        list.appendChild(div);
+    });
+
+    const btn = document.getElementById('conflictContinueBtn');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-arrow-right"></i> Continue Import';
+    document.getElementById('importConflictModal').style.display = 'flex';
+}
+
+function _markRestore(empNum, archiveid) {
+    _archivedDecisions[empNum] = { action: 'restore', archiveid };
+    const card = document.getElementById(`ccard-${empNum}`);
+    const acts = document.getElementById(`cact-${empNum}`);
+    if (card) card.className = 'conflict-card archived-conflict decided-restore';
+    if (acts) acts.innerHTML = `
+        <span class="conflict-card-badge badge-restored-emp"><i class="fas fa-check"></i> Will be Restored</span>
+        <button class="btn-conflict-skip" style="margin-top:5px;" onclick="_markSkip('${empNum}',${archiveid})">
+            Undo — Skip Instead
+        </button>`;
+}
+
+function _markSkip(empNum, archiveid) {
+    _archivedDecisions[empNum] = { action: 'skip', archiveid };
+    const card = document.getElementById(`ccard-${empNum}`);
+    const acts = document.getElementById(`cact-${empNum}`);
+    if (card) card.className = 'conflict-card archived-conflict decided-skip';
+    if (acts) acts.innerHTML = `
+        <span class="conflict-card-badge badge-skipped-emp"><i class="fas fa-forward"></i> Will be Skipped</span>
+        <button class="btn-conflict-restore" style="margin-top:5px;" onclick="_markRestore('${empNum}',${archiveid})">
+            Undo — Restore Instead
+        </button>`;
+}
+
+function _cancelConflict() {
+    document.getElementById('importConflictModal').style.display = 'none';
+}
+
+async function _proceedAfterConflict() {
+    const btn = document.getElementById('conflictContinueBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing…';
+
+    const allConflictNums = new Set([
+        ...(_conflictData.archived || []).map(e => e.emp_num),
+        ...(_conflictData.active   || []).map(e => e.emp_num),
+    ]);
+
+    const toRestore = Object.entries(_archivedDecisions)
+        .filter(([, v]) => v.action === 'restore' && v.archiveid);
+
+    for (const [, v] of toRestore) {
+        try {
+            await fetch('/faculty/import/restore-archived', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ archive_id: v.archiveid }),
+            });
+        } catch (e) { console.warn('Restore failed:', e); }
+    }
+
+    _cancelConflict();
+    const remaining = _empExtracted.filter(e => !allConflictNums.has((e.emp_num || '').trim()));
+    if (!remaining.length) {
+        _showImportAlert('All employees in the import list are conflicts. Nothing new to import.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-arrow-right"></i> Continue Import';
+        return;
+    }
+    _submitImport(remaining);
+}
+
+function _submitImport(employees) {
+    const _fields = ['emp_num','last_name','first_name','middle_name',
+                     'email','contact','specialization','emp_type','status','designation'];
+    const cleaned = employees.map(emp => {
+        const out = {};
+        _fields.forEach(f => { out[f] = _normCell(emp[f] || ''); });
+        return out;
+    });
+    document.getElementById('empConfirmData').value = JSON.stringify(cleaned);
     showLoading('Saving employees to database…');
     document.getElementById('empConfirmForm').submit();
 }
 
-function openEditFromEl(el) {
-    const emp = JSON.parse(el.dataset.emp);
-    openEditModal(emp.employeenumber, emp.firstname, emp.middlename || '', emp.lastname,
-                  emp.email, emp.contactnumber, emp.specializationid,
-                  emp.employeetypeid, emp.designationid || '', emp.employeestatus);
+function _showImportAlert(msg) {
+    const banner = document.getElementById('empReviewBanner');
+    if (!banner) { alert(msg); return; }
+    const el = document.createElement('div');
+    el.className = 'pdf-analyze-error';
+    el.style.marginTop = '8px';
+    el.textContent = msg;
+    banner.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
 }
 
-function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
-    document.getElementById("edit_emp_num").value = empNum;
-    document.getElementById("edit_f_name").value = fName;
-    document.getElementById("edit_m_name").value = mName;
-    document.getElementById("edit_l_name").value = lName;
-    document.getElementById("edit_email").value = email;
-    document.getElementById("edit_contact").value = contact;
-    document.getElementById("edit_spec").value = specId;
-    document.getElementById("edit_type").value = typeId;
-    document.getElementById("edit_designation").value = desigId;
-    document.getElementById("edit_status").value = status;
-    toggleDesignation('edit');
-    document.getElementById("editEmployeeModal").style.display = "block";
+// --- ARCHIVE MODAL ---
+let _archiveEmpNum = null;
+let _archiveIdsForBulk = [];
+
+function openArchiveModal(empNum, name) {
+    _archiveEmpNum = empNum;
+    document.getElementById('archiveEmployeeName').textContent = name;
+    document.getElementById('confirmArchiveBtn').href = `/archive_employee/${empNum}`;
+    document.getElementById('archiveConfirmModal').style.display = 'block';
 }
-function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
+function closeArchiveModal() { document.getElementById('archiveConfirmModal').style.display = 'none'; }
+
+function applyBulkArchive() {
+    _archiveIdsForBulk = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+    if (!_archiveIdsForBulk.length) return;
+    document.getElementById('bulkArchiveCount').textContent = _archiveIdsForBulk.length;
+    document.getElementById('bulkArchiveConfirmModal').style.display = 'block';
+}
+function closeBulkArchiveModal() { document.getElementById('bulkArchiveConfirmModal').style.display = 'none'; }
+
+document.getElementById('confirmBulkArchiveBtn').addEventListener('click', function () {
+    this.disabled = true;
+    this.textContent = 'Archiving…';
+    fetch('/bulk_archive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_ids: _archiveIdsForBulk }),
+    }).then(r => r.json()).then(data => {
+        if (data.success) window.location.reload();
+        else { alert(data.error || 'Error archiving employees.'); this.disabled = false; this.textContent = 'ARCHIVE ALL'; }
+    }).catch(() => { alert('Network error.'); this.disabled = false; this.textContent = 'ARCHIVE ALL'; });
+});
 
 function toggleDesignation(modalType) {
     const typeSelect = document.getElementById(`${modalType}_type`);
@@ -413,26 +621,28 @@ function toggleDesignation(modalType) {
 
 // --- FILTERING ---
 function filterTable() {
-    let nameInput = document.getElementById("searchInput").value.toUpperCase();
-    let typeInput = document.getElementById("typeFilter").value.toUpperCase();
-    let statusInput = document.getElementById("statusFilter").value.toUpperCase();
-    let specInput = document.getElementById("specFilter").value.toUpperCase();
+    const searchInput  = document.getElementById("searchInput").value.toUpperCase();
+    const typeInput    = document.getElementById("typeFilter").value.toUpperCase();
+    const statusInput  = document.getElementById("statusFilter").value.toUpperCase();
+    const specInput    = document.getElementById("specFilter").value.toUpperCase();
 
-    let table = document.getElementById("instructorTable");
-    let tr = table.getElementsByTagName("tbody")[0].getElementsByTagName("tr");
+    const table = document.getElementById("instructorTable");
+    const tr    = table.getElementsByTagName("tbody")[0].getElementsByTagName("tr");
 
     for (let i = 0; i < tr.length; i++) {
-        let nameTxt = tr[i].querySelector(".emp-name").textContent.toUpperCase();
-        let specTxt = tr[i].querySelector(".emp-spec").textContent.toUpperCase();
-        let typeTxt = tr[i].querySelector(".emp-type").textContent.toUpperCase();
-        let statusTxt = tr[i].querySelector(".emp-status").textContent.toUpperCase();
+        const nameTxt   = (tr[i].querySelector(".emp-name")?.textContent || '').toUpperCase();
+        // Employee number is stored as the checkbox value (not a visible column)
+        const empNumTxt = (tr[i].querySelector('.row-check')?.value || '').toUpperCase();
+        const specTxt   = (tr[i].querySelector(".emp-spec")?.textContent   || '').toUpperCase();
+        const typeTxt   = (tr[i].querySelector(".emp-type")?.textContent   || '').toUpperCase();
+        const statusTxt = (tr[i].querySelector(".emp-status")?.textContent || '').toUpperCase();
 
-        let matchName = nameTxt.includes(nameInput);
-        let matchType = typeInput === "" || typeTxt.trim() === typeInput;
-        let matchStatus = statusInput === "" || statusTxt.trim() === statusInput;
-        let matchSpec = specInput === "" || specTxt.trim() === specInput;
+        const matchSearch = nameTxt.includes(searchInput) || empNumTxt.includes(searchInput);
+        const matchType   = typeInput   === "" || typeTxt.trim()   === typeInput;
+        const matchStatus = statusInput === "" || statusTxt.trim() === statusInput;
+        const matchSpec   = specInput   === "" || specTxt.trim()   === specInput;
 
-        tr[i].style.display = (matchName && matchType && matchStatus && matchSpec) ? "" : "none";
+        tr[i].style.display = (matchSearch && matchType && matchStatus && matchSpec) ? "" : "none";
     }
 }
 
@@ -693,14 +903,44 @@ async function executeExport() {
     }
 }
 
-// --- CHECKBOX SELECT ALL ---
+function clearSelection() {
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+    const sa = document.getElementById('selectAll');
+    if (sa) { sa.checked = false; sa.indeterminate = false; }
+    _updateSelectedCount();
+}
+
+// --- CHECKBOX SELECT ALL + COUNTER ---
+function _updateSelectedCount() {
+    const n = document.querySelectorAll('.row-check:checked').length;
+    const countEl = document.getElementById('selectedCount');
+    const labelEl = document.getElementById('selectedLabel');
+    const row = document.getElementById('bulkActionsRow');
+    if (countEl) countEl.textContent = n;
+    if (labelEl) labelEl.textContent = n === 1 ? 'employee' : 'employees';
+    if (row) row.style.display = n > 0 ? 'flex' : 'none';
+}
+
 document.getElementById("selectAll").addEventListener("change", function () {
     document.querySelectorAll('.row-check').forEach(cb => cb.checked = this.checked);
+    _updateSelectedCount();
+});
+
+document.addEventListener('change', e => {
+    if (e.target.classList.contains('row-check')) {
+        _updateSelectedCount();
+        // Sync selectAll checkbox state
+        const all = document.querySelectorAll('.row-check');
+        const checked = document.querySelectorAll('.row-check:checked');
+        const sa = document.getElementById('selectAll');
+        if (sa) sa.indeterminate = checked.length > 0 && checked.length < all.length;
+        if (sa) sa.checked = checked.length === all.length;
+    }
 });
 
 // --- CLOSE MODALS ON BACKDROP CLICK ---
 window.onclick = function (event) {
-    ["addEmployeeModal", "editEmployeeModal",
+    ["addEmployeeModal", "archiveConfirmModal", "bulkArchiveConfirmModal",
      "importTypeModal", "empCsvModal", "empXlsxModal",
      "empPdfModal", "empDocxModal", "empReviewModal"].forEach(id => {
         const el = document.getElementById(id);

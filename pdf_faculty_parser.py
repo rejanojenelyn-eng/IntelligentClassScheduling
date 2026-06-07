@@ -92,14 +92,17 @@ _X_TOL = 8   # points tolerance for column boundary detection
 def _clean(v):
     if v is None: return ''
     s = str(v)
-    # Some PDF renderers/converters append trailing spaces before visual line breaks.
-    # Strip them so the join rule below sees the real last char.
+    # Strip trailing spaces before visual line breaks.
     s = re.sub(r' +\n', '\n', s)
-    # Join \n when preceded by word/email/phone chars (mid-token visual wrap).
-    # "HERNANDE\nZ"→"HERNANDEZ"  "Tempora\nry"→"Temporary"  "ALCANTA\nRA"→"ALCANTARA"
-    # "0917-55\n5-0033"→"0917-555-0033"  "enrico.\nsuinan"→"enrico.suinan"
-    s = re.sub(r'([A-Za-z0-9.@\-])\n', r'\1', s)
-    s = re.sub(r'\n', ' ', s)   # any remaining \n → space
+    # Only join WITHOUT a space for clear mid-word visual wraps:
+    #   "Temporar\ny…"  → "Temporary…"  (lowercase suffix)
+    #   "ALCANTA\nRA"   → "ALCANTARA"   (1-2 ALL-CAPS ending a word)
+    #   "0917-55\n5-00" → "0917-555-00" (digit phone continuation)
+    # All other \n become spaces so "DELA\nCRUZ" → "DELA CRUZ" not "DELACRUZ".
+    s = re.sub(r'([A-Za-z])\n([a-z])', r'\1\2', s)          # lowercase suffix
+    s = re.sub(r'([A-Z])\n([A-Z]{1,2})(?=\s|,|$)', r'\1\2', s)  # short ALL-CAPS fragment
+    s = re.sub(r'(\d)\n(\d)', r'\1\2', s)                   # digit continuation
+    s = re.sub(r'\n', ' ', s)   # remaining \n → space
     return re.sub(r'\s+', ' ', s).strip()
 
 

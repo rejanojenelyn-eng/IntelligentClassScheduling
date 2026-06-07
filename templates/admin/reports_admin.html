@@ -1,4 +1,584 @@
 {% extends "admin/base_admin.html" %}
+
+{% block head %}
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+
+.rpt-page { padding: 10px 0 60px; }
+
+/* ── Header ── */
+.rpt-header {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 16px; border-bottom: 1px solid #e5e5e5; padding-bottom: 20px; margin-bottom: 24px;
+}
+.rpt-header-left { display: flex; flex-direction: column; gap: 4px; }
+.rpt-header-title {
+    display: flex; align-items: center; gap: 8px;
+    color: #630100; font-size: 22px; font-weight: 700;
+}
+.rpt-header-title svg { width: 22px; height: 22px; flex-shrink: 0; }
+.rpt-header-sub { font-size: 13px; color: #6b7280; }
+.rpt-header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ── Buttons ── */
+.btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent; white-space: nowrap;
+    transition: opacity .15s; background: #fff;
+}
+.btn:hover { opacity: .85; }
+.btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+.btn-excel { color: #15803d; border-color: #16a34a; }
+.btn-pdf   { color: #630100; border-color: #630100; }
+
+/* ── Cards ── */
+.card {
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    overflow: hidden; margin-bottom: 24px;
+}
+.card-header {
+    padding: 16px 20px; border-bottom: 1px solid #f0f0f0; background: #fafafa;
+}
+.card-header h2 { font-size: 15px; font-weight: 600; color: #1a1a1a; }
+.card-header p  { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.card-body { padding: 20px; }
+
+/* ── Filter bar ── */
+.rpt-filter-bar {
+    background: #630100; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 24px;
+}
+.filter-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.filter-label-sm {
+    display: block; font-size: 10px; font-weight: 700; color: #ffd0d0;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
+}
+.filter-group { display: flex; flex-direction: column; flex: 1 1 130px; min-width: 130px; }
+.filter-group-wide { flex: 1.5 1 175px; min-width: 165px; }
+.filter-group.hidden { display: none; }
+
+select.rpt-select {
+    background: #fff; border: 1px solid #d1d5db; border-radius: 6px;
+    padding: 7px 32px 7px 10px; font-size: 13px; font-weight: 500; color: #1a1a1a;
+    cursor: pointer; appearance: none; -webkit-appearance: none; width: 100%;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+}
+select.rpt-select:focus { outline: none; border-color: #630100; box-shadow: 0 0 0 2px rgba(99,1,0,.12); }
+.select-report { max-width: 320px; }
+
+/* ── Searchable instructor ── */
+.search-sel-wrap { position: relative; }
+.search-sel-wrap input[type="text"] {
+    width: 100%; box-sizing: border-box; background: #fff;
+    border: 1px solid #d1d5db; border-radius: 6px;
+    padding: 7px 32px 7px 10px; font-size: 13px; font-weight: 500; color: #1a1a1a;
+}
+.search-sel-wrap input[type="text"]:focus {
+    outline: none; border-color: #630100; box-shadow: 0 0 0 2px rgba(99,1,0,.12);
+}
+.search-sel-wrap::after {
+    content: ''; position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 12px; height: 12px; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-size: contain;
+}
+.search-sel-list {
+    display: none; position: absolute; top: calc(100% + 4px); left: 0;
+    background: #fff; border: 1px solid #d1d5db; border-radius: 6px;
+    max-height: 220px; overflow-y: auto; z-index: 9999; width: 100%;
+    box-shadow: 0 4px 12px rgba(0,0,0,.12);
+}
+.search-sel-list.open { display: block; }
+.search-sel-item { padding: 8px 12px; font-size: 13px; cursor: pointer; color: #374151; }
+.search-sel-item:hover, .search-sel-item.active { background: #fef2f2; color: #630100; font-weight: 600; }
+.search-sel-item.dim { display: none; }
+
+/* ── Preview card header ── */
+.preview-header {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    padding: 12px 16px; background: #fafafa; border-bottom: 1px solid #f0f0f0;
+}
+.preview-header-left {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 14px; font-weight: 600; color: #1a1a1a;
+    text-align: center;
+}
+.preview-header-left svg { width: 15px; height: 15px; flex-shrink: 0; }
+.badge {
+    position: absolute; right: 16px;
+    font-size: 11px; font-weight: 500; color: #6b7280;
+    background: #e5e7eb; border-radius: 4px; padding: 2px 8px;
+}
+
+/* ── Table ── */
+.table-wrap { overflow-x: auto; }
+table.rpt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.rpt-table thead tr { background: #630100; }
+table.rpt-table thead th {
+    padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 700;
+    color: #fff; letter-spacing: 0.3px; white-space: nowrap; border: none;
+}
+table.rpt-table tbody tr { border-bottom: 1px solid #f0f0f0; }
+table.rpt-table tbody tr:hover { background: #fdf5f5; }
+table.rpt-table tbody td { padding: 9px 12px; vertical-align: middle; color: #374151; }
+table.rpt-table tbody td:first-child { font-weight: 600; color: #630100; }
+
+/* ── Grouped section label ── */
+.section-label {
+    padding: 9px 16px; background: #f9fafb;
+    border-left: 4px solid #630100; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0;
+    font-size: 12px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: 0.4px;
+}
+
+.record-count {
+    text-align: right; font-size: 11px; color: #9ca3af;
+    padding: 8px 16px; border-top: 1px solid #f0f0f0;
+}
+
+/* ── States ── */
+.rpt-empty { text-align: center; padding: 60px 20px; color: #9ca3af; }
+.rpt-empty svg { width: 36px; height: 36px; margin: 0 auto 12px; display: block; opacity: .35; }
+.rpt-empty p { font-size: 14px; }
+.rpt-loading {
+    text-align: center; padding: 40px; color: #630100;
+    font-weight: 600; font-size: 14px;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<h1>Admin Reports is Working</h1>
+<div class="rpt-page">
+
+    <!-- Header -->
+    <div class="rpt-header">
+        <div class="rpt-header-left">
+            <div class="rpt-header-title">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+                </svg>
+                REPORTS
+        </div>
+    </div>
+    <div class="rpt-header-actions">
+            <button class="btn btn-excel" onclick="exportExcel()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                Export Excel
+            </button>
+            <button class="btn btn-pdf" onclick="exportPdf()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 6 2 18 2 18 9"/>
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                    <rect x="6" y="14" width="12" height="8"/>
+                </svg>
+                Print PDF
+            </button>
+        </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="rpt-filter-bar">
+        <div class="filter-row">
+
+            <div class="filter-group filter-group-wide">
+                <label class="filter-label-sm">Report Type</label>
+                <select id="rptType" class="rpt-select" onchange="onReportTypeChange()">
+                    <option value="offerings">Subject Offerings</option>
+                    <option value="assignments">Teaching Assignments</option>
+                    <option value="faculty">List of Faculty</option>
+                    <option value="rooms">List of Rooms</option>
+                    <option value="curriculum">Curriculum</option>
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="grpAY">
+                <label class="filter-label-sm">Academic Year</label>
+                <select id="rptAY" class="rpt-select" onchange="debounceApply()">
+                    {% for ay in ay_list %}
+                    <option value="{{ ay.academicyearid }}">A.Y {{ ay.yearstart }}-{{ ay.yearend }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="grpSem">
+                <label class="filter-label-sm">Semester</label>
+                <select id="rptSem" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Semesters</option>
+                    <option value="A">1st Semester</option>
+                    <option value="B">2nd Semester</option>
+                    <option value="C">Summer</option>
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgProgram">
+                <label class="filter-label-sm">Program</label>
+                <select id="rptProgram" class="rpt-select" onchange="onProgramChange()">
+                    <option value="All">All Programs</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgYearLevel">
+                <label class="filter-label-sm">Year Level</label>
+                <select id="rptYearLevel" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Levels</option>
+                    <option value="1">1st Year</option>
+                    <option value="2">2nd Year</option>
+                    <option value="3">3rd Year</option>
+                    <option value="4">4th Year</option>
+                    <option value="5">5th Year</option>
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgInstructor">
+                <label class="filter-label-sm">Instructor</label>
+                <div class="search-sel-wrap">
+                    <input type="text" id="instrSearch" placeholder="Search instructor…"
+                           autocomplete="off"
+                           oninput="filterInstrList()"
+                           onfocus="openInstrList()"
+                           onblur="scheduleCloseInstrList()">
+                    <input type="hidden" id="rptInstructor" value="All">
+                    <div class="search-sel-list" id="instrList">
+                        <div class="search-sel-item active" data-val="All" onmousedown="selectInstr('All','All Instructors')">All Instructors</div>
+                        {% for f in faculty %}
+                        <div class="search-sel-item" data-val="{{ f.employeenumber }}" onmousedown="selectInstr('{{ f.employeenumber }}','{{ f.fullname }}')">{{ f.fullname }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="filter-group hidden" id="sgFacultyType">
+                <label class="filter-label-sm">Faculty Type</label>
+                <select id="rptFacultyType" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Types</option>
+                    {% for et in emp_types %}
+                    <option value="{{ et.employeetypeid }}">{{ et.typename }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgFacultyStatus">
+                <label class="filter-label-sm">Status</label>
+                <select id="rptFacultyStatus" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Statuses</option>
+                    {% for s in statuses %}
+                    <option value="{{ s.employeestatus }}">{{ s.employeestatus }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgSpecialization">
+                <label class="filter-label-sm">Specialization</label>
+                <select id="rptSpecialization" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Specializations</option>
+                    {% for sp in specializations %}
+                    <option value="{{ sp.specializationid }}">{{ sp.specializationname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgBuilding">
+                <label class="filter-label-sm">Building</label>
+                <select id="rptBuilding" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Buildings</option>
+                    {% for b in buildings %}
+                    <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgRoomType">
+                <label class="filter-label-sm">Room Type</label>
+                <select id="rptRoomType" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All Types</option>
+                    {% for rt in room_types %}
+                    <option value="{{ rt.roomtype }}">{{ rt.roomtype }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group hidden" id="sgCurriculum">
+                <label class="filter-label-sm">Curriculum</label>
+                <select id="rptCurriculum" class="rpt-select" onchange="debounceApply()">
+                    <option value="All">All</option>
+                    {% for c in curricula %}
+                    <option value="{{ c.curriculumid }}" data-prog="{{ c.programcode }}">
+                        {{ c.programcode }} — {{ c.curriculumcode }} ({{ c.curriculumyear }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Preview Area (populated by JS) -->
+    <div id="previewArea">
+        <div class="card">
+            <div class="rpt-empty">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <p>Select a report type to generate a preview.</p>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+const SEM_LABELS = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
+const RPT_LABELS = {
+    offerings:   'Subject Offerings',
+    assignments: 'Teaching Assignments',
+    faculty:     'List of Faculty',
+    rooms:       'List of Rooms',
+    curriculum:  'Curriculum',
+};
+const SUB_FILTERS = {
+    offerings:   ['sgProgram','sgYearLevel'],
+    assignments: ['sgInstructor'],
+    faculty:     ['sgFacultyType','sgFacultyStatus','sgSpecialization'],
+    rooms:       ['sgBuilding','sgRoomType'],
+    curriculum:  ['sgProgram','sgCurriculum'],
+};
+const NEEDS_PERIOD = ['offerings','assignments'];
+const ALL_SUB = ['sgProgram','sgYearLevel','sgInstructor',
+                 'sgFacultyType','sgFacultyStatus','sgSpecialization',
+                 'sgBuilding','sgRoomType','sgCurriculum'];
+
+const PREVIEW_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#630100" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+
+/* ── Debounce ── */
+let _debTimer = null;
+function debounceApply() { clearTimeout(_debTimer); _debTimer = setTimeout(applyFilter, 300); }
+
+function onReportTypeChange() {
+    const type = document.getElementById('rptType').value;
+    ALL_SUB.forEach(id => document.getElementById(id).classList.add('hidden'));
+    (SUB_FILTERS[type] || []).forEach(id => document.getElementById(id).classList.remove('hidden'));
+    const needsPeriod = NEEDS_PERIOD.includes(type);
+    document.getElementById('grpAY').classList.toggle('hidden', !needsPeriod);
+    document.getElementById('grpSem').classList.toggle('hidden', !needsPeriod);
+    debounceApply();
+}
+
+/* ── Curriculum depends on Program ── */
+function onProgramChange() {
+    const prog    = document.getElementById('rptProgram').value;
+    const currSel = document.getElementById('rptCurriculum');
+    if (!currSel) return;
+    [...currSel.options].forEach(opt => {
+        if (opt.value === 'All') { opt.style.display = ''; return; }
+        opt.style.display = (prog === 'All' || opt.dataset.prog === prog) ? '' : 'none';
+    });
+    currSel.value = 'All';
+    debounceApply();
+}
+
+/* ── Searchable instructor ── */
+function openInstrList() { document.getElementById('instrList').classList.add('open'); }
+function scheduleCloseInstrList() { setTimeout(() => document.getElementById('instrList').classList.remove('open'), 150); }
+
+function filterInstrList() {
+    const q     = document.getElementById('instrSearch').value.toLowerCase();
+    document.querySelectorAll('#instrList .search-sel-item').forEach(item => {
+        item.classList.toggle('dim', q !== '' && !item.textContent.toLowerCase().includes(q));
+    });
+    openInstrList();
+}
+
+function selectInstr(val, label) {
+    document.getElementById('rptInstructor').value = val;
+    document.getElementById('instrSearch').value   = val === 'All' ? '' : label;
+    document.querySelectorAll('#instrList .search-sel-item').forEach(i => i.classList.remove('active'));
+    const t = document.querySelector(`#instrList .search-sel-item[data-val="${val}"]`);
+    if (t) t.classList.add('active');
+    document.getElementById('instrList').classList.remove('open');
+    debounceApply();
+}
+
+/* ── Filters payload ── */
+function getFilters() {
+    return {
+        report_type:    document.getElementById('rptType').value,
+        ay:             document.getElementById('rptAY').value,
+        semester:       document.getElementById('rptSem').value,
+        program:        document.getElementById('rptProgram').value,
+        year_level:     document.getElementById('rptYearLevel').value,
+        instructor:     document.getElementById('rptInstructor').value,
+        curriculum:     document.getElementById('rptCurriculum').value,
+        faculty_type:   document.getElementById('rptFacultyType').value,
+        faculty_status: document.getElementById('rptFacultyStatus').value,
+        specialization: document.getElementById('rptSpecialization').value,
+        building:       document.getElementById('rptBuilding').value,
+        room_type:      document.getElementById('rptRoomType').value,
+    };
+}
+
+function buildSubtitle() {
+    const type = document.getElementById('rptType').value;
+    if (!NEEDS_PERIOD.includes(type)) return '';
+    const ayEl = document.getElementById('rptAY');
+    const ay   = ayEl.options[ayEl.selectedIndex] ? ayEl.options[ayEl.selectedIndex].text : '';
+    const sem  = document.getElementById('rptSem').value;
+    return `${ay} — ${SEM_LABELS[sem] || 'All Semesters'}`;
+}
+
+/* ── Apply ── */
+async function applyFilter() {
+    const area = document.getElementById('previewArea');
+    area.innerHTML = `<div class="card"><div class="rpt-loading"><i class="fas fa-spinner fa-spin"></i> Generating report…</div></div>`;
+    try {
+        const res  = await fetch('/admin/reports/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(getFilters()),
+        });
+        const data = await res.json();
+        if (data.error) {
+            area.innerHTML = `<div class="card"><div class="rpt-empty"><p style="color:#c00;">${data.error}</p></div></div>`;
+            return;
+        }
+        renderPreview(data);
+    } catch(e) {
+        area.innerHTML = `<div class="card"><div class="rpt-empty"><p style="color:#c00;">Network error: ${e.message}</p></div></div>`;
+    }
+}
+
+function buildTableHtml(columns, rows, tableId) {
+    const thead = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+    const tbody = rows.map(row =>
+        '<tr>' + row.map(cell => `<td>${cell ?? ''}</td>`).join('') + '</tr>'
+    ).join('');
+    return `<table class="rpt-table" id="${tableId}"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+
+function emptyCard(title) {
+    return `<div class="card">
+        <div class="preview-header">
+            <div class="preview-header-left">${PREVIEW_ICON} ${title}</div>
+            <span class="badge">0 records</span>
+        </div>
+        <div class="rpt-empty">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <p>No data found for the selected filters.</p>
+        </div>
+    </div>`;
+}
+
+function renderPreview(data) {
+    const area     = document.getElementById('previewArea');
+    const rtype    = document.getElementById('rptType').value;
+    const label    = RPT_LABELS[rtype] || 'Report';
+    const subtitle = buildSubtitle();
+    const titleStr = label + (subtitle ? ' — ' + subtitle : '') + ' Preview';
+
+    if (data.grouped) {
+        if (!data.sections || data.sections.length === 0) {
+            area.innerHTML = emptyCard(titleStr); return;
+        }
+        const total = data.sections.reduce((s, sec) => s + sec.rows.length, 0);
+        let inner = '';
+        data.sections.forEach((sec, idx) => {
+            inner += `<div class="section-label">${sec.title}</div>
+                <div class="table-wrap">${buildTableHtml(sec.columns, sec.rows, `reportTable_${idx}`)}</div>`;
+        });
+        area.innerHTML = `<div class="card">
+            <div class="preview-header">
+                <div class="preview-header-left">${PREVIEW_ICON} ${titleStr}</div>
+                <span class="badge">${total} record${total !== 1 ? 's' : ''}</span>
+            </div>
+            ${inner}
+            <div class="record-count">${total} record${total !== 1 ? 's' : ''}</div>
+        </div>`;
+        return;
+    }
+
+    if (!data.rows || data.rows.length === 0) {
+        area.innerHTML = emptyCard(titleStr); return;
+    }
+    const count = data.rows.length;
+    area.innerHTML = `<div class="card">
+        <div class="preview-header">
+            <div class="preview-header-left">${PREVIEW_ICON} ${titleStr}</div>
+            <span class="badge">${count} record${count !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="table-wrap">${buildTableHtml(data.columns, data.rows, 'reportTable_0')}</div>
+        <div class="record-count">${count} record${count !== 1 ? 's' : ''}</div>
+    </div>`;
+}
+
+/* ── Export ── */
+function exportExcel() {
+    const tables = document.querySelectorAll('[id^="reportTable_"]');
+    if (!tables.length) { alert('Generate a report preview first.'); return; }
+    const rtype    = document.getElementById('rptType').value;
+    const label    = (RPT_LABELS[rtype] || 'Report').replace(/\s+/g, '_');
+    const rows     = [];
+    const grouped  = tables.length > 1;
+    const secLabels = document.querySelectorAll('.section-label');
+    tables.forEach((table, idx) => {
+        if (grouped && secLabels[idx]) { rows.push(secLabels[idx].innerText.trim()); rows.push(''); }
+        table.querySelectorAll('tr').forEach(tr => {
+            rows.push([...tr.querySelectorAll('th,td')].map(c => c.innerText.trim()).join('\t'));
+        });
+        if (grouped) rows.push('');
+    });
+    const blob = new Blob([rows.join('\n')], { type: 'application/vnd.ms-excel' });
+    const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${label}.xls` });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+function exportPdf() {
+    const tables = document.querySelectorAll('[id^="reportTable_"]');
+    if (!tables.length) { alert('Generate a report preview first.'); return; }
+    const rtype     = document.getElementById('rptType').value;
+    const label     = RPT_LABELS[rtype] || 'Report';
+    const subtitle  = buildSubtitle();
+    const grouped   = tables.length > 1;
+    const secLabels = document.querySelectorAll('.section-label');
+    let bodyContent = '';
+    tables.forEach((table, idx) => {
+        if (grouped && secLabels[idx]) bodyContent += `<h3 class="sec-title">${secLabels[idx].innerText.trim()}</h3>`;
+        bodyContent += table.outerHTML + '<br>';
+    });
+    const win = window.open('', '_blank');
+    win.document.write(`<html><head><title>${label}</title>
+    <style>
+        body{font-family:Arial,sans-serif;font-size:11px;margin:20px;}
+        h2{text-align:center;color:#630100;margin-bottom:2px;font-size:13px;}
+        h3.sec-title{color:#630100;font-size:11px;margin:20px 0 4px;border-left:3px solid #630100;padding-left:8px;}
+        p.sub{text-align:center;margin:0 0 10px;font-size:10px;color:#333;font-weight:600;}
+        table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+        th{background:#630100;color:#fff;padding:5px 7px;font-size:9px;text-align:left;border:none;}
+        td{padding:4px 7px;border-bottom:1px solid #f0f0f0;font-size:10px;}
+        td:first-child{font-weight:600;color:#630100;}
+    </style></head><body>
+    <h2>${label}</h2>
+    ${subtitle ? `<p class="sub">${subtitle}</p>` : ''}
+    ${bodyContent}
+    <script>window.print();<\/script>
+    </body></html>`);
+    win.document.close();
+}
+
+onReportTypeChange();
+</script>
 {% endblock %}

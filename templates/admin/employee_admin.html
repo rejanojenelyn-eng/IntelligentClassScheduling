@@ -4,155 +4,179 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="employee-container">
     
+    <!-- HEADER TITLE & BUTTONS -->
+    <div class="page-header-row">
+        <h1 class="page-title">EMPLOYEE MANAGEMENT</h1>
+        <div class="header-actions">
+            <button class="btn-top btn-add-new" onclick="openAddModal()">
+                <i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE
+            </button>
+            <a href="{{ url_for('admin_archived_employees') }}" class="btn-top btn-view-archive">
+                <i class="fas fa-archive"></i> VIEW ARCHIVE
+            </a>
+        </div>
+    </div>
+
     <!-- STATS CARDS SECTION -->
     <div class="stats-row">
-        <div class="stat-card maroon">
-            <span class="stat-label">REGULAR</span>
-            <span class="stat-value">{{ reg }}</span>
+        <div class="stat-card card-green">
+            <div class="stat-info">
+                <span class="stat-label">REGULAR FACULTY</span>
+                <span class="stat-value">{{ reg }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-user-tie"></i></div>
         </div>
-        <div class="stat-card maroon">
-            <span class="stat-label">PART-TIME</span>
-            <span class="stat-value">{{ pt }}</span>
+        <div class="stat-card card-orange">
+            <div class="stat-info">
+                <span class="stat-label">PART-TIME FACULTY</span>
+                <span class="stat-value">{{ pt }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-user-clock"></i></div>
         </div>
-        <div class="stat-card maroon">
-            <span class="stat-label">DESIGNEES</span>
-            <span class="stat-value">{{ des }}</span>
+        <div class="stat-card card-blue">
+            <div class="stat-info">
+                <span class="stat-label">DESIGNEES</span>
+                <span class="stat-value">{{ des }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-user-tag"></i></div>
         </div>
-        <div class="stat-card white-border">
-            <span class="stat-label">TOTAL EMPLOYEE</span>
-            <span class="stat-value total">{{ total }}</span>
+        <div class="stat-card card-maroon">
+            <div class="stat-info">
+                <span class="stat-label">TOTAL EMPLOYEES</span>
+                <span class="stat-value total">{{ total }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-users"></i></div>
         </div>
     </div>
 
-    <!-- ACTION BUTTONS ROW -->
-    <div class="employee-header-flex">
-        <div class="action-buttons-group">
-            <button class="btn-capsule btn-add" onclick="openAddModal()">ADD NEW EMPLOYEE</button>
-            <!-- Fixed Archive Button: Starts disabled until a checkbox is clicked -->
-            <button id="btnBulkArchive" class="btn-capsule btn-outline" onclick="applyBulkArchive()" disabled>ARCHIVE</button>
-            <a href="{{ url_for('admin_archived_employees') }}" class="btn-capsule btn-outline">VIEW ARCHIVE</a>
-        </div>
+    <!-- CLEAN WHITE FILTER BAR -->
+    <div class="filter-container">
+        <div class="filter-inputs-row">
+            <!-- Search -->
+            <div class="filter-group">
+                <label>Search Employee</label>
+                <div class="search-wrapper">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="SELECT">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
 
-        <div class="import-container">
-            <div class="import-button-wrapper">
-                <button class="btn-import" onclick="openImportTypeModal()">IMPORT <i class="fas fa-chevron-down"></i></button>
-                <small class="import-subtext">CSV, Excel, PDF or Word</small>
+            <!-- Employee Type -->
+            <div class="filter-group">
+                <label>Employee Type</label>
+                <select id="typeFilter" onchange="filterTable()">
+                    <option value="">SELECT</option>
+                    {% for etype in employee_types %}
+                    <option value="{{ etype.typename }}">{{ etype.typename }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Status -->
+            <div class="filter-group">
+                <label>Employee Status</label>
+                <select id="statusFilter" onchange="filterTable()">
+                    <option value="">SELECT</option>
+                    <option value="Permanent">Permanent</option>
+                    <option value="Part-Time">Part-Time</option>
+                    <option value="Temporary">Temporary</option>
+                </select>
+            </div>
+
+            <!-- Specialization -->
+            <div class="filter-group">
+                <label>Specialization</label>
+                <select id="specFilter" onchange="filterTable()">
+                    <option value="">SELECT</option>
+                    {% for spec in specializations %}
+                    <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
+                    {% endfor %}
+                </select>
             </div>
         </div>
-    </div>
 
-    <!-- MAROON FILTER BAR -->
-<!-- MAROON FILTER BAR -->
-<div class="table-wrapper">
-    <div class="table-header-filters">
-        <!-- Search Group -->
-        <div class="filter-group">
-            <label>Search Employee</label>
-            <div class="search-input-wrapper">
-                <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
-                <i class="fas fa-search"></i>
-            </div>
-        </div>
-
-        <!-- Type Group -->
-        <div class="filter-group">
-            <label>Type</label>
-            <select id="typeFilter" onchange="filterTable()">
-                <option value="">All Types</option>
-                {% for etype in employee_types %}
-                <option value="{{ etype.typename }}">{{ etype.typename }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <!-- Status Group -->
-        <div class="filter-group">
-            <label>Status</label>
-            <select id="statusFilter" onchange="filterTable()">
-                <option value="">All Status</option>
-                <option value="Permanent">Permanent</option>
-                <option value="Part-Time">Part-Time</option>
-                <option value="Temporary">Temporary</option>
-            </select>
-        </div>
-
-        <!-- Specialization Group -->
-        <div class="filter-group">
-            <label>Specialization</label>
-            <select id="specFilter" onchange="filterTable()">
-                <option value="">All Specializations</option>
-                {% for spec in specializations %}
-                <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <!-- Actions Right -->
-        <div class="sort-wrapper" onclick="sortTable()">
-    <span id="sortDirection">Ascending</span> 
-    <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
-</div>
-            <button class="btn-export-white" onclick="openExportModal()">
-                <i class="fas fa-file-export"></i> Export
+        <!-- Sort, Export and Import Buttons -->
+        <div class="filter-secondary-actions">
+            <button class="btn-secondary" onclick="sortTable()">
+                <i class="fas fa-sort-alpha-down"></i> <span id="sortDirection">SORT: A-Z</span> <i class="fas fa-chevron-down" style="font-size:10px; margin-left:4px;"></i>
+            </button>
+            <button class="btn-secondary" onclick="openExportModal()">
+                <i class="fas fa-upload"></i> EXPORT
+            </button>
+            <button class="btn-secondary" onclick="openImportTypeModal()">
+                <i class="fas fa-file-import"></i> IMPORT
             </button>
         </div>
     </div>
-</div>
 
+    <!-- BULK ACTIONS ROW -->
+    <div class="bulk-actions-row" id="bulkActionsRow" style="display:none;">
+        <span>You have selected <strong id="selectedCount">0</strong> <span id="selectedLabel">employees</span>..</span>
+        <button id="btnBulkArchive" class="btn-bulk" onclick="applyBulkArchive()"><i class="far fa-calendar-minus"></i> ARCHIVE</button>
+        <button id="btnBulkCancel" class="btn-bulk" onclick="clearSelection()"><i class="fas fa-times"></i> CANCEL</button>
+    </div>
+
+    <!-- TABLE AREA -->
+    <div class="employee-table-wrapper">
         <table class="employee-table" id="instructorTable">
             <thead>
                 <tr>
-                    <th><input type="checkbox" id="selectAll"></th>
-                    <th>Employee Number</th> 
+                    <th style="width: 40px; text-align:center;"><input type="checkbox" id="selectAll" class="custom-checkbox"></th>
                     <th>Employee Name</th>
                     <th>Specialization</th>
                     <th>Email</th>
                     <th>Contact</th>
-                    <th>Employment type</th>
+                    <th>Employment Type</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th style="text-align: center;">Actions</th>
                 </tr>
-
             </thead>
             <tbody>
-    {% for emp in employees %}
-    <tr>
-        <td><input type="checkbox" class="row-check" value="{{ emp.employeenumber }}"></td>
-        <td><small>{{ emp.employeenumber }}</small></td> 
-        <td class="emp-name">
-            <strong>{{ emp.lastname }}, {{ emp.firstname }}</strong>
-        </td>
-        <td class="emp-spec">{{ emp.specializationname }}</td>
-        <td>{{ emp.email }}</td>
-        <td>{{ emp.contactnumber }}</td>
-        <!-- FIXED: Added Badge Span for color coding -->
-        <td class="emp-type">
-            <span class="badge badge-{{ emp.typename.lower().replace('-', '') }}">
-                {{ emp.typename }}
-            </span>
-        </td>
-        <td class="emp-status">{{ emp.employeestatus }}</td>
-        <td class="action-icons">
-            <i class="fas fa-edit edit"
-               data-emp="{{ emp | tojson | forceescape }}"
-               onclick="openEditFromEl(this)"></i>
-            <i class="fas fa-archive archive" onclick="openArchiveModal('{{ emp.employeenumber }}')"></i>
-        </td>
-    </tr>
-    {% endfor %}
-</tbody>
+                {% for emp in employees %}
+                <tr>
+                    <td style="text-align:center;"><input type="checkbox" class="row-check custom-checkbox" value="{{ emp.employeenumber }}"></td>
+                    
+                    <td class="emp-name">
+                        <strong>{{ emp.lastname }}, {{ emp.firstname }}</strong>
+                    </td>
+                    
+                    <td class="emp-spec">{{ emp.specializationname }}</td>
+                    
+                    <td>{{ emp.email }}</td>
+                    
+                    <td>{{ emp.contactnumber }}</td> <!-- Uses admin specific variable -->
+                    
+                    <td class="emp-type">
+                        <span class="badge-outline {{ emp.typename.lower().replace(' ', '-') }}">
+                            {{ emp.typename }}
+                        </span>
+                    </td>
+                    
+                    <td class="emp-status" style="color: #666; font-weight:600;">{{ emp.employeestatus|upper }}</td>
+                    
+                    <td class="action-icons" style="text-align: center;">
+                        <i class="far fa-eye view"></i>
+                        <i class="far fa-edit edit" 
+                            data-emp="{{ emp | tojson | forceescape }}"
+                            onclick="openEditFromEl(this)"></i>
+                        <i class="far fa-trash-alt archive" onclick="openArchiveModal('{{ emp.employeenumber }}')"></i>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
         </table>
     </div>
 </div>
 
 <!-- MODALS -->
+
 <!-- ADD NEW EMPLOYEE MODAL -->
 <div id="addEmployeeModal" class="modal">
     <div class="modal-content">
@@ -160,7 +184,6 @@
             <h2><i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE</h2>
             <span class="close-btn" onclick="closeAddModal()">&times;</span>
         </div>
-        <!-- FIXED: Form action now points to the admin-specific route -->
         <form id="addEmployeeForm" action="{{ url_for('admin_add_employee') }}" method="POST">
             <div class="form-grid">
                 <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" name="employee_number" required></div>
@@ -222,7 +245,6 @@
             <h2><i class="fas fa-user-edit"></i> EDIT EMPLOYEE</h2>
             <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
-        <!-- FIXED: Form action now points to the admin-specific route -->
         <form id="editEmployeeForm" action="{{ url_for('admin_edit_employee') }}" method="POST">
             <div class="form-grid">
                 <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
@@ -471,7 +493,6 @@
     </div>
 </div>
 
-
 <!-- EMPLOYEE REVIEW MODAL -->
 <div id="empReviewModal" class="custom-modal" style="display:none;z-index:1100;">
     <div class="modal-content-lg pdf-review-modal-content">
@@ -481,11 +502,8 @@
         </div>
         <div style="padding:16px 20px 8px;">
             <div id="empReviewBanner"></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+            <div style="margin-top:8px;">
                 <span id="empReviewCount" style="font-size:0.85rem;color:#555;"></span>
-                <button type="button" class="btn-modal btn-cancel" style="padding:4px 14px;font-size:0.8rem;" onclick="addEmpReviewRow()">
-                    <i class="fas fa-plus"></i> Add Row
-                </button>
             </div>
         </div>
         <div class="pdf-review-table-wrapper">
@@ -512,7 +530,28 @@
     </div>
 </div>
 
-<!-- ARCHIVE CONFIRMATION MODAL (Required for the button to work) -->
+<!-- IMPORT CONFLICT MODAL -->
+<div id="importConflictModal" class="import-conflict-overlay" style="display:none;" onclick="if(event.target===this)_cancelConflict()">
+    <div class="import-conflict-dialog">
+        <div class="import-conflict-header">
+            <div class="import-conflict-header-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div>
+                <h2>Import Conflicts Detected</h2>
+                <p id="conflictSummaryText">Review the conflicts below before continuing.</p>
+            </div>
+            <button class="import-conflict-close" onclick="_cancelConflict()">&#215;</button>
+        </div>
+        <div class="import-conflict-body" id="conflictCardList"></div>
+        <div class="import-conflict-footer">
+            <button class="btn-conflict-cancel" onclick="_cancelConflict()">Cancel</button>
+            <button class="btn-conflict-continue" id="conflictContinueBtn" onclick="_proceedAfterConflict()">
+                <i class="fas fa-arrow-right"></i> Continue Import
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ARCHIVE CONFIRMATION MODAL -->
 <div id="archiveConfirmModal" class="modal">
     <div class="modal-content" style="width: 400px;">
         <div class="modal-header">
@@ -529,7 +568,7 @@
     </div>
 </div>
 
-<!-- BULK ARCHIVE MODAL (Required for the header button to work) -->
+<!-- BULK ARCHIVE MODAL -->
 <div id="bulkArchiveConfirmModal" class="modal">
     <div class="modal-content" style="width: 450px;">
         <div class="modal-header">
@@ -546,7 +585,6 @@
     </div>
 </div>
   
-
 <!-- LOADING OVERLAY -->
 <div id="loadingOverlay">
     <div class="loa-card">
@@ -664,6 +702,7 @@
     <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
 </div>
 
+<!-- Admin Specific Script Maintained -->
 <script src="{{ url_for('static', filename='js/ADMIN/employee.admin.js') }}"></script>
 
 {% endblock %}

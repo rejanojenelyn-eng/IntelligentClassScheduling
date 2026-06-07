@@ -116,18 +116,30 @@
     letter-spacing: 1px;
 }
 
-.header-tools i {
-    font-size: 1.2rem;
+.header-tools {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.header-tools-icons {
+    display: flex;
+    align-items: center;
+}
+
+.header-tools-icons i {
+    font-size: 1.1rem;
     color: #630100;
-    margin-left: 10px;
+    margin-left: 6px;
     cursor: pointer;
     border: 1.5px solid #630100;
     border-radius: 6px;
-    padding: 8px;
+    padding: 7px 9px;
     transition: 0.2s;
 }
 
-.header-tools i:hover {
+.header-tools-icons i:hover {
     background: #fdf2f2;
 }
 

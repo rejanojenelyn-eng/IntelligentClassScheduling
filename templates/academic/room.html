@@ -4,68 +4,103 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="room-container">
 
-    <!-- STATS CARDS -->
-    <div class="stats-row">
-        <div class="stat-card">
-            <span class="stat-label">TOTAL LABORATORIES</span>
-            <span class="stat-value">{{ total_labs }}</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">TOTAL LECTURE</span>
-            <span class="stat-value">{{ total_lec }}</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">TOTAL ROOMS</span>
-            <span class="stat-value">{{ total_rooms }}</span>
-        </div>
-        <div class="stat-card white-border">
-            <span class="stat-label">TOTAL BUILDINGS</span>
-            <span class="stat-value">{{ total_bldgs }}</span>
+    <!-- PAGE HEADER -->
+    <div class="page-header-hub">
+        <h1>ROOMS AND BUILDINGS HUB</h1>
+        <div class="header-actions">
+            <button class="btn-outline-maroon" onclick="openRoomModal('modalBldg')"><i class="fas fa-plus"></i> ADD NEW BLDG</button>
+            <button class="btn-solid-maroon"   onclick="openRoomModal('modalRoom')"><i class="fas fa-plus"></i> ADD NEW ROOM</button>
         </div>
     </div>
 
-    <!-- MAIN LAYOUT WRAPPER -->
-    <div class="room-main-wrapper">
+    <!-- STATS CARDS -->
+    <div class="stats-row">
+        <div class="stat-card stat-green">
+            <div class="stat-content">
+                <span class="stat-label">TOTAL LABORATORIES</span>
+                <span class="stat-value" id="statLabs">{{ total_labs }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-flask"></i></div>
+        </div>
+        <div class="stat-card stat-orange">
+            <div class="stat-content">
+                <span class="stat-label">TOTAL LECTURE</span>
+                <span class="stat-value" id="statLec">{{ total_lec }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+        </div>
+        <div class="stat-card stat-blue">
+            <div class="stat-content">
+                <span class="stat-label">TOTAL ROOMS</span>
+                <span class="stat-value" id="statRooms">{{ total_rooms }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-door-open"></i></div>
+        </div>
+        <div class="stat-card stat-maroon">
+            <div class="stat-content">
+                <span class="stat-label">TOTAL BUILDINGS</span>
+                <span class="stat-value">{{ total_bldgs }}</span>
+            </div>
+            <div class="stat-icon"><i class="fas fa-building"></i></div>
+        </div>
+    </div>
 
-        <div class="room-grid">
+    <div class="room-grid">
 
-            <!-- LEFT SIDEBAR: BUILDINGS -->
-            <div class="building-sidebar">
+        <!-- LEFT SIDEBAR: BUILDINGS -->
+        <div class="building-sidebar">
+            <div class="bldg-sidebar-fixed">
                 <h3>LIST OF BUILDINGS</h3>
-                <button class="btn-building active" onclick="filterBySidebar(this, '')">ALL BUILDINGS</button>
+                <button class="btn-dark-add" onclick="openRoomModal('modalBldg')">
+                    <i class="fas fa-plus"></i> ADD NEW BLDG
+                </button>
+                <button class="btn-building active" id="bldgBtnAll" onclick="filterBySidebar('')">ALL BUILDINGS</button>
+            </div>
+            <div class="bldg-list-scroll" id="bldgListScroll">
                 {% for bldg in buildings %}
-                    <button class="btn-building" onclick="filterBySidebar(this, '{{ bldg.buildingname }}')">
-                        {{ bldg.buildingname }}
-                    </button>
+                <button class="btn-building"
+                    data-bldg-id="{{ bldg.buildingid }}"
+                    data-bldg-name="{{ bldg.buildingname }}"
+                    onclick="filterBySidebar('{{ bldg.buildingname }}')"
+                    oncontextmenu="showBuildingMenu(event, {{ bldg.buildingid }}, '{{ bldg.buildingname }}')">
+                    {{ bldg.buildingname }}
+                </button>
                 {% endfor %}
             </div>
+        </div>
 
-            <!-- RIGHT AREA: TABLE & FILTERS -->
-            <div class="room-content-area">
+        <!-- RIGHT AREA -->
+        <div class="room-content-area">
 
-                <!-- TOP FILTERS -->
-                <div class="room-filters">
-                    <div class="filter-group-row">
-                        <div class="filter-item">
-                            <label>SEARCH ROOM</label>
-                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Type...">
+            <!-- FILTERS -->
+            <div class="filter-card">
+                <div class="filter-group-row">
+                    <div class="filter-item">
+                        <label>SEARCH ROOM</label>
+                        <div class="filter-input-wrap">
+                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Search..">
                         </div>
-                        <div class="filter-item">
-                            <label>BUILDING</label>
+                    </div>
+                    <div class="filter-item">
+                        <label>BUILDING</label>
+                        <div class="filter-input-wrap">
                             <select id="filterBuilding" onchange="filterRoomTable()">
                                 <option value="">All Buildings</option>
                                 {% for bldg in buildings %}
-                                    <option value="{{ bldg.buildingname }}">{{ bldg.buildingname }}</option>
+                                <option value="{{ bldg.buildingname }}">{{ bldg.buildingname }}</option>
                                 {% endfor %}
                             </select>
                         </div>
-                        <div class="filter-item">
-                            <label>ROOM TYPE</label>
+                    </div>
+                    <div class="filter-item">
+                        <label>ROOM TYPE</label>
+                        <div class="filter-input-wrap">
                             <select id="filterType" onchange="filterRoomTable()">
                                 <option value="">All Types</option>
                                 <option value="Lecture">Lecture</option>
@@ -73,68 +108,232 @@
                             </select>
                         </div>
                     </div>
-
-                    <!-- ACTIONS -->
-                    <div class="actions-row">
-                        <button class="btn-room-export" style="background: white; color: var(--pup-maroon); font-weight: 800;" onclick="toggleAvailabilityRow()">
-                            <i class="fas fa-clock"></i> CHECK AVAILABLE ROOMS
-                        </button>
-                        <span style="font-size: 0.85rem; cursor: pointer; font-weight: 600; margin-left: 10px;" onclick="sortRoomTable()">
-                            <span id="roomSortText">Ascending</span> <i class="fas fa-sort"></i>
-                        </span>
-                        <button class="btn-room-export" onclick="openRoomExportModal()">
-                            <i class="fas fa-file-export"></i> Export
-                        </button>
-                    </div>
                 </div>
-
-                <!-- TOGGLEABLE AVAILABILITY ROW -->
-                <div id="availabilityRow" class="availability-filter-row">
-                    <div class="avail-item-inline">
-                        <label>SELECT DAY</label>
-                        <select id="filterDay" style="padding: 5px; border-radius: 4px; border: none; font-weight: 600;">
-                            <option value="">-- Select --</option>
-                            <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-                            <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
-                        </select>
-                    </div>
-                    <div class="avail-item-inline">
-                        <label>SELECT TIME</label>
-                        <input type="text" id="filterTime" placeholder="e.g. 7:30 AM - 10:30 AM" style="padding: 5px; border-radius: 4px; border: none; width: 200px;">
-                    </div>
-                    <button style="background: white; color: #700000; border: none; padding: 5px 15px; border-radius: 4px; font-weight: 800; cursor: pointer;">CHECK</button>
+                <div class="actions-row">
+                    <button class="btn-outline-action" onclick="openRoomExportModal()">
+                        <i class="fas fa-upload"></i> EXPORT
+                    </button>
                 </div>
+            </div>
 
-                <!-- BANNER -->
-                <div id="availableBanner" class="available-banner" style="display: none; opacity: 1; font-size: 1.2rem; color: #800000; margin-top: 15px;">
-                    A V A I L A B L E &nbsp; R O O M S
-                </div>
-
-                <!-- TABLE -->
+            <!-- TABLE -->
+            <div class="table-container">
                 <table class="room-table" id="roomTable">
                     <thead>
                         <tr>
-                            <th>Room no.</th>
-                            <th>Room type</th>
-                            <th>Room capacity</th>
-                            <th>Building</th>
-                            <th>Action</th>
+                            <th>ROOM NO.</th>
+                            <th>ROOM TYPE</th>
+                            <th>ROOM CAPACITY</th>
+                            <th>BUILDING</th>
+                            <th style="text-align:center;">ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for r in rooms %}
-                        <tr>
-                            <td class="td-room-name" style="font-weight: 800; color: #630100;">{{ r.roomname }}</td>
+                        <tr data-room-id="{{ r.roomid }}" data-building-id="{{ r.buildingid }}">
+                            <td class="td-room-name" style="font-weight:700;">{{ r.roomname }}</td>
                             <td class="td-room-type">{{ r.roomtype }}</td>
-                            <td>{{ r.roomcapacity }}</td>
+                            <td class="td-room-cap">{{ r.roomcapacity }}</td>
                             <td class="td-building">{{ r.buildingname }}</td>
-                            <td><a href="/room/view/{{ r.roomid }}" class="btn-view">View</a></td>
+                            <td>
+                                <div class="action-btns-wrapper" style="justify-content:center;">
+                                    <button class="btn-action view" title="View"
+                                        onclick="window.location.href='/room/view/{{ r.roomid }}'">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button class="btn-action edit" title="Edit"
+                                        onclick="openEditRoomModal({{ r.roomid }}, '{{ r.roomname }}', '{{ r.roomtype }}', {{ r.roomcapacity }}, {{ r.buildingid }})">
+                                        <i class="fas fa-pen"></i>
+                                    </button>
+                                    <button class="btn-action delete" title="Delete"
+                                        onclick="doDeleteRoom({{ r.roomid }}, '{{ r.roomname }}')">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- ADD BUILDING -->
+<div id="modalBldg" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalBldg')">
+    <div class="rm-box">
+        <div class="rm-header">
+            <div class="rm-hdr-icon"><i class="fas fa-building"></i></div>
+            <div><h2>Add New Building</h2><p>Enter a name for the new building.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomModal('modalBldg')">&#215;</button>
+        </div>
+        <div class="rm-body">
+            <div class="rm-error" id="errBldg" style="display:none;"></div>
+            <div class="rm-field">
+                <label>Building Name <span class="rm-req">*</span></label>
+                <input type="text" id="inp_bldg_name" class="rm-input" placeholder="e.g. Nantes Hall, LQ Building…" maxlength="120">
+            </div>
+        </div>
+        <div class="rm-footer">
+            <button class="rm-btn-cancel" onclick="closeRoomModal('modalBldg')">Cancel</button>
+            <button class="rm-btn-confirm" id="btnAddBldg" onclick="submitAddBuilding()"><i class="fas fa-plus"></i> Add Building</button>
+        </div>
+    </div>
+</div>
+
+<!-- EDIT BUILDING -->
+<div id="modalEditBldg" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalEditBldg')">
+    <div class="rm-box">
+        <div class="rm-header">
+            <div class="rm-hdr-icon"><i class="fas fa-building"></i></div>
+            <div><h2>Rename Building</h2><p>Enter a new name for this building.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomModal('modalEditBldg')">&#215;</button>
+        </div>
+        <div class="rm-body">
+            <div class="rm-error" id="errEditBldg" style="display:none;"></div>
+            <input type="hidden" id="edit_bldg_id">
+            <div class="rm-field">
+                <label>Building Name <span class="rm-req">*</span></label>
+                <input type="text" id="edit_bldg_name" class="rm-input" maxlength="120">
+            </div>
+        </div>
+        <div class="rm-footer">
+            <button class="rm-btn-cancel" onclick="closeRoomModal('modalEditBldg')">Cancel</button>
+            <button class="rm-btn-confirm" id="btnEditBldg" onclick="submitEditBuilding()"><i class="fas fa-check"></i> Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- ADD ROOM -->
+<div id="modalRoom" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalRoom')">
+    <div class="rm-box rm-box-wide">
+        <div class="rm-header">
+            <div class="rm-hdr-icon"><i class="fas fa-door-open"></i></div>
+            <div><h2>Add New Room</h2><p>Fill in the details for the new room.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomModal('modalRoom')">&#215;</button>
+        </div>
+        <div class="rm-body">
+            <div class="rm-error" id="errRoom" style="display:none;"></div>
+            <div class="rm-row">
+                <div class="rm-field">
+                    <label>Building <span class="rm-req">*</span></label>
+                    <select id="inp_room_bldg" class="rm-input">
+                        {% for bldg in buildings %}
+                        <option value="{{ bldg.buildingid }}">{{ bldg.buildingname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="rm-field">
+                    <label>Room Number <span class="rm-req">*</span></label>
+                    <input type="text" id="inp_room_name" class="rm-input" placeholder="e.g. LQ101, LQ-LAB1">
+                </div>
+            </div>
+            <div class="rm-row">
+                <div class="rm-field">
+                    <label>Room Type <span class="rm-req">*</span></label>
+                    <select id="inp_room_type" class="rm-input">
+                        <option value="Lecture">Lecture</option>
+                        <option value="Laboratory">Laboratory</option>
+                    </select>
+                </div>
+                <div class="rm-field">
+                    <label>Capacity <span class="rm-req">*</span></label>
+                    <input type="number" id="inp_room_cap" class="rm-input" placeholder="e.g. 40" min="1" max="999">
+                </div>
+            </div>
+        </div>
+        <div class="rm-footer">
+            <button class="rm-btn-cancel" onclick="closeRoomModal('modalRoom')">Cancel</button>
+            <button class="rm-btn-confirm" id="btnAddRoom" onclick="submitAddRoom()"><i class="fas fa-plus"></i> Add Room</button>
+        </div>
+    </div>
+</div>
+
+<!-- EDIT ROOM -->
+<div id="modalEditRoom" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalEditRoom')">
+    <div class="rm-box rm-box-wide">
+        <div class="rm-header">
+            <div class="rm-hdr-icon"><i class="fas fa-pen"></i></div>
+            <div><h2>Edit Room</h2><p>Update the room details below.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomModal('modalEditRoom')">&#215;</button>
+        </div>
+        <div class="rm-body">
+            <div class="rm-error" id="errEditRoom" style="display:none;"></div>
+            <input type="hidden" id="edit_room_id">
+            <div class="rm-row">
+                <div class="rm-field">
+                    <label>Building <span class="rm-req">*</span></label>
+                    <select id="edit_room_bldg_id" class="rm-input">
+                        {% for bldg in buildings %}
+                        <option value="{{ bldg.buildingid }}">{{ bldg.buildingname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="rm-field">
+                    <label>Room Number <span class="rm-req">*</span></label>
+                    <input type="text" id="edit_room_name" class="rm-input">
+                </div>
+            </div>
+            <div class="rm-row">
+                <div class="rm-field">
+                    <label>Room Type <span class="rm-req">*</span></label>
+                    <select id="edit_room_type" class="rm-input">
+                        <option value="Lecture">Lecture</option>
+                        <option value="Laboratory">Laboratory</option>
+                    </select>
+                </div>
+                <div class="rm-field">
+                    <label>Capacity <span class="rm-req">*</span></label>
+                    <input type="number" id="edit_room_capacity" class="rm-input" min="1" max="999">
+                </div>
+            </div>
+        </div>
+        <div class="rm-footer">
+            <button class="rm-btn-cancel" onclick="closeRoomModal('modalEditRoom')">Cancel</button>
+            <button class="rm-btn-confirm" id="btnEditRoom" onclick="submitEditRoom()"><i class="fas fa-check"></i> Update Room</button>
+        </div>
+    </div>
+</div>
+
+<!-- DELETE CONFIRMATION MODAL -->
+<div id="modalDeleteConfirm" class="rm-overlay" style="display:none;" onclick="if(event.target===this)_closeDeleteConfirm()">
+    <div class="rm-del-box">
+        <div class="rm-del-icon-wrap"><i class="fas fa-exclamation-triangle"></i></div>
+        <h3 class="rm-del-title" id="delConfirmTitle">Confirm Delete</h3>
+        <p class="rm-del-msg"   id="delConfirmMsg"></p>
+        <div class="rm-del-actions">
+            <button class="rm-btn-cancel" onclick="_closeDeleteConfirm()">Cancel</button>
+            <button class="rm-btn-delete" id="btnDeleteConfirm" onclick="_confirmDeleteAction()">
+                <i class="fas fa-trash"></i> Delete
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- STANDALONE EXPORT LOADING OVERLAY -->
+<div id="rmExpLoading" class="rm-exp-loading-overlay" style="display:none;">
+    <div class="rm-exp-loading-card">
+        <div class="rm-exp-spinner-sa"></div>
+        <div class="rm-exp-load-title" id="rmExpLoadText">Exporting…</div>
+        <div class="rm-exp-load-sub"   id="rmExpLoadSub">Please wait</div>
+    </div>
+</div>
+
+<!-- Building right-click context menu -->
+<div id="buildingMenu" class="context-menu">
+    <div class="context-menu-item" id="ctxEditBldg"><i class="fas fa-edit"></i> Edit Name</div>
+    <div class="context-menu-item delete" id="ctxDeleteBldg"><i class="fas fa-trash"></i> Delete Building</div>
+</div>
+
+<!-- Toast -->
+<div id="roomCrudToast" class="rm-toast">
+    <div class="rm-toast-icon" id="roomCrudToastIcon"></div>
+    <div>
+        <div class="rm-toast-title" id="roomCrudToastTitle"></div>
+        <div class="rm-toast-msg"   id="roomCrudToastMsg"></div>
     </div>
 </div>
 
@@ -153,16 +352,12 @@
       <div>
         <div class="room-exp-section-label"><i class="fas fa-building"></i>&nbsp;Step 1 — Select Buildings</div>
         <div class="room-exp-bldg-toolbar">
-          <input type="text" class="room-exp-search" id="roomExpSearch"
-            placeholder="Search buildings..." oninput="_filterRoomExpList()">
+          <input type="text" class="room-exp-search" id="roomExpSearch" placeholder="Search buildings..." oninput="_filterRoomExpList()">
           <label class="room-exp-sel-all-wrap">
-            <input type="checkbox" id="roomExpSelectAll" onchange="_toggleRoomExpSelectAll(this.checked)">
-            Select All
+            <input type="checkbox" id="roomExpSelectAll" onchange="_toggleRoomExpSelectAll(this.checked)"> Select All
           </label>
         </div>
-        <div class="room-exp-bldg-list" id="roomExpBldgList">
-          <div class="room-exp-bldg-empty">Loading buildings...</div>
-        </div>
+        <div class="room-exp-bldg-list" id="roomExpBldgList"><div class="room-exp-bldg-empty">Loading buildings...</div></div>
         <div style="margin-top:6px;font-size:.75rem;color:#555;">
           <span id="roomExpSelCount" style="font-weight:700;color:#800000;">0</span> building(s) &nbsp;&middot;&nbsp;
           <span id="roomExpRoomCount" style="font-weight:700;color:#800000;">0</span> rooms
@@ -171,42 +366,19 @@
       <div>
         <div class="room-exp-section-label"><i class="fas fa-file-alt"></i>&nbsp;Step 2 — Select Export Formats</div>
         <div class="room-exp-formats">
-          <div class="room-exp-fmt-card room-exp-csv-card"  data-format="csv"  onclick="_roomToggleFmtCard(this)">
-            <div class="fmt-icon"><i class="fas fa-file-csv"></i></div>
-            <div class="fmt-name">CSV</div><div class="fmt-desc">Spreadsheet</div>
-          </div>
-          <div class="room-exp-fmt-card room-exp-xlsx-card" data-format="xlsx" onclick="_roomToggleFmtCard(this)">
-            <div class="fmt-icon"><i class="fas fa-file-excel"></i></div>
-            <div class="fmt-name">XLSX</div><div class="fmt-desc">Excel Workbook</div>
-          </div>
-          <div class="room-exp-fmt-card room-exp-pdf-card"  data-format="pdf"  onclick="_roomToggleFmtCard(this)">
-            <div class="fmt-icon"><i class="fas fa-file-pdf"></i></div>
-            <div class="fmt-name">PDF</div><div class="fmt-desc">Portable Document</div>
-          </div>
-          <div class="room-exp-fmt-card room-exp-docx-card" data-format="docx" onclick="_roomToggleFmtCard(this)">
-            <div class="fmt-icon"><i class="fas fa-file-word"></i></div>
-            <div class="fmt-name">DOCX</div><div class="fmt-desc">Word Document</div>
-          </div>
+          <div class="room-exp-fmt-card room-exp-csv-card"  data-format="csv"  onclick="_roomToggleFmtCard(this)"><div class="fmt-icon"><i class="fas fa-file-csv"></i></div><div class="fmt-name">CSV</div><div class="fmt-desc">Spreadsheet</div></div>
+          <div class="room-exp-fmt-card room-exp-xlsx-card" data-format="xlsx" onclick="_roomToggleFmtCard(this)"><div class="fmt-icon"><i class="fas fa-file-excel"></i></div><div class="fmt-name">XLSX</div><div class="fmt-desc">Excel Workbook</div></div>
+          <div class="room-exp-fmt-card room-exp-pdf-card"  data-format="pdf"  onclick="_roomToggleFmtCard(this)"><div class="fmt-icon"><i class="fas fa-file-pdf"></i></div><div class="fmt-name">PDF</div><div class="fmt-desc">Portable Document</div></div>
+          <div class="room-exp-fmt-card room-exp-docx-card" data-format="docx" onclick="_roomToggleFmtCard(this)"><div class="fmt-icon"><i class="fas fa-file-word"></i></div><div class="fmt-name">DOCX</div><div class="fmt-desc">Word Document</div></div>
         </div>
-        <div style="text-align:right;">
-          <button class="room-exp-fmt-all-btn" id="roomExpFmtAllBtn" onclick="_roomToggleAllFmts()">Select All Formats</button>
-        </div>
+        <div style="text-align:right;"><button class="room-exp-fmt-all-btn" id="roomExpFmtAllBtn" onclick="_roomToggleAllFmts()">Select All Formats</button></div>
         <div class="room-exp-fmt-error" id="roomExpFmtError">Please select at least one export format.</div>
       </div>
       <div>
         <div class="room-exp-section-label"><i class="fas fa-cog"></i>&nbsp;Step 3 — Export Settings</div>
         <div class="room-exp-settings-grid">
-          <div class="room-exp-field">
-            <label>Filename</label>
-            <input type="text" id="roomExpFilename" value="Rooms_Export" oninput="_updateRoomExpFooter()">
-          </div>
-          <div class="room-exp-field">
-            <label>Options</label>
-            <div class="room-exp-toggle-row">
-              <input type="checkbox" id="roomExpDateToggle" checked onchange="_updateRoomExpFooter()">
-              <label for="roomExpDateToggle">Append timestamp to filename</label>
-            </div>
-          </div>
+          <div class="room-exp-field"><label>Filename</label><input type="text" id="roomExpFilename" value="Rooms_Export" oninput="_updateRoomExpFooter()"></div>
+          <div class="room-exp-field"><label>Options</label><div class="room-exp-toggle-row"><input type="checkbox" id="roomExpDateToggle" checked onchange="_updateRoomExpFooter()"><label for="roomExpDateToggle">Append timestamp to filename</label></div></div>
         </div>
         <div class="room-exp-summary" id="roomExpSummaryText">Select buildings and formats to see export summary</div>
       </div>
@@ -216,8 +388,7 @@
       <div class="room-exp-footer-btns">
         <button class="room-exp-cancel-btn" onclick="closeRoomExportModal()">Cancel</button>
         <button class="room-exp-confirm-btn" id="roomExpConfirmBtn" onclick="roomExecuteExport()">
-          <i class="fas fa-download"></i>
-          <span id="roomExpBtnLabel">Export</span>
+          <i class="fas fa-download"></i><span id="roomExpBtnLabel">Export</span>
         </button>
       </div>
     </div>

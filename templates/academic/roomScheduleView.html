@@ -1,0 +1,346 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<style>
+    .rs-container {
+        padding: 30px 40px;
+        background-color: #fff;
+        width: 100%;
+    }
+
+    /* ── Page header ── */
+    .rs-header-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 24px;
+        gap: 12px;
+    }
+
+    .rs-title {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: #800000;
+        letter-spacing: .3px;
+        margin: 0 0 4px;
+    }
+
+    .rs-subtitle {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #aaa;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    /* ── Maroon filter bar ── */
+    .rs-filter-bar {
+        background-color: #800000;
+        padding: 10px 16px;
+        border-radius: 6px 6px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #fff;
+    }
+
+    .rs-filter-left {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+    }
+
+    .rs-filter-unit {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .rs-filter-unit label {
+        font-size: 0.6rem;
+        font-weight: 800;
+        margin-bottom: 3px;
+        color: rgba(255, 255, 255, 0.75);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .rs-filter-unit select {
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #fff;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+        min-width: 130px;
+    }
+
+    .rs-filter-unit select option {
+        background: #630100;
+        color: #fff;
+    }
+
+    .rs-filter-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .btn-rs-export {
+        background: #fff;
+        border: none;
+        color: #630100;
+        padding: 5px 14px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s;
+    }
+
+    .btn-rs-export:hover {
+        background: #f0e0e0;
+    }
+
+    /* ── Table wrapper ── */
+    .rs-table-wrapper {
+        background: #fff;
+        border: 1px solid #ead5d5;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(99, 1, 0, 0.08);
+    }
+
+    .rs-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+
+    .rs-table thead {
+        background: linear-gradient(135deg, #7a0000 0%, #5c0000 100%);
+        color: #fff;
+    }
+
+    .rs-table th {
+        padding: 10px 12px;
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        text-align: left;
+        border-right: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .rs-table th:last-child {
+        border-right: none;
+    }
+
+    .rs-table tbody tr {
+        border-bottom: 1px solid #f0e8e8;
+        transition: background 0.15s;
+    }
+
+    .rs-table tbody tr:hover {
+        background: #f9f0f0;
+    }
+
+    .rs-table td {
+        padding: 10px 12px;
+        color: #595151;
+        font-size: 0.82rem;
+    }
+
+    /* ── Empty state ── */
+    .rs-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 70px 20px;
+        color: #aaa;
+        text-align: center;
+    }
+
+    .rs-empty-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: #f8eded;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.6rem;
+        color: #630100;
+        margin-bottom: 16px;
+        opacity: 0.6;
+    }
+
+    .rs-empty-title {
+        font-size: 0.88rem;
+        font-weight: 800;
+        color: #595151;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .rs-empty-sub {
+        font-size: 0.75rem;
+        color: #bbb;
+    }
+
+    /* ── Footer buttons ── */
+    .rs-footer-buttons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+    }
+
+    .btn-rs-outline {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 9px 18px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.72rem;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        border: 2px solid #630100;
+        color: #630100;
+        background: #fff;
+        transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-rs-outline:hover {
+        background: #630100;
+        color: #fff;
+        text-decoration: none;
+    }
+
+    .btn-rs-solid {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 9px 18px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.72rem;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        border: none;
+        background: #630100;
+        color: #fff;
+        transition: background 0.15s;
+    }
+
+    .btn-rs-solid:hover {
+        background: #7a0100;
+        color: #fff;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rs-container">
+
+    <!-- Header -->
+    <div class="rs-header-row">
+        <div>
+            <h1 class="rs-title">Room Schedule</h1>
+            <p class="rs-subtitle">View and manage room assignments per time slot</p>
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="rs-filter-bar">
+        <div class="rs-filter-left">
+            <div class="rs-filter-unit">
+                <label>Building</label>
+                <select disabled>
+                    <option>All Buildings</option>
+                </select>
+            </div>
+            <div class="rs-filter-unit">
+                <label>Room</label>
+                <select disabled>
+                    <option>All Rooms</option>
+                </select>
+            </div>
+            <div class="rs-filter-unit">
+                <label>Day</label>
+                <select disabled>
+                    <option>All Days</option>
+                </select>
+            </div>
+            <div class="rs-filter-unit">
+                <label>Semester</label>
+                <select disabled>
+                    <option>Current Semester</option>
+                </select>
+            </div>
+        </div>
+        <div class="rs-filter-right">
+            <button class="btn-rs-export" disabled>
+                <i class="fas fa-external-link-alt"></i> Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="rs-table-wrapper">
+        <table class="rs-table">
+            <thead>
+                <tr>
+                    <th>Room</th>
+                    <th>Building</th>
+                    <th>Day</th>
+                    <th>Time Start</th>
+                    <th>Time End</th>
+                    <th>Subject</th>
+                    <th>Instructor</th>
+                    <th>Program</th>
+                    <th>Year Level</th>
+                    <th>Section</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="10">
+                        <div class="rs-empty">
+                            <div class="rs-empty-icon">
+                                <i class="fas fa-door-open"></i>
+                            </div>
+                            <div class="rs-empty-title">Room Schedule is working.</div>
+                            <div class="rs-empty-sub">Select filters above to load room schedule data.</div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Footer buttons -->
+    <div class="rs-footer-buttons">
+        <a href="{{ url_for('room') }}" class="btn-rs-outline">
+            <i class="fas fa-door-open"></i> Manage Rooms
+        </a>
+        <a href="{{ url_for('schedule') }}" class="btn-rs-solid">
+            <i class="fas fa-table"></i> Class Schedule (SIS)
+        </a>
+    </div>
+
+</div>
+{% endblock %}

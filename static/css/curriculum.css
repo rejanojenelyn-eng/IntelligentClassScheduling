@@ -1,5 +1,11 @@
 /* static/css/curriculum.css */
 
+:root {
+    --pup-maroon: #800000;
+    --pup-maroon-dark: #4b0a0a;
+    --pup-maroon-mid: #630100;
+}
+
 /* =========================================================
    CURRICULUM & CURRICULUM VIEW MAIN UI
    ========================================================= */
@@ -13,10 +19,10 @@
 
 .curr-header h1 {
     font-weight: 800;
-    color: #630100;
-    font-size: 2.5rem;
+    color: var(--pup-maroon);
+    font-size: 1.8rem;
     margin: 0;
-    letter-spacing: -1px;
+    letter-spacing: -.5px;
 }
 
 /* Import Button */
@@ -111,10 +117,9 @@
     position: relative;
 }
 
-/* Ensure the container has enough height so the browser doesn't flip the dropdown up */
+/* Ensure the container has enough height */
 .curriculum-ui {
-    padding-bottom: 500px !important;
-    /* Extremely high padding to force downward expansion */
+    padding-bottom: 60px;
     min-height: 100vh;
 }
 
@@ -231,11 +236,14 @@
 }
 
 .curr-list-table thead th {
-    background: #630100;
+    background: var(--pup-maroon);
     color: white;
-    padding: 10px 15px;
+    padding: 11px 14px;
     text-align: left;
-    font-size: 0.85rem;
+    font-size: .76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
 }
 
 .curr-list-table tbody td {
@@ -615,23 +623,22 @@
 }
 
 .section-header-row h2 {
-    color: #630100;
-    font-weight: 800;
+    color: var(--pup-maroon);
+    font-weight: 700;
     margin: 0;
-    font-size: 1.6rem;
-    letter-spacing: -0.5px;
-    text-transform: uppercase;
+    font-size: 1.1rem;
+    letter-spacing: 0;
 }
 
 .filter-bar-dark {
-    background: #630100;
-    padding: 10px 15px;
-    border-radius: 2px;
+    background: var(--pup-maroon);
+    padding: 10px 16px;
+    border-radius: 6px 6px 0 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,.12);
 }
 
 .filter-group-row {
@@ -695,10 +702,7 @@
     text-transform: uppercase;
 }
 
-/* Ensure dropdown opens downwards */
-.curriculum-ui {
-    padding-bottom: 500px !important;
-}
+/* (padding-bottom already set above) */
 
 .assignment-table {
     margin-bottom: 40px;
@@ -712,7 +716,7 @@
     /* Precisely enough for ~3-4 rows */
     overflow-y: auto;
     overflow-x: hidden;
-    border: 2px solid #630100;
+    border: 1px solid var(--pup-maroon);
     border-radius: 5px;
     margin-bottom: 35px;
     background: #fff;
@@ -731,8 +735,7 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    background-color: #630100 !important;
-    /* Matches your maroon theme */
+    background-color: var(--pup-maroon) !important;
     box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -790,11 +793,22 @@
 .pdf-error-box {
     background: #fff0f0;
     border: 1px solid #e74c3c;
+    border-left: 4px solid #c0392b;
     color: #c0392b;
     padding: 10px 14px;
     border-radius: 5px;
-    font-size: 0.85rem;
+    font-size: 0.84rem;
     font-weight: 600;
+    display: none;          /* default hidden; JS sets to flex when showing */
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+}
+
+.pdf-error-box i {
+    margin-top: 2px;
+    flex-shrink: 0;
+    font-size: 0.95rem;
 }
 
 /* =========================================================
@@ -919,7 +933,7 @@
     white-space: nowrap;
 }
 
-/* Column widths */
+/* Column widths — curriculum review */
 .pdf-review-table .th-code { width: 100px; min-width: 90px; }
 .pdf-review-table .th-name { width: 220px; min-width: 160px; }
 .pdf-review-table .th-req  { width: 100px; min-width: 80px;  }
@@ -927,6 +941,20 @@
 .pdf-review-table .th-yl   { width: 52px;  min-width: 48px;  }
 .pdf-review-table .th-sem  { width: 58px;  min-width: 52px;  }
 .pdf-review-table .th-del  { width: 32px;  }
+
+/* Column widths — employee review (11 cols + delete) */
+.pdf-review-table .th-emp-num  { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-name { width: 100px; min-width: 88px;  }
+.pdf-review-table .th-emp-mid  { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-mail { width: 150px; min-width: 130px; }
+.pdf-review-table .th-emp-tel  { width: 110px; min-width: 96px;  }
+.pdf-review-table .th-emp-spec { width: 130px; min-width: 110px; }
+.pdf-review-table .th-emp-type { width: 96px;  min-width: 80px;  }
+.pdf-review-table .th-emp-stat { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-desig{ width: 96px;  min-width: 80px;  }
+
+/* Input sizing inside the review table */
+.pdf-review-table .rev-input { width: 100%; min-width: 0; box-sizing: border-box; }
 
 /* ── Group header rows ─────────────────────────────────────── */
 
@@ -1066,6 +1094,182 @@
 }
 
 .btn-row-delete:hover { background: #fde8e8; }
+
+/* ── Review modal — improved header ──────────────────────── */
+
+.pdf-review-modal-header {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding-bottom: 10px;
+}
+
+.pdf-review-header-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.pdf-review-meta-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.88);
+    padding: 4px 2px 0;
+    flex-wrap: wrap;
+    font-weight: 600;
+}
+
+.rev-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.rev-meta-sep {
+    opacity: 0.45;
+    font-weight: 400;
+}
+
+/* ── Year-level sections ─────────────────────────────────── */
+
+.rev-year-section {
+    margin-bottom: 18px;
+}
+
+.rev-year-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(90deg, #4b0a0a 0%, #700000 100%);
+    color: #fff;
+    padding: 9px 16px;
+    border-radius: 5px 5px 0 0;
+    font-weight: 800;
+    font-size: 0.88rem;
+    letter-spacing: 0.8px;
+}
+
+.rev-year-icon {
+    font-size: 1rem;
+    opacity: 0.75;
+}
+
+.rev-year-title {
+    flex: 1;
+    letter-spacing: 1px;
+}
+
+.rev-year-total {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* ── Semester sub-sections ───────────────────────────────── */
+
+.rev-sem-section {
+    border: 1px solid #e0d0d0;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.rev-sem-section:last-child {
+    margin-bottom: 0;
+    border-radius: 0 0 5px 5px;
+}
+
+.rev-year-section > .rev-sem-section:first-of-type {
+    border-top: none;
+}
+
+.rev-year-section > .rev-sem-section + .rev-sem-section {
+    border-top: 2px solid #e8dede;
+    border-radius: 0;
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+.rev-year-section > .rev-sem-section + .rev-sem-section:last-child {
+    border-radius: 0 0 5px 5px;
+}
+
+.rev-sem-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: #faf4f4;
+    border-bottom: 1px solid #e8d8d8;
+    padding: 7px 14px;
+}
+
+.rev-sem-title {
+    font-weight: 800;
+    font-size: 0.82rem;
+    color: #630100;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.rev-sem-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.rev-sem-count {
+    font-size: 0.74rem;
+    color: #888;
+    font-weight: 600;
+    background: #ede8e8;
+    padding: 2px 9px;
+    border-radius: 10px;
+}
+
+/* ── Per-semester table (no outer border — section provides it) ── */
+
+.rev-sem-table {
+    border-radius: 0;
+    border: none;
+}
+
+.rev-sem-table thead th {
+    background: #800000;
+    font-size: 0.76rem;
+    padding: 6px 8px;
+    position: static;   /* not sticky per-table to avoid stacking issues */
+}
+
+/* ── Empty state ────────────────────────────────────────── */
+
+.rev-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: #aaa;
+    font-size: 0.88rem;
+    gap: 10px;
+}
+
+.rev-empty-state i {
+    font-size: 2.2rem;
+    color: #d0c0c0;
+}
 
 /* =========================================================
    CURRICULUM EXPORT MODAL
@@ -1295,15 +1499,15 @@
 .curr-exp-loading-sub  { font-size: .81rem; color: #888; }
 /* Toast */
 .curr-exp-toast {
-    position: fixed; bottom: 24px; right: 24px; z-index: 12000;
+    position: fixed; top: 24px; right: 24px; z-index: 12000;
     background: #fff; border-radius: 10px; padding: 13px 16px;
     display: flex; align-items: flex-start; gap: 11px;
-    box-shadow: 0 8px 24px rgba(0,0,0,.2); min-width: 270px; max-width: 370px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2); min-width: 270px; max-width: 380px;
     border-left: 4px solid #800000; animation: curr-slidein .3s ease;
 }
 .curr-exp-toast.success { border-left-color: #27ae60; }
 .curr-exp-toast.error   { border-left-color: #c0392b; }
-@keyframes curr-slidein { from { transform:translateX(120%); opacity:0; } to { transform:none; opacity:1; } }
+@keyframes curr-slidein { from { transform:translateY(-20px) translateX(30px); opacity:0; } to { transform:none; opacity:1; } }
 .curr-exp-toast-icon { font-size: 1.15rem; flex-shrink: 0; margin-top: 1px; }
 .curr-exp-toast.success .curr-exp-toast-icon { color: #27ae60; }
 .curr-exp-toast.error   .curr-exp-toast-icon { color: #c0392b; }
@@ -1341,6 +1545,424 @@
     font-size: 0.72rem;
     color: #333;
     margin-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REDESIGNED CURRICULUM MANAGEMENT — TAB-BASED UI
+═══════════════════════════════════════════════════════════════ */
+
+/* Page header + toggle tabs */
+.curr-mgmt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+.curr-mgmt-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #800000;
+    text-transform: uppercase;
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+.curr-tab-group {
+    display: flex;
+    border-radius: 30px;
+    overflow: hidden;
+    border: 2px solid #800000;
+}
+.curr-tab-btn {
+    padding: 9px 24px;
+    background: transparent;
+    color: #800000;
+    border: none;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.82rem;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.curr-tab-btn.active { background: #800000; color: #fff; }
+.curr-tab-btn:not(.active):hover { background: #fff5f5; }
+
+/* Filter bar */
+.curr-filter-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    justify-content: space-between;
+}
+.curr-filter-group { display: flex; flex-direction: column; gap: 4px; }
+.curr-filter-label {
+    font-size: 0.62rem;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-filter-input {
+    padding: 7px 11px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #333;
+    background: #fafafa;
+    outline: none;
+    min-width: 130px;
+}
+.curr-filter-input:focus { border-color: #800000; }
+.curr-filter-actions { display: flex; gap: 8px; align-items: center; }
+
+.curr-btn-sort {
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    background: white;
+    color: #444;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-sort:hover { background: #f5f5f5; border-color: #bbb; }
+
+.curr-btn-export {
+    padding: 8px 16px;
+    border: none;
+    background: #800000;
+    color: white;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-export:hover { background: #600000; }
+
+.curr-btn-import {
+    padding: 8px 16px;
+    border: 1.5px solid #800000;
+    background: white;
+    color: #800000;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-import:hover { background: #fff5f5; }
+
+/* Assignments table */
+.curr-table-wrapper {
+    background: white;
+    border-radius: 8px;
+    overflow: visible;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.curr-assign-table { width: 100%; border-collapse: collapse; }
+.curr-assign-table thead th {
+    background: #800000;
+    color: white;
+    padding: 13px 18px;
+    text-align: left;
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.curr-assign-table tbody td {
+    padding: 13px 18px;
+    border-bottom: 1px solid #f0eeee;
+    font-size: 0.87rem;
+    color: #444;
+}
+.curr-assign-table tbody tr:last-child td { border-bottom: none; }
+.curr-assign-table tbody tr:hover { background: #fffaf9; }
+.curr-code-pill {
+    display: inline-block;
+    border: 2px solid #800000;
+    color: #800000;
+    border-radius: 5px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+/* Syllabi section */
+.curr-syllabi-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.curr-syllabi-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #888;
+    border: 2px dashed #e0d0d0;
+    border-radius: 10px;
+    margin-top: 16px;
+}
+.curr-syllabi-empty i { font-size: 2.4rem; color: #ddd; display: block; margin-bottom: 12px; }
+.curr-syllabi-empty-title { font-size: 1rem; font-weight: 700; color: #666; margin-bottom: 4px; }
+.curr-syllabi-empty-sub { font-size: 0.82rem; color: #aaa; }
+.curr-prog-section { margin-bottom: 20px; }
+.curr-prog-header {
+    background: #800000;
+    color: white;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 6px 6px 0 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-prog-body {
+    border: 1px solid #e8d8d8;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+    background: white;
+}
+.curr-syllabi-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 18px;
+    border-bottom: 1px solid #f5eeee;
+    gap: 10px;
+}
+.curr-syllabi-row:last-child { border-bottom: none; }
+.curr-prog-no-curr {
+    padding: 14px 18px;
+    font-size: 0.82rem;
+    color: #aaa;
+    font-style: italic;
+}
+.curr-syllabi-row::before {
+    content: '•';
+    color: #800000;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+.curr-syllabi-name {
+    font-size: 0.88rem;
+    color: #333;
+    font-weight: 500;
+    flex: 1;
+}
+.curr-syllabi-actions { display: flex; align-items: center; gap: 8px; }
+.btn-view-curr {
+    background: #800000;
+    color: white;
+    border: none;
+    padding: 7px 18px;
+    border-radius: 5px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    transition: 0.2s;
+    white-space: nowrap;
+}
+.btn-view-curr:hover { background: #600000; color: white; }
+.btn-del-curr {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    padding: 7px 10px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.btn-del-curr:hover { background: #c0392b; }
+
+/* Curriculum view page header */
+.curr-view-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+}
+.curr-view-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #800000;
+    text-transform: uppercase;
+    margin: 0;
+}
+.btn-back-curr {
+    background: #800000;
+    color: white;
+    border: none;
+    padding: 9px 22px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+}
+.btn-back-curr:hover { background: #600000; color: white; }
+
+/* ═══════════════════════════════════════════════════════════════
+   REDESIGNED CURRICULUM VIEW PAGE
+═══════════════════════════════════════════════════════════════ */
+
+/* Filter card — white card with labeled dropdowns */
+.curr-view-filter-card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    padding: 18px 22px;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.curr-view-filter-fields {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    flex: 1;
+}
+.curr-view-filter-group { display: flex; flex-direction: column; gap: 4px; }
+.curr-view-filter-label {
+    font-size: 0.62rem;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-view-dropdown {
+    padding: 7px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #333;
+    background: #fafafa;
+    outline: none;
+    cursor: pointer;
+    min-width: 130px;
+}
+.curr-view-dropdown:focus { border-color: #800000; }
+.curr-view-export-btn {
+    background: white;
+    border: 1.5px solid #800000;
+    color: #800000;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.curr-view-export-btn:hover { background: #fff5f5; }
+
+/* Section groups */
+.curr-view-section { margin-bottom: 28px; }
+
+/* Banner: program–year label left, CY+semester right */
+.curr-view-banner {
+    display: flex;
+    align-items: stretch;
+    border-radius: 6px 6px 0 0;
+    overflow: hidden;
+}
+.curr-view-banner-title {
+    flex: 3;
+    background: white;
+    border: 2px solid #800000;
+    border-right: none;
+    border-bottom: none;
+    padding: 10px 18px;
+    color: #800000;
+    font-weight: 800;
+    font-size: 0.88rem;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+}
+.curr-view-banner-info {
+    background: #800000;
+    padding: 10px 22px;
+    color: white;
+    font-weight: 700;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.curr-view-banner-sep { opacity: 0.45; }
+
+/* Subject table */
+.curr-view-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+}
+.curr-view-table thead th {
+    background: #800000;
+    color: white;
+    padding: 11px 14px;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.curr-view-table tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0eeee;
+    font-size: 0.84rem;
+    color: #333;
+}
+.curr-view-table tbody tr:last-child td { border-bottom: none; }
+.curr-view-table tbody tr:hover { background: #fffcfc; }
+.cvt-code { font-weight: 700; color: #800000; font-size: 0.82rem; }
+.cvt-req  { color: #777; font-size: 0.78rem; }
+.cvt-num  { text-align: center; font-weight: 600; color: #444; }
+.cvt-desc { color: #333; }
+.curr-view-no-subjects {
+    text-align: center;
+    padding: 36px;
+    color: #aaa;
+    background: white;
+    border-radius: 0 0 6px 6px;
+    border: 2px solid #800000;
+    border-top: none;
+    font-size: 0.88rem;
 }
 
 .pdf-scanned-warn {
