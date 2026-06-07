@@ -5,13 +5,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentBatchId      = null;
     let canPublish          = false;
 
-    const acadYear    = document.getElementById('acadYear');
-    const term        = document.getElementById('term');
-    const program     = document.getElementById('program');
-    const yearLevel   = document.getElementById('yearLevel');
-    const curriculum  = document.getElementById('curriculum');
+    const acadYear      = document.getElementById('acadYear');
+    const term          = document.getElementById('term');
+    const program       = document.getElementById('program');
+    const yearLevel     = document.getElementById('yearLevel');
+    const sectionFilter = document.getElementById('sectionFilter');
+    const curriculum    = document.getElementById('curriculum');
     const curriculumText = document.getElementById('curriculumText');
-    const useHistorical = document.getElementById('useHistorical');
+    const useHistorical  = document.getElementById('useHistorical');
 
     const btnGenerate      = document.getElementById('btnGenerate');
     const btnRegenerate    = document.getElementById('btnRegenerate');
@@ -21,12 +22,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnExport        = document.getElementById('btnExport');
     const btnCalendarView  = document.getElementById('btnCalendarView');
     const btnTableView     = document.getElementById('btnTableView');
+    const sortSelect       = document.getElementById('sortSelect');
+
+    async function loadSections() {
+        const prog = program.value;
+        const yl   = yearLevel.value;
+        sectionFilter.innerHTML = '<option value="">SELECT</option>';
+        if (!prog || !yl) { checkFormValidity(); return; }
+        sectionFilter.innerHTML = '<option value="">Loading...</option>';
+        try {
+            const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}`);
+            const data = await res.json();
+            sectionFilter.innerHTML = '<option value="">SELECT</option>';
+            (data.sections || []).forEach(sec => {
+                const opt = document.createElement('option');
+                opt.value = sec.id;
+                opt.textContent = sec.name;
+                sectionFilter.appendChild(opt);
+            });
+            if ((data.sections || []).length === 1) {
+                sectionFilter.value = data.sections[0].id;
+            }
+        } catch (e) {
+            sectionFilter.innerHTML = '<option value="">SELECT</option>';
+        }
+        checkFormValidity();
+    }
 
     program.addEventListener('change', async function() {
         const programValue = this.value;
         if (!programValue) {
             curriculumText.textContent = "Select Program first";
             curriculum.value = "";
+            sectionFilter.innerHTML = '<option value="">Select</option>';
             checkFormValidity();
             return;
         }
@@ -46,15 +74,17 @@ document.addEventListener('DOMContentLoaded', () => {
             curriculumText.textContent = "Error loading curriculum";
             curriculum.value = "";
         }
-        checkFormValidity();
+        await loadSections();
     });
 
     function checkFormValidity() {
-        const allFilled = acadYear.value && term.value && program.value && yearLevel.value && curriculum.value;
+        const allFilled = acadYear.value && term.value && program.value && yearLevel.value && sectionFilter.value && curriculum.value;
         btnGenerate.disabled = !allFilled;
     }
 
-    [acadYear, term, yearLevel, useHistorical].forEach(el => {
+    yearLevel.addEventListener('change', loadSections);
+    sectionFilter.addEventListener('change', checkFormValidity);
+    [acadYear, term, useHistorical].forEach(el => {
         el.addEventListener('change', checkFormValidity);
     });
 
@@ -79,12 +109,17 @@ document.addEventListener('DOMContentLoaded', () => {
         btnCalendarView.classList.remove('active-btn');
     });
 
+    sortSelect.addEventListener('change', () => {
+        if (currentScheduleData.length) renderTable(currentScheduleData, sortSelect.value);
+    });
+
     function getContext() {
         return {
             program:   program.value,
             yearLevel: parseInt(yearLevel.value),
             term:      term.value,
             acadYear:  acadYear.value,
+            section:   sectionFilter.value,
         };
     }
 
@@ -174,7 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(hideLoading, 500);
     }
 
-    function renderTable(scheduleArray) {
+    function renderTable(scheduleArray, sortBy = 'default') {
         const tbody = document.getElementById('scheduleTableBody');
         if (!scheduleArray.length) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> No classes scheduled yet</span></td></tr>';
@@ -213,14 +248,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!g.rooms.includes(room)) g.rooms.push(room);
         });
 
-        tbody.innerHTML = Object.values(groups).map(g => `
+        let entries = Object.values(groups);
+        if (sortBy === 'az') entries.sort((a, b) => a.subject_code.localeCompare(b.subject_code));
+        else if (sortBy === 'za') entries.sort((a, b) => b.subject_code.localeCompare(a.subject_code));
+        else if (sortBy === 'time') entries.sort((a, b) => (a.times[0] || '').localeCompare(b.times[0] || ''));
+
+        tbody.innerHTML = entries.map((g) => `
             <tr>
                 <td>${g.instructor}</td>
-                <td>${g.subject_code}</td>
+                <td class="subject-code-cell">${g.subject_code}</td>
                 <td>${g.description}</td>
                 <td>${g.lec_hours}</td>
                 <td>${g.lab_hours}</td>
-                <td>${g.credit_units}</td>
+                <td class="credit-cell">${g.credit_units}</td>
                 <td>${g.course}</td>
                 <td>${g.times.join(' / ')}</td>
                 <td>${g.lec_hours + g.lab_hours}</td>
@@ -391,7 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
         canPublish          = (data.conflict_count || 0) === 0;
 
-        renderTable(currentScheduleData);
+        renderTable(currentScheduleData, sortSelect.value);
         updateTitleBar();
 
         btnRegenerate.disabled   = false;
@@ -482,6 +522,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         yearLevel:  ctx.yearLevel,
                         term:       ctx.term,
                         curriculum: curriculum.value,
+                        section:    ctx.section,
                     }),
                 });
                 const data = await res.json();
@@ -498,7 +539,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await showInfo('Error', 'Connection error. Please try again.', 'error');
         } finally {
             btnGenerate.disabled = false;
-            btnGenerate.innerHTML = '<i class="fas fa-magic"></i> GENERATE SCHEDULE';
+            btnGenerate.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE';
             document.querySelector('#loadingModal h2').textContent = 'GENERATING SCHEDULE';
             document.querySelector('#loadingModal .loading-subtitle').textContent =
                 'Detecting conflicts & applying constraints...';
@@ -640,7 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     yearLevel.value = data.context.yearLevel || '';
                 }
 
-                renderTable(currentScheduleData);
+                renderTable(currentScheduleData, sortSelect.value);
                 updateTitleBar();
 
                 btnRegenerate.disabled   = false;

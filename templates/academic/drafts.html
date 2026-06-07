@@ -171,6 +171,18 @@
         box-shadow: 0 3px 10px rgba(26,122,46,0.25);
     }
 
+    /* "Edit to Manual Editor" — maroon, matching Manual Editor header */
+    .btn-dc-edit-editor {
+        background: #630100;
+        color: #fff;
+    }
+    .btn-dc-edit-editor:hover {
+        background: #8b0000;
+        color: #fff;
+        text-decoration: none;
+        box-shadow: 0 3px 10px rgba(99,1,0,0.25);
+    }
+
     .btn-dc-view {
         background: #630100;
         color: #fff;
@@ -343,6 +355,34 @@
     .btn-modal-confirm-delete:hover { background: #a00; }
     .btn-modal-confirm-delete:disabled { opacity: 0.6; cursor: not-allowed; }
 
+    /* ── Scheduler mode toggle (mirrors Manual Editor header) ── */
+    .drafts-mode-toggle {
+        display: inline-flex;
+        gap: 6px;
+        background: #f3e8e8;
+        border-radius: 8px;
+        padding: 5px;
+    }
+    .drafts-mode-btn {
+        padding: 8px 18px;
+        border-radius: 6px;
+        border: none;
+        font-size: 0.72rem;
+        font-weight: 900;
+        letter-spacing: 1.1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        color: #630100;
+        background: transparent;
+        transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .drafts-mode-btn.active {
+        background: #630100;
+        color: #fff;
+        box-shadow: 0 2px 8px rgba(99,1,0,0.25);
+    }
+    .drafts-mode-btn:not(.active):hover { background: #ead5d5; }
+
     /* ── VIEW ALL button ── */
     .btn-drafts-viewall {
         display: flex;
@@ -362,6 +402,32 @@
         flex-shrink: 0;
     }
     .btn-drafts-viewall:hover { background: #7a0100; }
+
+    /* ── Edit to Manual Editor button ── */
+    .btn-dc-edit-editor {
+        background: #630100;
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 9px 16px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 0.72rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        text-decoration: none;
+        border: none;
+        transition: background 0.15s, box-shadow 0.15s;
+        white-space: nowrap;
+    }
+    .btn-dc-edit-editor:hover {
+        background: #8b0000;
+        color: #fff;
+        text-decoration: none;
+        box-shadow: 0 3px 10px rgba(99,1,0,0.25);
+    }
 </style>
 {% endblock %}
 
@@ -373,10 +439,22 @@
             <h1 class="drafts-title">Draft List</h1>
             <p class="drafts-subtitle" id="draftsSubtitle">Loading&hellip;</p>
         </div>
-        <button class="btn-drafts-viewall" id="btnDraftsViewAll"
-                onclick="viewAllDraftsReport()" style="display:none;">
-            <i class="fas fa-external-link-alt"></i> VIEW ALL
-        </button>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div class="drafts-mode-toggle">
+                <button class="drafts-mode-btn active" id="btnDraftOfficial"
+                        onclick="setDraftSchedulerFilter('official',this)">
+                    <i class="fas fa-university" style="margin-right:5px;"></i> Official Scheduler
+                </button>
+                <button class="drafts-mode-btn" id="btnDraftLocal"
+                        onclick="setDraftSchedulerFilter('local',this)">
+                    <i class="fas fa-tools" style="margin-right:5px;"></i> Local Scheduler
+                </button>
+            </div>
+            <button class="btn-drafts-viewall" id="btnDraftsViewAll"
+                    onclick="viewAllDraftsReport()" style="display:none;">
+                <i class="fas fa-external-link-alt"></i> VIEW ALL
+            </button>
+        </div>
     </div>
 
     <div id="draftsList">
@@ -404,5 +482,8 @@
     </div>
 </div>
 
+<script>
+const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";
+</script>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/drafts.acad.js') }}"></script>
 {% endblock %}

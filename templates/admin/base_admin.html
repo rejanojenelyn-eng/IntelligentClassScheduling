@@ -141,10 +141,9 @@
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         {% for category, message in messages %}
-        <div class="flash-toast {{ 'error' if 'Denied' in message or 'Error' in message else 'success' }}">
+        <div class="flash-toast {{ category }}">
             <div class="toast-icon">
-                <i
-                    class="fas {{ 'fa-exclamation-circle' if 'Denied' in message or 'Error' in message else 'fa-check-circle' }}"></i>
+                <i class="fas {% if category == 'error' %}fa-exclamation-circle{% elif category == 'warning' %}fa-exclamation-triangle{% elif category == 'info' %}fa-info-circle{% else %}fa-check-circle{% endif %}"></i>
             </div>
             <div class="toast-content">
                 <p>{{ message }}</p>

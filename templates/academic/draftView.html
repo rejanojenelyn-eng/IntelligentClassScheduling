@@ -290,6 +290,7 @@
 {% endblock %}
 
 {% block content %}
+<div id="dv-init-data" data-version-id="{{ version_id }}" hidden></div>
 <div class="schedule-container" style="padding: 20px 28px;">
 
     <!-- ── Header ── -->
@@ -399,17 +400,9 @@
 
         <!-- Action Bar -->
         <div class="dv-action-bar">
-            <div class="dv-action-left">
-                <button class="dv-btn dv-btn-outline" id="dvBtnRegen" onclick="regenDraft()">
-                    <i class="fas fa-sync-alt"></i> Re-generate
-                </button>
-                <button class="dv-btn dv-btn-outline" id="dvBtnSave" onclick="saveDraft()">
-                    <i class="fas fa-save"></i> Save changes
-                </button>
-            </div>
-            <div class="dv-action-right">
+            <div class="dv-action-right" style="margin-left:auto;">
                 <button class="dv-btn dv-btn-solid" id="dvBtnManual" onclick="goManual()">
-                    <i class="fas fa-pen"></i> Go to Manual Editor
+                    <i class="fas fa-edit"></i> Edit to Manual Editor
                 </button>
                 <button class="dv-btn dv-btn-green" id="dvBtnApprove" onclick="approveDraft()">
                     <i class="fas fa-check-circle"></i> Approve Schedule
@@ -447,7 +440,7 @@
 </div>
 
 <script>
-const VERSION_ID        = {{ version_id }};
+const VERSION_ID        = parseInt(document.getElementById('dv-init-data').dataset.versionId, 10);
 const SCHEDULE_GEN_URL  = "{{ url_for('schedule_generation_view') }}";
 const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";
 </script>

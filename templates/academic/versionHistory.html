@@ -397,56 +397,99 @@
         align-items: center;
         justify-content: center;
     }
-
     .vh-modal-overlay.active { display: flex; }
 
     .vh-modal {
         background: #fff;
         border-radius: 10px;
-        padding: 28px 32px;
-        max-width: 440px;
-        width: 90%;
+        max-width: 480px;
+        width: 92%;
         box-shadow: 0 12px 40px rgba(0,0,0,0.2);
-        text-align: center;
+        overflow: hidden;
     }
 
-    .vh-modal-icon {
-        width: 52px;
-        height: 52px;
-        border-radius: 50%;
-        background: #fdf2f2;
+    .vh-modal-header {
+        padding: 14px 20px;
+        background: #630100;
+        color: #fff;
         display: flex;
         align-items: center;
-        justify-content: center;
-        font-size: 1.4rem;
-        color: #630100;
-        margin: 0 auto 14px;
-    }
-
-    .vh-modal-title {
-        font-size: 1rem;
+        gap: 10px;
+        font-size: 0.9rem;
         font-weight: 900;
-        color: #1e1e1e;
-        margin-bottom: 8px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
     }
 
-    .vh-modal-body {
+    .vh-modal-content { padding: 20px 24px 8px; }
+
+    .vh-modal-desc {
         font-size: 0.8rem;
-        color: #666;
-        margin-bottom: 22px;
+        color: #555;
         line-height: 1.6;
+        margin: 0 0 16px;
     }
+
+    .vh-restore-option {
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        padding: 13px 15px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        background: #fff;
+        transition: border-color 0.15s, background 0.15s;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    .vh-restore-option.selected {
+        border-color: #630100;
+        background: #fdf2f2;
+    }
+    .vh-radio {
+        width: 16px; height: 16px;
+        border-radius: 50%;
+        border: 2px solid #bbb;
+        background: #fff;
+        flex-shrink: 0;
+        margin-top: 2px;
+        display: flex; align-items: center; justify-content: center;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .vh-restore-option.selected .vh-radio {
+        background: #630100; border-color: #630100;
+    }
+    .vh-radio-dot {
+        width: 6px; height: 6px;
+        border-radius: 50%; background: #fff;
+        display: none;
+    }
+    .vh-restore-option.selected .vh-radio-dot { display: block; }
+
+    .vh-opt-title {
+        font-size: 0.8rem; font-weight: 900; color: #333; margin-bottom: 3px;
+    }
+    .vh-restore-option.selected .vh-opt-title { color: #630100; }
+    .vh-opt-badge {
+        background: #630100; color: #fff;
+        padding: 1px 7px; border-radius: 10px;
+        font-size: 0.6rem; letter-spacing: 0.5px;
+        margin-left: 6px; vertical-align: middle;
+    }
+    .vh-opt-desc { font-size: 0.72rem; color: #777; line-height: 1.5; }
 
     .vh-modal-actions {
+        padding: 10px 24px 20px;
         display: flex;
         gap: 10px;
-        justify-content: center;
+        justify-content: flex-end;
+        border-top: 1px solid #f0f0f0;
     }
 
     .btn-vh-modal-cancel {
-        padding: 9px 22px;
+        padding: 9px 20px;
         border-radius: 6px;
-        border: 2px solid #ddd;
+        border: 1.5px solid #ddd;
         background: #fff;
         color: #555;
         font-weight: 800;
@@ -456,7 +499,6 @@
         cursor: pointer;
         transition: border-color 0.15s;
     }
-
     .btn-vh-modal-cancel:hover { border-color: #999; }
 
     .btn-vh-modal-restore {
@@ -475,9 +517,58 @@
         align-items: center;
         gap: 6px;
     }
-
     .btn-vh-modal-restore:hover { background: #7a0100; }
     .btn-vh-modal-restore:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ---- restore warning block ---- */
+    .vh-restore-warning-block {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        background: #fff8e1;
+        border: 1px solid #ffe082;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 12px;
+    }
+
+    .vh-restore-warn-icon {
+        color: #946300;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+
+    .vh-restore-warn-text {
+        font-size: 0.78rem;
+        color: #946300;
+        font-weight: 600;
+        line-height: 1.55;
+    }
+
+    /* ---- success toast ---- */
+    .vh-toast {
+        position: fixed;
+        bottom: 28px;
+        right: 28px;
+        background: #1a7a2e;
+        color: #fff;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        z-index: 99999;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+        letter-spacing: 0.3px;
+    }
+
+    .vh-toast.show { opacity: 1; }
 </style>
 {% endblock %}
 
@@ -526,18 +617,26 @@
 <!-- Restore Confirmation Modal -->
 <div class="vh-modal-overlay" id="vhRestoreModal">
     <div class="vh-modal">
-        <div class="vh-modal-icon"><i class="fas fa-undo-alt"></i></div>
-        <div class="vh-modal-title">Restore to Draft?</div>
-        <div class="vh-modal-body" id="vhRestoreModalBody">
-            This will restore the selected version to Draft. Any existing Draft for this schedule will be archived first.
+        <div class="vh-modal-header">
+            <i class="fas fa-undo-alt"></i> <span id="vhRestoreModalTitle">Restore Revision</span>
         </div>
-        <div class="vh-modal-actions">
-            <button class="btn-vh-modal-cancel" onclick="vhCloseRestoreModal()">Cancel</button>
-            <button class="btn-vh-modal-restore" id="vhConfirmRestoreBtn">
-                <i class="fas fa-undo-alt"></i> Restore
-            </button>
+        <div class="vh-modal-content">
+            <div class="vh-restore-warning-block" id="vhRestoreWarningBlock" style="display:none;">
+                <div class="vh-restore-warn-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                <div class="vh-restore-warn-text" id="vhRestoreModalDesc"></div>
+            </div>
+            <p class="vh-modal-desc" id="vhRestoreModalDescPlain"></p>
+        </div>
+        <div class="vh-modal-actions" id="vhRestoreModalActions">
+            <!-- populated dynamically -->
         </div>
     </div>
+</div>
+
+<!-- Success toast -->
+<div class="vh-toast" id="vhToast">
+    <i class="fas fa-check-circle"></i>
+    <span id="vhToastMsg"></span>
 </div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/versionHistory.acad.js') }}"></script>

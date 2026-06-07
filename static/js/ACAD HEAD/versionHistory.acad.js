@@ -2,6 +2,7 @@
     let allVersions = [];
     let pendingRestoreId = null;
     let pendingRestoreLabel = '';
+    let pendingRestoreOrigStatus = 'Draft';  // 'Draft' | 'Published'
 
     // ── label helpers ──────────────────────────────────────────────────────────
     const semLabel = t =>
@@ -53,17 +54,35 @@
         return groups;
     }
 
-    // ── render one version chain ───────────────────────────────────────────────
-    // versions is sorted oldest→newest; the last entry is the active revision
-    function renderChain(versions) {
-        const maxVNum = versions.length ? versions[versions.length - 1].version_number : -1;
+    // ── render one typed version chain (Draft or Published) ──────────────────
+    // versions: pre-filtered array for one chain type, sorted oldest→newest.
+    // chainType: 'Draft' | 'Published'
+    function renderChain(versions, chainType) {
+        if (!versions.length)
+            return '<span style="color:#bbb;font-size:0.7rem;font-style:italic;">None yet</span>';
+
+        const getVNum  = v => chainType === 'Draft'
+            ? (v.draft_version_number || 0)
+            : (v.published_version_number || 0);
+        const maxNum   = Math.max(...versions.map(getVNum));
+
         let html = '<div class="vh-version-chain">';
         versions.forEach((v, i) => {
             if (i > 0) html += '<span class="vh-version-arrow"><i class="fas fa-chevron-right"></i></span>';
-            const isLatest   = v.version_number === maxVNum;
-            const progSafe   = (v.programcode || '').replace(/'/g, "\\'");
 
-            const overlayUrl = !isLatest
+            const vNum      = getVNum(v);
+            // Only mark as current if this revision is still actively in the right status.
+            // An archived Draft (fully published) must show Restore, not "Current Draft".
+            const isCurrent = vNum > 0 && vNum === maxNum
+                && (v.status || '').toLowerCase() === chainType.toLowerCase();
+            const progSafe  = (v.programcode || '').replace(/'/g, "\\'");
+            const label     = `${chainType} R${vNum}`;
+            const badge     = isCurrent ? ` &bull; Current ${chainType}` : '';
+            const pillCls   = isCurrent
+                ? (chainType === 'Published' ? 'vh-pill-published' : 'vh-pill-draft')
+                : 'vh-pill-archive';
+
+            const overlayUrl = !isCurrent
                 ? `/schedule?overlay_id=${v.versionid}` +
                   `&prog=${encodeURIComponent(v.programcode || '')}` +
                   `&yl=${v.yearlevel}` +
@@ -72,22 +91,22 @@
                   `&vnum=${v.version_number}`
                 : null;
 
-            const pillCls = isLatest ? 'vh-pill-published' : 'vh-pill-archive';
+            const labelSafe = label.replace(/'/g, "\\'");
 
             html += `
             <div class="vh-version-unit">
                 <div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
                     <span class="vh-version-pill ${pillCls}">
-                        R${v.version_number}${isLatest ? ' &bull; ACTIVE' : ''}
+                        ${label}${badge}
                     </span>
                 </div>
                 <div style="display:flex;gap:4px;align-items:center;">
-                    ${!isLatest ? `<a class="btn-vh-view" href="${overlayUrl}"
+                    ${!isCurrent ? `<a class="btn-vh-view" href="${overlayUrl}"
                         title="Compare this revision against the current schedule">
                         <i class="fas fa-eye"></i> View
                     </a>` : ''}
-                    ${!isLatest ? `<button class="btn-vh-restore"
-                        onclick="vhOpenRestoreModal(${v.versionid},'R${v.version_number}','${progSafe}',${v.yearlevel})"
+                    ${!isCurrent ? `<button class="btn-vh-restore"
+                        onclick="vhOpenRestoreModal(${v.versionid},'${labelSafe}','${progSafe}',${v.yearlevel},'${v.original_status || chainType}')"
                         title="Restore this revision">
                         <i class="fas fa-undo"></i> Restore
                     </button>` : ''}
@@ -96,6 +115,14 @@
         });
         html += '</div>';
         return html;
+    }
+
+    // Small inline type-label badge matching the pill palette
+    function chainTypeLabel(text, bg, fg, bd) {
+        return `<span style="display:inline-flex;align-items:center;min-width:62px;padding:3px 8px;` +
+               `border-radius:4px;font-size:0.6rem;font-weight:800;letter-spacing:0.7px;` +
+               `text-transform:uppercase;background:${bg};color:${fg};border:1px solid ${bd};` +
+               `white-space:nowrap;flex-shrink:0;">${text}</span>`;
     }
 
     // ── main render ────────────────────────────────────────────────────────────
@@ -162,10 +189,32 @@
                             <tbody>`;
 
                 ylKeys.forEach(yl => {
+                    const allVers = sg.levels[yl];
+
+                    // Split by original_status (set by backend); fall back to computed counters
+                    const draftVers = allVers
+                        .filter(v => v.draft_version_number)
+                        .sort((a, b) => a.draft_version_number - b.draft_version_number);
+                    const publishedVers = allVers
+                        .filter(v => v.published_version_number)
+                        .sort((a, b) => a.published_version_number - b.published_version_number);
+
+                    const draftRow = draftVers.length ? `
+                        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                            ${chainTypeLabel('Draft','#fff8e1','#946300','#ffe082')}
+                            ${renderChain(draftVers, 'Draft')}
+                        </div>` : '';
+
+                    const publishedRow = publishedVers.length ? `
+                        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;${draftVers.length ? 'margin-top:7px;' : ''}">
+                            ${chainTypeLabel('Published','#e8f8ee','#1a7a2e','#b2dbb5')}
+                            ${renderChain(publishedVers, 'Published')}
+                        </div>` : '';
+
                     html += `
                                 <tr>
                                     <td class="vh-year-cell">${yrLabel(yl)}</td>
-                                    <td>${renderChain(sg.levels[yl])}</td>
+                                    <td>${draftRow}${publishedRow}</td>
                                 </tr>`;
                 });
 
@@ -207,12 +256,85 @@
     };
 
     // ── restore modal ─────────────────────────────────────────────────────────
-    window.vhOpenRestoreModal = function (versionId, vLabel, prog, yl) {
-        pendingRestoreId    = versionId;
-        pendingRestoreLabel = `${vLabel} of ${prog} — Year ${yl}`;
-        document.getElementById('vhRestoreModalBody').textContent =
-            `This will restore ${pendingRestoreLabel} to Draft status. ` +
-            `Any existing Draft for this program/year/semester will be archived first.`;
+
+    window.vhOpenRestoreModal = function (versionId, vLabel, prog, yl, origStatus) {
+        pendingRestoreId         = versionId;
+        pendingRestoreLabel      = `${vLabel} of ${prog} — Year ${yl}`;
+        pendingRestoreOrigStatus = origStatus || 'Draft';
+
+        // Determine current state from already-loaded allVersions data
+        const thisVer  = allVersions.find(v => v.versionid === versionId);
+        const semKey   = thisVer ? thisVer.term     : null;
+        const ayKey    = thisVer ? thisVer.acadyear  : null;
+
+        const siblings = allVersions.filter(v =>
+            (v.programcode || '').toUpperCase() === (prog || '').toUpperCase() &&
+            Number(v.yearlevel) === Number(yl) &&
+            v.term     === semKey &&
+            v.acadyear === ayKey
+        );
+
+        const isCurrentlyPublished = thisVer && (thisVer.status || '').toLowerCase() === 'published';
+        const hasActiveDraft       = siblings.some(v => (v.status || '').toLowerCase() === 'draft');
+        const hasActivePublished   = siblings.some(v => (v.status || '').toLowerCase() === 'published');
+
+        // Pick scenario message and buttons
+        let title        = 'Restore Revision';
+        let message      = 'Are you sure you want to restore this revision as Draft?';
+        let primaryLabel = 'Restore Draft';
+        let cancelLabel  = 'Cancel';
+        let showWarning  = false;
+
+        if (isCurrentlyPublished && hasActiveDraft) {
+            title        = 'Active Schedule Conflict';
+            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and unpublish the current schedule.';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (isCurrentlyPublished) {
+            title        = 'Restore Published Revision';
+            message      = 'This revision is currently Published. Restoring it will automatically unpublish the current schedule. Do you want to continue?';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (hasActiveDraft && hasActivePublished) {
+            title        = 'Active Schedule Conflict';
+            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and affect the current schedule.';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (hasActiveDraft) {
+            title        = 'Replace Existing Draft?';
+            message      = 'There is already an existing Draft for this schedule. Restoring this revision will replace the current Draft. Do you want to continue?';
+            primaryLabel = 'Replace Draft';
+            cancelLabel  = 'Keep Current Draft';
+            showWarning  = true;
+        }
+
+        // Populate modal
+        document.getElementById('vhRestoreModalTitle').textContent = title;
+
+        const warnBlock = document.getElementById('vhRestoreWarningBlock');
+        const warnText  = document.getElementById('vhRestoreModalDesc');
+        const plainText = document.getElementById('vhRestoreModalDescPlain');
+
+        if (showWarning) {
+            warnText.textContent  = message;
+            warnBlock.style.display = 'flex';
+            plainText.textContent = '';
+            plainText.style.display = 'none';
+        } else {
+            warnBlock.style.display = 'none';
+            plainText.textContent   = message;
+            plainText.style.display = '';
+        }
+
+        // Build action buttons dynamically
+        const actions = document.getElementById('vhRestoreModalActions');
+        actions.innerHTML = `
+            <button class="btn-vh-modal-cancel" onclick="vhCloseRestoreModal()">${cancelLabel}</button>
+            <button class="btn-vh-modal-restore" id="vhConfirmRestoreBtn">
+                <i class="fas fa-undo-alt"></i> ${primaryLabel}
+            </button>`;
+
+        document.getElementById('vhConfirmRestoreBtn').addEventListener('click', _vhDoRestore);
         document.getElementById('vhRestoreModal').classList.add('active');
     };
 
@@ -222,28 +344,41 @@
         pendingRestoreLabel = '';
     };
 
-    document.getElementById('vhConfirmRestoreBtn').addEventListener('click', async () => {
+    async function _vhDoRestore() {
         if (!pendingRestoreId) return;
         const btn = document.getElementById('vhConfirmRestoreBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Restoring&hellip;';
 
         try {
-            const res  = await fetch(`/api/schedule/versions/${pendingRestoreId}/restore`, { method: 'POST' });
+            const res  = await fetch(`/api/schedule/versions/${pendingRestoreId}/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ restore_mode: 'draft' })
+            });
             const data = await res.json();
             if (data.success) {
                 vhCloseRestoreModal();
+                _vhShowToast('Revision restored successfully as Draft.');
                 await loadVersions();
             } else {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore';
                 alert('Restore failed: ' + (data.error || 'Unknown error'));
             }
         } catch (e) {
-            alert('Restore failed: ' + e.message);
-        } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore';
+            alert('Restore failed: ' + e.message);
         }
-    });
+    }
+
+    function _vhShowToast(msg) {
+        const toast = document.getElementById('vhToast');
+        document.getElementById('vhToastMsg').textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 4000);
+    }
 
     // ── data load ─────────────────────────────────────────────────────────────
     async function loadVersions() {

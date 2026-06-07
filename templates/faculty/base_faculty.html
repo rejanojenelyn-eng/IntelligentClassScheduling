@@ -60,26 +60,33 @@
                 </a>
             </li>
 
+            <!-- My Request (standalone) -->
+            <li class="nav-item {% if current_page == url_for('faculty_requests') %}active{% endif %}">
+                <a href="{{ url_for('faculty_requests') }}" class="nav-link">
+                    <i class="fas fa-file-alt"></i><span class="nav-label">My Request</span>
+                </a>
+            </li>
+
             <!-- SCHEDULE MENU -->
-            {% set schedule_pages =[url_for('faculty_schedule'), url_for('faculty_requests'), url_for('faculty_subject_offerings')] %}
-            
-            <li class="nav-item has-submenu {% if current_page in schedule_pages %}open active{% endif %}">
-                <a href="{{ url_for('faculty_schedule') }}" class="nav-link">
+            {% set schedule_pages = [url_for('faculty_schedule'), url_for('faculty_room_schedule')] %}
+
+            <li class="nav-item has-submenu">
+                <a href="javascript:void(0)" class="nav-link" onclick="var sm=this.nextElementSibling;sm.classList.toggle('show-submenu');this.querySelector('.sched-caret').classList.toggle('rotated');">
                     <i class="fas fa-calendar-alt"></i>
                     <span class="nav-label">Schedule</span>
-                    <i class="fas fa-caret-down"></i>
+                    <i class="fas fa-caret-down sched-caret {% if current_page in schedule_pages %}rotated{% endif %}"></i>
                 </a>
-                
+
                 <!-- Sub-menu -->
-                <ul class="sub-menu">
-                    <li class="nav-item {% if current_page == url_for('faculty_requests') %}active{% endif %}">
-                        <a href="{{ url_for('faculty_requests') }}" class="nav-link">
-                            <span class="nav-label">My Requests</span>
+                <ul class="sub-menu {% if current_page in schedule_pages %}show-submenu{% endif %}">
+                    <li class="nav-item {% if current_page == url_for('faculty_schedule') %}active{% endif %}">
+                        <a href="{{ url_for('faculty_schedule') }}" class="nav-link">
+                            <span class="nav-label">Class Schedule (SIS)</span>
                         </a>
                     </li>
-                    <li class="nav-item {% if current_page == url_for('faculty_subject_offerings') %}active{% endif %}">
-                        <a href="{{ url_for('faculty_subject_offerings') }}" class="nav-link">
-                            <span class="nav-label">Subject Offerings</span>
+                    <li class="nav-item {% if current_page == url_for('faculty_room_schedule') %}active{% endif %}">
+                        <a href="{{ url_for('faculty_room_schedule') }}" class="nav-link">
+                            <span class="nav-label">Room Schedule</span>
                         </a>
                     </li>
                 </ul>

@@ -1,0 +1,433 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<style>
+    .la-header-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 24px;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .la-title {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: #1b5e20;
+        letter-spacing: .3px;
+        margin: 0 0 4px;
+    }
+
+    .la-subtitle {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #aaa;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    .la-filter-bar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        margin-bottom: 20px;
+        background: #fff;
+        border: 1px solid #c8e6c9;
+        border-radius: 8px;
+        padding: 14px 18px;
+    }
+
+    .la-filter-group { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
+
+    .la-filter-label {
+        font-size: 0.6rem;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        color: #888;
+        text-transform: uppercase;
+    }
+
+    .la-filter-select {
+        border: 1.5px solid #ddd;
+        border-radius: 5px;
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #333;
+        background: #fff;
+        cursor: pointer;
+        min-width: 130px;
+    }
+    .la-filter-select:focus { outline: none; border-color: #2e7d32; }
+
+    .btn-la-filter {
+        padding: 7px 18px;
+        border-radius: 5px;
+        background: #1b5e20;
+        color: #fff;
+        border: none;
+        font-weight: 800;
+        font-size: 0.75rem;
+        cursor: pointer;
+        align-self: flex-end;
+        letter-spacing: 0.5px;
+        transition: background 0.18s;
+    }
+    .btn-la-filter:hover { background: #2e7d32; }
+
+    .btn-la-reset {
+        padding: 7px 14px;
+        border-radius: 5px;
+        background: #fff;
+        color: #555;
+        border: 1.5px solid #ccc;
+        font-weight: 800;
+        font-size: 0.75rem;
+        cursor: pointer;
+        align-self: flex-end;
+        transition: all 0.18s;
+    }
+    .btn-la-reset:hover { border-color: #888; color: #222; }
+
+    /* Cards */
+    .la-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        background: #fff;
+        border: 1px solid #c8e6c9;
+        border-left: 5px solid #1b5e20;
+        border-radius: 8px;
+        padding: 18px 24px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        transition: box-shadow 0.18s, transform 0.18s;
+    }
+    .la-card:hover { box-shadow: 0 6px 20px rgba(27,94,32,0.12); transform: translateY(-1px); }
+    .la-card.la-card-hc { border-left-color: #e53935; }
+
+    .la-card-icon {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: #e8f5e9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        color: #1b5e20;
+        font-size: 1.1rem;
+    }
+    .la-card.la-card-hc .la-card-icon { background: #ffebee; color: #c62828; }
+
+    .la-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+
+    .la-card-eyebrow {
+        font-size: 0.6rem;
+        font-weight: 800;
+        letter-spacing: 1.8px;
+        color: #888;
+        text-transform: uppercase;
+    }
+
+    .la-card-title {
+        font-size: 1rem;
+        font-weight: 900;
+        color: #1e1e1e;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        line-height: 1.2;
+    }
+
+    .la-card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+
+    .la-badge {
+        font-size: 0.62rem;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        padding: 3px 9px;
+        border-radius: 10px;
+        text-transform: uppercase;
+    }
+    .la-badge-green  { background: #e8f5e9; color: #1b5e20; }
+    .la-badge-blue   { background: #e3f2fd; color: #1565c0; }
+    .la-badge-gray   { background: #f5f5f5; color: #555; }
+    .la-badge-red    { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+
+    .la-card-reason {
+        font-size: 0.74rem;
+        color: #666;
+        font-style: italic;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 500px;
+    }
+
+    .la-card-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+    .btn-la-view {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        background: #1b5e20;
+        color: #fff;
+        border: none;
+        font-weight: 800;
+        font-size: 0.72rem;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        text-transform: uppercase;
+        transition: background 0.18s;
+    }
+    .btn-la-view:hover { background: #2e7d32; }
+
+    .btn-la-deactivate {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 6px;
+        background: #fff;
+        color: #c62828;
+        border: 1.5px solid #ef9a9a;
+        font-weight: 800;
+        font-size: 0.72rem;
+        cursor: pointer;
+        transition: all 0.18s;
+    }
+    .btn-la-deactivate:hover { background: #ffebee; }
+
+    /* Empty / Loading */
+    .la-empty, .la-loading {
+        text-align: center;
+        padding: 64px 20px;
+        color: #888;
+        font-size: 0.88rem;
+    }
+    .la-empty i, .la-loading i { font-size: 2rem; display: block; margin-bottom: 12px; color: #c8e6c9; }
+    .la-loading i { color: #1b5e20; }
+
+    /* Detail modal */
+    .la-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.45);
+        z-index: 9000;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .la-modal-box {
+        background: #fff;
+        border-radius: 12px;
+        width: min(720px, 96vw);
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    }
+
+    .la-modal-hdr {
+        background: #1b5e20;
+        color: #fff;
+        padding: 16px 22px;
+        border-radius: 12px 12px 0 0;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .la-modal-title { font-size: 0.95rem; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
+    .la-modal-meta  { font-size: 0.62rem; opacity: 0.75; letter-spacing: 1px; margin-top: 3px; }
+
+    .la-modal-close {
+        background: none; border: none; color: #fff;
+        font-size: 1.1rem; cursor: pointer; opacity: 0.7; flex-shrink: 0; line-height: 1; padding: 0;
+    }
+    .la-modal-close:hover { opacity: 1; }
+
+    .la-modal-body { padding: 18px 22px; overflow-y: auto; flex: 1; }
+
+    .la-modal-info-bar {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        background: #f1f8e9;
+        border: 1px solid #c5e1a5;
+        border-radius: 7px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+    }
+
+    .la-modal-info-item { display: flex; flex-direction: column; gap: 2px; }
+    .la-modal-info-label { font-size: 0.58rem; font-weight: 900; letter-spacing: 1.5px; color: #555; text-transform: uppercase; }
+    .la-modal-info-val   { font-size: 0.8rem; font-weight: 800; color: #1b5e20; }
+
+    .la-session-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+
+    .la-session-table thead th {
+        background: #1b5e20;
+        color: #fff;
+        padding: 9px 12px;
+        font-size: 0.62rem;
+        font-weight: 900;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        text-align: left;
+    }
+
+    .la-session-table tbody td { padding: 9px 12px; border-bottom: 1px solid #eee; color: #333; }
+    .la-session-table tbody tr:nth-child(even) { background: #f1f8e9; }
+    .la-session-table tbody tr:hover { background: #dcedc8; }
+
+    .la-modal-ftr {
+        padding: 14px 22px;
+        border-top: 1px solid #eee;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+
+    .btn-la-modal-close {
+        padding: 9px 22px;
+        border-radius: 6px;
+        border: 2px solid #1b5e20;
+        background: #fff;
+        color: #1b5e20;
+        font-weight: 800;
+        font-size: 0.76rem;
+        cursor: pointer;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+    }
+    .btn-la-modal-close:hover { background: #1b5e20; color: #fff; }
+
+    .hidden { display: none !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-container" style="padding: 20px 28px;">
+
+    <!-- Header -->
+    <div class="la-header-row">
+        <div>
+            <div class="la-subtitle">Schedule Management</div>
+            <h1 class="la-title"><i class="fas fa-layer-group" style="margin-right:8px;opacity:0.7;"></i>Local Arrangements</h1>
+        </div>
+        <a href="{{ url_for('manual_schedule_editor', scheduler='local') }}"
+           style="display:inline-flex;align-items:center;gap:7px;padding:10px 20px;border-radius:6px;background:#1b5e20;color:#fff;font-weight:800;font-size:0.78rem;letter-spacing:0.5px;text-decoration:none;text-transform:uppercase;transition:background 0.18s;"
+           onmouseover="this.style.background='#2e7d32'" onmouseout="this.style.background='#1b5e20'">
+            <i class="fas fa-plus"></i> New Local Arrangement
+        </a>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="la-filter-bar">
+        <div class="la-filter-group">
+            <span class="la-filter-label">Academic Year</span>
+            <select id="laFilterAy" class="la-filter-select" onchange="laRebuildSemFilter()">
+                <option value="">All Years</option>
+            </select>
+        </div>
+        <div class="la-filter-group">
+            <span class="la-filter-label">Semester</span>
+            <select id="laFilterSem" class="la-filter-select">
+                <option value="">All Semesters</option>
+            </select>
+        </div>
+        <div class="la-filter-group">
+            <span class="la-filter-label">Program</span>
+            <select id="laFilterProg" class="la-filter-select">
+                <option value="">All Programs</option>
+            </select>
+        </div>
+        <div class="la-filter-group">
+            <span class="la-filter-label">Year Level</span>
+            <select id="laFilterYl" class="la-filter-select">
+                <option value="">All Levels</option>
+                <option>1</option><option>2</option><option>3</option>
+                <option>4</option><option>5</option>
+            </select>
+        </div>
+        <button class="btn-la-filter" onclick="laLoadArrangements()">
+            <i class="fas fa-search"></i> Filter
+        </button>
+        <button class="btn-la-reset" onclick="laResetFilters()">Reset</button>
+    </div>
+
+    <!-- Loading -->
+    <div class="la-loading" id="laLoading">
+        <i class="fas fa-spinner fa-spin"></i>
+        Loading local arrangements…
+    </div>
+
+    <!-- Cards -->
+    <div id="laCardList" class="hidden"></div>
+
+    <!-- Empty -->
+    <div class="la-empty hidden" id="laEmpty">
+        <i class="fas fa-layer-group"></i>
+        No local arrangements found.<br>
+        <span style="font-size:0.8rem;">
+            Create one from the
+            <a href="{{ url_for('manual_schedule_editor', scheduler='local') }}"
+               style="color:#1b5e20;font-weight:700;">Local Scheduler</a>
+            using "Save as Local Arrangement".
+        </span>
+    </div>
+
+</div>
+
+<!-- Detail Modal -->
+<div class="la-modal-overlay" id="laDetailModal">
+    <div class="la-modal-box">
+        <div class="la-modal-hdr">
+            <div>
+                <div class="la-modal-title" id="laModalTitle">Local Arrangement</div>
+                <div class="la-modal-meta"  id="laModalMeta"></div>
+            </div>
+            <button class="la-modal-close" onclick="laCloseModal()">✕</button>
+        </div>
+        <div class="la-modal-body">
+            <div class="la-modal-info-bar" id="laModalInfoBar"></div>
+            <table class="la-session-table">
+                <thead>
+                    <tr>
+                        <th>Subject Code</th>
+                        <th>Subject Name</th>
+                        <th>Instructor</th>
+                        <th>Day</th>
+                        <th>Time</th>
+                        <th>Room</th>
+                    </tr>
+                </thead>
+                <tbody id="laModalSessions"></tbody>
+            </table>
+            <div class="la-empty hidden" id="laModalEmpty" style="padding:30px 10px;">
+                <i class="fas fa-info-circle" style="font-size:1.5rem;"></i>
+                No session details recorded.
+            </div>
+        </div>
+        <div class="la-modal-ftr">
+            <button class="btn-la-modal-close" onclick="laCloseModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Server-side seed data for filters -->
+<div id="la-init-data"
+     data-acad-years="{{ acad_years_json | e }}"
+     data-programs="{{ programs_json | e }}"
+     hidden></div>
+
+<script src="{{ url_for('static', filename='js/ACAD HEAD/localArrangements.acad.js') }}"></script>
+{% endblock %}

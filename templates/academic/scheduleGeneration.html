@@ -8,30 +8,45 @@
 {% block content %}
 <div class="schedule-container">
 
+<<<<<<< HEAD
     <!-- Top Action Links -->
     <div class="top-action-links">
         <button class="outline-btn" onclick="openDraftsModal()"><i class="fas fa-edit"></i> View Drafts</button>
         <button class="outline-btn" onclick="openVersionHistoryModal()"><i class="fas fa-history"></i> Version History</button>
+=======
+    <!-- Page Title Bar -->
+    <div class="page-title-bar">
+        <div class="page-title-left">
+            <h2><i class="fas fa-calendar-alt"></i> GENERATE SCHEDULE</h2>
+        </div>
+        <div class="page-title-right">
+            <button id="btnManualEditor" class="outline-btn" disabled>
+                <i class="fas fa-pen"></i> Go to Manual Editor
+            </button>
+        </div>
+>>>>>>> 4323b880aa5b6d26a4684517beaa0afa2c16a224
     </div>
 
     <!-- Filter and Generate Section -->
     <div class="schedule-header-split">
         <div class="filter-box">
-            <span class="instruction-text"><i class="fas fa-info-circle"></i> SELECT FIRST BEFORE GENERATING</span>
+            <div class="filter-section-label">
+                <i class="fas fa-sliders-h"></i> FILTER CONTROLS
+            </div>
             <form id="generateScheduleForm">
                 <div class="form-group">
-                    <label>ACADEMIC YEAR</label>
+                    <label>ACAD YEAR</label>
                     <select id="acadYear" name="acadYear" required>
-                        <option value="">Select...</option>
+                        <option value="">SELECT</option>
                         {% for year in acad_years %}
                             <option value="{{ year }}">{{ year }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>TERM</label>
+                    <label>SEMESTER</label>
                     <select id="term" name="term" required>
-                        <option value="">Select...</option>
+                        <option value="">SELECT</option>
                         {% for term in terms %}
                             <option value="{{ term.id }}">{{ term.name }}</option>
                         {% endfor %}
@@ -40,7 +55,7 @@
                 <div class="form-group">
                     <label>PROGRAM</label>
                     <select id="program" name="program" required>
-                        <option value="">Select...</option>
+                        <option value="">SELECT</option>
                         {% for prog in programs %}
                             <option value="{{ prog.code }}">{{ prog.name }}</option>
                         {% endfor %}
@@ -49,10 +64,16 @@
                 <div class="form-group">
                     <label>YEAR LEVEL</label>
                     <select id="yearLevel" name="yearLevel" required>
-                        <option value="">Select...</option>
+                        <option value="">SELECT</option>
                         {% for level in year_levels %}
                             <option value="{{ level }}">Year {{ level }}</option>
                         {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>SECTIONS</label>
+                    <select id="sectionFilter" name="sectionFilter" required>
+                        <option value="">SELECT</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -66,12 +87,12 @@
         </div>
 
         <div class="generate-box">
-            <button type="button" id="btnGenerate">
-                <i class="fas fa-magic"></i> GENERATE SCHEDULE
+            <button type="button" id="btnGenerate" disabled>
+                <i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE
             </button>
             <div class="checkbox-wrapper">
                 <input type="checkbox" id="useHistorical" name="useHistorical">
-                <label for="useHistorical"><i class="fas fa-clock-rotate-left"></i> retrieve previous schedule</label>
+                <label for="useHistorical"><i class="fas fa-clock-rotate-left"></i> Retrieve previous schedule</label>
             </div>
         </div>
     </div>
@@ -83,10 +104,21 @@
 
         <div class="table-toolbar">
             <div class="view-toggles">
-                <button class="outline-btn" id="btnCalendarView"><i class="far fa-calendar-alt"></i> Calendar view</button>
-                <button class="active-btn" id="btnTableView"><i class="fas fa-table"></i> Table view</button>
+                <button class="outline-btn" id="btnCalendarView"><i class="far fa-calendar-alt"></i> Calendar View</button>
+                <button class="active-btn" id="btnTableView"><i class="fas fa-table"></i> Table View</button>
             </div>
-            <button class="outline-btn" id="btnExport" disabled><i class="fas fa-file-export"></i> Export Schedule</button>
+            <div class="toolbar-right">
+                <div class="sort-control">
+                    <i class="fas fa-sort-amount-down-alt"></i>
+                    <select id="sortSelect">
+                        <option value="default">SORT: Default</option>
+                        <option value="az">SORT: A-Z</option>
+                        <option value="za">SORT: Z-A</option>
+                        <option value="time">SORT: By Time</option>
+                    </select>
+                </div>
+                <button class="outline-btn" id="btnExport" disabled><i class="fas fa-file-export"></i> Export Schedule</button>
+            </div>
         </div>
 
         <!-- Table View -->
@@ -102,7 +134,7 @@
                         <th>CREDIT UNITS</th>
                         <th>COURSE</th>
                         <th>TIME</th>
-                        <th>HOURS</th>
+                        <th>HRS</th>
                         <th>DAYS</th>
                         <th>ROOM</th>
                     </tr>
@@ -143,7 +175,7 @@
             </div>
         </div>
 
-        <!-- Conflict Warning Banner (hidden by default) -->
+        <!-- Conflict Warning Banner -->
         <div id="conflictBanner" class="conflict-banner hidden">
             <i class="fas fa-exclamation-triangle"></i>
             <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
@@ -152,11 +184,11 @@
 
         <div id="actionButtons">
             <div class="left-actions">
-                <button id="btnRegenerate" disabled><i class="fas fa-sync-alt"></i> Re-generate</button>
+                <a href="{{ url_for('schedule_drafts_list') }}" class="outline-btn"><i class="fas fa-layer-group"></i> View Draft List</a>
                 <button id="btnSaveDraft" disabled><i class="fas fa-save"></i> Save as Draft</button>
             </div>
             <div class="right-actions">
-                <button id="btnManualEditor" disabled><i class="fas fa-pen"></i> Go to Manual Editor</button>
+                <button id="btnRegenerate" disabled><i class="fas fa-sync-alt"></i> Re-generate</button>
                 <button id="btnApprove" disabled><i class="fas fa-check-circle"></i> Approve Schedule</button>
             </div>
         </div>
@@ -164,7 +196,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════
-     LOADING MODAL (animated progress)
+     LOADING MODAL
 ═══════════════════════════════════════════════ -->
 <div id="loadingModal" class="modal-overlay hidden">
     <div class="modal-content loading-modal-content">
@@ -188,7 +220,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════
-     INFO MODAL (replaces all alert() popups)
+     INFO MODAL
 ═══════════════════════════════════════════════ -->
 <div id="infoModal" class="modal-overlay hidden">
     <div class="modal-content info-modal-content">
@@ -1031,4 +1063,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 </script>
+<<<<<<< HEAD
 {% endblock %}
+=======
+<script src="{{ url_for('static', filename='js/ACAD HEAD/scheduleGeneration.acad.js') }}"></script>
+{% endblock %}
+>>>>>>> 4323b880aa5b6d26a4684517beaa0afa2c16a224

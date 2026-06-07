@@ -1,186 +1,415 @@
 {% extends "faculty/base_faculty.html" %}
 
 {% block head %}
-    {{ super() }}
-    <!-- Link to the new CSS for the schedule page -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_faculty.css') }}">
-    <!-- Font Awesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+{{ super() }}
+<style>
+    /* ── Page wrapper ── */
+    .fcs-wrap { padding: 28px 32px; background: #fff; font-family: 'Inter', sans-serif; }
+
+    /* ── Header ── */
+    .fcs-page-title {
+        font-size: 1.8rem;
+        font-weight: 900;
+        color: #800000;
+        letter-spacing: .5px;
+        margin: 0 0 8px;
+        text-transform: uppercase;
+    }
+    .fcs-page-sub {
+        font-size: 0.8rem;
+        color: #a33;
+        font-weight: 500;
+        margin: 0 0 20px;
+    }
+
+    /* ── Filter bar ── */
+    .fcs-filter-container {
+        background: #5C0A0A; /* Dark Maroon */
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+    }
+    .fcs-filter-header {
+        color: #fff;
+        font-size: 0.85rem;
+        font-weight: 800;
+        margin-bottom: 15px;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+        padding-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    .fcs-filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        align-items: flex-end;
+    }
+    .fcs-filter-unit { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 130px; }
+    .fcs-filter-unit label {
+        font-size: 0.65rem;
+        font-weight: 800;
+        color: #fff;
+        text-transform: uppercase;
+    }
+    .fcs-filter-unit select {
+        background: #fff;
+        border: none;
+        color: #333;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        cursor: pointer;
+        width: 100%;
+    }
+    .fcs-sort-wrap {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        padding-bottom: 8px;
+    }
+    .fcs-sort-label {
+        font-size: 0.7rem;
+        font-weight: 800;
+        color: #fff;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    /* ── View toggle bar ── */
+    .fcs-view-bar-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        border: 1px solid #800000;
+        border-radius: 8px;
+        padding: 8px 12px;
+    }
+    .fcs-view-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .fcs-btn-view {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 8px 16px;
+        border: none;
+        background: transparent;
+        color: #800000;
+        font-size: 0.8rem;
+        font-weight: 800;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .fcs-btn-view.active {
+        background: #800000;
+        color: #fff;
+    }
+    .btn-fcs-export {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: 1px solid #800000;
+        background: #fff;
+        color: #800000;
+        font-size: 0.8rem;
+        font-weight: 800;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .btn-fcs-export:hover { background: #f8f2f2; }
+
+    /* ── Section context label ── */
+    .fcs-context-label {
+        border: 1px solid #800000;
+        border-radius: 8px;
+        padding: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 60px;
+        margin-bottom: 20px;
+        font-size: 0.95rem;
+        font-weight: 900;
+        color: #800000;
+        text-transform: uppercase;
+    }
+
+    /* ── Loading / empty ── */
+    .fcs-state { text-align: center; padding: 60px 20px; color: #800000; font-size: 0.9rem; font-weight: bold; }
+    .fcs-state i { font-size: 2rem; display: block; margin-bottom: 12px; opacity: .5; }
+
+    /* ════════════════════════════════════
+       CALENDAR VIEW
+    ════════════════════════════════════ */
+    .fcs-cal-outer {
+        position: relative;
+        padding-top: 10px;
+    }
+
+    /* Day header row (Mockup: White bg, maroon text, line below) */
+    .fcs-cal-header {
+        display: grid;
+        grid-template-columns: 80px repeat(7, 1fr);
+        border-bottom: 1px solid #800000;
+        margin-bottom: 15px;
+    }
+    .fcs-cal-header-cell {
+        padding: 10px 6px;
+        text-align: center;
+        font-size: 0.75rem;
+        font-weight: 900;
+        color: #800000;
+        text-transform: uppercase;
+    }
+
+    /* Grid body */
+    .fcs-cal-body {
+        display: grid;
+        grid-template-columns: 80px repeat(7, 1fr);
+        position: relative;
+    }
+
+    /* Time labels column */
+    .fcs-time-label {
+        grid-column: 1;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #555;
+        text-align: center;
+        height: 60px;
+        box-sizing: border-box;
+        transform: translateY(-8px); /* Align text with line */
+    }
+
+    /* Day columns */
+    .fcs-day-col { position: relative; }
+
+    /* Horizontal slot lines */
+    .fcs-slot-line {
+        height: 60px;
+        border-top: 1px solid #eee;
+        box-sizing: border-box;
+    }
+
+    /* Session pills */
+    .fcs-pill {
+        position: absolute;
+        left: 5px;
+        right: 5px;
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #fff;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,.1);
+        z-index: 2;
+    }
+    .fcs-pill-code  { font-weight: 900; font-size: 0.75rem; display: block; margin-bottom: 2px; }
+    .fcs-pill-name  { font-weight: 500; font-size: 0.65rem; display: block; margin-bottom: 6px; line-height: 1.2; }
+    .fcs-pill-meta  { display: flex; align-items: center; gap: 5px; font-size: 0.65rem; margin-top: 2px; }
+
+    /* ════════════════════════════════════
+       TABLE VIEW
+    ════════════════════════════════════ */
+    .fcs-table-wrap {
+        border: 1px solid #800000;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .fcs-tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+    }
+    .fcs-tbl thead { background: #800000; color: #fff; }
+    .fcs-tbl th {
+        padding: 12px 10px;
+        font-size: 0.7rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        text-align: center;
+        border-right: 1px solid rgba(255,255,255,.2);
+    }
+    .fcs-tbl th:nth-child(1), .fcs-tbl th:nth-child(3) { text-align: left; }
+    .fcs-tbl th:last-child { border-right: none; }
+    
+    .fcs-tbl tbody tr { border-bottom: 1px solid #ddd; }
+    .fcs-tbl tbody tr:last-child { border-bottom: none; }
+    .fcs-tbl td {
+        padding: 12px 10px;
+        color: #000;
+        vertical-align: middle;
+        text-align: center;
+        font-weight: 600;
+    }
+    .fcs-tbl td:nth-child(1), .fcs-tbl td:nth-child(3) { text-align: left; }
+    
+    .fcs-tbl .td-code { font-weight: 900; color: #800000; }
+    .fcs-tbl .td-units { font-weight: 900; color: #b30000; }
+    .fcs-tbl .td-days { font-weight: 900; color: #800000; }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="schedule-wrapper">
-    <!-- Top Filter Bar -->
-    <div class="filter-bar">
-        <div class="filter-group">
-            <label for="select-day">SELECT DAY</label>
-            <select id="select-day">
-                <option>Monday</option>
-                <option>Tuesday</option>
-                <option>Wednesday</option>
-                <option>Thursday</option>
-                <option>Friday</option>
-                <option>Saturday</option>
-            </select>
-        </div>
-        <div class="filter-group">
-            <label for="select-time">SELECT TIME</label>
-            <input type="text" id="select-time" value="7:30AM - 10:30AM">
-        </div>
-        <div class="filter-group">
-            <label for="room-type">ROOM TYPE</label>
-            <select id="room-type">
-                <option>Lecture</option>
-                <option>Laboratory</option>
-            </select>
-        </div>
-        <button class="btn-request-room"><i class="fa-regular fa-file-lines"></i> REQUEST ROOM</button>
-    </div>
+<div class="fcs-wrap">
 
-    <!-- Building/Category Tabs -->
-    <div class="building-tabs">
-        <button class="tab-btn active">HEALTH AND SCIENCE</button>
-        <button class="tab-btn">EDUCATION</button>
-        <button class="tab-btn">N-TYPE</button>
-        <button class="tab-btn">ENGINEERING</button>
-        <button class="tab-btn">HM AND AGRI</button>
-        <button class="tab-btn">LABORATORIES</button>
-        <button class="tab-btn">GYM</button>
-    </div>
+    <!-- Page header -->
+    <h1 class="fcs-page-title">OFFICIAL CLASS SCHEDULE</h1>
+    <p class="fcs-page-sub">
+        This schedule reflects the Official and Approved Schedule in the PUP Student Information System (SIS). Unilateral direct modifications in this schedule view are locked.
+    </p>
 
-    <!-- Main Schedule Container -->
-    <div class="schedule-container">
-        <!-- Rooms Sidebar -->
-        <aside class="rooms-sidebar">
-            <div class="floor-selector">
-                <span>ROOMS</span>
-                <select>
-                    <option>1st Floor</option>
-                    <option>2nd Floor</option>
+    <!-- Filter bar -->
+    <div class="fcs-filter-container">
+        <div class="fcs-filter-header">FILTER CONTROLS</div>
+        <div class="fcs-filter-bar">
+            <div class="fcs-filter-unit">
+                <label>Acad Year</label>
+                <select id="fcsAy" onchange="fcsOnAyChange()">
+                    <option value="">SELECT</option>
                 </select>
             </div>
-            <nav class="room-list">
-                <a href="#" class="room-item active">101</a>
-                <a href="#" class="room-item">102</a>
-                <a href="#" class="room-item">103</a>
-                <a href="#" class="room-item">104</a>
-                <a href="#" class="room-item">105</a>
-                <a href="#" class="room-item">106</a>
-                <a href="#" class="room-item">107</a>
-                <a href="#" class="room-item">108</a>
-                <a href="#" class="room-item">109</a>
-                <a href="#" class="room-item">110</a>
-            </nav>
-        </aside>
+            <div class="fcs-filter-unit">
+                <label>Semester</label>
+                <select id="fcsSem">
+                    <option value="">SELECT</option>
+                </select>
+            </div>
+            <div class="fcs-filter-unit">
+                <label>Program</label>
+                <select id="fcsProg" onchange="fcsOnProgChange()">
+                    <option value="">SELECT</option>
+                </select>
+            </div>
+            <div class="fcs-filter-unit">
+                <label>Year Level</label>
+                <select id="fcsYl" onchange="fcsOnYlChange()">
+                    <option value="">SELECT</option>
+                    <option value="1">1ST YEAR</option>
+                    <option value="2">2ND YEAR</option>
+                    <option value="3">3RD YEAR</option>
+                    <option value="4">4TH YEAR</option>
+                    <option value="5">5TH YEAR</option>
+                </select>
+            </div>
+            <div class="fcs-filter-unit">
+                <label>Sections</label>
+                <select id="fcsSec">
+                    <option value="">SELECT</option>
+                </select>
+            </div>
+            <div class="fcs-filter-unit">
+                <label>Instructor</label>
+                <select id="fcsInstr">
+                    <option value="">SELECT</option>
+                </select>
+            </div>
+            <div class="fcs-sort-wrap">
+                <span class="fcs-sort-label" onclick="fcsSortToggle()">
+                    <i class="fas fa-sort-amount-down" id="fcsSortIcon"></i> SORT: <span id="fcsSortLabel">A-Z</span>
+                </span>
+            </div>
+        </div>
+    </div>
 
-        <!-- Schedule Grid -->
-        <main class="schedule-grid">
-            <table>
+    <!-- View toggle + export -->
+    <div class="fcs-view-bar-wrap">
+        <div class="fcs-view-bar">
+            <button class="fcs-btn-view active" id="btnFcsCalendar" onclick="fcsSetView('calendar')">
+                <i class="fas fa-calendar-alt"></i> CALENDAR VIEW
+            </button>
+            <button class="fcs-btn-view" id="btnFcsTable" onclick="fcsSetView('table')">
+                <i class="fas fa-table"></i> TABLE VIEW
+            </button>
+        </div>
+        <button class="btn-fcs-export" onclick="fcsExport()">
+            <i class="fas fa-sign-out-alt"></i> EXPORT SCHEDULE
+        </button>
+    </div>
+
+    <!-- Context label -->
+    <div class="fcs-context-label" id="fcsContextBar" style="display:none">
+        <span id="fcsContextProg">—</span>
+        <span id="fcsContextAy">—</span>
+        <span id="fcsContextSem">—</span>
+    </div>
+
+    <!-- Loading state -->
+    <div class="fcs-state" id="fcsLoading" style="display:none">
+        <i class="fas fa-spinner fa-spin"></i>
+        Loading schedule…
+    </div>
+
+    <!-- Empty state -->
+    <div class="fcs-state" id="fcsEmpty" style="display:none">
+        <i class="fas fa-calendar-times"></i>
+        No schedule found for the selected filters.
+    </div>
+
+    <!-- CALENDAR VIEW -->
+    <div id="fcsCalendarPanel" style="display:none">
+        <div class="fcs-cal-outer">
+            <!-- Day header -->
+            <div class="fcs-cal-header">
+                <div class="fcs-cal-header-cell">TIME</div>
+                <div class="fcs-cal-header-cell">MONDAY</div>
+                <div class="fcs-cal-header-cell">TUESDAY</div>
+                <div class="fcs-cal-header-cell">WEDNESDAY</div>
+                <div class="fcs-cal-header-cell">THURSDAY</div>
+                <div class="fcs-cal-header-cell">FRIDAY</div>
+                <div class="fcs-cal-header-cell">SATURDAY</div>
+                <div class="fcs-cal-header-cell">SUNDAY</div>
+            </div>
+            <!-- Grid body -->
+            <div class="fcs-cal-body" id="fcsCalGrid">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- TABLE VIEW -->
+    <div id="fcsTablePanel" style="display:none">
+        <div class="fcs-table-wrap">
+            <table class="fcs-tbl">
                 <thead>
                     <tr>
-                        <th class="time-col">TIME</th>
-                        <th>MON</th>
-                        <th>TUE</th>
-                        <th>WED</th>
-                        <th>THU</th>
-                        <th>FRI</th>
-                        <th>SAT</th>
-                        <th>SUN</th>
+                        <th>INSTRUCTOR</th>
+                        <th>SUBJECT CODE</th>
+                        <th>SUBJECT DESCRIPTION</th>
+                        <th>LEC HOURS</th>
+                        <th>LAB HOURS</th>
+                        <th>CREDIT UNITS</th>
+                        <th>COURSE</th>
+                        <th>TIME</th>
+                        <th>HOURS</th>
+                        <th>DAYS</th>
+                        <th>ROOM</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <tr>
-                        <td class="time-col">7:30</td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td class="time-col">8:30</td>
-                        <td class="class-block" rowspan="2">
-                            <div class="class-info">
-                                <strong>INTRO TO COMPUTING</strong>
-                                <span>Mrs. Icon Obmerga</span>
-                            </div>
-                        </td>
-                        <td></td>
-                        <td class="class-block" rowspan="2">
-                             <div class="class-info">
-                                <strong>IT ELECTIVE 1</strong>
-                                <span>Mr. Lynel Tabien</span>
-                            </div>
-                        </td>
-                        <td></td>
-                         <td class="class-block" rowspan="2">
-                             <div class="class-info">
-                                <strong>INTRO TO COMPUTING</strong>
-                                <span>Mrs. Icon Obmerga</span>
-                            </div>
-                        </td>
-                        <td></td>
-                        <td class="class-block" rowspan="2">
-                             <div class="class-info">
-                                <strong>IT ELECTIVE 1</strong>
-                                <span>Mr. Lynel Tabien</span>
-                            </div>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="time-col">9:30</td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                    </tr>
-                     <tr>
-                        <td class="time-col">10:30</td>
-                        <td></td>
-                         <td class="class-block" rowspan="2">
-                            <div class="class-info">
-                                <strong>PRINCIPLES OF ORGANIZATION</strong>
-                                <span>Mrs. Grace Silaya</span>
-                            </div>
-                        </td>
-                        <td></td>
-                         <td class="available-block" rowspan="2">
-                            <div class="class-info">
-                                <strong>AVAILABLE</strong>
-                                <a href="#">REQUEST</a>
-                            </div>
-                        </td>
-                        <td></td>
-                         <td class="class-block" rowspan="2">
-                             <div class="class-info">
-                                <strong>PRINCIPLES OF ORGANIZATION</strong>
-                                <span>Mrs. Grace Silaya</span>
-                            </div>
-                        </td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td class="time-col">11:30</td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                    </tr>
-                    <tr>
-                        <td class="time-col">12:30</td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                    </tr>
-                </tbody>
+                <tbody id="fcsTbody"></tbody>
             </table>
-        </main>
+        </div>
     </div>
+
 </div>
+
+<!-- Seed data for dropdowns -->
+<div id="fcs-init-data"
+     data-programs="{{ programs_json | e }}"
+     data-acad-years="{{ acad_years_json | e }}"
+     data-faculty="{{ faculty_json | e }}"
+     hidden></div>
+
+<script src="{{ url_for('static', filename='js/FACULTY/schedule.faculty.js') }}"></script>
 {% endblock %}
