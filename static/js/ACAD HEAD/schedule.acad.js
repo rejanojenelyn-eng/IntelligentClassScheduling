@@ -470,25 +470,143 @@ function exitOverlayMode() {
 
 async function restoreFromOverlay() {
     if (!window._OVERLAY_ID) return;
-    const ok = confirm(
-        'Restore this revision to Draft?\n\n' +
-        'Any existing Draft for this program / year level / semester will be archived first.\n\n' +
-        'Continue?'
-    );
-    if (!ok) return;
+
+    // Check current Draft/Published state before showing confirmation
+    let stateData = { isCurrentlyPublished: false, hasActiveDraft: false, hasActivePublished: false };
+    try {
+        const checkResp = await fetch(`/api/schedule/versions/${window._OVERLAY_ID}/check`);
+        const checkData = await checkResp.json();
+        if (checkData.success) stateData = checkData;
+    } catch (e) { /* proceed with safe defaults */ }
+
+    const { isCurrentlyPublished, hasActiveDraft, hasActivePublished } = stateData;
+
+    // Pick scenario message and buttons
+    let title        = 'Restore Revision';
+    let message      = 'Are you sure you want to restore this revision as Draft?';
+    let primaryLabel = 'Restore Draft';
+    let cancelLabel  = 'Cancel';
+    let showWarning  = false;
+
+    if (isCurrentlyPublished && hasActiveDraft) {
+        title        = 'Active Schedule Conflict';
+        message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and unpublish the current schedule.';
+        primaryLabel = 'Continue Restore';
+        showWarning  = true;
+    } else if (isCurrentlyPublished) {
+        title        = 'Restore Published Revision';
+        message      = 'This revision is currently Published. Restoring it will automatically unpublish the current schedule. Do you want to continue?';
+        primaryLabel = 'Continue Restore';
+        showWarning  = true;
+    } else if (hasActiveDraft && hasActivePublished) {
+        title        = 'Active Schedule Conflict';
+        message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and affect the current schedule.';
+        primaryLabel = 'Continue Restore';
+        showWarning  = true;
+    } else if (hasActiveDraft) {
+        title        = 'Replace Existing Draft?';
+        message      = 'There is already an existing Draft for this schedule. Restoring this revision will replace the current Draft. Do you want to continue?';
+        primaryLabel = 'Replace Draft';
+        cancelLabel  = 'Keep Current Draft';
+        showWarning  = true;
+    }
+
+    const confirmed = await _showOverlayRestoreModal(title, message, primaryLabel, cancelLabel, showWarning);
+    if (!confirmed) return;
+
+    const restoreBtn = document.getElementById('btnOverlayRestore');
+    if (restoreBtn) {
+        restoreBtn.disabled = true;
+        restoreBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Restoring…';
+    }
 
     try {
-        const resp = await fetch(`/api/schedule/versions/${window._OVERLAY_ID}/restore`, { method: 'POST' });
+        const resp = await fetch(`/api/schedule/versions/${window._OVERLAY_ID}/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ restore_mode: 'draft' })
+        });
         const data = await resp.json();
         if (data.success) {
-            alert('Revision successfully restored to Draft.');
-            window.location.href = '/schedule/version-history';
+            _showOverlayToast('Revision restored successfully as Draft.');
+            setTimeout(() => { window.location.href = '/schedule/version-history'; }, 2200);
         } else {
+            if (restoreBtn) {
+                restoreBtn.disabled = false;
+                restoreBtn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore Revision';
+            }
             alert('Restore failed: ' + (data.error || 'Unknown error'));
         }
     } catch (e) {
+        if (restoreBtn) {
+            restoreBtn.disabled = false;
+            restoreBtn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore Revision';
+        }
         alert('Restore failed: ' + e.message);
     }
+}
+
+function _showOverlayRestoreModal(title, message, primaryLabel, cancelLabel, showWarning) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99000;display:flex;align-items:center;justify-content:center;';
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:#fff;border-radius:10px;max-width:460px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,0.22);overflow:hidden;font-family:inherit;';
+
+        const header = document.createElement('div');
+        header.style.cssText = 'padding:14px 20px;background:#630100;color:#fff;display:flex;align-items:center;gap:10px;font-size:0.9rem;font-weight:900;letter-spacing:0.3px;text-transform:uppercase;';
+        header.innerHTML = '<i class="fas fa-undo-alt"></i> ' + title;
+
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:20px 24px 0;';
+
+        if (showWarning) {
+            const warn = document.createElement('div');
+            warn.style.cssText = 'display:flex;align-items:flex-start;gap:10px;background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px;';
+            warn.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#946300;font-size:1rem;flex-shrink:0;margin-top:2px;"></i>' +
+                '<span style="font-size:0.78rem;color:#946300;font-weight:600;line-height:1.55;">' + message + '</span>';
+            body.appendChild(warn);
+        } else {
+            const msg = document.createElement('p');
+            msg.style.cssText = 'font-size:0.8rem;color:#555;line-height:1.6;margin:0;';
+            msg.textContent = message;
+            body.appendChild(msg);
+        }
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'padding:14px 24px 20px;display:flex;gap:10px;justify-content:flex-end;border-top:1px solid #f0f0f0;margin-top:16px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = cancelLabel;
+        cancelBtn.style.cssText = 'padding:9px 20px;border-radius:6px;border:1.5px solid #ddd;background:#fff;color:#555;font-weight:800;font-size:0.75rem;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit;';
+        cancelBtn.onmouseover = () => { cancelBtn.style.borderColor = '#999'; };
+        cancelBtn.onmouseout  = () => { cancelBtn.style.borderColor = '#ddd'; };
+        cancelBtn.onclick = () => { overlay.remove(); resolve(false); };
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.innerHTML = '<i class="fas fa-undo-alt"></i> ' + primaryLabel;
+        confirmBtn.style.cssText = 'padding:9px 22px;border-radius:6px;border:none;background:#630100;color:#fff;font-weight:800;font-size:0.75rem;letter-spacing:1px;text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;';
+        confirmBtn.onmouseover = () => { confirmBtn.style.background = '#7a0100'; };
+        confirmBtn.onmouseout  = () => { confirmBtn.style.background = '#630100'; };
+        confirmBtn.onclick = () => { overlay.remove(); resolve(true); };
+
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        modal.appendChild(header);
+        modal.appendChild(body);
+        modal.appendChild(actions);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+    });
+}
+
+function _showOverlayToast(msg) {
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:28px;right:28px;background:#1a7a2e;color:#fff;padding:12px 20px;border-radius:8px;font-size:0.8rem;font-weight:800;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:99999;letter-spacing:0.3px;';
+    toast.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 /* ---- Init ---- */

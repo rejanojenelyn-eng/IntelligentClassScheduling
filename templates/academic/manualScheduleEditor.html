@@ -459,6 +459,34 @@
     .local-mode .ts-row .ts-day-sel:focus {
         border-color: #8c52ff !important;
     }
+    /* ── Local Scheduler: no-published-schedule block ── */
+    .local-no-pub-block {
+        margin: 10px 0 6px;
+        padding: 16px 14px;
+        background: #f9f9f9;
+        border: 1.5px dashed #ccc;
+        border-radius: 7px;
+        text-align: center;
+        color: #888;
+    }
+    .local-no-pub-block i   { font-size: 1.4rem; color: #bbb; display: block; margin-bottom: 8px; }
+    .local-no-pub-block strong { color: #555; font-size: 0.78rem; display: block; margin-bottom: 5px; }
+    .local-no-pub-block span  { font-size: 0.71rem; line-height: 1.6; }
+
+    /* ── Local Scheduler: faculty section read-only ── */
+    .local-fac-ro .fac-stats-header { pointer-events: none !important; cursor: default !important; }
+    .local-fac-ro #fac-lock-badge   { pointer-events: none !important; cursor: default !important; }
+    .local-fac-ro #fac-soft-badge   { display: none !important; }
+    .local-fac-ro #btnAssignFaculty  { display: none !important; }
+
+    /* ── Local Scheduler: curriculum items with no published schedule ── */
+    .subj-item.subj-no-pub { opacity: 0.55; }
+    .subj-item.subj-no-pub .subj-item-inner { border-left: 3px solid #ccc; }
+    .badge-no-pub { background: #f5f5f5 !important; color: #999 !important;
+                    border: 1px dashed #ccc !important; font-size: 0.58rem !important; }
+
+    /* ── Disabled save buttons ── */
+    .btn-save-outlined[disabled] { opacity: 0.38 !important; cursor: not-allowed !important; pointer-events: none !important; }
 </style>
 {% endblock %}
 
@@ -882,7 +910,7 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="fl-total-line">TOTAL PRT-TIME LOAD: <span id="fl-total-parttime">—</span></div>
+                    <div class="fl-total-line">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
                 </div>
 
             </div><!-- /facultyLoadPanel -->
@@ -915,7 +943,7 @@
                 </div>
             </div><!-- /draftListPanel -->
 
-            <!-- ── Version History Panel (shown when VERSION HISTORY tab active) ── -->
+            <!-- ── Version History Panel ── -->
             <div id="versionHistoryPanel" class="version-history-panel" style="display:none;">
                 <div class="vhp-header">
                     <div>
@@ -1101,6 +1129,9 @@
                 <span id="fac-avail-units">-</span>
             </div>
 
+            <!-- Specialization mismatch warning (filled by _checkFacultySpecWarning) -->
+            <div id="fac-spec-warning"></div>
+
             <!-- Room & Time -->
             <div style="display:none;" aria-hidden="true">
                 <div class="dss-select-wrapper" id="room_wrapper">
@@ -1113,13 +1144,20 @@
                 <input type="hidden" id="sel_room" value="">
                 <input type="hidden" id="room_display_name" value="">
             </div>
-            <div id="room_dss_warning" class="dss-warning" style="color:#c0392b;font-size:0.7rem;font-weight:800;margin-top:4px;display:none;">
-                <i class="fas fa-exclamation-circle"></i> Has Lab Hours.
+            <div id="room_dss_warning" class="dss-warning" style="font-size:0.7rem;font-weight:800;margin-top:4px;display:none;">
+                <i class="fas fa-exclamation-circle"></i> <span id="room_dss_warning_text"></span>
             </div>
 
             <div class="time-allot-hdr">
                 <span>TIME ALLOTMENT</span>
-                <button class="btn-add-ts" onclick="addNewTimeSlot()">+</button>
+                <button class="btn-add-ts" id="btnAddTimeSlot" onclick="addNewTimeSlot()">+</button>
+            </div>
+            <!-- Local Scheduler: shown when subject has no Published Official schedule -->
+            <div id="localNoPubBlock" class="local-no-pub-block" style="display:none;">
+                <i class="fas fa-lock"></i>
+                <strong>No Published Official Schedule</strong>
+                <span>This subject does not have a Published Official Schedule.<br>
+                New Local Arrangements can only be created from an existing Published Schedule.<br>
             </div>
             <div id="time-slots-container" class="time-slots-wrap"></div>
 
@@ -1154,10 +1192,10 @@
             <div class="right-save-section">
                 {% if scheduler_mode == 'local' %}
                     {# Local Scheduler buttons #}
-                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement()">
+                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement(false)">
                         SAVE AS LOCAL ARRANGEMENT
                     </button>
-                    <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="confirmAllSlots()">
+                    <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="saveLocalArrangement(true)">
                         SAVE AS DRAFT
                     </button>
                     {# MAKE UP CLASS: Academic Head only #}
@@ -1187,6 +1225,79 @@
     </div><!-- /editor-wrapper -->
 </div><!-- /schedule-container -->
 
+<!-- ── Local Arrangement Reason Modal ── -->
+<div id="localReasonModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:12px;width:min(480px,94vw);box-shadow:0 8px 32px rgba(0,0,0,0.22);">
+        <div style="background:#1b5e20;color:#fff;padding:16px 22px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;">
+            <div>
+                <div style="font-size:0.58rem;font-weight:900;letter-spacing:2px;opacity:0.75;margin-bottom:3px;">LOCAL SCHEDULER</div>
+                <div style="font-size:0.95rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;">Save as Local Arrangement</div>
+            </div>
+            <button onclick="document.getElementById('localReasonCancelBtn').click()" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;opacity:0.7;line-height:1;">✕</button>
+        </div>
+        <div style="padding:20px 22px 14px;">
+            <label style="font-size:0.65rem;font-weight:900;letter-spacing:1px;color:#666;text-transform:uppercase;display:block;margin-bottom:6px;">
+                Reason / Description <span style="font-weight:400;letter-spacing:0;text-transform:none;color:#aaa;">(optional)</span>
+            </label>
+            <textarea id="localReasonInput" rows="3"
+                placeholder="e.g. Part-time faculty temporary morning slot, room substitution for specific section…"
+                style="width:100%;box-sizing:border-box;border:1.5px solid #ddd;border-radius:6px;padding:10px 12px;font-size:0.82rem;resize:vertical;font-family:inherit;line-height:1.45;"></textarea>
+        </div>
+        <div style="padding:12px 22px 18px;display:flex;gap:10px;justify-content:flex-end;">
+            <button id="localReasonCancelBtn"
+                style="padding:9px 20px;border-radius:6px;border:2px solid #888;background:#fff;color:#555;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
+                CANCEL
+            </button>
+            <button id="localReasonOkBtn"
+                style="padding:9px 20px;border-radius:6px;border:none;background:#1b5e20;color:#fff;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
+                <i class="fas fa-save"></i>&nbsp; SAVE ARRANGEMENT
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Local Override Conflict Modal ── -->
+<div id="localOverrideModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.52);z-index:9100;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:12px;width:min(540px,95vw);box-shadow:0 8px 36px rgba(0,0,0,0.28);display:flex;flex-direction:column;max-height:85vh;">
+        <!-- Header -->
+        <div style="background:#b71c1c;color:#fff;padding:16px 22px;border-radius:12px 12px 0 0;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+            <div>
+                <div style="font-size:0.56rem;font-weight:900;letter-spacing:2px;opacity:0.78;margin-bottom:3px;">LOCAL SCHEDULER · CONFLICT DETECTED</div>
+                <div style="font-size:0.92rem;font-weight:900;letter-spacing:0.8px;text-transform:uppercase;">Official Schedule Still Active</div>
+            </div>
+            <button onclick="_localOverrideResolve(false)" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;opacity:0.7;line-height:1;flex-shrink:0;">✕</button>
+        </div>
+        <!-- Body -->
+        <div style="padding:18px 22px 10px;overflow-y:auto;flex:1;">
+            <p style="margin:0 0 12px;font-size:0.82rem;color:#444;line-height:1.55;">
+                The slot you are placing this Local Arrangement into is still occupied by the
+                <strong>Official Published Schedule</strong> of the following subject(s).
+                You must override them before this arrangement can be saved.
+            </p>
+            <div id="localOverrideConflictList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:6px;"></div>
+            <div style="margin-top:14px;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 14px;">
+                <div style="font-size:0.65rem;font-weight:900;letter-spacing:1px;color:#b8860b;margin-bottom:4px;text-transform:uppercase;">If you choose Override:</div>
+                <ul style="margin:0;padding-left:18px;font-size:0.78rem;color:#555;line-height:1.7;">
+                    <li>The conflicting subject(s) will become <strong>Unscheduled</strong> in the Local Scheduler.</li>
+                    <li>Their <strong>Official Schedule remains untouched</strong> — only the Local Scheduler state changes.</li>
+                    <li>You can reschedule the displaced subject(s) later from the Curriculum Guide.</li>
+                </ul>
+            </div>
+        </div>
+        <!-- Footer -->
+        <div style="padding:14px 22px 18px;display:flex;gap:10px;justify-content:flex-end;border-top:1px solid #eee;">
+            <button onclick="_localOverrideResolve(false)"
+                style="padding:9px 20px;border-radius:6px;border:2px solid #888;background:#fff;color:#555;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
+                CANCEL
+            </button>
+            <button onclick="_localOverrideResolve(true)"
+                style="padding:9px 22px;border-radius:6px;border:none;background:#b71c1c;color:#fff;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
+                <i class="fas fa-bolt"></i>&nbsp; OVERRIDE SCHEDULE
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- ── App init data ── -->
 <div id="app-init-data"
      data-rooms="{{ rooms_json | e }}"
@@ -1199,6 +1310,11 @@
      data-available-sems="{{ available_sems_json | e }}"
      data-scheduler-mode="{{ scheduler_mode }}"
      data-is-acad-head="{{ 'true' if is_acad_head else 'false' }}"
+     data-lab-constraint="{{ 'true' if lab_constraint_enabled else 'false' }}"
+     data-weekend-enabled="{{ 'true' if weekend_enabled else 'false' }}"
+     data-weekend-day="{{ weekend_day }}"
+     data-weekend-subject="{{ weekend_subject }}"
+     data-spec-enabled="{{ 'true' if spec_constraint_enabled else 'false' }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260527"></script>
@@ -1813,11 +1929,37 @@ window.confirmAndPlace = async function() {
         
         // Iba-block lang natin kung SOSOBRA na sa required hours (e.g. naging 6 hours yung 5 hour subject)
         if (totalAfter > _subjInfo.total_hours + 0.01) {
-            await showValidationModal('Duration Exceeded',
-                `This slice is ${sessionHours}h. Combined with other slices, it totals ${totalAfter}h. ` +
-                `However, "${subjSel.value}" only requires ${_subjInfo.total_hours}h. Please shorten the time.`
+            await showValidationModal('Session Hours Exceeded',
+                `Cannot add this session: "${subjSel.value}" requires ${_subjInfo.total_hours}h total, ` +
+                `but this would bring the total to ${totalAfter}h ` +
+                `(${scheduledAlready}h already scheduled + ${sessionHours}h this session). ` +
+                `Please remove or shorten an existing session before adding more.`
             );
             return;
+        }
+    }
+
+    // ── HC4: Sunday restriction ──
+    if (dayVal === 'Sunday' && typeof _subjInfo !== 'undefined' && _subjInfo && !_subjInfo.is_sunday_allowed) {
+        await showValidationModal('Sunday Restriction',
+            `Only NSTP and OU subjects may be scheduled on Sunday. "${subjSel.value}" is not allowed on Sunday.`);
+        return;
+    }
+
+    // ── HC4: Saturday restriction (when "All Weekends" + NSTP-only is configured) ──
+    if (dayVal === 'Saturday') {
+        const _wkEnabled = typeof WEEKEND_ENABLED !== 'undefined' ? WEEKEND_ENABLED : false;
+        const _wkDay     = typeof WEEKEND_DAY_SCOPE !== 'undefined' ? WEEKEND_DAY_SCOPE : 'sunday_only';
+        const _wkSubj    = typeof WEEKEND_SUBJECT_SCOPE !== 'undefined' ? WEEKEND_SUBJECT_SCOPE : 'nstp_only';
+        if (_wkEnabled && _wkDay === 'all_weekends' && _wkSubj === 'nstp_only') {
+            const _subjCode = (subjSel.value || '').toUpperCase();
+            if (!_subjCode.startsWith('NSTP') && !_subjCode.startsWith('OU')) {
+                await showValidationModal('Saturday Restriction',
+                    `"${subjSel.value}" cannot be scheduled on Saturday. ` +
+                    `The Weekend Restriction is set to allow only NSTP/OU subjects on weekends. ` +
+                    `Please select a weekday, or update the Weekend Restriction setting.`);
+                return;
+            }
         }
     }
 
@@ -1840,8 +1982,31 @@ window.confirmAndPlace = async function() {
         }
     }
 
-    // --- STANDARD CONFLICT CHECKS ---
-    // Room conflict
+    // --- CONFLICT CHECKS (in-memory + DB) ---
+
+    // Room conflict — DB sessions
+    if (roomVal) {
+        try {
+            const rResp = await fetch(`/api/get_room_schedule/${roomVal}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
+            const rSessions = await rResp.json();
+            for (const s of rSessions) {
+                if (s.daydesc !== dayVal) continue;
+                if (window.currentEditSession &&
+                    s.subjectcode === window.currentEditSession.subjectcode &&
+                    s.daydesc     === window.currentEditSession.daydesc &&
+                    s.starttimeid === window.currentEditSession.starttimeid) continue;
+                if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    await showConflictModal(
+                        `Room conflict: "${s.subjectname}" (${s.instructor || 'TBA'}) is already scheduled in ${roomName} on ${dayVal} — ` +
+                        `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}.`
+                    );
+                    return;
+                }
+            }
+        } catch(e) { console.error('DB room conflict check failed:', e); }
+    }
+
+    // Room conflict — in-memory pending
     for (const c of pendingManualSchedule) {
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (String(c.room_id) === String(roomVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -1854,7 +2019,30 @@ window.confirmAndPlace = async function() {
         }
     }
 
-    // Faculty conflict
+    // Faculty conflict — DB sessions
+    if (facVal) {
+        try {
+            const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+            const fSessions = await fResp.json();
+            for (const s of fSessions) {
+                if (s.daydesc !== dayVal) continue;
+                if (window.currentEditSession &&
+                    s.subjectcode === window.currentEditSession.subjectcode &&
+                    s.daydesc     === window.currentEditSession.daydesc &&
+                    s.starttimeid === window.currentEditSession.starttimeid) continue;
+                if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    await showConflictModal(
+                        `Faculty conflict: ${facName} already has "${s.subjectname}" on ${dayVal} — ` +
+                        `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
+                        `Faculty cannot have overlapping schedules.`
+                    );
+                    return;
+                }
+            }
+        } catch(e) { console.error('DB faculty conflict check failed:', e); }
+    }
+
+    // Faculty conflict — in-memory pending
     for (const c of pendingManualSchedule) {
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (String(c.faculty_id) === String(facVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -1867,7 +2055,28 @@ window.confirmAndPlace = async function() {
         }
     }
 
-    // Section conflict
+    // Section conflict — DB sessions
+    try {
+        const sResp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+        const sSessions = await sResp.json();
+        for (const s of sSessions) {
+            if (s.daydesc !== dayVal) continue;
+            if (window.currentEditSession &&
+                s.subjectcode === window.currentEditSession.subjectcode &&
+                s.daydesc     === window.currentEditSession.daydesc &&
+                s.starttimeid === window.currentEditSession.starttimeid) continue;
+            if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                await showConflictModal(
+                    `Section conflict: "${s.subjectname || s.subjectcode}" is already scheduled for ${prog} Year ${yl} on ${dayVal} — ` +
+                    `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
+                    `A section cannot have two classes at the same time.`
+                );
+                return;
+            }
+        }
+    } catch(e) { console.error('DB section conflict check failed:', e); }
+
+    // Section conflict — in-memory pending
     for (const c of pendingManualSchedule) {
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (c.course === prog && String(c.year_level) === String(yl) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -1892,25 +2101,26 @@ window.confirmAndPlace = async function() {
 
     // Ilagay ang bagong schedule slice
     const newClass = {
-        temp_id:      (window.currentEditSession && window.currentEditSession._localTempId) ? window.currentEditSession._localTempId : ("DRAFT_" + Date.now() + "_" + Math.random().toString(36).slice(2)),
+        temp_id:           (window.currentEditSession && window.currentEditSession._localTempId) ? window.currentEditSession._localTempId : ("DRAFT_" + Date.now() + "_" + Math.random().toString(36).slice(2)),
         ay, sem,
-        subject_code: subjSel.value,
-        subject_name: subjSel.options[subjSel.selectedIndex].text,
-        faculty_id:   facVal,
-        instructor:   facName,
-        room_id:      roomVal,
-        room:         roomName,
-        day:          dayVal,
-        days:         dayVal.substring(0, 3).toUpperCase(),
-        days_list:    [dayVal],
-        start_time:   startVal,
-        end_time:     endVal,
-        time:         `${startVal} - ${endVal}`,
-        course:       prog,
-        year_level:   yl,
-        units:        typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 3,
-        fromExisting: (window.currentEditSession && window.currentEditSession.fromExisting) || false,
-        status:       (window.currentEditSession && window.currentEditSession.status) || 'Draft'
+        subject_code:      subjSel.value,
+        subject_name:      subjSel.options[subjSel.selectedIndex].text,
+        faculty_id:        facVal,
+        instructor:        facName,
+        room_id:           roomVal,
+        room:              roomName,
+        day:               dayVal,
+        days:              dayVal.substring(0, 3).toUpperCase(),
+        days_list:         [dayVal],
+        start_time:        startVal,
+        end_time:          endVal,
+        time:              `${startVal} - ${endVal}`,
+        course:            prog,
+        year_level:        yl,
+        units:             typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 3,
+        total_subject_hrs: typeof _subjInfo !== 'undefined' && _subjInfo ? parseFloat(_subjInfo.total_hours || 0) : 0,
+        fromExisting:      (window.currentEditSession && window.currentEditSession.fromExisting) || false,
+        status:            (window.currentEditSession && window.currentEditSession.status) || 'Draft'
     };
 
     pendingManualSchedule.push(newClass);
@@ -1980,6 +2190,8 @@ async function _updateSubjectList() {
         const isActive   = code === document.getElementById('sel_subj').value;
 
         // Badge: show saved status (Draft / Published / Published/Draft)
+        // In Local mode, subjects with no Official Published schedule get a "NO PUB" badge.
+        const hasNoPublished = IS_LOCAL && !savedStatus;
         let badgeText = '', badgeCls = 'subj-badge';
         if (savedStatus === 'Published') {
             badgeText = 'PUBLISHED'; badgeCls += ' badge-published';
@@ -1987,6 +2199,8 @@ async function _updateSubjectList() {
             badgeText = 'DRAFT'; badgeCls += ' badge-draft';
         } else if (savedStatus === 'Published/Draft') {
             badgeText = 'PUB/DRAFT'; badgeCls += ' badge-pub-draft';
+        } else if (hasNoPublished) {
+            badgeText = 'NO PUB'; badgeCls += ' badge-no-pub';
         }
 
         const typePillCls  = labhours > 0 ? 'subj-type-pill subj-type-lab' : 'subj-type-pill subj-type-lec';
@@ -1994,7 +2208,7 @@ async function _updateSubjectList() {
         const fillCls      = isComplete ? 'subj-hrs-fill' : 'subj-hrs-fill incomplete';
 
         const item = document.createElement('div');
-        item.className = 'subj-item' + (isActive ? ' subj-item-active' : '');
+        item.className = 'subj-item' + (isActive ? ' subj-item-active' : '') + (hasNoPublished ? ' subj-no-pub' : '');
         item.setAttribute('data-code', code);
         item.innerHTML = `
             <div class="subj-item-inner">
@@ -2041,6 +2255,19 @@ async function _updateSubjectList() {
     if (typeof _loadFacultyAssignments === 'function') {
         _loadFacultyAssignments().catch(() => {});
     }
+
+    // Auto-select first subject once the list is fully built and progress data is
+    // populated. Works in both Official and Local mode. Uses _currentSubjectCode
+    // as the guard so it does not re-fire when the user has already chosen a subject.
+    if (!_currentSubjectCode) {
+        const _asAy   = document.getElementById('sel_ay')?.value   || '';
+        const _asSem  = document.getElementById('sel_sem')?.value  || '';
+        const _asProg = document.getElementById('sel_prog')?.value || '';
+        const _asYl   = document.getElementById('sel_year')?.value || '';
+        if (_asAy && _asSem && _asProg && _asYl) {
+            await _localAutoSelectFirstSubject();
+        }
+    }
 }
 
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
@@ -2051,15 +2278,18 @@ async function _refreshSubjectScheduledHours() {
     const yl    = document.getElementById('sel_year').value;
     if (!ay || !sem || !currId || !yl) return;
     try {
-        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}`);
+        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}`);
         const data = await resp.json();
         if (!data.subjects) return;
         const subjSel = document.getElementById('sel_subj');
         data.subjects.forEach(s => {
             const opt = Array.from(subjSel.options).find(o => o.value === s.subjectcode);
             if (opt) {
-                opt.dataset.dbScheduled  = s.scheduled_hours || 0;
-                opt.dataset.savedStatus  = s.saved_status    || '';
+                // Only overwrite if the new value is defined — never reset a subject to 0
+                // while the user is mid-session. Subjects keep their last-known values
+                // so the overall progress and badges stay stable across subject switches.
+                if (s.scheduled_hours !== undefined) opt.dataset.dbScheduled = s.scheduled_hours || 0;
+                if (s.saved_status    !== undefined) opt.dataset.savedStatus  = s.saved_status   || '';
             }
         });
     } catch(e) {}
@@ -2070,18 +2300,49 @@ function _updateOverallProgress() {
     const subjSel = document.getElementById('sel_subj');
     const ay  = document.getElementById('sel_ay')?.value  || '';
     const sem = document.getElementById('sel_sem')?.value || '';
+    const yl  = document.getElementById('sel_year')?.value || '';
     let totalReq  = 0, totalSched = 0, doneCount = 0, totalCount = 0;
     Array.from(subjSel.options).forEach(opt => {
         if (!opt.value) return;
         totalCount++;
-        const code  = opt.value;
-        const hours = parseFloat(opt.dataset.hours || 0);
-        // Use live pending count (includes unsaved preview slices) for all subjects
-        const liveSched = _getScheduledHoursForCode(code, ay, sem);
-        const sched = liveSched > 0 ? liveSched : parseFloat(opt.dataset.dbScheduled || 0);
+        const code    = opt.value;
+        const hours   = parseFloat(opt.dataset.hours || 0);
+        const dbSched = parseFloat(opt.dataset.dbScheduled || 0);
+        const savedSt = opt.dataset.savedStatus || '';
+
+        let sched;
+        if (IS_LOCAL) {
+            // Use DB-saved hours as the stable base. If dbSched is still 0 (e.g., API
+            // hasn't returned yet), fall back to fromExisting pending sessions that were
+            // loaded when the user clicked this subject, so progress never shows 0
+            // for a subject that has visible sessions in the slices.
+            let fromExistHrs = 0;
+            if (dbSched === 0 && typeof pendingManualSchedule !== 'undefined') {
+                for (const c of pendingManualSchedule) {
+                    if (!c.fromExisting || c.subject_code !== code) continue;
+                    if (c.ay !== ay || c.sem !== sem) continue;
+                    if (yl && c.year_level && String(c.year_level) !== String(yl)) continue;
+                    const si = _TS_TIMES.indexOf(c.start_time);
+                    const ei = _TS_TIMES.indexOf(c.end_time);
+                    if (si >= 0 && ei > si) fromExistHrs += (ei - si) * 0.5;
+                }
+            }
+            sched = dbSched > 0 ? dbSched : fromExistHrs;
+        } else {
+            // Official mode: prefer live pending so unsaved work is reflected in real time.
+            const liveSched = _getScheduledHoursForCode(code, ay, sem);
+            sched = liveSched > 0 ? liveSched : dbSched;
+        }
+
         totalReq   += hours;
         totalSched += Math.min(sched, hours);
-        if (hours > 0 && sched >= hours) doneCount++;
+
+        // Local mode: "done" means a Published Official schedule exists for this subject.
+        // Official mode: "done" means all required hours are scheduled.
+        const isDone = IS_LOCAL
+            ? (savedSt === 'Published' || savedSt === 'Published/Draft')
+            : (hours > 0 && sched >= hours);
+        if (isDone) doneCount++;
     });
     const pct = totalReq > 0 ? Math.round((totalSched / totalReq) * 100) : 0;
 
@@ -2172,6 +2433,89 @@ function _getScheduledHoursForCode(code, ay, sem) {
     return 0;
 }
 
+/* ── Local Scheduler: faculty read-only enforcement ──
+   Applied once on init (IS_LOCAL). Removes all faculty-edit affordances so the
+   right panel only ever shows the faculty from the Official Published schedule.  */
+function _applyLocalFacultyReadonly() {
+    if (!IS_LOCAL) return;
+
+    // Apply CSS class to the stats panel so descendants lose pointer-events
+    const statsPanel = document.getElementById('fac-stats-panel');
+    if (statsPanel) statsPanel.classList.add('local-fac-ro');
+
+    // Lock badge: remove click, update label to "Official Faculty (Read-Only)"
+    const lockBadge = document.getElementById('fac-lock-badge');
+    if (lockBadge) {
+        lockBadge.onclick = null;
+        lockBadge.removeAttribute('title');
+        lockBadge.innerHTML = '<i class="fas fa-lock"></i> Official Faculty (Read-Only)';
+    }
+
+    // Stats header: non-clickable, change subtitle and icon
+    const statsHdr = document.querySelector('#fac-stats-panel .fac-stats-header');
+    if (statsHdr) {
+        statsHdr.onclick = null;
+        statsHdr.style.cursor = 'default';
+        statsHdr.removeAttribute('title');
+    }
+    const chevronEl = document.getElementById('fac-stats-chevron');
+    if (chevronEl) { chevronEl.className = 'fas fa-lock'; chevronEl.style.color = '#9e9e9e'; }
+    const typeEl = document.getElementById('fac-stats-type');
+    if (typeEl && typeEl.textContent === 'click to search') typeEl.textContent = 'from Official Schedule';
+
+    // Always hide the search wrapper and assignment buttons
+    const facWrapper = document.getElementById('fac_wrapper');
+    if (facWrapper) facWrapper.style.display = 'none';
+    const btnAssign  = document.getElementById('btnAssignFaculty');
+    if (btnAssign)   btnAssign.style.display  = 'none';
+    const softBadge  = document.getElementById('fac-soft-badge');
+    if (softBadge)   softBadge.style.display  = 'none';
+
+    // Patch the right-field-label to say "FACULTY (OFFICIAL)"
+    const facLabel = document.querySelector('.editor-right-panel-new .right-field-label');
+    if (facLabel && facLabel.textContent.trim() === 'FACULTY') {
+        facLabel.textContent = 'FACULTY (OFFICIAL)';
+        facLabel.style.color = '#888';
+    }
+}
+
+/* ── Local Scheduler: block editing panel when no Published Official schedule ──
+   Hides slices, disables save buttons, shows informational message.           */
+/* blocked=false  → full edit mode (all controls enabled)
+   blocked=true   → no Official Published AND no Local Arrangement:
+                    disable + button and save actions; keep existing slices visible
+                    so a Local Arrangement that was already loaded is never hidden.
+   blocked='soft' → Local Arrangement exists but Official is gone:
+                    show slices read-only, disable save, hide + button             */
+function _localSetBlockPanel(blocked) {
+    const block      = document.getElementById('localNoPubBlock');
+    const slotsWrap  = document.getElementById('time-slots-container');
+    const addTsBtn   = document.getElementById('btnAddTimeSlot');
+    const saveLA     = document.getElementById('btnSaveLocalArr');
+    const saveDraft  = document.getElementById('btnSaveDraftRight');
+    const saveMakeup = document.getElementById('btnSaveMakeupClass');
+
+    if (!blocked) {
+        // Full edit mode
+        if (block)     block.style.display    = 'none';
+        if (slotsWrap) slotsWrap.style.display = '';
+        if (addTsBtn)  addTsBtn.style.display  = '';
+        if (saveLA)    { saveLA.disabled    = false; }
+        if (saveDraft) { saveDraft.disabled = false; }
+        if (saveMakeup){ saveMakeup.disabled= false; }
+    } else {
+        // Blocked: show message, disable add + save.
+        // IMPORTANT: never hide the slice container — an existing Local Arrangement
+        // may already be loaded into its slices and must remain visible to the user.
+        if (block)  block.style.display   = '';
+        if (addTsBtn) addTsBtn.style.display = 'none';
+        if (saveLA)    { saveLA.disabled    = true; }
+        if (saveDraft) { saveDraft.disabled = true; }
+        if (saveMakeup){ saveMakeup.disabled= true; }
+        // slotsWrap stays visible — any loaded slices are preserved for reference
+    }
+}
+
 /* ── Subject click handler ── */
 async function _onSubjectClick(code, name, units, hours) {
     // Prompt if there are unsaved pending slices for the current subject
@@ -2240,9 +2584,11 @@ async function _onSubjectClick(code, name, units, hours) {
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
 
-    // NSTP: Sunday only; OU: all days incl. Sunday; others: Mon-Sat
+    // NSTP: Sunday only or both weekends (when all_weekends); OU: all days incl. Sunday; others: Mon-Sat
     if (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_sunday_only) {
         _TS_DAYS = ['Sunday'];
+    } else if (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_weekend_only) {
+        _TS_DAYS = ['Saturday', 'Sunday'];
     } else {
         _TS_DAYS = _TS_DAYS_ALL.filter(d => d !== 'Sunday' ||
             (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_sunday_allowed));
@@ -2270,6 +2616,39 @@ async function _onSubjectClick(code, name, units, hours) {
     // Trigger DSS logic (loads faculty + room recommendations, auto-loads existing sessions)
     if (typeof triggerDSSLogic === 'function') await triggerDSSLogic();
 
+    // Local Scheduler: manage panel state based on whether sessions were found.
+    // _hasExistingSchedule = true  → Local Arrangement OR Official Published returned sessions
+    // _hasExistingSchedule = false → neither was found — block new editing
+    //
+    // When blocking, we do NOT return early: faculty display and calendar refresh still
+    // run so that any sessions visible in the calendar remain properly shown.
+    // If the subject had a Local Arrangement loaded in a previous click (slices are still
+    // in the DOM), those slices stay visible — only the + button and save buttons are locked.
+    if (IS_LOCAL) {
+        const _hasLoadedSlices = document.querySelectorAll('.ts-row').length > 0;
+        if (!_hasExistingSchedule && !_hasLoadedSlices) {
+            // Truly empty: no sessions loaded and no existing slices — full block.
+            _localSetBlockPanel(true);
+            // Still refresh calendar so Official pills (from other contexts) render correctly
+            const _blkRoom = document.getElementById('sel_room')?.value;
+            const _blkAy   = document.getElementById('sel_ay').value;
+            const _blkSem  = document.getElementById('sel_sem').value;
+            if (typeof renderGrid === 'function' && _blkRoom && _blkAy && _blkSem) {
+                renderGrid(_blkRoom, _blkAy, _blkSem);
+            }
+            _updateAssignFacultyBtn();
+            return;
+        } else if (!_hasExistingSchedule && _hasLoadedSlices) {
+            // Existing Local Arrangement slices are still in the DOM (subject was previously
+            // loaded), but the Official schedule is no longer available. Keep slices visible,
+            // block only new additions and saving.
+            _localSetBlockPanel(true);
+        } else {
+            // Sessions loaded normally — full edit mode
+            _localSetBlockPanel(false);
+        }
+    }
+
     // Refresh room calendar to reflect cleared old-subject sessions.
     // _loadExistingSessionsIntoSlices already calls renderGrid when sessions exist;
     // this covers the case where the new subject has no existing sessions.
@@ -2291,9 +2670,8 @@ async function _onSubjectClick(code, name, units, hours) {
     }
 
     // Restore a previously "Assigned" faculty if no DB-locked faculty was loaded.
-    // This preserves the faculty selection across subject switches even when the
-    // schedule has unresolved conflicts and was never fully saved.
-    if (!_lockedFacultyId && _subjectFacultyAssignments[code]) {
+    // Skip in Local mode — faculty is always from the Official schedule, never re-assignable.
+    if (!IS_LOCAL && !_lockedFacultyId && _subjectFacultyAssignments[code]) {
         const stored = _subjectFacultyAssignments[code];
         document.getElementById('sel_faculty').value = stored.id;
         document.getElementById('fac_display_name').value = stored.name;
@@ -2303,8 +2681,8 @@ async function _onSubjectClick(code, name, units, hours) {
     }
 
     // Auto-add one empty slice if no slices were loaded (no existing sessions).
-    // Pass skipFullCheck=true so selecting a fully-scheduled subject doesn't trigger the warning.
-    if (!document.querySelectorAll('.ts-row').length) {
+    // In Local mode: only add when unblocked (subject has a valid Published/LA source).
+    if ((!IS_LOCAL || _hasExistingSchedule) && !document.querySelectorAll('.ts-row').length) {
         if (typeof addNewTimeSlot === 'function') addNewTimeSlot('', '', '', '', '', true);
     }
 
@@ -2364,6 +2742,16 @@ function _updateUnitProgress(code, ay, sem, units, hours) {
     if (uiVal) uiVal.textContent = units > 0 ? `${Math.round(units*10)/10}/${Math.round(hours*10)/10} Units` : '-';
     const uiCheck = document.getElementById('unit-instr-check');
     if (uiCheck) uiCheck.style.display = isComplete ? 'inline' : 'none';
+
+    // Persist the live scheduled count back onto the option so _updateOverallProgress
+    // can read it after fromExisting sessions are purged on a subject switch.
+    if (scheduled > 0) {
+        const _subjSel = document.getElementById('sel_subj');
+        if (_subjSel) {
+            const _opt = Array.from(_subjSel.options).find(o => o.value === code);
+            if (_opt) _opt.dataset.dbScheduled = scheduled;
+        }
+    }
 
     // Refresh left-panel card mini-bar for this subject (hours text uses live pending count)
     const card = document.querySelector(`.subj-item[data-code="${code}"]`);
@@ -2462,6 +2850,14 @@ function _updateAssignFacultyBtn() {
     const softBadge  = document.getElementById('fac-soft-badge');
     const facWrapper = document.getElementById('fac_wrapper');
     if (!btn) return;
+
+    // Local mode: faculty assignment is always read-only (from Official schedule)
+    if (IS_LOCAL) {
+        btn.style.display = 'none';
+        if (softBadge)  softBadge.classList.remove('visible');
+        if (facWrapper) facWrapper.style.display = 'none';
+        return;
+    }
     const hasSubject    = !!_currentSubjectCode;
     const selectedFacId = document.getElementById('sel_faculty').value;
     const hasFaculty    = !!selectedFacId;
@@ -2513,6 +2909,7 @@ function _handleAssignFacultyBtnClick() {
 
 // Opens the dropdown so user can pick a new faculty (for reassignment flow)
 function startReassignFaculty() {
+    if (IS_LOCAL) return;      // Local mode: faculty is always from Official schedule
     if (!_currentSubjectCode) return;
     const ay   = document.getElementById('sel_ay').value;
     const sem  = document.getElementById('sel_sem').value;
@@ -2632,6 +3029,7 @@ async function _loadFacultyAssignments() {
 // No load-event hook needed here.
 
 window.unlockFacultyChoice = async function() {
+    if (IS_LOCAL) return;  // Local mode: faculty is always from Official schedule
     const sliceCount = document.querySelectorAll('.ts-row').length;
     if (!sliceCount) { _clearFacultyLock(); return; }
     const ok = await showConfirmModal(
@@ -2759,7 +3157,7 @@ async function _updateFacultyUnitDisplay(empNum) {
     const ayId = document.getElementById('sel_ay').value;
     const sem  = document.getElementById('sel_sem').value;
     try {
-        const resp = await fetch(`/api/manual/faculty_load?emp_num=${encodeURIComponent(empNum)}&ay_id=${encodeURIComponent(ayId)}&sem=${encodeURIComponent(sem)}`);
+        const resp = await fetch(`/api/manual/faculty_load?emp_num=${encodeURIComponent(empNum)}&ay_id=${encodeURIComponent(ayId)}&sem=${encodeURIComponent(sem)}&scheduler_mode=${SCHED_MODE}`);
         const data = await resp.json();
         if (data.success) {
             _facLoadData = data;
@@ -3102,11 +3500,27 @@ function _buildDayOpts(sel) {
     let days;
     if (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_sunday_only) {
         days = ['Sunday'];
+    } else if (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_weekend_only) {
+        // NSTP when "All Weekends" is configured — both Saturday and Sunday are allowed
+        days = ['Saturday', 'Sunday'];
     } else if (typeof _subjInfo !== 'undefined' && _subjInfo && _subjInfo.is_sunday_allowed) {
         days = _TS_DAYS_ALL;
     } else {
-        days = _TS_DAYS_ALL.slice(0, 6);
+        days = _TS_DAYS_ALL.slice(0, 6); // Mon-Sat by default
     }
+
+    // Exclude Saturday for non-NSTP subjects when "All Weekends" + NSTP-only restriction is active
+    const _wkEnd = typeof WEEKEND_ENABLED !== 'undefined' ? WEEKEND_ENABLED : false;
+    const _wkDay = typeof WEEKEND_DAY_SCOPE !== 'undefined' ? WEEKEND_DAY_SCOPE : 'sunday_only';
+    const _wkSubj = typeof WEEKEND_SUBJECT_SCOPE !== 'undefined' ? WEEKEND_SUBJECT_SCOPE : 'nstp_only';
+    if (_wkEnd && _wkDay === 'all_weekends' && _wkSubj === 'nstp_only') {
+        const subjCode = (typeof _currentSubjectCode !== 'undefined' ? _currentSubjectCode : '').toUpperCase();
+        const isNstpOu = subjCode.startsWith('NSTP') || subjCode.startsWith('OU');
+        if (!isNstpOu) {
+            days = days.filter(d => d !== 'Saturday');
+        }
+    }
+
     return '<option value="">-- Day --</option>' +
         days.map(d => `<option value="${d}"${d===sel?' selected':''}>${d}</option>`).join('');
 }
@@ -3348,6 +3762,21 @@ async function removeTimeSlot(id) {
             'Final Confirmation'
         );
         if (!ok2) return;
+
+        // Also remove the matching confirmed-but-unsaved entry from pendingManualSchedule.
+        // These entries are added by confirmAndPlace with temp_ids like "DRAFT_..." — they
+        // never get cleaned up when the UI row is removed, causing ghost blocks in the grid.
+        if (typeof pendingManualSchedule !== 'undefined') {
+            const day   = row.querySelector('.ts-day-sel')?.value      || '';
+            const start = row.querySelector('.ts-start-hidden')?.value || '';
+            const end   = row.querySelector('.ts-end-hidden')?.value   || '';
+            const subj  = (typeof _currentSubjectCode !== 'undefined' ? _currentSubjectCode : '')
+                          || document.getElementById('sel_subj')?.value || '';
+            pendingManualSchedule = pendingManualSchedule.filter(c =>
+                !(c.subject_code === subj && c.day === day &&
+                  c.start_time === start && c.end_time === end && !c.fromExisting)
+            );
+        }
     }
 
     // Remove any preview entry for this slice
@@ -3825,7 +4254,7 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
     }
 
     const btn = document.getElementById('btnSaveDraftRight');
-    if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; btn.disabled = true; }
+    if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating...'; btn.disabled = true; }
 
     const context = {
         program:   document.getElementById('sel_prog').value,
@@ -3834,15 +4263,37 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
         acadYear:  ay
     };
 
+    // ── Pre-save validation gate — block immediately if any constraint is violated ──
+    const newDrafts = contextDrafts.filter(c => !c.fromExisting);
+    if (newDrafts.length) {
+        try {
+            const valRes  = await fetch('/api/schedule/validate', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ schedule_data: newDrafts })
+            });
+            const valData = await valRes.json();
+            if (valData.has_violations) {
+                await _showFirstViolation(valData.violations);
+                if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> SAVE AS DRAFT'; btn.disabled = false; }
+                return;
+            }
+        } catch(e) {
+            // validation endpoint unreachable — allow save to proceed (server will re-validate)
+        }
+    }
+
+    if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; btn.disabled = true; }
+
     try {
         const res = await fetch('/api/schedule/save-draft', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                schedule_data: contextDrafts, 
-                context: context,
-                // --- FIX: Ipadala sa API ang mga binura ---
-                deleted_subjects: Array.from(window._deletedSubjectCodes) 
+            body: JSON.stringify({
+                schedule_data:     contextDrafts,
+                context:           context,
+                deleted_subjects:  Array.from(window._deletedSubjectCodes),
+                scheduler_mode:    SCHED_MODE
             })
         });
         const data = await res.json();
@@ -3851,10 +4302,8 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             window.isLeavingIntentionally = true;
 
             const deletedCount = window._deletedSubjectCodes.size;
-            // --- FIX: I-clear ang tracker kapag successful ---
             window._deletedSubjectCodes.clear();
 
-            // Count only newly added slices — fromExisting entries were already in the DB
             const newSliceCount = contextDrafts.filter(c => !c.fromExisting).length;
             const deletedNote = deletedCount > 0 ? ' Any removed sessions were deleted from the Draft.' : '';
             const savedMsg = newSliceCount > 0
@@ -3862,13 +4311,9 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
                 : 'Draft updated successfully.';
             await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
 
-            // Clear pending — sessions are now persisted in DB
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             hiddenDbSchedules.clear();
 
-            // Reload current subject's saved sessions from DB.
-            // Use existing_sessions (returns both Draft and Published with correct statuses)
-            // so Published slots remain green and new Draft-only slots appear gray.
             const prog        = document.getElementById('sel_prog').value;
             const yl          = document.getElementById('sel_year').value;
             const currentSubj = document.getElementById('sel_subj').value;
@@ -3895,16 +4340,15 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const gridRoom = document.getElementById('sel_room').value;
             if (currentMode === 'program') renderProgramTimetable();
             else renderGrid(gridRoom, ay, sem);
-            // Rebuild FL dropdown (new faculty may now have assignments) and refresh if visible
             await _initFlFacultyMenu();
             _refreshFlIfVisible();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
         } else {
-            let msg = data.error || 'Unknown error occurred.';
             if (data.violations && data.violations.length) {
-                msg += '\n\nViolations:\n' + data.violations.map(v => '- ' + v.detail).join('\n');
+                await _showFirstViolation(data.violations);
+            } else {
+                await showValidationModal('Save Failed', data.error || 'Unknown error occurred.');
             }
-            await showValidationModal('Save Failed', msg);
         }
     } catch(e) {
         await showValidationModal('Connection Error', 'Could not reach the server. Please try again.');
@@ -4263,14 +4707,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const initProg = initData.dataset.initProg;
     const initYl   = initData.dataset.initYl;
 
-    if (initAy) {
-        const aySel = document.getElementById('sel_ay');
-        if (aySel.querySelector(`option[value="${initAy}"]`)) aySel.value = initAy;
+    if (IS_LOCAL && initAy) {
+        // Local mode: set all breadcrumb + hidden select values WITHOUT firing triggerCascade
+        // mid-sequence.  A single cascade fires after all values are in place.
+
+        // 1. AY — set hidden select + breadcrumb text
+        const _aySel = document.getElementById('sel_ay');
+        if (_aySel && _aySel.querySelector(`option[value="${initAy}"]`)) _aySel.value = initAy;
+        const _ayTxt = document.getElementById('bc-ay-text');
+        if (_ayTxt) _ayTxt.textContent = `AY 20${initAy.slice(2,4)}-20${initAy.slice(4)}`;
+
+        // 2. Rebuild sem dropdown options for this AY (synchronous, no cascade)
+        if (typeof _rebuildSemDropdown === 'function') _rebuildSemDropdown(initAy);
+
+        // 3. Semester — set hidden select + breadcrumb text
+        if (initSem) {
+            const _semSel = document.getElementById('sel_sem');
+            if (_semSel && _semSel.querySelector(`option[value="${initSem}"]`)) _semSel.value = initSem;
+            const _semTxt = document.getElementById('bc-sem-text');
+            const _sLbls  = {A:'1st Semester', B:'2nd Semester', C:'Summer'};
+            if (_semTxt) _semTxt.textContent = _sLbls[initSem] || initSem;
+        }
+    } else {
+        if (initAy) {
+            const aySel = document.getElementById('sel_ay');
+            if (aySel.querySelector(`option[value="${initAy}"]`)) aySel.value = initAy;
+        }
+        if (initSem) {
+            const semSel = document.getElementById('sel_sem');
+            if (semSel.querySelector(`option[value="${initSem}"]`)) semSel.value = initSem;
+        }
     }
-    if (initSem) {
-        const semSel = document.getElementById('sel_sem');
-        if (semSel.querySelector(`option[value="${initSem}"]`)) semSel.value = initSem;
-    }
+
+    // Program + Year Level (both modes)
     if (initProg && typeof selectProg === 'function') {
         selectProg(initProg);
     }
@@ -4279,10 +4748,12 @@ document.addEventListener('DOMContentLoaded', () => {
         selectYearLevel(initYl, labels[initYl] || initYl + 'th Year');
     }
 
+    // Fire ONE cascade after ALL values are set so the curriculum guide loads immediately
     if (initAy || initSem || initProg || initYl) {
-        setTimeout(() => triggerCascade(true), 200);
-        // Sync breadcrumb text to match pre-loaded selections
-        setTimeout(() => _syncBcFromSelects(), 50);
+        setTimeout(() => {
+            if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
+            triggerCascade(true);
+        }, 100);
     }
 
     // Close dropdowns on outside click
@@ -4357,10 +4828,66 @@ window.triggerCascade = async function(skipGridRender) {
     if (vhPanel && vhPanel.style.display !== 'none') {
         _loadVersionHistoryPanel();
     }
+
+    // Safety-net auto-select (both Official and Local) in case _updateSubjectList's
+    // own trigger didn't fire due to a concurrent cascade race.
+    // _localAutoSelectFirstSubject is idempotent — _currentSubjectCode guards double-fire.
+    if (!_currentSubjectCode) {
+        const _ay   = document.getElementById('sel_ay')?.value   || '';
+        const _sem  = document.getElementById('sel_sem')?.value  || '';
+        const _prog = document.getElementById('sel_prog')?.value || '';
+        const _yl   = document.getElementById('sel_year')?.value || '';
+        if (_ay && _sem && _prog && _yl) {
+            await _localAutoSelectFirstSubject();
+        }
+    }
 };
 
-// Initialize workflow bar on page load
-document.addEventListener('DOMContentLoaded', () => _updateWorkflowBar());
+/**
+ * Auto-select the first subject with a Published official session.
+ * Falls back to any scheduled subject, then to the first in the list.
+ * Only fires in local mode after a full context (ay+sem+prog+yl) is ready.
+ */
+async function _localAutoSelectFirstSubject() {
+    const subjSel = document.getElementById('sel_subj');
+    if (!subjSel) return;
+
+    // Use _currentSubjectCode as the authoritative guard — subjSel.value can be stale
+    // during async rebuilds, but _currentSubjectCode is only set inside _onSubjectClick.
+    if (_currentSubjectCode) return;
+
+    const opts = Array.from(subjSel.options).filter(o => o.value);
+    if (!opts.length) return;
+
+    // Priority: Published → Published/Draft → any saved status → first subject.
+    // In Local mode ONLY subjects with a Published Official schedule are valid — never
+    // fall back to opts[0] for a subject with no schedule.
+    const pick = IS_LOCAL
+        ? (opts.find(o => o.dataset.savedStatus === 'Published') ||
+           opts.find(o => o.dataset.savedStatus === 'Published/Draft'))
+        : (opts.find(o => o.dataset.savedStatus === 'Published') ||
+           opts.find(o => o.dataset.savedStatus === 'Published/Draft') ||
+           opts.find(o => o.dataset.savedStatus && o.dataset.savedStatus !== '') ||
+           opts[0]);
+
+    if (pick && typeof _onSubjectClick === 'function') {
+        subjSel.value = pick.value;
+        await _onSubjectClick(
+            pick.value,
+            pick.text,
+            parseFloat(pick.dataset.units || 0),
+            parseFloat(pick.dataset.hours || 0)
+        );
+    }
+}
+
+// Initialize workflow bar on page load; apply Local-mode faculty read-only state
+document.addEventListener('DOMContentLoaded', () => {
+    _updateWorkflowBar();
+    _applyLocalFacultyReadonly();
+    // Block save buttons until a subject is selected in local mode
+    if (IS_LOCAL) _localSetBlockPanel(false);
+});
 
 /* ══════════════════════════════════════════════════════════════
    FACULTY SECTION HIGHLIGHT
@@ -4822,9 +5349,239 @@ function switchEditorTab(tab, el) {
     }
 }
 
-function saveLocalArrangement() {
-    // Local scheduler publish = same approve flow as official
-    document.getElementById('btnManualApprove').click();
+/**
+ * saveLocalArrangement(skipModal)
+ *   skipModal=false → shows reason modal (default, "SAVE AS LOCAL ARRANGEMENT")
+ *   skipModal=true  → no modal, quick save ("SAVE AS DRAFT" in local mode)
+ *
+ * Collects:
+ *   1. fromExisting sessions — the Published Official base already loaded into memory
+ *   2. New pending sessions the user placed this session (ay/sem match)
+ *   3. Filled UI time-slice rows not yet confirmed
+ */
+async function saveLocalArrangement(skipModal = false) {
+    const ay   = typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || '');
+    const sem  = typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || '');
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+
+    if (!ay || !sem || !prog || !yl) {
+        await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, and Year Level before saving.');
+        return;
+    }
+
+    // Collect sessions:
+    //  a) fromExisting = Published Official base sessions loaded into pendingManualSchedule
+    //  b) new sessions the user placed (c.ay === ay && c.sem === sem)
+    const all = typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [];
+    let contextSessions = all.filter(c =>
+        !c.isPreview && (
+            c.fromExisting ||                          // Official Published base
+            (c.ay === ay && c.sem === sem)             // new additions this session
+        )
+    );
+
+    // Also sweep unfilled-but-placed UI rows (for subjects with filled slices not yet confirmed)
+    if (!contextSessions.length) {
+        const filledRows = Array.from(document.querySelectorAll('.ts-row')).filter(row => {
+            const day   = row.querySelector('.ts-day-sel')?.value       || '';
+            const start = row.querySelector('.ts-start-hidden')?.value  || '';
+            const end   = row.querySelector('.ts-end-hidden')?.value    || '';
+            const room  = row.querySelector('.ts-room-hidden')?.value   || '';
+            return day && start && end && room;
+        });
+        contextSessions = filledRows.map(row => ({
+            subject_code: document.getElementById('sel_subj')?.value || '',
+            day:        row.querySelector('.ts-day-sel').value,
+            start_time: row.querySelector('.ts-start-hidden').value,
+            end_time:   row.querySelector('.ts-end-hidden').value,
+            room_id:    row.querySelector('.ts-room-hidden').value,
+            ay, sem,
+        }));
+    }
+
+    if (!contextSessions.length) {
+        await showValidationModal('No Sessions', 'No sessions found to save. Load a subject from the Curriculum Guide first.');
+        return;
+    }
+
+    // ── Conflict check: find Official slots that would be displaced ──
+    // Build a compact session list (room_id, day, start_time, end_time) for the API.
+    const conflictSessions = contextSessions.map(c => ({
+        room_id:    c.room_id || c.roomid,
+        day:        c.day     || c.daydesc,
+        start_time: c.start_time || c.start_fmt,
+        end_time:   c.end_time   || c.end_fmt,
+    })).filter(s => s.room_id && s.day && s.start_time && s.end_time);
+
+    const currentSubjCode = document.getElementById('sel_subj')?.value || _currentSubjectCode || '';
+    let displaceSubjects = [];
+
+    if (conflictSessions.length) {
+        try {
+            const cRes  = await fetch('/api/local/check_room_conflicts', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    ay_id:            ay,
+                    term:             sem,
+                    sessions:         conflictSessions,
+                    exclude_subject:  currentSubjCode,
+                }),
+            });
+            const cData = await cRes.json();
+            if (cData.success && cData.conflicts && cData.conflicts.length > 0) {
+                // Show override modal — user must confirm or cancel
+                const doOverride = await _showLocalOverrideModal(cData.conflicts);
+                if (!doOverride) return;   // user cancelled
+                // Collect unique subject codes to displace
+                displaceSubjects = [...new Set(cData.conflicts.map(c => c.subjectcode))];
+            }
+        } catch (_) { /* network error in conflict check — proceed without override */ }
+    }
+
+    // Reason modal — skip when called from "SAVE AS DRAFT"
+    const reason = skipModal ? '' : await _showLocalReasonModal();
+    if (reason === null) return;   // user cancelled the modal
+
+    const btn = document.getElementById('btnSaveLocalArr');
+    if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; btn.disabled = true; }
+
+    try {
+        const res  = await fetch('/api/local/save_arrangement', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                context:           { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay },
+                sessions:          contextSessions,
+                reason,
+                violations:        [],
+                displace_subjects: displaceSubjects,
+            }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            await showValidationModal(
+                'Arrangement Saved',
+                `Local Arrangement #${data.arrangementid} has been saved.\nView it under Schedule → Local Arrangements.`
+            );
+
+            // Clear all pending sessions for this context so the slice panel is clean
+            if (typeof pendingManualSchedule !== 'undefined') {
+                pendingManualSchedule = pendingManualSchedule.filter(
+                    c => !(c.ay === ay && c.sem === sem)
+                );
+            }
+            hiddenDbSchedules.clear();
+
+            // Re-load the just-saved arrangement's sessions into the slice panel so
+            // the calendar, slices, and Version History all show identical data.
+            if (_currentSubjectCode && typeof triggerDSSLogic === 'function') {
+                _skipExistingCheck = false;
+                await triggerDSSLogic();
+            }
+
+            // Refresh the calendar and subject list (for updated hours/badges)
+            if (typeof renderGrid === 'function') {
+                const _room = document.getElementById('sel_room')?.value || '';
+                renderGrid(_room, ay, sem);
+            }
+            if (typeof _updateSubjectList === 'function') {
+                _updateSubjectList().catch(() => {});
+            }
+        } else {
+            await showValidationModal('Save Failed', data.error || 'Could not save local arrangement.');
+        }
+    } catch (e) {
+        await showValidationModal('Network Error', 'Could not reach the server. Please try again.');
+    } finally {
+        if (btn) { btn.innerHTML = 'SAVE AS LOCAL ARRANGEMENT'; btn.disabled = false; }
+    }
+}
+
+function _showLocalReasonModal() {
+    return new Promise(resolve => {
+        const modal   = document.getElementById('localReasonModal');
+        const input   = document.getElementById('localReasonInput');
+        const btnOk   = document.getElementById('localReasonOkBtn');
+        const btnCancel = document.getElementById('localReasonCancelBtn');
+        if (!modal) { resolve(''); return; }
+
+        input.value = '';
+        modal.style.display = 'flex';
+        input.focus();
+
+        function cleanup() {
+            modal.style.display = 'none';
+            btnOk.removeEventListener('click', onOk);
+            btnCancel.removeEventListener('click', onCancel);
+        }
+        function onOk()     { cleanup(); resolve(input.value.trim()); }
+        function onCancel() { cleanup(); resolve(null); }
+
+        btnOk.addEventListener('click', onOk);
+        btnCancel.addEventListener('click', onCancel);
+    });
+}
+
+/* Promise-based override conflict modal.
+   conflicts = [{subjectcode, subjectname, day, start_fmt, end_fmt, roomname, instructor}]
+   Resolves true (Override) or false (Cancel). */
+let _localOverrideResolve = () => {};
+
+function _showLocalOverrideModal(conflicts) {
+    return new Promise(resolve => {
+        _localOverrideResolve = (doOverride) => {
+            document.getElementById('localOverrideModal').style.display = 'none';
+            _localOverrideResolve = () => {};
+            resolve(doOverride);
+        };
+
+        const list = document.getElementById('localOverrideConflictList');
+        list.innerHTML = conflicts.map(c => `
+            <div style="background:#fff5f5;border:1px solid #ffcdd2;border-radius:6px;padding:10px 14px;font-size:0.78rem;color:#333;">
+                <div style="font-weight:900;letter-spacing:0.5px;color:#b71c1c;margin-bottom:3px;">
+                    ${c.subjectcode}
+                    <span style="font-weight:500;color:#555;font-size:0.73rem;margin-left:6px;">${c.subjectname || ''}</span>
+                </div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:0.72rem;color:#666;">
+                    <span><i class="fas fa-calendar-day" style="color:#b71c1c;margin-right:4px;"></i>${c.day || c.daydesc || ''}</span>
+                    <span><i class="fas fa-clock" style="color:#b71c1c;margin-right:4px;"></i>${c.start_fmt || ''} – ${c.end_fmt || ''}</span>
+                    <span><i class="fas fa-door-open" style="color:#b71c1c;margin-right:4px;"></i>${c.roomname || ''}</span>
+                    <span><i class="fas fa-user" style="color:#b71c1c;margin-right:4px;"></i>${c.instructor || ''}</span>
+                </div>
+            </div>`).join('');
+
+        document.getElementById('localOverrideModal').style.display = 'flex';
+    });
+}
+
+async function publishLatestLocalDraft() {
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const ay   = typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || '');
+    const sem  = typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || '');
+
+    if (!prog || !yl || !ay || !sem) {
+        await showValidationModal('Missing Context', 'Select Program, Year Level, AY, and Semester first.');
+        return;
+    }
+
+    // Find the latest Draft arrangement for this context
+    const params = new URLSearchParams({ program: prog, year_level: yl, ay_id: ay, sem, status: 'Draft' });
+    try {
+        const res  = await fetch('/api/local/arrangements?' + params.toString());
+        const data = await res.json();
+        const drafts = (data.arrangements || []).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+        if (!drafts.length) {
+            await showValidationModal('No Draft Found', 'Save an arrangement as Draft first before publishing.');
+            return;
+        }
+        const btn = document.getElementById('btnPublishLocalArr');
+        await publishLocalArrangement(drafts[0].arrangementid, btn);
+    } catch(e) {
+        await showValidationModal('Error', e.message);
+    }
 }
 
 function saveAsMakeupClass() {
@@ -4938,12 +5695,39 @@ async function selectFlFaculty(empNum, name) {
 
         const reg = document.getElementById('fl-regular-body');
         const pt  = document.getElementById('fl-parttime-body');
-        reg.innerHTML = data.sessions.length
-            ? data.sessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
+
+        // Classify sessions by employee type.
+        // Part-Time and Designee: all sessions → Part-Time Load.
+        // Regular: weekday sessions ending by 17:xx → Regular Load; rest → Part-Time Load.
+        const _empType = (data.faculty.employee_type || '').toLowerCase();
+        const _isNonReg = _empType.includes('part') || _empType.includes('design');
+        const _WKDAYS   = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+
+        let regSessions, ptSessions;
+        if (_isNonReg) {
+            regSessions = [];
+            ptSessions  = data.sessions;
+        } else {
+            regSessions = data.sessions.filter(s => {
+                const endHr = parseInt((s.time_code || '').slice(2)) || 0;
+                return _WKDAYS.has(s.days || '') && endHr <= 17;
+            });
+            ptSessions = data.sessions.filter(s => {
+                const endHr = parseInt((s.time_code || '').slice(2)) || 0;
+                return !_WKDAYS.has(s.days || '') || endHr > 17;
+            });
+        }
+
+        const _sumUnits = arr => arr.reduce((t, s) => t + (parseFloat(s.units) || 0), 0);
+
+        reg.innerHTML = regSessions.length
+            ? regSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : '<tr><td colspan="10" class="fl-no-data">No sessions found</td></tr>';
-        pt.innerHTML  = '<tr><td colspan="10" class="fl-no-data">—</td></tr>';
-        document.getElementById('fl-total-regular').textContent  = data.assigned_units + ' units';
-        document.getElementById('fl-total-parttime').textContent = '0 units';
+        pt.innerHTML  = ptSessions.length
+            ? ptSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
+            : '<tr><td colspan="10" class="fl-no-data">—</td></tr>';
+        document.getElementById('fl-total-regular').textContent  = _sumUnits(regSessions) + ' units';
+        document.getElementById('fl-total-parttime').textContent = _sumUnits(ptSessions)  + ' units';
     } catch(e) {
         _flShowMsg('Failed to load: ' + e.message);
     }
@@ -5129,6 +5913,56 @@ async function confirmDlpDelete() {
 /* ══════════════════════════════════════════════════════════════
    VERSION HISTORY PANEL
    ══════════════════════════════════════════════════════════════ */
+
+/* Version History — module state */
+let _vhpAllVersions    = [];   // shared with viewVersionInline modal
+
+function _vhpRelTime(dt) {
+    if (!dt || isNaN(dt)) return '';
+    const sec = Math.floor((Date.now() - dt) / 1000);
+    if (sec < 60)         return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60)         return min + ' min ago';
+    const hr = Math.floor(min / 60);
+    if (hr < 24)          return hr + ' hr ago';
+    const day = Math.floor(hr / 24);
+    if (day < 7)          return day + ' day' + (day > 1 ? 's' : '') + ' ago';
+    return '';
+}
+
+function _vhpFmtDateTime(dt) {
+    if (!dt || isNaN(dt)) return '—';
+    const date = dt.toLocaleDateString('en-US', {year:'numeric', month:'short', day:'numeric'});
+    const time = dt.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+    const rel  = _vhpRelTime(dt);
+    return date + ' · ' + time + (rel ? ' · ' + rel : '');
+}
+
+/* ── Diff engine ─────────────────────────────────────────────── */
+function _vhpComputeDiff(prevSessions, currSessions) {
+    const key = s => `${s.subjectcode||''}|${s.daydesc||''}|${String(s.start_time||'').slice(0,5)}`;
+    const prevMap = new Map(prevSessions.map(s => [key(s), s]));
+    const currKeys = new Set(currSessions.map(key));
+
+    const currDiff = new Map();
+    currSessions.forEach(s => {
+        const k = key(s);
+        if (!prevMap.has(k)) {
+            // Check if same subject exists on same day (time shifted = modified)
+            const sameSubjDay = prevSessions.find(p => p.subjectcode === s.subjectcode && p.daydesc === s.daydesc);
+            currDiff.set(k, sameSubjDay ? 'modified' : 'added');
+        } else {
+            const p = prevMap.get(k);
+            const changed = p.roomname !== s.roomname || p.instructor !== s.instructor;
+            currDiff.set(k, changed ? 'modified' : 'unchanged');
+        }
+    });
+
+    const removedSessions = prevSessions.filter(s => !currKeys.has(key(s)));
+    return { currDiff, removedSessions };
+}
+
+
 async function _loadVersionHistoryPanel() {
     const cards    = document.getElementById('vhpCards');
     const subtitle = document.getElementById('vhpSubtitle');
@@ -5138,20 +5972,124 @@ async function _loadVersionHistoryPanel() {
     const sem  = document.getElementById('sel_sem')?.value || '';
     const yl   = document.getElementById('sel_year')?.value || '';
 
-    // Require AY + program + year level before loading version history
     if (!ay || !prog || !yl) {
-        if (cards) cards.innerHTML = `
-            <div class="vhp-empty">
-                <i class="fas fa-filter" style="font-size:2rem;opacity:0.3;display:block;margin-bottom:10px;"></i>
-                <div style="font-size:0.8rem;font-weight:700;color:#888;">Select Academic Year, Semester, Program &amp; Year Level to view revision history.</div>
-            </div>`;
+        if (cards) cards.innerHTML = `<div class="vhp-empty"><i class="fas fa-filter" style="font-size:2rem;opacity:0.3;display:block;margin-bottom:10px;"></i><div style="font-size:0.75rem;font-weight:700;color:#888;">Select Program &amp; Year Level to view history.</div></div>`;
         if (subtitle) subtitle.textContent = 'No context selected';
         return;
     }
 
-    if (cards)    cards.innerHTML = '<div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading versions&hellip;</div>';
+    if (cards)    cards.innerHTML = '<div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading&hellip;</div>';
     if (subtitle) subtitle.textContent = 'Loading…';
 
+    window.vhpToggleSection = function(hdr) {
+        const body    = hdr.nextElementSibling;
+        const chevron = hdr.querySelector('.vhp-section-chevron');
+        body.classList.toggle('collapsed');
+        chevron.classList.toggle('open');
+    };
+
+    /* ── Local Scheduler path ── */
+    if (IS_LOCAL) {
+        try {
+            const params = new URLSearchParams();
+            if (prog) params.set('program', prog);
+            if (yl)   params.set('year_level', yl);
+            if (ay && sem) { params.set('ay_id', ay); params.set('sem', sem); }
+            const res  = await fetch('/api/local/arrangements?' + params.toString());
+            const data = await res.json();
+            const arr  = (data.arrangements || []);
+
+            if (subtitle) subtitle.textContent = `${arr.length} arrangement${arr.length !== 1 ? 's' : ''}`;
+            if (!arr.length) {
+                cards.innerHTML = '<div class="vhp-empty"><i class="fas fa-layer-group"></i><div>No local arrangements saved yet.</div></div>';
+                return;
+            }
+
+            const _grpOrder = {Published:0, Draft:1, Archived:2};
+            arr.sort((a,b) =>
+                (_grpOrder[a.status]||2) - (_grpOrder[b.status]||2) ||
+                new Date(b.created_at||0) - new Date(a.created_at||0)
+            );
+            const _currentPubId   = (arr.find(a => a.status === 'Published') || {}).arrangementid;
+            const _currentDraftId = (arr.find(a => a.status === 'Draft')     || {}).arrangementid;
+
+            function renderLocalCard(a, rNum) {
+                const dt  = a.created_at ? new Date(a.created_at) : null;
+                const ds  = _vhpFmtDateTime(dt);
+                const letters  = (a.programcode || '—').split('').join(' ');
+                const isCurPub = a.arrangementid === _currentPubId;
+                const isCurDrf = a.arrangementid === _currentDraftId;
+                const isCurrent = isCurPub || isCurDrf;
+                const canRestore = a.status === 'Archived' || a.status === 'Published';
+
+                let dotCls, cardCls, badgeHtml;
+                if (a.status === 'Published')       { dotCls = 'dot-local-pub';      cardCls = 'is-local-pub';   badgeHtml = '<span class="vhp-snap-badge badge-local-pub"><i class="fas fa-check-circle"></i> Published</span>'; }
+                else if (a.status === 'Draft')      { dotCls = 'dot-local-draft';    cardCls = 'is-local-draft'; badgeHtml = '<span class="vhp-snap-badge badge-local-draft"><i class="fas fa-file-alt"></i> Draft</span>'; }
+                else                                { dotCls = 'dot-local-archived'; cardCls = '';               badgeHtml = '<span class="vhp-snap-badge badge-local-archived"><i class="fas fa-box-archive"></i> Archived</span>'; }
+
+                const hcBadge  = a.has_hc_violation ? '<span class="vhp-snap-badge badge-hc-warn"><i class="fas fa-exclamation-triangle"></i> HC</span>' : '';
+                const semLbl   = a.sem_label || '—';
+                const ayDisp   = a.acadyear ? String(a.acadyear).replace('AY','').trim() : '—';
+
+                return `
+                <div class="vhp-tl-entry">
+                    <div class="vhp-tl-dot-wrap"><div class="vhp-tl-dot ${dotCls}"></div></div>
+                    <div class="vhp-snap-card ${cardCls}" data-arr-id="${a.arrangementid}">
+                        <div class="vhp-snap-top">
+                            <div class="vhp-snap-rev-label">
+                                <span class="vhp-snap-rnum">R${rNum}</span>
+                                ${badgeHtml}${hcBadge}
+                            </div>
+                            <span class="vhp-snap-date"><i class="fas fa-clock" style="font-size:0.5rem;margin-right:2px;"></i>${ds}</span>
+                        </div>
+                        <div class="vhp-snap-body">
+                            <div class="vhp-snap-prog">${letters} &ndash; ${a.yearlevel || '—'}</div>
+                            <div class="vhp-snap-meta">
+                                <span><i class="fas fa-calendar-alt"></i> A.Y ${ayDisp}</span>
+                                <span><i class="fas fa-book-open"></i> ${semLbl}</span>
+                            </div>
+                        </div>
+                        <div class="vhp-snap-actions">
+                            ${a.status === 'Draft' ? `<button class="vhp-btn vhp-btn-publish" onclick="publishLocalArrangement(${a.arrangementid},this)"><i class="fas fa-check-circle"></i> Publish</button>`
+                              : canRestore ? `<button class="vhp-btn vhp-btn-restore" onclick="restoreLocalArrangement(${a.arrangementid},this)"><i class="fas fa-undo-alt"></i> Restore</button>`
+                              : `<span class="vhp-snap-active-note"><i class="fas fa-circle" style="font-size:0.4rem;color:#880e4f;"></i> Active</span>`}
+                            <button class="vhp-btn vhp-btn-view" style="margin-left:auto;"
+                                onclick="viewLocalArrangementInline(${a.arrangementid},this)">
+                                <i class="fas fa-eye"></i> View
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+            }
+
+            function buildLocalSection(items, label, sectionCls, iconCls, startIdx) {
+                if (!items.length) return '';
+                return `<div class="vhp-timeline-section">
+                    <div class="vhp-section-hdr ${sectionCls}" onclick="vhpToggleSection(this)">
+                        <div class="vhp-section-left"><i class="fas ${iconCls}"></i><span>${label}</span><span class="vhp-section-count">${items.length}</span></div>
+                        <i class="fas fa-chevron-down vhp-section-chevron open"></i>
+                    </div>
+                    <div class="vhp-timeline">${items.map((a,i) => renderLocalCard(a, startIdx+i+1)).join('')}</div>
+                </div>`;
+            }
+
+            const pubArr   = arr.filter(a => a.status === 'Published');
+            const draftArr = arr.filter(a => a.status === 'Draft');
+            const archArr  = arr.filter(a => a.status === 'Archived');
+            let html = '';
+            html += buildLocalSection(pubArr,   'Published', 'vhp-section-local-pub',      'fa-check-circle', 0);
+            html += buildLocalSection(draftArr,  'Draft',     'vhp-section-local-draft',    'fa-file-alt',     pubArr.length);
+            html += buildLocalSection(archArr,   'Archived',  'vhp-section-local-archived', 'fa-box-archive',  pubArr.length + draftArr.length);
+            cards.innerHTML = html || '<div class="vhp-empty"><i class="fas fa-layer-group"></i><div>No arrangements saved yet.</div></div>';
+
+            // list rendered — user clicks View to preview in the fullscreen modal
+        } catch(e) {
+            cards.innerHTML = `<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`;
+        }
+        return;
+    }
+
+    /* ── Official Scheduler path ── */
     try {
         const res  = await fetch('/api/schedule/versions');
         const data = await res.json();
@@ -5167,214 +6105,590 @@ async function _loadVersionHistoryPanel() {
         if (sem)  filtered = filtered.filter(v => (v.term||'') === sem);
         if (yl)   filtered = filtered.filter(v => String(v.yearlevel||'') === String(yl));
 
+        _vhpAllVersions = filtered;  // cache for diff lookups
+
         if (!filtered.length) {
-            const hasFilter = prog || ay || sem || yl;
-            const msg = hasFilter ? 'No revisions match the selected filters.' : 'No revisions found.';
+            const msg = (prog||ay||sem||yl) ? 'No revisions match the selected context.' : 'No revisions found.';
             cards.innerHTML = `<div class="vhp-empty"><i class="fas fa-history"></i><div>${msg}</div></div>`;
-            if (subtitle) subtitle.textContent = hasFilter ? 'No match' : 'No revisions';
+            if (subtitle) subtitle.textContent = 'No revisions';
             return;
         }
 
-        // Split into independent Published and Draft chains — newest (current) first
-        const pubVers   = filtered.filter(v => v.published_version_number)
-            .sort((a, b) => b.published_version_number - a.published_version_number);
-        const draftVers = filtered.filter(v => v.draft_version_number)
-            .sort((a, b) => b.draft_version_number - a.draft_version_number);
-
+        const pubVers   = filtered.filter(v => v.published_version_number).sort((a,b) => b.published_version_number - a.published_version_number);
+        const draftVers = filtered.filter(v => v.draft_version_number).sort((a,b) => b.draft_version_number - a.draft_version_number);
         const maxPubVn   = pubVers.length   ? Math.max(...pubVers.map(v => v.published_version_number))   : 0;
         const maxDraftVn = draftVers.length ? Math.max(...draftVers.map(v => v.draft_version_number)) : 0;
 
         const totalCount = pubVers.length + draftVers.length;
         if (subtitle) subtitle.textContent = `${totalCount} revision${totalCount !== 1 ? 's' : ''}`;
 
-        function renderCard(v, chainType, typeVn, maxVn) {
-            // A revision is "current" only if it has the highest sequence number in its chain AND
-            // is still actively in that status. An archived Draft (all sessions published/replaced)
-            // must show Restore instead of CURRENT — it is no longer the active working Draft.
+        function renderOfficialCard(v, chainType, typeVn, maxVn) {
             const isCurrent  = typeVn > 0 && typeVn === maxVn && v.status === chainType;
             const dt         = v.datecreated ? new Date(v.datecreated) : null;
-            const dateStr    = (dt && !isNaN(dt)) ? dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}) : '—';
-            const semLbl     = v.term==='A'?'1st Semester':v.term==='B'?'2nd Semester':v.term==='C'?'Summer':(v.term||'—');
-            const ayRaw      = String(v.acadyear || '');
-            const ayDisp     = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
+            const dateStr    = _vhpFmtDateTime(dt);
             const letters    = (v.programcode||'').split('').join(' ');
             const origStatus = v.original_status || chainType;
-            const chipHtml   = chainType === 'Published'
-                ? '<span class="vhp-published-chip"><i class="fas fa-check-circle"></i> PUBLISHED</span>'
-                : '<span class="vhp-draft-chip"><i class="fas fa-file-alt"></i> DRAFT</span>';
+            const isPub      = chainType === 'Published';
+            const dotCls     = isCurrent ? (isPub ? 'dot-pub-current' : 'dot-draft-current') : (isPub ? 'dot-pub-archived' : 'dot-draft-archived');
+            const cardCls    = isCurrent ? (isPub ? 'is-current-pub'  : 'is-current-draft')  : '';
+            const semLbl     = v.term==='A'?'1st Sem':v.term==='B'?'2nd Sem':v.term==='C'?'Summer':(v.term||'');
+            const ayRaw      = String(v.acadyear||'');
+            const ayDisp     = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
+
+            let badgeHtml;
+            if (isCurrent && isPub)  badgeHtml = '<span class="vhp-snap-badge badge-cur-pub"><i class="fas fa-check-circle"></i> Current</span>';
+            else if (isCurrent)      badgeHtml = '<span class="vhp-snap-badge badge-cur-draft"><i class="fas fa-file-alt"></i> Current</span>';
+            else                     badgeHtml = '<span class="vhp-snap-badge badge-archived"><i class="fas fa-box-archive"></i> Archived</span>';
+
             return `
-            <div class="vhp-card${isCurrent ? ' is-latest' : ''}"
-                 data-vid="${v.versionid}"
-                 data-original-status="${origStatus}"
-                 id="vhpc-${v.versionid}">
-                <div class="vhp-version-badge">R${typeVn}</div>
-                <div class="vhp-card-meta">
-                    <div class="vhp-card-eyebrow">
-                        A.Y ${ayDisp} &bull; ${semLbl}
-                        ${isCurrent ? '<span class="vhp-active-chip"><i class="fas fa-circle" style="font-size:0.45rem;vertical-align:middle;margin-right:3px;"></i>CURRENT</span>' : ''}
-                        ${chipHtml}
+            <div class="vhp-tl-entry">
+                <div class="vhp-tl-dot-wrap"><div class="vhp-tl-dot ${dotCls}"></div></div>
+                <div class="vhp-snap-card ${cardCls}" id="vhpc-${v.versionid}"
+                     data-vid="${v.versionid}" data-original-status="${origStatus}">
+                    <div class="vhp-snap-top">
+                        <div class="vhp-snap-rev-label">
+                            <span class="vhp-snap-rnum">R${typeVn}</span>
+                            ${badgeHtml}
+                        </div>
+                        <span class="vhp-snap-date">${dateStr}</span>
                     </div>
-                    <div class="vhp-card-prog">${letters} &ndash; ${v.yearlevel||'—'}</div>
-                    <div class="vhp-card-date"><i class="fas fa-clock" style="margin-right:3px;"></i>${dateStr}</div>
+                    <div class="vhp-snap-body">
+                        <div class="vhp-snap-prog">${letters} &ndash; ${v.yearlevel||'—'}</div>
+                        <div class="vhp-snap-meta">
+                            <span><i class="fas fa-calendar-alt"></i> A.Y ${ayDisp}</span>
+                            <span><i class="fas fa-book-open"></i> ${semLbl}</span>
+                        </div>
+                    </div>
+                    <div class="vhp-snap-actions">
+                        ${!isCurrent
+                            ? `<button class="vhp-btn vhp-btn-restore" id="vhpr-${v.versionid}"
+                                   onclick="restoreVersion(${v.versionid},this)">
+                                   <i class="fas fa-undo-alt"></i> Restore
+                               </button>`
+                            : `<span class="vhp-snap-active-note"><i class="fas fa-circle" style="font-size:0.4rem;color:${isPub?'#1a7a2e':'#d97706'};"></i> Active</span>`}
+                        <button class="vhp-btn vhp-btn-view" style="margin-left:auto;"
+                            data-vn="${v.version_number}"
+                            data-type-vn="${typeVn}"
+                            data-chain-type="${chainType}"
+                            data-prog="${v.programcode}" data-yl="${v.yearlevel}"
+                            data-ay="${v.acadyear}" data-term="${v.term}"
+                            onclick="viewVersionInline(this)">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                    </div>
                 </div>
-                <div class="vhp-card-actions">
-                    ${!isCurrent ? `
-                    <button class="vhp-btn vhp-btn-restore" id="vhpr-${v.versionid}"
-                        onclick="restoreVersion(${v.versionid}, this)">
-                        <i class="fas fa-undo-alt"></i> RESTORE
-                    </button>` : ''}
-                    <button class="vhp-btn vhp-btn-view"
-                        data-vn="${v.version_number}"
-                        data-type-vn="${typeVn}"
-                        data-chain-type="${chainType}"
-                        data-prog="${v.programcode}" data-yl="${v.yearlevel}"
-                        data-ay="${v.acadyear}" data-term="${v.term}"
-                        onclick="viewVersionInline(this)">
-                        <i class="fas fa-eye"></i> VIEW
-                    </button>
+            </div>`;
+        }
+
+        function buildOfficialSection(versions, chainType, vnGetter, maxVn, label, sectionCls, iconCls) {
+            if (!versions.length) return '';
+            return `<div class="vhp-timeline-section">
+                <div class="vhp-section-hdr ${sectionCls}" onclick="vhpToggleSection(this)">
+                    <div class="vhp-section-left"><i class="fas ${iconCls}"></i><span>${label}</span><span class="vhp-section-count">${versions.length}</span></div>
+                    <i class="fas fa-chevron-down vhp-section-chevron open"></i>
+                </div>
+                <div class="vhp-timeline">${versions.map(v => renderOfficialCard(v, chainType, vnGetter(v), maxVn)).join('')}</div>
+            </div>`;
+        }
+
+        let html = '';
+        html += buildOfficialSection(pubVers,  'Published', v => v.published_version_number, maxPubVn,   'Published', 'vhp-section-pub',   'fa-check-circle');
+        html += buildOfficialSection(draftVers, 'Draft',    v => v.draft_version_number,    maxDraftVn,  'Draft',     'vhp-section-draft', 'fa-file-alt');
+        cards.innerHTML = html;
+
+        // revision list rendered — user clicks Preview to open the full-screen modal
+
+    } catch(e) {
+        if (cards)    cards.innerHTML = `<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`;
+        if (subtitle) subtitle.textContent = 'Error';
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LOCAL ARRANGEMENT — View / Publish / Restore helpers
+   ══════════════════════════════════════════════════════════════ */
+
+async function viewLocalArrangementInline(arrId) {
+    try {
+        const res  = await fetch(`/api/local/arrangement/${arrId}`);
+        const data = await res.json();
+        if (!data.success) { await showValidationModal('Error', 'Could not load arrangement.'); return; }
+
+        const a    = data.arrangement;
+        const sess = data.sessions || [];
+
+        const _aStatus    = a.status || 'Draft';
+        const statusColor = _aStatus === 'Published' ? '#880e4f' : _aStatus === 'Archived' ? '#616161' : '#e65100';
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;border-radius:12px;width:min(900px,96vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;font-family:inherit;';
+
+        const hdr = document.createElement('div');
+        hdr.style.cssText = `background:${statusColor};color:#fff;padding:14px 20px 12px;flex-shrink:0;`;
+        hdr.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap;">
+                    <span style="font-size:0.56rem;font-weight:900;letter-spacing:2px;opacity:0.7;text-transform:uppercase;">Local Schedule Snapshot</span>
+                    <span style="background:rgba(255,255,255,0.22);padding:2px 10px;border-radius:20px;font-size:0.62rem;font-weight:900;">Arr #${a.arrangementid}</span>
+                    <span style="background:rgba(255,255,255,0.15);padding:2px 9px;border-radius:20px;font-size:0.58rem;font-weight:700;">${_aStatus}</span>
+                    ${a.has_hc_violation ? `<span style="background:rgba(255,255,255,0.15);padding:2px 9px;border-radius:20px;font-size:0.58rem;font-weight:800;color:#ffe082;"><i class="fas fa-exclamation-triangle" style="margin-right:3px;"></i>HC</span>` : ''}
+                </div>
+                <div style="font-size:0.98rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;">
+                    ${(a.programcode||'—').split('').join(' ')} &ndash; ${a.yearlevel||'—'}
+                </div>
+                <div style="font-size:0.67rem;opacity:0.75;margin-top:3px;">
+                    ${a.acadyear ? 'A.Y ' + String(a.acadyear).replace('AY','').trim() : '—'} &bull; ${a.sem_label||'—'}
+                    ${a.override_reason ? ' &bull; "' + a.override_reason + '"' : ''}
+                </div>
+            </div>
+            <button style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:1.4rem;cursor:pointer;line-height:1;padding:0;flex-shrink:0;margin-top:2px;" title="Close">&#x2715;</button>
+        </div>`;
+        hdr.querySelector('button').onclick = () => overlay.remove();
+
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:0;overflow-y:auto;flex:1;';
+
+        if (!sess.length) {
+            body.style.padding = '20px';
+            body.innerHTML = `<div style="text-align:center;padding:36px;color:#aaa;"><i class="fas fa-inbox" style="font-size:2rem;display:block;margin-bottom:10px;opacity:0.35;"></i>No sessions recorded.</div>`;
+        } else {
+            body.innerHTML = _buildScheduleTimetable(sess);
+        }
+
+        const foot = document.createElement('div');
+        foot.style.cssText = 'padding:10px 20px;border-top:1px solid #eee;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;background:#fafafa;gap:10px;';
+        foot.innerHTML = `<span style="font-size:0.6rem;color:#bbb;display:flex;align-items:center;gap:5px;"><i class="fas fa-eye"></i> Read-only &mdash; local arrangement snapshot</span>`;
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Close';
+        closeBtn.style.cssText = 'padding:7px 15px;background:#fff;border:1.5px solid #ccc;border-radius:6px;cursor:pointer;font-size:0.77rem;font-weight:700;font-family:inherit;color:#555;';
+        closeBtn.onclick = () => overlay.remove();
+        foot.appendChild(closeBtn);
+
+        box.appendChild(hdr);
+        box.appendChild(body);
+        box.appendChild(foot);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    } catch(e) {
+        await showValidationModal('Error', e.message);
+    }
+}
+
+async function publishLocalArrangement(arrId, btn) {
+    const ok = await showConfirmModal(
+        'Publishing this local arrangement will make it the active override layer for this section. The previous published arrangement (if any) will be archived.',
+        'Publish Local Arrangement'
+    );
+    if (!ok) return;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+    try {
+        const res  = await fetch(`/api/local/arrangement/${arrId}/publish`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            await showValidationModal('Published', 'Local Arrangement published successfully.');
+            _loadVersionHistoryPanel();
+        } else {
+            await showValidationModal('Error', data.error || 'Could not publish.');
+        }
+    } catch(e) {
+        await showValidationModal('Error', e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> PUBLISH'; }
+    }
+}
+
+async function restoreLocalArrangement(arrId, btn) {
+    const ok = await showConfirmModal(
+        'This will create a new Draft arrangement by copying the sessions from this version, referencing the current Published Official Schedule as the base.',
+        'Restore Local Arrangement'
+    );
+    if (!ok) return;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+    try {
+        const res  = await fetch(`/api/local/arrangement/${arrId}/restore`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            await showValidationModal('Restored', `New Draft #${data.new_arrangementid} created. You can publish it when ready.`);
+            _loadVersionHistoryPanel();
+        } else {
+            await showValidationModal('Error', data.error || 'Could not restore.');
+        }
+    } catch(e) {
+        await showValidationModal('Error', e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE'; }
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   OFFICIAL SCHEDULER VERSION — inline viewer
+   ══════════════════════════════════════════════════════════════ */
+
+/* Shared timetable renderer — used by both Official and Local snapshot modals */
+function _buildScheduleTimetable(sessions, diffData = null) {
+    // 1. FIXED DIMENSIONS AND RANGE (7:30 AM to 9:30 PM)
+    const SLOT_H     = 55;
+    const TIME_W     = 80;
+    const DAY_MIN_W  = 110;
+    const gridS      = 450;  // 7:30 AM in minutes
+    const gridE      = 1290; // 9:30 PM in minutes
+    const TOTAL_H    = (gridE - gridS) / 30 * SLOT_H;
+
+    const COLORS = [
+        { bg:'#FFF9C4', border:'#F9A825', text:'#3e2800' },
+        { bg:'#BBDEFB', border:'#1976D2', text:'#0d2f5c' },
+        { bg:'#F8BBD0', border:'#E91E63', text:'#5a0025' },
+        { bg:'#C8E6C9', border:'#388E3C', text:'#1b3a1c' },
+        { bg:'#E1BEE7', border:'#8E24AA', text:'#3a0059' },
+        { bg:'#B2EBF2', border:'#0097A7', text:'#003940' },
+        { bg:'#FFE0B2', border:'#FB8C00', text:'#4a2000' },
+        { bg:'#D1C4E9', border:'#7E57C2', text:'#2a1060' },
+        { bg:'#DCEDC8', border:'#689F38', text:'#1e3300' },
+        { bg:'#FCE4EC', border:'#E91E63', text:'#5a0025' },
+    ];
+
+    function parseMin(t) {
+        if (!t) return null;
+        const p = t.split(':').map(Number);
+        return p[0] * 60 + (p[1] || 0);
+    }
+
+    const diffKey = s => `${s.subjectcode||''}|${s.daydesc||''}|${String(s.start_time||'').slice(0,5)}`;
+
+    // All sessions to render = current + removed ghosts
+    const removedSessions = (diffData?.removedSessions || []).map(s => ({...s, _diffState: 'removed'}));
+    const allSessions = [...sessions, ...removedSessions];
+
+    // Assign stable colors per subject
+    const colorMap = {};
+    let ci = 0;
+    allSessions.forEach(s => {
+        const k = s.subjectcode || s.subjectname || '—';
+        if (!colorMap[k]) colorMap[k] = COLORS[ci++ % COLORS.length];
+    });
+
+    // Group sessions by day
+    const byDay = {};
+    const sessionDays = new Set(allSessions.map(s => s.daydesc).filter(Boolean));
+    
+    // Always show Monday to Saturday. Add Sunday ONLY if it has classes.
+    const shownDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if (sessionDays.has('Sunday')) shownDays.push('Sunday');
+
+    shownDays.forEach(d => byDay[d] = []);
+    allSessions.forEach(s => { if (byDay[s.daydesc]) byDay[s.daydesc].push(s); });
+
+    // Time label column (Fixed 7:30 AM to 9:00 PM)
+    let timeLabelHtml = '';
+    for (let m = gridS; m < gridE; m += 30) {
+        const top = (m - gridS) / 30 * SLOT_H;
+        const h = Math.floor(m / 60), mn = m % 60;
+        const ap  = h < 12 ? 'AM' : 'PM';
+        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        const lbl = `${h12}:${String(mn).padStart(2,'0')} ${ap}`;
+        
+        timeLabelHtml += `<div style="position:absolute;top:${top}px;left:0;right:0;height:${SLOT_H}px;display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;color:#630100;background:#f8f9fa;border-bottom:1px solid #eee;border-right:1px solid #eee;box-sizing:border-box;user-select:none;">${lbl}</div>`;
+    }
+
+    // Horizontal slot dividers
+    let slotLines = '';
+    for (let m = gridS; m <= gridE; m += 30) {
+        const top  = (m - gridS) / 30 * SLOT_H;
+        slotLines += `<div style="position:absolute;top:${top}px;left:0;right:0;pointer-events:none;border-top:1px solid #eee;"></div>`;
+    }
+
+    // Build each day column
+    function buildDayCol(day) {
+        let blocks = slotLines;
+        byDay[day].forEach(s => {
+            const sm = parseMin(s.start_time), em = parseMin(s.end_time);
+            if (sm === null || em === null) return;
+            const top = (sm - gridS) / 30 * SLOT_H;
+            const ht  = Math.max(SLOT_H - 3, (em - sm) / 30 * SLOT_H - 3);
+            const col = colorMap[s.subjectcode || s.subjectname || '—'] || COLORS[0];
+            const st  = _fmt12(s.start_time), et = _fmt12(s.end_time);
+
+            // Determine diff state
+            const rawState = s._diffState || (diffData ? diffData.currDiff.get(diffKey(s)) : null);
+            const diffCls  = rawState === 'added'    ? 'vhp-diff-added'
+                           : rawState === 'removed'  ? 'vhp-diff-removed'
+                           : rawState === 'modified' ? 'vhp-diff-modified'
+                           : '';
+
+            blocks += `
+            <div class="${diffCls}" style="position:absolute;top:${top + 1}px;height:${ht}px;left:2px;right:2px;
+                background:${col.bg};border:1px solid rgba(0,0,0,0.1);border-left:4px solid ${col.border};border-radius:4px;
+                overflow:hidden;box-shadow:2px 2px 6px rgba(0,0,0,0.15);transition:opacity 0.2s;"
+                title="${s.subjectcode||''} ${s.subjectname||''} | ${st}–${et} | ${s.roomname||'TBA'} | ${s.instructor||'TBA'}${rawState ? ' [' + rawState.toUpperCase() + ']' : ''}">
+                <div style="padding:4px 6px;height:100%;display:flex;flex-direction:column;overflow:hidden;gap:1px;text-align:center;justify-content:center;">
+                    <div style="font-size:0.72rem;font-weight:900;color:${col.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;text-transform:uppercase;">${s.subjectcode || '—'}</div>
+                    ${ht > 42 ? `<div style="font-size:0.6rem;color:${col.text};opacity:0.9;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.2;">${s.subjectname || ''}</div>` : ''}
+                    ${ht > 64 ? `<div style="font-size:0.58rem;color:${col.text};opacity:0.8;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.2;margin-top:2px;">${s.instructor||'TBA'}</div>` : ''}
+                    ${ht > 86 ? `<div style="font-size:0.58rem;color:${col.text};opacity:0.8;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.2;"><i class="fas fa-building" style="font-size:0.5rem;"></i> ${s.roomname||'TBA'}</div>` : ''}
+                </div>
+            </div>`;
+        });
+        
+        // flex: 1 ensures it stretches perfectly to cover white space
+        return `<div style="flex: 1; min-width: ${DAY_MIN_W}px; position:relative; height:${TOTAL_H}px; border-right:1px solid #eee; background:#fff;">${blocks}</div>`;
+    }
+
+    // Day header cells
+    const dayHdrCells = shownDays.map(d => `
+        <div style="flex: 1; min-width: ${DAY_MIN_W}px; padding:10px 8px; text-align:center;
+            font-size:0.72rem; font-weight:800; color:#ffffff; text-transform:uppercase;
+            border-right:1px solid #7a0100; border-bottom:1px solid #7a0100; background:#630100;
+            display:flex; align-items:center; justify-content:center;">
+            ${d.toUpperCase()}
+        </div>`).join('');
+
+    const dayCols = shownDays.map(d => buildDayCol(d)).join('');
+
+    // Return the grid structure (display: flex; flex-direction: column fixes the whitespace)
+    return `
+    <div style="display:flex; flex-direction:column; width:100%; min-width: 800px; border:1px solid #ddd; border-radius:4px; overflow:hidden; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+        <div style="display:flex; width:100%; position:sticky; top:0; z-index:5; background:#630100;">
+            <div style="width:${TIME_W}px; flex-shrink:0; background:#630100; border-right:1px solid #7a0100; border-bottom:1px solid #7a0100; display:flex; align-items:center; justify-content:center; color:white; font-size:0.72rem; font-weight:800;">TIME</div>
+            ${dayHdrCells}
+        </div>
+        <div style="display:flex; width:100%;">
+            <div style="width:${TIME_W}px; flex-shrink:0; position:relative; height:${TOTAL_H}px; background:#f8f9fa;">
+                ${timeLabelHtml}
+            </div>
+            ${dayCols}
+        </div>
+    </div>`;
+}
+
+async function viewVersionInline(btn) {
+    const card      = btn.closest('.vhp-snap-card') || btn.closest('.vhp-card');
+    const initVid   = parseInt(card.dataset.vid);
+    const typeVn    = btn.dataset.typeVn || btn.dataset.vn;
+    const chainType = btn.dataset.chainType || '';
+    const isPub     = chainType === 'Published';
+    const isCurrent = card.classList.contains('is-current-pub') || card.classList.contains('is-current-draft') || card.classList.contains('is-latest');
+
+    const progDisplay = btn.dataset.prog ? btn.dataset.prog.split('').join(' ') + ' – ' + (btn.dataset.yl||'') + ' Year' : '';
+    const semDisplay  = btn.dataset.term === 'A' ? '1st Semester' : btn.dataset.term === 'B' ? '2nd Semester' : btn.dataset.term === 'C' ? 'Summer' : '';
+    const ayDisplay   = btn.dataset.ay ? 'A.Y ' + String(btn.dataset.ay).replace('AY','').trim() : '';
+
+    // Build full-screen overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'vhv-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'vhv-modal';
+
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'vhv-header';
+    hdr.innerHTML = `
+    <div class="vhv-header-left">
+        <i class="fas fa-history"></i>
+        <span id="vhvRevLabel">R${typeVn}</span>
+        <span id="vhvStatusBadge" class="vhv-badge ${isCurrent ? (isPub ? 'vhv-badge-pub' : 'vhv-badge-draft') : 'vhv-badge-arch'}">
+            ${isCurrent ? (isPub ? 'Current Published' : 'Current Draft') : 'Archived'}
+        </span>
+        <span id="vhvMetaInfo">${progDisplay}${ayDisplay ? '  ·  ' + ayDisplay : ''}${semDisplay ? '  ·  ' + semDisplay : ''}</span>
+    </div>
+    <div class="vhv-header-right">
+        <label class="vhv-toggle" title="Show what changed vs the previous revision">
+            <input type="checkbox" id="vhvHighlightChk">
+            <span class="vhv-toggle-slider"></span>
+            <span class="vhv-toggle-label"><i class="fas fa-adjust" style="margin-right:4px;font-size:0.58rem;"></i>Highlight Changes</span>
+        </label>
+        <div id="vhvRestoreArea"></div>
+        <button class="vhv-close-btn" id="vhvCloseBtn" title="Close"><i class="fas fa-times"></i></button>
+    </div>`;
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'vhv-body';
+
+    const leftPane = document.createElement('div');
+    leftPane.className = 'vhv-left';
+    leftPane.id = 'vhvLeft';
+    leftPane.innerHTML = '<div class="vhv-loading"><i class="fas fa-spinner fa-spin" style="color:#630100;font-size:1rem;"></i> Loading snapshot…</div>';
+
+    const rightPane = document.createElement('div');
+    rightPane.className = 'vhv-right';
+    rightPane.innerHTML = `
+    <div class="vhv-right-header"><i class="fas fa-history"></i>Version History</div>
+    <div class="vhv-diff-legend" id="vhvDiffLegend">
+        <span class="vhv-legend added"><i class="fas fa-circle"></i> Added</span>
+        <span class="vhv-legend removed"><i class="fas fa-circle"></i> Removed</span>
+        <span class="vhv-legend modified"><i class="fas fa-circle"></i> Modified</span>
+        <span class="vhv-legend unchanged"><i class="fas fa-circle"></i> Unchanged</span>
+    </div>
+    <div class="vhv-timeline-list" id="vhvTimelineList">
+        <div class="vhv-loading"><i class="fas fa-spinner fa-spin"></i></div>
+    </div>`;
+
+    body.appendChild(leftPane);
+    body.appendChild(rightPane);
+    modal.appendChild(hdr);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // State
+    let _currentVid  = initVid;
+    let _highlightOn = false;
+    const _allVers   = _vhpAllVersions.slice();
+
+    // Close
+    const closeModal = () => {
+        overlay.remove();
+        document.removeEventListener('keydown', onKeyDown);
+        delete window.vhvSwitchRevision;
+    };
+    hdr.querySelector('#vhvCloseBtn').onclick = closeModal;
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+    const onKeyDown = e => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKeyDown);
+
+    // Highlight Changes toggle
+    hdr.querySelector('#vhvHighlightChk').addEventListener('change', async function() {
+        _highlightOn = this.checked;
+        const legend = document.getElementById('vhvDiffLegend');
+        if (legend) legend.style.display = _highlightOn ? 'flex' : 'none';
+        await vhvLoadTimetable(_currentVid);
+    });
+
+    // Restore button in header
+    function vhvUpdateRestoreArea(vid, origStatus) {
+        const area = document.getElementById('vhvRestoreArea');
+        if (!area) return;
+        const v         = _allVers.find(x => x.versionid === vid);
+        const isOPub    = origStatus === 'Published';
+        const maxVn     = isOPub
+            ? _allVers.filter(x => x.published_version_number).reduce((m,x) => Math.max(m, x.published_version_number), 0)
+            : _allVers.filter(x => x.draft_version_number).reduce((m,x) => Math.max(m, x.draft_version_number), 0);
+        const thisVn    = v ? (isOPub ? v.published_version_number : v.draft_version_number) : 0;
+        const isCur     = thisVn > 0 && thisVn === maxVn && v && v.status === origStatus;
+        area.innerHTML  = !isCur
+            ? `<button class="vhv-restore-btn" onclick="(async()=>{closeModal&&closeModal();await restoreVersion(${vid},this);})()"><i class="fas fa-undo-alt"></i> Restore R${thisVn}</button>`
+            : '';
+    }
+
+    // Load timetable for a revision
+    async function vhvLoadTimetable(vid) {
+        leftPane.innerHTML = '<div class="vhv-loading"><i class="fas fa-spinner fa-spin" style="color:#630100;font-size:1rem;"></i> Loading snapshot…</div>';
+        try {
+            const res  = await fetch(`/api/schedule/versions/${vid}/sessions`);
+            const data = await res.json();
+            if (!data.success || !data.sessions?.length) {
+                leftPane.innerHTML = '<div class="vhv-empty"><i class="fas fa-inbox"></i><div>No sessions recorded for this revision.</div></div>';
+                return;
+            }
+            const curr = data.sessions;
+            let diffData = null;
+
+            if (_highlightOn) {
+                const v    = _allVers.find(x => x.versionid === vid);
+                if (v) {
+                    const isP  = (v.published_version_number || 0) > 0;
+                    const cVn  = isP ? v.published_version_number : v.draft_version_number;
+                    const prev = _allVers.find(x => isP
+                        ? x.published_version_number === cVn - 1
+                        : x.draft_version_number === cVn - 1);
+                    if (prev) {
+                        try {
+                            const pr = await fetch(`/api/schedule/versions/${prev.versionid}/sessions`);
+                            const pd = await pr.json();
+                            if (pd.success && pd.sessions?.length)
+                                diffData = _vhpComputeDiff(pd.sessions, curr);
+                        } catch(_) {}
+                    }
+                }
+            }
+            leftPane.innerHTML = _buildScheduleTimetable(curr, diffData);
+        } catch(e) {
+            leftPane.innerHTML = `<div class="vhv-empty"><i class="fas fa-exclamation-circle" style="color:#c62828;"></i><div>${e.message}</div></div>`;
+        }
+    }
+
+    // Build right-panel revision list
+    function vhvBuildTimeline() {
+        const list = document.getElementById('vhvTimelineList');
+        if (!list) return;
+        if (!_allVers.length) {
+            list.innerHTML = '<div style="padding:20px;color:rgba(255,255,255,0.25);font-size:0.72rem;text-align:center;">No other revisions.</div>';
+            return;
+        }
+        const pubV    = _allVers.filter(v => v.published_version_number).sort((a,b) => b.published_version_number - a.published_version_number);
+        const draftV  = _allVers.filter(v => v.draft_version_number).sort((a,b) => b.draft_version_number - a.draft_version_number);
+        const maxPub  = pubV.length   ? Math.max(...pubV.map(v => v.published_version_number))   : 0;
+        const maxDrf  = draftV.length ? Math.max(...draftV.map(v => v.draft_version_number)) : 0;
+
+        function card2(v, ct, vn, maxVn) {
+            const isCur  = vn === maxVn && v.status === ct;
+            const isPubC = ct === 'Published';
+            const dt     = v.datecreated ? new Date(v.datecreated) : null;
+            const dtStr  = _vhpFmtDateTime(dt);
+            const dotCls = isCur ? (isPubC ? 'vhv-dot-pub-cur' : 'vhv-dot-draft-cur') : 'vhv-dot-arch';
+            const isSel  = v.versionid === _currentVid;
+            return `
+            <div class="vhv-tl-card${isSel ? ' vhv-active' : ''}" data-vid="${v.versionid}"
+                 onclick="vhvSwitchRevision(${v.versionid},'${ct}',${vn},this)">
+                <div class="vhv-tl-dot ${dotCls}"></div>
+                <div class="vhv-tl-body">
+                    <div class="vhv-tl-rnum">R${vn}</div>
+                    <div class="vhv-tl-badges">
+                        <span class="vhv-badge ${isCur ? (isPubC?'vhv-badge-pub':'vhv-badge-draft') : 'vhv-badge-arch'}" style="font-size:0.5rem;padding:1px 7px;">
+                            ${isCur ? 'Current' : 'Archived'}
+                        </span>
+                        <span class="vhv-badge ${isPubC?'vhv-badge-pub':'vhv-badge-draft'}" style="font-size:0.47rem;padding:1px 6px;opacity:0.65;">${ct}</span>
+                    </div>
+                    <div class="vhv-tl-date">${dtStr}</div>
                 </div>
             </div>`;
         }
 
         let html = '';
-
-        if (pubVers.length) {
-            html += `<div style="margin:0 0 8px;padding:6px 10px;background:#e8f8ee;border-left:3px solid #1a7a2e;border-radius:0 4px 4px 0;font-size:0.68rem;font-weight:800;letter-spacing:0.7px;color:#1a7a2e;text-transform:uppercase;">
-                <i class="fas fa-check-circle" style="margin-right:5px;"></i>Published History
-            </div>`;
-            html += pubVers.map(v => renderCard(v, 'Published', v.published_version_number, maxPubVn)).join('');
+        if (pubV.length) {
+            html += `<div class="vhv-tl-section-hdr vhv-sec-pub"><i class="fas fa-check-circle" style="margin-right:4px;"></i>Published</div>`;
+            html += pubV.map(v => card2(v, 'Published', v.published_version_number, maxPub)).join('');
         }
-
-        if (draftVers.length) {
-            html += `<div style="margin:${pubVers.length ? '16px' : '0'} 0 8px;padding:6px 10px;background:#fff8e1;border-left:3px solid #946300;border-radius:0 4px 4px 0;font-size:0.68rem;font-weight:800;letter-spacing:0.7px;color:#946300;text-transform:uppercase;">
-                <i class="fas fa-file-alt" style="margin-right:5px;"></i>Draft History
-            </div>`;
-            html += draftVers.map(v => renderCard(v, 'Draft', v.draft_version_number, maxDraftVn)).join('');
+        if (draftV.length) {
+            html += `<div class="vhv-tl-section-hdr vhv-sec-draft" style="margin-top:${pubV.length?'10px':'0'};"><i class="fas fa-file-alt" style="margin-right:4px;"></i>Draft</div>`;
+            html += draftV.map(v => card2(v, 'Draft', v.draft_version_number, maxDrf)).join('');
         }
-
-        cards.innerHTML = html;
-
-    } catch(e) {
-        if (cards) cards.innerHTML = `<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> ${e.message}</div>`;
-        if (subtitle) subtitle.textContent = 'Error';
+        list.innerHTML = html || '<div style="padding:20px;color:rgba(255,255,255,0.25);font-size:0.72rem;text-align:center;">No revisions.</div>';
     }
+
+    // Switch revision from timeline click
+    window.vhvSwitchRevision = async function(vid, ct, vn, cardEl) {
+        _currentVid = vid;
+        document.querySelectorAll('.vhv-tl-card').forEach(c => c.classList.remove('vhv-active'));
+        if (cardEl) cardEl.classList.add('vhv-active');
+        const lbl = document.getElementById('vhvRevLabel');
+        const bdg = document.getElementById('vhvStatusBadge');
+        if (lbl) lbl.textContent = `R${vn}`;
+        if (bdg) {
+            const v = _allVers.find(x => x.versionid === vid);
+            const mxVn = ct === 'Published'
+                ? _allVers.filter(x => x.published_version_number).reduce((m,x) => Math.max(m,x.published_version_number),0)
+                : _allVers.filter(x => x.draft_version_number).reduce((m,x) => Math.max(m,x.draft_version_number),0);
+            const nowCur = vn === mxVn && v && v.status === ct;
+            bdg.className = 'vhv-badge ' + (nowCur ? (ct==='Published'?'vhv-badge-pub':'vhv-badge-draft') : 'vhv-badge-arch');
+            bdg.textContent = nowCur ? (ct==='Published'?'Current Published':'Current Draft') : 'Archived';
+        }
+        vhvUpdateRestoreArea(vid, ct);
+        await vhvLoadTimetable(vid);
+    };
+
+    // Init
+    vhvBuildTimeline();
+    vhvUpdateRestoreArea(initVid, card.dataset.originalStatus || chainType);
+    await vhvLoadTimetable(initVid);
+    requestAnimationFrame(() => document.querySelector('.vhv-tl-card.vhv-active')?.scrollIntoView({block:'nearest'}));
 }
-
-async function viewVersionInline(btn) {
-    const card      = btn.closest('.vhp-card');
-    const vid       = card.dataset.vid;
-    const typeVn    = btn.dataset.typeVn || btn.dataset.vn;
-    const chainType = btn.dataset.chainType || '';
-    const isCurrent = card.classList.contains('is-latest');
-
-    const labelPrefix = chainType ? `${chainType} R${typeVn}` : `Revision R${typeVn}`;
-
-    // Build overlay modal
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.52);z-index:99998;display:flex;align-items:center;justify-content:center;';
-
-    const box = document.createElement('div');
-    box.style.cssText = 'background:#fff;border-radius:10px;max-width:700px;width:94%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.28);font-family:inherit;overflow:hidden;';
-
-    // Header
-    const hdr = document.createElement('div');
-    hdr.style.cssText = 'padding:14px 20px;background:#8b1a1a;color:white;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;';
-    hdr.innerHTML = `<div style="font-size:0.83rem;font-weight:900;letter-spacing:0.5px;text-transform:uppercase;">
-        <i class="fas fa-history" style="margin-right:7px;"></i> ${labelPrefix}
-        ${isCurrent ? '<span style="background:rgba(255,255,255,0.18);padding:2px 9px;border-radius:10px;font-size:0.68rem;margin-left:8px;letter-spacing:0.3px;">CURRENT</span>' : '<span style="background:rgba(255,255,255,0.1);padding:2px 9px;border-radius:10px;font-size:0.68rem;margin-left:8px;letter-spacing:0.3px;">ARCHIVED</span>'}
-    </div>
-    <button style="background:none;border:none;color:rgba(255,255,255,0.75);font-size:1.3rem;cursor:pointer;line-height:1;padding:0 2px;" title="Close">&#x2715;</button>`;
-    hdr.querySelector('button').onclick = () => overlay.remove();
-
-    // Body
-    const body = document.createElement('div');
-    body.style.cssText = 'padding:18px 20px;overflow-y:auto;flex:1;';
-    body.innerHTML = '<div style="text-align:center;padding:24px;color:#aaa;font-size:0.85rem;"><i class="fas fa-spinner fa-spin" style="font-size:1.1rem;margin-bottom:8px;display:block;"></i>Loading sessions…</div>';
-
-    // Footer
-    const foot = document.createElement('div');
-    foot.style.cssText = 'padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:#fafafa;';
-
-    if (!isCurrent) {
-        const restoreBtn = document.createElement('button');
-        restoreBtn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore This Version';
-        restoreBtn.style.cssText = 'padding:8px 18px;background:#8b1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;font-family:inherit;';
-        restoreBtn.onclick = async () => {
-            overlay.remove();
-            const dummy = document.createElement('button');
-            dummy.dataset.originalStatus = card.dataset.originalStatus;
-            await restoreVersion(parseInt(vid), dummy);
-        };
-        foot.appendChild(restoreBtn);
-    }
-
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = 'Close';
-    closeBtn.style.cssText = 'padding:8px 18px;background:#fff;border:1.5px solid #ccc;border-radius:6px;cursor:pointer;font-size:0.82rem;font-family:inherit;';
-    closeBtn.onclick = () => overlay.remove();
-    foot.appendChild(closeBtn);
-
-    box.appendChild(hdr);
-    box.appendChild(body);
-    box.appendChild(foot);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-
-    // Fetch and render sessions
-    try {
-        const res  = await fetch(`/api/schedule/versions/${vid}/sessions`);
-        const data = await res.json();
-        if (!data.success || !data.sessions?.length) {
-            body.innerHTML = '<div style="text-align:center;padding:24px;color:#aaa;"><i class="fas fa-inbox"></i><br>No sessions found for this revision.</div>';
-            return;
-        }
-
-        // Group sessions by subject code
-        const bySubj = {};
-        data.sessions.forEach(s => {
-            const code = s.subjectcode || '—';
-            if (!bySubj[code]) bySubj[code] = { name: s.subjectname || code, instructor: s.instructor || 'TBA', rows: [] };
-            if (s.daydesc || s.start_time) bySubj[code].rows.push(s);
-        });
-
-        let html = `<table style="width:100%;border-collapse:collapse;font-size:0.79rem;">
-            <thead><tr style="background:#f5f5f5;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:#666;">
-                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Subject</th>
-                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Day</th>
-                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Time</th>
-                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Room</th>
-                <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #ddd;font-weight:800;">Faculty</th>
-            </tr></thead><tbody>`;
-
-        Object.entries(bySubj).forEach(([code, info]) => {
-            const sessList = info.rows;
-            if (!sessList.length) {
-                html += `<tr><td colspan="5" style="padding:8px 10px;color:#aaa;border-bottom:1px solid #f0f0f0;font-style:italic;">${info.name} — no sessions</td></tr>`;
-                return;
-            }
-            sessList.forEach((s, i) => {
-                const st = s.start_time ? _fmt12(s.start_time) : '—';
-                const et = s.end_time   ? _fmt12(s.end_time)   : '—';
-                html += `<tr style="border-bottom:1px solid #f0f0f0;">
-                    ${i === 0 ? `<td style="padding:9px 10px;vertical-align:top;font-weight:700;color:#2c3e50;" rowspan="${sessList.length}">
-                        ${info.name}<br><span style="font-size:0.67rem;color:#999;font-weight:400;">${code}</span>
-                    </td>` : ''}
-                    <td style="padding:8px 10px;">${s.daydesc || '—'}</td>
-                    <td style="padding:8px 10px;white-space:nowrap;">${st} – ${et}</td>
-                    <td style="padding:8px 10px;">${s.roomname || 'TBA'}</td>
-                    ${i === 0 ? `<td style="padding:9px 10px;vertical-align:top;color:#555;" rowspan="${sessList.length}">${info.instructor || 'TBA'}</td>` : ''}
-                </tr>`;
-            });
-        });
-
-        html += '</tbody></table>';
-        body.innerHTML = html;
-    } catch(e) {
-        body.innerHTML = `<div style="text-align:center;padding:24px;color:#c0392b;"><i class="fas fa-exclamation-circle"></i><br>${e.message}</div>`;
-    }
-}
-
 function _fmt12(t24) {
     if (!t24) return t24;
     const [h, m] = t24.split(':').map(Number);
@@ -5492,7 +6806,7 @@ async function restoreVersion(versionId, btn) {
         return;
     }
 
-    const card = btn.closest?.('.vhp-card') || document.querySelector(`[data-vid="${versionId}"]`);
+    const card = btn.closest?.('.vhp-snap-card') || btn.closest?.('.vhp-card') || document.querySelector(`[data-vid="${versionId}"]`);
     const origStatus = card?.dataset?.originalStatus || btn?.dataset?.originalStatus || 'Draft';
     const typeLabel  = origStatus === 'Published' ? 'Published' : 'Draft';
 

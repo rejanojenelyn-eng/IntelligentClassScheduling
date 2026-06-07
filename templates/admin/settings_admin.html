@@ -5,298 +5,1172 @@
 {% endblock %}
 
 {% block content %}
-<div class="settings-container" id="settingsWrapper" data-locked="{{ 'true' if is_locked else 'false' }}">
-    <div class="settings-header">
-        <h1>SETTINGS</h1>
-    </div>
+<script id="ay-status-data" type="application/json">
+{{ ay_list | map(attribute='academicyearid') | list | tojson }}
+</script>
+<script id="ay-status-full" type="application/json">
+{
+  {% for ay in ay_list %}
+  "{{ ay.academicyearid }}": {"isfinalized": {{ 'true' if ay.isfinalized else 'false' }}, "has_published": {{ 'true' if ay.has_published else 'false' }}, "computed_status": "{{ ay.computed_status }}"}{% if not loop.last %},{% endif %}
+  {% endfor %}
+}
+</script>
 
-    <div class="settings-tabs" style="display: flex; gap: 10px; margin-bottom: 20px;">
-        <button class="tab-btn active">ACADEMIC MANAGEMENT</button>
-        <button class="tab-btn inactive">ACTIVITY LOGS</button>
-    </div>
+<div class="settings-container" id="settingsWrapper"
+     data-locked="{{ 'true' if is_locked else 'false' }}"
+     data-locked-detail="{{ locked_detail }}">
 
-    <!-- SECTION 1: ACADEMIC YEAR MANAGEMENT -->
-    <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 10px;">
-        <h2 class="section-main-title" style="margin: 0;">ACADEMIC YEAR MANAGEMENT</h2>
-        <button class="btn-action-maroon" onclick="openAYModal()" style="background:#630100; color:white; border:none; padding:8px 20px; border-radius:4px; font-weight:800; cursor:pointer; font-size:0.7rem;">
-            <i class="fas fa-plus-square"></i> ADD ACADEMIC YEAR
-        </button>
-    </div>
-    
-    <div class="ay-control-box" style="background: #fdf2f2; padding: 20px 25px; border: 1px solid #e2d1d1; border-radius: 4px;">
-        <!-- Static Info Row (No Form, No Dropdowns, No Apply Button) -->
-        <div class="ay-top-row" style="display: flex; align-items: center; gap: 40px;">
-            <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
-                <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Current Academic Year:</label>
-                <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #630100; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
-                    {{ current_ay_label }}
-                </div>
-            </div>
+  <div class="settings-header">
+    <h1>SETTINGS</h1>
+  </div>
 
-            <div class="ay-label-group" style="display: flex; align-items: center; gap: 12px;">
-                <label style="font-weight: 800; color: #630100; font-size: 0.75rem; text-transform: uppercase; white-space: nowrap;">Semester:</label>
-                <div style="background: #fff; border: 1px solid #630100; padding: 5px 25px; color: #800000; font-weight: 800; font-size: 0.85rem; border-radius: 4px; min-width: 140px; text-align: center;">
-                    {{ current_sem_label }}
-                </div>
-            </div>
+
+  <!-- ── Tab Navigation ────────────────────────────── -->
+  <div class="settings-tabs">
+    <button class="tab-btn active" data-tab="academic">ACADEMIC MANAGEMENT</button>
+    <button class="tab-btn"        data-tab="program">PROGRAM MANAGEMENT</button>
+    <button class="tab-btn"        data-tab="logs">ACTIVITY LOGS</button>
+  </div>
+
+  <!-- ════════════════════════════════════════════════
+       TAB 1 · ACADEMIC MANAGEMENT
+       ════════════════════════════════════════════════ -->
+  <div id="tab-academic" class="tab-content active">
+
+    <!-- ── ACADEMIC YEAR MANAGEMENT ─────────────── -->
+    <div class="section-block">
+      <div class="section-header-row">
+        <div class="section-title-group">
+          <i class="fas fa-calendar-alt section-icon"></i>
+          <h2>Academic Year Management</h2>
         </div>
+        <button class="btn-primary" onclick="openAYModal()">
+          <i class="fas fa-plus"></i> ADD ACADEMIC YEAR
+        </button>
+      </div>
 
-        <!-- Table remains exactly as it was -->
-        <table class="settings-table-exact" style="width: 100%; border-collapse: collapse; background: white; margin-top: 25px; border: 1px solid #630100;">
-            <thead>
-                <tr>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">ACADEMIC YEAR</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">1ST SEM START</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">1ST SEM END</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">2ND SEM START</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">2ND SEM END</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">SUMMER START</th>
-                    <th style="border: 1px solid #630100; padding: 10px; font-size: 0.7rem; font-weight: 900;">SUMMER END</th>
-                    <th style="width: 45px; border: none;"></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for ay in ay_list %}
-                <tr>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">AY {{ ay.academicyearid[2:4] }}-{{ ay.academicyearid[4:] }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['1st sem start'] or '-' }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['1st sem end'] or '-' }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['2nd sem start'] or '-' }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['2nd sem end'] or '-' }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['3rd sem start'] or '-' }}</td>
-                    <td style="border: 1px solid #630100; padding: 10px; text-align: center; font-weight: 700; font-size: 0.8rem;">{{ ay['3rd sem end'] or '-' }}</td>
-                    <td class="edit-col-maroon" style="background: #630100; color: white; width: 45px; cursor: pointer; text-align: center;" 
-                        onclick="prepareAY(this)" 
-                        data-id="{{ ay.academicyearid }}" 
-                        data-start="20{{ ay.academicyearid[2:4] }}" 
-                        data-end="20{{ ay.academicyearid[4:] }}"
-                        data-s1s="{{ ay['1st sem start'] }}" data-s1e="{{ ay['1st sem end'] }}"
-                        data-s2s="{{ ay['2nd sem start'] }}" data-s2e="{{ ay['2nd sem end'] }}"
-                        data-s3s="{{ ay['3rd sem start'] }}" data-s3e="{{ ay['3rd sem end'] }}">
-                        <i class="fas fa-edit"></i>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <!-- SECTION 2: EMPLOYEE HOURS -->
-    <div class="section-header-row">
-        <h2 class="section-main-title">EMPLOYEE FACULTY HOURS</h2>
-    </div>
-    <table class="table-pro">
-        <thead>
+      <div class="ay-info-strip">
+        <div class="info-chip">
+          <span class="chip-label">Current A.Y.</span>
+          <span class="chip-value">{{ current_ay_label }}</span>
+        </div>
+        <div class="info-chip">
+          <span class="chip-label">Semester</span>
+          <span class="chip-value">{{ current_sem_label }}</span>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
             <tr>
-                <th style="text-align: left; padding-left: 20px;">EMPLOYEE TYPE</th>
-                <th>REGULAR LOAD</th>
-                <th>PART-TIME LOAD</th>
-                <th>TEACHING SUBSTITUTION</th>
-                <th>REGULAR HOURS</th>
-                <th>PART-TIME HOURS</th>
-                <th style="width: 45px; border: none;"></th>
+              <th>ACADEMIC YEAR</th>
+              <th>1ST SEM START</th>
+              <th>1ST SEM END</th>
+              <th>2ND SEM START</th>
+              <th>2ND SEM END</th>
+              <th>SUMMER START</th>
+              <th>SUMMER END</th>
+              <th>STATUS</th>
+              <th class="col-action" style="width:130px;"></th>
             </tr>
-        </thead>
-        <tbody>
+          </thead>
+          <tbody>
+            {% for ay in ay_list %}
+            <tr>
+              <td class="td-label">AY {{ ay.academicyearid[2:4] }}-{{ ay.academicyearid[4:] }}</td>
+              <td>{{ ay['1st sem start'] or '—' }}</td>
+              <td>{{ ay['1st sem end'] or '—' }}</td>
+              <td>{{ ay['2nd sem start'] or '—' }}</td>
+              <td>{{ ay['2nd sem end'] or '—' }}</td>
+              <td>{{ ay['3rd sem start'] or '—' }}</td>
+              <td>{{ ay['3rd sem end'] or '—' }}</td>
+              <td>
+                {% if ay.computed_status == 'finalized' %}
+                  <span class="ay-status-badge ay-finalized">
+                    <i class="fas fa-lock"></i> FINALIZED
+                  </span>
+                {% elif ay.computed_status == 'current' %}
+                  <span class="ay-status-badge ay-current">
+                    <i class="fas fa-circle"></i> CURRENT
+                  </span>
+                {% elif ay.computed_status == 'past' %}
+                  <span class="ay-status-badge ay-past">
+                    <i class="fas fa-history"></i> PAST
+                  </span>
+                {% else %}
+                  <span class="ay-status-badge ay-upcoming">
+                    <i class="fas fa-clock"></i> UPCOMING
+                  </span>
+                {% endif %}
+              </td>
+              <td style="text-align:center; padding:6px 10px;">
+                <div style="display:flex;gap:6px;justify-content:center;align-items:center;">
+                  <button class="ay-row-btn ay-row-edit"
+                      onclick="prepareAY(this)"
+                      data-id="{{ ay.academicyearid }}"
+                      data-finalized="{{ 'true' if ay.isfinalized else 'false' }}"
+                      data-haspub="{{ 'true' if ay.has_published else 'false' }}"
+                      data-status="{{ ay.computed_status }}"
+                      data-start="20{{ ay.academicyearid[2:4] }}"
+                      data-end="20{{ ay.academicyearid[4:] }}"
+                      data-s1s="{{ ay['1st sem start'] }}" data-s1e="{{ ay['1st sem end'] }}"
+                      data-s2s="{{ ay['2nd sem start'] }}" data-s2e="{{ ay['2nd sem end'] }}"
+                      data-s3s="{{ ay['3rd sem start'] }}" data-s3e="{{ ay['3rd sem end'] }}"
+                      title="{{ 'View only — this Academic Year is finalized' if ay.isfinalized else ('Edit Academic Year' if ay.computed_status == 'current' else ('Edit Academic Year (past — consider finalizing)' if ay.computed_status == 'past' else 'Edit Academic Year')) }}">
+                    <i class="fas {{ 'fa-eye' if ay.isfinalized else 'fa-edit' }}"></i>
+                  </button>
+                  {% if not ay.isfinalized %}
+                  <button class="ay-row-btn ay-row-finalize"
+                      onclick="openFinalizeModal('{{ ay.academicyearid }}')"
+                      title="Finalize this Academic Year (locks all settings permanently)">
+                    <i class="fas fa-archive"></i>
+                  </button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── EMPLOYEE FACULTY HOURS ────────────────── -->
+    <div class="section-block">
+      <div class="section-header-row">
+        <div class="section-title-group">
+          <i class="fas fa-users section-icon"></i>
+          <h2>Employee Faculty Hours</h2>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding-left:20px;">EMPLOYEE TYPE</th>
+              <th>REGULAR LOAD</th>
+              <th>PART-TIME LOAD</th>
+              <th>TEACHING SUBSTITUTION</th>
+              <th>REGULAR HOURS</th>
+              <th>PART-TIME HOURS</th>
+              <th class="col-action"></th>
+            </tr>
+          </thead>
+          <tbody>
             {% for et in emp_types %}
             <tr>
-                <td style="text-align: left; padding-left: 20px; font-weight: 800; color: #630100;">{{ et.typename }}
-                </td>
-                <td>{{ et.regularload or '-' }}</td>
-                <td>{{ et.parttimeload or '-' }}</td>
-                <td>{{ et.teachingsubstitution or '-' }}</td>
-                <td>{{ et.reg_time_str }}</td>
-                <td>{{ et.pt_time_str }}</td>
-                <td class="edit-cell-btn" onclick="prepareEmp(this)" data-id="{{ et.employeetypeid }}"
-                    data-name="{{ et.typename }}" data-rl="{{ et.regularload }}" data-ptl="{{ et.parttimeload }}"
-                    data-sub="{{ et.teachingsubstitution }}" data-rs="{{ et.regular_start }}"
-                    data-re="{{ et.regular_end }}" data-ps="{{ et.parttime_start }}" data-pe="{{ et.parttime_end }}">
-                    <i class="fas fa-external-link-alt"></i>
-                </td>
+              <td class="td-type">{{ et.typename }}</td>
+              <td>{{ et.regularload or '—' }}</td>
+              <td>{{ et.parttimeload or '—' }}</td>
+              <td>{{ et.teachingsubstitution or '—' }}</td>
+              <td>{{ et.reg_time_str }}</td>
+              <td>{{ et.pt_time_str }}</td>
+              <td class="td-action" onclick="prepareEmp(this)"
+                  data-id="{{ et.employeetypeid }}"
+                  data-name="{{ et.typename }}"
+                  data-rl="{{ et.regularload }}" data-ptl="{{ et.parttimeload }}"
+                  data-sub="{{ et.teachingsubstitution }}"
+                  data-rs="{{ et.regular_start }}" data-re="{{ et.regular_end }}"
+                  data-ps="{{ et.parttime_start }}" data-pe="{{ et.parttime_end }}">
+                <i class="fas fa-edit"></i>
+              </td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
-
-    <!-- SECTION 3: DESIGNEES -->
-    <div class="section-header-row">
-        <h2 class="section-main-title">DESIGNEES FACULTY HOURS</h2>
-        <button class="btn-action-maroon" onclick="openModal('modalAddDesig')"
-            style="background:#630100; color:white; border:none; padding:8px 20px; border-radius:4px; font-weight:800; cursor:pointer; font-size:0.7rem;">
-            <i class="fas fa-plus-square"></i> ADD DESIGNEE
-        </button>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <table class="table-pro" style="margin-bottom: 50px;">
-        <thead>
+
+    <!-- ── DESIGNEES FACULTY HOURS ───────────────── -->
+    <div class="section-block">
+      <div class="section-header-row">
+        <div class="section-title-group">
+          <i class="fas fa-user-tie section-icon"></i>
+          <h2>Designees Faculty Hours</h2>
+        </div>
+        <button class="btn-primary" onclick="openSModal('modalAddDesig')">
+          <i class="fas fa-plus"></i> ADD DESIGNEE
+        </button>
+      </div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
             <tr>
-                <th style="text-align: left; padding-left: 20px;">DESIGNATION</th>
-                <th>REGULAR LOAD UNITS</th>
-                <th>PT/NIGHT TEACHING SERVICE</th>
-                <th>REGULAR HOURS</th>
-                <th>PART-TIME HOURS</th>
-                <th style="width: 45px; border: none;"></th>
+              <th style="text-align:left; padding-left:20px;">DESIGNATION</th>
+              <th>REGULAR LOAD UNITS</th>
+              <th>PT/NIGHT TEACHING SERVICE</th>
+              <th>REGULAR HOURS</th>
+              <th>PART-TIME HOURS</th>
+              <th class="col-action"></th>
             </tr>
-        </thead>
-        <tbody>
+          </thead>
+          <tbody>
             {% for des in designations %}
             <tr>
-                <td style="text-align: left; padding-left: 20px; font-weight: 800; color: #630100;">{{
-                    des.designationname }}</td>
-                <td>{{ des.regularloadunit }}</td>
-                <td>{{ des.nightteachingservice }}</td>
-
-                <!-- Computed REGULAR HOURS based on Night Teaching Service -->
-                <td>
-                    {% if des.nightteachingservice == 0 %}
-                    08:00 AM - 05:00 PM
-                    {% else %}
-                    07:30 AM - 04:30 PM
-                    {% endif %}
-                </td>
-
-                <!-- Computed PART-TIME HOURS based on Night Teaching Service -->
-                <td>
-                    {% if des.nightteachingservice > 0 %}
-                    04:30 PM - 06:00 PM
-                    {% else %}
-                    None (Weekdays)
-                    {% endif %}
-                </td>
-
-                <td class="edit-cell-btn" onclick="prepareDesig(this)" data-id="{{ des.designationid }}"
-                    data-name="{{ des.designationname }}" data-rl="{{ des.regularloadunit }}"
-                    data-nt="{{ des.nightteachingservice }}">
-                    <i class="fas fa-edit"></i>
-                </td>
+              <td class="td-type">{{ des.designationname }}</td>
+              <td>{{ des.regularloadunit }}</td>
+              <td>{{ des.nightteachingservice }}</td>
+              <td>{% if des.nightteachingservice == 0 %}08:00 AM - 05:00 PM{% else %}07:30 AM - 04:30 PM{% endif %}</td>
+              <td>{% if des.nightteachingservice > 0 %}04:30 PM - 06:00 PM{% else %}None (Weekdays){% endif %}</td>
+              <td class="td-action" onclick="prepareDesig(this)"
+                  data-id="{{ des.designationid }}"
+                  data-name="{{ des.designationname }}"
+                  data-rl="{{ des.regularloadunit }}"
+                  data-nt="{{ des.nightteachingservice }}">
+                <i class="fas fa-edit"></i>
+              </td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
-</div>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-<!-- ==========================================
+    <!-- ── HARD CONSTRAINTS CONTROLLER ──────────── -->
+    <div class="section-block">
+      <div class="section-header-row">
+        <div class="section-title-group">
+          <i class="fas fa-shield-alt section-icon"></i>
+          <h2>Hard Constraints Controller</h2>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span id="hc-save-status" class="hc-save-status"></span>
+          <span class="badge-enforced">SYSTEM ENFORCED</span>
+        </div>
+      </div>
+      <p class="section-desc">
+        Strict scheduling rules enforced system-wide during schedule generation, conflict validation, room and faculty assignment, and publishing. All changes are automatically saved to the database and take effect on the next schedule generation or validation run.
+      </p>
+
+      <div class="constraints-grid">
+
+        <!-- Card: Weekend Restriction -->
+        <div class="constraint-card">
+          <div class="card-head">
+            <div class="card-toprow">
+              <span class="card-category">WEEKEND RESTRICTION</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-weekend" onchange="saveConstraint('weekend',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
+            <h3 class="card-title">Weekend NSTP Requirement</h3>
+            <p class="card-desc">All courses scheduled on Sunday must be NSTP courses. No other subjects can be set for Sundays.</p>
+          </div>
+          <div class="card-body">
+            <div class="cparam-label"><i class="fas fa-sliders-h"></i> CONSTRAINT PARAMETERS CONFIGURATION</div>
+            <div class="param-row">
+              <div class="param-group">
+                <label class="param-label">SUBJECT RESTRICTION</label>
+                <select class="param-select" id="param-weekend-subj" onchange="saveConstraintParam('weekend_subject',this.value)">
+                  <option value="nstp_only">NSTP Subject Only</option>
+                  <option value="all_allowed">All Subjects Allowed</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">DAY CONSTRAINT BOUNDS</label>
+                <select class="param-select" id="param-weekend-day" onchange="saveConstraintParam('weekend_day',this.value)">
+                  <option value="sunday_only">Sunday Only</option>
+                  <option value="all_weekends">All Weekends</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Day Pairing Alignment -->
+        <div class="constraint-card">
+          <div class="card-head">
+            <div class="card-toprow">
+              <span class="card-category">DAY ASSIGNMENT</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-day-pair" onchange="saveConstraint('day_pairing',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
+            <h3 class="card-title">Regular Day Pairing Alignment</h3>
+            <p class="card-desc">When enabled, classes must align into standard pairs. If disabled random pairings are accepted.</p>
+          </div>
+          <div class="card-body">
+            <div class="cparam-label"><i class="fas fa-sliders-h"></i> CONSTRAINT PARAMETERS CONFIGURATION</div>
+            <div class="pair-list-head">
+              <span class="param-sublabel">INTERACTIVE DAY PAIRINGS</span>
+              <button class="btn-add-item" onclick="addDayPair()"><i class="fas fa-plus"></i> ADD PAIR</button>
+            </div>
+            <div id="day-pairs-container"></div>
+          </div>
+        </div>
+
+        <!-- Card: Laboratory Sessions -->
+        <div class="constraint-card">
+          <div class="card-head">
+            <div class="card-toprow">
+              <span class="card-category">LABORATORY</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-lab" onchange="saveConstraint('lab_session',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
+            <h3 class="card-title">Laboratory Room Requirement</h3>
+            <p class="card-desc">When enabled, subjects with laboratory hours are required to use laboratory rooms for their lab sessions. When disabled, lab subjects may still be scheduled in regular lecture rooms.</p>
+          </div>
+          <div class="card-body simple-status">
+            <div class="status-row"><i class="fas fa-check-circle ic-green"></i><span>Lab room validation enforced during schedule generation, auto-scheduling, and manual assignment.</span></div>
+          </div>
+        </div>
+
+        <!-- Card: Faculty Specialization Restriction -->
+        <div class="constraint-card">
+          <div class="card-head">
+            <div class="card-toprow">
+              <span class="card-category">FACULTY QUALIFICATION</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-faculty-spec" onchange="saveConstraint('faculty_spec',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
+            <h3 class="card-title">Faculty Specialization Restriction</h3>
+            <p class="card-desc">When disabled, subjects can only be assigned to faculty whose specialization matches the subject's curriculum program area. If disabled, specialization will be ignored.</p>
+          </div>
+          <div class="card-body simple-status">
+            <div class="status-row"><i class="fas fa-check-circle ic-green"></i><span>Validated automatically during schedule generation and official scheduling.</span></div>
+          </div>
+        </div>
+
+      </div><!-- /constraints-grid -->
+    </div><!-- /hard constraints section-block -->
+
+  </div><!-- /tab-academic -->
+
+
+  <!-- ════════════════════════════════════════════════
+       TAB 2 · PROGRAM MANAGEMENT
+       ════════════════════════════════════════════════ -->
+  <div id="tab-program" class="tab-content">
+
+    <!-- Embed JSON data for JS consumption -->
+    <script id="pm-data" type="application/json">
+      {
+        "programs":  {{ programs_mgmt  | tojson }},
+        "curricula": {{ curricula_mgmt | tojson }},
+        "sections":  {{ sections_mgmt  | tojson }}
+      }
+    </script>
+
+    <!-- Main two-panel layout -->
+    <div class="pm-layout">
+
+      <!-- ── Left: Program List ──────────────────── -->
+      <div class="pm-left">
+        <div class="pm-list-head">
+          <span class="pm-list-title">ACADEMIC PROGRAMS</span>
+          <button class="pm-add-btn" onclick="openSModal('modalAddProgram')" title="Add Program">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
+        <div class="pm-search-wrap">
+          <i class="fas fa-search pm-search-icon"></i>
+          <input type="text" class="pm-search" id="pmSearch" placeholder="Search programs…" oninput="filterProgramList()">
+        </div>
+        <div class="pm-list" id="pmList">
+          {% for p in programs_mgmt %}
+          <div class="pm-list-item" data-code="{{ p.programcode }}" onclick="selectProgram('{{ p.programcode }}')">
+            <div class="pm-item-code">{{ p.programcode }}</div>
+            <div class="pm-item-name">{{ p.programname }}</div>
+            <div class="pm-item-meta">
+              {% set c_count = p.curr_count | int %}
+              <span class="pm-track-badge {% if c_count == 0 %}pm-track-zero{% endif %}">
+                {{ c_count }} CURRICULUM
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- ── Right: Program Detail ───────────────── -->
+      <div class="pm-right" id="pmDetail">
+
+        <!-- Empty state -->
+        <div class="pm-empty" id="pmEmpty">
+          <i class="fas fa-graduation-cap"></i>
+          <p>Select a program from the list to view details.</p>
+        </div>
+
+        <!-- Detail content (hidden until program selected) -->
+        <div class="pm-detail-content" id="pmDetailContent" style="display:none;">
+
+          <!-- Program header -->
+          <div class="pm-detail-hd">
+            <div class="pm-detail-title-group">
+              <span class="pm-detail-code" id="pdCode"></span>
+              <span class="pm-detail-name" id="pdName"></span>
+            </div>
+            <div class="pm-detail-actions">
+              <button class="pm-btn-edit" id="pdEditBtn" onclick="openEditProgram()">
+                <i class="fas fa-edit"></i> EDIT PROGRAM
+              </button>
+              <button class="pm-btn-delete" id="pdDeleteBtn" onclick="confirmDeleteProgram()">
+                <i class="fas fa-trash"></i> DELETE
+              </button>
+            </div>
+          </div>
+
+          <!-- Stats row -->
+          <div class="pm-stats-row">
+            <div class="pm-stat-box">
+              <span class="pm-stat-val" id="pdUnits">—</span>
+              <span class="pm-stat-lbl">YEAR LEVELS</span>
+            </div>
+            <div class="pm-stat-box">
+              <span class="pm-stat-val" id="pdCourses">—</span>
+              <span class="pm-stat-lbl">PROGRAM TYPE</span>
+            </div>
+          </div>
+
+          <!-- Majors / Branches -->
+          <div class="pm-section-card">
+            <div class="pm-section-hd">
+              <span class="pm-section-lbl">MAJOR AND BRANCHES</span>
+              <button class="pm-sub-btn" onclick="openAddMajor()">
+                <i class="fas fa-plus"></i> ADD MAJOR
+              </button>
+            </div>
+            <div id="pdMajors" class="pm-majors-list">
+              <!-- rendered by JS -->
+            </div>
+          </div>
+
+          <!-- Degree Specializations (Curricula / Tracks) -->
+          <div class="pm-section-card">
+            <div class="pm-section-hd">
+              <span class="pm-section-lbl">DEGREE SPECIALIZATIONS</span>
+              <button class="pm-sub-btn" id="pdAddTrackBtn" onclick="openAddTrack()">
+                <i class="fas fa-plus"></i> ADD TRACK
+              </button>
+            </div>
+            <div id="pdTracks" class="pm-tracks-list">
+              <!-- rendered by JS -->
+            </div>
+          </div>
+
+        </div><!-- /pm-detail-content -->
+      </div><!-- /pm-right -->
+
+    </div><!-- /pm-layout -->
+
+  </div><!-- /tab-program -->
+
+
+  <!-- ════════════════════════════════════════════════
+       TAB 3 · ACTIVITY LOGS
+       ════════════════════════════════════════════════ -->
+  <div id="tab-logs" class="tab-content">
+    <div class="section-block">
+
+      <!-- Header row -->
+      <div class="section-header-row" style="margin-bottom:14px;">
+        <div class="section-title-group">
+          <i class="fas fa-history section-icon"></i>
+          <h2>System Activity Logs</h2>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button class="logs-sort-btn active" id="logSortDesc" onclick="setLogSort('desc')">
+            Most recent <i class="fas fa-sort-amount-down"></i>
+          </button>
+          <button class="logs-sort-btn" id="logSortAsc" onclick="setLogSort('asc')">
+            Oldest first <i class="fas fa-sort-amount-up"></i>
+          </button>
+          <button class="btn-outline" onclick="exportLogs()">
+            <i class="fas fa-upload"></i> Export
+          </button>
+        </div>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="logs-bar">
+        <input type="text" class="log-search" id="logSearch"
+               placeholder="Search by user, action, or log content…" oninput="filterLogs()">
+        <select class="log-filter" id="logFilterCat" onchange="filterLogs()">
+          <option value="">All Categories</option>
+          <option value="calendar">Calendar</option>
+          <option value="settings">Settings</option>
+          <option value="employee">Employee</option>
+          <option value="approval">Approval</option>
+          <option value="schedule">Schedule</option>
+          <option value="program">Program</option>
+          <option value="curriculum">Curriculum</option>
+          <option value="system">System</option>
+        </select>
+        <select class="log-filter" id="logFilterUser" onchange="filterLogs()">
+          <option value="">All Users</option>
+          {% set users_seen = [] %}
+          {% for log in activity_logs %}
+            {% if log.initiated_by and log.initiated_by not in users_seen %}
+              {% set _ = users_seen.append(log.initiated_by) %}
+              <option value="{{ log.initiated_by }}">{{ log.initiated_by }}</option>
+            {% endif %}
+          {% endfor %}
+          {% for acc in accounts %}
+            {% if acc.username not in users_seen %}
+              <option value="{{ acc.username }}">{{ acc.username }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Logs table -->
+      {% if activity_logs %}
+      <div class="table-wrapper" id="logs-table-wrap">
+        <table class="data-table logs-table" id="logsTable">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding-left:18px; width:170px;">TIMESTAMP</th>
+              <th style="text-align:left; width:200px;">ACTION / TRANSACTION</th>
+              <th style="text-align:left;">LOG CONTENT / DETAILS</th>
+              <th style="width:150px;">INITIATED BY</th>
+              <th style="width:110px;">CATEGORY</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            {% for log in activity_logs %}
+            <tr class="log-row"
+                data-cat="{{ log.category | lower }}"
+                data-user="{{ log.initiated_by | lower }}"
+                data-text="{{ ((log.action or '') + ' ' + (log.details or '')) | lower }}">
+              <td class="log-ts" style="text-align:left; padding-left:18px;">{{ log.logtime }}</td>
+              <td style="text-align:left;">
+                <span class="log-dot log-dot-{{ log.log_color }}"></span>
+                <strong class="log-action">{{ log.action }}</strong>
+              </td>
+              <td class="log-detail" style="text-align:left;">{{ log.details or '—' }}</td>
+              <td class="log-user"><strong>{{ log.initiated_by or '—' }}</strong></td>
+              <td>
+                <span class="log-cat-badge log-cat-{{ log.category | lower }}">{{ log.category | title }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="logs-empty">
+        <i class="fas fa-history"></i>
+        <p>No activity logs yet. Logs will appear here after settings actions are performed.</p>
+      </div>
+      {% endif %}
+
+    </div>
+  </div><!-- /tab-logs -->
+
+</div><!-- /settings-container -->
+
+
+<!-- ════════════════════════════════════════════════════
      MODALS
-     ========================================== -->
+     ════════════════════════════════════════════════════ -->
 
-<!-- AY MODAL -->
-<div id="modalAY" class="logout-modal" style="display: none;">
-    <div class="modal-content-logout" style="width: 600px;">
-        <div class="modal-header-logout">
-            <h2 id="ay_modal_title">ACADEMIC YEAR CONFIGURATION</h2>
-        </div>
-        <form action="{{ url_for('upsert_ay') }}" method="POST">
-            <div class="modal-grid-layout">
-                <div class="input-block"><label>Year Start</label><input type="number" name="year_start"
-                        id="ay_year_start" class="modal-input" required></div>
-                <div class="input-block"><label>Year End</label><input type="number" name="year_end" id="ay_year_end"
-                        class="modal-input" required></div>
-                <div class="input-block"><label>1st Sem Start</label><input type="date" name="sem1_start" id="ay_s1s"
-                        class="modal-input"></div>
-                <div class="input-block"><label>1st Sem End</label><input type="date" name="sem1_end" id="ay_s1e"
-                        class="modal-input"></div>
-                <div class="input-block"><label>2nd Sem Start</label><input type="date" name="sem2_start" id="ay_s2s"
-                        class="modal-input"></div>
-                <div class="input-block"><label>2nd Sem End</label><input type="date" name="sem2_end" id="ay_s2e"
-                        class="modal-input"></div>
-                <div class="input-block"><label>Summer Start</label><input type="date" name="sem3_start" id="ay_s3s"
-                        class="modal-input"></div>
-                <div class="input-block"><label>Summer End</label><input type="date" name="sem3_end" id="ay_s3e"
-                        class="modal-input"></div>
-            </div>
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout"
-                    onclick="closeModal('modalAY')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Save AY</button>
-            </div>
-        </form>
+<!-- ── MODAL: Lock Warning (kept for emp/desig backward compat) ── -->
+<div id="modalLockWarning" class="s-modal">
+  <div class="s-modal-box w-md lock-warn-box">
+    <div class="lock-warn-banner">
+      <i class="fas fa-lock"></i>
+      <div>
+        <span class="lock-warn-title">EDITING RESTRICTED</span>
+        <span class="lock-warn-sub" id="lockWarnSub">This section is currently locked.</span>
+      </div>
     </div>
+    <div class="s-modal-body" style="padding-top:18px;">
+      <p class="lock-warn-body" id="lockWarnBody"></p>
+      <div class="lock-warn-actions">
+        <button class="btn-lock-view" id="btnViewOnly" onclick="openViewOnly()">
+          <i class="fas fa-eye"></i> View Only Mode
+        </button>
+        <button class="btn-lock-cancel" onclick="closeSModal('modalLockWarning')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- EMP TYPE MODAL -->
-<div id="modalEditEmpType" class="logout-modal" style="display: none;">
-    <div class="modal-content-logout" style="width: 500px;">
-        <div class="modal-header-logout">
-            <h2>Edit <span id="et_name_label"></span> Rules</h2>
-        </div>
-        <form action="{{ url_for('update_emp_type') }}" method="POST">
-            <input type="hidden" name="emp_type_id" id="modal_et_id">
-            <div class="modal-grid-layout" style="padding: 20px;">
-                <div class="input-block"><label>Regular Load</label><input type="number" name="reg_load"
-                        id="modal_et_reg" class="modal-input"></div>
-                <div class="input-block"><label>Part-Time Load</label><input type="number" name="pt_load"
-                        id="modal_et_pt" class="modal-input"></div>
-                <div class="input-block" style="grid-column: span 2;"><label>Teaching Substitution</label><input
-                        type="number" name="sub_load" id="modal_et_sub" class="modal-input"></div>
-                <div class="input-block"><label>Reg Start</label><input type="time" name="reg_start" id="modal_et_rs"
-                        class="modal-input"></div>
-                <div class="input-block"><label>Reg End</label><input type="time" name="reg_end" id="modal_et_re"
-                        class="modal-input"></div>
-                <div class="input-block"><label>PT Start</label><input type="time" name="pt_start" id="modal_et_ps"
-                        class="modal-input"></div>
-                <div class="input-block"><label>PT End</label><input type="time" name="pt_end" id="modal_et_pe"
-                        class="modal-input"></div>
-            </div>
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout"
-                    onclick="closeModal('modalEditEmpType')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Save Rules</button>
-            </div>
-        </form>
+<!-- ── MODAL: AY Active-Schedule Warning ─────────────────── -->
+<div id="modalAYWarning" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#7a4f00,#c47f00);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">ACTIVE SCHEDULES DETECTED</span>
+        <span class="lock-warn-sub">Changes may affect existing records.</span>
+      </div>
     </div>
+    <div class="s-modal-body" style="padding-top:18px;">
+      <p class="lock-warn-body">
+        Changing academic calendar dates may affect existing schedules, validations, reports,
+        and scheduling logic. Proceed with care.
+      </p>
+      <div class="lock-warn-actions" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn-ay-warn-continue" onclick="ayWarnContinue()">
+          <i class="fas fa-pen"></i> Continue Changes
+        </button>
+        <button class="btn-ay-warn-future" onclick="ayWarnFuture()">
+          <i class="fas fa-forward"></i> Apply to Future Schedules Only
+        </button>
+        <button class="btn-lock-cancel" onclick="closeSModal('modalAYWarning')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- ADD/EDIT DESIGNEE MODAL -->
-<div id="modalEditDesig" class="logout-modal" style="display: none;">
-    <div class="modal-content-logout" style="width: 450px; border-radius: 8px;">
-        <div class="modal-header-logout">
-            <h2>Edit <span id="des_name_title"></span></h2>
-        </div>
-        <form action="{{ url_for('update_designation') }}" method="POST">
-            <input type="hidden" name="designation_id" id="modal_des_id">
-            <div class="modal-body-logout">
-                <div class="input-block" style="margin-bottom: 20px;">
-                    <label>Regular Load Units</label>
-                    <input type="number" name="reg_load" id="modal_des_reg" class="modal-input" required>
-                </div>
-                <div class="input-block">
-                    <label>Night Teaching Service Units (PT)</label>
-                    <input type="number" name="night_teaching" id="modal_des_night" class="modal-input" required>
-                </div>
-                <p style="font-size: 0.75rem; color: #777; margin-top: 15px; font-style: italic;">
-                    * Note: System will automatically compute teaching hours based on the Night Teaching Service value.
-                </p>
-            </div>
-            <div class="modal-footer-logout" style="padding: 20px;">
-                <button type="button" class="btn-modal btn-cancel-logout"
-                    onclick="closeModal('modalEditDesig')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Save Changes</button>
-            </div>
-        </form>
+<!-- ── MODAL: Past AY Edit Warning ───────────────────────── -->
+<div id="modalAYPast" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#5d3200,#b35a00);">
+      <i class="fas fa-history"></i>
+      <div>
+        <span class="lock-warn-title">PAST ACADEMIC YEAR</span>
+        <span class="lock-warn-sub">This Academic Year has already ended.</span>
+      </div>
     </div>
-</div>
+    <div class="s-modal-body" style="padding-top:18px;">
+      <p class="lock-warn-body">
+        All semesters for this Academic Year have already concluded. Editing past records may
+        affect historical data, reports, and audit trails.
+        <br><br>
+        Consider <strong>Finalizing</strong> this Academic Year instead to permanently protect it.
+      </p>
+      <div class="lock-warn-actions" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn-ay-warn-continue" onclick="ayPastContinue()">
+          <i class="fas fa-pen"></i> Edit Anyway
+        </button>
+        <button class="btn-lock-cancel" onclick="closeSModal('modalAYPast')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- ADD DESIGNEE MODAL -->
-<div id="modalAddDesig" class="logout-modal" style="display: none;">
-    <div class="modal-content-logout" style="width: 450px;">
-        <div class="modal-header-logout">
-            <h2>ADD NEW DESIGNEE</h2>
-        </div>
-        <form action="{{ url_for('add_designation') }}" method="POST">
-            <div class="modal-grid-layout" style="grid-template-columns: 1fr;">
-                <div class="input-block"><label>Designation Name</label><input type="text" name="designation_name"
-                        class="modal-input" required></div>
-                <div class="input-block"><label>Regular Load Units</label><input type="number" name="reg_load"
-                        class="modal-input" required></div>
-                <div class="input-block"><label>Night Teaching Units (PT)</label><input type="number"
-                        name="night_teaching" class="modal-input" required></div>
-            </div>
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout"
-                    onclick="closeModal('modalAddDesig')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Create Designee</button>
-            </div>
-        </form>
+<!-- ── MODAL: Finalize Academic Year ─────────────────────── -->
+<div id="modalFinalizeAY" class="s-modal">
+  <div class="s-modal-box w-md lock-warn-box">
+    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#1a3a5c,#2471a3);">
+      <i class="fas fa-archive"></i>
+      <div>
+        <span class="lock-warn-title">FINALIZE ACADEMIC YEAR</span>
+        <span class="lock-warn-sub" id="finalizeAYLabel">This will permanently lock the record.</span>
+      </div>
     </div>
+    <form id="finalizeAYForm" action="{{ url_for('finalize_ay') }}" method="POST">
+      <input type="hidden" name="ay_id" id="finalizeAYId">
+      <div class="s-modal-body" style="padding-top:18px;">
+        <p class="lock-warn-body">
+          Once finalized, this Academic Year becomes <strong>fully locked and view-only</strong>.
+          All associated schedules will be historically protected and scheduling settings will
+          become archival reference only.<br><br>
+          <strong>This action cannot be undone</strong> without Super Admin override.
+        </p>
+        <div class="lock-warn-actions">
+          <button type="submit" class="btn-ay-finalize-confirm">
+            <i class="fas fa-archive"></i> Finalize Academic Year
+          </button>
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalFinalizeAY')">
+            <i class="fas fa-times"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add / Edit Academic Year ────────────── -->
+<div id="modalAY" class="s-modal">
+  <div class="s-modal-box">
+    <div class="s-modal-hd">
+      <h2 id="ay_modal_title">ADD NEW ACADEMIC YEAR</h2>
+      <div class="modal-hd-right">
+        <span class="view-only-badge" id="ay-view-badge" style="display:none;"><i class="fas fa-eye"></i> VIEW ONLY</span>
+        <button class="modal-x" onclick="closeSModal('modalAY')"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="view-only-notice" id="ay-view-notice" style="display:none;">
+      <i class="fas fa-lock"></i>
+      <span id="ay-view-notice-text">This Academic Year is finalized and cannot be edited.</span>
+    </div>
+    <form action="{{ url_for('upsert_ay') }}" method="POST">
+      <div class="s-modal-body">
+
+        <div class="mf" style="margin-bottom:18px;">
+          <label>ACADEMIC YEAR TAG</label>
+          <div class="m-input-tag" id="ay_tag_display">AY __ - __</div>
+        </div>
+
+        <div class="mg-2">
+          <div class="mf">
+            <label>1ST SEM START DATE</label>
+            <input type="date" name="sem1_start" id="ay_s1s" class="m-input">
+          </div>
+          <div class="mf">
+            <label>1ST SEM END DATE</label>
+            <input type="date" name="sem1_end" id="ay_s1e" class="m-input">
+          </div>
+          <div class="mf">
+            <label>2ND SEM START DATE</label>
+            <input type="date" name="sem2_start" id="ay_s2s" class="m-input">
+          </div>
+          <div class="mf">
+            <label>2ND SEM END DATE</label>
+            <input type="date" name="sem2_end" id="ay_s2e" class="m-input">
+          </div>
+          <div class="mf">
+            <label>SUMMER START DATE</label>
+            <input type="date" name="sem3_start" id="ay_s3s" class="m-input">
+          </div>
+          <div class="mf">
+            <label>SUMMER END DATE</label>
+            <input type="date" name="sem3_end" id="ay_s3e" class="m-input">
+          </div>
+        </div>
+
+        <!-- Hidden fields for year_start / year_end kept for backend compatibility -->
+        <input type="hidden" name="year_start" id="ay_year_start">
+        <input type="hidden" name="year_end"   id="ay_year_end">
+
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAY')">CANCEL</button>
+        <button type="submit" class="btn-ms" id="ay_submit_btn">ADD CALENDAR</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Employee Type ───────────────────── -->
+<div id="modalEditEmpType" class="s-modal">
+  <div class="s-modal-box">
+    <div class="s-modal-hd">
+      <h2>EDIT LIMITS — <span id="et_name_label"></span></h2>
+      <div class="modal-hd-right">
+        <span class="view-only-badge" id="et-view-badge" style="display:none;"><i class="fas fa-eye"></i> VIEW ONLY</span>
+        <button class="modal-x" onclick="closeSModal('modalEditEmpType')"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="view-only-notice" id="et-view-notice" style="display:none;">
+      <i class="fas fa-info-circle"></i>
+      <span id="et-view-notice-text"></span>
+    </div>
+    <form action="{{ url_for('update_emp_type') }}" method="POST">
+      <input type="hidden" name="emp_type_id" id="modal_et_id">
+      <div class="s-modal-body">
+
+        <div class="mg-3" style="margin-bottom:18px;">
+          <div class="mf">
+            <label>REGULAR LOAD LIMIT</label>
+            <input type="number" name="reg_load" id="modal_et_reg" class="m-input" min="0">
+          </div>
+          <div class="mf">
+            <label>PART-TIME LOAD LIMIT</label>
+            <input type="number" name="pt_load" id="modal_et_pt" class="m-input" min="0">
+          </div>
+          <div class="mf">
+            <label>SUBSTITUTION</label>
+            <input type="number" name="sub_load" id="modal_et_sub" class="m-input" min="0">
+          </div>
+        </div>
+
+        <div class="mg-2">
+          <div class="mf">
+            <label>WEEKDAY REGULAR HOURS BAND</label>
+            <div class="ts-group">
+              <select name="reg_start" id="modal_et_rs"></select>
+              <span class="ts-to">to</span>
+              <select name="reg_end" id="modal_et_re"></select>
+            </div>
+          </div>
+          <div class="mf">
+            <label>WEEKDAY PART-TIME NIGHT HOUR BAND</label>
+            <div class="ts-group">
+              <select name="pt_start" id="modal_et_ps"></select>
+              <span class="ts-to">to</span>
+              <select name="pt_end" id="modal_et_pe"></select>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditEmpType')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE LIMITS</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Designee ────────────────────────── -->
+<div id="modalEditDesig" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>EDIT DESIGNEE — <span id="des_name_title"></span></h2>
+      <div class="modal-hd-right">
+        <span class="view-only-badge" id="desig-view-badge" style="display:none;"><i class="fas fa-eye"></i> VIEW ONLY</span>
+        <button class="modal-x" onclick="closeSModal('modalEditDesig')"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="view-only-notice" id="desig-view-notice" style="display:none;">
+      <i class="fas fa-info-circle"></i>
+      <span id="desig-view-notice-text"></span>
+    </div>
+    <form action="{{ url_for('update_designation') }}" method="POST">
+      <input type="hidden" name="designation_id" id="modal_des_id">
+      <div class="s-modal-body">
+
+        <div class="mg-2" style="margin-bottom:18px;">
+          <div class="mf">
+            <label>REGULAR LOAD UNITS</label>
+            <input type="number" name="reg_load" id="modal_des_reg" class="m-input" min="0" required
+                   onchange="updateDesigHours()">
+          </div>
+          <div class="mf">
+            <label>PT / NIGHT TEACHING SERVICE ALLOWED</label>
+            <input type="number" name="night_teaching" id="modal_des_night" class="m-input" min="0" required
+                   onchange="updateDesigHours()">
+          </div>
+        </div>
+
+        <div class="mg-2">
+          <div class="mf">
+            <label>REGULAR HOURS SLOT</label>
+            <div class="ts-group">
+              <select id="desig_reg_from" disabled></select>
+              <span class="ts-to">to</span>
+              <select id="desig_reg_to" disabled></select>
+            </div>
+          </div>
+          <div class="mf">
+            <label>PART-TIME HOURS SLOT</label>
+            <div class="ts-group">
+              <select id="desig_pt_from" disabled></select>
+              <span class="ts-to">to</span>
+              <select id="desig_pt_to" disabled></select>
+            </div>
+          </div>
+        </div>
+
+        <p class="m-note">* Hours slots are computed automatically from the night teaching service value.</p>
+
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditDesig')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE DESIGNEE</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Designee ─────────────────────────── -->
+<div id="modalAddDesig" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>ADD NEW DESIGNEE DESIGNATION</h2>
+      <button class="modal-x" onclick="closeSModal('modalAddDesig')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('add_designation') }}" method="POST">
+      <div class="s-modal-body">
+
+        <div class="mg-1" style="margin-bottom:18px;">
+          <div class="mf">
+            <label>DESIGNATION / ROLE TITLE</label>
+            <input type="text" name="designation_name" class="m-input" placeholder="e.g. Guidance Coordinator, Research Head" required>
+          </div>
+        </div>
+
+        <div class="mg-2" style="margin-bottom:18px;">
+          <div class="mf">
+            <label>REGULAR LOAD UNITS LIMIT</label>
+            <input type="number" name="reg_load" id="add_des_reg" class="m-input" min="0" required
+                   onchange="updateAddDesigHours()">
+          </div>
+          <div class="mf">
+            <label>PT / NIGHT TEACHING SERVICE ALLOWED</label>
+            <input type="number" name="night_teaching" id="add_des_night" class="m-input" min="0" required
+                   onchange="updateAddDesigHours()">
+          </div>
+        </div>
+
+        <div class="mg-2">
+          <div class="mf">
+            <label>REGULAR HOURS BAND</label>
+            <input type="text" id="add_des_reg_band" class="m-input" value="07:30 AM - 04:30 PM" readonly>
+          </div>
+          <div class="mf">
+            <label>PART-TIME HOURS BAND</label>
+            <input type="text" id="add_des_pt_band" class="m-input" value="04:30 PM - 06:00 PM" readonly>
+          </div>
+        </div>
+
+        <p class="m-note">* Hours bands are computed from the night teaching service value.</p>
+
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddDesig')">CANCEL</button>
+        <button type="submit" class="btn-ms">CONFIRM ADD</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Program ───────────────────────────── -->
+<div id="modalAddProgram" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>ADD NEW PROGRAM</h2>
+      <button class="modal-x" onclick="closeSModal('modalAddProgram')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_add_program') }}" method="POST">
+      <div class="s-modal-body">
+        <div class="mg-2">
+          <div class="mf">
+            <label>PROGRAM CODE</label>
+            <input type="text" name="program_code" class="m-input" placeholder="e.g. BSIT" required style="text-transform:uppercase;">
+          </div>
+          <div class="mf">
+            <label>YEAR LEVELS</label>
+            <input type="number" name="num_year_level" class="m-input" value="4" min="1" max="6" required>
+          </div>
+          <div class="mf span2">
+            <label>PROGRAM NAME</label>
+            <input type="text" name="program_name" class="m-input" placeholder="e.g. Bachelor of Science in Information Technology" required>
+          </div>
+          <div class="mf span2">
+            <label>PROGRAM TYPE</label>
+            <select name="program_type" class="m-input">
+              <option value="Undergraduate">Undergraduate</option>
+              <option value="Diploma">Diploma</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddProgram')">CANCEL</button>
+        <button type="submit" class="btn-ms">ADD PROGRAM</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Program ──────────────────────────── -->
+<div id="modalEditProgram" class="s-modal">
+  <div class="s-modal-box ep-modal-box">
+    <div class="s-modal-hd">
+      <h2>EDIT PROGRAM — <span id="editProgCode"></span></h2>
+      <button class="modal-x" onclick="closeSModal('modalEditProgram')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_edit_program') }}" method="POST">
+      <input type="hidden" name="program_code" id="editProgCodeInput">
+      <div class="s-modal-body">
+
+        <!-- Program info fields -->
+        <div class="ep-info-block">
+          <div class="ep-section-label">PROGRAM INFORMATION</div>
+          <div class="ep-fields-grid">
+            <div class="mf ep-span2">
+              <label>PROGRAM NAME</label>
+              <input type="text" name="program_name" id="editProgName" class="m-input" required>
+            </div>
+            <div class="mf">
+              <label>PROGRAM TYPE</label>
+              <select name="program_type" id="editProgType" class="m-input">
+                <option value="Undergraduate">Undergraduate</option>
+                <option value="Diploma">Diploma</option>
+              </select>
+            </div>
+            <div class="mf">
+              <label>YEAR LEVELS</label>
+              <input type="number" name="num_year_level" id="editProgYrs" class="m-input" min="1" max="6" required>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sections panel -->
+        <div class="ep-sections-block">
+          <div class="ep-sections-hd">
+            <div class="ep-section-label">SECTIONS PER YEAR LEVEL</div>
+            <button type="button" class="ep-add-sec-btn" onclick="openAddSection()">
+              <i class="fas fa-plus"></i> ADD SECTION
+            </button>
+          </div>
+          <div id="editProgSectionsList" class="ep-sections-list">
+            <!-- populated by JS -->
+          </div>
+        </div>
+
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditProgram')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE PROGRAM</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Section ───────────────────────────── -->
+<div id="modalAddSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>ADD SECTION — <span id="addSecProgLabel"></span></h2>
+      <button class="modal-x" onclick="closeSModal('modalAddSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_add_section') }}" method="POST">
+      <input type="hidden" name="program_code" id="addSecProgCode">
+      <div class="s-modal-body">
+        <div class="mg-2">
+          <div class="mf">
+            <label>YEAR LEVEL</label>
+            <select name="year_level" id="addSecYearLevel" class="m-input" required>
+              <option value="1">Year 1</option>
+              <option value="2">Year 2</option>
+              <option value="3">Year 3</option>
+              <option value="4">Year 4</option>
+              <option value="5">Year 5</option>
+              <option value="6">Year 6</option>
+            </select>
+          </div>
+          <div class="mf">
+            <label>SECTION NAME</label>
+            <input type="text" name="section_name" class="m-input" placeholder="e.g. BSIT 1-A" required>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddSection')">CANCEL</button>
+        <button type="submit" class="btn-ms">ADD SECTION</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Delete Program Confirm ───────────────── -->
+<div id="modalDeleteProgram" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">DEACTIVATE PROGRAM</span>
+        <span class="lock-warn-sub" id="delProgLabel">This cannot be easily undone.</span>
+      </div>
+    </div>
+    <form action="{{ url_for('settings_delete_program') }}" method="POST">
+      <input type="hidden" name="program_code" id="delProgCode">
+      <div class="s-modal-body">
+        <p class="lock-warn-body">The program will be marked as <strong>inactive</strong> and removed from scheduling. Existing curricula and subjects are preserved.</p>
+        <div class="lock-warn-actions">
+          <button type="submit" class="btn-lock-view" style="background:#fce4e4; color:#c0392b; border-color:#f5c6c6;">
+            <i class="fas fa-trash"></i> Deactivate
+          </button>
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteProgram')">
+            <i class="fas fa-times"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Curriculum Track ─────────────────── -->
+<div id="modalAddTrack" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>ADD CURRICULUM TRACK — <span id="addTrackProgLabel"></span></h2>
+      <button class="modal-x" onclick="closeSModal('modalAddTrack')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_add_curriculum') }}" method="POST">
+      <input type="hidden" name="program_code" id="addTrackProgCode">
+      <div class="s-modal-body">
+        <div class="mg-1">
+          <div class="mf">
+            <label>CURRICULUM YEAR</label>
+            <input type="text" name="curriculum_year" id="addTrackYear" class="m-input" placeholder="e.g. 2025-2026" required>
+          </div>
+          <div class="mf">
+            <label>CURRICULUM CODE <small style="font-size:.65rem;font-weight:500;">(leave blank to auto-generate)</small></label>
+            <input type="text" name="curriculum_code" id="addTrackCode" class="m-input" placeholder="e.g. CY2526" style="text-transform:uppercase;">
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddTrack')">CANCEL</button>
+        <button type="submit" class="btn-ms">ADD TRACK</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Curriculum Track ────────────────── -->
+<div id="modalEditTrack" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>EDIT CURRICULUM TRACK</h2>
+      <button class="modal-x" onclick="closeSModal('modalEditTrack')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_edit_curriculum') }}" method="POST">
+      <input type="hidden" name="curriculum_id" id="editTrackId">
+      <div class="s-modal-body">
+        <div class="mg-1">
+          <div class="mf">
+            <label>CURRICULUM YEAR</label>
+            <input type="text" name="curriculum_year" id="editTrackYear" class="m-input" required>
+          </div>
+          <div class="mf">
+            <label>CURRICULUM CODE</label>
+            <input type="text" name="curriculum_code" id="editTrackCode" class="m-input" required style="text-transform:uppercase;">
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditTrack')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE TRACK</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Delete Track Confirm ─────────────────── -->
+<div id="modalDeleteTrack" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">DELETE CURRICULUM TRACK</span>
+        <span class="lock-warn-sub">This action cannot be undone.</span>
+      </div>
+    </div>
+    <form action="{{ url_for('settings_delete_curriculum') }}" method="POST">
+      <input type="hidden" name="curriculum_id" id="delTrackId">
+      <div class="s-modal-body">
+        <p class="lock-warn-body">Only empty curricula (with no subjects assigned) can be deleted. Subjects linked to this track must be removed first.</p>
+        <div class="lock-warn-actions">
+          <button type="submit" class="btn-lock-view" style="background:#fce4e4; color:#c0392b; border-color:#f5c6c6;">
+            <i class="fas fa-trash"></i> Delete Track
+          </button>
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteTrack')">
+            <i class="fas fa-times"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}"></script>

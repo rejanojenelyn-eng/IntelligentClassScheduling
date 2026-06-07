@@ -40,7 +40,7 @@ function _buildDraftCard(d) {
             </div>
             <div class="draft-card-title">${prog} &mdash; Year ${yr}</div>
             <div class="draft-card-badges">
-                <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft v${d.version_number || 1}</span>
+                <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft</span>
                 <span class="dc-badge dc-badge-ay"><i class="fas fa-graduation-cap"></i> AY ${ayDisplay}</span>
                 <span class="dc-badge dc-badge-sem"><i class="fas fa-book-open"></i> ${semLabel}</span>
             </div>
@@ -49,6 +49,9 @@ function _buildDraftCard(d) {
         <div class="draft-card-actions">
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
                 <i class="fas fa-eye"></i> View
+            </a>
+            <a href="${MANUAL_EDITOR_URL}?mode=program&prog=${encodeURIComponent(d.programcode||'')}&yl=${encodeURIComponent(d.yearlevel||'')}&ay=${encodeURIComponent(d.acadyear||'')}&sem=${encodeURIComponent(d.term||'')}&scheduler=${source}" class="btn-dc btn-dc-edit-editor">
+                <i class="fas fa-edit"></i> Edit to Manual Editor
             </a>
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">
                 <i class="fas fa-check-circle"></i> Approve

@@ -1,0 +1,971 @@
+{% extends "faculty/base_faculty.html" %}
+
+{% block head %}
+{{ super() }}
+<style>
+    .frs-wrap { padding: 28px 32px; background: #fff; font-family: 'Inter', sans-serif; }
+
+    /* ── Page header ── */
+    .frs-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+    }
+    .frs-page-title {
+        font-size: 1.8rem;
+        font-weight: 900;
+        color: #800000;
+        letter-spacing: .5px;
+        margin: 0;
+        text-transform: uppercase;
+    }
+    .btn-frs-request {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-radius: 8px;
+        background: #800000;
+        color: #fff;
+        border: none;
+        font-weight: 800;
+        font-size: 0.8rem;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .btn-frs-request:hover { background: #5c0000; }
+    .btn-frs-request i { font-size: 1rem; }
+
+    /* ── Main tabs (Schedule View / Available Rooms) ── */
+    .frs-main-tabs {
+        display: flex;
+        gap: 0;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        overflow: hidden;
+        width: 100%;
+        margin-bottom: 20px;
+    }
+    .frs-main-tab-btn {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 22px;
+        border: none;
+        background: #fff;
+        color: #800000;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        border-right: 1px solid #800000;
+        transition: all 0.2s;
+    }
+    .frs-main-tab-btn.active { background: #800000; color: #fff; }
+    .frs-main-tab-btn i { font-size: 0.9rem; }
+
+    /* ════════════════════════════════════
+       SCHEDULE VIEW
+    ════════════════════════════════════ */
+    /* Building tabs */
+    .frs-bldg-tabs {
+        display: flex;
+        gap: 0;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        margin-bottom: 20px;
+        overflow-x: auto;
+    }
+    .frs-bldg-tab {
+        padding: 10px 18px;
+        border: none;
+        background: #fff;
+        color: #800000;
+        font-size: 0.8rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        cursor: pointer;
+        white-space: nowrap;
+        border-right: 1px solid rgba(128,0,0,0.2);
+        transition: background 0.12s;
+    }
+    .frs-bldg-tab:last-child { border-right: none; }
+    .frs-bldg-tab.active {
+        background: #800000;
+        color: #fff;
+    }
+
+    /* Body: left sidebar + right calendar */
+    .frs-body {
+        display: flex;
+        gap: 20px;
+        min-height: 520px;
+    }
+
+    /* Left: floor selector + room list */
+    .frs-left {
+        flex: 0 0 140px;
+        display: flex;
+        flex-direction: column;
+    }
+    .frs-sidebar-label {
+        font-size: 0.55rem;
+        font-weight: 800;
+        color: #888;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+        letter-spacing: 0.5px;
+    }
+    .frs-floor-select {
+        padding: 6px 8px;
+        border: 1px solid #800000;
+        border-radius: 4px;
+        color: #800000;
+        font-size: 0.75rem;
+        font-weight: 800;
+        cursor: pointer;
+        width: 100%;
+        margin-bottom: 15px;
+        background: #fff;
+    }
+    .frs-room-list { flex: 1; overflow-y: auto; border: 1px solid #800000; border-radius: 6px; padding: 5px 0; background: #fff;}
+    .frs-room-item {
+        display: block;
+        padding: 10px 15px;
+        font-size: 0.8rem;
+        font-weight: 800;
+        color: #333;
+        background: #fff;
+        cursor: pointer;
+        text-align: center;
+        transition: all 0.1s;
+    }
+    .frs-room-item:hover { background: #f8f2f2; }
+    .frs-room-item.active { 
+        background: #800000; 
+        color: #fff; 
+        border-radius: 6px;
+        margin: 0 5px;
+    }
+    .frs-room-empty { padding: 20px 10px; text-align: center; font-size: 0.75rem; color: #aaa; }
+
+    /* Right: calendar grid */
+    .frs-cal-wrap {
+        flex: 1;
+        overflow-x: auto;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        background: #fff;
+    }
+    .frs-cal-title {
+        padding: 12px 16px;
+        background: #fff;
+        color: #800000;
+        font-size: 0.75rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        border-bottom: 1px solid #800000;
+    }
+
+    /* Grid */
+    .frs-grid-outer { overflow-x: auto; flex: 1; }
+    .frs-grid {
+        display: grid;
+        grid-template-columns: 80px repeat(7, minmax(110px, 1fr));
+        min-width: 880px;
+    }
+    .frs-grid-header-cell {
+        padding: 10px 6px;
+        background: #5C0A0A;
+        color: #fff;
+        font-size: 0.7rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        text-align: center;
+        border-right: 1px solid rgba(255,255,255,.1);
+    }
+    .frs-time-cell {
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: #888;
+        text-align: center;
+        height: 30px; /* 30 min intervals */
+        box-sizing: border-box;
+        border-right: 1px solid #ddd;
+        border-bottom: 1px solid #eee;
+        transform: translateY(-8px); /* align with line */
+    }
+    .frs-day-col-cell {
+        position: relative;
+        border-right: 1px solid #ddd;
+        height: 30px;
+        box-sizing: border-box;
+        border-bottom: 1px solid #eee;
+    }
+
+    /* Pills inside room calendar */
+    .frs-pill {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        border-radius: 6px;
+        padding: 6px 8px;
+        color: #333;
+        font-size: 0.65rem;
+        overflow: hidden;
+        cursor: default;
+        box-shadow: 0 1px 3px rgba(0,0,0,.1);
+        z-index: 2;
+        line-height: 1.3;
+    }
+    .frs-pill-code { font-weight: 900; font-size: 0.7rem; display: block; margin-bottom: 2px;}
+    .frs-pill-name { font-weight: 500; font-size: 0.6rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;}
+    .frs-pill-meta { display: flex; align-items: center; gap: 4px; font-size: 0.6rem; opacity: .85; }
+
+    /* Loading state */
+    .frs-cal-loading {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 10px;
+        color: #800000;
+        font-size: 0.9rem;
+        font-weight: bold;
+        padding: 60px 20px;
+    }
+
+    /* ════════════════════════════════════
+       AVAILABLE ROOMS
+    ════════════════════════════════════ */
+    .frs-avail-wrap { display: flex; gap: 24px; }
+
+    /* Filter panel */
+    .frs-avail-filters {
+        flex: 0 0 220px;
+    }
+    .frs-avail-filters-header {
+        background: #5C0A0A;
+        color: #fff;
+        padding: 12px 15px;
+        font-size: 0.85rem;
+        font-weight: 900;
+        border-radius: 6px 6px 0 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-transform: uppercase;
+    }
+    .frs-avail-filters-body {
+        border: 1px solid #800000;
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+        padding: 15px;
+        background: #fff;
+    }
+    .frs-avail-filter-group { margin-bottom: 12px; }
+    .frs-avail-filter-label {
+        font-size: 0.65rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        color: #800000;
+        display: block;
+        margin-bottom: 5px;
+    }
+    .frs-avail-filter-group select,
+    .frs-avail-filter-group input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #800000;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #800000;
+        background: #fff;
+        box-sizing: border-box;
+    }
+
+    /* Results */
+    .frs-avail-results { flex: 1; }
+    .frs-avail-results-header {
+        background: #FFF9ED;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        padding: 12px 16px;
+        font-size: 0.8rem;
+        font-weight: 800;
+        color: #800000;
+        margin-bottom: 20px;
+        text-transform: uppercase;
+    }
+    .frs-avail-building-title {
+        font-size: 0.8rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        color: #5C0A0A;
+        border-bottom: 2px solid #800000;
+        padding-bottom: 6px;
+        margin: 0 0 15px;
+    }
+    .frs-avail-cards {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-bottom: 25px;
+    }
+    .frs-avail-card {
+        background: #fff;
+        border: 1px solid #800000;
+        border-radius: 8px;
+        padding: 12px 15px;
+        min-width: 160px;
+        position: relative;
+    }
+    .frs-avail-dot {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #84C784; /* Soft green */
+    }
+    .frs-avail-room-name {
+        font-size: 1.1rem;
+        font-weight: 900;
+        color: #5C0A0A;
+        margin: 0 0 10px;
+    }
+    .frs-avail-badge {
+        display: inline-block;
+        font-size: 0.6rem;
+        font-weight: 900;
+        padding: 3px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        margin-right: 6px;
+    }
+    .frs-badge-lec { background: #FDE08B; color: #333; }
+    .frs-badge-lab { background: #A9C2F0; color: #333; }
+    .frs-avail-time {
+        font-size: 0.65rem;
+        color: #333;
+        font-weight: 800;
+        display: inline-block;
+    }
+
+    /* ════════════════════════════════════
+       REQUEST MODALS
+    ════════════════════════════════════ */
+    .req-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.45);
+        z-index: 9000;
+        align-items: center;
+        justify-content: center;
+    }
+    .req-overlay.open { display: flex; }
+
+    /* ── Type picker ── */
+    .req-picker-box {
+        background: #fff;
+        border-radius: 12px;
+        padding: 36px 32px;
+        display: flex;
+        gap: 24px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.22);
+    }
+    .req-type-card {
+        width: 220px;
+        height: 130px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        text-align: center;
+        cursor: pointer;
+        border: 2.5px solid transparent;
+        transition: transform 0.15s, box-shadow 0.15s;
+        line-height: 1.4;
+        padding: 20px;
+    }
+    .req-type-card:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(0,0,0,.15); }
+    .req-type-card.makeup    { background: #FDE08B; color: #7a5c00; border-color: #e6c350; }
+    .req-type-card.adjustment { background: #fff; color: #c0392b; border-color: #c0392b; }
+
+    /* ── Form modal shared ── */
+    .req-modal-box {
+        background: #fff;
+        border-radius: 12px;
+        width: min(700px, 96vw);
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,.22);
+        overflow: hidden;
+    }
+    .req-modal-hdr {
+        padding: 16px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #eee;
+    }
+    .req-modal-hdr.makeup    { background: #FDE08B; }
+    .req-modal-hdr.adjustment { background: #fff; border: 2px solid #c0392b; border-radius: 8px 8px 0 0; border-bottom: none; }
+    .req-modal-title {
+        font-size: 0.95rem;
+        font-weight: 900;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+    }
+    .req-modal-hdr.makeup .req-modal-title    { color: #5c0000; }
+    .req-modal-hdr.adjustment .req-modal-title { color: #c0392b; }
+    .req-modal-close {
+        background: none; border: none; font-size: 1.1rem; cursor: pointer;
+        color: #888; line-height: 1; padding: 0;
+    }
+    .req-modal-close:hover { color: #333; }
+    .req-modal-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+
+    /* Form grid */
+    .req-form-row  { display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+    .req-form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 130px; }
+    .req-form-group.full { flex-basis: 100%; }
+    .req-form-label {
+        font-size: 0.6rem;
+        font-weight: 900;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #800000;
+    }
+    .req-form-group select,
+    .req-form-group input[type="text"],
+    .req-form-group input[type="date"],
+    .req-form-group textarea {
+        padding: 7px 10px;
+        border: 1.5px solid #ccc;
+        border-radius: 5px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #333;
+        font-family: 'Inter', sans-serif;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .req-form-group select:focus,
+    .req-form-group input:focus,
+    .req-form-group textarea:focus { outline: none; border-color: #800000; }
+    .req-search-wrap { position: relative; }
+    .req-search-wrap input { padding-right: 32px; }
+    .req-search-wrap i {
+        position: absolute; right: 10px; top: 50%;
+        transform: translateY(-50%); color: #aaa; font-size: 0.8rem;
+    }
+    .req-form-group textarea { resize: vertical; min-height: 60px; }
+
+    /* Footer */
+    .req-modal-ftr {
+        padding: 14px 24px;
+        border-top: 1px solid #eee;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+    .btn-req-cancel {
+        padding: 9px 22px; border-radius: 5px; border: 1.5px solid #ccc;
+        background: #fff; color: #555; font-weight: 800; font-size: 0.75rem;
+        cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
+    }
+    .btn-req-cancel:hover { border-color: #800000; color: #800000; }
+    .btn-req-submit {
+        padding: 9px 22px; border-radius: 5px; border: none;
+        background: #800000; color: #fff; font-weight: 800; font-size: 0.75rem;
+        cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
+        transition: background .15s;
+    }
+    .btn-req-submit:hover { background: #5c0000; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="frs-wrap">
+
+    <!-- Page header -->
+    <div class="frs-header-row">
+        <h1 class="frs-page-title">ROOM SCHEDULE</h1>
+        <button class="btn-frs-request" onclick="frsOpenRequest()">
+            <i class="fas fa-plus-circle"></i> SUBMIT REQUEST
+        </button>
+    </div>
+
+    <!-- Main tabs -->
+    <div class="frs-main-tabs">
+        <button class="frs-main-tab-btn active" id="btnFrsSchedView" onclick="frsSetMainTab('schedule')">
+            <i class="fas fa-calendar-alt"></i> SCHEDULE VIEW
+        </button>
+        <button class="frs-main-tab-btn" id="btnFrsAvailRooms" onclick="frsSetMainTab('available')">
+            <i class="fas fa-search"></i> AVAILABLE ROOMS
+        </button>
+    </div>
+
+    <!-- ══ SCHEDULE VIEW panel ══ -->
+    <div id="frsScheduleViewPanel">
+        <!-- Building tabs (populated by JS) -->
+        <div class="frs-bldg-tabs" id="frsBldgTabs"></div>
+
+        <!-- Body -->
+        <div class="frs-body">
+            <!-- Left: floor + rooms -->
+            <div class="frs-left">
+                <div class="frs-sidebar-label">Select Floor</div>
+                <select class="frs-floor-select" id="frsFloorSel" onchange="frsFilterFloor()">
+                    <option value="">1ST FLOOR</option>
+                    <option value="2">2ND FLOOR</option>
+                    <option value="3">3RD FLOOR</option>
+                    <option value="4">4TH FLOOR</option>
+                </select>
+
+                <div class="frs-sidebar-label">Room List</div>
+                <div class="frs-room-list" id="frsRoomList">
+                    <div class="frs-room-empty">Select a building</div>
+                </div>
+            </div>
+
+            <!-- Right: calendar -->
+            <div class="frs-cal-wrap">
+                <div class="frs-cal-title" id="frsCalTitle">BUILDING: HEALTH AND SCIENCE – ROOM LQ101</div>
+                <div class="frs-grid-outer">
+                    <div class="frs-grid" id="frsGrid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ AVAILABLE ROOMS panel ══ -->
+    <div id="frsAvailPanel" style="display:none">
+        <div class="frs-avail-wrap">
+
+            <!-- Filters -->
+            <div class="frs-avail-filters">
+                <div class="frs-avail-filters-header">
+                    <i class="fas fa-filter"></i> FILTERS
+                </div>
+                <div class="frs-avail-filters-body">
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Day</label>
+                        <select id="frsAvailDay" onchange="frsFindAvailable()">
+                            <option value="">SELECT</option>
+                            <option>Monday</option>
+                            <option>Tuesday</option>
+                            <option>Wednesday</option>
+                            <option>Thursday</option>
+                            <option>Friday</option>
+                            <option>Saturday</option>
+                            <option>Sunday</option>
+                        </select>
+                    </div>
+
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Start Time</label>
+                        <input type="time" id="frsAvailStart" value="07:30" onchange="frsFindAvailable()">
+                    </div>
+
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">End Time</label>
+                        <input type="time" id="frsAvailEnd" value="10:30" onchange="frsFindAvailable()">
+                    </div>
+
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Room Type</label>
+                        <select id="frsAvailType" onchange="frsFindAvailable()">
+                            <option value="">SELECT</option>
+                            <option value="Lecture">Lecture</option>
+                            <option value="Laboratory">Laboratory</option>
+                        </select>
+                    </div>
+
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Building</label>
+                        <select id="frsAvailBuilding" onchange="frsFindAvailable()">
+                            <option value="">ALL</option>
+                        </select>
+                    </div>
+
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Room Number</label>
+                        <select id="frsAvailRoomNum" onchange="frsFindAvailable()">
+                            <option value="">SELECT</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div class="frs-avail-results">
+                <div class="frs-avail-results-header" id="frsAvailHeader">
+                    HERE ARE THE AVAILABLE ROOMS FOR (ALL BUILDINGS)
+                </div>
+                <div id="frsAvailContent">
+                    <div class="frs-cal-loading" style="padding: 20px;">
+                        <i class="fas fa-search"></i>
+                        Set filters to view available rooms.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════
+     MODAL 1 — Type Picker
+══════════════════════════════════════════ -->
+<div class="req-overlay" id="reqPickerOverlay">
+    <div class="req-picker-box">
+        <div class="req-type-card makeup" onclick="frsOpenForm('makeup')">
+            MAKE UP CLASS<br>REQUEST
+        </div>
+        <div class="req-type-card adjustment" onclick="frsOpenForm('adjustment')">
+            SCHEDULE<br>ADJUSTMENT
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MODAL 2 — Make Up Class Request
+══════════════════════════════════════════ -->
+<div class="req-overlay" id="reqMakeupOverlay">
+    <div class="req-modal-box">
+        <div class="req-modal-hdr makeup">
+            <span class="req-modal-title">Make Up Class Request</span>
+            <button class="req-modal-close" onclick="frsCloseForm('makeup')">✕</button>
+        </div>
+        <div class="req-modal-body">
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Room</label>
+                    <select id="muRoom"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Date</label>
+                    <input type="date" id="muDate">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Start Time</label>
+                    <select id="muStart"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*End Time</label>
+                    <select id="muEnd"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Faculty Name</label>
+                    <input type="text" id="muFaculty" placeholder="Type...">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Program Name</label>
+                    <select id="muProgram" onchange="reqLoadSections('mu')"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">Year Level</label>
+                    <select id="muYl" onchange="reqLoadSections('mu')">
+                        <option value="">SELECT</option>
+                        <option>1</option><option>2</option><option>3</option>
+                        <option>4</option><option>5</option>
+                    </select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Section</label>
+                    <select id="muSection"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Subject Code / Description</label>
+                    <div class="req-search-wrap">
+                        <input type="text" id="muSubject" placeholder="Type...">
+                        <i class="fas fa-search"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">Reason for Request</label>
+                    <textarea id="muReason"></textarea>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">Note</label>
+                    <textarea id="muNote"></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="req-modal-ftr">
+            <button class="btn-req-cancel" onclick="frsCloseForm('makeup')">CANCEL</button>
+            <button class="btn-req-submit" onclick="reqSubmit('makeup')">SUBMIT REQUEST</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MODAL 3 — Schedule Adjustment
+══════════════════════════════════════════ -->
+<div class="req-overlay" id="reqAdjOverlay">
+    <div class="req-modal-box">
+        <div class="req-modal-hdr adjustment">
+            <span class="req-modal-title">Schedule Adjustment</span>
+            <button class="req-modal-close" onclick="frsCloseForm('adjustment')">✕</button>
+        </div>
+        <div class="req-modal-body">
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Room</label>
+                    <select id="adjRoom"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Day</label>
+                    <select id="adjDay">
+                        <option value="">SELECT</option>
+                        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                    </select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Start Time</label>
+                    <select id="adjStart"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*End Time</label>
+                    <select id="adjEnd"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Program Name</label>
+                    <select id="adjProgram" onchange="reqLoadSections('adj')"><option value="">SELECT</option></select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*Start Date</label>
+                    <input type="date" id="adjStartDate">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">*End Date</label>
+                    <input type="date" id="adjEndDate">
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Faculty Name</label>
+                    <input type="text" id="adjFaculty" placeholder="Type...">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Year Level</label>
+                    <select id="adjYl" onchange="reqLoadSections('adj')">
+                        <option value="">SELECT</option>
+                        <option>1</option><option>2</option><option>3</option>
+                        <option>4</option><option>5</option>
+                    </select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Section</label>
+                    <select id="adjSection"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Subject Code / Description</label>
+                    <div class="req-search-wrap">
+                        <input type="text" id="adjSubject" placeholder="Type...">
+                        <i class="fas fa-search"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">Reason for Request</label>
+                    <textarea id="adjReason"></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="req-modal-ftr">
+            <button class="btn-req-cancel" onclick="frsCloseForm('adjustment')">CANCEL</button>
+            <button class="btn-req-submit" onclick="reqSubmit('adjustment')">SUBMIT REQUEST</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ── Request modal helpers ── */
+const _REQ_SLOTS = [
+    '07:30 AM','08:00 AM','08:30 AM','09:00 AM','09:30 AM','10:00 AM','10:30 AM',
+    '11:00 AM','11:30 AM','12:00 PM','12:30 PM','01:00 PM','01:30 PM','02:00 PM',
+    '02:30 PM','03:00 PM','03:30 PM','04:00 PM','04:30 PM','05:00 PM','05:30 PM',
+    '06:00 PM','06:30 PM','07:00 PM','07:30 PM','08:00 PM','08:30 PM','09:00 PM'
+];
+
+function _populateTimeSelects() {
+    ['muStart','muEnd','adjStart','adjEnd'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '<option value="">SELECT</option>';
+        _REQ_SLOTS.forEach(t => {
+            const o = document.createElement('option');
+            o.value = o.textContent = t;
+            sel.appendChild(o);
+        });
+    });
+}
+
+function _populateRoomSelects() {
+    ['muRoom','adjRoom'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '<option value="">SELECT</option>';
+        _rooms.forEach(r => {
+            const o = document.createElement('option');
+            o.value = r.id;
+            o.textContent = `${r.name} (${r.bname})`;
+            sel.appendChild(o);
+        });
+    });
+}
+
+function _populateProgramSelects() {
+    const progData = JSON.parse(document.getElementById('frs-init-data').dataset.programs || '[]');
+    ['muProgram','adjProgram'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '<option value="">SELECT</option>';
+        progData.forEach(p => {
+            const o = document.createElement('option');
+            o.value = p.code;
+            o.textContent = p.name;
+            sel.appendChild(o);
+        });
+    });
+}
+
+async function reqLoadSections(prefix) {
+    const prog = document.getElementById(prefix + 'Program').value;
+    const yl   = document.getElementById(prefix + 'Yl').value;
+    const sel  = document.getElementById(prefix + 'Section');
+    sel.innerHTML = '<option value="">SELECT</option>';
+    if (!prog || !yl) return;
+    try {
+        const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${yl}`);
+        const data = await res.json();
+        (data.sections || []).forEach(s => {
+            const o = document.createElement('option');
+            o.value = s.id; o.textContent = s.name;
+            sel.appendChild(o);
+        });
+    } catch(e) {}
+}
+
+function frsOpenRequest() {
+    document.getElementById('reqPickerOverlay').classList.add('open');
+}
+
+function frsOpenForm(type) {
+    document.getElementById('reqPickerOverlay').classList.remove('open');
+    if (type === 'makeup') {
+        document.getElementById('reqMakeupOverlay').classList.add('open');
+    } else {
+        document.getElementById('reqAdjOverlay').classList.add('open');
+    }
+}
+
+function frsCloseForm(type) {
+    if (type === 'makeup') document.getElementById('reqMakeupOverlay').classList.remove('open');
+    else                   document.getElementById('reqAdjOverlay').classList.remove('open');
+}
+
+async function reqSubmit(type) {
+    const isMakeup = type === 'makeup';
+    const p = isMakeup ? 'mu' : 'adj';
+
+    const payload = {
+        request_type: type,
+        room_id:     document.getElementById(p + 'Room').value,
+        start_time:  document.getElementById(p + 'Start').value,
+        end_time:    document.getElementById(p + 'End').value,
+        faculty_name: document.getElementById(p + 'Faculty').value,
+        program:     document.getElementById(p + 'Program').value,
+        year_level:  document.getElementById(p + 'Yl').value,
+        section_id:  document.getElementById(p + 'Section').value,
+        subject_code: document.getElementById(p + 'Subject').value,
+        reason:      document.getElementById(p + 'Reason').value,
+    };
+
+    if (isMakeup) {
+        payload.request_date = document.getElementById('muDate').value;
+        payload.note         = document.getElementById('muNote').value;
+    } else {
+        payload.day        = document.getElementById('adjDay').value;
+        payload.start_date = document.getElementById('adjStartDate').value;
+        payload.end_date   = document.getElementById('adjEndDate').value;
+    }
+
+    try {
+        const res  = await fetch('/api/faculty/submit_request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+            frsCloseForm(type);
+            alert('Request submitted successfully!');
+        } else {
+            alert('Error: ' + (data.error || 'Could not submit request.'));
+        }
+    } catch(e) {
+        alert('Network error. Please try again.');
+    }
+}
+
+/* Close overlay on background click */
+['reqPickerOverlay','reqMakeupOverlay','reqAdjOverlay'].forEach(id => {
+    document.getElementById(id).addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.classList.remove('open');
+        }
+    });
+});
+
+/* Init selects once DOM is ready */
+document.addEventListener('DOMContentLoaded', () => {
+    _populateTimeSelects();
+    _populateRoomSelects();
+    _populateProgramSelects();
+});
+</script>
+
+<!-- Seed data -->
+<div id="frs-init-data"
+     data-buildings="{{ buildings_json | e }}"
+     data-rooms="{{ rooms_json | e }}"
+     data-programs="{{ programs_json | e }}"
+     hidden></div>
+
+<script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}"></script>
+{% endblock %}

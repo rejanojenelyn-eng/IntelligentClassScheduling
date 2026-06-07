@@ -519,6 +519,56 @@
     }
     .btn-vh-modal-restore:hover { background: #7a0100; }
     .btn-vh-modal-restore:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ---- restore warning block ---- */
+    .vh-restore-warning-block {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        background: #fff8e1;
+        border: 1px solid #ffe082;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 12px;
+    }
+
+    .vh-restore-warn-icon {
+        color: #946300;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+
+    .vh-restore-warn-text {
+        font-size: 0.78rem;
+        color: #946300;
+        font-weight: 600;
+        line-height: 1.55;
+    }
+
+    /* ---- success toast ---- */
+    .vh-toast {
+        position: fixed;
+        bottom: 28px;
+        right: 28px;
+        background: #1a7a2e;
+        color: #fff;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        z-index: 99999;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+        letter-spacing: 0.3px;
+    }
+
+    .vh-toast.show { opacity: 1; }
 </style>
 {% endblock %}
 
@@ -564,52 +614,29 @@
 
 </div>
 
-<!-- Restore Choice Modal -->
+<!-- Restore Confirmation Modal -->
 <div class="vh-modal-overlay" id="vhRestoreModal">
     <div class="vh-modal">
         <div class="vh-modal-header">
-            <i class="fas fa-undo-alt"></i> Restore Revision
+            <i class="fas fa-undo-alt"></i> <span id="vhRestoreModalTitle">Restore Revision</span>
         </div>
         <div class="vh-modal-content">
-            <p class="vh-modal-desc">
-                You are about to restore this revision. Choose what to do with the current schedules:
-            </p>
-            <!-- Option A: Restore as Draft -->
-            <div class="vh-restore-option" id="vhOptDraft" onclick="vhSelectMode('draft')">
-                <div class="vh-radio"><div class="vh-radio-dot"></div></div>
-                <div>
-                    <div class="vh-opt-title">
-                        Restore as Draft
-                        <span class="vh-opt-badge" id="vhDraftBadge" style="display:none;">RECOMMENDED</span>
-                    </div>
-                    <div class="vh-opt-desc">
-                        Creates a new Draft from this snapshot. The current Published is untouched.
-                        Subject will appear as PUB/DRAFT if it also has an active Published revision.
-                    </div>
-                </div>
+            <div class="vh-restore-warning-block" id="vhRestoreWarningBlock" style="display:none;">
+                <div class="vh-restore-warn-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                <div class="vh-restore-warn-text" id="vhRestoreModalDesc"></div>
             </div>
-            <!-- Option B: Restore as Published / Full Replace -->
-            <div class="vh-restore-option" id="vhOptReplace" onclick="vhSelectMode('replace')">
-                <div class="vh-radio"><div class="vh-radio-dot"></div></div>
-                <div>
-                    <div class="vh-opt-title">
-                        <span id="vhReplaceTitle">Restore as Published</span>
-                        <span class="vh-opt-badge" id="vhReplaceBadge" style="display:none;">RECOMMENDED</span>
-                    </div>
-                    <div class="vh-opt-desc" id="vhReplaceDesc">
-                        The restored snapshot becomes the new current active Published revision.
-                        The current Published is archived first.
-                    </div>
-                </div>
-            </div>
+            <p class="vh-modal-desc" id="vhRestoreModalDescPlain"></p>
         </div>
-        <div class="vh-modal-actions">
-            <button class="btn-vh-modal-cancel" onclick="vhCloseRestoreModal()">Cancel</button>
-            <button class="btn-vh-modal-restore" id="vhConfirmRestoreBtn">
-                <i class="fas fa-undo-alt"></i> Restore
-            </button>
+        <div class="vh-modal-actions" id="vhRestoreModalActions">
+            <!-- populated dynamically -->
         </div>
     </div>
+</div>
+
+<!-- Success toast -->
+<div class="vh-toast" id="vhToast">
+    <i class="fas fa-check-circle"></i>
+    <span id="vhToastMsg"></span>
 </div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/versionHistory.acad.js') }}"></script>

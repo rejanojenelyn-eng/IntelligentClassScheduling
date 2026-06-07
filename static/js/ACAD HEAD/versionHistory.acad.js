@@ -256,46 +256,85 @@
     };
 
     // ── restore modal ─────────────────────────────────────────────────────────
-    let selectedRestoreMode = 'draft';  // 'draft' | 'replace'
-
-    window.vhSelectMode = function (mode) {
-        selectedRestoreMode = mode;
-        const draftEl   = document.getElementById('vhOptDraft');
-        const replaceEl = document.getElementById('vhOptReplace');
-        if (!draftEl || !replaceEl) return;
-        [draftEl, replaceEl].forEach(el => el.classList.remove('selected'));
-        (mode === 'draft' ? draftEl : replaceEl).classList.add('selected');
-    };
 
     window.vhOpenRestoreModal = function (versionId, vLabel, prog, yl, origStatus) {
         pendingRestoreId         = versionId;
         pendingRestoreLabel      = `${vLabel} of ${prog} — Year ${yl}`;
-        pendingRestoreOrigStatus  = origStatus || 'Draft';
+        pendingRestoreOrigStatus = origStatus || 'Draft';
 
-        // Default recommendation is type-aware:
-        // Published revisions → recommend "Restore as Published" (Full Replace mode)
-        //   → archives current Published, creates new current active Published from this snapshot
-        // Draft revisions     → recommend "Restore as Draft"
-        //   → archives current Draft, creates new Draft; Published is untouched
-        const isPublished = pendingRestoreOrigStatus === 'Published';
-        const defaultMode = isPublished ? 'replace' : 'draft';
-        selectedRestoreMode = defaultMode;
-        vhSelectMode(defaultMode);
+        // Determine current state from already-loaded allVersions data
+        const thisVer  = allVersions.find(v => v.versionid === versionId);
+        const semKey   = thisVer ? thisVer.term     : null;
+        const ayKey    = thisVer ? thisVer.acadyear  : null;
 
-        // Show RECOMMENDED badge on the appropriate option
-        const draftBadge   = document.getElementById('vhDraftBadge');
-        const replaceBadge = document.getElementById('vhReplaceBadge');
-        const replaceTitle = document.getElementById('vhReplaceTitle');
-        const replaceDesc  = document.getElementById('vhReplaceDesc');
-        if (draftBadge)   draftBadge.style.display   = isPublished ? 'none' : '';
-        if (replaceBadge) replaceBadge.style.display  = isPublished ? '' : 'none';
-        if (replaceTitle) replaceTitle.textContent     = isPublished ? 'Restore as Published' : 'Full Replace (Draft)';
-        if (replaceDesc) {
-            replaceDesc.textContent = isPublished
-                ? 'The restored snapshot becomes the new current active Published revision. The current Published is archived first.'
-                : 'Archive the current Draft and create a new Draft from this snapshot. Same effect as Restore as Draft for a Draft revision.';
+        const siblings = allVersions.filter(v =>
+            (v.programcode || '').toUpperCase() === (prog || '').toUpperCase() &&
+            Number(v.yearlevel) === Number(yl) &&
+            v.term     === semKey &&
+            v.acadyear === ayKey
+        );
+
+        const isCurrentlyPublished = thisVer && (thisVer.status || '').toLowerCase() === 'published';
+        const hasActiveDraft       = siblings.some(v => (v.status || '').toLowerCase() === 'draft');
+        const hasActivePublished   = siblings.some(v => (v.status || '').toLowerCase() === 'published');
+
+        // Pick scenario message and buttons
+        let title        = 'Restore Revision';
+        let message      = 'Are you sure you want to restore this revision as Draft?';
+        let primaryLabel = 'Restore Draft';
+        let cancelLabel  = 'Cancel';
+        let showWarning  = false;
+
+        if (isCurrentlyPublished && hasActiveDraft) {
+            title        = 'Active Schedule Conflict';
+            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and unpublish the current schedule.';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (isCurrentlyPublished) {
+            title        = 'Restore Published Revision';
+            message      = 'This revision is currently Published. Restoring it will automatically unpublish the current schedule. Do you want to continue?';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (hasActiveDraft && hasActivePublished) {
+            title        = 'Active Schedule Conflict';
+            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and affect the current schedule.';
+            primaryLabel = 'Continue Restore';
+            showWarning  = true;
+        } else if (hasActiveDraft) {
+            title        = 'Replace Existing Draft?';
+            message      = 'There is already an existing Draft for this schedule. Restoring this revision will replace the current Draft. Do you want to continue?';
+            primaryLabel = 'Replace Draft';
+            cancelLabel  = 'Keep Current Draft';
+            showWarning  = true;
         }
 
+        // Populate modal
+        document.getElementById('vhRestoreModalTitle').textContent = title;
+
+        const warnBlock = document.getElementById('vhRestoreWarningBlock');
+        const warnText  = document.getElementById('vhRestoreModalDesc');
+        const plainText = document.getElementById('vhRestoreModalDescPlain');
+
+        if (showWarning) {
+            warnText.textContent  = message;
+            warnBlock.style.display = 'flex';
+            plainText.textContent = '';
+            plainText.style.display = 'none';
+        } else {
+            warnBlock.style.display = 'none';
+            plainText.textContent   = message;
+            plainText.style.display = '';
+        }
+
+        // Build action buttons dynamically
+        const actions = document.getElementById('vhRestoreModalActions');
+        actions.innerHTML = `
+            <button class="btn-vh-modal-cancel" onclick="vhCloseRestoreModal()">${cancelLabel}</button>
+            <button class="btn-vh-modal-restore" id="vhConfirmRestoreBtn">
+                <i class="fas fa-undo-alt"></i> ${primaryLabel}
+            </button>`;
+
+        document.getElementById('vhConfirmRestoreBtn').addEventListener('click', _vhDoRestore);
         document.getElementById('vhRestoreModal').classList.add('active');
     };
 
@@ -305,7 +344,7 @@
         pendingRestoreLabel = '';
     };
 
-    document.getElementById('vhConfirmRestoreBtn').addEventListener('click', async () => {
+    async function _vhDoRestore() {
         if (!pendingRestoreId) return;
         const btn = document.getElementById('vhConfirmRestoreBtn');
         btn.disabled = true;
@@ -315,22 +354,31 @@
             const res  = await fetch(`/api/schedule/versions/${pendingRestoreId}/restore`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ restore_mode: selectedRestoreMode })
+                body: JSON.stringify({ restore_mode: 'draft' })
             });
             const data = await res.json();
             if (data.success) {
                 vhCloseRestoreModal();
+                _vhShowToast('Revision restored successfully as Draft.');
                 await loadVersions();
             } else {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore';
                 alert('Restore failed: ' + (data.error || 'Unknown error'));
             }
         } catch (e) {
-            alert('Restore failed: ' + e.message);
-        } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-undo-alt"></i> Restore';
+            alert('Restore failed: ' + e.message);
         }
-    });
+    }
+
+    function _vhShowToast(msg) {
+        const toast = document.getElementById('vhToast');
+        document.getElementById('vhToastMsg').textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 4000);
+    }
 
     // ── data load ─────────────────────────────────────────────────────────────
     async function loadVersions() {

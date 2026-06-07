@@ -1,220 +1,268 @@
-/* Dashboard Container */
-.dashboard-wrapper {
-    padding: 20px 30px;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+:root {
+    --primary-maroon: #800000;
+    --text-dark: #333;
+    --text-muted: #666;
+    --bg-page: #fdfdfd;       /* Very light gray for the page background */
+    --bg-card: #fffffc;       /* The yellowish-white you requested */
+    --border-color: #e0e0e0;
+    --card-shadow: 0 2px 10px rgba(0,0,0,0.03);
     font-family: 'Inter', sans-serif;
 }
 
+* {
+    font-family: 'Inter', sans-serif;
+}
+
+.dashboard-wrapper {
+    padding: 30px 40px;
+    background-color: var(--bg-page); /* Page background */
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+}
+
 /* Welcome Header */
+.welcome-section {
+    margin-bottom: 30px;
+}
+
 .welcome-heading {
-    color: #800000;
     font-size: 2.2rem;
-    font-weight: 700;
-    margin-bottom: 20px;
+    font-weight: 800;
+    color: #444;
+}
+
+.welcome-heading span {
+    color: var(--primary-maroon);
+    font-weight: 800;
+}
+
+.welcome-subtext {
+    color: var(--text-muted);
+    font-size: 1rem;
+    margin-top: 5px;
+}
+
+.welcome-subtext b {
+    color: var(--primary-maroon);
+}
+
+/* Quick Action Cards */
+.action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 40px;
+}
+
+/* Action Cards */
+.action-card {
+    background-color: var(--bg-card); /* Yellowish BG */
     display: flex;
     align-items: center;
+    gap: 12px;
+    padding: 18px 20px;
+    border: 1px solid #d1d1d1;
+    border-radius: 12px;
+    text-decoration: none;
+    color: var(--primary-maroon);
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    box-shadow: var(--card-shadow);
+    transition: all 0.2s ease;
+}
+
+.action-card:hover {
+    background-color: #fff;
+    transform: translateY(-3px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+
+.action-card i {
+    font-size: 1.2rem;
+}
+
+/* Layout Grid */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 40px;
+}
+
+.section-title-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    border-left: 4px solid var(--primary-maroon);
+    padding-left: 15px;
+}
+
+.section-label {
+    font-weight: 800;
+    font-size: 1.1rem;
+    text-transform: uppercase;
+}
+
+.date-label {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+/* Schedule Cards */
+.schedule-list {
+    display: flex;
+    flex-direction: column;
     gap: 15px;
 }
 
-.role-badge {
-    background-color: #800000;
-    color: white;
-    font-size: 1rem;
-    padding: 5px 20px;
-    border-radius: 20px;
-    font-weight: 600;
-}
-
-/* Action Bar */
-.action-bar-container {
-    background-color: #800000;
-    padding: 15px;
+/* Schedule Card */
+.schedule-card {
+    background-color: var(--bg-card); /* Yellowish BG */
     display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    border-left: 6px solid var(--primary-maroon);
+    margin-bottom: 15px;
+    box-shadow: var(--card-shadow);
 }
 
-.btn-outline {
-    background-color: transparent;
-    color: white;
-    border: 2px solid white;
-    border-radius: 5px;
-    padding: 8px 15px;
-    font-weight: 700;
-    font-size: 0.85rem;
-    text-decoration: none;
+.time-box {
+    padding: 20px;
+    background-color: rgba(0,0,0,0.01); /* Subtle contrast for time */
+    border-right: 1px solid var(--border-color);
     text-align: center;
+    min-width: 90px;
 }
 
-.btn-outline:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+.time-box i {
+    font-size: 1.5rem;
+    color: var(--primary-maroon);
+    margin-bottom: 5px;
 }
 
-.btn-solid-white {
-    background-color: white;
-    color: #800000;
-    border: 2px solid white;
-    border-radius: 5px;
-    padding: 8px 15px;
+.time-range {
+    font-size: 0.7rem;
     font-weight: 700;
-    font-size: 0.85rem;
-    text-decoration: none;
+    color: var(--text-dark);
+}
+
+.subject-info {
+    padding: 15px 20px;
+    flex-grow: 1;
+}
+
+.subject-info h4 {
+    margin: 0 0 10px 0;
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: var(--primary-maroon);
+    text-transform: uppercase;
+}
+
+.subject-details {
+    display: flex;
+    gap: 20px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.detail-item {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.btn-solid-white:hover {
-    background-color: #f1f1f1;
-}
-
-/* Main Grid Layout */
-.main-stats-grid {
+/* Overview Section */
+.overview-grid {
     display: grid;
-    grid-template-columns: 1.8fr 1fr;
-    gap: 20px;
-    margin-top: 25px;
-}
-
-/* Section Wrappers (Tabs + Content) */
-.section-wrapper {
-    display: flex;
-    flex-direction: column;
-}
-
-.section-tab {
-    background-color: #800000;
-    color: white;
-    font-weight: 700;
-    font-size: 0.9rem;
-    padding: 6px 20px;
-    border-radius: 8px 8px 0 0;
-    width: fit-content;
-}
-
-.section-content {
-    background-color: #F5EAEA;
-    padding: 15px;
-    border-radius: 0 5px 5px 5px;
-    height: 100%;
-}
-
-/* Today's Schedule Cards */
-.schedule-card {
-    background-color: #800000; /* Lighter maroon */
-    color: white;
-    padding: 15px 20px;
-    margin-bottom: 10px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.schedule-card:last-child {
-    margin-bottom: 0;
-}
-
-.subject-code {
-    color: #F0C85D; /* Yellow */
-    font-weight: 800;
-    font-size: 1.1rem;
-    margin-bottom: 5px;
-}
-
-.subject-meta {
-    font-size: 0.8rem;
-    font-style: italic;
-    font-weight: 300;
-}
-
-.card-right {
-    font-weight: 800;
-    font-size: 1.1rem;
-}
-
-/* Overview Section Layout */
-.overview-content {
-    display: flex;
+    grid-template-columns: 1fr 1fr;
     gap: 15px;
 }
 
-.stat-box {
-    background-color: #800000;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+.stat-card {
+    background-color: var(--bg-card); /* Yellowish BG */
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 40px 20px;
     text-align: center;
-    padding: 20px 10px;
+    box-shadow: var(--card-shadow);
 }
 
-.stat-title {
-    color: white;
-    font-weight: 700;
-    font-size: 0.85rem;
-    margin-bottom: 5px;
-    line-height: 1.2;
-}
-
-.stat-value {
-    color: #F0C85D; /* Yellow */
+.stat-number {
+    font-size: 5rem;
     font-weight: 800;
-    font-size: 3.5rem;
-    line-height: 1;
+    color: #222;
 }
+
+.stat-desc {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    line-height: 1.3;
+    margin-bottom: 15px;
+}
+
+.status-badge {
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.status-badge.green { color: #28a745; }
+.status-badge.red { color: var(--primary-maroon); }
 
 /* Inbox Section */
 .inbox-section {
-    margin-top: 25px;
+    margin-top: 40px;
 }
 
-.inbox-banner {
-    background-color: #800000;
+.inbox-card {
+    background-color: #800000; /* Dark Maroon */
     color: white;
-    padding: 12px 20px;
+    padding: 20px 30px;
+    border-radius: 12px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    font-weight: 700;
-    font-size: 0.9rem;
+    justify-content: space-between;
+}
+.inbox-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
 }
 
-.view-details {
+.inbox-icon {
+    background: white;
+    color: var(--primary-maroon);
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+.inbox-text b { display: block; font-size: 1rem; }
+.inbox-text span { font-size: 0.85rem; opacity: 0.9; }
+
+.view-details-link {
     color: white;
     text-decoration: none;
-    font-style: italic;
-    font-weight: 400;
-}
-
-.view-details:hover {
-    text-decoration: underline;
-}
-/* Container to align the text and badge side-by-side */
-.dashboard-header {
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
     display: flex;
-    align-items: center; /* Vertically centers the items */
-    gap: 15px;           /* Space between the name and the badge */
-    margin-bottom: 30px; 
+    align-items: center;
+    gap: 10px;
 }
 
-/* The dark red bold text */
-.welcome-heading {
-    color: #8B0000;      /* Dark Red / Maroon */
-    font-size: 32px;     /* Adjust size as needed */
-    font-weight: 900;    /* Extra bold */
-    font-family: 'Inter', sans-serif;
-    margin: 0;           /* Removes default h2 spacing */
-}
-
-/* The pill-shaped badge */
-.role-badge {
-    background-color: #8B0000;
-    color: #ffffff;
-    padding: 6px 18px;
-    border-radius: 25px; /* Creates the rounded pill shape */
-    font-size: 16px;
-    font-weight: bold;
-    font-family: 'Inter', sans-serif;
-    display: inline-block;
-    box-shadow: 0px 2px 4px rgba(0,0,0,0.1); /* Optional: slight shadow for depth */
-}
+.view-details-link:hover { text-decoration: underline; }

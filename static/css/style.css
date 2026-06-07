@@ -384,6 +384,9 @@ body {
 
 .nav-arrow.rotated { transform: rotate(180deg); }
 
+.sched-caret { transition: transform 0.2s ease; margin-left: auto; }
+.sched-caret.rotated { transform: rotate(180deg); }
+
 /* ── Sub Menu ── */
 .sub-menu {
     display: none;
@@ -800,6 +803,8 @@ body {
 
 .flash-toast.error   { border-left-color: var(--danger); }
 .flash-toast.success { border-left-color: var(--success); }
+.flash-toast.warning { border-left-color: var(--warning); }
+.flash-toast.info    { border-left-color: var(--info); }
 
 @keyframes slideIn {
     from { transform: translateX(110%); opacity: 0; }
@@ -809,6 +814,8 @@ body {
 .toast-icon { font-size: 1.35rem; flex-shrink: 0; }
 .flash-toast.error   .toast-icon { color: var(--danger); }
 .flash-toast.success .toast-icon { color: var(--success); }
+.flash-toast.warning .toast-icon { color: var(--warning); }
+.flash-toast.info    .toast-icon { color: var(--info); }
 
 .toast-content p {
     margin: 0;

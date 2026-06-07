@@ -364,7 +364,7 @@
         const dateStr   = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }).toUpperCase();
 
         document.getElementById('dvTitle').textContent =
-            `${ctx.program || ''} ${yearLabel} SCHEDULE — DRAFT V${draftVersion}`;
+            `${ctx.program || ''} ${yearLabel} SCHEDULE`;
         document.getElementById('dvDate').textContent = `SAVED: ${dateStr}`;
 
         const ayRaw = String(ctx.acadYear || '');
@@ -376,7 +376,7 @@
         document.getElementById('dvTerm').textContent      = termLabel || '—';
         document.getElementById('dvProgram').textContent   = ctx.program    || '—';
         document.getElementById('dvYearLevel').textContent = yearLabel       || '—';
-        document.getElementById('dvVersionBadge').textContent = `DRAFT V${draftVersion}`;
+        document.getElementById('dvVersionBadge').textContent = 'DRAFT';
 
         // Show scheduler type badge
         const srcLabel = (draftContext.source === 'local') ? 'LOCAL SCHEDULER' : 'OFFICIAL SCHEDULER';
