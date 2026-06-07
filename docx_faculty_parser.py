@@ -37,25 +37,117 @@ _COL_KEYWORDS = {
 }
 
 
+# Word XML namespace prefix for the main wordprocessingml namespace
+_W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+# Regex that removes spaces before common English word-ending suffixes.
+# These 2-5 char lowercase fragments appear after mid-word run splits caused by
+# Word font/formatting changes (e.g. "Tempora ry" → "Temporary").
+_RUN_SPLIT_RE = re.compile(
+    r'([A-Za-z]) '
+    r'(tion|sion|ment|ness|ary|ery|ory|ive|ful|ism|ist|ity|age|ogy|ics|'
+    r'ies|ees|ers|ons|ings|'
+    r'ry|ty|ny|gy|cy|dy|py|'
+    r'nt|nd|ng|ct|pt|lt|st|xt|'
+    r'ss|ff|ll|'
+    r'al|el|'
+    r'er|or|ar|'
+    r'ed|en|'
+    r'es|rs|ts|ns|ls|ds|'
+    r'ee|oo'
+    r')(?=[ \t,;.:()\-\/\']|$)',
+    re.IGNORECASE,
+)
+
+
+def _fix_run_splits(text):
+    """
+    Remove spurious mid-word spaces left after DOCX run-split extraction,
+    e.g. 'Tempora ry' → 'Temporary', 'Educa tion' → 'Education'.
+    Applied repeatedly until stable.
+    """
+    for _ in range(6):
+        prev = text
+        text = _RUN_SPLIT_RE.sub(lambda m: m.group(1) + m.group(2), text)
+        if text == prev:
+            break
+    return text
+
+
 def _el_text(el):
-    parts = []
-    for n in el.iter():
-        if n.tag.endswith('}t'):
-            parts.append(n.text or '')
-        elif n.tag.endswith('}br'):
-            parts.append('\n')   # hard line break inside cell
-    raw = ''.join(parts)
-    # PDF-to-DOCX converters often append a trailing space before <w:br/>.
-    # Strip those spaces so the join rules below can see the real last char.
-    # e.g. "Patrici \na"  → "Patrici\na"   "MONDRAG \nON" → "MONDRAG\nON"
+    """
+    Extract clean text from a DOCX table cell element.
+
+    Strategy
+    --------
+    1. Walk paragraph-by-paragraph so we can join paragraphs with a single
+       space rather than smashing everything together.
+    2. Within each paragraph, walk run-by-run.  If a run ends with a
+       trailing space *and* the very next run in the same paragraph starts
+       with a lowercase letter *and* the run (stripped) ends with a letter,
+       the trailing space is a Word formatting artifact — strip it.
+       (This handles "Designe " + "es" → "Designees".)
+    3. Apply _fix_run_splits() as a second pass for any 2-5 char suffix
+       fragments that still slipped through.
+    4. Fall back to the original flat extraction if no paragraphs are found.
+    """
+    W_P  = _W + 'p'
+    W_R  = _W + 'r'
+    W_T  = _W + 't'
+    W_BR = _W + 'br'
+
+    para_texts = []
+    for p_el in el.iter(W_P):
+        runs = []
+        for r_el in p_el.iter(W_R):
+            t = ''
+            for ch in r_el:
+                if ch.tag == W_T:
+                    t += (ch.text or '')
+                elif ch.tag == W_BR:
+                    t += '\n'
+            runs.append(t)
+
+        buf = []
+        for i, run in enumerate(runs):
+            if i < len(runs) - 1:
+                next_run = runs[i + 1]
+                stripped = run.rstrip(' ')
+                # Strip trailing space when it's a run-formatting artifact:
+                # current run ends with a letter, next starts with lowercase
+                if (run.endswith(' ')
+                        and next_run and next_run[0].islower()
+                        and stripped and stripped[-1].isalpha()):
+                    run = stripped
+            buf.append(run)
+
+        para_text = ''.join(buf)
+        para_text = re.sub(r'[^\S\n]+', ' ', para_text).strip()
+        if para_text:
+            para_texts.append(para_text)
+
+    if not para_texts:
+        # Fallback: original flat extraction
+        parts = []
+        for n in el.iter():
+            if n.tag.endswith('}t'):
+                parts.append(n.text or '')
+            elif n.tag.endswith('}br'):
+                parts.append('\n')
+        raw = ''.join(parts)
+    else:
+        raw = ' '.join(para_texts)
+
+    # Handle hard line-break (\n) continuation patterns (unchanged from original)
     raw = re.sub(r' +\n', '\n', raw)
-    # Join \n when preceded by word/email/phone chars (mid-token wrap artifact).
-    # Covers: alphanumeric, period (email), hyphen (phone/hyphenated words), @
-    # "Tempora\nry"→"Temporary"  "ALCANTA\nRA"→"ALCANTARA"  "0917-55\n5-0033"→"0917-555-0033"
-    # "enrico.\nsuinan"→"enrico.suinan"  "Patrici\na Anne"→"Patricia Anne"
-    raw = re.sub(r'([A-Za-z0-9.@\-])\n', r'\1', raw)
-    raw = re.sub(r'\n', ' ', raw)   # any remaining \n → space
-    return re.sub(r'\s+', ' ', raw).strip()
+    raw = re.sub(r'([A-Za-z])\n([a-z])', r'\1\2', raw)           # lowercase suffix
+    raw = re.sub(r'([A-Z])\n([A-Z]{1,2})(?=\s|,|$)', r'\1\2', raw)  # short ALL-CAPS
+    raw = re.sub(r'(\d)\n(\d)', r'\1\2', raw)                    # digit continuation
+    raw = re.sub(r'\n', ' ', raw)
+    raw = re.sub(r'\s+', ' ', raw).strip()
+
+    # Second-pass: suffix-based cleanup for any remaining artifacts
+    return _fix_run_splits(raw)
 
 
 def _detect_cols(headers):

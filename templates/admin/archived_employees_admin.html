@@ -1,130 +1,140 @@
 {% extends "admin/base_admin.html" %}
-
 {% block head %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="employee-container">
     <!-- TOP HEADER SECTION -->
-    <div class="employee-header-flex" style="margin-bottom: 20px;">
-        <h1 style="color: var(--pup-maroon); font-weight: 800; font-size: 24px; margin: 0;">ARCHIVED EMPLOYEES</h1>
-        
-        <div class="action-buttons-group">
-            <button id="btnBulkRestore" class="btn-capsule btn-add" onclick="openBulkRestoreModal()" disabled>
-                <i class="fas fa-sync-alt"></i> RESTORE SELECTED
-            </button>
-            <a href="{{ url_for('admin_employee') }}" class="btn-capsule" style="background-color: #6c757d; color: white; text-decoration: none; display: flex; align-items: center; gap: 8px;">
-                <i class="fas fa-arrow-left"></i> BACK
+    <div class="page-header-row">
+        <h1 class="page-title">ARCHIVED EMPLOYEES</h1>
+        <div class="header-actions">
+            <a href="{{ url_for('admin_employee') }}" class="btn-top btn-view-archive">
+                <i class="fas fa-users"></i> VIEW EMPLOYEE LIST
             </a>
         </div>
     </div>
 
-    <!-- MAROON FILTER BAR -->
-    <div class="table-wrapper">
-        <div class="table-header-filters">
-            <!-- Search Group -->
+    <!-- WHITE FILTER CARD -->
+    <div class="filter-container">
+        <div class="filter-inputs-row">
             <div class="filter-group">
                 <label>SEARCH EMPLOYEE</label>
-                <div class="search-input-wrapper">
+                <div class="search-wrapper">
                     <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Name...">
                     <i class="fas fa-search"></i>
                 </div>
             </div>
-            
-            <!-- Type Group -->
+
             <div class="filter-group">
                 <label>EMPLOYEE TYPE</label>
                 <select id="typeFilter" onchange="filterTable()">
-                    <option value="">All Types</option>
-                    {# IMPORTANT: Your backend MUST pass 'employee_types' to this template #}
+                    <option value="">SELECT</option>
                     {% for etype in employee_types %}
                         <option value="{{ etype.typename }}">{{ etype.typename }}</option>
                     {% endfor %}
                 </select>
             </div>
 
-            <!-- Status Group -->
             <div class="filter-group">
-                <label>Status</label>
+                <label>EMPLOYEE STATUS</label>
                 <select id="statusFilter" onchange="filterTable()">
-                    <option value="">All Status</option>
+                    <option value="">SELECT</option>
                     <option value="Permanent">Permanent</option>
                     <option value="Part-Time">Part-Time</option>
                     <option value="Temporary">Temporary</option>
                 </select>
             </div>
 
-            <!-- Specialization Group -->
             <div class="filter-group">
                 <label>SPECIALIZATION</label>
                 <select id="specFilter" onchange="filterTable()">
-                    <option value="">All Specializations</option>
-                    {# IMPORTANT: Your backend MUST pass 'specializations' to this template #}
+                    <option value="">SELECT</option>
                     {% for spec in specializations %}
                         <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
                     {% endfor %}
                 </select>
             </div>
+        </div>
 
-            <!-- FIXED: Actions Right (with new Sort button) -->
-            <div class="table-actions-right">
-                <div class="sort-wrapper" onclick="sortTable()">
-                    <span id="sortDirection">Ascending</span> <i id="sortIcon" class="fas fa-sort-amount-down-alt"></i>
-                </div>
-                <button class="btn-export-white" onclick="exportToExcel()">
-                    <i class="fas fa-file-export"></i> Export
-                </button>
-            </div>
+        <div class="filter-secondary-actions">
+            <button class="btn-secondary" onclick="sortTable()">
+                <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
+            </button>
+            <button class="btn-secondary" onclick="openExportModal()">
+                <i class="fas fa-external-link-alt"></i> EXPORT
+            </button>
         </div>
     </div>
 
+    <!-- BULK SELECTION ACTION BAR -->
+    <div id="selectionBar" class="bulk-actions-row" style="display: none; margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 8px;">
+        <span>You have selected <strong id="selectedCount">0</strong> employees.</span>
+        <button class="btn-bulk" onclick="openBulkRestoreModal()" style="border: 1px solid #333;">
+            <i class="fas fa-sync-alt"></i> RESTORE
+        </button>
+        <button class="btn-bulk" onclick="deselectAll()">
+            <i class="fas fa-times"></i> CANCEL
+        </button>
+    </div>
+
     <!-- ARCHIVE TABLE -->
-    <table class="employee-table" id="archiveTable">
-        <thead>
-           
-            <tr>
-                <th style="width: 5%;"><input type="checkbox" id="selectAll"></th>
-                <th>Employee Number</th> 
-                <th>Employee Name</th>
-                <th>Specialization</th>
-                <th>Employment type</th>
-                <th>Status</th>
-                <th>Date Archived</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for emp in archived_employees %}
-            <tr>
-                <td><input type="checkbox" class="row-check" value="{{ emp.facultyarchiveid }}"></td>
-                <td><small>{{ emp.employeenumber }}</small></td> 
-                <td class="emp-name" style="color: var(--pup-maroon); font-weight: bold;">
-                    {{ emp.lastname }}, {{ emp.firstname }}
-                </td>
-                <td class="emp-spec">{{ emp.specializationname }}</td>
-                <td class="emp-type">
-                    <span class="badge badge-{{ emp.typename.lower().replace('-', '') }}">
-                        {{ emp.typename }}
-                    </span>
-                </td>
-                <td class="emp-status">{{ emp.employeestatus }}</td>
-                <td class="date-archived" style="color: var(--pup-maroon); font-weight: 600; font-size: 12px;">
-                    {{ emp.archivedat.strftime('%Y-%m-%d %H:%M') }}
-                </td>
-                <td>
-                    <button class="btn-restore-pill" onclick="openRestoreModal('{{ emp.facultyarchiveid }}', '{{ emp.firstname }} {{ emp.lastname }}')">
-                        <i class="fas fa-sync-alt"></i> RESTORE
-                    </button>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="employee-table-wrapper">
+        <table class="employee-table" id="archiveTable">
+            <thead>
+                <tr>
+                    <th style="width: 40px; text-align: center;">
+                        <input type="checkbox" id="selectAll" class="custom-checkbox">
+                    </th>
+                    <th>EMPLOYEE NAME</th>
+                    <th>SPECIALIZATION</th>
+                    <th>EMAIL</th>
+                    <th>CONTACT</th>
+                    <th>EMPLOYMENT TYPE</th>
+                    <th>STATUS</th>
+                    <th>DATE ARCHIVED</th>
+                    <th style="text-align: center;">ACTION</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for emp in archived_employees %}
+                <tr>
+                    <td style="text-align: center;">
+                        <input type="checkbox" class="row-check custom-checkbox" value="{{ emp.facultyarchiveid }}">
+                    </td>
+                    <td class="emp-name" style="font-weight: 600;">
+                        {{ emp.lastname }}, {{ emp.firstname }}
+                    </td>
+                    <td class="emp-spec">{{ emp.specializationname }}</td>
+                    <td class="emp-email" style="color: #666; font-size: 12px;">{{ emp.email }}</td>
+                    <td class="emp-contact" style="color: #666;">{{ emp.contactnumber }}</td>
+                    <td class="emp-type">
+                        {% set type_class = emp.typename.lower().replace(' ', '-') %}
+                        <span class="badge-outline {{ type_class }}">
+                            {{ emp.typename }}
+                        </span>
+                    </td>
+                    <td class="emp-status" style="font-size: 11px; font-weight: 700; text-transform: uppercase;">
+                        {{ emp.employeestatus }}
+                    </td>
+                    <td class="date-archived" style="font-size: 12px; color: #444;">
+                        {{ emp.archivedat.strftime('%m-%d-%y') }}
+                    </td>
+                    <td style="text-align: center;">
+                        <button class="action-icons" onclick="openRestoreModal('{{ emp.facultyarchiveid }}', '{{ emp.firstname }} {{ emp.lastname }}')" style="background: none; border: none;">
+                            <i class="fas fa-sync-alt" style="color: #444; cursor: pointer;"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
-<!-- MODALS (No changes needed here) -->
 <!-- SINGLE RESTORE MODAL -->
 <div id="restoreConfirmModal" class="modal">
     <div class="modal-content" style="width: 400px;">
@@ -159,6 +169,106 @@
     </div>
 </div>
 
+<!-- EXPORT MODAL -->
+<div id="exportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeExportModal()">
+    <div class="emp-export-dialog">
+        <div class="emp-export-header">
+            <div class="emp-export-header-icon"><i class="fas fa-file-export"></i></div>
+            <div>
+                <h2>Export Archived Employees</h2>
+                <p>Select format(s) and options below</p>
+            </div>
+            <button class="emp-export-close" onclick="closeExportModal()">&#215;</button>
+        </div>
+        <div class="emp-export-summary">
+            <div class="emp-export-summary-icon"><i class="fas fa-archive"></i></div>
+            <div>
+                <span class="emp-export-count" id="exportEmpCount">0</span>
+                <span class="emp-export-count-label">Records to Export</span>
+            </div>
+            <div class="emp-export-summary-info" id="exportScopeLabel">All visible employees</div>
+        </div>
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Export Format</span>
+                <button class="emp-export-select-all" id="selectAllFormatsBtn" onclick="toggleSelectAllFormats()">Select All</button>
+            </div>
+            <div class="emp-export-format-grid">
+                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
+                    <div class="emp-format-name">CSV</div>
+                    <div class="emp-format-desc">Comma separated values</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
+                    <div class="emp-format-name">Excel (XLSX)</div>
+                    <div class="emp-format-desc">Microsoft Excel workbook</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
+                    <div class="emp-format-name">PDF</div>
+                    <div class="emp-format-desc">Portable document format</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="toggleFormatCard(this)">
+                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
+                    <div class="emp-format-name">Word (DOCX)</div>
+                    <div class="emp-format-desc">Microsoft Word document</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+            </div>
+            <div class="emp-export-format-error" id="exportFormatError" style="display:none;">
+                Please select at least one export format.
+            </div>
+        </div>
+        <div class="emp-export-section">
+            <label class="emp-export-label">Export Filename</label>
+            <div class="emp-filename-input-wrapper">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="exportFilenameInput" class="emp-filename-input" value="Archived_Employees" placeholder="Enter filename...">
+            </div>
+        </div>
+        <div class="emp-export-section">
+            <div class="emp-export-date-row">
+                <div>
+                    <span class="emp-export-label">Include Date &amp; Time in Filename</span>
+                    <small class="emp-export-sublabel">e.g. Archived_Employees_20240615_143022</small>
+                </div>
+                <label class="emp-toggle-switch">
+                    <input type="checkbox" id="exportDateToggle" checked>
+                    <span class="emp-toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="emp-export-footer">
+            <button class="emp-export-cancel" onclick="closeExportModal()">Cancel</button>
+            <button class="emp-export-confirm" id="exportConfirmBtn" onclick="executeExport()">
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Export Loading Overlay -->
+<div id="exportLoadingOverlay" style="display:none;" class="emp-export-loading">
+    <div class="emp-export-loading-card">
+        <div class="emp-export-spinner"></div>
+        <div class="emp-export-loading-text" id="exportLoadingText">Preparing export...</div>
+        <div class="emp-export-loading-sub" id="exportLoadingSubText">Please wait</div>
+    </div>
+</div>
+
+<!-- Export Toast -->
+<div id="exportToast" class="emp-export-toast" style="display:none;">
+    <div class="emp-export-toast-icon" id="exportToastIcon"></div>
+    <div class="emp-export-toast-body">
+        <div class="emp-export-toast-title" id="exportToastTitle"></div>
+        <div class="emp-export-toast-msg" id="exportToastMsg"></div>
+    </div>
+    <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
+</div>
 
 <script src="{{ url_for('static', filename='js/ADMIN/archivedEmployees.admin.js') }}"></script>
-{% endblock %}  
+{% endblock %}

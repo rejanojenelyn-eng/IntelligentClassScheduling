@@ -7,121 +7,118 @@
 {% block content %}
 <div class="curriculum-ui">
 
-    <div class="curr-header">
-        <h1>CURRICULUM VIEW</h1>
+    <!-- Page header: title + back button -->
+    <div class="curr-view-header">
+        <h1 class="curr-view-title">CURRICULUM</h1>
+        <button class="btn-back-curr" onclick="location.href='/curriculum'">
+            <i class="fas fa-arrow-left"></i> BACK
+        </button>
     </div>
 
-    <!-- Back to Acad Head Curriculum Page -->
-    <button class="btn-back-maroon-pill" onclick="location.href='/curriculum?program_code={{ info.programcode }}'">
-        <i class="fas fa-arrow-circle-left"></i> BACK
-    </button>
-
-    <div class="selection-panel-main">
-        <div class="row-top-panel">
-            <div class="field-item" style="flex: 2;">
-                <label>PROGRAM</label>
-                <select class="visible-dropdown" onchange="location.href='/curriculum?program_code='+this.value">
+    <!-- Filter card -->
+    <div class="curr-view-filter-card">
+        <div class="curr-view-filter-fields">
+            <div class="curr-view-filter-group" style="flex:2;">
+                <label class="curr-view-filter-label">PROGRAM</label>
+                <select class="curr-view-dropdown" style="min-width:260px;"
+                        onchange="location.href='/curriculum?program_code='+this.value">
                     {% for p in programs %}
-                    <option value="{{ p.programcode }}" {{ 'selected' if info.programcode==p.programcode }}>{{ p.programname }}</option>
+                    <option value="{{ p.programcode }}" {{ 'selected' if info.programcode==p.programcode }}>
+                        {{ p.programname }}
+                    </option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="field-item" style="flex: 1;">
-                <label>CURRICULUM YEAR</label>
-                <select class="visible-dropdown" onchange="location.href='/curriculum/view/'+this.value">
+            <div class="curr-view-filter-group">
+                <label class="curr-view-filter-label">CURRICULUM YEAR</label>
+                <select class="curr-view-dropdown"
+                        onchange="location.href='/curriculum/view/'+this.value">
                     {% for oc in other_curriculums %}
-                    <option value="{{ oc.curriculumid }}" {{ 'selected' if info.curriculumid==oc.curriculumid }}>C.Y {{ oc.curriculumyear }}</option>
+                    <option value="{{ oc.curriculumid }}" {{ 'selected' if info.curriculumid==oc.curriculumid }}>
+                        C.Y {{ oc.curriculumyear }}
+                    </option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="button-group-export">
-                <button class="btn-export-outline-white" onclick="handleFilteredExport()">
-                    <i class="fas fa-external-link-alt"></i> Export
-                </button>
+            <div class="curr-view-filter-group">
+                <label class="curr-view-filter-label">SEMESTER</label>
+                <select class="curr-view-dropdown" onchange="updateFilters('semester', this.value)">
+                    <option value="All" {{ 'selected' if curr_sem=='All' }}>ALL</option>
+                    <option value="A"   {{ 'selected' if curr_sem=='A'   }}>1ST SEMESTER</option>
+                    <option value="B"   {{ 'selected' if curr_sem=='B'   }}>2ND SEMESTER</option>
+                    <option value="C"   {{ 'selected' if curr_sem=='C'   }}>SUMMER</option>
+                </select>
             </div>
-        </div>
-
-        <div class="row-bottom-panel">
-            <div class="field-item-inline">
-                <label>YEAR LEVEL</label>
-                <select class="visible-dropdown-small" onchange="updateFilters('year', this.value)">
+            <div class="curr-view-filter-group">
+                <label class="curr-view-filter-label">YEAR LEVEL</label>
+                <select class="curr-view-dropdown" onchange="updateFilters('year', this.value)">
                     <option value="0" {{ 'selected' if curr_year=='0' }}>ALL</option>
-                    
-                    <!-- DYNAMIC YEAR LEVEL BASED ON PROGRAM DURATION (CSP) -->
                     {% set max_years = info.numyearlevel if info.numyearlevel else 4 %}
                     {% for y in range(1, max_years + 1) %}
-                        <option value="{{ y }}" {{ 'selected' if curr_year == y|string }}>
-                            {{ y }}{{ 'ST' if y==1 else 'ND' if y==2 else 'RD' if y==3 else 'TH' }} YEAR
-                        </option>
+                    <option value="{{ y }}" {{ 'selected' if curr_year==y|string }}>
+                        {{ y }}{{ 'ST' if y==1 else 'ND' if y==2 else 'RD' if y==3 else 'TH' }} YEAR
+                    </option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="field-item-inline">
-                <label>SEMESTER</label>
-                <select class="visible-dropdown-small" onchange="updateFilters('semester', this.value)">
-                    <option value="All" {{ 'selected' if curr_sem=='All' }}>ALL</option>
-                    <option value="A" {{ 'selected' if curr_sem=='A' }}>1ST SEMESTER</option>
-                    <option value="B" {{ 'selected' if curr_sem=='B' }}>2ND SEMESTER</option>
-                    <option value="C" {{ 'selected' if curr_sem=='C' }}>SUMMER</option>
-                </select>
-            </div>
         </div>
+        <button class="curr-view-export-btn" onclick="handleFilteredExport()">
+            <i class="fas fa-external-link-alt"></i> EXPORT
+        </button>
     </div>
 
+    <!-- Subject sections grouped by year + semester -->
     {% set last_group = namespace(value='') %}
     {% for s in subjects %}
     {% set current_group_key = s.yearlevel ~ '-' ~ s.semester %}
 
     {% if current_group_key != last_group.value %}
-        {% if last_group.value != '' %}
-            </tbody></table></div>
-        {% endif %}
+        {% if last_group.value != '' %}</tbody></table></div>{% endif %}
         {% set last_group.value = current_group_key %}
 
-        <div class="curriculum-section-group">
-            <div class="banners-flex-container">
-                <div class="banner-title-box">
-                    {{ info.programname }} - {{ s.yearlevel }}{{ 'ST' if s.yearlevel==1 else 'ND' if s.yearlevel==2 else 'RD' if s.yearlevel==3 else 'TH' }} YEAR
+        <div class="curr-view-section">
+            <div class="curr-view-banner">
+                <div class="curr-view-banner-title">
+                    {{ info.programname }} &mdash; {{ s.yearlevel }}{{ 'ST' if s.yearlevel==1 else 'ND' if s.yearlevel==2 else 'RD' if s.yearlevel==3 else 'TH' }} YEAR
                 </div>
-                <div class="banner-info-box">
-                    <span class="cy-label">C.Y {{ info.curriculumyear }}</span>
-                    <span class="sem-label">{{ '1ST SEMESTER' if s.semester == 'A' else '2ND SEMESTER' if s.semester == 'B' else 'SUMMER' }}</span>
+                <div class="curr-view-banner-info">
+                    C.Y {{ info.curriculumyear }}
+                    <span class="curr-view-banner-sep">|</span>
+                    {{ '1ST SEMESTER' if s.semester == 'A' else '2ND SEMESTER' if s.semester == 'B' else 'SUMMER' }}
                 </div>
             </div>
-
-            <table class="subjects-table-exact">
+            <table class="curr-view-table">
                 <thead>
                     <tr>
-                        <!-- FIXED: Adjusted widths and added Tuition Hours -->
-                        <th style="width: 12%;">Subject code</th>
-                        <th style="width: 12%;">Pre-requisite</th>
-                        <th style="width: 12%;">Co-requisite</th>
-                        <th style="width: 28%;">Subject description</th>
-                        <th style="text-align: center; width: 7%;">Lec Hours</th>
-                        <th style="text-align: center; width: 7%;">Lab Hours</th>
-                        <th style="text-align: center; width: 7%;">Units</th>
-                        <th style="text-align: center; width: 7%;">Tuition Hours</th>
+                        <th style="width:12%;">Subject Code</th>
+                        <th style="width:11%;">Pre-requisite</th>
+                        <th style="width:11%;">Co-requisite</th>
+                        <th>Subject Description</th>
+                        <th style="width:8%;text-align:center;">Lec Hrs</th>
+                        <th style="width:8%;text-align:center;">Lab Hrs</th>
+                        <th style="width:9%;text-align:center;">Credited Units</th>
+                        <th style="width:9%;text-align:center;">Tuition Hrs</th>
                     </tr>
                 </thead>
                 <tbody>
     {% endif %}
                     <tr>
-                        <td class="code-maroon-bold">{{ s.subjectcode }}</td>
-                        <td class="req-cell">{{ s.prerequisite if s.prerequisite else '-' }}</td>
-                        <td class="req-cell">{{ s.corequisite if s.corequisite else '-' }}</td>
-                        <td class="desc-cell">{{ s.subjectname }}</td>
-                        <td align="center">{{ s.lecturehours }}</td>
-                        <td align="center">{{ s.laboratoryhours }}</td>
-                        <td align="center" style="font-weight: 900;">{{ s.creditunits }}</td>
-                        <!-- FIXED: Tuition Hours Data Added Here -->
-                        <td align="center">{{ s.tuitionhours }}</td>
+                        <td class="cvt-code">{{ s.subjectcode }}</td>
+                        <td class="cvt-req">{{ s.prerequisite if s.prerequisite else '—' }}</td>
+                        <td class="cvt-req">{{ s.corequisite if s.corequisite else '—' }}</td>
+                        <td class="cvt-desc">{{ s.subjectname }}</td>
+                        <td class="cvt-num">{{ s.lecturehours }}</td>
+                        <td class="cvt-num">{{ s.laboratoryhours }}</td>
+                        <td class="cvt-num" style="font-weight:800;">{{ s.creditunits }}</td>
+                        <td class="cvt-num">{{ s.tuitionhours }}</td>
                     </tr>
     {% endfor %}
     {% if subjects %}
         </tbody></table></div>
     {% else %}
-        <div style="text-align:center; padding:30px; color:#888;">No subjects found for the selected filters.</div>
+        <div class="curr-view-no-subjects">No subjects found for the selected filters.</div>
     {% endif %}
+
 </div>
 
 <script>

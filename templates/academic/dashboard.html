@@ -10,7 +10,7 @@
 <div class="dashboard-wrapper">
     <!-- Header Section -->
     <div class="welcome-header">
-        <h1>Welcome, Acad head!</h1>
+        <h1>Welcome, {{ current_user_display }}!</h1>
         <p class="current-date">{{ current_date }}</p>
     </div>
 
@@ -130,3 +130,4 @@
     </div>
 </div>
 {% endblock %}
+

@@ -27,3 +27,27 @@ def query_db(query, args=(), one=False):
     cur.close()
     conn.close()
     return (rv[0] if rv else None) if one else rv
+
+_SCHEDULER_CONFIG_DEFAULTS = {
+    'sc1_daytime':    20,
+    'sc2_night':      15,
+    'sc3_day_dist':   10,
+    'sc4_compact':    10,
+    'sc5_pt_balance': 10,
+    'sc6_weekend':    10,
+    'sc7_consecutive':30,
+    'hc7_max_night':   2,
+}
+
+def load_scheduler_config() -> dict:
+    """Return scheduler penalty weights from DB, falling back to defaults."""
+    try:
+        rows = query_db("SELECT config_key, config_value FROM scheduler_config")
+        cfg = dict(_SCHEDULER_CONFIG_DEFAULTS)
+        for row in rows:
+            key = row['config_key']
+            if key in cfg:
+                cfg[key] = float(row['config_value'])
+        return cfg
+    except Exception:
+        return dict(_SCHEDULER_CONFIG_DEFAULTS)

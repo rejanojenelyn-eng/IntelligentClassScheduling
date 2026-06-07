@@ -1,15 +1,62 @@
-function filterAssignments() {
-    const currFilter = document.getElementById('filterAssignCurr').value.toLowerCase();
-    const progFilter = document.getElementById('filterAssignProg').value.toLowerCase();
-    const rows = document.querySelectorAll('#assignmentTable tbody tr');
-
-    rows.forEach(row => {
-        const currText = row.cells[0].textContent.toLowerCase().trim();
-        const progText = row.cells[1].textContent.toLowerCase().trim();
-        const matchesCurr = (currFilter === 'all' || currText === currFilter);
-        const matchesProg = (progFilter === 'all' || progText === progFilter);
-        row.style.display = (matchesCurr && matchesProg) ? '' : 'none';
+// ── Tab switching with localStorage persistence ───────────────────────────────
+function switchCurrTab(tab) {
+    const panels = { assignments: 'currPanelAssignments', syllabi: 'currPanelSyllabi' };
+    const btns   = { assignments: 'tabBtnAssignments',    syllabi: 'tabBtnSyllabi'    };
+    Object.keys(panels).forEach(k => {
+        document.getElementById(panels[k]).style.display = k === tab ? '' : 'none';
+        document.getElementById(btns[k]).classList.toggle('active', k === tab);
     });
+    try { localStorage.setItem('currTab', tab); } catch(e) {}
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    try {
+        const saved = localStorage.getItem('currTab');
+        if (saved === 'syllabi') switchCurrTab('syllabi');
+    } catch(e) {}
+});
+
+// ── Assignment table filter + sort ────────────────────────────────────────────
+function filterAssignments() {
+    const search   = (document.getElementById('searchAssign')?.value    || '').toLowerCase();
+    const currFilter = (document.getElementById('filterAssignCurr')?.value || '').toLowerCase();
+    const progFilter = (document.getElementById('filterAssignProg')?.value || '').toLowerCase();
+    document.querySelectorAll('#assignmentTable tbody tr').forEach(row => {
+        const currText = (row.dataset.curr || row.cells[0]?.textContent || '').toLowerCase().trim();
+        const progText = (row.dataset.prog || row.cells[1]?.textContent || '').toLowerCase().trim();
+        const matchSearch = !search    || currText.includes(search) || progText.includes(search);
+        const matchCurr   = !currFilter || currText === currFilter;
+        const matchProg   = !progFilter || progText === progFilter;
+        row.style.display = (matchSearch && matchCurr && matchProg) ? '' : 'none';
+    });
+}
+
+let _sortAssignAsc = true;
+function sortAssignTable() {
+    const tbody = document.querySelector('#assignmentTable tbody');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        const pa = (a.dataset.prog || a.cells[1]?.textContent || '').trim().toLowerCase();
+        const pb = (b.dataset.prog || b.cells[1]?.textContent || '').trim().toLowerCase();
+        return _sortAssignAsc ? pa.localeCompare(pb) : pb.localeCompare(pa);
+    });
+    _sortAssignAsc = !_sortAssignAsc;
+    rows.forEach(r => tbody.appendChild(r));
+    const btn = document.getElementById('sortAssignBtn');
+    if (btn) btn.innerHTML = `<i class="fas fa-sort-amount-${_sortAssignAsc ? 'down' : 'up'}-alt"></i> SORT: ${_sortAssignAsc ? 'A-Z' : 'Z-A'}`;
+}
+
+// ── Syllabi program filter ────────────────────────────────────────────────────
+function filterSyllabiByProgram(code) {
+    let anyVisible = false;
+    document.querySelectorAll('#syllabiList .curr-prog-section').forEach(sec => {
+        const show = (!code || code === 'All' || sec.dataset.programCode === code);
+        sec.style.display = show ? '' : 'none';
+        if (show) anyVisible = true;
+    });
+    const msg = document.getElementById('syllabiEmptyMsg');
+    if (msg) msg.style.display = (!code || code === 'All' || anyVisible) ? 'none' : 'block';
 }
 
 function editAssignment(id, prog, curr, year, sec) {
@@ -44,19 +91,43 @@ const _CURR_XLSX_ROUTE = '/admin/curriculum/export/xlsx';
 const _CURR_DATA_ROUTE = '/admin/curriculum/export/data';
 const _CURR_LIST_ROUTE = '/admin/curriculum/export/list';
 
-let _currExpPrograms   = [];
+let _currExpPrograms    = [];
 let _currExpSelectedIds = new Set();
-let _currExpLoaded     = false;
+let _currExpLoaded      = false;
+let _pendingFilterProgCode = null;
 
 // ── Modal open / close ────────────────────────────────────────────────────────
-async function openCurrExportModal() {
+async function openCurrExportModal(filterProgCode) {
+    _pendingFilterProgCode = (filterProgCode && filterProgCode !== 'All') ? filterProgCode : null;
+    // Pre-fill filename with program code when a specific program is filtered
+    if (_pendingFilterProgCode) {
+        const fnInput = document.getElementById('currExpFilename');
+        if (fnInput) fnInput.value = _pendingFilterProgCode + '_Curriculum';
+    } else {
+        const fnInput = document.getElementById('currExpFilename');
+        if (fnInput && !fnInput.value.trim()) fnInput.value = 'Curriculum_Export';
+    }
     document.getElementById('currExportModal').style.display = 'flex';
     _updateCurrExpFooter();
     if (!_currExpLoaded) {
         await _loadCurrExpList();
     } else {
         _renderCurrExpList();
+        if (_pendingFilterProgCode) {
+            _applyProgramFilter(_pendingFilterProgCode);
+            _pendingFilterProgCode = null;
+        }
     }
+}
+
+function _applyProgramFilter(progCode) {
+    _currExpSelectedIds.clear();
+    const prog = _currExpPrograms.find(p => p.program_code === progCode);
+    if (prog) {
+        prog.curricula.forEach(c => _currExpSelectedIds.add(c.curriculum_id));
+    }
+    _renderCurrExpList();
+    _updateCurrExpFooter();
 }
 function closeCurrExportModal() { document.getElementById('currExportModal').style.display = 'none'; }
 
@@ -70,6 +141,10 @@ async function _loadCurrExpList() {
         _currExpPrograms = await res.json();
         _currExpLoaded   = true;
         _renderCurrExpList();
+        if (_pendingFilterProgCode) {
+            _applyProgramFilter(_pendingFilterProgCode);
+            _pendingFilterProgCode = null;
+        }
     } catch (e) {
         listEl.innerHTML = `<div class="curr-exp-list-empty"><i class="fas fa-exclamation-triangle" style="color:#c00;margin-right:6px;"></i>Failed to load: ${e.message}</div>`;
     }
@@ -118,8 +193,8 @@ function _renderCurrExpList() {
               <input type="checkbox" class="curr-exp-curr-cb" id="cb_${c.curriculum_id}"
                 ${isSel ? 'checked' : ''}
                 onclick="event.stopPropagation();_toggleCurrItem(${c.curriculum_id},'${prog.program_code}')">
-              <span class="curr-exp-curr-label">C.Y ${c.curriculum_year}</span>
-              <span class="curr-exp-curr-code">${c.curriculum_code}</span>
+              <span class="curr-exp-curr-label">Curriculum Year ${c.curriculum_year}</span>
+              <span class="curr-exp-curr-code">${prog.program_code}</span>
             </div>`;
         });
         html += `</div></div>`;
@@ -256,8 +331,9 @@ function _showCurrExpToast(type, title, msg) {
     setTimeout(() => { toast.style.display = 'none'; }, 6000);
 }
 
-// ── Format generators ─────────────────────────────────────────────────────────
-function _currExportCSV(curricula, filename) {
+// ── Blob-returning format generators ──────────────────────────────────────────
+
+function _currCSVBlob(curricula) {
     const now = new Date().toLocaleString();
     const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [`"Curriculum Export"`, `"Generated: ${now}"`, `"Total Curricula: ${curricula.length}"`, ''];
@@ -278,23 +354,19 @@ function _currExportCSV(curricula, filename) {
         });
         lines.push('', '');
     });
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
-    a.click(); URL.revokeObjectURL(a.href);
+    return new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
 }
 
-async function _currExportXLSX(curricula, filename) {
+async function _currXLSXBlob(curricula) {
     const res = await fetch(_CURR_XLSX_ROUTE, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
     });
     if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
-    a.click(); URL.revokeObjectURL(a.href);
+    return await res.blob();
 }
 
-async function _currExportPDF(curricula, filename) {
+function _currPDFBlob(curricula) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const W   = 297;
@@ -334,8 +406,7 @@ async function _currExportPDF(curricula, filename) {
                     alternateRowStyles: { fillColor:[253,245,245] },
                     tableWidth: W - 20,
                     columnStyles: {
-                        0:{ cellWidth:32 },
-                        1:{ cellWidth:26 }, 2:{ cellWidth:20 },
+                        0:{ cellWidth:32 }, 1:{ cellWidth:26 }, 2:{ cellWidth:20 },
                         3:{ cellWidth:126 },
                         4:{ cellWidth:16,halign:'center' }, 5:{ cellWidth:16,halign:'center' },
                         6:{ cellWidth:22,halign:'center' }, 7:{ cellWidth:19,halign:'center' },
@@ -353,17 +424,20 @@ async function _currExportPDF(curricula, filename) {
         doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150);
         doc.text(`Page ${i} of ${total}`, 287, 206, { align:'right' });
     }
-    doc.save(filename + '.pdf');
+    return doc.output('blob');
 }
 
-async function _currExportDOCX(curricula, filename) {
+async function _currDOCXBlob(curricula) {
     const res = await fetch(_CURR_DOCX_ROUTE, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
     });
     if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'DOCX failed'));
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.docx' });
+    return await res.blob();
+}
+
+function _currTriggerDownload(blob, filename) {
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename });
     a.click(); URL.revokeObjectURL(a.href);
 }
 
@@ -395,24 +469,66 @@ async function currExecuteExport() {
         _hideCurrExpLoading(); btn.disabled = false;
         _showCurrExpToast('error', 'Data Fetch Failed', e.message); return;
     }
+
+    // Single file = direct download; multiple curricula or multiple formats = ZIP
+    const useZip = curricula.length > 1 || selectedFmts.length > 1;
     const errors = [];
-    for (const fmt of selectedFmts) {
-        _showCurrExpLoading(`Exporting ${fmt.toUpperCase()}`, `Processing ${curricula.length} curricul${curricula.length===1?'um':'a'}...`);
+
+    if (!useZip) {
+        // Single curriculum × single format → direct download
+        const fmt = selectedFmts[0];
+        _showCurrExpLoading(`Exporting ${fmt.toUpperCase()}`, curricula[0].program_name + '...');
         try {
-            if (fmt === 'csv')  _currExportCSV(curricula, filename);
-            if (fmt === 'xlsx') await _currExportXLSX(curricula, filename);
-            if (fmt === 'pdf')  await _currExportPDF(curricula, filename);
-            if (fmt === 'docx') await _currExportDOCX(curricula, filename);
-            await new Promise(r => setTimeout(r, 400));
+            let blob;
+            if (fmt === 'csv')  blob = _currCSVBlob(curricula);
+            if (fmt === 'xlsx') blob = await _currXLSXBlob(curricula);
+            if (fmt === 'pdf')  blob = _currPDFBlob(curricula);
+            if (fmt === 'docx') blob = await _currDOCXBlob(curricula);
+            if (blob) _currTriggerDownload(blob, filename + '.' + fmt);
         } catch (e) {
-            console.error(`Curriculum export ${fmt} error:`, e);
             errors.push(fmt.toUpperCase() + ': ' + e.message);
         }
+    } else {
+        // Multiple → ZIP; one file per curriculum per format
+        const zip = new JSZip();
+        for (const curr of curricula) {
+            const safeCode = (curr.program_code || curr.curriculum_code || 'CURR')
+                .replace(/[^a-zA-Z0-9_-]/g, '_');
+            const safeYear = (curr.curriculum_year || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+            const currFile = `${safeCode}_CY${safeYear}`;
+
+            for (const fmt of selectedFmts) {
+                _showCurrExpLoading(`Packaging ${fmt.toUpperCase()}`,
+                    `${curr.program_name} – ${curr.curriculum_year}…`);
+                try {
+                    let blob;
+                    if (fmt === 'csv')  blob = _currCSVBlob([curr]);
+                    if (fmt === 'xlsx') blob = await _currXLSXBlob([curr]);
+                    if (fmt === 'pdf')  blob = _currPDFBlob([curr]);
+                    if (fmt === 'docx') blob = await _currDOCXBlob([curr]);
+                    if (blob) zip.file(`${currFile}.${fmt}`, blob);
+                } catch (e) {
+                    errors.push(`${curr.program_name} ${fmt.toUpperCase()}: ` + e.message);
+                }
+                await new Promise(r => setTimeout(r, 150));
+            }
+        }
+        _showCurrExpLoading('Creating ZIP', 'Compressing all files…');
+        try {
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            _currTriggerDownload(zipBlob, filename + '.zip');
+        } catch (e) {
+            errors.push('ZIP: ' + e.message);
+        }
     }
+
     _hideCurrExpLoading(); btn.disabled = false;
     if (errors.length === 0) {
-        _showCurrExpToast('success', 'Export Complete', `${selectedFmts.length} file(s) downloaded successfully.`);
-    } else if (errors.length < selectedFmts.length) {
+        const msg = useZip
+            ? `${curricula.length} curricul${curricula.length===1?'um':'a'} × ${selectedFmts.length} format${selectedFmts.length===1?'':'s'} packaged into ZIP.`
+            : 'File downloaded successfully.';
+        _showCurrExpToast('success', 'Export Complete', msg);
+    } else if (errors.length < curricula.length * selectedFmts.length) {
         _showCurrExpToast('error', 'Partial Export', 'Some files failed: ' + errors.join('; '));
     } else {
         _showCurrExpToast('error', 'Export Failed', errors.join('; '));
@@ -537,18 +653,35 @@ function resetDocxColumnCustomization() {
 function updateDocxHiddenCol(index, val) { document.getElementById(`docx_h_col_${index}`).value = val; }
 
 // ── Import type selector ────────────────────────────────────────────────────
-function openImportTypeModal() { document.getElementById('importTypeModal').style.display = 'flex'; }
+let _preselectedProgram = '';   // captures the syllabi program filter when opening import
+
+function openImportTypeModal() {
+    const filter = document.getElementById('syllabiProgramFilter');
+    _preselectedProgram = (filter && filter.value && filter.value !== 'All') ? filter.value : '';
+    document.getElementById('importTypeModal').style.display = 'flex';
+}
 function closeImportTypeModal() { document.getElementById('importTypeModal').style.display = 'none'; }
+
+function _applyPreselectedProgram(selectId) {
+    if (!_preselectedProgram) return;
+    const sel = document.getElementById(selectId);
+    if (sel) sel.value = _preselectedProgram;
+}
 
 function openCsvImportModal() {
     closeImportTypeModal();
     document.getElementById('importModal').style.display = 'flex';
     resetColumnCustomization();
+    _applyPreselectedProgram('modalProgramCode');
 }
 
 function openImportModal() { openImportTypeModal(); }   // legacy alias
 function closeImportModal() {
     document.getElementById('importModal').style.display = 'none';
+}
+function backFromCsvModal() {
+    closeImportModal();
+    openImportTypeModal();
 }
 
 // ── Excel (.xlsx) import modal ──────────────────────────────────────────────
@@ -556,9 +689,14 @@ function openXlsxImportModal() {
     closeImportTypeModal();
     resetXlsxColumnCustomization();
     document.getElementById('xlsxImportModal').style.display = 'flex';
+    _applyPreselectedProgram('xlsxModalProgramCode');
 }
 function closeXlsxImportModal() {
     document.getElementById('xlsxImportModal').style.display = 'none';
+}
+function backFromXlsxModal() {
+    closeXlsxImportModal();
+    openImportTypeModal();
 }
 function updateXlsxYearLevelDropdown() {
     const progSelect = document.getElementById('xlsxModalProgramCode');
@@ -580,15 +718,18 @@ async function analyzeXlsxCurriculum() {
     const currYear  = document.getElementById('xlsxModalCurriculumYear').value.trim();
     const fileInput = document.getElementById('xlsxModalFileInput');
     const btn       = document.getElementById('xlsxAnalyzeBtn');
-    const errorBox  = document.getElementById('xlsxAnalyzeError');
-    errorBox.style.display = 'none';
+    _hideAnalyzeError('xlsxAnalyzeError');
 
-    if (!progCode) { errorBox.textContent = 'Please select a target program.'; errorBox.style.display = 'block'; return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { errorBox.textContent = 'Please enter a valid curriculum year (e.g. 2024-2025).'; errorBox.style.display = 'block'; return; }
-    if (!fileInput.files.length) { errorBox.textContent = 'Please select an Excel file.'; errorBox.style.display = 'block'; return; }
+    if (!progCode)  { _showAnalyzeError('xlsxAnalyzeError', 'Please select a target program.'); return; }
+    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { _showAnalyzeError('xlsxAnalyzeError', 'Please enter a valid curriculum year (e.g. 2024-2025).'); return; }
+    if (!fileInput.files.length) { _showAnalyzeError('xlsxAnalyzeError', 'Please select an Excel file.'); return; }
+
+    const validation = await _validateCurriculumFile(fileInput.files[0], 'xlsx');
+    if (!validation.valid) { _showAnalyzeError('xlsxAnalyzeError', validation.error); return; }
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    _importSource = 'Excel (XLSX)';
 
     const fd = new FormData();
     fd.append('file', fileInput.files[0]);
@@ -599,15 +740,16 @@ async function analyzeXlsxCurriculum() {
     try {
         const res  = await fetch('/admin/curriculum/import/xlsx/analyze', { method: 'POST', body: fd });
         const data = await res.json();
-        if (!res.ok || data.error) { errorBox.textContent = data.error || 'Server error.'; errorBox.style.display = 'block'; return; }
+        if (!res.ok || data.error) { _showAnalyzeError('xlsxAnalyzeError', data.error || 'Server error.'); return; }
+        const xlsxCheck = _validateExtractedCurriculum(data.subjects || []);
+        if (!xlsxCheck.valid) { _showAnalyzeError('xlsxAnalyzeError', xlsxCheck.error); return; }
         _pdfExtractedSubjects = data.subjects || [];
         _pdfProgCode = progCode;
         _pdfCurrYear = currYear;
         closeXlsxImportModal();
         _renderPdfReviewModal(data);
     } catch (err) {
-        errorBox.textContent = 'Network error: ' + err.message;
-        errorBox.style.display = 'block';
+        _showAnalyzeError('xlsxAnalyzeError', 'Network error: ' + err.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-search"></i> Analyze Excel';
@@ -620,9 +762,14 @@ function openPdfImportModal() {
     resetPdfColumnCustomization();
     document.getElementById('pdfAnalyzeError').style.display = 'none';
     document.getElementById('pdfImportModal').style.display = 'flex';
+    _applyPreselectedProgram('pdfProgramCode');
 }
 function closePdfImportModal() {
     document.getElementById('pdfImportModal').style.display = 'none';
+}
+function backFromPdfModal() {
+    closePdfImportModal();
+    openImportTypeModal();
 }
 
 // ── Word (.docx) upload modal ───────────────────────────────────────────────
@@ -631,9 +778,14 @@ function openDocxImportModal() {
     resetDocxColumnCustomization();
     document.getElementById('docxAnalyzeError').style.display = 'none';
     document.getElementById('docxImportModal').style.display = 'flex';
+    _applyPreselectedProgram('docxProgramCode');
 }
 function closeDocxImportModal() {
     document.getElementById('docxImportModal').style.display = 'none';
+}
+function backFromDocxModal() {
+    closeDocxImportModal();
+    openImportTypeModal();
 }
 
 async function analyzeCsvCurriculum() {
@@ -641,15 +793,18 @@ async function analyzeCsvCurriculum() {
     const currYear  = document.getElementById('modalCurriculumYear').value.trim();
     const fileInput = document.getElementById('modalFileInput');
     const btn       = document.getElementById('csvAnalyzeBtn');
-    const errorBox  = document.getElementById('csvAnalyzeError');
-    errorBox.style.display = 'none';
+    _hideAnalyzeError('csvAnalyzeError');
 
-    if (!progCode) { errorBox.textContent = 'Please select a target program.'; errorBox.style.display = 'block'; return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { errorBox.textContent = 'Please enter a valid curriculum year (e.g. 2024-2025).'; errorBox.style.display = 'block'; return; }
-    if (!fileInput.files.length) { errorBox.textContent = 'Please select a CSV file.'; errorBox.style.display = 'block'; return; }
+    if (!progCode) { _showAnalyzeError('csvAnalyzeError', 'Please select a target program.'); return; }
+    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { _showAnalyzeError('csvAnalyzeError', 'Please enter a valid curriculum year (e.g. 2024-2025).'); return; }
+    if (!fileInput.files.length) { _showAnalyzeError('csvAnalyzeError', 'Please select a CSV file.'); return; }
+
+    const validation = await _validateCurriculumFile(fileInput.files[0], 'csv');
+    if (!validation.valid) { _showAnalyzeError('csvAnalyzeError', validation.error); return; }
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    _importSource = 'CSV';
 
     const fd = new FormData();
     fd.append('file', fileInput.files[0]);
@@ -660,15 +815,16 @@ async function analyzeCsvCurriculum() {
     try {
         const res  = await fetch('/admin/curriculum/import/csv/analyze', { method: 'POST', body: fd });
         const data = await res.json();
-        if (!res.ok || data.error) { errorBox.textContent = data.error || 'Server error.'; errorBox.style.display = 'block'; return; }
+        if (!res.ok || data.error) { _showAnalyzeError('csvAnalyzeError', data.error || 'Server error.'); return; }
+        const csvCheck = _validateExtractedCurriculum(data.subjects || []);
+        if (!csvCheck.valid) { _showAnalyzeError('csvAnalyzeError', csvCheck.error); return; }
         _pdfExtractedSubjects = data.subjects || [];
         _pdfProgCode = progCode;
         _pdfCurrYear = currYear;
         closeImportModal();
         _renderPdfReviewModal(data);
     } catch (err) {
-        errorBox.textContent = 'Network error: ' + err.message;
-        errorBox.style.display = 'block';
+        _showAnalyzeError('csvAnalyzeError', 'Network error: ' + err.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-search"></i> Analyze CSV';
@@ -706,20 +862,171 @@ function updateYearLevelDropdown() {
     ylSelect.value = (currentVal <= maxYears) ? currentVal : "0";
 }
 
+// ── Pre-analysis file validation ─────────────────────────────────────────────
+
+const _MAGIC_PDF = [0x25, 0x50, 0x44, 0x46];   // %PDF
+const _MAGIC_ZIP = [0x50, 0x4B, 0x03, 0x04];   // PK\x03\x04 — XLSX and DOCX are ZIP-based
+
+const _MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;  // 50 MB
+
+function _readFileHeader(file, n) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = e => resolve(new Uint8Array(e.target.result));
+        r.onerror = () => reject(new Error('Cannot read file.'));
+        r.readAsArrayBuffer(file.slice(0, n));
+    });
+}
+
+function _readFileSample(file, n) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = e => resolve(e.target.result);
+        r.onerror = () => reject(new Error('Cannot read file.'));
+        r.readAsText(file.slice(0, n));
+    });
+}
+
+function _magicMatch(bytes, magic) {
+    for (let i = 0; i < magic.length; i++) {
+        if ((bytes[i] ?? -1) !== magic[i]) return false;
+    }
+    return true;
+}
+
+// Returns { valid: true } or { valid: false, error: '<message>' }
+async function _validateCurriculumFile(file, type) {
+    if (!file) return { valid: false, error: 'No file selected.' };
+
+    if (file.size === 0)
+        return { valid: false, error: 'Invalid curriculum file. The selected file is empty.' };
+
+    if (file.size > _MAX_IMPORT_FILE_BYTES)
+        return { valid: false, error: `File too large (${(file.size / 1048576).toFixed(1)} MB). Maximum is 50 MB.` };
+
+    const ext = file.name.toLowerCase().split('.').pop();
+
+    // Extension check
+    const extMap = { csv: 'csv', xlsx: 'xlsx', pdf: 'pdf', docx: 'docx' };
+    if (ext !== extMap[type])
+        return { valid: false, error: `Invalid curriculum file. Please select a valid .${extMap[type]} file.` };
+
+    try {
+        // Magic bytes — confirms actual binary format, not just a renamed file
+        if (type === 'pdf') {
+            const hdr = await _readFileHeader(file, 4);
+            if (!_magicMatch(hdr, _MAGIC_PDF))
+                return { valid: false, error: 'Invalid curriculum file. The file does not appear to be a real PDF document. Please upload the actual PDF file.' };
+        }
+
+        if (type === 'xlsx') {
+            const hdr = await _readFileHeader(file, 4);
+            if (!_magicMatch(hdr, _MAGIC_ZIP))
+                return { valid: false, error: 'Invalid curriculum file. The file does not appear to be a real Excel (.xlsx) document. Please upload the actual .xlsx file.' };
+        }
+
+        if (type === 'docx') {
+            const hdr = await _readFileHeader(file, 4);
+            if (!_magicMatch(hdr, _MAGIC_ZIP))
+                return { valid: false, error: 'Invalid curriculum file. The file does not appear to be a real Word (.docx) document. Please upload the actual .docx file.' };
+        }
+
+        if (type === 'csv') {
+            const sample = await _readFileSample(file, 2048);
+            if (!sample.trim())
+                return { valid: false, error: 'Invalid curriculum file. The CSV file is empty or contains no readable text.' };
+            const rows = sample.split('\n').filter(l => l.trim());
+            if (rows.length < 2)
+                return { valid: false, error: 'Invalid curriculum file. The CSV must contain a header row and at least one data row.' };
+        }
+    } catch (_e) {
+        return { valid: false, error: 'Could not read the file. It may be corrupted or locked by another application.' };
+    }
+
+    return { valid: true };
+}
+
+// Unified error display — shows icon + message; used by all four analyze functions
+function _showAnalyzeError(boxId, msg) {
+    const box = document.getElementById(boxId);
+    if (!box) return;
+    box.innerHTML = '';
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-exclamation-circle';
+    box.appendChild(icon);
+    const txt = document.createElement('span');
+    txt.textContent = msg;
+    box.appendChild(txt);
+    box.style.display = 'flex';
+}
+
+function _hideAnalyzeError(boxId) {
+    const box = document.getElementById(boxId);
+    if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+}
+
+// ── Post-extraction content validation ───────────────────────────────────────
+// Checks whether data returned by the server actually looks like curriculum subjects.
+// Catches "wrong file" situations (e.g. uploading an employee list as a curriculum).
+
+const _EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+const _PHONE_RE = /\b09\d{2}[-\s]?\d{3}[-\s]?\d{4}\b|\b\+63\d/;
+
+function _validateExtractedCurriculum(subjects) {
+    if (!subjects || subjects.length === 0)
+        return {
+            valid: false,
+            error: 'Invalid curriculum file. No curriculum subjects could be found in this file. Please select the correct curriculum document.'
+        };
+
+    // Email addresses anywhere in subject code / name / pre-req / co-req
+    // — strong signal that this is a contacts or employee file
+    const hasEmail = subjects.some(s =>
+        _EMAIL_RE.test(s.sc || '') || _EMAIL_RE.test(s.sn || '') ||
+        _EMAIL_RE.test(s.pre || '') || _EMAIL_RE.test(s.co || '')
+    );
+    if (hasEmail)
+        return {
+            valid: false,
+            error: 'Invalid curriculum file. The file appears to contain employee or personal records, not curriculum subjects. Please upload the correct curriculum document.'
+        };
+
+    // Phone numbers in any field — another employee-file signal
+    const hasPhone = subjects.some(s =>
+        _PHONE_RE.test(s.sc || '') || _PHONE_RE.test(s.sn || '') ||
+        _PHONE_RE.test(s.pre || '') || _PHONE_RE.test(s.co || '')
+    );
+    if (hasPhone)
+        return {
+            valid: false,
+            error: 'Invalid curriculum file. The file appears to contain employee or personal records, not curriculum subjects. Please upload the correct curriculum document.'
+        };
+
+    // Year levels must be 1–6; anything higher means the parser picked up
+    // a non-year-level number (e.g. a phone number fragment, an ID, a date)
+    const badYl = subjects.find(s => s.yl && (s.yl < 0 || s.yl > 6));
+    if (badYl)
+        return {
+            valid: false,
+            error: `Invalid curriculum file. An unrecognized year-level value (${badYl.yl}) was detected. This file does not appear to be a curriculum document. Please upload the correct file.`
+        };
+
+    return { valid: true };
+}
+
 // ── PDF Analysis & Review ───────────────────────────────────────────────────
 
 let _pdfExtractedSubjects = [];
 let _pdfProgCode = '';
 let _pdfCurrYear = '';
+let _importSource = 'File';   // tracks which file type was used for import
 
 async function analyzePdf() {
     const progCode  = document.getElementById('pdfProgramCode').value;
     const currYear  = document.getElementById('pdfCurriculumYear').value.trim();
     const fileInput = document.getElementById('pdfFileInput');
-    const errorBox  = document.getElementById('pdfAnalyzeError');
     const btn       = document.getElementById('pdfAnalyzeBtn');
-
-    errorBox.style.display = 'none';
+    _hideAnalyzeError('pdfAnalyzeError');
 
     if (!progCode) { _showPdfError('Please select a target program.'); return; }
     if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
@@ -728,8 +1035,12 @@ async function analyzePdf() {
     }
     if (!fileInput.files.length) { _showPdfError('Please select a PDF file to upload.'); return; }
 
+    const validation = await _validateCurriculumFile(fileInput.files[0], 'pdf');
+    if (!validation.valid) { _showPdfError(validation.error); return; }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    _importSource = 'PDF';
 
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
@@ -748,6 +1059,9 @@ async function analyzePdf() {
             return;
         }
 
+        const pdfCheck = _validateExtractedCurriculum(data.subjects || []);
+        if (!pdfCheck.valid) { _showPdfError(pdfCheck.error); return; }
+
         _pdfExtractedSubjects = data.subjects || [];
         _pdfProgCode = progCode;
         _pdfCurrYear = currYear;
@@ -762,20 +1076,14 @@ async function analyzePdf() {
     }
 }
 
-function _showPdfError(msg) {
-    const box = document.getElementById('pdfAnalyzeError');
-    box.textContent = msg;
-    box.style.display = 'block';
-}
+function _showPdfError(msg) { _showAnalyzeError('pdfAnalyzeError', msg); }
 
 async function analyzeDocx() {
     const progCode  = document.getElementById('docxProgramCode').value;
     const currYear  = document.getElementById('docxCurriculumYear').value.trim();
     const fileInput = document.getElementById('docxFileInput');
-    const errorBox  = document.getElementById('docxAnalyzeError');
     const btn       = document.getElementById('docxAnalyzeBtn');
-
-    errorBox.style.display = 'none';
+    _hideAnalyzeError('docxAnalyzeError');
 
     if (!progCode) { _showDocxError('Please select a target program.'); return; }
     if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
@@ -784,8 +1092,12 @@ async function analyzeDocx() {
     }
     if (!fileInput.files.length) { _showDocxError('Please select a Word (.docx) file to upload.'); return; }
 
+    const validation = await _validateCurriculumFile(fileInput.files[0], 'docx');
+    if (!validation.valid) { _showDocxError(validation.error); return; }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    _importSource = 'Word (DOCX)';
 
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
@@ -804,12 +1116,15 @@ async function analyzeDocx() {
             return;
         }
 
+        const docxCheck = _validateExtractedCurriculum(data.subjects || []);
+        if (!docxCheck.valid) { _showDocxError(docxCheck.error); return; }
+
         _pdfExtractedSubjects = data.subjects || [];
         _pdfProgCode = progCode;
         _pdfCurrYear = currYear;
 
         closeDocxImportModal();
-        _renderPdfReviewModal(data);   // reuse the same review modal
+        _renderPdfReviewModal(data);
     } catch (err) {
         _showDocxError('Network error: ' + err.message);
     } finally {
@@ -818,18 +1133,30 @@ async function analyzeDocx() {
     }
 }
 
-function _showDocxError(msg) {
-    const box = document.getElementById('docxAnalyzeError');
-    box.textContent = msg;
-    box.style.display = 'block';
-}
+function _showDocxError(msg) { _showAnalyzeError('docxAnalyzeError', msg); }
 
 function _renderPdfReviewModal(data) {
     const confidence = data.confidence || 0;
     const warnings   = data.warnings   || [];
     const rawText    = data.raw_text   || '';
     const banner     = document.getElementById('pdfReviewBanner');
-    const badgeClass = confidence >= 75 ? 'conf-high' : confidence >= 40 ? 'conf-medium' : 'conf-low';
+
+    // Populate header meta bar (program / year / source)
+    const meta = document.getElementById('pdfReviewMeta');
+    if (meta) {
+        const progLabel = (function() {
+            const sel = document.getElementById('syllabiProgramFilter');
+            if (!sel) return _pdfProgCode;
+            const opt = Array.from(sel.options).find(o => o.value === _pdfProgCode);
+            return opt ? opt.textContent.trim() : _pdfProgCode;
+        })();
+        meta.innerHTML = `
+            <span class="rev-meta-item"><i class="fas fa-graduation-cap"></i> ${_esc(progLabel)}</span>
+            <span class="rev-meta-sep">|</span>
+            <span class="rev-meta-item"><i class="fas fa-calendar-alt"></i> C.Y ${_esc(_pdfCurrYear)}</span>
+            <span class="rev-meta-sep">|</span>
+            <span class="rev-meta-item"><i class="fas fa-file-import"></i> ${_esc(_importSource)}</span>`;
+    }
 
     let warnHtml = warnings.length
         ? '<ul class="pdf-warn-list">' + warnings.map(w => `<li>${w}</li>`).join('') + '</ul>'
@@ -840,31 +1167,23 @@ function _renderPdfReviewModal(data) {
     if (confidence === 0 && rawText.trim()) {
         rawHtml = `
         <details class="pdf-raw-details">
-            <summary>Show raw text extracted from PDF (use this to manually enter subjects)</summary>
+            <summary>Show raw text extracted from file (use this to manually enter subjects)</summary>
             <pre class="pdf-raw-pre">${rawText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
         </details>`;
     } else if (confidence === 0 && !rawText.trim()) {
         rawHtml = `<div class="pdf-scanned-warn">
             <i class="fas fa-exclamation-triangle"></i>
-            No text could be read from this PDF. It may be a scanned image.
+            No text could be read from this file. It may be a scanned image.
             Please use a text-based PDF or export the curriculum as CSV instead.
         </div>`;
     }
 
-    banner.innerHTML = `
-        <div class="pdf-conf-row">
-            <span class="conf-badge ${badgeClass}">Extraction Confidence: ${confidence}%</span>
-            ${confidence < 75 ? '<span class="conf-note">Please review and correct the data below before importing.</span>' : ''}
-        </div>
-        ${warnHtml}
-        ${rawHtml}
-    `;
+    const reviewNote = confidence < 75
+        ? '<div class="conf-note" style="margin-bottom:6px;"><i class="fas fa-exclamation-circle" style="margin-right:5px;"></i>Please review and correct the extracted data below before importing.</div>'
+        : '';
 
-    // Subject count
-    document.getElementById('pdfReviewSubjectCount').textContent =
-        `${_pdfExtractedSubjects.length} subjects extracted`;
+    banner.innerHTML = `${reviewNote}${warnHtml}${rawHtml}`;
 
-    // Build table rows
     _rebuildReviewTable();
 
     document.getElementById('pdfReviewModal').style.display = 'flex';
@@ -898,65 +1217,110 @@ function _sortedWithIdx() {
 }
 
 function _rebuildReviewTable() {
-    const tbody = document.getElementById('pdfReviewTableBody');
-    tbody.innerHTML = '';
+    const wrapper = document.getElementById('pdfReviewTableWrapper');
+    wrapper.innerHTML = '';
     _groupIdxMap = {};
 
+    const total = _pdfExtractedSubjects.length;
+    document.getElementById('pdfReviewSubjectCount').textContent =
+        `${total} subject${total !== 1 ? 's' : ''} extracted`;
+
+    if (!total) {
+        wrapper.innerHTML = '<div class="rev-empty-state"><i class="fas fa-inbox"></i><p>No subjects extracted. Click <strong>Add Row</strong> to add manually.</p></div>';
+        return;
+    }
+
     const sorted = _sortedWithIdx();
-    let currentKey = null;
 
+    // Group: byYear[yl][sem] = [{s, origIdx}, ...]
+    const byYear = {};
     sorted.forEach(({ s, origIdx }) => {
-        const key = `${s.yl || 0}_${s.sem || 'A'}`;   // e.g. "1_A", "2_B"
-
-        // ── Insert group header when group changes ──────────────────────
-        if (key !== currentKey) {
-            currentKey = key;
-
-            // Collect all origIdxs for this group for bulk-move
-            const groupItems = sorted.filter(
-                ({ s: g }) => `${g.yl || 0}_${g.sem || 'A'}` === key
-            );
-            _groupIdxMap[key] = groupItems.map(item => item.origIdx);
-
-            const groupCount = groupItems.length;
-            const ylLabel  = s.yl ? (_YL_LABELS[s.yl] || `Year ${s.yl}`) : 'Unassigned';
-            const semLabel = _SEM_LABELS[s.sem] || s.sem || '';
-
-            // Build year-level options for the move-all selector
-            const ylOpts = [1, 2, 3, 4, 5]
-                .map(n => `<option value="${n}" ${s.yl == n ? 'selected' : ''}>${_YL_LABELS[n]}</option>`)
-                .join('');
-            const semOpts = `
-                <option value="A" ${s.sem === 'A' ? 'selected' : ''}>1st Semester</option>
-                <option value="B" ${s.sem === 'B' ? 'selected' : ''}>2nd Semester</option>
-                <option value="C" ${s.sem === 'C' ? 'selected' : ''}>Summer</option>`;
-
-            const hdr = document.createElement('tr');
-            hdr.className = 'rev-group-hdr';
-            hdr.innerHTML = `
-                <td colspan="11">
-                    <div class="rev-group-hdr-inner">
-                        <div class="rev-group-left">
-                            <span class="rev-group-title">${ylLabel} &mdash; ${semLabel}</span>
-                            <span class="rev-group-badge">${groupCount} subject${groupCount !== 1 ? 's' : ''}</span>
-                        </div>
-                        <div class="rev-group-move">
-                            <span class="rev-group-move-label">Move all to:</span>
-                            <select class="rev-group-sel" id="gYl_${key}">${ylOpts}</select>
-                            <select class="rev-group-sel" id="gSem_${key}">${semOpts}</select>
-                            <button type="button" class="btn-group-apply"
-                                onclick="_applyGroupMove('${key}')">Apply</button>
-                        </div>
-                    </div>
-                </td>`;
-            tbody.appendChild(hdr);
-        }
-
-        tbody.appendChild(_buildReviewRow(s, origIdx));
+        const yl  = s.yl  || 0;
+        const sem = s.sem || 'A';
+        if (!byYear[yl])      byYear[yl]      = {};
+        if (!byYear[yl][sem]) byYear[yl][sem] = [];
+        byYear[yl][sem].push({ s, origIdx });
+        const key = `${yl}_${sem}`;
+        if (!_groupIdxMap[key]) _groupIdxMap[key] = [];
+        _groupIdxMap[key].push(origIdx);
     });
 
-    document.getElementById('pdfReviewSubjectCount').textContent =
-        `${_pdfExtractedSubjects.length} subject${_pdfExtractedSubjects.length !== 1 ? 's' : ''} extracted`;
+    const yearLevels = Object.keys(byYear).map(Number).sort((a, b) => a - b);
+
+    for (const yl of yearLevels) {
+        const ylLabel = yl ? (_YL_LABELS[yl] || `Year ${yl}`) : 'Unassigned';
+        const sems    = Object.keys(byYear[yl]).sort((a, b) => (_SEM_ORDER[a] ?? 0) - (_SEM_ORDER[b] ?? 0));
+        const ylTotal = sems.reduce((n, s) => n + byYear[yl][s].length, 0);
+
+        // ── Year-level banner ──
+        const yearSection = document.createElement('div');
+        yearSection.className = 'rev-year-section';
+        yearSection.innerHTML = `
+            <div class="rev-year-banner">
+                <span class="rev-year-icon"><i class="fas fa-layer-group"></i></span>
+                <span class="rev-year-title">${ylLabel.toUpperCase()}</span>
+                <span class="rev-year-total">${ylTotal} subject${ylTotal !== 1 ? 's' : ''}</span>
+            </div>`;
+
+        for (const sem of sems) {
+            const semLabel = _SEM_LABELS[sem] || sem;
+            const rows     = byYear[yl][sem];
+            const key      = `${yl}_${sem}`;
+
+            // ── Semester sub-section ──
+            const semSection = document.createElement('div');
+            semSection.className = 'rev-sem-section';
+
+            // Semester header
+            const semHdr = document.createElement('div');
+            semHdr.className = 'rev-sem-header';
+            semHdr.innerHTML = `
+                <span class="rev-sem-title"><i class="fas fa-book-open"></i> ${semLabel}</span>
+                <div class="rev-sem-controls">
+                    <span class="rev-sem-count">${rows.length} subject${rows.length !== 1 ? 's' : ''}</span>
+                    <div class="rev-group-move">
+                        <span class="rev-group-move-label">Move all to:</span>
+                        <select class="rev-group-sel" id="gYl_${key}">
+                            ${[1,2,3,4,5].map(n => `<option value="${n}" ${n == yl ? 'selected' : ''}>${n}</option>`).join('')}
+                        </select>
+                        <select class="rev-group-sel" id="gSem_${key}">
+                            <option value="A" ${sem === 'A' ? 'selected' : ''}>1st</option>
+                            <option value="B" ${sem === 'B' ? 'selected' : ''}>2nd</option>
+                            <option value="C" ${sem === 'C' ? 'selected' : ''}>Sum</option>
+                        </select>
+                        <button type="button" class="btn-group-apply" onclick="_applyGroupMove('${key}')">Apply</button>
+                    </div>
+                </div>`;
+            semSection.appendChild(semHdr);
+
+            // Per-semester table with its own header row
+            const table  = document.createElement('table');
+            table.className = 'pdf-review-table rev-sem-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th class="th-code">Subject Code</th>
+                        <th class="th-name">Description</th>
+                        <th class="th-req">Pre-requisite</th>
+                        <th class="th-req">Co-requisite</th>
+                        <th class="th-num">Lec</th>
+                        <th class="th-num">Lab</th>
+                        <th class="th-num">Units</th>
+                        <th class="th-num">TH</th>
+                        <th class="th-yl">YL</th>
+                        <th class="th-sem">Sem</th>
+                        <th class="th-del"></th>
+                    </tr>
+                </thead>`;
+            const tbody = document.createElement('tbody');
+            rows.forEach(({ s, origIdx }) => tbody.appendChild(_buildReviewRow(s, origIdx)));
+            table.appendChild(tbody);
+            semSection.appendChild(table);
+            yearSection.appendChild(semSection);
+        }
+
+        wrapper.appendChild(yearSection);
+    }
 }
 
 // Bulk-move all subjects in a group to a new year level / semester
@@ -1048,14 +1412,65 @@ function closePdfReviewModal() {
     document.getElementById('pdfReviewModal').style.display = 'none';
 }
 
-function confirmPdfImport() {
+function backFromReviewModal() {
+    closePdfReviewModal();
+    // Re-open the originating import modal (file input still populated — user can re-analyze or adjust)
+    switch (_importSource) {
+        case 'CSV':
+            document.getElementById('importModal').style.display = 'flex';
+            break;
+        case 'Excel (XLSX)':
+            document.getElementById('xlsxImportModal').style.display = 'flex';
+            break;
+        case 'PDF':
+            document.getElementById('pdfImportModal').style.display = 'flex';
+            break;
+        case 'Word (DOCX)':
+            document.getElementById('docxImportModal').style.display = 'flex';
+            break;
+        default:
+            openImportTypeModal();
+    }
+}
+
+async function confirmPdfImport() {
     const valid = _pdfExtractedSubjects.filter(s => s.sc && s.sc.trim());
     if (!valid.length) {
         alert('No valid subjects to import. Each row must have a Subject Code.');
         return;
     }
-    document.getElementById('pdfConfirmProg').value  = _pdfProgCode;
-    document.getElementById('pdfConfirmYear').value  = _pdfCurrYear;
-    document.getElementById('pdfConfirmData').value  = JSON.stringify(valid);
+
+    try {
+        const res  = await fetch(`/admin/curriculum/check-duplicate?program_code=${encodeURIComponent(_pdfProgCode)}&curriculum_year=${encodeURIComponent(_pdfCurrYear)}`);
+        const data = await res.json();
+        if (data.exists) {
+            const msg = document.getElementById('duplicateCurrMsg');
+            if (msg) msg.textContent = `A curriculum for ${_pdfProgCode} C.Y ${_pdfCurrYear} already exists in the system.`;
+            document.getElementById('duplicateCurrModal').style.display = 'flex';
+            return;
+        }
+    } catch (_e) {
+        // Network error — proceed anyway; server will catch duplicates
+    }
+
+    _doImportConfirm(false);
+}
+
+function closeDuplicateCurrModal() {
+    document.getElementById('duplicateCurrModal').style.display = 'none';
+}
+
+function proceedWithCurrOverride() {
+    closeDuplicateCurrModal();
+    _doImportConfirm(true);
+}
+
+function _doImportConfirm(override) {
+    const valid = _pdfExtractedSubjects.filter(s => s.sc && s.sc.trim());
+    document.getElementById('pdfConfirmProg').value     = _pdfProgCode;
+    document.getElementById('pdfConfirmYear').value     = _pdfCurrYear;
+    document.getElementById('pdfConfirmData').value     = JSON.stringify(valid);
+    document.getElementById('pdfConfirmSource').value   = _importSource;
+    document.getElementById('pdfConfirmOverride').value = override ? '1' : '0';
     document.getElementById('pdfConfirmForm').submit();
 }

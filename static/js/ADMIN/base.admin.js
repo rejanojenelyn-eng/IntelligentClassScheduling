@@ -9,6 +9,15 @@
             }
         });
 
+        function toggleDropdown(event, menuId, arrowId) {
+            event.preventDefault();
+            event.stopPropagation();
+            const menu  = document.getElementById(menuId);
+            const arrow = document.getElementById(arrowId);
+            if (menu)  menu.classList.toggle('show-submenu');
+            if (arrow) arrow.classList.toggle('rotated');
+        }
+
         // --- LOGOUT MODAL ---
         function openLogoutModal(e) {
             if (e) e.preventDefault();

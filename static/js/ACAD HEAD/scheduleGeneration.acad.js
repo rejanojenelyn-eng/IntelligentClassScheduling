@@ -543,8 +543,37 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    btnManualEditor.addEventListener('click', () => {
-        window.location.href = MANUAL_EDITOR_URL;
+    btnManualEditor.addEventListener('click', async () => {
+        if (!currentScheduleData.length) {
+            window.location.href = MANUAL_EDITOR_URL;
+            return;
+        }
+        const ctx = getContext();
+
+        btnManualEditor.disabled = true;
+        btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+        try {
+            const res = await fetch('/api/schedule/save-draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    batch_id:      currentBatchId,
+                    schedule_data: currentScheduleData,
+                    context:       ctx,
+                }),
+            });
+            const data = await res.json();
+            if (!data.success) {
+                await showInfo('Warning', 'Could not auto-save draft. The editor will still open.', 'error');
+            }
+        } catch (e) {
+            // proceed anyway
+        }
+
+        const url = MANUAL_EDITOR_URL
+            + `?mode=program&prog=${encodeURIComponent(ctx.program)}&yl=${encodeURIComponent(ctx.yearLevel)}&ay=${encodeURIComponent(ctx.acadYear)}&sem=${encodeURIComponent(ctx.term)}`;
+        window.location.href = url;
     });
 
     btnApprove.addEventListener('click', async () => {

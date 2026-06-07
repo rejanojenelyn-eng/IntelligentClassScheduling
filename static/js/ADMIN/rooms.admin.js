@@ -1,80 +1,400 @@
-let activeSidebarBuilding = "";
+// ── Delete confirmation modal ─────────────────────────────────────────────────
+let _pendingDeleteFn = null;
 
-function openModal(id) { document.getElementById(id).style.display = 'flex'; }
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-
-function toggleAvailabilityRow() {
-    const row = document.getElementById('availabilityRow');
-    const banner = document.getElementById('availableBanner');
-    row.classList.toggle('active');
-    banner.style.display = row.classList.contains('active') ? 'block' : 'none';
+function _showDeleteConfirm(title, bodyHtml, onConfirm) {
+    document.getElementById('delConfirmTitle').textContent = title;
+    document.getElementById('delConfirmMsg').innerHTML    = bodyHtml;
+    _pendingDeleteFn = onConfirm;
+    const btn = document.getElementById('btnDeleteConfirm');
+    if (btn) btn.disabled = false;
+    openRoomModal('modalDeleteConfirm');
+}
+function _closeDeleteConfirm() {
+    closeRoomModal('modalDeleteConfirm');
+    _pendingDeleteFn = null;
+}
+function _confirmDeleteAction() {
+    const btn = document.getElementById('btnDeleteConfirm');
+    if (btn) btn.disabled = true;
+    const fn = _pendingDeleteFn;
+    _pendingDeleteFn = null;
+    closeRoomModal('modalDeleteConfirm');
+    if (fn) fn();
 }
 
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+function openRoomModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'flex';
+    // clear any previous errors
+    el && el.querySelectorAll('.rm-error').forEach(e => { e.style.display = 'none'; e.textContent = ''; });
+}
+function closeRoomModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+    el && el.querySelectorAll('.rm-error').forEach(e => { e.style.display = 'none'; });
+}
+
+// legacy aliases (sidebar btn-dark-add still uses openModal in some places)
+function openModal(id)  { openRoomModal(id); }
+function closeModal(id) { closeRoomModal(id); }
+
+function _rmErr(errId, msg) {
+    const el = document.getElementById(errId);
+    if (!el) return;
+    el.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${msg}`;
+    el.style.display = 'flex';
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function _rmToast(type, title, msg) {
+    const t  = document.getElementById('roomCrudToast');
+    if (!t) return;
+    t.className = `rm-toast rm-${type}`;
+    document.getElementById('roomCrudToastIcon').innerHTML =
+        type === 'success' ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
+    document.getElementById('roomCrudToastTitle').textContent = title;
+    document.getElementById('roomCrudToastMsg').textContent   = msg;
+    requestAnimationFrame(() => t.classList.add('rm-show'));
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => t.classList.remove('rm-show'), 4000);
+}
+
+// ── Sidebar filter ────────────────────────────────────────────────────────────
+let _activeSidebarBldg = '';
+
+function filterBySidebar(buildingName) {
+    _activeSidebarBldg = buildingName.toUpperCase();
+    document.querySelectorAll('.btn-building').forEach(b => b.classList.remove('active'));
+    const target = buildingName === ''
+        ? document.getElementById('bldgBtnAll')
+        : document.querySelector(`.btn-building[data-bldg-name="${buildingName}"]`);
+    if (target) target.classList.add('active');
+    document.getElementById('filterBuilding').value = '';
+    _applyRoomFilter();
+}
+
+function filterRoomTable() {
+    _activeSidebarBldg = '';
+    document.querySelectorAll('.btn-building').forEach(b => b.classList.remove('active'));
+    document.getElementById('bldgBtnAll')?.classList.add('active');
+    _applyRoomFilter();
+}
+
+function _applyRoomFilter() {
+    const search   = (document.getElementById('searchRoom')?.value   || '').toUpperCase();
+    const bldgSel  = (document.getElementById('filterBuilding')?.value || '').toUpperCase();
+    const typeSel  = (document.getElementById('filterType')?.value    || '').toUpperCase();
+    const bldgFilter = bldgSel !== '' ? bldgSel : _activeSidebarBldg;
+
+    document.querySelectorAll('#roomTable tbody tr').forEach(tr => {
+        const name  = (tr.querySelector('.td-room-name')?.textContent  || '').toUpperCase();
+        const type  = (tr.querySelector('.td-room-type')?.textContent  || '').toUpperCase();
+        const bldg  = (tr.querySelector('.td-building')?.textContent   || '').toUpperCase();
+        const show  = name.includes(search)
+            && (typeSel   === '' || type === typeSel)
+            && (bldgFilter === '' || bldg === bldgFilter);
+        tr.style.display = show ? '' : 'none';
+    });
+}
+
+function toggleAvailabilityRow() {
+    const row    = document.getElementById('availabilityRow');
+    const banner = document.getElementById('availableBanner');
+    row.classList.toggle('active');
+    if (banner) banner.style.display = row.classList.contains('active') ? 'block' : 'none';
+}
+
+// ── Building right-click context menu ────────────────────────────────────────
 function showBuildingMenu(e, id, name) {
     e.preventDefault();
     const menu = document.getElementById('buildingMenu');
     menu.style.display = 'block';
-    menu.style.left = e.pageX + 'px';
-    menu.style.top = e.pageY + 'px';
+    menu.style.left    = e.pageX + 'px';
+    menu.style.top     = e.pageY + 'px';
 
-    document.getElementById('ctxEditBldg').onclick = function () {
-        document.getElementById('edit_bldg_id').value = id;
+    document.getElementById('ctxEditBldg').onclick = () => {
+        document.getElementById('edit_bldg_id').value   = id;
         document.getElementById('edit_bldg_name').value = name;
-        openModal('modalEditBldg');
+        menu.style.display = 'none';
+        openRoomModal('modalEditBldg');
     };
-
-    document.getElementById('ctxDeleteBldg').onclick = function () {
-        document.getElementById('del_bldg_name_display').innerText = name;
-        document.getElementById('confirmBldgDeleteLink').href = "/admin/delete_building/" + id;
-        openModal('modalDeleteBldg');
+    document.getElementById('ctxDeleteBldg').onclick = () => {
+        menu.style.display = 'none';
+        doDeleteBuilding(id, name);
     };
 }
+window.addEventListener('click', () => {
+    const m = document.getElementById('buildingMenu');
+    if (m) m.style.display = 'none';
+});
 
-window.addEventListener('click', () => { document.getElementById('buildingMenu').style.display = 'none'; });
-
-function openEditModal(id, name, type, capacity, bldgId) {
-    document.getElementById('edit_room_id').value = id;
-    document.getElementById('edit_room_name').value = name;
-    document.getElementById('edit_room_type').value = type;
+// ── Open Edit Room Modal ──────────────────────────────────────────────────────
+function openEditRoomModal(id, name, type, capacity, bldgId) {
+    document.getElementById('edit_room_id').value       = id;
+    document.getElementById('edit_room_name').value     = name;
+    document.getElementById('edit_room_type').value     = type;
     document.getElementById('edit_room_capacity').value = capacity;
-    document.getElementById('edit_room_bldg_id').value = bldgId;
-    openModal('modalEditRoom');
+    document.getElementById('edit_room_bldg_id').value  = bldgId;
+    openRoomModal('modalEditRoom');
+}
+// legacy alias
+function openEditModal(id, name, type, capacity, bldgId) {
+    openEditRoomModal(id, name, type, capacity, bldgId);
 }
 
-function confirmDelete(id, name) {
-    document.getElementById('del_room_name').innerText = name;
-    document.getElementById('confirmDeleteLink').href = "/admin/delete_room/" + id;
-    openModal('modalDeleteRoom');
+// ── ADD BUILDING ──────────────────────────────────────────────────────────────
+async function submitAddBuilding() {
+    const name = (document.getElementById('inp_bldg_name')?.value || '').trim();
+    if (!name) { _rmErr('errBldg', 'Building name is required.'); return; }
+
+    const btn = document.getElementById('btnAddBldg');
+    btn.disabled = true;
+    try {
+        const res  = await fetch('/admin/api/add_building', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!data.success) { _rmErr('errBldg', data.error || 'Failed to add building.'); return; }
+        closeRoomModal('modalBldg');
+        document.getElementById('inp_bldg_name').value = '';
+        _domAddBuildingBtn(data.buildingid, data.buildingname);
+        _addBldgToDropdowns(data.buildingid, data.buildingname);
+        _rmToast('success', 'Building Added', `"${data.buildingname}" added successfully.`);
+    } catch { _rmErr('errBldg', 'Network error. Please try again.'); }
+    finally { btn.disabled = false; }
 }
 
-function filterBySidebar(buildingName) {
-    activeSidebarBuilding = buildingName.toUpperCase();
-    let buttons = document.querySelectorAll('.btn-building');
-    buttons.forEach(btn => btn.classList.remove('active'));
-    if (window.event) window.event.target.classList.add('active');
-    document.getElementById("filterBuilding").value = "";
-    filterRoomTable();
+// ── EDIT BUILDING ─────────────────────────────────────────────────────────────
+async function submitEditBuilding() {
+    const bldg_id = document.getElementById('edit_bldg_id')?.value;
+    const name    = (document.getElementById('edit_bldg_name')?.value || '').trim();
+    if (!name) { _rmErr('errEditBldg', 'Building name is required.'); return; }
+
+    const btn = document.getElementById('btnEditBldg');
+    btn.disabled = true;
+    try {
+        const res  = await fetch('/admin/api/edit_building', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bldg_id: parseInt(bldg_id), name }),
+        });
+        const data = await res.json();
+        if (!data.success) { _rmErr('errEditBldg', data.error || 'Failed to rename.'); return; }
+        closeRoomModal('modalEditBldg');
+        _domUpdateBuildingName(data.buildingid, data.buildingname);
+        _rmToast('success', 'Building Renamed', `Renamed to "${data.buildingname}".`);
+    } catch { _rmErr('errEditBldg', 'Network error. Please try again.'); }
+    finally { btn.disabled = false; }
 }
 
-function filterRoomTable() {
-    let search = document.getElementById("searchRoom").value.toUpperCase();
-    let bldgSelect = document.getElementById("filterBuilding").value.toUpperCase();
-    let typeSelect = document.getElementById("filterType").value.toUpperCase();
-    let buildingFilter = bldgSelect !== "" ? bldgSelect : activeSidebarBuilding;
-    let tr = document.getElementById("roomTable").getElementsByTagName("tr");
+// ── ADD ROOM ──────────────────────────────────────────────────────────────────
+async function submitAddRoom() {
+    const name     = (document.getElementById('inp_room_name')?.value  || '').trim();
+    const rtype    =  document.getElementById('inp_room_type')?.value  || 'Lecture';
+    const capacity =  document.getElementById('inp_room_cap')?.value;
+    const bldg_id  =  document.getElementById('inp_room_bldg')?.value;
 
-    for (let i = 1; i < tr.length; i++) {
-        let roomName = tr[i].querySelector(".td-room-name").textContent.toUpperCase();
-        let roomType = tr[i].querySelector(".td-room-type").textContent.toUpperCase();
-        let building = tr[i].querySelector(".td-building").textContent.toUpperCase();
-        let matchSearch = roomName.indexOf(search) > -1;
-        let matchType = typeSelect === "" || roomType === typeSelect;
-        let matchBldg = buildingFilter === "" || building === buildingFilter;
-        tr[i].style.display = (matchSearch && matchType && matchBldg) ? "" : "none";
+    if (!name)     { _rmErr('errRoom', 'Room number is required.'); return; }
+    if (!capacity) { _rmErr('errRoom', 'Capacity is required.'); return; }
+    if (!bldg_id)  { _rmErr('errRoom', 'Please select a building.'); return; }
+
+    const btn = document.getElementById('btnAddRoom');
+    btn.disabled = true;
+    try {
+        const res  = await fetch('/admin/api/add_room', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_name: name, room_type: rtype, capacity: parseInt(capacity), bldg_id: parseInt(bldg_id) }),
+        });
+        const data = await res.json();
+        if (!data.success) { _rmErr('errRoom', data.error || 'Failed to add room.'); return; }
+        closeRoomModal('modalRoom');
+        document.getElementById('inp_room_name').value = '';
+        document.getElementById('inp_room_cap').value  = '';
+        _domAddRoomRow(data);
+        _adjustStat('statRooms', 1);
+        _adjustStat(data.roomtype === 'Laboratory' ? 'statLabs' : 'statLec', 1);
+        _rmToast('success', 'Room Added', `Room "${data.roomname}" added successfully.`);
+    } catch { _rmErr('errRoom', 'Network error. Please try again.'); }
+    finally { btn.disabled = false; }
+}
+
+// ── EDIT ROOM ─────────────────────────────────────────────────────────────────
+async function submitEditRoom() {
+    const room_id  =  document.getElementById('edit_room_id')?.value;
+    const name     = (document.getElementById('edit_room_name')?.value     || '').trim();
+    const rtype    =  document.getElementById('edit_room_type')?.value     || 'Lecture';
+    const capacity =  document.getElementById('edit_room_capacity')?.value;
+    const bldg_id  =  document.getElementById('edit_room_bldg_id')?.value;
+
+    if (!name) { _rmErr('errEditRoom', 'Room number is required.'); return; }
+
+    const btn = document.getElementById('btnEditRoom');
+    btn.disabled = true;
+    try {
+        const res  = await fetch('/admin/api/edit_room', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_id: parseInt(room_id), room_name: name, room_type: rtype,
+                                   capacity: parseInt(capacity), bldg_id: parseInt(bldg_id) }),
+        });
+        const data = await res.json();
+        if (!data.success) { _rmErr('errEditRoom', data.error || 'Failed to update room.'); return; }
+        closeRoomModal('modalEditRoom');
+        _domUpdateRoomRow(data);
+        _rmToast('success', 'Room Updated', `Room "${data.roomname}" updated.`);
+    } catch { _rmErr('errEditRoom', 'Network error. Please try again.'); }
+    finally { btn.disabled = false; }
+}
+
+// ── DELETE ROOM ───────────────────────────────────────────────────────────────
+function doDeleteRoom(roomId, roomName) {
+    _showDeleteConfirm(
+        'Delete Room',
+        `Are you sure you want to delete room <strong>${roomName}</strong>?<br>` +
+        `This will permanently remove it from the system.`,
+        async () => {
+            try {
+                const res  = await fetch('/admin/api/delete_room', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_id: roomId }),
+                });
+                const data = await res.json();
+                if (!data.success) { _rmToast('error', 'Delete Failed', data.error || 'Could not delete room.'); return; }
+                const tr    = document.querySelector(`#roomTable tr[data-room-id="${roomId}"]`);
+                const rtype = tr?.querySelector('.td-room-type')?.textContent || '';
+                tr?.remove();
+                _adjustStat('statRooms', -1);
+                _adjustStat(rtype === 'Laboratory' ? 'statLabs' : 'statLec', -1);
+                _rmToast('success', 'Room Deleted', `"${roomName}" removed.`);
+            } catch { _rmToast('error', 'Error', 'Network error. Please try again.'); }
+        }
+    );
+}
+// legacy alias
+function confirmDelete(id, name) { doDeleteRoom(id, name); }
+
+// ── DELETE BUILDING ───────────────────────────────────────────────────────────
+function doDeleteBuilding(bldgId, bldgName) {
+    _showDeleteConfirm(
+        'Delete Building',
+        `Are you sure you want to delete <strong>${bldgName}</strong>?<br>` +
+        `All rooms in this building will be permanently removed as well.`,
+        async () => {
+            try {
+                const res  = await fetch('/admin/api/delete_building', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bldg_id: bldgId }),
+                });
+                const data = await res.json();
+                if (!data.success) { _rmToast('error', 'Delete Failed', data.error || 'Could not delete building.'); return; }
+                document.querySelector(`.btn-building[data-bldg-id="${bldgId}"]`)?.remove();
+                document.querySelectorAll(`select option[value="${bldgId}"]`).forEach(o => o.remove());
+                const removed = document.querySelectorAll(`#roomTable tr[data-building-id="${bldgId}"]`);
+                let labs = 0, lec = 0;
+                removed.forEach(tr => {
+                    const t = tr.querySelector('.td-room-type')?.textContent || '';
+                    t === 'Laboratory' ? labs++ : lec++;
+                    tr.remove();
+                });
+                _adjustStat('statRooms', -(labs + lec));
+                _adjustStat('statLabs', -labs);
+                _adjustStat('statLec',  -lec);
+                filterBySidebar('');
+                _rmToast('success', 'Building Deleted', `"${bldgName}" and its rooms removed.`);
+            } catch { _rmToast('error', 'Error', 'Network error. Please try again.'); }
+        }
+    );
+}
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+function _domAddBuildingBtn(id, name) {
+    const scroll = document.getElementById('bldgListScroll');
+    if (!scroll) return;
+    const btn = document.createElement('button');
+    btn.className          = 'btn-building';
+    btn.dataset.bldgId     = id;
+    btn.dataset.bldgName   = name;
+    btn.textContent        = name;
+    btn.onclick            = () => filterBySidebar(name);
+    btn.setAttribute('oncontextmenu', `showBuildingMenu(event,${id},'${name.replace(/'/g,"\\'")}');return false;`);
+    scroll.appendChild(btn);
+}
+
+function _domUpdateBuildingName(id, newName) {
+    const btn = document.querySelector(`.btn-building[data-bldg-id="${id}"]`);
+    if (btn) {
+        btn.textContent      = newName;
+        btn.dataset.bldgName = newName;
+        btn.onclick          = () => filterBySidebar(newName);
+        btn.setAttribute('oncontextmenu', `showBuildingMenu(event,${id},'${newName.replace(/'/g,"\\'")}');return false;`);
     }
+    document.querySelectorAll(`select option[value="${id}"]`).forEach(o => o.textContent = newName);
+    document.querySelectorAll(`#roomTable tr[data-building-id="${id}"] .td-building`).forEach(td => {
+        td.textContent = newName;
+    });
 }
 
-// ══ Room Export Engine ══════════════════════════════════════════════════════
+function _addBldgToDropdowns(id, name) {
+    ['filterBuilding', 'inp_room_bldg', 'edit_room_bldg_id'].forEach(selId => {
+        const sel = document.getElementById(selId);
+        if (sel) sel.appendChild(new Option(name, id));
+    });
+}
+
+function _domAddRoomRow(r) {
+    const tbody = document.querySelector('#roomTable tbody');
+    if (!tbody) return;
+    const tr  = document.createElement('tr');
+    tr.dataset.roomId     = r.roomid;
+    tr.dataset.buildingId = r.buildingid;
+    tr.innerHTML = `
+        <td class="td-room-name" style="font-weight:700;">${r.roomname}</td>
+        <td class="td-room-type">${r.roomtype}</td>
+        <td class="td-room-cap">${r.roomcapacity}</td>
+        <td class="td-building">${r.buildingname}</td>
+        <td>
+            <div class="action-btns-wrapper" style="justify-content:center;">
+                <button class="btn-action view" title="View"
+                    onclick="window.location.href='/room/view/${r.roomid}'">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="btn-action edit" title="Edit"
+                    onclick="openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid})">
+                    <i class="fas fa-pen"></i>
+                </button>
+                <button class="btn-action delete" title="Delete"
+                    onclick="doDeleteRoom(${r.roomid},'${_esc(r.roomname)}')">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </td>`;
+    tbody.appendChild(tr);
+}
+
+function _domUpdateRoomRow(r) {
+    const tr = document.querySelector(`#roomTable tr[data-room-id="${r.roomid}"]`);
+    if (!tr) return;
+    tr.dataset.buildingId = r.buildingid;
+    tr.querySelector('.td-room-name').textContent = r.roomname;
+    tr.querySelector('.td-room-type').textContent = r.roomtype;
+    tr.querySelector('.td-room-cap').textContent  = r.roomcapacity;
+    tr.querySelector('.td-building').textContent  = r.buildingname;
+    const editBtn = tr.querySelector('.btn-action.edit');
+    if (editBtn) editBtn.setAttribute('onclick',
+        `openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid})`);
+    const delBtn = tr.querySelector('.btn-action.delete');
+    if (delBtn) delBtn.setAttribute('onclick', `doDeleteRoom(${r.roomid},'${_esc(r.roomname)}')`);
+}
+
+function _esc(s) { return String(s || '').replace(/'/g, "\\'").replace(/"/g, '\\"'); }
+
+function _adjustStat(id, delta) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = Math.max(0, parseInt(el.textContent || 0) + delta);
+}
+
+// ══ Room Export Engine (unchanged from original) ══════════════════════════════
 
 const _ROOM_DOCX_ROUTE  = '/admin/rooms/export/docx';
 const _ROOM_XLSX_ROUTE  = '/admin/rooms/export/xlsx';
@@ -116,8 +436,7 @@ function _renderRoomExpList() {
     const search = (document.getElementById('roomExpSearch')?.value || '').toUpperCase();
     const listEl = document.getElementById('roomExpBldgList');
     if (!listEl) return;
-    const matched = _roomExpBuildings.filter(b =>
-        !search || b.buildingname.toUpperCase().includes(search));
+    const matched = _roomExpBuildings.filter(b => !search || b.buildingname.toUpperCase().includes(search));
     if (!matched.length) {
         listEl.innerHTML = '<div class="room-exp-bldg-empty">No buildings match your search.</div>';
         return;
@@ -137,16 +456,14 @@ function _renderRoomExpList() {
 
 function _toggleRoomBldg(id) {
     _roomExpSelectedIds.has(id) ? _roomExpSelectedIds.delete(id) : _roomExpSelectedIds.add(id);
-    _renderRoomExpList();
-    _updateRoomExpFooter();
+    _renderRoomExpList(); _updateRoomExpFooter();
 }
 function _toggleRoomExpSelectAll(checked) {
     _roomExpBuildings.forEach(b => checked ? _roomExpSelectedIds.add(b.buildingid) : _roomExpSelectedIds.delete(b.buildingid));
-    _renderRoomExpList();
-    _updateRoomExpFooter();
+    _renderRoomExpList(); _updateRoomExpFooter();
 }
 function _updateRoomExpSelCount() {
-    const n  = _roomExpSelectedIds.size;
+    const n = _roomExpSelectedIds.size;
     const allCb = document.getElementById('roomExpSelectAll');
     if (allCb) {
         const total = _roomExpBuildings.length;
@@ -156,44 +473,31 @@ function _updateRoomExpSelCount() {
     const roomCount = _roomExpBuildings
         .filter(b => _roomExpSelectedIds.has(b.buildingid))
         .reduce((s, b) => s + (b.room_count || 0), 0);
-    const selEl = document.getElementById('roomExpSelCount');
-    if (selEl) selEl.textContent = n;
-    const rcEl = document.getElementById('roomExpRoomCount');
-    if (rcEl) rcEl.textContent = roomCount;
+    const selEl = document.getElementById('roomExpSelCount');  if (selEl) selEl.textContent = n;
+    const rcEl  = document.getElementById('roomExpRoomCount'); if (rcEl)  rcEl.textContent  = roomCount;
 }
 
-function _roomToggleFmtCard(el) {
-    el.classList.toggle('selected');
-    _syncRoomFmtAllBtn();
-    _updateRoomExpFooter();
-}
+function _roomToggleFmtCard(el) { el.classList.toggle('selected'); _syncRoomFmtAllBtn(); _updateRoomExpFooter(); }
 function _roomToggleAllFmts() {
     const cards  = document.querySelectorAll('#roomExportModal .room-exp-fmt-card');
     const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
     cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
-    _syncRoomFmtAllBtn();
-    _updateRoomExpFooter();
+    _syncRoomFmtAllBtn(); _updateRoomExpFooter();
 }
 function _syncRoomFmtAllBtn() {
-    const btn = document.getElementById('roomExpFmtAllBtn');
-    if (!btn) return;
-    const allSel = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card'))
-        .every(c => c.classList.contains('selected'));
+    const btn = document.getElementById('roomExpFmtAllBtn'); if (!btn) return;
+    const allSel = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card')).every(c => c.classList.contains('selected'));
     btn.textContent = allSel ? 'Deselect All Formats' : 'Select All Formats';
 }
 
 function _updateRoomExpFooter() {
-    const fmts = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card.selected'))
-        .map(c => c.dataset.format.toUpperCase());
-    const n  = _roomExpSelectedIds.size;
-    const nf = fmts.length;
+    const fmts = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card.selected')).map(c => c.dataset.format.toUpperCase());
+    const n = _roomExpSelectedIds.size, nf = fmts.length;
     const btn = document.getElementById('roomExpBtnLabel');
     if (btn) btn.textContent = n > 0 ? `Export ${n} Building${n === 1 ? '' : 's'}` : 'Export';
     const sumEl = document.getElementById('roomExpSummaryText');
     if (sumEl) {
-        const roomCount = _roomExpBuildings
-            .filter(b => _roomExpSelectedIds.has(b.buildingid))
-            .reduce((s, b) => s + (b.room_count || 0), 0);
+        const roomCount = _roomExpBuildings.filter(b => _roomExpSelectedIds.has(b.buildingid)).reduce((s, b) => s + (b.room_count || 0), 0);
         sumEl.innerHTML = (n === 0 || nf === 0)
             ? 'Select buildings and formats to see export summary'
             : `<strong>${n}</strong> building${n===1?'':'s'} &middot; <strong>${roomCount}</strong> rooms &times; <strong>${nf}</strong> format${nf===1?'':'s'} &rarr; <strong>${n*nf}</strong> file${n*nf===1?'':'s'} will be generated`;
@@ -203,37 +507,30 @@ function _updateRoomExpFooter() {
 }
 
 function _buildRoomFilename() {
-    const raw = (document.getElementById('roomExpFilename')?.value.trim() || 'Rooms_Export')
-        .replace(/[\/\\:*?"<>|]/g, '_');
+    const raw = (document.getElementById('roomExpFilename')?.value.trim() || 'Rooms_Export').replace(/[\/\\:*?"<>|]/g, '_');
     if (document.getElementById('roomExpDateToggle')?.checked) {
         const n = new Date();
-        const ts = n.getFullYear() + String(n.getMonth()+1).padStart(2,'0') + String(n.getDate()).padStart(2,'0')
-            + '_' + String(n.getHours()).padStart(2,'0') + String(n.getMinutes()).padStart(2,'0') + String(n.getSeconds()).padStart(2,'0');
-        return `${raw}_${ts}`;
+        return `${raw}_${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}_${String(n.getHours()).padStart(2,'0')}${String(n.getMinutes()).padStart(2,'0')}${String(n.getSeconds()).padStart(2,'0')}`;
     }
     return raw;
 }
 
 function _showRoomExpLoading(text, sub) {
-    document.getElementById('roomExpLoadingText').textContent    = text || 'Exporting...';
-    document.getElementById('roomExpLoadingSubText').textContent = sub  || 'Please wait';
-    document.getElementById('roomExpLoadingOverlay').style.display = 'flex';
+    document.getElementById('rmExpLoadText').textContent = text || 'Exporting...';
+    document.getElementById('rmExpLoadSub').textContent  = sub  || 'Please wait';
+    document.getElementById('rmExpLoading').style.display = 'flex';
 }
-function _hideRoomExpLoading() {
-    document.getElementById('roomExpLoadingOverlay').style.display = 'none';
-}
+function _hideRoomExpLoading() { document.getElementById('rmExpLoading').style.display = 'none'; }
 function _showRoomExpToast(type, title, msg) {
     const toast = document.getElementById('roomExpToast');
     toast.className = `room-exp-toast ${type}`;
-    document.getElementById('roomExpToastIcon').innerHTML = type === 'success'
-        ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
+    document.getElementById('roomExpToastIcon').innerHTML  = type === 'success' ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
     document.getElementById('roomExpToastTitle').textContent = title;
     document.getElementById('roomExpToastMsg').textContent   = msg;
     toast.style.display = 'flex';
     setTimeout(() => { toast.style.display = 'none'; }, 6000);
 }
 
-// ── Generators ───────────────────────────────────────────────────────────────
 function _roomExportCSV(buildings, filename) {
     const now = new Date().toLocaleString();
     const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -241,9 +538,7 @@ function _roomExportCSV(buildings, filename) {
     buildings.forEach(bldg => {
         lines.push(q(`Building: ${bldg.buildingname}`));
         lines.push(['Room Number', 'Room Type', 'Capacity'].map(q).join(','));
-        (bldg.rooms || []).forEach(r => {
-            lines.push([r.roomname, r.roomtype, r.roomcapacity].map(q).join(','));
-        });
+        (bldg.rooms || []).forEach(r => { lines.push([r.roomname, r.roomtype, r.roomcapacity].map(q).join(',')); });
         lines.push([q('TOTAL ROOMS'), q(''), (bldg.rooms || []).length].join(','));
         lines.push('');
     });
@@ -253,10 +548,7 @@ function _roomExportCSV(buildings, filename) {
 }
 
 async function _roomExportXLSX(buildings, filename) {
-    const res = await fetch(_ROOM_XLSX_ROUTE, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ buildings, timestamp: 'Generated: ' + new Date().toLocaleString() }),
-    });
+    const res = await fetch(_ROOM_XLSX_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildings, timestamp: 'Generated: ' + new Date().toLocaleString() }) });
     if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
     const blob = await res.blob();
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
@@ -265,146 +557,85 @@ async function _roomExportXLSX(buildings, filename) {
 
 async function _roomExportPDF(buildings, filename) {
     const { jsPDF } = window.jspdf;
-    const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const W     = 210;
-    const M     = 10;   // left/right margin
-    const CW    = W - 2 * M;  // 190mm content width
-    const HDR_H = 32;          // maroon banner height
-    const PAGE_H = 297;
-    const now   = new Date().toLocaleString();
-
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210, M = 10, CW = 190, HDR_H = 32, PAGE_H = 297;
+    const now = new Date().toLocaleString();
     function drawBanner() {
-        doc.setFillColor(128, 0, 0); doc.rect(0, 0, W, HDR_H, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');  doc.setFontSize(13);
-        doc.text('PUP LOPEZ CAMPUS', W / 2, 11, { align: 'center' });
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-        doc.text('ROOMS AND BUILDINGS', W / 2, 18, { align: 'center' });
-        doc.setFontSize(7.5);
-        doc.text('Generated: ' + now, W / 2, 26, { align: 'center' });
-        doc.setTextColor(0, 0, 0);
+        doc.setFillColor(128,0,0); doc.rect(0,0,W,HDR_H,'F');
+        doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+        doc.text('PUP LOPEZ CAMPUS', W/2, 11, { align:'center' });
+        doc.setFont('helvetica','normal'); doc.setFontSize(10);
+        doc.text('ROOMS AND BUILDINGS', W/2, 18, { align:'center' });
+        doc.setFontSize(7.5); doc.text('Generated: '+now, W/2, 26, { align:'center' });
+        doc.setTextColor(0,0,0);
     }
-
-    drawBanner();
-    let y = HDR_H + 5;
-
+    drawBanner(); let y = HDR_H + 5;
     buildings.forEach((bldg, idx) => {
         const rooms = bldg.rooms || [];
-        // Estimate: bar(8) + table-header(9) + rows(~8 each) + foot(8) + gap(5)
-        const minNeeded = 8 + 9 + Math.min(rooms.length, 3) * 8 + 8 + 5;
-
-        if (idx > 0) {
-            if (y + minNeeded > PAGE_H - 10) {
-                doc.addPage(); drawBanner(); y = HDR_H + 5;
-            } else {
-                y += 5; // gap between buildings on the same page
-            }
-        }
-
-        // Building heading bar — fills full content width
-        doc.setFillColor(55, 55, 55); doc.rect(M, y, CW, 8, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-        doc.text(bldg.buildingname.toUpperCase(), M + 4, y + 5.5);
-        const info = `Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`;
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
-        doc.text(info, W - M - 3, y + 5.5, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
-        y += 9;
-
+        const minNeeded = 8 + 9 + Math.min(rooms.length,3)*8 + 8 + 5;
+        if (idx > 0) { if (y + minNeeded > PAGE_H - 10) { doc.addPage(); drawBanner(); y = HDR_H+5; } else { y += 5; } }
+        doc.setFillColor(55,55,55); doc.rect(M,y,CW,8,'F');
+        doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+        doc.text(bldg.buildingname.toUpperCase(), M+4, y+5.5);
+        doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+        doc.text(`Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`, W-M-3, y+5.5, { align:'right' });
+        doc.setTextColor(0,0,0); y += 9;
         doc.autoTable({
-            columns: [
-                { header: '#',           dataKey: '_num'         },
-                { header: 'Room Number', dataKey: 'roomname'     },
-                { header: 'Room Type',   dataKey: 'roomtype'     },
-                { header: 'Capacity',    dataKey: 'roomcapacity' },
-            ],
-            body: rooms.map((r, i) => ({ ...r, _num: i + 1 })),
-            startY: y,
-            styles:            { fontSize: 8.5, cellPadding: 2.5 },
-            headStyles:        { fillColor: [128,0,0], textColor: 255, fontStyle: 'bold', fontSize: 9 },
-            alternateRowStyles:{ fillColor: [253,245,245] },
-            columnStyles: {
-                0: { cellWidth: 12,  halign: 'center' },
-                1: { cellWidth: 102 },
-                2: { cellWidth: 50,  halign: 'center' },
-                3: { cellWidth: 26,  halign: 'center' },
-            },
-            tableWidth: CW,
-            foot:       [['', 'TOTAL ROOMS', '', rooms.length]],
-            footStyles: { fillColor: [240,230,230], fontStyle: 'bold', fontSize: 9, textColor: [80,0,0] },
-            showFoot: 'lastPage',
-            margin: { top: HDR_H + 4, left: M, right: M },
-            didDrawPage: (data) => {
-                if (data.pageNumber > 1) { drawBanner(); }
-            },
+            columns: [{ header:'Room Number',dataKey:'roomname' },{ header:'Room Type',dataKey:'roomtype' },{ header:'Capacity',dataKey:'roomcapacity' }],
+            body: rooms.map(r => ({ ...r })), startY: y,
+            styles:{ fontSize:8.5, cellPadding:2.5 },
+            headStyles:{ fillColor:[128,0,0], textColor:255, fontStyle:'bold', fontSize:9 },
+            alternateRowStyles:{ fillColor:[253,245,245] },
+            columnStyles:{ 0:{ cellWidth:114 }, 1:{ cellWidth:50,halign:'center' }, 2:{ cellWidth:26,halign:'center' } },
+            tableWidth: CW, foot:[['TOTAL ROOMS','',rooms.length]],
+            footStyles:{ fillColor:[240,230,230], fontStyle:'bold', fontSize:9, textColor:[80,0,0] },
+            showFoot:'lastPage', margin:{ top:HDR_H+4, left:M, right:M },
+            didDrawPage: (d) => { if (d.pageNumber>1) { drawBanner(); } },
         });
         y = doc.lastAutoTable.finalY + 3;
     });
-
     const total = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= total; i++) {
-        doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${total}`, W - M, PAGE_H - 4, { align: 'right' });
-    }
-    doc.save(filename + '.pdf');
+    for (let i=1;i<=total;i++) { doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150); doc.text(`Page ${i} of ${total}`, W-M, PAGE_H-4, { align:'right' }); }
+    doc.save(filename+'.pdf');
 }
 
 async function _roomExportDOCX(buildings, filename) {
-    const res = await fetch(_ROOM_DOCX_ROUTE, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ buildings, timestamp: 'Generated: ' + new Date().toLocaleString() }),
-    });
-    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'DOCX failed'));
+    const res = await fetch(_ROOM_DOCX_ROUTE, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ buildings, timestamp:'Generated: '+new Date().toLocaleString() }) });
+    if (!res.ok) throw new Error('Server error: '+(await res.text()||'DOCX failed'));
     const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.docx' });
+    const a = Object.assign(document.createElement('a'), { href:URL.createObjectURL(blob), download:filename+'.docx' });
     a.click(); URL.revokeObjectURL(a.href);
 }
 
 async function roomExecuteExport() {
-    const selectedFmts = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card.selected'))
-        .map(c => c.dataset.format);
+    const selectedFmts = Array.from(document.querySelectorAll('#roomExportModal .room-exp-fmt-card.selected')).map(c => c.dataset.format);
     const fmtErr = document.getElementById('roomExpFmtError');
     if (selectedFmts.length === 0) { if (fmtErr) fmtErr.style.display = 'block'; return; }
     if (fmtErr) fmtErr.style.display = 'none';
-    if (_roomExpSelectedIds.size === 0) {
-        _showRoomExpToast('error', 'No Buildings Selected', 'Please select at least one building to export.');
-        return;
-    }
+    if (_roomExpSelectedIds.size === 0) { _showRoomExpToast('error','No Buildings Selected','Select at least one building.'); return; }
     const filename = _buildRoomFilename();
     const ids      = Array.from(_roomExpSelectedIds);
     const btn      = document.getElementById('roomExpConfirmBtn');
     btn.disabled   = true;
     closeRoomExportModal();
-    _showRoomExpLoading('Fetching Room Data', 'Loading room details from database...');
+    _showRoomExpLoading('Fetching Room Data','Loading room details from database...');
     let buildings;
     try {
-        const res = await fetch(_ROOM_DATA_ROUTE, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ building_ids: ids }),
-        });
-        if (!res.ok) throw new Error(await res.text() || 'Failed to fetch room data');
+        const res = await fetch(_ROOM_DATA_ROUTE, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ building_ids:ids }) });
+        if (!res.ok) throw new Error(await res.text()||'Failed to fetch room data');
         buildings = await res.json();
-    } catch (e) {
-        _hideRoomExpLoading(); btn.disabled = false;
-        _showRoomExpToast('error', 'Data Fetch Failed', e.message); return;
-    }
+    } catch(e) { _hideRoomExpLoading(); btn.disabled=false; _showRoomExpToast('error','Data Fetch Failed',e.message); return; }
     const errors = [];
     for (const fmt of selectedFmts) {
-        _showRoomExpLoading(`Generating ${fmt.toUpperCase()}`, `Building ${fmt.toUpperCase()} file...`);
+        _showRoomExpLoading(`Generating ${fmt.toUpperCase()}`,`Building ${fmt.toUpperCase()} file...`);
         try {
-            if (fmt === 'csv')  _roomExportCSV(buildings, filename);
-            if (fmt === 'xlsx') await _roomExportXLSX(buildings, filename);
-            if (fmt === 'pdf')  await _roomExportPDF(buildings, filename);
-            if (fmt === 'docx') await _roomExportDOCX(buildings, filename);
-        } catch (e) { errors.push(`${fmt.toUpperCase()}: ${e.message}`); }
+            if (fmt==='csv')  _roomExportCSV(buildings, filename);
+            if (fmt==='xlsx') await _roomExportXLSX(buildings, filename);
+            if (fmt==='pdf')  await _roomExportPDF(buildings, filename);
+            if (fmt==='docx') await _roomExportDOCX(buildings, filename);
+        } catch(e) { errors.push(`${fmt.toUpperCase()}: ${e.message}`); }
     }
-    _hideRoomExpLoading();
-    btn.disabled = false;
-    if (errors.length) {
-        _showRoomExpToast('error', 'Export Errors', errors.join(' | '));
-    } else {
-        const n = selectedFmts.length;
-        _showRoomExpToast('success', 'Export Complete', `${n} file${n===1?'':'s'} generated successfully.`);
-    }
+    _hideRoomExpLoading(); btn.disabled=false;
+    if (errors.length) _showRoomExpToast('error','Export Errors',errors.join(' | '));
+    else { const n=selectedFmts.length; _showRoomExpToast('success','Export Complete',`${n} file${n===1?'':'s'} generated.`); }
 }

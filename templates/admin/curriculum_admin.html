@@ -4,149 +4,155 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="curriculum-ui">
 
-    <!-- SECTION 1: CURRICULUM ASSIGNMENT -->
-    <div class="section-header-row">
-        <h2>CURRICULUM ASSIGNMENT</h2>
+    <!-- ── PAGE HEADER WITH TOGGLE TABS ── -->
+    <div class="curr-mgmt-header">
+        <h1 class="curr-mgmt-title">CURRICULUM MANAGEMENT</h1>
+        <div class="curr-tab-group">
+            <button class="curr-tab-btn active" id="tabBtnAssignments" onclick="switchCurrTab('assignments')">Active Assignments</button>
+            <button class="curr-tab-btn" id="tabBtnSyllabi" onclick="switchCurrTab('syllabi')">Curriculum Syllabi</button>
+        </div>
     </div>
-    <div class="filter-bar-dark">
-        <div class="filter-group-row">
-            <div class="filter-item-inline">
-                <label>Curriculum</label>
-                <select id="filterAssignCurr" onchange="filterAssignments()">
-                    <option value="All">All</option>
-                    {% for c in all_curriculums %}
-                    <option value="{{ c.curriculumcode }}">{{ c.curriculumcode }}</option>
-                    {% endfor %}
-                </select>
+
+    <!-- ═══ TAB 1: ACTIVE ASSIGNMENTS ═══ -->
+    <div id="currPanelAssignments" class="curr-tab-panel">
+
+        <!-- Filter Bar -->
+        <div class="curr-filter-bar">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">SEARCH</label>
+                    <input type="text" id="searchAssign" class="curr-filter-input" placeholder=".." oninput="filterAssignments()">
+                </div>
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">CURRICULUM</label>
+                    <select id="filterAssignCurr" class="curr-filter-input" onchange="filterAssignments()">
+                        <option value="">SELECT</option>
+                        {% for c in all_curriculums %}
+                        <option value="{{ c.curriculumcode }}">{{ c.curriculumcode }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">PROGRAM</label>
+                    <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
+                        <option value="">SELECT</option>
+                        {% for p in programs %}
+                        <option value="{{ p.programname }}">{{ p.programname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
-            <div class="filter-item-inline">
-                <label>Program</label>
-                <select id="filterAssignProg" onchange="filterAssignments()" style="width: 400px;">
-                    <option value="All">All Programs</option>
+            <div class="curr-filter-actions">
+                <button class="curr-btn-sort" id="sortAssignBtn" onclick="sortAssignTable()">
+                    <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
+                </button>
+                <button class="curr-btn-export" onclick="location.href='/admin/export/assignments'">
+                    <i class="fas fa-upload"></i> EXPORT
+                </button>
+            </div>
+        </div>
+
+        <!-- Assignments Table -->
+        <div class="curr-table-wrapper">
+            <table class="curr-assign-table" id="assignmentTable">
+                <thead>
+                    <tr>
+                        <th>CURRICULUM CODE</th>
+                        <th>ACADEMIC PROGRAM</th>
+                        <th>YEAR LEVEL</th>
+                        <th>NO. OF SECTION</th>
+                        <th>ACAD YEAR OF ENTRY</th>
+                        <th style="width: 50px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in cohorts %}
+                    <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programname }}">
+                        <td><span class="curr-code-pill">{{ c.curriculumcode }}</span></td>
+                        <td>{{ c.programname }}</td>
+                        <td>{{ c.year_level }}</td>
+                        <td>{{ c.numberofsections }}</td>
+                        <td>{{ c.startacademicyear }}</td>
+                        <td style="text-align:center;">
+                            <button class="btn-edit-icon" onclick="editAssignment('{{ c.cohortid }}','{{ c.programcode }}','{{ c.curriculumid }}','{{ c.startacademicyear }}','{{ c.numberofsections }}')">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ═══ TAB 2: CURRICULUM SYLLABI ═══ -->
+    <div id="currPanelSyllabi" class="curr-tab-panel" style="display:none;">
+
+        <!-- Syllabi header: program filter left, Export + Import right -->
+        <div class="curr-syllabi-header">
+            <div class="curr-filter-group">
+                <label class="curr-filter-label">PROGRAM</label>
+                <select class="curr-filter-input" id="syllabiProgramFilter" onchange="filterSyllabiByProgram(this.value)" style="min-width:260px;">
+                    <option value="All">ALL PROGRAMS</option>
                     {% for p in programs %}
-                    <option value="{{ p.programname }}">{{ p.programname }}</option>
+                    <option value="{{ p.programcode }}">{{ p.programname }}</option>
                     {% endfor %}
                 </select>
             </div>
-        </div>
-        <div>
-            <button class="btn-export-outline-white" onclick="openCurrExportModal()">
-                <i class="fas fa-file-export"></i> Export
-            </button>
-        </div>
-    </div>
-
-    <div class="assignment-scroll-wrapper">
-        <table id="assignmentTable" class="curr-list-table assignment-table">
-            <thead>
-                <tr>
-                    <th>Curriculum Code</th>
-                    <th>Program</th>
-                    <th>Year level</th>
-                    <th>No. of Section</th>
-                    <th>Acad Year of Entry</th>
-                    <th style="width: 50px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for c in cohorts %}
-                <tr>
-                    <td>{{ c.curriculumcode }}</td>
-                    <td>{{ c.programname }}</td>
-                    <td>{{ c.year_level }}</td>
-                    <td>{{ c.numberofsections }}</td>
-                    <td>{{ c.startacademicyear }}</td>
-                    <td style="text-align: center;">
-                        <button type="button" class="btn-edit-icon"
-                            onclick="editAssignment('{{ c.cohortid }}', '{{ c.programcode }}', '{{ c.curriculumid }}', '{{ c.startacademicyear }}', '{{ c.numberofsections }}')">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- SECTION 2: CURRICULUM LIST -->
-    <div class="section-header-row" style="margin-top: 50px;">
-        <h2>CURRICULUM LIST</h2>
-        <div class="import-button-container" onclick="openImportTypeModal()">
-            <span class="upload-file-pill">Upload file</span>
-            <button class="import-curriculum-btn">
-                <i class="fas fa-arrow-circle-down"></i> IMPORT CURRICULUM
-            </button>
-        </div>
-    </div>
-
-    <div class="selection-box-maroon">
-        <div class="selection-inner">
-            <div class="input-group-curr">
-                <label>SELECT PROGRAM</label>
-                <select id="mainProgramFilter" onchange="location.href='?program_code='+this.value">
-                    <option value="" disabled {{ 'selected' if not selected_program }}>-- Select Program --</option>
-                    <option value="All" {{ 'selected' if selected_program=='All' }}>All Programs</option>
-                    {% for p in programs %}
-                    <option value="{{ p.programcode }}" {{ 'selected' if selected_program==p.programcode }}>{{ p.programname }}</option>
-                    {% endfor %}
-                </select>
+            <div class="curr-filter-actions">
+                <button class="curr-btn-export" onclick="openCurrExportModal(document.getElementById('syllabiProgramFilter').value)">
+                    <i class="fas fa-upload"></i> EXPORT
+                </button>
+                <button class="curr-btn-import" onclick="openImportTypeModal()">
+                    <i class="fas fa-file-import"></i> IMPORT CURRICULUM
+                </button>
             </div>
-            <button class="btn-export-curr" onclick="openCurrExportModal()">
-                <i class="fas fa-file-export"></i> Export
-            </button>
         </div>
-    </div>
 
-    {% if selected_program %}
-    <p class="helper-text-italic">Here are the list of curriculums available for your selection</p>
-
-    {% for p in programs %}
-    {% set prog_currs = curriculums | selectattr("programcode", "equalto", p.programcode) | list %}
-    {% if prog_currs %}
-    <div class="program-group-header">
-        {{ p.programname | upper }}
-    </div>
-
-    <table class="curr-list-table" style="margin-bottom: 30px;">
-        <thead>
-            <tr>
-                <th>Curriculum Name</th>
-                <th style="width: 120px;"></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for c in prog_currs %}
-            <tr>
-                <td>C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</td>
-                <td style="text-align: right; display: flex; gap: 10px; justify-content: flex-end;">
-                    <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}" class="btn-black-view">View</a>
-                    <button class="btn-red-delete" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}', '{{ c.curriculumyear }}')">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </td>
-            </tr>
+        <!-- Grouped curriculum list: only programs WITH curricula are rendered -->
+        <div id="syllabiList">
+            {% for p in programs %}
+            {% set prog_currs = all_curriculums | selectattr("programcode", "equalto", p.programcode) | list %}
+            {% if prog_currs %}
+            <div class="curr-prog-section" data-program-code="{{ p.programcode }}">
+                <div class="curr-prog-header">{{ p.programname | upper }}</div>
+                <div class="curr-prog-body">
+                    {% for c in prog_currs %}
+                    <div class="curr-syllabi-row">
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</span>
+                        <div class="curr-syllabi-actions">
+                            <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
+                            <button class="btn-del-curr" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}','{{ c.curriculumyear }}')">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
             {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
-    {% endfor %}
-    {% else %}
-    <div style="text-align: center; padding: 40px; color: #bbb; border: 2px dashed #ddd; margin-top: 20px; border-radius: 5px;">
-        <p>Please select a program or "All Programs" to view the curriculum files.</p>
-    </div>
-    {% endif %}
+        </div>
 
-    <div style="height: 450px; background: transparent; pointer-events: none;"></div>
+        <!-- Empty state: shown by JS when a specific program has no curriculum -->
+        <div id="syllabiEmptyMsg" class="curr-syllabi-empty" style="display:none;">
+            <i class="fas fa-book-open"></i>
+            <div class="curr-syllabi-empty-title">No Available Curriculum</div>
+            <div class="curr-syllabi-empty-sub">This program does not have an assigned curriculum yet.</div>
+        </div>
+    </div>
+
 </div>
 
-<!-- ALL MODALS -->
+<!-- ─── MODALS (unchanged) ─── -->
 
-<!-- 1. ASSIGNMENT MODAL -->
+<!-- 1. ASSIGNMENT EDIT MODAL -->
 <div id="assignModal" class="custom-modal" style="display: none; z-index: 1000;">
     <div class="modal-content-lg" style="width: 450px; border-radius: 8px;">
         <div class="modal-header-maroon">
@@ -157,13 +163,11 @@
             <input type="hidden" name="cohort_id" id="assignCohortId">
             <input type="hidden" name="program_code" id="hiddenProgramCode">
             <input type="hidden" name="start_academic_year" id="hiddenStartYear">
-
             <div class="modal-body-vertical" style="padding: 25px; gap: 15px;">
                 <div class="form-group-modal">
                     <label>Academic Year of Entry</label>
                     <input type="text" id="assignStartYear" disabled class="modal-input-styled modal-readonly-bg">
                 </div>
-
                 <div class="form-group-modal">
                     <label>Program</label>
                     <select id="assignProgramCode" disabled class="modal-input-styled modal-readonly-bg">
@@ -172,7 +176,6 @@
                         {% endfor %}
                     </select>
                 </div>
-
                 <div class="form-group-modal">
                     <label style="color: #c0392b;">Curriculum Version</label>
                     <select name="curriculum_id" id="assignCurriculumId" required class="modal-input-styled" style="border: 2px solid #c0392b;">
@@ -184,7 +187,6 @@
                         {% endfor %}
                     </select>
                 </div>
-
                 <div class="form-group-modal">
                     <label style="color: #c0392b;">Number of Sections</label>
                     <input type="number" name="number_of_sections" id="assignSections" required min="1" class="modal-input-styled" style="border: 2px solid #c0392b;">
@@ -198,7 +200,7 @@
     </div>
 </div>
 
-<!-- 2. EXPORT NOTICE MODAL -->
+<!-- 2. EXPORT WARNING MODAL -->
 <div id="exportWarningModal" class="custom-modal" style="display: none; z-index: 9999;">
     <div class="modal-content-logout">
         <div class="modal-header-logout" style="background-color: #f39c12; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
@@ -209,9 +211,7 @@
             <p style="color: #555; font-weight: 600;">Please select a specific program or <strong>"All Programs"</strong> before clicking Export.</p>
         </div>
         <div class="modal-footer-logout" style="display: flex; justify-content: center; padding-bottom: 20px;">
-            <button type="button" class="btn-modal" onclick="closeExportWarning()" style="background-color: #630100; color: white; border: none; padding: 10px 50px; border-radius: 4px; font-weight: 800; cursor: pointer;">
-                UNDERSTOOD
-            </button>
+            <button type="button" class="btn-modal" onclick="closeExportWarning()" style="background-color: #630100; color: white; border: none; padding: 10px 50px; border-radius: 4px; font-weight: 800; cursor: pointer;">UNDERSTOOD</button>
         </div>
     </div>
 </div>
@@ -227,44 +227,31 @@
             <p style="color:#555; font-size:0.9rem; margin:0;">Choose how you would like to import a curriculum:</p>
             <button class="import-type-btn" onclick="openCsvImportModal()">
                 <i class="fas fa-file-csv import-type-icon"></i>
-                <div>
-                    <div class="import-type-title">Import via CSV</div>
-                    <div class="import-type-desc">Upload a structured CSV file with column mapping support.</div>
-                </div>
+                <div><div class="import-type-title">Import via CSV</div><div class="import-type-desc">Upload a structured CSV file with column mapping support.</div></div>
             </button>
             <button class="import-type-btn" onclick="openXlsxImportModal()">
                 <i class="fas fa-file-excel import-type-icon" style="color:#1d6f42;"></i>
-                <div>
-                    <div class="import-type-title">Import via Excel (.xlsx)</div>
-                    <div class="import-type-desc">Upload a structured Excel workbook with the same column format as CSV.</div>
-                </div>
+                <div><div class="import-type-title">Import via Excel (.xlsx)</div><div class="import-type-desc">Upload a structured Excel workbook with the same column format as CSV.</div></div>
             </button>
             <button class="import-type-btn" onclick="openPdfImportModal()">
                 <i class="fas fa-file-pdf import-type-icon" style="color:#c0392b;"></i>
-                <div>
-                    <div class="import-type-title">Import via PDF</div>
-                    <div class="import-type-desc">Upload a curriculum PDF and let the system extract subjects automatically.</div>
-                </div>
+                <div><div class="import-type-title">Import via PDF</div><div class="import-type-desc">Upload a curriculum PDF and let the system extract subjects automatically.</div></div>
             </button>
             <button class="import-type-btn" onclick="openDocxImportModal()">
                 <i class="fas fa-file-word import-type-icon" style="color:#2b5797;"></i>
-                <div>
-                    <div class="import-type-title">Import via Word (.docx)</div>
-                    <div class="import-type-desc">Upload a curriculum Word document and review extracted subjects before importing.</div>
-                </div>
+                <div><div class="import-type-title">Import via Word (.docx)</div><div class="import-type-desc">Upload a curriculum Word document and review extracted subjects before importing.</div></div>
             </button>
         </div>
     </div>
 </div>
 
-<!-- 4. CSV IMPORT MODAL (unchanged logic) -->
+<!-- 4. CSV IMPORT MODAL -->
 <div id="importModal" class="custom-modal" style="display: none;">
     <div class="modal-content-lg">
         <div class="modal-header-maroon">
             <h2><i class="fas fa-file-csv"></i> Import via CSV</h2>
             <span class="close-btn" onclick="closeImportModal()">&times;</span>
         </div>
-
         <form id="advancedImportForm" action="/admin/curriculum/import" method="POST" enctype="multipart/form-data">
             <input type="hidden" name="col_0" id="h_col_0" value="cc">
             <input type="hidden" name="col_1" id="h_col_1" value="yl">
@@ -277,54 +264,25 @@
             <input type="hidden" name="col_8" id="h_col_8" value="lb">
             <input type="hidden" name="col_9" id="h_col_9" value="u">
             <input type="hidden" name="col_10" id="h_col_10" value="th">
-
             <div class="modal-body-vertical">
                 <div class="form-section-vert">
                     <h3>1. Setup Curriculum Environment</h3>
                     <div class="form-group-modal">
                         <label>Target Program</label>
-                        <select name="program_code" id="modalProgramCode" required onchange="updateYearLevelDropdown()">
-                            <option value="" disabled selected data-years="4">Select Program</option>
-                            {% for p in programs %}
-                            <option value="{{ p.programcode }}" data-years="{{ p.numyearlevel }}">{{ p.programname }}</option>
-                            {% endfor %}
+                        <select name="program_code" id="modalProgramCode" required>
+                            <option value="" disabled selected>Select Program</option>
+                            {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
                         </select>
                     </div>
                     <div class="form-group-modal">
                         <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                         <input type="text" name="curriculum_year" id="modalCurriculumYear" required placeholder="YYYY-YYYY">
                     </div>
-                    <div style="display: flex; gap: 15px;">
-                        <div class="form-group-modal" style="flex: 1;">
-                            <label>Year Level</label>
-                            <select name="year_level" id="modalYearLevel">
-                                <option value="0" selected>All Year Levels</option>
-                                <option value="1">1st Year</option>
-                                <option value="2">2nd Year</option>
-                                <option value="3">3rd Year</option>
-                                <option value="4">4th Year</option>
-                                <option value="5">5th Year</option>
-                            </select>
-                        </div>
-                        <div class="form-group-modal" style="flex: 1;">
-                            <label>Semester</label>
-                            <select name="semester" id="modalSemester">
-                                <option value="All" selected>All Semesters</option>
-                                <option value="A">1st Semester</option>
-                                <option value="B">2nd Semester</option>
-                                <option value="C">Summer</option>
-                            </select>
-                        </div>
-                    </div>
                 </div>
-
                 <div class="form-section-vert">
                     <h3>2. CSV Column Format</h3>
                     <div id="defaultColumnView">
-                        <div class="column-order-display">
-                            Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite,
-                            Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours
-                        </div>
+                        <div class="column-order-display">Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite, Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours</div>
                         <button type="button" class="btn-link-maroon" onclick="toggleColumnCustomization()">Edit default order?</button>
                     </div>
                     <div id="customColumnView" style="display: none;">
@@ -333,19 +291,15 @@
                         <button type="button" class="btn-link-maroon" style="margin-top:10px;" onclick="resetColumnCustomization()">Cancel Edit (Use Default)</button>
                     </div>
                 </div>
-
                 <div class="form-section-vert">
                     <h3>3. Upload CSV File <small>(Format: .csv)</small></h3>
                     <input type="file" name="file" id="modalFileInput" accept=".csv" required class="file-input-style">
                 </div>
                 <div id="csvAnalyzeError" class="pdf-error-box" style="display:none;"></div>
             </div>
-
             <div class="modal-footer-flex">
-                <button type="button" class="btn-modal btn-cancel" onclick="closeImportModal()">Back</button>
-                <button type="button" class="btn-modal btn-confirm" id="csvAnalyzeBtn" onclick="analyzeCsvCurriculum()">
-                    <i class="fas fa-search"></i> Analyze CSV
-                </button>
+                <button type="button" class="btn-modal btn-cancel" onclick="backFromCsvModal()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button type="button" class="btn-modal btn-confirm" id="csvAnalyzeBtn" onclick="analyzeCsvCurriculum()"><i class="fas fa-search"></i> Analyze CSV</button>
             </div>
         </form>
     </div>
@@ -358,16 +312,11 @@
             <h2><i class="fas fa-file-pdf"></i> Import via PDF</h2>
             <span class="close-btn" onclick="closePdfImportModal()">&times;</span>
         </div>
-        <input type="hidden" id="pdf_h_col_0"  value="cc">
-        <input type="hidden" id="pdf_h_col_1"  value="yl">
-        <input type="hidden" id="pdf_h_col_2"  value="sem">
-        <input type="hidden" id="pdf_h_col_3"  value="sc">
-        <input type="hidden" id="pdf_h_col_4"  value="pre">
-        <input type="hidden" id="pdf_h_col_5"  value="co">
-        <input type="hidden" id="pdf_h_col_6"  value="sn">
-        <input type="hidden" id="pdf_h_col_7"  value="lc">
-        <input type="hidden" id="pdf_h_col_8"  value="lb">
-        <input type="hidden" id="pdf_h_col_9"  value="u">
+        <input type="hidden" id="pdf_h_col_0" value="cc"><input type="hidden" id="pdf_h_col_1" value="yl">
+        <input type="hidden" id="pdf_h_col_2" value="sem"><input type="hidden" id="pdf_h_col_3" value="sc">
+        <input type="hidden" id="pdf_h_col_4" value="pre"><input type="hidden" id="pdf_h_col_5" value="co">
+        <input type="hidden" id="pdf_h_col_6" value="sn"><input type="hidden" id="pdf_h_col_7" value="lc">
+        <input type="hidden" id="pdf_h_col_8" value="lb"><input type="hidden" id="pdf_h_col_9" value="u">
         <input type="hidden" id="pdf_h_col_10" value="th">
         <div class="modal-body-vertical">
             <div class="form-section-vert">
@@ -376,9 +325,7 @@
                     <label>Target Program</label>
                     <select id="pdfProgramCode" required>
                         <option value="" disabled selected>Select Program</option>
-                        {% for p in programs %}
-                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                        {% endfor %}
+                        {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group-modal">
@@ -389,10 +336,7 @@
             <div class="form-section-vert">
                 <h3>2. Column Format</h3>
                 <div id="pdfDefaultColumnView">
-                    <div class="column-order-display">
-                        Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite,
-                        Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours
-                    </div>
+                    <div class="column-order-display">Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite, Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours</div>
                     <button type="button" class="btn-link-maroon" onclick="togglePdfColumnCustomization()">Edit default order?</button>
                 </div>
                 <div id="pdfCustomColumnView" style="display:none;">
@@ -404,17 +348,13 @@
             <div class="form-section-vert">
                 <h3>3. Upload PDF File <small>(Format: .pdf)</small></h3>
                 <input type="file" id="pdfFileInput" accept=".pdf" class="file-input-style">
-                <p class="mapping-hint" style="margin-top:8px;">
-                    The system will automatically detect year levels, semesters, subject codes, titles, and units from the PDF.
-                </p>
+                <p class="mapping-hint" style="margin-top:8px;">The system will automatically detect year levels, semesters, subject codes, titles, and units from the PDF.</p>
             </div>
             <div id="pdfAnalyzeError" class="pdf-error-box" style="display:none;"></div>
         </div>
         <div class="modal-footer-flex">
-            <button type="button" class="btn-modal btn-cancel" onclick="closePdfImportModal()">Back</button>
-            <button type="button" class="btn-modal btn-confirm" id="pdfAnalyzeBtn" onclick="analyzePdf()">
-                <i class="fas fa-search"></i> Analyze PDF
-            </button>
+            <button type="button" class="btn-modal btn-cancel" onclick="backFromPdfModal()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="btn-modal btn-confirm" id="pdfAnalyzeBtn" onclick="analyzePdf()"><i class="fas fa-search"></i> Analyze PDF</button>
         </div>
     </div>
 </div>
@@ -422,80 +362,51 @@
 <!-- 6. PDF REVIEW MODAL -->
 <div id="pdfReviewModal" class="custom-modal" style="display: none; z-index: 1100;">
     <div class="modal-content-lg pdf-review-modal-content">
-        <div class="modal-header-maroon">
-            <h2><i class="fas fa-clipboard-check"></i> Review Extracted Curriculum</h2>
-            <span class="close-btn" onclick="closePdfReviewModal()">&times;</span>
+        <div class="modal-header-maroon pdf-review-modal-header">
+            <div class="pdf-review-header-main">
+                <h2><i class="fas fa-clipboard-check"></i> Review Extracted Curriculum</h2>
+                <span class="close-btn" onclick="closePdfReviewModal()">&times;</span>
+            </div>
+            <div id="pdfReviewMeta" class="pdf-review-meta-bar"></div>
         </div>
-
-        <!-- Confidence + Warnings banner -->
         <div id="pdfReviewBanner" class="pdf-review-banner"></div>
-
         <div class="pdf-review-body">
             <div class="pdf-review-controls">
                 <span id="pdfReviewSubjectCount" class="pdf-subject-count"></span>
-                <button type="button" class="btn-add-row" onclick="addPdfReviewRow()">
-                    <i class="fas fa-plus"></i> Add Row
-                </button>
+                <button type="button" class="btn-add-row" onclick="addPdfReviewRow()"><i class="fas fa-plus"></i> Add Row</button>
             </div>
-
-            <div class="pdf-review-table-wrapper">
-                <table class="pdf-review-table" id="pdfReviewTable">
-                    <thead>
-                        <tr>
-                            <th class="th-code">Subject Code</th>
-                            <th class="th-name">Description</th>
-                            <th class="th-req">Pre-requisite</th>
-                            <th class="th-req">Co-requisite</th>
-                            <th class="th-num">Lec</th>
-                            <th class="th-num">Lab</th>
-                            <th class="th-num">Units</th>
-                            <th class="th-num">TH</th>
-                            <th class="th-yl">YL</th>
-                            <th class="th-sem">Sem</th>
-                            <th class="th-del"></th>
-                        </tr>
-                    </thead>
-                    <tbody id="pdfReviewTableBody"></tbody>
-                </table>
+            <div class="pdf-review-table-wrapper" id="pdfReviewTableWrapper">
+                <!-- JS builds year-level sections with per-semester tables here -->
             </div>
         </div>
-
         <form id="pdfConfirmForm" action="/admin/curriculum/import/pdf/confirm" method="POST">
-            <input type="hidden" name="program_code" id="pdfConfirmProg">
+            <input type="hidden" name="program_code"   id="pdfConfirmProg">
             <input type="hidden" name="curriculum_year" id="pdfConfirmYear">
-            <input type="hidden" name="subjects_data" id="pdfConfirmData">
+            <input type="hidden" name="subjects_data"  id="pdfConfirmData">
+            <input type="hidden" name="import_source"  id="pdfConfirmSource">
+            <input type="hidden" name="override"       id="pdfConfirmOverride" value="0">
         </form>
-
         <div class="modal-footer-flex">
-            <button type="button" class="btn-modal btn-cancel" onclick="closePdfReviewModal()">Back</button>
-            <button type="button" class="btn-modal btn-confirm" onclick="confirmPdfImport()">
-                <i class="fas fa-check-circle"></i> Confirm & Import
-            </button>
+            <button type="button" class="btn-modal btn-cancel" onclick="backFromReviewModal()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="btn-modal btn-confirm" onclick="confirmPdfImport()"><i class="fas fa-check-circle"></i> Confirm &amp; Import</button>
         </div>
     </div>
 </div>
 
-<!-- 6b. EXCEL (.xlsx) IMPORT MODAL -->
+<!-- 7. EXCEL (.xlsx) IMPORT MODAL -->
 <div id="xlsxImportModal" class="custom-modal" style="display: none;">
     <div class="modal-content-lg">
         <div class="modal-header-maroon">
             <h2><i class="fas fa-file-excel"></i> Import via Excel (.xlsx)</h2>
             <span class="close-btn" onclick="closeXlsxImportModal()">&times;</span>
         </div>
-
         <form id="xlsxImportForm" action="/admin/curriculum/import/xlsx" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="col_0"  id="x_col_0"  value="cc">
-            <input type="hidden" name="col_1"  id="x_col_1"  value="yl">
-            <input type="hidden" name="col_2"  id="x_col_2"  value="sem">
-            <input type="hidden" name="col_3"  id="x_col_3"  value="sc">
-            <input type="hidden" name="col_4"  id="x_col_4"  value="pre">
-            <input type="hidden" name="col_5"  id="x_col_5"  value="co">
-            <input type="hidden" name="col_6"  id="x_col_6"  value="sn">
-            <input type="hidden" name="col_7"  id="x_col_7"  value="lc">
-            <input type="hidden" name="col_8"  id="x_col_8"  value="lb">
-            <input type="hidden" name="col_9"  id="x_col_9"  value="u">
+            <input type="hidden" name="col_0" id="x_col_0" value="cc"><input type="hidden" name="col_1" id="x_col_1" value="yl">
+            <input type="hidden" name="col_2" id="x_col_2" value="sem"><input type="hidden" name="col_3" id="x_col_3" value="sc">
+            <input type="hidden" name="col_4" id="x_col_4" value="pre"><input type="hidden" name="col_5" id="x_col_5" value="co">
+            <input type="hidden" name="col_6" id="x_col_6" value="sn"><input type="hidden" name="col_7" id="x_col_7" value="lc">
+            <input type="hidden" name="col_8" id="x_col_8" value="lb"><input type="hidden" name="col_9" id="x_col_9" value="u">
             <input type="hidden" name="col_10" id="x_col_10" value="th">
-
             <div class="modal-body-vertical">
                 <div class="form-section-vert">
                     <h3>1. Setup Curriculum Environment</h3>
@@ -503,9 +414,7 @@
                         <label>Target Program</label>
                         <select name="program_code" id="xlsxModalProgramCode" required onchange="updateXlsxYearLevelDropdown()">
                             <option value="" disabled selected data-years="4">Select Program</option>
-                            {% for p in programs %}
-                            <option value="{{ p.programcode }}" data-years="{{ p.numyearlevel }}">{{ p.programname }}</option>
-                            {% endfor %}
+                            {% for p in programs %}<option value="{{ p.programcode }}" data-years="{{ p.numyearlevel }}">{{ p.programname }}</option>{% endfor %}
                         </select>
                     </div>
                     <div class="form-group-modal">
@@ -517,10 +426,8 @@
                             <label>Year Level</label>
                             <select name="year_level" id="xlsxModalYearLevel">
                                 <option value="0" selected>All Year Levels</option>
-                                <option value="1">1st Year</option>
-                                <option value="2">2nd Year</option>
-                                <option value="3">3rd Year</option>
-                                <option value="4">4th Year</option>
+                                <option value="1">1st Year</option><option value="2">2nd Year</option>
+                                <option value="3">3rd Year</option><option value="4">4th Year</option>
                                 <option value="5">5th Year</option>
                             </select>
                         </div>
@@ -528,21 +435,16 @@
                             <label>Semester</label>
                             <select name="semester" id="xlsxModalSemester">
                                 <option value="All" selected>All Semesters</option>
-                                <option value="A">1st Semester</option>
-                                <option value="B">2nd Semester</option>
+                                <option value="A">1st Semester</option><option value="B">2nd Semester</option>
                                 <option value="C">Summer</option>
                             </select>
                         </div>
                     </div>
                 </div>
-
                 <div class="form-section-vert">
                     <h3>2. Excel Column Format</h3>
                     <div id="xlsxDefaultColumnView">
-                        <div class="column-order-display">
-                            Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite,
-                            Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours
-                        </div>
+                        <div class="column-order-display">Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite, Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours</div>
                         <button type="button" class="btn-link-maroon" onclick="toggleXlsxColumnCustomization()">Edit default order?</button>
                     </div>
                     <div id="xlsxCustomColumnView" style="display:none;">
@@ -552,41 +454,32 @@
                     </div>
                     <p class="mapping-hint">The first row of the spreadsheet is treated as a header and will be skipped.</p>
                 </div>
-
                 <div class="form-section-vert">
                     <h3>3. Upload Excel File <small>(Format: .xlsx)</small></h3>
                     <input type="file" name="file" id="xlsxModalFileInput" accept=".xlsx" required class="file-input-style">
                 </div>
                 <div id="xlsxAnalyzeError" class="pdf-error-box" style="display:none;"></div>
             </div>
-
             <div class="modal-footer-flex">
-                <button type="button" class="btn-modal btn-cancel" onclick="closeXlsxImportModal()">Back</button>
-                <button type="button" class="btn-modal btn-confirm" id="xlsxAnalyzeBtn" onclick="analyzeXlsxCurriculum()">
-                    <i class="fas fa-search"></i> Analyze Excel
-                </button>
+                <button type="button" class="btn-modal btn-cancel" onclick="backFromXlsxModal()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button type="button" class="btn-modal btn-confirm" id="xlsxAnalyzeBtn" onclick="analyzeXlsxCurriculum()"><i class="fas fa-search"></i> Analyze Excel</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- 6c. WORD (.docx) UPLOAD MODAL -->
+<!-- 8. WORD (.docx) IMPORT MODAL -->
 <div id="docxImportModal" class="custom-modal" style="display: none;">
     <div class="modal-content-lg" style="width: 480px;">
         <div class="modal-header-maroon">
             <h2><i class="fas fa-file-word"></i> Import via Word (.docx)</h2>
             <span class="close-btn" onclick="closeDocxImportModal()">&times;</span>
         </div>
-        <input type="hidden" id="docx_h_col_0"  value="cc">
-        <input type="hidden" id="docx_h_col_1"  value="yl">
-        <input type="hidden" id="docx_h_col_2"  value="sem">
-        <input type="hidden" id="docx_h_col_3"  value="sc">
-        <input type="hidden" id="docx_h_col_4"  value="pre">
-        <input type="hidden" id="docx_h_col_5"  value="co">
-        <input type="hidden" id="docx_h_col_6"  value="sn">
-        <input type="hidden" id="docx_h_col_7"  value="lc">
-        <input type="hidden" id="docx_h_col_8"  value="lb">
-        <input type="hidden" id="docx_h_col_9"  value="u">
+        <input type="hidden" id="docx_h_col_0" value="cc"><input type="hidden" id="docx_h_col_1" value="yl">
+        <input type="hidden" id="docx_h_col_2" value="sem"><input type="hidden" id="docx_h_col_3" value="sc">
+        <input type="hidden" id="docx_h_col_4" value="pre"><input type="hidden" id="docx_h_col_5" value="co">
+        <input type="hidden" id="docx_h_col_6" value="sn"><input type="hidden" id="docx_h_col_7" value="lc">
+        <input type="hidden" id="docx_h_col_8" value="lb"><input type="hidden" id="docx_h_col_9" value="u">
         <input type="hidden" id="docx_h_col_10" value="th">
         <div class="modal-body-vertical">
             <div class="form-section-vert">
@@ -595,9 +488,7 @@
                     <label>Target Program</label>
                     <select id="docxProgramCode" required>
                         <option value="" disabled selected>Select Program</option>
-                        {% for p in programs %}
-                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                        {% endfor %}
+                        {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
                     </select>
                 </div>
                 <div class="form-group-modal">
@@ -608,10 +499,7 @@
             <div class="form-section-vert">
                 <h3>2. Column Format</h3>
                 <div id="docxDefaultColumnView">
-                    <div class="column-order-display">
-                        Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite,
-                        Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours
-                    </div>
+                    <div class="column-order-display">Curriculum Code, Year Level, Semester, Subject Code, Pre-requisite, Co-requisite, Subject Description, Lecture Hours, Lab Hours, Credited Units, Tuition Hours</div>
                     <button type="button" class="btn-link-maroon" onclick="toggleDocxColumnCustomization()">Edit default order?</button>
                 </div>
                 <div id="docxCustomColumnView" style="display:none;">
@@ -623,24 +511,17 @@
             <div class="form-section-vert">
                 <h3>3. Upload Word File <small>(Format: .docx)</small></h3>
                 <input type="file" id="docxFileInput" accept=".docx" class="file-input-style">
-                <p class="mapping-hint" style="margin-top:8px;">
-                    The system will detect year levels, semesters, and subject tables from the Word document.
-                    The document should use the standard curriculum table format (Subject Code, Pre-req, Co-req,
-                    Description, Lec Hours, Lab Hours, Credited Units, Tuition Hours).
-                </p>
             </div>
             <div id="docxAnalyzeError" class="pdf-error-box" style="display:none;"></div>
         </div>
         <div class="modal-footer-flex">
-            <button type="button" class="btn-modal btn-cancel" onclick="closeDocxImportModal()">Back</button>
-            <button type="button" class="btn-modal btn-confirm" id="docxAnalyzeBtn" onclick="analyzeDocx()">
-                <i class="fas fa-search"></i> Analyze Document
-            </button>
+            <button type="button" class="btn-modal btn-cancel" onclick="backFromDocxModal()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="btn-modal btn-confirm" id="docxAnalyzeBtn" onclick="analyzeDocx()"><i class="fas fa-search"></i> Analyze Document</button>
         </div>
     </div>
 </div>
 
-<!-- 4. DELETE MODAL -->
+<!-- 9. DELETE CURRICULUM MODAL -->
 <div id="deleteCurriculumModal" class="custom-modal" style="display: none; z-index: 9999;">
     <div class="modal-content-logout">
         <div class="modal-header-logout" style="background-color: #c0392b; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
@@ -656,17 +537,13 @@
             </p>
         </div>
         <div class="modal-footer-logout" style="display: flex; gap: 12px; justify-content: center; padding-bottom: 25px;">
-            <button class="btn-modal btn-cancel-logout" onclick="closeDeleteModal()" style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">
-                Cancel
-            </button>
-            <button class="btn-modal" id="confirmDeleteBtn" style="background-color: #c0392b; color: white; border: none; padding: 10px 40px; border-radius: 4px; font-weight: 700; cursor: pointer;">
-                Delete
-            </button>
+            <button class="btn-modal btn-cancel-logout" onclick="closeDeleteModal()" style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">Cancel</button>
+            <button class="btn-modal" id="confirmDeleteBtn" style="background-color: #c0392b; color: white; border: none; padding: 10px 40px; border-radius: 4px; font-weight: 700; cursor: pointer;">Delete</button>
         </div>
     </div>
 </div>
 
-<!-- CURRICULUM EXPORT MODAL -->
+<!-- 10. CURRICULUM EXPORT MODAL -->
 <div id="currExportModal" class="curr-exp-overlay" style="display:none;" onclick="if(event.target===this)closeCurrExportModal()">
     <div class="curr-exp-dialog">
         <div class="curr-exp-header">
@@ -678,13 +555,8 @@
             <button class="curr-exp-close" onclick="closeCurrExportModal()">&#215;</button>
         </div>
         <div class="curr-exp-body">
-
-            <!-- STEP 1 -->
             <div class="curr-exp-section">
-                <div class="curr-exp-section-title">
-                    <span class="curr-exp-step-num">1</span>
-                    <span>Select Curricula</span>
-                </div>
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">1</span><span>Select Curricula</span></div>
                 <div class="curr-exp-search-wrap">
                     <i class="fas fa-search"></i>
                     <input type="text" id="currExpSearch" placeholder="Search programs or curriculum codes..." oninput="_filterCurrExpList()">
@@ -700,51 +572,21 @@
                     <div class="curr-exp-list-loading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading curricula...</div>
                 </div>
             </div>
-
-            <!-- STEP 2 -->
             <div class="curr-exp-section">
-                <div class="curr-exp-section-title">
-                    <span class="curr-exp-step-num">2</span>
-                    <span>Export Format</span>
-                </div>
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">2</span><span>Export Format</span></div>
                 <div class="curr-exp-format-grid">
-                    <div class="curr-exp-format-card csv-sel" data-format="csv" onclick="_currToggleFmtCard(this)">
-                        <div class="cf-icon"><i class="fas fa-file-csv"></i></div>
-                        <div class="cf-name">CSV</div>
-                        <div class="cf-desc">Comma separated</div>
-                        <div class="cf-check"><i class="fas fa-check"></i></div>
-                    </div>
-                    <div class="curr-exp-format-card xlsx-sel" data-format="xlsx" onclick="_currToggleFmtCard(this)">
-                        <div class="cf-icon"><i class="fas fa-file-excel"></i></div>
-                        <div class="cf-name">Excel (XLSX)</div>
-                        <div class="cf-desc">Excel workbook</div>
-                        <div class="cf-check"><i class="fas fa-check"></i></div>
-                    </div>
-                    <div class="curr-exp-format-card pdf-sel" data-format="pdf" onclick="_currToggleFmtCard(this)">
-                        <div class="cf-icon"><i class="fas fa-file-pdf"></i></div>
-                        <div class="cf-name">PDF</div>
-                        <div class="cf-desc">Portable document</div>
-                        <div class="cf-check"><i class="fas fa-check"></i></div>
-                    </div>
-                    <div class="curr-exp-format-card docx-sel" data-format="docx" onclick="_currToggleFmtCard(this)">
-                        <div class="cf-icon"><i class="fas fa-file-word"></i></div>
-                        <div class="cf-name">Word (DOCX)</div>
-                        <div class="cf-desc">Word document</div>
-                        <div class="cf-check"><i class="fas fa-check"></i></div>
-                    </div>
+                    <div class="curr-exp-format-card csv-sel" data-format="csv" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-csv"></i></div><div class="cf-name">CSV</div><div class="cf-desc">Comma separated</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card xlsx-sel" data-format="xlsx" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-excel"></i></div><div class="cf-name">Excel (XLSX)</div><div class="cf-desc">Excel workbook</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card pdf-sel" data-format="pdf" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-pdf"></i></div><div class="cf-name">PDF</div><div class="cf-desc">Portable document</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card docx-sel" data-format="docx" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-word"></i></div><div class="cf-name">Word (DOCX)</div><div class="cf-desc">Word document</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
                 </div>
                 <div class="curr-exp-format-row">
                     <span id="currExpFmtError" class="curr-exp-format-error" style="display:none;">Please select at least one format.</span>
                     <button class="curr-exp-fmt-sel-all" id="currExpFmtAllBtn" onclick="_currToggleAllFmts()">Select All Formats</button>
                 </div>
             </div>
-
-            <!-- STEP 3 -->
             <div class="curr-exp-section">
-                <div class="curr-exp-section-title">
-                    <span class="curr-exp-step-num">3</span>
-                    <span>Settings</span>
-                </div>
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">3</span><span>Settings</span></div>
                 <label style="font-size:.8rem;color:#666;font-weight:600;display:block;margin-bottom:5px;">Export Filename</label>
                 <div class="curr-exp-filename-wrap">
                     <i class="fas fa-file-signature"></i>
@@ -765,7 +607,6 @@
                     <div class="curr-exp-summary-text" id="currExpSummaryText">Select curricula and formats to see export summary</div>
                 </div>
             </div>
-
         </div>
         <div class="curr-exp-footer">
             <div class="curr-exp-footer-info" id="currExpFooterInfo"></div>
@@ -783,7 +624,7 @@
     <div class="curr-exp-loading-card">
         <div class="curr-exp-spinner"></div>
         <div class="curr-exp-loading-text" id="currExpLoadingText">Preparing export...</div>
-        <div class="curr-exp-loading-sub"  id="currExpLoadingSubText">Please wait</div>
+        <div class="curr-exp-loading-sub" id="currExpLoadingSubText">Please wait</div>
     </div>
 </div>
 
@@ -792,9 +633,27 @@
     <div class="curr-exp-toast-icon" id="currExpToastIcon"></div>
     <div>
         <div class="curr-exp-toast-title" id="currExpToastTitle"></div>
-        <div class="curr-exp-toast-msg"   id="currExpToastMsg"></div>
+        <div class="curr-exp-toast-msg" id="currExpToastMsg"></div>
     </div>
     <button class="curr-exp-toast-close" onclick="document.getElementById('currExpToast').style.display='none'">&#215;</button>
+</div>
+
+<!-- DUPLICATE CURRICULUM CONFIRMATION MODAL -->
+<div id="duplicateCurrModal" class="custom-modal" style="display: none; z-index: 9999;">
+    <div class="modal-content-logout">
+        <div class="modal-header-logout" style="background-color: #f39c12; color: white; display: flex; justify-content: center; align-items: center; padding: 20px;">
+            <i class="fas fa-exclamation-triangle" style="font-size: 2.5rem;"></i>
+        </div>
+        <div class="modal-body-logout" style="text-align: center; padding: 30px;">
+            <h2 style="color: #630100; margin-bottom: 10px; font-weight: 800;">Curriculum Already Exists</h2>
+            <p id="duplicateCurrMsg" style="color: #555; font-weight: 600; margin-bottom: 6px;"></p>
+            <p style="font-size: 0.85rem; color: #888;">Do you want to override the existing curriculum?</p>
+        </div>
+        <div class="modal-footer-logout" style="display: flex; gap: 12px; justify-content: center; padding-bottom: 25px;">
+            <button class="btn-modal btn-cancel-logout" onclick="closeDuplicateCurrModal()" style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">Cancel</button>
+            <button class="btn-modal" onclick="proceedWithCurrOverride()" style="background-color: #f39c12; color: white; border: none; padding: 10px 40px; border-radius: 4px; font-weight: 700; cursor: pointer;">Override</button>
+        </div>
+    </div>
 </div>
 
 <script src="{{ url_for('static', filename='js/ADMIN/curriculum.admin.js') }}"></script>

@@ -89,22 +89,34 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
 
     def _detect_header_cols(headers):
         """Return column-index list if row is a subject-table header, else None."""
-        sc_i = _col_idx(headers, 'subject code', 'course code', 'subj code', 'sub code')
+        sc_i = _col_idx(headers,
+                        'subject code', 'course code', 'subj code', 'sub code',
+                        'course no', 'course num', 'subj.', 'course #', 'subjectcode')
+        # Fallback: bare 'code' only when a description-like or units column is also present
+        if sc_i is None:
+            code_i  = _col_idx(headers, 'code')
+            anchor  = (_col_idx(headers, 'title', 'description', 'descriptive') is not None
+                       or _col_idx(headers, 'units', 'credited', 'credit') is not None)
+            if code_i is not None and anchor:
+                sc_i = code_i
         if sc_i is None:
             return None
         return [
             sc_i,
             _col_idx(headers, 'descriptive title', 'description',
-                     'subject name', 'course title', 'title'),        # sn
-            _col_idx(headers, 'prereq', 'pre-req', 'prerequisite', 'pre req'),  # pre
-            _col_idx(headers, 'co-req', 'coreq', 'co req', 'corequisite'),      # co
+                     'subject name', 'course title', 'title',
+                     'subject description', 'course description', 'subject title'),  # sn
+            _col_idx(headers, 'prereq', 'pre-req', 'prerequisite', 'pre req',
+                     'pre-requisite', 'co-requisite pre'),                            # pre
+            _col_idx(headers, 'co-req', 'coreq', 'co req', 'corequisite',
+                     'co-requisite'),                                                  # co
             _col_idx(headers, 'lec hrs', 'lec hours', 'lecture hrs',
-                     'lecture hours', 'lec'),                           # lc
+                     'lecture hours', 'lec', 'lecture'),                              # lc
             _col_idx(headers, 'lab hrs', 'lab hours', 'laboratory hrs',
-                     'laboratory hours', 'lab'),                        # lb
+                     'laboratory hours', 'lab', 'laboratory'),                        # lb
             _col_idx(headers, 'credited units', 'credit units',
-                     'units', 'credited'),                              # u
-            _col_idx(headers, 'tuition hrs', 'tuition hours', 'tuition'),  # th
+                     'units', 'credited', 'cu', 'credit'),                            # u
+            _col_idx(headers, 'tuition hrs', 'tuition hours', 'tuition', 'tth'),     # th
         ]
 
     _SKIP_SC = {
@@ -154,9 +166,9 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
                 if not cells:
                     continue
 
-                def gcell(idx, _c=cells):
-                    if idx is None or idx >= len(_c): return ''
-                    return _el_text(_c[idx])
+                def gcell(idx, _cells=cells):
+                    if idx is None or idx >= len(_cells): return ''
+                    return _el_text(_cells[idx])
 
                 headers = [_el_text(c) for c in cells]
 
@@ -166,7 +178,7 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
                     if override_col_map is None:
                         sc_i, sn_i, pre_i, co_i, lc_i, lb_i, u_i, th_i = new_cols
                         _last_cols[:] = new_cols
-                    continue  # header — not a data row
+                    continue  # header row — skip to next row
 
                 # ── 2. Is this a year/semester heading row? ───────────────────
                 row_text = ' '.join(headers)
