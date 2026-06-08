@@ -76,7 +76,6 @@ function setView(type) {
     document.getElementById('btn-table').classList.toggle('active', type === 'table');
     document.getElementById('calendarViewWrapper').style.display = type === 'calendar' ? 'block' : 'none';
     document.getElementById('tableViewWrapper').style.display    = type === 'table'    ? 'block' : 'none';
-    document.getElementById('table-sort-controls').style.display = type === 'table' ? 'flex' : 'none';
     renderCurrentView(window._lastSessions || []);
 }
 
@@ -102,21 +101,6 @@ function updateYearLevels() {
     }
 }
 
-/* ---- Table sort ---- */
-let _sortDir = 'asc';
-function toggleSort() {
-    _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
-    document.getElementById('sort-icon').className = _sortDir === 'asc' ? 'fas fa-sort-alpha-down' : 'fas fa-sort-alpha-up';
-    document.getElementById('sort-label').textContent = _sortDir === 'asc' ? 'A–Z' : 'Z–A';
-    if (!window._lastSessions) return;
-    const sorted = [...window._lastSessions].sort((a, b) => {
-        const aLast = (a.instructor || '').split(',')[0].trim().toLowerCase();
-        const bLast = (b.instructor || '').split(',')[0].trim().toLowerCase();
-        const cmp = aLast.localeCompare(bLast);
-        return _sortDir === 'asc' ? cmp : -cmp;
-    });
-    renderTable(sorted);
-}
 
 /* ---- Color palette ---- */
 const colorPalette = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
@@ -250,37 +234,54 @@ function renderCalendar(sessions) {
 function renderTable(sessions) {
     const tbody = document.getElementById('offeringsTableBody');
     if (!sessions || sessions.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg">No records found.</span></td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-times" style="margin-right:6px;"></i>No schedule data found for the selected filters.</span></td></tr>';
         return;
     }
+
+    const progSel = document.getElementById('view_prog');
+    const ylSel   = document.getElementById('view_yl');
+    const progCode = progSel ? progSel.value : '';
+    const yl       = ylSel  ? ylSel.value   : '';
+    const courseLabel = progCode && yl ? `${progCode} ${yl}` : (progCode || '-');
 
     const grouped = {};
     sessions.forEach(sess => {
         const key = `${sess.subjectcode}||${sess.instructor}`;
         if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [] };
         if (sess.daydesc) {
-            const dayAb = dayAbbr(sess.daydesc);
-            if (!grouped[key].daysArr.includes(dayAb)) grouped[key].daysArr.push(dayAb);
+            const ab = dayAbbr(sess.daydesc);
+            if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
         }
         if (sess.start_time) {
-            const t = `${fmtTime(sess.start_time)}-${fmtTime(sess.end_time)}`;
+            const t = `${fmtTime(sess.start_time)} - ${fmtTime(sess.end_time)}`;
             if (!grouped[key].timesArr.includes(t)) grouped[key].timesArr.push(t);
         }
     });
 
-    tbody.innerHTML = Object.values(grouped).map(sess => `<tr>
-        <td>${sess.instructor || '-'}</td>
-        <td>${sess.subjectcode || '-'}</td>
-        <td>${sess.subjectname || '-'}</td>
-        <td>${sess.lecturehours || 0}</td>
-        <td>${sess.laboratoryhours || 0}</td>
-        <td>${sess.creditunits || 0}</td>
-        <td>${document.getElementById('view_prog').value || '-'}</td>
-        <td>${sess.timesArr.join(' / ') || '-'}</td>
-        <td>${sess.total_hours || 0}</td>
-        <td>${sess.daysArr.join('/') || '-'}</td>
-        <td>${sess.roomname || 'TBA'}</td>
-    </tr>`).join('');
+    tbody.innerHTML = Object.values(grouped).map(sess => {
+        const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+        const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
+            ? `<span title="${sess.instructor}">${sess.instructor}</span>`
+            : '<span style="color:#aaa;font-style:italic;">TBA</span>';
+        const daysDisplay  = sess.daysArr.length  ? sess.daysArr.join('/') : '<span style="color:#aaa;">—</span>';
+        const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
+        const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
+            ? sess.roomname
+            : '<span style="color:#aaa;font-style:italic;">TBA</span>';
+        return `<tr>
+            <td class="td-instructor">${instrDisplay}</td>
+            <td class="td-code">${sess.subjectcode || '—'}</td>
+            <td class="td-desc" title="${sess.subjectname || ''}">${sess.subjectname || '—'}</td>
+            <td>${sess.lecturehours || 0}</td>
+            <td>${sess.laboratoryhours || 0}</td>
+            <td class="td-units">${sess.creditunits || 0}</td>
+            <td>${courseLabel}</td>
+            <td class="td-time">${timeDisplay}</td>
+            <td>${sess.total_hours || 0}</td>
+            <td class="td-days">${daysDisplay}</td>
+            <td class="td-room">${roomDisplay}</td>
+        </tr>`;
+    }).join('');
 }
 
 /* ---- Data fetch ---- */
@@ -291,7 +292,7 @@ async function refreshOfferings() {
     const sem = document.getElementById('view_sem').value;
     const ay  = document.getElementById('view_ay').value;
 
-    if (!pSel.value) {
+    if (!pSel.value || !ay) {
         document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
         document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select a program and year level.</td></tr>';
         document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
@@ -299,11 +300,14 @@ async function refreshOfferings() {
         return;
     }
 
-    const pText = pSel.options[pSel.selectedIndex].text;
+    const pText    = pSel.options[pSel.selectedIndex].text;
+    const ayEl     = document.getElementById('view_ay');
+    const ayTxt    = ayEl.options[ayEl.selectedIndex]?.text || ay;
     const semLabel = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[sem] || sem;
     const ylOrdinals = ['1st', '2nd', '3rd', '4th', '5th'];
     const ylOrd = (ylOrdinals[parseInt(yl) - 1] || yl + 'th') + ' Year';
-    document.getElementById('gridLabel').innerText = `${pText.toUpperCase()} - ${ylOrd} | A.Y ${ay} | ${semLabel}`;
+    const ylNum = parseInt(yl) || '';
+    document.getElementById('gridLabel').innerText = `${pText.toUpperCase()}  —  ${ylNum}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
 
     if (_refreshController) _refreshController.abort();
     _refreshController = new AbortController();
@@ -613,7 +617,6 @@ function _showOverlayToast(msg) {
 window.onload = function () {
     document.getElementById('calendarViewWrapper').style.display = 'block';
     document.getElementById('tableViewWrapper').style.display    = 'none';
-    document.getElementById('table-sort-controls').style.display = 'none';
     updateYearLevels();
     initOverlayMode();
 };

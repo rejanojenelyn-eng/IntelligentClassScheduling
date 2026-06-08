@@ -50,10 +50,29 @@
                             <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_employee' }}">
-                        <a href="{{ url_for('admin_employee') }}" class="nav-link">
-                            <i class="fas fa-users"></i><span class="nav-label">Employee Management</span>
-                        </a>
+                    <li class="nav-item-dropdown {{ 'open' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}">
+                        <div class="nav-link-wrapper {{ 'active' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}"
+                             onclick="toggleDropdown(event, 'adminEmpSubMenu', 'adminEmpArrow')">
+                            <span class="nav-link-main">
+                                <i class="fas fa-users"></i>
+                                <span class="nav-label">Employee Management</span>
+                            </span>
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}" id="adminEmpArrow"></i>
+                        </div>
+                        <ul class="sub-menu {{ 'show-submenu' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}" id="adminEmpSubMenu">
+                            <li>
+                                <a href="{{ url_for('admin_employee') }}"
+                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_employee' }}">
+                                    Employee List
+                                </a>
+                            </li>
+                            <li>
+                                <a href="{{ url_for('admin_archived_employees') }}"
+                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_archived_employees' }}">
+                                    Archived Employee
+                                </a>
+                            </li>
+                        </ul>
                     </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_curriculum' }}">
                         <a href="{{ url_for('admin_curriculum') }}" class="nav-link">

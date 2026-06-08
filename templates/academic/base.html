@@ -74,19 +74,25 @@
 
                     <!-- Employee Management -->
                     <li class="nav-item-dropdown {{ 'open' if 'employee' in request.path }}">
-                        <div class="nav-link-wrapper">
-                            <a href="/employee" class="nav-link-main">
+                        <div class="nav-link-wrapper {{ 'active' if 'employee' in request.path }}"
+                             onclick="toggleDropdown(event, 'employeeSubMenu', 'employeeArrow')">
+                            <span class="nav-link-main">
                                 <i class="fas fa-users"></i>
                                 <span class="nav-label">Employee Management</span>
-                            </a>
-                            <i class="fas fa-caret-down nav-arrow" id="employeeArrow"
-                                onclick="toggleDropdown(event, 'employeeSubMenu', 'employeeArrow')"></i>
+                            </span>
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if 'employee' in request.path }}" id="employeeArrow"></i>
                         </div>
                         <ul class="sub-menu {{ 'show-submenu' if 'employee' in request.path }}" id="employeeSubMenu">
                             <li>
-                                <a href="/employee/archived"
-                                    class="sub-menu-link {{ 'active' if '/employee/archived' in request.path }}">
-                                    Archive Employee
+                                <a href="{{ url_for('employee') }}"
+                                   class="sub-menu-link {{ 'active' if request.path == url_for('employee') }}">
+                                    Employee List
+                                </a>
+                            </li>
+                            <li>
+                                <a href="{{ url_for('archived_employees') }}"
+                                   class="sub-menu-link {{ 'active' if '/employee/archived' in request.path }}">
+                                    Archived Employee
                                 </a>
                             </li>
                         </ul>

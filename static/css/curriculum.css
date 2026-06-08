@@ -117,10 +117,9 @@
     position: relative;
 }
 
-/* Ensure the container has enough height so the browser doesn't flip the dropdown up */
+/* Ensure the container has enough height */
 .curriculum-ui {
-    padding-bottom: 500px !important;
-    /* Extremely high padding to force downward expansion */
+    padding-bottom: 60px;
     min-height: 100vh;
 }
 
@@ -703,10 +702,7 @@
     text-transform: uppercase;
 }
 
-/* Ensure dropdown opens downwards */
-.curriculum-ui {
-    padding-bottom: 500px !important;
-}
+/* (padding-bottom already set above) */
 
 .assignment-table {
     margin-bottom: 40px;
@@ -750,4 +746,1235 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 0.9rem;
+}
+
+/* =========================================================
+   PDF IMPORT — TYPE SELECTOR & UPLOAD MODAL
+   ========================================================= */
+
+.import-type-btn {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: #fafafa;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    padding: 16px 20px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s, background 0.2s;
+    width: 100%;
+}
+
+.import-type-btn:hover {
+    border-color: #630100;
+    background: #fff8f8;
+}
+
+.import-type-icon {
+    font-size: 2rem;
+    color: #630100;
+    flex-shrink: 0;
+}
+
+.import-type-title {
+    font-weight: 800;
+    font-size: 0.95rem;
+    color: #333;
+    margin-bottom: 3px;
+}
+
+.import-type-desc {
+    font-size: 0.78rem;
+    color: #777;
+    line-height: 1.4;
+}
+
+.pdf-error-box {
+    background: #fff0f0;
+    border: 1px solid #e74c3c;
+    border-left: 4px solid #c0392b;
+    color: #c0392b;
+    padding: 10px 14px;
+    border-radius: 5px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    display: none;          /* default hidden; JS sets to flex when showing */
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+}
+
+.pdf-error-box i {
+    margin-top: 2px;
+    flex-shrink: 0;
+    font-size: 0.95rem;
+}
+
+/* =========================================================
+   PDF REVIEW MODAL
+   ========================================================= */
+
+.pdf-review-modal-content {
+    width: 95vw;
+    max-width: 1280px;
+    max-height: 93vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.pdf-review-banner {
+    background: #f9f9f9;
+    border-bottom: 1px solid #eee;
+    padding: 10px 20px;
+    font-size: 0.82rem;
+    flex-shrink: 0;
+}
+
+.pdf-conf-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.conf-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-weight: 800;
+    font-size: 0.8rem;
+}
+
+.conf-high   { background: #d4edda; color: #155724; }
+.conf-medium { background: #fff3cd; color: #856404; }
+.conf-low    { background: #f8d7da; color: #721c24; }
+
+.conf-note {
+    font-size: 0.78rem;
+    color: #856404;
+    font-weight: 600;
+}
+
+.pdf-warn-list {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+    color: #6c757d;
+    font-size: 0.78rem;
+}
+
+.pdf-review-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 10px 16px 0;
+    min-height: 0;
+}
+
+.pdf-review-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.pdf-subject-count {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #630100;
+}
+
+.btn-add-row {
+    background: #630100;
+    color: white;
+    border: none;
+    padding: 5px 14px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-add-row:hover { background: #800000; }
+
+.pdf-review-table-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    min-height: 0;
+}
+
+/* ── Review table ────────────────────────────────────────────── */
+
+.pdf-review-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.79rem;
+    min-width: 900px;
+}
+
+.pdf-review-table thead th {
+    background: #630100;
+    color: white;
+    padding: 8px 8px;
+    text-align: left;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    white-space: nowrap;
+}
+
+/* Column widths — curriculum review */
+.pdf-review-table .th-code { width: 100px; min-width: 90px; }
+.pdf-review-table .th-name { width: 220px; min-width: 160px; }
+.pdf-review-table .th-req  { width: 100px; min-width: 80px;  }
+.pdf-review-table .th-num  { width: 52px;  min-width: 48px;  text-align: center; }
+.pdf-review-table .th-yl   { width: 52px;  min-width: 48px;  }
+.pdf-review-table .th-sem  { width: 58px;  min-width: 52px;  }
+.pdf-review-table .th-del  { width: 32px;  }
+
+/* Column widths — employee review (11 cols + delete) */
+.pdf-review-table .th-emp-num  { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-name { width: 100px; min-width: 88px;  }
+.pdf-review-table .th-emp-mid  { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-mail { width: 150px; min-width: 130px; }
+.pdf-review-table .th-emp-tel  { width: 110px; min-width: 96px;  }
+.pdf-review-table .th-emp-spec { width: 130px; min-width: 110px; }
+.pdf-review-table .th-emp-type { width: 96px;  min-width: 80px;  }
+.pdf-review-table .th-emp-stat { width: 88px;  min-width: 76px;  }
+.pdf-review-table .th-emp-desig{ width: 96px;  min-width: 80px;  }
+
+/* Input sizing inside the review table */
+.pdf-review-table .rev-input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* ── Group header rows ─────────────────────────────────────── */
+
+.rev-group-hdr td {
+    background: #4b0a0a;
+    color: #fff;
+    padding: 5px 10px;
+    font-weight: 800;
+    font-size: 0.78rem;
+    border-top: 3px solid #fff;
+}
+
+.rev-group-hdr-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rev-group-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.rev-group-title {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.8rem;
+}
+
+.rev-group-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.18);
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+/* Move-all controls inside group header */
+.rev-group-move {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: nowrap;
+}
+
+.rev-group-move-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.75);
+    white-space: nowrap;
+}
+
+.rev-group-sel {
+    padding: 3px 6px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 0.72rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.rev-group-sel option { background: #333; color: #fff; }
+
+.btn-group-apply {
+    background: #fff;
+    color: #4b0a0a;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.btn-group-apply:hover { background: #ffd5d5; }
+
+/* ── Data rows ─────────────────────────────────────────────── */
+
+.pdf-review-table tbody tr:not(.rev-group-hdr):nth-child(even) td {
+    background: #fdf8f8;
+}
+
+.pdf-review-table tbody tr:not(.rev-group-hdr):hover td {
+    background: #fff4f4;
+}
+
+.pdf-review-table tbody td {
+    padding: 3px 4px;
+    border-bottom: 1px solid #f0e8e8;
+    vertical-align: middle;
+}
+
+.pdf-review-table tr.row-warning td { background: #fff8e1 !important; }
+
+/* ── Input fields inside review table ─────────────────────── */
+
+.rev-input {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 0.77rem;
+    font-family: inherit;
+    background: #fff;
+    box-sizing: border-box;
+}
+
+.rev-input:focus { outline: none; border-color: #630100; box-shadow: 0 0 0 2px rgba(99,1,0,.12); }
+
+.rev-missing { border-color: #e74c3c !important; background: #fff5f5 !important; }
+
+.rev-code { min-width: 82px;  }
+.rev-desc { min-width: 150px; }
+.rev-req  { min-width: 75px;  }
+.rev-num  { width: 44px; text-align: center; }
+.rev-yl   { width: 44px; }
+.rev-sem  { width: 50px; }
+
+.btn-row-delete {
+    background: none;
+    border: none;
+    color: #c0392b;
+    cursor: pointer;
+    font-size: 0.88rem;
+    padding: 3px 5px;
+    border-radius: 3px;
+    transition: background 0.15s;
+}
+
+.btn-row-delete:hover { background: #fde8e8; }
+
+/* ── Review modal — improved header ──────────────────────── */
+
+.pdf-review-modal-header {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding-bottom: 10px;
+}
+
+.pdf-review-header-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.pdf-review-meta-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.88);
+    padding: 4px 2px 0;
+    flex-wrap: wrap;
+    font-weight: 600;
+}
+
+.rev-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.rev-meta-sep {
+    opacity: 0.45;
+    font-weight: 400;
+}
+
+/* ── Year-level sections ─────────────────────────────────── */
+
+.rev-year-section {
+    margin-bottom: 18px;
+}
+
+.rev-year-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(90deg, #4b0a0a 0%, #700000 100%);
+    color: #fff;
+    padding: 9px 16px;
+    border-radius: 5px 5px 0 0;
+    font-weight: 800;
+    font-size: 0.88rem;
+    letter-spacing: 0.8px;
+}
+
+.rev-year-icon {
+    font-size: 1rem;
+    opacity: 0.75;
+}
+
+.rev-year-title {
+    flex: 1;
+    letter-spacing: 1px;
+}
+
+.rev-year-total {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* ── Semester sub-sections ───────────────────────────────── */
+
+.rev-sem-section {
+    border: 1px solid #e0d0d0;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.rev-sem-section:last-child {
+    margin-bottom: 0;
+    border-radius: 0 0 5px 5px;
+}
+
+.rev-year-section > .rev-sem-section:first-of-type {
+    border-top: none;
+}
+
+.rev-year-section > .rev-sem-section + .rev-sem-section {
+    border-top: 2px solid #e8dede;
+    border-radius: 0;
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+.rev-year-section > .rev-sem-section + .rev-sem-section:last-child {
+    border-radius: 0 0 5px 5px;
+}
+
+.rev-sem-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: #faf4f4;
+    border-bottom: 1px solid #e8d8d8;
+    padding: 7px 14px;
+}
+
+.rev-sem-title {
+    font-weight: 800;
+    font-size: 0.82rem;
+    color: #630100;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.rev-sem-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.rev-sem-count {
+    font-size: 0.74rem;
+    color: #888;
+    font-weight: 600;
+    background: #ede8e8;
+    padding: 2px 9px;
+    border-radius: 10px;
+}
+
+/* ── Per-semester table (no outer border — section provides it) ── */
+
+.rev-sem-table {
+    border-radius: 0;
+    border: none;
+}
+
+.rev-sem-table thead th {
+    background: #800000;
+    font-size: 0.76rem;
+    padding: 6px 8px;
+    position: static;   /* not sticky per-table to avoid stacking issues */
+}
+
+/* ── Empty state ────────────────────────────────────────── */
+
+.rev-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: #aaa;
+    font-size: 0.88rem;
+    gap: 10px;
+}
+
+.rev-empty-state i {
+    font-size: 2.2rem;
+    color: #d0c0c0;
+}
+
+/* =========================================================
+   CURRICULUM EXPORT MODAL
+   ========================================================= */
+
+.curr-exp-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 10000; padding: 20px;
+    backdrop-filter: blur(2px);
+}
+.curr-exp-dialog {
+    background: #fff; border-radius: 12px;
+    width: 720px; max-width: 100%; max-height: 88vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.08);
+    overflow: hidden;
+}
+.curr-exp-header {
+    background: linear-gradient(135deg, #800000 0%, #a30000 100%);
+    padding: 18px 22px; display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+}
+.curr-exp-header-icon {
+    width: 42px; height: 42px; background: rgba(255,255,255,.18);
+    border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.25rem; color: #fff; flex-shrink: 0;
+}
+.curr-exp-header h2 { color: #fff; margin: 0; font-size: 1.1rem; font-weight: 700; }
+.curr-exp-header p  { color: rgba(255,255,255,.72); margin: 2px 0 0; font-size: .8rem; }
+.curr-exp-close {
+    margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff;
+    font-size: 1.3rem; width: 30px; height: 30px; border-radius: 7px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .15s;
+}
+.curr-exp-close:hover { background: rgba(255,255,255,.28); }
+.curr-exp-body {
+    flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px;
+}
+.curr-exp-body::-webkit-scrollbar { width: 5px; }
+.curr-exp-body::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+.curr-exp-section {
+    background: #fafafa; border: 1px solid #e8e8e8; border-radius: 10px; padding: 14px 16px;
+}
+.curr-exp-section-title {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.curr-exp-step-num {
+    width: 22px; height: 22px; border-radius: 50%; background: #800000; color: #fff;
+    font-size: .74rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.curr-exp-section-title > span:last-child {
+    font-weight: 700; color: #333; font-size: .88rem; text-transform: uppercase; letter-spacing: .5px;
+}
+/* Search */
+.curr-exp-search-wrap { position: relative; margin-bottom: 9px; }
+.curr-exp-search-wrap i {
+    position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    color: #aaa; font-size: .8rem; pointer-events: none;
+}
+.curr-exp-search-wrap input {
+    width: 100%; padding: 7px 10px 7px 30px; border: 1.5px solid #ddd; border-radius: 7px;
+    font-size: .84rem; color: #444; outline: none; transition: border-color .15s; box-sizing: border-box;
+}
+.curr-exp-search-wrap input:focus { border-color: #800000; }
+/* Select-all row */
+.curr-exp-sel-all-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 4px 8px; border-bottom: 1px solid #eee; margin-bottom: 8px;
+}
+.curr-exp-sel-all-label {
+    display: flex; align-items: center; gap: 7px;
+    font-size: .83rem; font-weight: 600; color: #555; cursor: pointer;
+}
+.curr-exp-sel-count {
+    font-size: .75rem; background: #800000; color: #fff;
+    padding: 2px 9px; border-radius: 10px; font-weight: 600;
+}
+/* Curriculum list */
+.curr-exp-list {
+    max-height: 260px; overflow-y: auto;
+    border: 1.5px solid #e8e8e8; border-radius: 8px; background: #fff;
+}
+.curr-exp-list::-webkit-scrollbar { width: 4px; }
+.curr-exp-list::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+.curr-exp-prog-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; cursor: pointer; background: #f5f5f5;
+    border-bottom: 1px solid #e8e8e8; user-select: none; transition: background .12s;
+}
+.curr-exp-prog-header:hover { background: #ede8e8; }
+.curr-exp-prog-toggle {
+    font-size: .68rem; color: #800000; transition: transform .2s; width: 12px; flex-shrink: 0;
+}
+.curr-exp-prog-group.collapsed .curr-exp-prog-toggle { transform: rotate(-90deg); }
+.curr-exp-prog-group.collapsed .curr-exp-prog-items { display: none; }
+.curr-exp-prog-cb { accent-color: #800000; width: 14px; height: 14px; flex-shrink: 0; cursor: pointer; }
+.curr-exp-prog-name { font-weight: 700; color: #444; font-size: .83rem; flex: 1; }
+.curr-exp-prog-code {
+    font-size: .72rem; color: #888; background: #e8e8e8; padding: 1px 6px; border-radius: 4px;
+}
+.curr-exp-prog-count { font-size: .7rem; color: #800000; font-weight: 600; }
+.curr-exp-prog-items { border-bottom: 1px solid #eeeeee; }
+.curr-exp-curr-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 14px 7px 34px;
+    cursor: pointer; transition: background .1s; border-bottom: 1px solid #f5f5f5;
+}
+.curr-exp-curr-item:last-child { border-bottom: none; }
+.curr-exp-curr-item:hover { background: #fff8f8; }
+.curr-exp-curr-item.selected { background: #fff0f0; }
+.curr-exp-curr-cb { accent-color: #800000; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.curr-exp-curr-label { flex: 1; font-size: .82rem; color: #444; user-select: none; }
+.curr-exp-curr-code {
+    font-size: .72rem; color: #888; background: #f5f5f5; padding: 1px 6px; border-radius: 4px; font-family: monospace;
+}
+.curr-exp-curr-item.selected .curr-exp-curr-label { color: #800000; font-weight: 600; }
+.curr-exp-curr-item.selected .curr-exp-curr-code  { background: #ffe8e8; color: #800000; }
+.curr-exp-list-loading, .curr-exp-list-empty {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; padding: 28px; color: #999; font-size: .84rem; text-align: center;
+}
+/* Format cards */
+.curr-exp-format-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+.curr-exp-format-card {
+    border: 2px solid #e8e8e8; border-radius: 9px; padding: 12px 8px;
+    cursor: pointer; transition: all .18s; text-align: center; background: #fff;
+    position: relative; user-select: none;
+}
+.curr-exp-format-card:hover { border-color: #bbb; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.08); }
+.curr-exp-format-card .cf-icon { font-size: 1.55rem; margin-bottom: 5px; }
+.curr-exp-format-card .cf-name { font-weight: 700; font-size: .8rem; color: #333; }
+.curr-exp-format-card .cf-desc { font-size: .7rem; color: #aaa; margin-top: 2px; }
+.curr-exp-format-card .cf-check {
+    position: absolute; top: 7px; right: 7px; width: 17px; height: 17px;
+    border-radius: 50%; border: 2px solid #ddd;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .58rem; color: transparent; transition: all .15s;
+}
+.curr-exp-format-card.csv-sel  { --fc:#22863a; }
+.curr-exp-format-card.xlsx-sel { --fc:#1d6f42; }
+.curr-exp-format-card.pdf-sel  { --fc:#c0392b; }
+.curr-exp-format-card.docx-sel { --fc:#2b5797; }
+.curr-exp-format-card .cf-icon { color: var(--fc); }
+.curr-exp-format-card.selected { border-color: var(--fc); }
+.curr-exp-format-card.csv-sel.selected  { background: #f0fff4; }
+.curr-exp-format-card.xlsx-sel.selected { background: #f0fff4; }
+.curr-exp-format-card.pdf-sel.selected  { background: #fff5f5; }
+.curr-exp-format-card.docx-sel.selected { background: #f0f4ff; }
+.curr-exp-format-card.selected .cf-name  { color: var(--fc); }
+.curr-exp-format-card.selected .cf-check { background: var(--fc); border-color: var(--fc); color: #fff; }
+.curr-exp-format-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.curr-exp-format-error { font-size: .78rem; color: #c0392b; }
+.curr-exp-fmt-sel-all {
+    font-size: .76rem; color: #800000; font-weight: 600; background: none;
+    border: none; cursor: pointer; padding: 2px 0; text-decoration: underline;
+}
+.curr-exp-fmt-sel-all:hover { color: #a30000; }
+/* Filename / settings */
+.curr-exp-filename-wrap { position: relative; display: flex; align-items: center; margin-top: 4px; }
+.curr-exp-filename-wrap i {
+    position: absolute; left: 10px; color: #aaa; font-size: .82rem; pointer-events: none;
+}
+.curr-exp-filename-wrap input {
+    width: 100%; padding: 8px 10px 8px 30px; border: 1.5px solid #ddd; border-radius: 7px;
+    font-size: .86rem; outline: none; transition: border-color .15s; box-sizing: border-box;
+}
+.curr-exp-filename-wrap input:focus { border-color: #800000; }
+.curr-exp-date-row {
+    display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+}
+.curr-exp-date-label { font-size: .83rem; color: #555; }
+.curr-exp-date-sub   { font-size: .73rem; color: #aaa; display: block; margin-top: 2px; }
+.curr-toggle-switch  { position: relative; display: inline-block; width: 38px; height: 21px; }
+.curr-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.curr-toggle-slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #ccc; border-radius: 21px; transition: .2s;
+}
+.curr-toggle-slider:before {
+    content: ''; position: absolute; width: 15px; height: 15px; left: 3px; bottom: 3px;
+    background: #fff; border-radius: 50%; transition: .2s;
+}
+.curr-toggle-switch input:checked + .curr-toggle-slider { background: #800000; }
+.curr-toggle-switch input:checked + .curr-toggle-slider:before { transform: translateX(17px); }
+/* Summary box */
+.curr-exp-summary-box {
+    background: linear-gradient(135deg,#fff8f8,#fff); border: 1.5px solid #f0d0d0;
+    border-radius: 8px; padding: 11px 13px; margin-top: 10px;
+    display: flex; align-items: flex-start; gap: 9px;
+}
+.curr-exp-summary-box i { color: #800000; font-size: .95rem; margin-top: 1px; flex-shrink: 0; }
+.curr-exp-summary-text { font-size: .81rem; color: #555; line-height: 1.5; }
+.curr-exp-summary-text strong { color: #800000; }
+/* Footer */
+.curr-exp-footer {
+    padding: 13px 20px; background: #f8f8f8; border-top: 1px solid #eeeeee;
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+}
+.curr-exp-footer-info { flex: 1; font-size: .78rem; color: #999; }
+.curr-exp-cancel {
+    padding: 8px 18px; border: 1.5px solid #ddd; background: #fff; border-radius: 7px;
+    font-size: .86rem; font-weight: 600; color: #666; cursor: pointer; transition: all .15s;
+}
+.curr-exp-cancel:hover { border-color: #bbb; background: #f5f5f5; }
+.curr-exp-confirm {
+    padding: 9px 22px; background: #800000; color: #fff; border: none; border-radius: 7px;
+    font-size: .88rem; font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; transition: background .15s;
+    min-width: 140px; justify-content: center;
+}
+.curr-exp-confirm:hover    { background: #a30000; }
+.curr-exp-confirm:disabled { background: #bbb; cursor: not-allowed; }
+/* Loading overlay */
+.curr-exp-loading-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center; z-index: 11000;
+}
+.curr-exp-loading-card {
+    background: #fff; border-radius: 12px; padding: 30px 38px;
+    text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.3); min-width: 230px;
+}
+.curr-exp-spinner {
+    width: 42px; height: 42px; border: 4px solid #f0e8e8; border-top-color: #800000;
+    border-radius: 50%; animation: curr-spin .8s linear infinite; margin: 0 auto 14px;
+}
+@keyframes curr-spin { to { transform: rotate(360deg); } }
+.curr-exp-loading-text { font-weight: 700; font-size: .97rem; color: #333; margin-bottom: 5px; }
+.curr-exp-loading-sub  { font-size: .81rem; color: #888; }
+/* Toast */
+.curr-exp-toast {
+    position: fixed; top: 24px; right: 24px; z-index: 12000;
+    background: #fff; border-radius: 10px; padding: 13px 16px;
+    display: flex; align-items: flex-start; gap: 11px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2); min-width: 270px; max-width: 380px;
+    border-left: 4px solid #800000; animation: curr-slidein .3s ease;
+}
+.curr-exp-toast.success { border-left-color: #27ae60; }
+.curr-exp-toast.error   { border-left-color: #c0392b; }
+@keyframes curr-slidein { from { transform:translateY(-20px) translateX(30px); opacity:0; } to { transform:none; opacity:1; } }
+.curr-exp-toast-icon { font-size: 1.15rem; flex-shrink: 0; margin-top: 1px; }
+.curr-exp-toast.success .curr-exp-toast-icon { color: #27ae60; }
+.curr-exp-toast.error   .curr-exp-toast-icon { color: #c0392b; }
+.curr-exp-toast-title { font-weight: 700; font-size: .88rem; color: #333; }
+.curr-exp-toast-msg   { font-size: .8rem; color: #666; margin-top: 2px; }
+.curr-exp-toast-close {
+    background: none; border: none; color: #bbb; font-size: 1.05rem;
+    cursor: pointer; margin-left: auto; flex-shrink: 0; padding: 0; line-height: 1;
+}
+.curr-exp-toast-close:hover { color: #555; }
+
+/* Raw text debug panel */
+.pdf-raw-details {
+    margin-top: 8px;
+    font-size: 0.78rem;
+}
+
+.pdf-raw-details summary {
+    cursor: pointer;
+    color: #630100;
+    font-weight: 700;
+    font-size: 0.78rem;
+    user-select: none;
+}
+
+.pdf-raw-pre {
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.72rem;
+    color: #333;
+    margin-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REDESIGNED CURRICULUM MANAGEMENT — TAB-BASED UI
+═══════════════════════════════════════════════════════════════ */
+
+/* Page header + toggle tabs */
+.curr-mgmt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+.curr-mgmt-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #800000;
+    text-transform: uppercase;
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+.curr-tab-group {
+    display: flex;
+    border-radius: 30px;
+    overflow: hidden;
+    border: 2px solid #800000;
+}
+.curr-tab-btn {
+    padding: 9px 24px;
+    background: transparent;
+    color: #800000;
+    border: none;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.82rem;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.curr-tab-btn.active { background: #800000; color: #fff; }
+.curr-tab-btn:not(.active):hover { background: #fff5f5; }
+
+/* Filter bar */
+.curr-filter-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    justify-content: space-between;
+}
+.curr-filter-group { display: flex; flex-direction: column; gap: 4px; }
+.curr-filter-label {
+    font-size: 0.62rem;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-filter-input {
+    padding: 7px 11px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #333;
+    background: #fafafa;
+    outline: none;
+    min-width: 130px;
+}
+.curr-filter-input:focus { border-color: #800000; }
+.curr-filter-actions { display: flex; gap: 8px; align-items: center; }
+
+.curr-btn-sort {
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    background: white;
+    color: #444;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-sort:hover { background: #f5f5f5; border-color: #bbb; }
+
+.curr-btn-export {
+    padding: 8px 16px;
+    border: none;
+    background: #800000;
+    color: white;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-export:hover { background: #600000; }
+
+.curr-btn-import {
+    padding: 8px 16px;
+    border: 1.5px solid #800000;
+    background: white;
+    color: #800000;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.curr-btn-import:hover { background: #fff5f5; }
+
+/* Assignments table */
+.curr-table-wrapper {
+    background: white;
+    border-radius: 8px;
+    overflow: visible;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.curr-assign-table { width: 100%; border-collapse: collapse; }
+.curr-assign-table thead th {
+    background: #800000;
+    color: white;
+    padding: 13px 18px;
+    text-align: left;
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.curr-assign-table tbody td {
+    padding: 13px 18px;
+    border-bottom: 1px solid #f0eeee;
+    font-size: 0.87rem;
+    color: #444;
+}
+.curr-assign-table tbody tr:last-child td { border-bottom: none; }
+.curr-assign-table tbody tr:hover { background: #fffaf9; }
+.curr-code-pill {
+    display: inline-block;
+    border: 2px solid #800000;
+    color: #800000;
+    border-radius: 5px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+/* Syllabi section */
+.curr-syllabi-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.curr-syllabi-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #888;
+    border: 2px dashed #e0d0d0;
+    border-radius: 10px;
+    margin-top: 16px;
+}
+.curr-syllabi-empty i { font-size: 2.4rem; color: #ddd; display: block; margin-bottom: 12px; }
+.curr-syllabi-empty-title { font-size: 1rem; font-weight: 700; color: #666; margin-bottom: 4px; }
+.curr-syllabi-empty-sub { font-size: 0.82rem; color: #aaa; }
+.curr-prog-section { margin-bottom: 20px; }
+.curr-prog-header {
+    background: #800000;
+    color: white;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 6px 6px 0 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-prog-body {
+    border: 1px solid #e8d8d8;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+    background: white;
+}
+.curr-syllabi-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 18px;
+    border-bottom: 1px solid #f5eeee;
+    gap: 10px;
+}
+.curr-syllabi-row:last-child { border-bottom: none; }
+.curr-prog-no-curr {
+    padding: 14px 18px;
+    font-size: 0.82rem;
+    color: #aaa;
+    font-style: italic;
+}
+.curr-syllabi-row::before {
+    content: '•';
+    color: #800000;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+.curr-syllabi-name {
+    font-size: 0.88rem;
+    color: #333;
+    font-weight: 500;
+    flex: 1;
+}
+.curr-syllabi-actions { display: flex; align-items: center; gap: 8px; }
+.btn-view-curr {
+    background: #800000;
+    color: white;
+    border: none;
+    padding: 7px 18px;
+    border-radius: 5px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    transition: 0.2s;
+    white-space: nowrap;
+}
+.btn-view-curr:hover { background: #600000; color: white; }
+.btn-del-curr {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    padding: 7px 10px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.btn-del-curr:hover { background: #c0392b; }
+
+/* Curriculum view page header */
+.curr-view-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+}
+.curr-view-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #800000;
+    text-transform: uppercase;
+    margin: 0;
+}
+.btn-back-curr {
+    background: #800000;
+    color: white;
+    border: none;
+    padding: 9px 22px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+}
+.btn-back-curr:hover { background: #600000; color: white; }
+
+/* ═══════════════════════════════════════════════════════════════
+   REDESIGNED CURRICULUM VIEW PAGE
+═══════════════════════════════════════════════════════════════ */
+
+/* Filter card — white card with labeled dropdowns */
+.curr-view-filter-card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    padding: 18px 22px;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.curr-view-filter-fields {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    flex: 1;
+}
+.curr-view-filter-group { display: flex; flex-direction: column; gap: 4px; }
+.curr-view-filter-label {
+    font-size: 0.62rem;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.curr-view-dropdown {
+    padding: 7px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #333;
+    background: #fafafa;
+    outline: none;
+    cursor: pointer;
+    min-width: 130px;
+}
+.curr-view-dropdown:focus { border-color: #800000; }
+.curr-view-export-btn {
+    background: white;
+    border: 1.5px solid #800000;
+    color: #800000;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.curr-view-export-btn:hover { background: #fff5f5; }
+
+/* Section groups */
+.curr-view-section { margin-bottom: 28px; }
+
+/* Banner: program–year label left, CY+semester right */
+.curr-view-banner {
+    display: flex;
+    align-items: stretch;
+    border-radius: 6px 6px 0 0;
+    overflow: hidden;
+}
+.curr-view-banner-title {
+    flex: 3;
+    background: white;
+    border: 2px solid #800000;
+    border-right: none;
+    border-bottom: none;
+    padding: 10px 18px;
+    color: #800000;
+    font-weight: 800;
+    font-size: 0.88rem;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+}
+.curr-view-banner-info {
+    background: #800000;
+    padding: 10px 22px;
+    color: white;
+    font-weight: 700;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.curr-view-banner-sep { opacity: 0.45; }
+
+/* Subject table */
+.curr-view-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border-radius: 0 0 6px 6px;
+    overflow: hidden;
+}
+.curr-view-table thead th {
+    background: #800000;
+    color: white;
+    padding: 11px 14px;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.curr-view-table tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0eeee;
+    font-size: 0.84rem;
+    color: #333;
+}
+.curr-view-table tbody tr:last-child td { border-bottom: none; }
+.curr-view-table tbody tr:hover { background: #fffcfc; }
+.cvt-code { font-weight: 700; color: #800000; font-size: 0.82rem; }
+.cvt-req  { color: #777; font-size: 0.78rem; }
+.cvt-num  { text-align: center; font-weight: 600; color: #444; }
+.cvt-desc { color: #333; }
+.curr-view-no-subjects {
+    text-align: center;
+    padding: 36px;
+    color: #aaa;
+    background: white;
+    border-radius: 0 0 6px 6px;
+    border: 2px solid #800000;
+    border-top: none;
+    font-size: 0.88rem;
+}
+
+.pdf-scanned-warn {
+    margin-top: 8px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    color: #856404;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }

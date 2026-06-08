@@ -360,11 +360,7 @@ body {
     text-decoration: none;
     font-weight: 500;
     font-size: .9rem;
-    pointer-events: none; /* wrapper handles the click for schedule; employee has its own <a> */
-}
-
-.nav-link-wrapper a.nav-link-main {
-    pointer-events: auto; /* employee dropdown — link is real */
+    pointer-events: none; /* wrapper div handles all dropdown clicks */
 }
 
 .nav-link-main i {

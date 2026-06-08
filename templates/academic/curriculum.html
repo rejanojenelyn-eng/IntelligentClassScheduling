@@ -2,130 +2,234 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
 <div class="curriculum-ui">
 
-    <!-- SECTION 1: CURRICULUM ASSIGNMENT (READ-ONLY) -->
-    <div class="section-header-row">
-        <h2>CURRICULUM ASSIGNMENT</h2>
+    <!-- ── PAGE HEADER WITH TOGGLE TABS ── -->
+    <div class="curr-mgmt-header">
+        <h1 class="curr-mgmt-title">CURRICULUM MANAGEMENT</h1>
+        <div class="curr-tab-group">
+            <button class="curr-tab-btn active" id="tabBtnAssignments" onclick="switchCurrTab('assignments')">Active Assignments</button>
+            <button class="curr-tab-btn" id="tabBtnSyllabi" onclick="switchCurrTab('syllabi')">Curriculum Syllabi</button>
+        </div>
     </div>
-    <div class="filter-bar-dark">
-        <div class="filter-group-row">
-            <div class="filter-item-inline">
-                <label>Curriculum</label>
-                <select id="filterAssignCurr" onchange="filterAssignments()">
-                    <option value="All">All</option>
-                    {% for c in cohorts|map(attribute='curriculumcode')|unique %}
-                    <option value="{{ c }}">{{ c }}</option>
-                    {% endfor %}
-                </select>
+
+    <!-- ═══ TAB 1: ACTIVE ASSIGNMENTS ═══ -->
+    <div id="currPanelAssignments" class="curr-tab-panel">
+
+        <!-- Filter Bar -->
+        <div class="curr-filter-bar">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">SEARCH</label>
+                    <input type="text" id="searchAssign" class="curr-filter-input" placeholder=".." oninput="filterAssignments()">
+                </div>
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">CURRICULUM</label>
+                    <select id="filterAssignCurr" class="curr-filter-input" onchange="filterAssignments()">
+                        <option value="">SELECT</option>
+                        {% for c in cohorts|map(attribute='curriculumcode')|unique %}
+                        <option value="{{ c }}">{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="curr-filter-group">
+                    <label class="curr-filter-label">PROGRAM</label>
+                    <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
+                        <option value="">SELECT</option>
+                        {% for p in programs %}
+                        <option value="{{ p.programname }}">{{ p.programname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
-            <div class="filter-item-inline">
-                <label>Program</label>
-                <select id="filterAssignProg" onchange="filterAssignments()" style="width: 400px;">
-                    <option value="All">All Programs</option>
-                    {% for p in programs %}
-                    <option value="{{ p.programname }}">{{ p.programname }}</option>
-                    {% endfor %}
-                </select>
+            <div class="curr-filter-actions">
+                <button class="curr-btn-sort" id="sortAssignBtn" onclick="sortAssignTable()">
+                    <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
+                </button>
+                <button class="curr-btn-export" onclick="location.href='/admin/export/assignments'">
+                    <i class="fas fa-upload"></i> EXPORT
+                </button>
             </div>
         </div>
-        <div>
-            <!-- Using Admin Export Route directly since data is identical -->
-            <button class="btn-export-outline-white" onclick="location.href='/admin/export/assignments'">
-                <i class="fas fa-external-link-alt"></i> Export
+
+        <!-- Assignments Table -->
+        <div class="curr-table-wrapper">
+            <table class="curr-assign-table" id="assignmentTable">
+                <thead>
+                    <tr>
+                        <th>CURRICULUM CODE</th>
+                        <th>ACADEMIC PROGRAM</th>
+                        <th>YEAR LEVEL</th>
+                        <th>NO. OF SECTION</th>
+                        <th>ACAD YEAR OF ENTRY</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in cohorts %}
+                    <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programname }}">
+                        <td><span class="curr-code-pill">{{ c.curriculumcode }}</span></td>
+                        <td>{{ c.programname }}</td>
+                        <td>{{ c.year_level }}</td>
+                        <td>{{ c.numberofsections }}</td>
+                        <td>{{ c.startacademicyear }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ═══ TAB 2: CURRICULUM SYLLABI ═══ -->
+    <div id="currPanelSyllabi" class="curr-tab-panel" style="display:none;">
+
+        <!-- Syllabi header: program filter left, Export right -->
+        <div class="curr-syllabi-header">
+            <div class="curr-filter-group">
+                <label class="curr-filter-label">PROGRAM</label>
+                <select class="curr-filter-input" id="syllabiProgramFilter" onchange="filterSyllabiByProgram(this.value)" style="min-width:260px;">
+                    <option value="All">ALL PROGRAMS</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="curr-filter-actions">
+                <button class="curr-btn-export" onclick="openCurrExportModal()">
+                    <i class="fas fa-upload"></i> EXPORT
+                </button>
+            </div>
+        </div>
+
+        <!-- Grouped curriculum list: only programs WITH curricula are rendered -->
+        <div id="syllabiList">
+            {% for p in programs %}
+            {% set prog_currs = curriculums | selectattr("programcode", "equalto", p.programcode) | list %}
+            {% if prog_currs %}
+            <div class="curr-prog-section" data-program-code="{{ p.programcode }}">
+                <div class="curr-prog-header">{{ p.programname | upper }}</div>
+                <div class="curr-prog-body">
+                    {% for c in prog_currs %}
+                    <div class="curr-syllabi-row">
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</span>
+                        <div class="curr-syllabi-actions">
+                            <a href="{{ url_for('view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <!-- Empty state: shown by JS when a specific program has no curriculum -->
+        <div id="syllabiEmptyMsg" class="curr-syllabi-empty" style="display:none;">
+            <i class="fas fa-book-open"></i>
+            <div class="curr-syllabi-empty-title">No Available Curriculum</div>
+            <div class="curr-syllabi-empty-sub">This program does not have an assigned curriculum yet.</div>
+        </div>
+    </div>
+
+</div>
+
+<!-- CURRICULUM EXPORT MODAL -->
+<div id="currExportModal" class="curr-exp-overlay" style="display:none;" onclick="if(event.target===this)closeCurrExportModal()">
+    <div class="curr-exp-dialog">
+        <div class="curr-exp-header">
+            <div class="curr-exp-header-icon"><i class="fas fa-file-export"></i></div>
+            <div>
+                <h2>Export Curriculum</h2>
+                <p>Select curricula, choose formats, and download your export files</p>
+            </div>
+            <button class="curr-exp-close" onclick="closeCurrExportModal()">&#215;</button>
+        </div>
+        <div class="curr-exp-body">
+            <div class="curr-exp-section">
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">1</span><span>Select Curricula</span></div>
+                <div class="curr-exp-search-wrap">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="currExpSearch" placeholder="Search programs or curriculum codes..." oninput="_filterCurrExpList()">
+                </div>
+                <div class="curr-exp-sel-all-row">
+                    <label class="curr-exp-sel-all-label">
+                        <input type="checkbox" id="currExpSelectAll" class="curr-exp-prog-cb" onchange="_toggleCurrExpSelectAll(this.checked)">
+                        <span>Select All Curricula</span>
+                    </label>
+                    <span class="curr-exp-sel-count" id="currExpSelCount">0 selected</span>
+                </div>
+                <div class="curr-exp-list" id="currExpList">
+                    <div class="curr-exp-list-loading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading curricula...</div>
+                </div>
+            </div>
+            <div class="curr-exp-section">
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">2</span><span>Export Format</span></div>
+                <div class="curr-exp-format-grid">
+                    <div class="curr-exp-format-card csv-sel" data-format="csv" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-csv"></i></div><div class="cf-name">CSV</div><div class="cf-desc">Comma separated</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card xlsx-sel" data-format="xlsx" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-excel"></i></div><div class="cf-name">Excel (XLSX)</div><div class="cf-desc">Excel workbook</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card pdf-sel" data-format="pdf" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-pdf"></i></div><div class="cf-name">PDF</div><div class="cf-desc">Portable document</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                    <div class="curr-exp-format-card docx-sel" data-format="docx" onclick="_currToggleFmtCard(this)"><div class="cf-icon"><i class="fas fa-file-word"></i></div><div class="cf-name">Word (DOCX)</div><div class="cf-desc">Word document</div><div class="cf-check"><i class="fas fa-check"></i></div></div>
+                </div>
+                <div class="curr-exp-format-row">
+                    <span id="currExpFmtError" class="curr-exp-format-error" style="display:none;">Please select at least one format.</span>
+                    <button class="curr-exp-fmt-sel-all" id="currExpFmtAllBtn" onclick="_currToggleAllFmts()">Select All Formats</button>
+                </div>
+            </div>
+            <div class="curr-exp-section">
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">3</span><span>Settings</span></div>
+                <label style="font-size:.8rem;color:#666;font-weight:600;display:block;margin-bottom:5px;">Export Filename</label>
+                <div class="curr-exp-filename-wrap">
+                    <i class="fas fa-file-signature"></i>
+                    <input type="text" id="currExpFilename" value="Curriculum_Export" placeholder="Enter filename...">
+                </div>
+                <div class="curr-exp-date-row">
+                    <div>
+                        <span class="curr-exp-date-label">Include date &amp; time in filename</span>
+                        <small class="curr-exp-date-sub">e.g. Curriculum_Export_20250525_143022</small>
+                    </div>
+                    <label class="curr-toggle-switch">
+                        <input type="checkbox" id="currExpDateToggle" checked>
+                        <span class="curr-toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="curr-exp-summary-box">
+                    <i class="fas fa-info-circle"></i>
+                    <div class="curr-exp-summary-text" id="currExpSummaryText">Select curricula and formats to see export summary</div>
+                </div>
+            </div>
+        </div>
+        <div class="curr-exp-footer">
+            <div class="curr-exp-footer-info" id="currExpFooterInfo"></div>
+            <button class="curr-exp-cancel" onclick="closeCurrExportModal()">Cancel</button>
+            <button class="curr-exp-confirm" id="currExpConfirmBtn" onclick="currExecuteExport()">
+                <i class="fas fa-download"></i>
+                <span id="currExpBtnLabel">Export</span>
             </button>
         </div>
     </div>
+</div>
 
-    <div class="assignment-scroll-wrapper">
-        <table id="assignmentTable" class="curr-list-table assignment-table">
-            <thead>
-                <tr>
-                    <th>Curriculum Code</th>
-                    <th>Program</th>
-                    <th>Year level</th>
-                    <th>No. of Sections</th>
-                    <th>Acad Year of Entry</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for c in cohorts %}
-                <tr>
-                    <td style="font-weight: 800; color: #630100;">{{ c.curriculumcode }}</td>
-                    <td>{{ c.programname }}</td>
-                    <td>{{ c.year_level }}</td>
-                    <td>{{ c.numberofsections }}</td>
-                    <td>{{ c.startacademicyear }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+<!-- Export Loading Overlay -->
+<div id="currExpLoadingOverlay" class="curr-exp-loading-overlay" style="display:none;">
+    <div class="curr-exp-loading-card">
+        <div class="curr-exp-spinner"></div>
+        <div class="curr-exp-loading-text" id="currExpLoadingText">Preparing export...</div>
+        <div class="curr-exp-loading-sub" id="currExpLoadingSubText">Please wait</div>
     </div>
+</div>
 
-    <!-- SECTION 2: CURRICULUM LIST (READ-ONLY) -->
-    <div class="section-header-row" style="margin-top: 50px;">
-        <h2>CURRICULUM LIST</h2>
+<!-- Export Toast -->
+<div id="currExpToast" class="curr-exp-toast" style="display:none;">
+    <div class="curr-exp-toast-icon" id="currExpToastIcon"></div>
+    <div>
+        <div class="curr-exp-toast-title" id="currExpToastTitle"></div>
+        <div class="curr-exp-toast-msg" id="currExpToastMsg"></div>
     </div>
-
-    <div class="selection-box-maroon">
-        <div class="selection-inner">
-            <div class="input-group-curr">
-                <label>SELECT PROGRAM TO VIEW</label>
-                <select id="mainProgramFilter" onchange="location.href='?program_code='+this.value">
-                    <option value="" disabled {{ 'selected' if not selected_program }}>-- Select Program --</option>
-                    <option value="All" {{ 'selected' if selected_program=='All' }}>All Programs</option>
-                    {% for p in programs %}
-                    <option value="{{ p.programcode }}" {{ 'selected' if selected_program==p.programcode }}>{{ p.programname }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button class="btn-export-curr" onclick="handleProgramExport()">
-                <i class="fas fa-external-link-alt"></i> Export
-            </button>
-        </div>
-    </div>
-
-    {% if selected_program %}
-    <p class="helper-text-italic">Here are the curriculum versions available for the selected program.</p>
-
-    {% for p in programs %}
-        {% set prog_currs = curriculums | selectattr("programcode", "equalto", p.programcode) | list %}
-        {% if prog_currs %}
-        <div class="program-group-header">
-            {{ p.programname | upper }}
-        </div>
-
-        <table class="curr-list-table" style="margin-bottom: 30px;">
-            <thead>
-                <tr>
-                    <th>Curriculum Name</th>
-                    <th style="width: 100px; text-align: center;">Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for c in prog_currs %}
-                <tr>
-                    <td style="font-weight: 800; color: #333;">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</td>
-                    <td style="text-align: center;">
-                        <a href="{{ url_for('view_curriculum', curriculum_id=c.curriculumid) }}" class="btn-black-view" style="background: #630100;">View</a>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% endif %}
-    {% endfor %}
-    {% else %}
-    <div style="text-align: center; padding: 40px; color: #bbb; border: 2px dashed #ddd; margin-top: 20px; border-radius: 5px;">
-        <p>Please select a program to view its curriculum records.</p>
-    </div>
-    {% endif %}
-
-    <!-- Spacer for dropdown -->
-    <div style="height: 250px; background: transparent; pointer-events: none;"></div>
+    <button class="curr-exp-toast-close" onclick="document.getElementById('currExpToast').style.display='none'">&#215;</button>
 </div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/curriculum.acad.js') }}"></script>
