@@ -56,12 +56,12 @@
                 <tr>
                     <td>{{ c.curriculumcode }}</td>
                     <td>{{ c.programname }}</td>
-                    <td>{{ c.year_level }}</td>
-                    <td>{{ c.numberofsections }}</td>
-                    <td>{{ c.startacademicyear }}</td>
+                    <td>{{ c.yearlevel }}</td>
+                    <td>{{ c.section_count }}</td>
+                    <td>{{ c.academicyearid }}</td>
                     <td style="text-align: center;">
                         <button type="button" class="btn-edit-icon"
-                            onclick="editAssignment('{{ c.cohortid }}', '{{ c.programcode }}', '{{ c.curriculumid }}', '{{ c.startacademicyear }}', '{{ c.numberofsections }}')">
+                            onclick="editAssignment('{{ c.programyearlevelid }}', '{{ c.offeringcode }}', '{{ c.curriculumid }}', '{{ c.academicyearid }}', '{{ c.programname }}')">
                             <i class="fas fa-edit"></i>
                         </button>
                     </td>
@@ -152,7 +152,7 @@
             <span class="close-btn" onclick="closeAssignModal()">&times;</span>
         </div>
         <form action="/admin/curriculum/assign" method="POST">
-            <input type="hidden" name="cohort_id" id="assignCohortId">
+            <input type="hidden" name="pyl_id" id="assignPylId">
             <input type="hidden" name="program_code" id="hiddenProgramCode">
             <input type="hidden" name="start_academic_year" id="hiddenStartYear">
 
@@ -164,11 +164,7 @@
 
                 <div class="form-group-modal">
                     <label>Program</label>
-                    <select id="assignProgramCode" disabled class="modal-input-styled modal-readonly-bg">
-                        {% for p in programs %}
-                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                        {% endfor %}
-                    </select>
+                    <input type="text" id="assignProgramCode" disabled class="modal-input-styled modal-readonly-bg">
                 </div>
 
                 <div class="form-group-modal">
@@ -176,17 +172,13 @@
                     <select name="curriculum_id" id="assignCurriculumId" required class="modal-input-styled" style="border: 2px solid #c0392b;">
                         <option value="" disabled selected>Select Curriculum</option>
                         {% for c in all_curriculums %}
-                        <option class="curr-opt" value="{{ c.curriculumid }}" data-program="{{ c.programcode }}">
+                        <option class="curr-opt" value="{{ c.curriculumid }}" data-program="{{ c.offeringcode }}">
                             {{ c.curriculumcode }} (C.Y {{ c.curriculumyear }})
                         </option>
                         {% endfor %}
                     </select>
                 </div>
 
-                <div class="form-group-modal">
-                    <label style="color: #c0392b;">Number of Sections</label>
-                    <input type="number" name="number_of_sections" id="assignSections" required min="1" class="modal-input-styled" style="border: 2px solid #c0392b;">
-                </div>
             </div>
             <div class="modal-footer-flex">
                 <button type="button" class="btn-modal btn-cancel" onclick="closeAssignModal()">Cancel</button>

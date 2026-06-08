@@ -734,32 +734,44 @@ def curriculum():
     
     currs_raw = []
     if selected_program == 'All':
-        currs_raw = query_db("SELECT c.*, p.ProgramName FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode ORDER BY p.ProgramName ASC, c.CurriculumYear DESC")
+        currs_raw = query_db("""
+            SELECT c.*, ao.offeringcode AS programcode, ao.offeringdescription AS programname
+            FROM curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            JOIN programs p ON ao.programcode = p.programcode
+            WHERE p.isactive = TRUE
+            ORDER BY p.programname ASC, c.curriculumyear DESC
+        """)
     elif selected_program:
-        currs_raw = query_db("SELECT * FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC", (selected_program,))
+        currs_raw = query_db("""
+            SELECT c.*, ao.offeringcode AS programcode, ao.offeringdescription AS programname
+            FROM curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.programcode = %s
+            ORDER BY c.curriculumyear DESC
+        """, (selected_program,))
 
     curriculums = [{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else []
     
     today = date.today()
     cohorts_raw = query_db("""
-        SELECT c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, 
-               c.StartAcademicYear, c.NumberOfSections,
-               (CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 as year_level
-        FROM Cohort c 
-        JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode 
-        CROSS JOIN (
-            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
-            UNION ALL 
-            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
-            LIMIT 1
-        ) ay
-        WHERE 
-            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) >= 1
-            AND 
-            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) <= p.NumYearLevel
-        ORDER BY c.StartAcademicYear DESC, p.ProgramName ASC
-    """, (today,))
+        SELECT pyl.programyearlevelid AS cohortid, ao.offeringcode AS programcode,
+               p.programname, pyl.curriculumid, curr.curriculumcode,
+               ay.academicyearid AS startacademicyear,
+               COUNT(sec.sectionid) AS numberofsections,
+               pyl.yearlevel AS year_level
+        FROM program_yearlevel pyl
+        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
+        JOIN academicyear ay ON pyl.academicyearid = ay.academicyearid
+        LEFT JOIN curriculum curr ON pyl.curriculumid = curr.curriculumid
+        LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid AND sec.isactive = TRUE
+        WHERE pyl.isactive = TRUE
+          AND ay.isactive = TRUE
+        GROUP BY pyl.programyearlevelid, ao.offeringcode, p.programname,
+                 pyl.curriculumid, curr.curriculumcode, ay.academicyearid, pyl.yearlevel
+        ORDER BY ay.academicyearid DESC, p.programname ASC
+    """)
 
     cohorts = [{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else []
 
@@ -772,7 +784,14 @@ def view_curriculum(curriculum_id):
     y_lvl = request.args.get('year', '0') 
     sem = request.args.get('semester', 'All')
 
-    info_sql = "SELECT c.*, p.ProgramName, p.ProgramCode, p.NumYearLevel FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode WHERE c.CurriculumID = %s"
+    info_sql = """
+        SELECT c.*, ao.offeringcode AS programcode, ao.offeringdescription AS programname,
+               ao.programcode AS baseprogramcode, p.numyearlevel
+        FROM curriculum c
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
+        WHERE c.curriculumid = %s
+    """
     info_raw = query_db(info_sql, (curriculum_id,), one=True)
     if not info_raw: return redirect(url_for('curriculum'))
     info = {k.lower(): v for k, v in info_raw.items()}
@@ -780,20 +799,31 @@ def view_curriculum(curriculum_id):
     raw_progs = query_db("SELECT * FROM Programs WHERE IsActive = TRUE ORDER BY ProgramName")
     programs =[{k.lower(): v for k, v in row.items()} for row in raw_progs] if raw_progs else[]
     
-    other_sql = "SELECT CurriculumID, CurriculumYear, CurriculumCode FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC"
+    other_sql = """
+        SELECT c.curriculumid, c.curriculumyear, c.curriculumcode
+        FROM curriculum c
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        WHERE ao.offeringcode = %s ORDER BY c.curriculumyear DESC
+    """
     other_currs = query_db(other_sql, (info['programcode'],))
 
-    main_sql = "SELECT cv.SubjectCode as subjectcode, cv.\"Prerequisite\" as prerequisite, cv.\"Co-requisite\" as corequisite, s.SubjectName as subjectname, cv.LectureHours as lecturehours, cv.LaboratoryHours as laboratoryhours, cv.CreditUnits as creditunits, cv.TuitionHours as tuitionhours, cv.Semester as semester, CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) as yearlevel FROM Curriculum_View cv LEFT JOIN Subject s ON cv.SubjectCode = s.SubjectCode WHERE cv.CurriculumID = %s"
-    
-    params =[curriculum_id]
+    main_sql = """
+        SELECT cv.subjectcode, cv."Prerequisite" AS prerequisite, cv."Co-requisite" AS corequisite,
+               s.subjectname, cv.lecturehours, cv.laboratoryhours, cv.creditunits,
+               cv.tuitionhours, cv.semester, cv.yearlevel
+        FROM curriculum_view cv
+        LEFT JOIN subject s ON cv.subjectcode = s.subjectcode
+        WHERE cv.curriculumid = %s
+    """
+    params = [curriculum_id]
     if y_lvl != '0':
-        main_sql += " AND CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) = %s"
+        main_sql += " AND cv.yearlevel = %s"
         params.append(int(y_lvl))
     if sem != 'All':
-        main_sql += " AND cv.Semester = %s"
+        main_sql += " AND cv.semester = %s"
         params.append(sem)
 
-    main_sql += " ORDER BY yearlevel ASC, cv.Semester ASC"
+    main_sql += " ORDER BY cv.yearlevel ASC, cv.semester ASC"
     raw_subs = query_db(main_sql, tuple(params))
     subs =[{k.lower(): v for k, v in row.items()} for row in raw_subs] if raw_subs else[]
 
@@ -932,19 +962,19 @@ def schedule():
 
     status_query = """
         SELECT
-            p.programname,
-            p.programcode,
-            sec.yearlevel,
+            ao.offeringdescription AS programname,
+            ao.offeringcode        AS programcode,
+            pyl.yearlevel,
             ay.academicyearid,
             sem.semestertype,
             MAX(s.datecreated) AS datecreated
         FROM schedule s
-        JOIN sections sec    ON s.sectionid          = sec.sectionid
-        JOIN cohort c        ON sec.cohortid          = c.cohortid
-        JOIN programs p      ON c.programcode         = p.programcode
-        JOIN semester sem    ON s.semesterid          = sem.semesterid
-        JOIN academicyear ay ON sem.academicyearid    = ay.academicyearid
-        GROUP BY p.programname, p.programcode, sec.yearlevel, ay.academicyearid, sem.semestertype
+        JOIN sections sec          ON s.sectionid             = sec.sectionid
+        JOIN program_yearlevel pyl ON sec.programyearlevelid  = pyl.programyearlevelid
+        JOIN academic_offering ao  ON pyl.academicofferingid  = ao.academicofferingid
+        JOIN semester sem          ON s.semesterid            = sem.semesterid
+        JOIN academicyear ay       ON sem.academicyearid      = ay.academicyearid
+        GROUP BY ao.offeringdescription, ao.offeringcode, pyl.yearlevel, ay.academicyearid, sem.semestertype
         ORDER BY MAX(s.datecreated) DESC
     """
     status_list = query_db(status_query)
@@ -1015,19 +1045,20 @@ def get_offerings_schedule():
                 sv.status,
                 sv.versionid
             FROM schedule_version sv
-            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
-            JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN subject sub           ON cs.subjectcode = sub.subjectcode
-            JOIN sections sec          ON sc.sectionid = sec.sectionid
-            JOIN cohort co             ON sec.cohortid = co.cohortid
-            LEFT JOIN faculty f        ON sc.employeenumber = f.employeenumber
-            LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
-            LEFT JOIN room r           ON ss.roomid = r.roomid
-            LEFT JOIN timeslot ts_s    ON ss.starttimeid = ts_s.timeid
-            LEFT JOIN timeslot ts_e    ON ss.endtimeid   = ts_e.timeid
+            JOIN schedule sc              ON sv.scheduleid             = sc.scheduleid
+            JOIN curriculumsubject cs     ON sc.curriculumsubjectid    = cs.curriculumsubjectid
+            JOIN subject sub              ON cs.subjectcode            = sub.subjectcode
+            JOIN sections sec             ON sc.sectionid              = sec.sectionid
+            JOIN program_yearlevel pyl    ON sec.programyearlevelid    = pyl.programyearlevelid
+            JOIN academic_offering ao     ON pyl.academicofferingid    = ao.academicofferingid
+            LEFT JOIN faculty f           ON sc.employeenumber         = f.employeenumber
+            LEFT JOIN schedule_sessions ss ON ss.versionid             = sv.versionid
+            LEFT JOIN room r              ON ss.roomid                 = r.roomid
+            LEFT JOIN timeslot ts_s       ON ss.starttimeid            = ts_s.timeid
+            LEFT JOIN timeslot ts_e       ON ss.endtimeid              = ts_e.timeid
             WHERE {status_clause}
-              AND UPPER(co.programcode) = UPPER(%s)
-              AND sec.yearlevel = %s
+              AND ao.offeringcode = %s
+              AND pyl.yearlevel = %s
               AND sc.semesterid = (
                   SELECT semesterid FROM semester
                   WHERE semestertype = %s AND academicyearid = %s LIMIT 1
@@ -1334,9 +1365,10 @@ def schedule_diagnose():
             FROM schedule_version sv
             JOIN schedule sc ON sv.scheduleid=sc.scheduleid AND sv.status='Published'
             JOIN sections sec ON sc.sectionid=sec.sectionid
-            JOIN cohort co ON sec.cohortid=co.cohortid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+            JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
             LEFT JOIN schedule_sessions ss ON ss.versionid=sv.versionid
-            WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s
+            WHERE ao.offeringcode=%s AND pyl.yearlevel=%s
         """, (prog, int(yl)))
         sched_row = cur.fetchone()
 
@@ -1377,26 +1409,27 @@ def export_schedule():
                 COALESCE(sub.lecturehours, 0)    AS "LectureHours",
                 COALESCE(sub.laboratoryhours, 0) AS "LaboratoryHours",
                 COALESCE(sub.creditunits, 0)     AS "CreditUnits",
-                co.programcode   AS "Program",
-                sec.yearlevel    AS "YearLevel",
+                ao.offeringcode  AS "Program",
+                pyl.yearlevel    AS "YearLevel",
                 (COALESCE(sub.lecturehours,0) + COALESCE(sub.laboratoryhours,0)) AS "Hours",
                 ss.daydesc       AS "Day/s",
                 TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS "Time",
                 COALESCE(r.roomname, 'TBA') AS "Room"
             FROM schedule_version sv
-            JOIN schedule sc           ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
-            JOIN curriculumsubject cs   ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN subject sub            ON cs.subjectcode = sub.subjectcode
-            JOIN sections sec           ON sc.sectionid = sec.sectionid
-            JOIN cohort co              ON sec.cohortid = co.cohortid
-            LEFT JOIN faculty f         ON sc.employeenumber = f.employeenumber
+            JOIN schedule sc              ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
+            JOIN curriculumsubject cs      ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN subject sub               ON cs.subjectcode = sub.subjectcode
+            JOIN sections sec              ON sc.sectionid = sec.sectionid
+            JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao      ON pyl.academicofferingid = ao.academicofferingid
+            LEFT JOIN faculty f            ON sc.employeenumber = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
-            LEFT JOIN room r            ON ss.roomid = r.roomid
-            LEFT JOIN timeslot ts_s     ON ss.starttimeid = ts_s.timeid
-            LEFT JOIN timeslot ts_e     ON ss.endtimeid   = ts_e.timeid
+            LEFT JOIN room r               ON ss.roomid = r.roomid
+            LEFT JOIN timeslot ts_s        ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e        ON ss.endtimeid   = ts_e.timeid
         """
-        if prog: norm_filters.append("UPPER(co.programcode) = UPPER(%s)"); norm_params.append(prog)
-        if yl:   norm_filters.append("sec.yearlevel = %s");                 norm_params.append(int(yl))
+        if prog: norm_filters.append("ao.offeringcode = %s"); norm_params.append(prog)
+        if yl:   norm_filters.append("pyl.yearlevel = %s");   norm_params.append(int(yl))
         if sem or ay:
             sem_sub = "SELECT semesterid FROM semester WHERE TRUE"
             if sem: sem_sub += " AND semestertype = %s"; norm_params.append(sem)
@@ -1662,7 +1695,8 @@ def import_schedule():
                         SELECT cs.curriculumsubjectid
                         FROM curriculumsubject cs
                         JOIN curriculum c ON cs.curriculumid = c.curriculumid
-                        WHERE UPPER(c.programcode) = UPPER(%s) AND UPPER(cs.subjectcode) = UPPER(%s)
+                        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                        WHERE ao.offeringcode = %s AND UPPER(cs.subjectcode) = UPPER(%s)
                         LIMIT 1
                     """, (prog, s_code))
                     r = cur.fetchone()
@@ -1680,26 +1714,28 @@ def import_schedule():
                 if prog and yl:
                     cur.execute("""
                         SELECT sec.sectionid FROM sections sec
-                        JOIN cohort co ON sec.cohortid = co.cohortid
-                        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s AND sec.isactive = TRUE
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                        WHERE ao.offeringcode = %s AND pyl.yearlevel = %s AND sec.isactive = TRUE
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
                 if not sec_id and prog and yl:
                     cur.execute("""
                         SELECT sec.sectionid FROM sections sec
-                        JOIN cohort co ON sec.cohortid = co.cohortid
-                        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                        WHERE ao.offeringcode = %s AND pyl.yearlevel = %s
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
                 if not sec_id and prog:
-                    # No section for this year level — use any section for the program
                     cur.execute("""
                         SELECT sec.sectionid FROM sections sec
-                        JOIN cohort co ON sec.cohortid = co.cohortid
-                        WHERE UPPER(co.programcode) = UPPER(%s)
-                        ORDER BY sec.yearlevel, sec.sectionname LIMIT 1
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                        WHERE ao.offeringcode = %s
+                        ORDER BY pyl.yearlevel, sec.sectionname LIMIT 1
                     """, (prog,))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
 
@@ -2097,8 +2133,9 @@ def api_save_local_arrangement():
             JOIN schedule s ON sv.scheduleid = s.scheduleid
             JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
             WHERE sv.status = 'Published'
-              AND UPPER(c.programcode) = UPPER(%s)
+              AND UPPER(ao.offeringcode) = UPPER(%s)
               AND cs.yearlevel = %s
               AND s.semesterid = %s
             LIMIT 1
@@ -2405,8 +2442,9 @@ def api_publish_local_arrangement(arr_id):
             JOIN   schedule s  ON sv.scheduleid = s.scheduleid
             JOIN   curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN   academic_offering ao ON c.academicofferingid = ao.academicofferingid
             WHERE  sv.status = 'Published'
-              AND  UPPER(c.programcode) = UPPER(%s)
+              AND  UPPER(ao.offeringcode) = UPPER(%s)
               AND  cs.yearlevel = %s
               AND  s.semesterid = %s
             LIMIT 1
@@ -2463,8 +2501,9 @@ def api_restore_local_arrangement(arr_id):
             JOIN   schedule s  ON sv.scheduleid = s.scheduleid
             JOIN   curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN   academic_offering ao ON c.academicofferingid = ao.academicofferingid
             WHERE  sv.status = 'Published'
-              AND  UPPER(c.programcode) = UPPER(%s)
+              AND  UPPER(ao.offeringcode) = UPPER(%s)
               AND  cs.yearlevel = %s
               AND  s.semesterid = %s
             LIMIT 1
@@ -2579,15 +2618,16 @@ def api_local_check_room_conflicts():
                     TO_CHAR(ts_e.timevalue,'HH12:MI AM')           AS end_fmt,
                     r.roomname,
                     COALESCE(f.lastname||', '||f.firstname,'—')    AS instructor,
-                    UPPER(COALESCE(c.programcode,''))               AS programcode,
-                    cs.yearlevel
+                    UPPER(COALESCE(ao.offeringcode,''))             AS programcode,
+                    pyl.yearlevel
                 FROM schedule_sessions ss
                 JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
                 JOIN schedule s          ON sv.scheduleid = s.scheduleid AND s.semesterid = %s
                 JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN subject subj        ON cs.subjectcode = subj.subjectcode
-                LEFT JOIN sections sec   ON s.sectionid = sec.sectionid
-                LEFT JOIN cohort c       ON sec.cohortid = c.cohortid
+                LEFT JOIN sections sec      ON s.sectionid = sec.sectionid
+                LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                LEFT JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
                 JOIN room r              ON ss.roomid = r.roomid
                 LEFT JOIN faculty f      ON s.employeenumber = f.employeenumber
                 LEFT JOIN timeslot ts_s  ON ss.starttimeid = ts_s.timeid
@@ -2597,23 +2637,21 @@ def api_local_check_room_conflicts():
                   AND ss.starttimeid < %s
                   AND ss.endtimeid   > %s
                   AND UPPER(cs.subjectcode) != %s
-                  -- Skip subjects that already have an active Local Arrangement
                   AND NOT EXISTS (
                       SELECT 1 FROM public.local_arrangement_sessions las
                       JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
                       WHERE UPPER(las.subjectcode) = UPPER(cs.subjectcode)
                         AND la.is_active  = TRUE
                         AND la.semesterid = s.semesterid
-                        AND UPPER(la.programcode) = UPPER(COALESCE(c.programcode,''))
-                        AND la.yearlevel  = cs.yearlevel
+                        AND UPPER(la.programcode) = UPPER(COALESCE(ao.offeringcode,''))
+                        AND la.yearlevel  = pyl.yearlevel
                   )
-                  -- Skip subjects already displaced
                   AND NOT EXISTS (
                       SELECT 1 FROM public.local_displaced_subjects lds
                       WHERE UPPER(lds.subjectcode) = UPPER(cs.subjectcode)
                         AND lds.semesterid  = s.semesterid
-                        AND UPPER(lds.programcode) = UPPER(COALESCE(c.programcode,''))
-                        AND lds.yearlevel   = cs.yearlevel
+                        AND UPPER(lds.programcode) = UPPER(COALESCE(ao.offeringcode,''))
+                        AND lds.yearlevel   = pyl.yearlevel
                         AND lds.is_active   = TRUE
                   )
             """, (sem_id, int(room_id), day, int(end_id), int(start_id), exclude_subj or ''))
@@ -2649,7 +2687,8 @@ def get_room_schedule(room_id):
         params  = [room_id]
         joins = """ JOIN semester sem ON s.semesterid = sem.semesterid
             LEFT JOIN sections sec ON s.sectionid = sec.sectionid
-            LEFT JOIN cohort c ON sec.cohortid = c.cohortid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
             JOIN room r ON ss.roomid = r.roomid"""
 
         if scheduler_mode == 'local':
@@ -2665,8 +2704,8 @@ def get_room_schedule(room_id):
                     WHERE UPPER(las.subjectcode) = UPPER(cs.subjectcode)
                       AND la.is_active = TRUE
                       AND la.semesterid = s.semesterid
-                      AND UPPER(la.programcode) = UPPER(COALESCE(c.programcode, ''))
-                      AND la.yearlevel = cs.yearlevel
+                      AND UPPER(la.programcode) = UPPER(COALESCE(ao.offeringcode, ''))
+                      AND la.yearlevel = pyl.yearlevel
                 )
             """)
             filters.append("""
@@ -2674,8 +2713,8 @@ def get_room_schedule(room_id):
                     SELECT 1 FROM public.local_displaced_subjects lds
                     WHERE UPPER(lds.subjectcode) = UPPER(cs.subjectcode)
                       AND lds.semesterid = s.semesterid
-                      AND UPPER(lds.programcode) = UPPER(COALESCE(c.programcode, ''))
-                      AND lds.yearlevel = cs.yearlevel
+                      AND UPPER(lds.programcode) = UPPER(COALESCE(ao.offeringcode, ''))
+                      AND lds.yearlevel = pyl.yearlevel
                       AND lds.is_active = TRUE
                 )
             """)
@@ -2691,7 +2730,7 @@ def get_room_schedule(room_id):
             filters.append("sem.semestertype = %s")
             params.append(semester)
         if program:
-            filters.append("c.programcode = %s")
+            filters.append("ao.offeringcode = %s")
             params.append(program)
 
         cur.execute(f"""
@@ -2702,8 +2741,8 @@ def get_room_schedule(room_id):
                 ss.daydesc,
                 ss.starttimeid,
                 ss.endtimeid,
-                cs.yearlevel AS year_level,
-                c.programcode,
+                pyl.yearlevel AS year_level,
+                ao.offeringcode AS programcode,
                 r.roomname,
                 sv.status,
                 sv.versionid
@@ -2761,17 +2800,17 @@ def api_get_faculty_schedule():
         params += [ay_id, semester]
 
     if program:
-        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        filters.append("UPPER(ao.offeringcode) = UPPER(%s)")
         params.append(program)
 
     if year_level:
-        filters.append("sec.yearlevel = %s")
+        filters.append("pyl.yearlevel = %s")
         params.append(int(year_level))
 
     try:
         rows = query_db(f"""
             SELECT sub.subjectcode, sub.subjectname, sub.creditunits,
-                   sec.sectionname, sec.yearlevel, co.programcode, ss.daydesc, r.roomname,
+                   sec.sectionname, pyl.yearlevel, ao.offeringcode AS programcode, ss.daydesc, r.roomname,
                    ss.starttimeid, ss.endtimeid, sv.status,
                    f.lastname || ', ' || f.firstname AS instructor,
                    sc.employeenumber,
@@ -2783,7 +2822,8 @@ def api_get_faculty_schedule():
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub ON cs.subjectcode = sub.subjectcode
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-            LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
@@ -2844,28 +2884,31 @@ def api_get_curriculum():
         # 1. Hahanapin muna natin ang mismong Curriculum na naka-assign sa Cohort (Batch) nila
         # Kino-compute natin ang StartAcademicYear nila base sa kasalukuyang AY at sa Year Level nila.
         if prog and ay_id and yl and yl.isdigit():
+            # Primary: find the curriculum assigned to this offering's program_yearlevel for this AY + year level
             cur.execute("""
-                SELECT c.CurriculumID, c.CurriculumYear, c.CurriculumCode,
-                       ARRAY(SELECT DISTINCT cs.YearLevel FROM CurriculumSubject cs
-                             WHERE cs.CurriculumID = c.CurriculumID ORDER BY cs.YearLevel) AS year_levels
-                FROM Cohort co
-                JOIN Curriculum c ON co.CurriculumID = c.CurriculumID
-                WHERE co.ProgramCode = %s
-                  AND (CAST(SUBSTRING(%s, 3, 2) AS INT) - CAST(SUBSTRING(co.StartAcademicYear, 3, 2) AS INT)) + 1 = %s
+                SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
+                       ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
+                             WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
+                FROM program_yearlevel pyl
+                JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                JOIN curriculum c ON pyl.curriculumid = c.curriculumid
+                WHERE ao.offeringcode = %s
+                  AND pyl.academicyearid = %s
+                  AND pyl.yearlevel = %s
                 LIMIT 1
             """, (prog, ay_id, int(yl)))
             res = cur.fetchone()
 
-        # 2. Kung sakaling walang nakitang cohort (e.g. hindi pa naka-set up sa Admin), 
-        # tsaka lang tayo gagamit ng fallback na kukunin ang pinakabagong Curriculum.
+        # Fallback: latest curriculum for this offering
         if not res:
             cur.execute("""
-                SELECT c.CurriculumID, c.CurriculumYear, c.CurriculumCode,
-                       ARRAY(SELECT DISTINCT cs.YearLevel FROM CurriculumSubject cs
-                             WHERE cs.CurriculumID = c.CurriculumID ORDER BY cs.YearLevel) AS year_levels
-                FROM Curriculum c
-                WHERE c.ProgramCode = %s
-                ORDER BY c.CurriculumYear DESC LIMIT 1
+                SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
+                       ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
+                             WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
+                FROM curriculum c
+                JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                WHERE ao.offeringcode = %s
+                ORDER BY c.curriculumyear DESC LIMIT 1
             """, (prog,))
             res = cur.fetchone()
 
@@ -2899,8 +2942,9 @@ def api_get_existing_schedule_periods():
                 JOIN semester sem ON sch.semesterid = sem.semesterid
                 JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
                 JOIN sections sec ON sch.sectionid = sec.sectionid
-                JOIN cohort c ON sec.cohortid = c.cohortid
-                WHERE c.programcode = %s AND ay.academicyearid = %s
+                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                WHERE ao.offeringcode = %s AND ay.academicyearid = %s
             """, (prog, ay_id))
             done = [r['semester_code'] for r in cur.fetchall()]
         from datetime import date as _date
@@ -3471,10 +3515,10 @@ def api_manual_existing_days():
         filters.append("sc.semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)")
         params += [ay_id, sem]
     if prog:
-        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        filters.append("UPPER(ao.offeringcode) = UPPER(%s)")
         params.append(prog)
     if yl:
-        filters.append("sec.yearlevel = %s")
+        filters.append("pyl.yearlevel = %s")
         params.append(int(yl))
     rows = query_db(f"""
         SELECT DISTINCT ss.daydesc
@@ -3484,7 +3528,8 @@ def api_manual_existing_days():
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
         JOIN subject sub ON cs.subjectcode = sub.subjectcode
         LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-        LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
         WHERE {' AND '.join(filters)}
     """, params or None) or []
     return jsonify({'success': True, 'days': [r['daydesc'] for r in rows]})
@@ -3506,17 +3551,17 @@ def api_manual_existing_sessions():
     ]
     base_params = [subj, ay_id, sem]
     if prog:
-        base_filters.append("UPPER(co.programcode) = UPPER(%s)")
+        base_filters.append("ao.offeringcode = %s")
         base_params.append(prog)
     if yl:
-        base_filters.append("sec.yearlevel = %s")
+        base_filters.append("pyl.yearlevel = %s")
         base_params.append(int(yl))
 
     session_query = f"""
         SELECT ss.starttimeid, ss.endtimeid, ss.daydesc,
                sv.versionid,
                sub.subjectcode, sub.subjectname,
-               sec.yearlevel, co.programcode,
+               pyl.yearlevel, ao.offeringcode AS programcode,
                r.roomid, r.roomname,
                f.employeenumber,
                f.lastname || ', ' || f.firstname AS instructor,
@@ -3529,7 +3574,8 @@ def api_manual_existing_sessions():
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
         JOIN subject sub ON cs.subjectcode = sub.subjectcode
         LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-        LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
         LEFT JOIN room r ON ss.roomid = r.roomid
         LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
         LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
@@ -3648,14 +3694,15 @@ def api_manual_section_schedule():
             JOIN schedule sc          ON sv.scheduleid  = sc.scheduleid
             JOIN semester s           ON sc.semesterid  = s.semesterid
             JOIN academicyear ay      ON s.academicyearid = ay.academicyearid
-            JOIN sections sec         ON sc.sectionid   = sec.sectionid
-            JOIN cohort co            ON sec.cohortid   = co.cohortid
-            JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN subject subj         ON cs.subjectcode = subj.subjectcode
-            WHERE UPPER(co.programcode) = UPPER(%s)
-              AND sec.yearlevel::text    = %s
-              AND ay.academicyearid::text = %s
-              AND s.semestertype         = %s
+            JOIN sections sec             ON sc.sectionid            = sec.sectionid
+            JOIN program_yearlevel pyl    ON sec.programyearlevelid  = pyl.programyearlevelid
+            JOIN academic_offering ao     ON pyl.academicofferingid  = ao.academicofferingid
+            JOIN curriculumsubject cs     ON sc.curriculumsubjectid  = cs.curriculumsubjectid
+            JOIN subject subj            ON cs.subjectcode           = subj.subjectcode
+            WHERE ao.offeringcode              = %s
+              AND pyl.yearlevel::text          = %s
+              AND ay.academicyearid::text      = %s
+              AND s.semestertype               = %s
               AND {status_clause}
         """, (prog, yl, ay_id, sem))
         return jsonify([dict(r) for r in (rows or [])])
@@ -3724,22 +3771,25 @@ def api_get_subjects():
                         WHERE  academicyearid = %s AND semestertype = %s LIMIT 1
                     ),
                     prog_cte AS (
-                        SELECT UPPER(programcode) AS programcode
-                        FROM   curriculum WHERE curriculumid = %s LIMIT 1
+                        SELECT ao.offeringcode
+                        FROM   curriculum c
+                        JOIN   academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                        WHERE  c.curriculumid = %s LIMIT 1
                     ),
                     max_version AS (
                         SELECT UPPER(sub2.subjectcode) AS subjectcode,
                                MAX(sv2.version_number)  AS max_v
                         FROM   schedule_version sv2
-                        JOIN   schedule sc2          ON sv2.scheduleid          = sc2.scheduleid
-                        JOIN   curriculumsubject cs2 ON sc2.curriculumsubjectid = cs2.curriculumsubjectid
-                        JOIN   subject sub2          ON cs2.subjectcode         = sub2.subjectcode
-                        JOIN   sections sec2         ON sc2.sectionid           = sec2.sectionid
-                        JOIN   cohort co2            ON sec2.cohortid           = co2.cohortid
-                        JOIN   sem_cte               ON sc2.semesterid          = sem_cte.semesterid
+                        JOIN   schedule sc2           ON sv2.scheduleid          = sc2.scheduleid
+                        JOIN   curriculumsubject cs2  ON sc2.curriculumsubjectid = cs2.curriculumsubjectid
+                        JOIN   subject sub2           ON cs2.subjectcode         = sub2.subjectcode
+                        JOIN   sections sec2          ON sc2.sectionid           = sec2.sectionid
+                        JOIN   program_yearlevel pyl2 ON sec2.programyearlevelid = pyl2.programyearlevelid
+                        JOIN   academic_offering ao2  ON pyl2.academicofferingid = ao2.academicofferingid
+                        JOIN   sem_cte                ON sc2.semesterid          = sem_cte.semesterid
                         WHERE  {version_filter}
-                          AND  sec2.yearlevel                = %s
-                          AND  UPPER(co2.programcode) = (SELECT programcode FROM prog_cte)
+                          AND  pyl2.yearlevel          = %s
+                          AND  ao2.offeringcode = (SELECT offeringcode FROM prog_cte)
                         GROUP BY UPPER(sub2.subjectcode)
                     )
                     SELECT mv.subjectcode,
@@ -3748,17 +3798,18 @@ def api_get_subjects():
                                 WHEN bool_or(sv.status = 'Draft')     THEN 'Draft'
                                 ELSE NULL END AS saved_status
                     FROM   max_version mv
-                    JOIN   curriculumsubject cs2 ON UPPER(cs2.subjectcode) = mv.subjectcode
-                    JOIN   schedule sc           ON sc.curriculumsubjectid = cs2.curriculumsubjectid
-                    JOIN   sections sec          ON sc.sectionid           = sec.sectionid
-                    JOIN   cohort co             ON sec.cohortid           = co.cohortid
-                    JOIN   sem_cte               ON sc.semesterid          = sem_cte.semesterid
-                    JOIN   schedule_version sv   ON sv.scheduleid          = sc.scheduleid
-                                                AND sv.version_number      = mv.max_v
-                                                AND {version_filter}
-                    JOIN   schedule_sessions ss  ON ss.versionid           = sv.versionid
-                    WHERE  sec.yearlevel                = %s
-                      AND  UPPER(co.programcode) = (SELECT programcode FROM prog_cte)
+                    JOIN   curriculumsubject cs2  ON UPPER(cs2.subjectcode)    = mv.subjectcode
+                    JOIN   schedule sc            ON sc.curriculumsubjectid    = cs2.curriculumsubjectid
+                    JOIN   sections sec           ON sc.sectionid              = sec.sectionid
+                    JOIN   program_yearlevel pyl  ON sec.programyearlevelid    = pyl.programyearlevelid
+                    JOIN   academic_offering ao   ON pyl.academicofferingid    = ao.academicofferingid
+                    JOIN   sem_cte                ON sc.semesterid             = sem_cte.semesterid
+                    JOIN   schedule_version sv    ON sv.scheduleid             = sc.scheduleid
+                                                 AND sv.version_number        = mv.max_v
+                                                 AND {version_filter}
+                    JOIN   schedule_sessions ss   ON ss.versionid              = sv.versionid
+                    WHERE  pyl.yearlevel          = %s
+                      AND  ao.offeringcode = (SELECT offeringcode FROM prog_cte)
                     GROUP BY mv.subjectcode
                 """, (ay_id, sem, curr_id, int(yl), int(yl))) or []
                 for r in sched_rows:
@@ -3775,20 +3826,23 @@ def api_get_subjects():
                             WHERE academicyearid = %s AND semestertype = %s LIMIT 1
                         ),
                         prog_cte AS (
-                            SELECT UPPER(programcode) AS programcode
-                            FROM curriculum WHERE curriculumid = %s LIMIT 1
+                            SELECT ao.offeringcode
+                            FROM curriculum c
+                            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                            WHERE c.curriculumid = %s LIMIT 1
                         )
                         SELECT UPPER(sub.subjectcode) AS subjectcode
                         FROM   schedule_version sv
-                        JOIN   schedule sc    ON sv.scheduleid          = sc.scheduleid
-                        JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                        JOIN   subject sub    ON cs.subjectcode         = sub.subjectcode
-                        JOIN   sections sec   ON sc.sectionid           = sec.sectionid
-                        JOIN   cohort co      ON sec.cohortid           = co.cohortid
-                        JOIN   sem_cte        ON sc.semesterid          = sem_cte.semesterid
+                        JOIN   schedule sc           ON sv.scheduleid          = sc.scheduleid
+                        JOIN   curriculumsubject cs   ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                        JOIN   subject sub            ON cs.subjectcode         = sub.subjectcode
+                        JOIN   sections sec           ON sc.sectionid           = sec.sectionid
+                        JOIN   program_yearlevel pyl  ON sec.programyearlevelid = pyl.programyearlevelid
+                        JOIN   academic_offering ao   ON pyl.academicofferingid = ao.academicofferingid
+                        JOIN   sem_cte               ON sc.semesterid          = sem_cte.semesterid
                         WHERE  sv.status IN ('Draft', 'Published')
-                          AND  sec.yearlevel                = %s
-                          AND  UPPER(co.programcode) = (SELECT programcode FROM prog_cte)
+                          AND  pyl.yearlevel         = %s
+                          AND  ao.offeringcode = (SELECT offeringcode FROM prog_cte)
                         GROUP BY UPPER(sub.subjectcode)
                         HAVING COUNT(DISTINCT sv.status) > 1
                     """, (ay_id, sem, curr_id, int(yl))) or []
@@ -3821,7 +3875,7 @@ def reports():
     ay_list         = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
     programs        = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
     faculty         = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
-    curricula       = query_db("SELECT curriculumid, curriculumcode, curriculumyear, programcode FROM curriculum ORDER BY programcode, curriculumyear DESC")
+    curricula       = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, ao.offeringcode AS programcode FROM curriculum c JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid ORDER BY ao.offeringcode, c.curriculumyear DESC")
     emp_types       = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
     specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
     statuses        = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
@@ -4365,53 +4419,51 @@ def edit_building():
 @app.route('/admin/curriculum')
 def admin_curriculum():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    
+
     conn = get_db_connection()
     cur = conn.cursor()
-
     try:
-        # 1. AUTOMATION: Find the AY based on today's date
+        # Resolve active AY from today's date, fall back to most recent AY
         today = date.today()
         cur.execute("""
-            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
-            UNION ALL 
-            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
+            (SELECT academicyearid, yearstart FROM semester
+              WHERE %s BETWEEN semstartdate AND semenddate LIMIT 1)
+            UNION ALL
+            (SELECT academicyearid, yearstart FROM academicyear ORDER BY yearstart DESC LIMIT 1)
             LIMIT 1
         """, (today,))
-        
         active_res = cur.fetchone()
 
         if active_res:
-            ay_id = active_res[0] 
-            base_year_int = int(ay_id[2:4]) 
+            ay_id      = active_res[0]
+            ay_start   = int(active_res[1])
 
-            # 2. Logic: Assign the latest curriculum that is NOT newer than the student's entry year
+            # Auto-sync: for every active offering × every year level, upsert a
+            # program_yearlevel row with the best-matching curriculum (entry-year rule).
             cur.execute("""
-                INSERT INTO Cohort (ProgramCode, CurriculumID, StartAcademicYear, NumberOfSections)
-                SELECT p.ProgramCode,
+                INSERT INTO program_yearlevel
+                    (academicofferingid, academicyearid, yearlevel, curriculumid, isactive)
+                SELECT
+                    ao.academicofferingid,
+                    %s,
+                    gs.n,
                     (
-                        SELECT c.CurriculumID FROM Curriculum c 
-                        WHERE c.ProgramCode = p.ProgramCode 
-                        AND CAST(SUBSTRING(c.CurriculumYear, 1, 4) AS INT) <= (2000 + %s - gs.n)
-                        ORDER BY c.CurriculumYear DESC LIMIT 1
+                        SELECT c.curriculumid FROM curriculum c
+                        WHERE c.academicofferingid = ao.academicofferingid
+                          AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT) <= (%s - (gs.n - 1))
+                        ORDER BY c.curriculumyear DESC LIMIT 1
                     ),
-                    'AY' || LPAD((%s - gs.n)::text, 2, '0') || LPAD((%s - gs.n + 1)::text, 2, '0'), 1
-                FROM Programs p 
-                JOIN LATERAL generate_series(0, p.NumYearLevel - 1) AS gs(n) ON TRUE
-                WHERE p.IsActive = TRUE
-                AND EXISTS (SELECT 1 FROM Curriculum c WHERE c.ProgramCode = p.ProgramCode)
-                ON CONFLICT (ProgramCode, StartAcademicYear) 
-                DO UPDATE SET CurriculumID = EXCLUDED.CurriculumID
-            """, (base_year_int, base_year_int, base_year_int))
-
-            # 3. Sync Sections
-            cur.execute("""
-                INSERT INTO Sections (CohortID, YearLevel, SectionName)
-                SELECT c.CohortID, (CAST(SUBSTRING(%s, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1, CHR(64 + gs.num)
-                FROM Cohort c JOIN Programs p ON c.ProgramCode = p.ProgramCode JOIN LATERAL generate_series(1, c.NumberOfSections) AS gs(num) ON TRUE
-                WHERE (CAST(SUBSTRING(%s, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 BETWEEN 1 AND p.NumYearLevel
-                ON CONFLICT (CohortID, YearLevel, SectionName) DO NOTHING
-            """, (ay_id, ay_id))
+                    TRUE
+                FROM academic_offering ao
+                JOIN programs p ON ao.programcode = p.programcode
+                JOIN LATERAL generate_series(1, p.numyearlevel) AS gs(n) ON TRUE
+                WHERE ao.isactive = TRUE
+                  AND EXISTS (
+                      SELECT 1 FROM curriculum c WHERE c.academicofferingid = ao.academicofferingid
+                  )
+                ON CONFLICT (academicofferingid, academicyearid, yearlevel)
+                DO UPDATE SET curriculumid = EXCLUDED.curriculumid
+            """, (ay_id, ay_start))
             conn.commit()
     except Exception as e:
         conn.rollback()
@@ -4422,47 +4474,73 @@ def admin_curriculum():
     # --- FETCH DATA FOR THE PAGE ---
     programs = query_db("SELECT * FROM Programs WHERE IsActive = TRUE ORDER BY ProgramName")
     selected_program = request.args.get('program_code')
-    
+
     currs_raw = []
     if selected_program == 'All':
-        currs_raw = query_db("SELECT c.*, p.ProgramName FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode ORDER BY p.ProgramName ASC, c.CurriculumYear DESC")
+        currs_raw = query_db("""
+            SELECT c.*, ao.offeringcode, ao.offeringdescription AS programname,
+                   ao.programcode, p.programname AS parentprogramname
+            FROM curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            JOIN programs p ON ao.programcode = p.programcode
+            ORDER BY p.programname ASC, c.curriculumyear DESC
+        """)
     elif selected_program:
-        currs_raw = query_db("SELECT * FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC", (selected_program,))
+        currs_raw = query_db("""
+            SELECT c.*, ao.offeringcode, ao.offeringdescription AS programname,
+                   ao.programcode
+            FROM curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.programcode = %s
+            ORDER BY c.curriculumyear DESC
+        """, (selected_program,))
     curriculums = [{k.lower(): v for k, v in row.items()} for row in currs_raw] if currs_raw else []
 
-    unique_codes_raw = query_db("SELECT DISTINCT CurriculumCode FROM Curriculum ORDER BY CurriculumCode DESC")
+    unique_codes_raw = query_db("SELECT DISTINCT curriculumcode FROM curriculum ORDER BY curriculumcode DESC")
     unique_codes = [{k.lower(): v for k, v in row.items()} for row in unique_codes_raw] if unique_codes_raw else []
 
-    all_curriculums_raw = query_db("SELECT * FROM Curriculum ORDER BY CurriculumYear DESC")
+    all_curriculums_raw = query_db("""
+        SELECT c.*, ao.offeringcode, ao.programcode
+        FROM curriculum c
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        ORDER BY c.curriculumyear DESC
+    """)
     all_curriculums = [{k.lower(): v for k, v in row.items()} for row in all_curriculums_raw] if all_curriculums_raw else []
 
-    # Get cohorts based on automatic year detection for the table display
+    # Build the assignments table from program_yearlevel for the current AY
     today = date.today()
-    cohorts_raw = query_db("""
-        SELECT c.CohortID, c.ProgramCode, p.ProgramName, c.CurriculumID, curr.CurriculumCode, 
-               c.StartAcademicYear, c.NumberOfSections,
-               (CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 as year_level
-        FROM Cohort c 
-        JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode 
-        CROSS JOIN (
-            (SELECT AcademicYearID FROM Semester WHERE %s BETWEEN SemStartDate AND SemEndDate LIMIT 1)
-            UNION ALL 
-            (SELECT AcademicYearID FROM AcademicYear ORDER BY YearStart DESC LIMIT 1)
-            LIMIT 1
-        ) ay
-        -- THIS LINE ENFORCES YOUR RULES (3yr for Diploma, 4yr for Degree, 5yr for Arch)
-        WHERE 
-            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) >= 1
-            AND 
-            ((CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1) <= p.NumYearLevel
-        ORDER BY c.StartAcademicYear DESC, p.ProgramName ASC
+    pylrows_raw = query_db("""
+        SELECT
+            pyl.programyearlevelid,
+            ao.offeringcode,
+            ao.offeringdescription AS programname,
+            ao.programcode,
+            pyl.academicyearid,
+            pyl.yearlevel,
+            pyl.curriculumid,
+            COALESCE(curr.curriculumcode, '—') AS curriculumcode,
+            pyl.isactive,
+            COUNT(sec.sectionid) FILTER (WHERE sec.isactive = TRUE) AS section_count
+        FROM program_yearlevel pyl
+        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+        LEFT JOIN curriculum curr ON pyl.curriculumid = curr.curriculumid
+        LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid
+        WHERE pyl.academicyearid = (
+            SELECT academicyearid FROM (
+                (SELECT academicyearid FROM semester WHERE %s BETWEEN semstartdate AND semenddate LIMIT 1)
+                UNION ALL
+                (SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1)
+            ) x LIMIT 1
+        )
+        GROUP BY pyl.programyearlevelid, ao.offeringcode, ao.offeringdescription,
+                 ao.programcode, pyl.academicyearid, pyl.yearlevel,
+                 pyl.curriculumid, curr.curriculumcode, pyl.isactive
+        ORDER BY ao.offeringcode ASC, pyl.yearlevel ASC
     """, (today,))
+    cohorts = [{k.lower(): v for k, v in row.items()} for row in pylrows_raw] if pylrows_raw else []
 
-    cohorts = [{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else []
-
-    return render_template('admin/curriculum_admin.html', programs=programs, curriculums=curriculums, 
-                           selected_program=selected_program, cohorts=cohorts, 
+    return render_template('admin/curriculum_admin.html', programs=programs, curriculums=curriculums,
+                           selected_program=selected_program, cohorts=cohorts,
                            unique_codes=unique_codes, all_curriculums=all_curriculums)
 
 @app.route('/admin/export/assignments')
@@ -4470,14 +4548,18 @@ def export_assignments():
     if session.get('role') not in['Admin', 'Academic Head']: return redirect(url_for('login'))
     
     data = query_db("""
-        SELECT curr.CurriculumCode, p.ProgramName, 
-            (CAST(SUBSTRING(ay.AcademicYearID, 3, 2) AS INT) - CAST(SUBSTRING(c.StartAcademicYear, 3, 2) AS INT)) + 1 as year_level,
-            c.NumberOfSections, c.StartAcademicYear
-        FROM Cohort c
-        JOIN Curriculum curr ON c.CurriculumID = curr.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode
-        CROSS JOIN (SELECT AcademicYearID FROM AcademicYear WHERE IsActive = TRUE LIMIT 1) ay
-        ORDER BY c.StartAcademicYear DESC, p.ProgramName ASC
+        SELECT curr.curriculumcode, ao.offeringdescription AS programname,
+               pyl.yearlevel AS year_level,
+               COUNT(sec.sectionid) FILTER (WHERE sec.isactive = TRUE) AS numberofsections,
+               pyl.academicyearid AS startacademicyear
+        FROM program_yearlevel pyl
+        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
+        LEFT JOIN curriculum curr ON pyl.curriculumid = curr.curriculumid
+        LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid
+        WHERE pyl.isactive = TRUE
+        GROUP BY curr.curriculumcode, ao.offeringdescription, pyl.yearlevel, pyl.academicyearid
+        ORDER BY pyl.academicyearid DESC, ao.offeringdescription ASC
     """)
 
     def generate():
@@ -4494,18 +4576,20 @@ def export_program_all(program_code):
     if session.get('role') not in['Admin', 'Academic Head']: return redirect(url_for('login'))
     
     query = """
-        SELECT p.ProgramName, c.CurriculumYear, CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) as yearlevel, 
-            cv.Semester, cv.SubjectCode, cv."Prerequisite", cv."Co-requisite", cv."Description", 
-            cv.LectureHours, cv.LaboratoryHours, cv.CreditUnits, cv.TuitionHours
-        FROM Curriculum_View cv JOIN Curriculum c ON cv.CurriculumID = c.CurriculumID
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode
+        SELECT ao.offeringdescription AS programname, c.curriculumyear, cv.yearlevel,
+               cv.semester, cv.subjectcode, cv."Prerequisite", cv."Co-requisite", cv.subjectname AS description,
+               cv.lecturehours, cv.laboratoryhours, cv.creditunits, cv.tuitionhours
+        FROM curriculum_view cv
+        JOIN curriculum c ON cv.curriculumid = c.curriculumid
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
     """
-    params =[]
+    params = []
     if program_code != 'All':
-        query += " WHERE c.ProgramCode = %s"
+        query += " WHERE ao.offeringcode = %s"
         params.append(program_code)
 
-    query += " ORDER BY p.ProgramName ASC, c.CurriculumYear DESC, yearlevel ASC, cv.Semester ASC"
+    query += " ORDER BY ao.offeringdescription ASC, c.curriculumyear DESC, cv.yearlevel ASC, cv.semester ASC"
     raw_data = query_db(query, tuple(params))
 
     if not raw_data:
@@ -4592,7 +4676,17 @@ def import_curriculum():
     conn = get_db_connection(); cur = conn.cursor()
     
     try:
-        cur.execute("SELECT 1 FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s", (prog_code, curr_year))
+        # Resolve offering to academicofferingid
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s LIMIT 1", (prog_code,))
+        ao_row = cur.fetchone()
+        if not ao_row:
+            flash(f"Import Blocked: No academic offering found for '{prog_code}'.")
+            return redirect(request.referrer)
+        ao_id = ao_row[0]
+
+        cur.execute("""
+            SELECT 1 FROM curriculum c WHERE c.academicofferingid = %s AND c.curriculumyear = %s
+        """, (ao_id, curr_year))
         if cur.fetchone():
             flash(f"Import Blocked: Curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
             return redirect(request.referrer)
@@ -4610,9 +4704,9 @@ def import_curriculum():
             curr_code_str = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
 
         cur.execute("""
-            INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear) 
-            VALUES (%s, %s, %s) RETURNING CurriculumID
-        """, (curr_code_str, prog_code, curr_year))
+            INSERT INTO curriculum (curriculumcode, academicofferingid, curriculumyear)
+            VALUES (%s, %s, %s) RETURNING curriculumid
+        """, (curr_code_str, ao_id, curr_year))
         target_curr_id = cur.fetchone()[0]
 
         for row in csv_data:
@@ -4731,8 +4825,12 @@ def admin_delete_curriculum(curriculum_id):
         exclusive_subjects = [r['subjectcode'] for r in cur.fetchall()]
 
         # ── 4. Cascade delete ──────────────────────────────────────────────
-        # 4a. Unlink cohorts assigned to this curriculum (preserve cohort, just clear the link)
-        cur.execute("UPDATE cohort SET curriculumid = NULL WHERE curriculumid = %s", (curriculum_id,))
+        # 4a. Clear curriculum from any program_yearlevel rows (preserves the year-level record, marks inactive)
+        cur.execute("""
+            UPDATE program_yearlevel
+            SET curriculumid = NULL, isactive = FALSE
+            WHERE curriculumid = %s
+        """, (curriculum_id,))
 
         # 4b. Delete curriculum subjects
         cur.execute("DELETE FROM curriculumsubject WHERE curriculumid = %s", (curriculum_id,))
@@ -4761,10 +4859,10 @@ def admin_delete_curriculum(curriculum_id):
 @app.route('/admin/curriculum/assign', methods=['POST'])
 def assign_curriculum():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    
-    cohort_id = request.form.get('cohort_id')
-    curr_id = request.form.get('curriculum_id') 
-    sections_count = request.form.get('number_of_sections')
+
+    pyl_id   = request.form.get('pyl_id')
+    curr_id  = request.form.get('curriculum_id')
+    isactive = request.form.get('isactive', '1') == '1'
 
     if not curr_id or curr_id == "":
         flash("Error: No curriculum version selected.")
@@ -4772,89 +4870,109 @@ def assign_curriculum():
 
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        if cohort_id and cohort_id.strip() != "":
+        if pyl_id and pyl_id.strip() != "":
             cur.execute("""
-                UPDATE Cohort 
-                SET CurriculumID = %s, NumberOfSections = %s 
-                WHERE CohortID = %s
-            """, (int(curr_id), int(sections_count), int(cohort_id)))
+                UPDATE program_yearlevel
+                SET curriculumid = %s, isactive = %s
+                WHERE programyearlevelid = %s
+            """, (int(curr_id), isactive, int(pyl_id)))
             flash("Assignment updated successfully.")
         else:
-            prog_code = request.form.get('program_code')
-            start_year = request.form.get('start_academic_year')
+            offering_code = request.form.get('offering_code')
+            academicyearid = request.form.get('academicyearid')
+            yearlevel = int(request.form.get('yearlevel', 1))
             cur.execute("""
-                INSERT INTO Cohort (ProgramCode, CurriculumID, StartAcademicYear, NumberOfSections)
-                VALUES (%s, %s, %s, %s)
-            """, (prog_code, int(curr_id), start_year, int(sections_count)))
+                SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s
+            """, (offering_code,))
+            ao_row = cur.fetchone()
+            if not ao_row:
+                flash(f"Offering '{offering_code}' not found.")
+                return redirect(url_for('admin_curriculum'))
+            ao_id = ao_row[0]
+            cur.execute("""
+                INSERT INTO program_yearlevel
+                    (academicofferingid, academicyearid, yearlevel, curriculumid, isactive)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (academicofferingid, academicyearid, yearlevel)
+                DO UPDATE SET curriculumid = EXCLUDED.curriculumid, isactive = EXCLUDED.isactive
+            """, (ao_id, academicyearid, yearlevel, int(curr_id), isactive))
             flash("New assignment created.")
-            
+
         conn.commit()
     except Exception as e:
         conn.rollback()
         flash(f"Database Error: {str(e)}")
     finally:
         cur.close(); conn.close()
-        
+
     return redirect(url_for('admin_curriculum'))
 
-# --- ORIGINAL AUTOGENERATE LOGIC FULLY RESTORED ---
 @app.route('/admin/curriculum/autogenerate', methods=['POST'])
 def autogenerate_assignments():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     conn = get_db_connection(); cur = conn.cursor()
 
     try:
-        cur.execute("SELECT AcademicYearID, YearStart FROM AcademicYear WHERE IsActive = TRUE LIMIT 1")
+        # Resolve current active AY
+        cur.execute("SELECT academicyearid, yearstart FROM academicyear WHERE isactive = TRUE ORDER BY yearstart DESC LIMIT 1")
         active_ay = cur.fetchone()
         if not active_ay:
             flash("Error: No Active Academic Year found.")
             return redirect(url_for('admin_curriculum'))
 
-        ay_start = int(active_ay['yearstart'] if isinstance(active_ay, dict) else active_ay[1])
-        cur.execute("SELECT ProgramCode, ProgramDuration FROM Programs WHERE IsActive = TRUE")
-        programs = cur.fetchall()
+        ay_id    = active_ay[0] if not isinstance(active_ay, dict) else active_ay['academicyearid']
+        ay_start = int(active_ay[1] if not isinstance(active_ay, dict) else active_ay['yearstart'])
 
-        for prog in programs:
-            p_code = prog['programcode'] if isinstance(prog, dict) else prog[0]
-            p_duration = int(prog['programduration'] if isinstance(prog, dict) else prog[1])
+        # Fetch all active academic offerings with their program duration
+        cur.execute("""
+            SELECT ao.academicofferingid, ao.offeringcode, p.numyearlevel
+            FROM academic_offering ao
+            JOIN programs p ON ao.programcode = p.programcode
+            WHERE ao.isactive = TRUE
+        """)
+        offerings = cur.fetchall()
 
-            for yr in range(1, p_duration + 1):
-                target_start_year_int = ay_start - (yr - 1)
-                target_ay_string = f"AY{str(target_start_year_int)[2:]}{str(target_start_year_int + 1)[2:]}"
+        for off in offerings:
+            ao_id        = off[0] if not isinstance(off, dict) else off['academicofferingid']
+            offering_code = off[1] if not isinstance(off, dict) else off['offeringcode']
+            num_years    = int(off[2] if not isinstance(off, dict) else off['numyearlevel'])
 
-                # Find the Best Matching Curriculum for this specific year
+            for yr in range(1, num_years + 1):
+                # The batch that is currently in year `yr` entered (ay_start - yr + 1)
+                entry_year_start = ay_start - (yr - 1)
+
+                # Best-matching curriculum: latest whose year <= entry year of this batch
                 cur.execute("""
-                    SELECT CurriculumID FROM Curriculum 
-                    WHERE ProgramCode = %s AND CAST(SUBSTRING(CurriculumYear, 1, 4) AS INT) <= %s
-                    ORDER BY CurriculumYear DESC LIMIT 1
-                """, (p_code, target_start_year_int))
-                best_curr = cur.fetchone()
-                
-                if best_curr:
-                    curr_id = best_curr['curriculumid'] if isinstance(best_curr, dict) else best_curr[0]
-                    cur.execute("""
-                        INSERT INTO Cohort (ProgramCode, CurriculumID, StartAcademicYear, NumberOfSections)
-                        VALUES (%s, %s, %s, 1)
-                        ON CONFLICT (ProgramCode, StartAcademicYear) 
-                        DO UPDATE SET CurriculumID = EXCLUDED.CurriculumID
-                        RETURNING CohortID
-                    """, (p_code, curr_id, target_ay_string))
-                    res = cur.fetchone()
-                    target_cohort_id = res['cohortid'] if isinstance(res, dict) else res[0]
+                    SELECT curriculumid FROM curriculum
+                    WHERE academicofferingid = %s
+                      AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
+                    ORDER BY curriculumyear DESC LIMIT 1
+                """, (ao_id, entry_year_start))
+                best = cur.fetchone()
+                best_curr_id = (best[0] if not isinstance(best, dict) else best['curriculumid']) if best else None
 
-                    # Generate Sections
-                    cur.execute("SELECT NumberOfSections FROM Cohort WHERE CohortID = %s", (target_cohort_id,))
-                    num_sections = cur.fetchone()[0]
-                    for i in range(1, num_sections + 1):
-                        sec_name = f"{p_code} {yr}-{chr(64 + i)}"
-                        cur.execute("""
-                            INSERT INTO Sections (CohortID, YearLevel, SectionName, IsActive)
-                            VALUES (%s, %s, %s, TRUE)
-                            ON CONFLICT (CohortID, YearLevel, SectionName) DO NOTHING
-                        """, (target_cohort_id, yr, sec_name))
+                cur.execute("""
+                    INSERT INTO program_yearlevel
+                        (academicofferingid, academicyearid, yearlevel, curriculumid, isactive)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (academicofferingid, academicyearid, yearlevel)
+                    DO UPDATE SET curriculumid = EXCLUDED.curriculumid,
+                                  isactive     = EXCLUDED.isactive
+                    RETURNING programyearlevelid
+                """, (ao_id, ay_id, yr, best_curr_id, best_curr_id is not None))
+                pyl_row = cur.fetchone()
+                pyl_id = pyl_row[0] if not isinstance(pyl_row, dict) else pyl_row['programyearlevelid']
+
+                # Seed one default section if none exist yet for this year level
+                sec_name = f"{offering_code} {yr}-A"
+                cur.execute("""
+                    INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                    VALUES (%s, %s, TRUE)
+                    ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                """, (pyl_id, sec_name))
 
         conn.commit()
-        flash("Curriculum Assignment successfully updated based on batch entry years.")
+        flash("Curriculum assignments updated based on batch entry years.")
     except Exception as e:
         conn.rollback()
         flash(f"Error: {str(e)}")
@@ -4869,27 +4987,45 @@ def admin_view_curriculum(curriculum_id):
     y_lvl = request.args.get('year', '0') 
     sem = request.args.get('semester', 'All')
 
-    info_sql = "SELECT c.*, p.ProgramName, p.ProgramCode, p.NumYearLevel FROM Curriculum c JOIN Programs p ON c.ProgramCode = p.ProgramCode WHERE c.CurriculumID = %s"
+    info_sql = """
+        SELECT c.*, ao.offeringcode, ao.offeringdescription AS programname,
+               ao.academicofferingid, ao.programcode, p.numyearlevel
+        FROM curriculum c
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
+        WHERE c.curriculumid = %s
+    """
     info_raw = query_db(info_sql, (curriculum_id,), one=True)
     if not info_raw: return redirect(url_for('admin_curriculum'))
-    
+
     info = {k.lower(): v for k, v in info_raw.items()}
     progs = query_db("SELECT * FROM Programs WHERE IsActive = TRUE ORDER BY ProgramName")
-    
-    other_sql = "SELECT CurriculumID, CurriculumYear, CurriculumCode FROM Curriculum WHERE ProgramCode = %s ORDER BY CurriculumYear DESC"
-    other_currs = query_db(other_sql, (info['programcode'],))
 
-    main_sql = "SELECT cv.SubjectCode as subjectcode, cv.\"Prerequisite\" as prerequisite, cv.\"Co-requisite\" as corequisite, s.SubjectName as subjectname, cv.LectureHours as lecturehours, cv.LaboratoryHours as laboratoryhours, cv.CreditUnits as creditunits, cv.TuitionHours as tuitionhours, cv.Semester as semester, CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) as yearlevel FROM Curriculum_View cv LEFT JOIN Subject s ON cv.SubjectCode = s.SubjectCode WHERE cv.CurriculumID = %s"
-    
+    other_sql = """
+        SELECT curriculumid, curriculumyear, curriculumcode
+        FROM curriculum
+        WHERE academicofferingid = %s
+        ORDER BY curriculumyear DESC
+    """
+    other_currs = query_db(other_sql, (info['academicofferingid'],))
+
+    main_sql = """
+        SELECT cv.subjectcode, cv."Prerequisite" AS prerequisite, cv."Co-requisite" AS corequisite,
+               s.subjectname, cv.lecturehours, cv.laboratoryhours, cv.creditunits, cv.tuitionhours,
+               cv.semester, cv.yearlevel
+        FROM curriculum_view cv
+        LEFT JOIN subject s ON cv.subjectcode = s.subjectcode
+        WHERE cv.curriculumid = %s
+    """
     params = [curriculum_id]
     if y_lvl != '0':
-        main_sql += " AND CAST(SUBSTRING(cv.ProgramYearLevel FROM '-(.*)') AS INT) = %s"
+        main_sql += " AND cv.yearlevel = %s"
         params.append(int(y_lvl))
     if sem != 'All':
-        main_sql += " AND cv.Semester = %s"
+        main_sql += " AND cv.semester = %s"
         params.append(sem)
 
-    main_sql += " ORDER BY yearlevel ASC, cv.Semester ASC"
+    main_sql += " ORDER BY cv.yearlevel ASC, cv.semester ASC"
     raw_subs = query_db(main_sql, tuple(params))
     subs =[{k.lower(): v for k, v in row.items()} for row in raw_subs] if raw_subs else[]
 
@@ -5079,9 +5215,15 @@ def admin_settings():
                    COALESCE(p.programtype, 'Undergraduate') AS programtype,
                    p.isactive,
                    COALESCE(p.numyearlevel, 4) AS numyearlevel,
-                   COUNT(DISTINCT c.curriculumid) AS curr_count
+                   COUNT(DISTINCT c.curriculumid)                                             AS curr_count,
+                   COUNT(DISTINCT ao.academicofferingid) FILTER (WHERE ao.isactive = TRUE)    AS offering_count,
+                   COUNT(DISTINCT pyl.programyearlevelid)                                     AS yearlevel_count,
+                   COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE)           AS section_count
             FROM   programs p
-            LEFT JOIN curriculum c ON c.programcode = p.programcode
+            LEFT JOIN academic_offering  ao  ON ao.programcode  = p.programcode
+            LEFT JOIN curriculum         c   ON c.academicofferingid = ao.academicofferingid
+            LEFT JOIN program_yearlevel  pyl ON pyl.academicofferingid = ao.academicofferingid AND pyl.isactive = TRUE
+            LEFT JOIN sections           sec ON sec.programyearlevelid = pyl.programyearlevelid
             WHERE  p.isactive = TRUE
             GROUP  BY p.programcode, p.programname, p.programtype,
                       p.isactive, p.numyearlevel
@@ -5090,27 +5232,47 @@ def admin_settings():
         programs_mgmt = to_dict(cur)
 
         cur.execute("""
-            SELECT c.curriculumid, c.curriculumcode, c.programcode,
+            SELECT c.curriculumid, c.curriculumcode, ao.offeringcode AS programcode,
                    c.curriculumyear,
                    COUNT(cs.subjectcode)          AS subj_count,
                    COALESCE(SUM(s.creditunits), 0) AS total_units
             FROM   curriculum c
+            JOIN   academic_offering ao ON ao.academicofferingid = c.academicofferingid
             LEFT JOIN curriculumsubject cs ON cs.curriculumid = c.curriculumid
             LEFT JOIN subject           s  ON s.subjectcode   = cs.subjectcode
             GROUP  BY c.curriculumid, c.curriculumcode,
-                      c.programcode, c.curriculumyear
-            ORDER  BY c.programcode, c.curriculumyear DESC
+                      ao.offeringcode, c.curriculumyear
+            ORDER  BY ao.offeringcode, c.curriculumyear DESC
         """)
         curricula_mgmt = to_dict(cur)
 
         cur.execute("""
-            SELECT sec.sectionid, sec.sectionname, sec.yearlevel, co.programcode
+            SELECT sec.sectionid, sec.sectionname, pyl.yearlevel,
+                   ao.offeringcode AS programcode, sec.isactive
             FROM   sections sec
-            JOIN   cohort co ON sec.cohortid = co.cohortid
-            WHERE  sec.isactive = TRUE
-            ORDER  BY co.programcode, sec.yearlevel, sec.sectionname
+            JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN   academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+            JOIN   programs p            ON ao.programcode = p.programcode
+            WHERE  p.isactive = TRUE
+            ORDER  BY ao.offeringcode, pyl.yearlevel, sec.sectionname
         """)
         sections_mgmt = to_dict(cur)
+
+        cur.execute("""
+            SELECT ao.academicofferingid, ao.offeringcode, ao.offeringdescription,
+                   ao.programcode, ao.isactive,
+                   t.trackname, t.trackcode, t.tracktype,
+                   COUNT(DISTINCT pyl.programyearlevelid)                          AS yearlevel_count,
+                   COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE) AS section_count
+            FROM   academic_offering ao
+            LEFT JOIN track             t   ON t.trackid = ao.trackid
+            LEFT JOIN program_yearlevel pyl ON pyl.academicofferingid = ao.academicofferingid AND pyl.isactive = TRUE
+            LEFT JOIN sections          sec ON sec.programyearlevelid = pyl.programyearlevelid
+            GROUP  BY ao.academicofferingid, ao.offeringcode, ao.offeringdescription,
+                      ao.programcode, ao.isactive, t.trackname, t.trackcode, t.tracktype
+            ORDER  BY ao.programcode, ao.offeringcode
+        """)
+        offerings_mgmt = to_dict(cur)
 
         return render_template('admin/settings_admin.html',
                                ay_list=ay_data, emp_types=emp_types,
@@ -5121,6 +5283,7 @@ def admin_settings():
                                programs_mgmt=programs_mgmt,
                                curricula_mgmt=curricula_mgmt,
                                sections_mgmt=sections_mgmt,
+                               offerings_mgmt=offerings_mgmt,
                                activity_logs=activity_logs)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
@@ -5606,10 +5769,16 @@ def settings_add_curriculum():
             # Auto-generate from year e.g. "2025-2026" → "CY2526"
             parts = year.replace(' ','').split('-')
             code = 'CY' + (parts[0][-2:] if parts else '') + (parts[1][-2:] if len(parts)>1 else '')
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s LIMIT 1", (pcode,))
+        ao_row = cur.fetchone()
+        if not ao_row:
+            flash(f"No academic offering found for '{pcode}'.", "error")
+            return redirect(url_for('admin_settings'))
+        ao_id = ao_row[0]
         cur.execute("""
-            INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear)
+            INSERT INTO curriculum (curriculumcode, academicofferingid, curriculumyear)
             VALUES (%s, %s, %s)
-        """, (code, pcode, year))
+        """, (code, ao_id, year))
         conn.commit()
         flash(f"Curriculum track '{code}' added to {pcode}.", "success")
         write_activity_log("Added Curriculum Track",
@@ -5672,68 +5841,98 @@ def settings_delete_curriculum():
 def settings_add_section():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     prog_code    = request.form.get('program_code', '').strip().upper()
-    year_level   = request.form.get('year_level', '1')
+    year_level   = int(request.form.get('year_level', '1'))
     section_name = request.form.get('section_name', '').strip()
     if not prog_code or not section_name:
         flash("Program code and section name are required.", "error")
         return redirect(url_for('admin_settings'))
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        # Prefer a cohort that already manages sections at this year level
+        # Resolve current AY
+        cur.execute("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC NULLS LAST LIMIT 1")
+        ay_row = cur.fetchone()
+        if not ay_row:
+            flash("No academic year configured. Please add an academic year first.", "warning")
+            return redirect(url_for('admin_settings'))
+        ay_id = ay_row[0]
+
+        # Find the program_yearlevel row for this offering + AY + year level.
+        # Try exact match on programcode (programs without tracks) first,
+        # then widen to any offering under this program.
         cur.execute("""
-            SELECT DISTINCT co.cohortid
-            FROM cohort co
-            JOIN sections sec ON sec.cohortid = co.cohortid
-            WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s AND sec.isactive = TRUE
+            SELECT pyl.programyearlevelid
+            FROM program_yearlevel pyl
+            JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+            WHERE UPPER(ao.offeringcode) = UPPER(%s)
+              AND pyl.academicyearid = %s
+              AND pyl.yearlevel = %s
             LIMIT 1
-        """, (prog_code, int(year_level)))
-        row = cur.fetchone()
-        if not row:
-            # Fall back to any cohort for this program
+        """, (prog_code, ay_id, year_level))
+        pyl_row = cur.fetchone()
+
+        if not pyl_row:
+            # Widen: any offering whose programcode matches
             cur.execute("""
-                SELECT cohortid FROM cohort
-                WHERE UPPER(programcode) = UPPER(%s)
-                ORDER BY startacademicyear DESC NULLS LAST LIMIT 1
+                SELECT pyl.programyearlevelid
+                FROM program_yearlevel pyl
+                JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                WHERE UPPER(ao.programcode) = UPPER(%s)
+                  AND pyl.academicyearid = %s
+                  AND pyl.yearlevel = %s
+                ORDER BY ao.offeringcode
+                LIMIT 1
+            """, (prog_code, ay_id, year_level))
+            pyl_row = cur.fetchone()
+
+        if not pyl_row:
+            # Auto-create program_yearlevel using the latest curriculum for this program
+            cur.execute("""
+                SELECT ao.academicofferingid, c.curriculumid
+                FROM academic_offering ao
+                LEFT JOIN curriculum c ON c.academicofferingid = ao.academicofferingid
+                WHERE UPPER(ao.programcode) = UPPER(%s)
+                ORDER BY c.curriculumyear DESC NULLS LAST
+                LIMIT 1
             """, (prog_code,))
-            row = cur.fetchone()
-        if not row:
-            # Auto-create a cohort using the program's latest curriculum + current AY
-            cur.execute("""
-                SELECT curriculumid FROM curriculum
-                WHERE UPPER(programcode) = UPPER(%s)
-                ORDER BY curriculumyear DESC NULLS LAST LIMIT 1
-            """, (prog_code,))
-            curr_row = cur.fetchone()
-            cur.execute("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC NULLS LAST LIMIT 1")
-            ay_row = cur.fetchone()
-            if not curr_row:
-                flash(f"No curriculum found for '{prog_code}'. Add a curriculum track first.", "warning")
+            off_row = cur.fetchone()
+            if not off_row:
+                flash(f"No academic offering found for '{prog_code}'. Set up program offerings first.", "warning")
                 return redirect(url_for('admin_settings'))
-            if not ay_row:
-                flash("No academic year configured. Please add an academic year first.", "warning")
-                return redirect(url_for('admin_settings'))
+            ao_id    = off_row[0]
+            curr_id  = off_row[1]
             cur.execute("""
-                INSERT INTO cohort (programcode, curriculumid, startacademicyear, numberofsections)
-                VALUES (%s, %s, %s, 0)
-                ON CONFLICT (programcode, startacademicyear)
-                DO UPDATE SET curriculumid = EXCLUDED.curriculumid
-                RETURNING cohortid
-            """, (prog_code, curr_row[0], ay_row[0]))
-            row = cur.fetchone()
-        cohort_id = row[0]
-        # Check for duplicate section name in same cohort + year level
+                INSERT INTO program_yearlevel
+                    (academicofferingid, academicyearid, yearlevel, curriculumid, isactive)
+                VALUES (%s, %s, %s, %s, TRUE)
+                ON CONFLICT (academicofferingid, academicyearid, yearlevel)
+                DO UPDATE SET isactive = TRUE
+                RETURNING programyearlevelid
+            """, (ao_id, ay_id, year_level, curr_id))
+            pyl_row = cur.fetchone()
+
+        pyl_id = pyl_row[0]
+
+        # Guard: inactive year level blocks manual section creation
+        cur.execute("SELECT isactive FROM program_yearlevel WHERE programyearlevelid = %s", (pyl_id,))
+        active_check = cur.fetchone()
+        if active_check and not active_check[0]:
+            conn.commit()
+            flash(f"Year {year_level} is inactive for this offering. Activate it first.", "warning")
+            return redirect(url_for('admin_settings'))
+
+        # Duplicate check
         cur.execute("""
             SELECT 1 FROM sections
-            WHERE cohortid=%s AND LOWER(sectionname)=LOWER(%s) AND yearlevel=%s
-        """, (cohort_id, section_name, int(year_level)))
+            WHERE programyearlevelid = %s AND LOWER(sectionname) = LOWER(%s)
+        """, (pyl_id, section_name))
         if cur.fetchone():
-            conn.commit()  # commit any cohort auto-creation
+            conn.commit()
             flash(f"Section '{section_name}' already exists for Year {year_level}.", "warning")
         else:
             cur.execute("""
-                INSERT INTO sections (cohortid, yearlevel, sectionname, isactive)
-                VALUES (%s, %s, %s, TRUE)
-            """, (cohort_id, int(year_level), section_name))
+                INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                VALUES (%s, %s, TRUE)
+            """, (pyl_id, section_name))
             conn.commit()
             flash(f"Section '{section_name}' added for Year {year_level}.", "success")
             write_activity_log("Added Section",
@@ -5765,6 +5964,171 @@ def settings_deactivate_section():
     return redirect(url_for('admin_settings'))
 
 
+@app.route('/admin/settings/section/edit', methods=['POST'])
+def settings_edit_section():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    section_id  = request.form.get('section_id')
+    sec_name    = request.form.get('section_name', '').strip()
+    if not section_id or not sec_name:
+        flash("Section ID and name are required.", "error")
+        return redirect(url_for('admin_settings'))
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE sections SET sectionname=%s WHERE sectionid=%s", (sec_name, section_id))
+        conn.commit()
+        flash(f"Section renamed to '{sec_name}'.", "success")
+        write_activity_log("Renamed Section",
+                           f"Section ID {section_id} renamed to {sec_name}",
+                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+    except Exception as e:
+        conn.rollback(); flash(f"Error renaming section: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+
+@app.route('/admin/settings/offering/add', methods=['POST'])
+def settings_add_offering():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    prog_code        = request.form.get('program_code', '').strip().upper()
+    track_name       = request.form.get('track_name', '').strip()
+    short_code       = request.form.get('short_code', '').strip().upper()
+    initial_sections = max(0, int(request.form.get('initial_sections', '0') or 0))
+    track_type       = request.form.get('track_type', 'Track').strip()
+    is_active        = request.form.get('status', 'active') == 'active'
+
+    if not prog_code or not track_name or not short_code:
+        flash("Program, track name, and short code are all required.", "error")
+        return redirect(url_for('admin_settings'))
+
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        # Validate: duplicate track code
+        cur.execute("SELECT 1 FROM track WHERE UPPER(trackcode) = UPPER(%s)", (short_code,))
+        if cur.fetchone():
+            flash(f"Track code '{short_code}' already exists.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # Validate: duplicate track name under same program
+        cur.execute("""
+            SELECT 1 FROM track
+            WHERE UPPER(parentprogramcode) = UPPER(%s) AND LOWER(trackname) = LOWER(%s)
+        """, (prog_code, track_name))
+        if cur.fetchone():
+            flash(f"Track '{track_name}' already exists for program '{prog_code}'.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # Step 2: Create track
+        cur.execute("""
+            INSERT INTO track (trackcode, trackname, parentprogramcode, tracktype, isactive)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING trackid
+        """, (short_code, track_name, prog_code, track_type, is_active))
+        track_id = cur.fetchone()[0]
+
+        # Step 3: Auto-create base offering if this is the first track for the program
+        cur.execute("""
+            SELECT academicofferingid FROM academic_offering
+            WHERE programcode = %s AND trackid IS NULL
+        """, (prog_code,))
+        if not cur.fetchone():
+            cur.execute("SELECT programname FROM programs WHERE programcode = %s", (prog_code,))
+            prow = cur.fetchone()
+            prog_name = prow[0] if prow else prog_code
+            cur.execute("""
+                INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
+                VALUES (%s, NULL, %s, %s, TRUE)
+            """, (prog_code, prog_code, prog_name))
+
+        # Generate offering code = programcode + shortcode (no separator)
+        offering_code = prog_code + short_code
+        offering_desc = f"{prog_code} - {track_name}"
+
+        cur.execute("""
+            INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING academicofferingid
+        """, (prog_code, track_id, offering_code, offering_desc, is_active))
+        ao_id = cur.fetchone()[0]
+
+        # Step 4: Generate program year levels for current active AY
+        cur.execute("SELECT numyearlevel FROM programs WHERE programcode = %s", (prog_code,))
+        prow = cur.fetchone()
+        num_yr = prow[0] if prow else 4
+
+        cur.execute("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1")
+        ay_row = cur.fetchone()
+        if not ay_row:
+            cur.execute("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC NULLS LAST LIMIT 1")
+            ay_row = cur.fetchone()
+        ay_id = ay_row[0] if ay_row else None
+
+        letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        if ay_id:
+            for yr in range(1, num_yr + 1):
+                cur.execute("""
+                    INSERT INTO program_yearlevel (academicofferingid, academicyearid, yearlevel, isactive)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT ON CONSTRAINT uq_program_yearlevel DO NOTHING
+                    RETURNING programyearlevelid
+                """, (ao_id, ay_id, yr, is_active))
+                pyl_row = cur.fetchone()
+
+                # Step 5: Auto-create section rows if initial_sections > 0
+                if pyl_row and initial_sections > 0:
+                    pyl_id = pyl_row[0]
+                    for i in range(min(initial_sections, 26)):
+                        sec_name = f"{offering_code}-{yr}{letters[i]}"
+                        cur.execute("""
+                            INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                            VALUES (%s, %s, TRUE)
+                        """, (pyl_id, sec_name))
+
+        conn.commit()
+        total_secs = num_yr * initial_sections if ay_id else 0
+        flash(f"Offering '{offering_code}' created — {num_yr} year levels, {total_secs} sections.", "success")
+        write_activity_log("Added Academic Offering",
+                           f"Created {track_type} offering {offering_code} ({track_name}) for {prog_code}",
+                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+    except Exception as e:
+        conn.rollback(); flash(f"Error creating offering: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+
+@app.route('/admin/settings/offering/edit', methods=['POST'])
+def settings_edit_offering():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    ao_id      = request.form.get('offering_id')
+    track_name = request.form.get('track_name', '').strip()
+    track_code = request.form.get('track_code', '').strip().upper()
+    is_active  = request.form.get('status', 'active') == 'active'
+
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE academic_offering SET isactive=%s WHERE academicofferingid=%s",
+                    (is_active, ao_id))
+        # Also update the linked track (if any)
+        cur.execute("SELECT trackid FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            cur.execute("""
+                UPDATE track SET trackname=%s, trackcode=%s, isactive=%s
+                WHERE trackid=%s
+            """, (track_name, track_code, is_active, row[0]))
+        conn.commit()
+        flash("Offering updated.", "success")
+        write_activity_log("Updated Academic Offering",
+                           f"Modified offering ID {ao_id}",
+                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+    except Exception as e:
+        conn.rollback(); flash(f"Error updating offering: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_settings'))
+
+
 @app.route('/admin/reports')
 def admin_reports():
     if session.get('role') not in ('Admin', 'Academic Head'):
@@ -5772,7 +6136,7 @@ def admin_reports():
     ay_list       = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
     programs      = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
     faculty       = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
-    curricula     = query_db("SELECT curriculumid, curriculumcode, curriculumyear, programcode FROM curriculum ORDER BY programcode, curriculumyear DESC")
+    curricula     = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, ao.offeringcode AS programcode FROM curriculum c JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid ORDER BY ao.offeringcode, c.curriculumyear DESC")
     emp_types     = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
     specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
     statuses      = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
@@ -5823,9 +6187,9 @@ def reports_data():
             where.append("sem.semestertype = %s"); p.append(sem_type)
         effective_prog = prog_val if prog_val else prog
         if effective_prog and effective_prog != 'All':
-            where.append("p.programcode = %s"); p.append(effective_prog)
+            where.append("ao.offeringcode = %s"); p.append(effective_prog)
         if yl and yl != 'All':
-            where.append("sec.yearlevel = %s"); p.append(int(yl))
+            where.append("pyl.yearlevel = %s"); p.append(int(yl))
         cur.execute(f"""
             SELECT
                 f.lastname || ', ' || f.firstname AS "Instructor",
@@ -5834,7 +6198,7 @@ def reports_data():
                 sub.lecturehours AS "Lec",
                 sub.laboratoryhours AS "Lab",
                 sub.creditunits AS "Units",
-                p.programcode || ' ' || sec.yearlevel AS "Course",
+                ao.offeringcode || ' ' || pyl.yearlevel AS "Course",
                 string_agg(DISTINCT
                     CASE ss.daydesc
                         WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
@@ -5848,12 +6212,12 @@ def reports_data():
                 string_agg(COALESCE(r.roomname,'TBA'), '/') AS "Room"
             FROM schedule_version sv
             JOIN schedule sg               ON sv.scheduleid          = sg.scheduleid
-            JOIN curriculumsubject cs      ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculumsubject cs       ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub               ON cs.subjectcode         = sub.subjectcode
             JOIN sections sec              ON sg.sectionid           = sec.sectionid
-            JOIN cohort c                  ON sec.cohortid           = c.cohortid
-            JOIN programs p               ON c.programcode          = p.programcode
-            JOIN faculty f                ON sg.employeenumber      = f.employeenumber
+            JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao      ON pyl.academicofferingid = ao.academicofferingid
+            JOIN faculty f                 ON sg.employeenumber      = f.employeenumber
             JOIN semester sem              ON sg.semesterid          = sem.semesterid
             LEFT JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
             LEFT JOIN timeslot ts_s        ON ss.starttimeid         = ts_s.timeid
@@ -5862,8 +6226,8 @@ def reports_data():
             WHERE {' AND '.join(where)}
             GROUP BY f.lastname, f.firstname, sub.subjectcode, sub.subjectname,
                      sub.lecturehours, sub.laboratoryhours, sub.creditunits,
-                     p.programcode, sec.yearlevel
-            ORDER BY f.lastname, p.programcode, sec.yearlevel, sub.subjectcode
+                     ao.offeringcode, pyl.yearlevel
+            ORDER BY f.lastname, ao.offeringcode, pyl.yearlevel, sub.subjectcode
         """, p)
         return cur.fetchall()
 
@@ -5881,7 +6245,7 @@ def reports_data():
                 f.lastname || ', ' || f.firstname AS "Faculty Name",
                 sub.subjectcode AS "Subject Code",
                 sub.subjectname AS "Subject Description",
-                p.programcode AS "Program",
+                ao.offeringcode AS "Program",
                 sec.sectionname AS "Section",
                 (sub.lecturehours + sub.laboratoryhours) AS "Hours"
             FROM schedule_version sv
@@ -5889,12 +6253,12 @@ def reports_data():
             JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub          ON cs.subjectcode         = sub.subjectcode
             JOIN sections sec         ON sg.sectionid           = sec.sectionid
-            JOIN cohort c             ON sec.cohortid           = c.cohortid
-            JOIN programs p           ON c.programcode          = p.programcode
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
             JOIN faculty f            ON sg.employeenumber      = f.employeenumber
             JOIN semester sem         ON sg.semesterid          = sem.semesterid
             WHERE {' AND '.join(where)}
-            ORDER BY f.lastname, p.programcode, sub.subjectcode
+            ORDER BY f.lastname, ao.offeringcode, sub.subjectcode
         """, p)
         return cur.fetchall()
 
@@ -5947,7 +6311,7 @@ def reports_data():
         elif rtype == 'curriculum':
             where, p = [], []
             if prog and prog != 'All':
-                where.append("c.programcode = %s"); p.append(prog)
+                where.append("ao.offeringcode = %s"); p.append(prog)
             if curr and curr != 'All':
                 where.append("cs.curriculumid = %s"); p.append(int(curr))
             cur.execute(f"""
@@ -5964,6 +6328,7 @@ def reports_data():
                 FROM curriculumsubject cs
                 JOIN subject sub  ON cs.subjectcode  = sub.subjectcode
                 JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
                 {'WHERE ' + ' AND '.join(where) if where else ''}
                 ORDER BY c.curriculumcode, cs.yearlevel, cs.semester, sub.subjectcode
             """, p)
@@ -5988,7 +6353,7 @@ def reports_data():
             if sem and sem != 'All':
                 combo_where.append("sem.semestertype = %s"); combo_params.append(sem)
             if yl and yl != 'All':
-                combo_where.append("sec.yearlevel = %s"); combo_params.append(int(yl))
+                combo_where.append("pyl.yearlevel = %s"); combo_params.append(int(yl))
 
             cur.execute(f"""
                 SELECT DISTINCT
@@ -6000,8 +6365,9 @@ def reports_data():
                 JOIN semester sem   ON sg.semesterid     = sem.semesterid
                 JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
                 JOIN sections sec   ON sg.sectionid      = sec.sectionid
-                JOIN cohort co      ON sec.cohortid      = co.cohortid
-                JOIN programs p     ON co.programcode    = p.programcode
+                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+                JOIN programs p     ON ao.programcode    = p.programcode
                 WHERE {' AND '.join(combo_where)}
                 ORDER BY ay.yearstart DESC, p.programcode, sem.semestertype
             """, combo_params)
@@ -6284,12 +6650,12 @@ def api_faculty_schedule_full():
         params += [ay_id, semester]
 
     if program:
-        filters.append("UPPER(co.programcode) = UPPER(%s)")
+        filters.append("ao.offeringcode = %s")
         params.append(program)
 
     if year_level:
         try:
-            filters.append("sec.yearlevel = %s")
+            filters.append("pyl.yearlevel = %s")
             params.append(int(year_level))
         except ValueError:
             pass
@@ -6314,8 +6680,8 @@ def api_faculty_schedule_full():
                 COALESCE(sub.lecturehours,    0) AS lecturehours,
                 COALESCE(sub.laboratoryhours, 0) AS laboratoryhours,
                 sec.sectionname,
-                sec.yearlevel,
-                co.programcode,
+                pyl.yearlevel,
+                ao.offeringcode AS programcode,
                 ss.daydesc,
                 r.roomname,
                 f.lastname || ', ' || f.firstname AS instructor,
@@ -6330,7 +6696,8 @@ def api_faculty_schedule_full():
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub ON cs.subjectcode = sub.subjectcode
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-            LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
@@ -6616,9 +6983,12 @@ def _archive_status(cur, program, year_level, term, semester_id, status_to_archi
     cur.execute(f"""
         UPDATE public.schedule_version sv
         SET status = 'Archive'
-        FROM public.schedule s, public.curriculumsubject cs, public.curriculum c
+        FROM public.schedule s, public.curriculumsubject cs, public.curriculum c,
+             public.academic_offering ao
         WHERE sv.scheduleid = s.scheduleid AND s.curriculumsubjectid = cs.curriculumsubjectid
-          AND cs.curriculumid = c.curriculumid AND UPPER(c.programcode) = UPPER(%s)
+          AND cs.curriculumid = c.curriculumid
+          AND c.academicofferingid = ao.academicofferingid
+          AND ao.offeringcode = %s
           AND cs.yearlevel = %s AND cs.semester = %s AND s.semesterid = %s AND sv.status = %s
           {extra}
     """, params)
@@ -6631,9 +7001,12 @@ def _archive_status_for_subjects(cur, program, year_level, term, semester_id, st
     cur.execute(f"""
         UPDATE public.schedule_version sv
         SET status = 'Archive'
-        FROM public.schedule s, public.curriculumsubject cs, public.curriculum c
+        FROM public.schedule s, public.curriculumsubject cs, public.curriculum c,
+             public.academic_offering ao
         WHERE sv.scheduleid = s.scheduleid AND s.curriculumsubjectid = cs.curriculumsubjectid
-          AND cs.curriculumid = c.curriculumid AND UPPER(c.programcode) = UPPER(%s)
+          AND cs.curriculumid = c.curriculumid
+          AND c.academicofferingid = ao.academicofferingid
+          AND ao.offeringcode = %s
           AND cs.yearlevel = %s AND cs.semester = %s AND s.semesterid = %s AND sv.status = %s
           AND UPPER(cs.subjectcode) IN ({placeholders})
     """, [program, year_level, term, semester_id, status_to_archive] + upper_codes)
@@ -6642,8 +7015,10 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
     _ensure_source_col(cur)
     _ensure_original_status_col(cur)
     cur.execute("""
-        SELECT sec.sectionid FROM public.sections sec JOIN public.cohort co ON sec.cohortid = co.cohortid
-        WHERE UPPER(co.programcode) = UPPER(%s) AND sec.yearlevel = %s LIMIT 1
+        SELECT sec.sectionid FROM public.sections sec
+        JOIN public.program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        JOIN public.academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+        WHERE ao.offeringcode = %s AND pyl.yearlevel = %s LIMIT 1
     """, (program, year_level))
     sec_res = cur.fetchone()
     section_id = sec_res['sectionid'] if sec_res else None
@@ -6663,16 +7038,17 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         cur.execute("""
             SELECT cs.curriculumsubjectid FROM public.curriculumsubject cs
             JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-            WHERE UPPER(cs.subjectcode) = UPPER(%s) AND UPPER(c.programcode) = UPPER(%s)
+            JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE UPPER(cs.subjectcode) = UPPER(%s) AND ao.offeringcode = %s
               AND cs.yearlevel = %s AND cs.semester = %s LIMIT 1
         """, (s_code, program, year_level, cls.get('sem') or cls.get('semester', '')))
         cs_res = cur.fetchone()
         if not cs_res:
-            # Fallback: match by subject+program only (in case semester data is missing)
             cur.execute("""
                 SELECT cs.curriculumsubjectid FROM public.curriculumsubject cs
                 JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-                WHERE UPPER(cs.subjectcode) = UPPER(%s) AND UPPER(c.programcode) = UPPER(%s) LIMIT 1
+                JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                WHERE UPPER(cs.subjectcode) = UPPER(%s) AND ao.offeringcode = %s LIMIT 1
             """, (s_code, program))
             cs_res = cur.fetchone()
         if not cs_res: continue
@@ -6769,14 +7145,15 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
                t_e.timevalue::text AS end_time,
                sv.status, sv.version_number
         FROM   schedule_version sv
-        JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
-        JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
-        JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-        JOIN   schedule_sessions ss  ON sv.versionid           = ss.versionid
-        JOIN   timeslot t_s          ON ss.starttimeid         = t_s.timeid
-        JOIN   timeslot t_e          ON ss.endtimeid           = t_e.timeid
-        WHERE  UPPER(c.programcode) = UPPER(%s)
-          AND  cs.yearlevel         = %s
+        JOIN   schedule sg           ON sv.scheduleid          = sg.scheduleid
+        JOIN   curriculumsubject cs   ON sg.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN   curriculum c           ON cs.curriculumid        = c.curriculumid
+        JOIN   academic_offering ao   ON c.academicofferingid   = ao.academicofferingid
+        JOIN   schedule_sessions ss   ON sv.versionid           = ss.versionid
+        JOIN   timeslot t_s           ON ss.starttimeid         = t_s.timeid
+        JOIN   timeslot t_e           ON ss.endtimeid           = t_e.timeid
+        WHERE  ao.offeringcode = %s
+          AND  cs.yearlevel    = %s
           AND  sg.semesterid        = %s
           AND  sv.status IN ({status_filter})
           AND  sv.source            = 'manual_editor'
@@ -6877,18 +7254,19 @@ def api_retrieve_previous_schedule():
         cur.execute("""
             SELECT DISTINCT ON (sv.versionid)
                    sv.versionid, sv.version_number, sv.status, sv.datecreated,
-                   c.programcode, cs.yearlevel, sem.semestertype AS term,
+                   ao.offeringcode AS programcode, cs.yearlevel, sem.semestertype AS term,
                    ay.academicyearid AS acadyear, sc.semesterid,
                    ay.yearstart, ay.yearend
             FROM   public.schedule_version sv
             JOIN   public.schedule sc         ON sv.scheduleid           = sc.scheduleid
             JOIN   public.curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   public.curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN   public.academic_offering ao ON c.academicofferingid   = ao.academicofferingid
             JOIN   public.semester sem         ON sc.semesterid          = sem.semesterid
             JOIN   public.academicyear ay      ON sem.academicyearid     = ay.academicyearid
-            WHERE  UPPER(c.programcode) = UPPER(%s)
-              AND  cs.yearlevel         = %s
-              AND  sem.semestertype     = %s
+            WHERE  UPPER(ao.offeringcode) = UPPER(%s)
+              AND  cs.yearlevel           = %s
+              AND  sem.semestertype       = %s
               AND  sv.status IN ('Published', 'Draft')
             ORDER BY sv.versionid,
                      CASE sv.status WHEN 'Published' THEN 1 WHEN 'Draft' THEN 2 ELSE 3 END,
@@ -6917,7 +7295,7 @@ def api_retrieve_previous_schedule():
                    sub.lecturehours       AS lec_hours,
                    sub.laboratoryhours    AS lab_hours,
                    sub.creditunits        AS credit_units,
-                   c.programcode          AS course,
+                   ao.offeringcode        AS course,
                    sc.employeenumber      AS faculty_id,
                    CONCAT(f.lastname, ', ', f.firstname) AS instructor,
                    ss.daydesc             AS day,
@@ -6931,6 +7309,7 @@ def api_retrieve_previous_schedule():
             JOIN   public.curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   public.subject sub           ON cs.subjectcode         = sub.subjectcode
             JOIN   public.curriculum c          ON cs.curriculumid        = c.curriculumid
+            JOIN   public.academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
             LEFT JOIN public.faculty f          ON sc.employeenumber      = f.employeenumber
             LEFT JOIN public.room r             ON ss.roomid              = r.roomid
             LEFT JOIN public.timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
@@ -7031,7 +7410,8 @@ def api_save_draft():
             JOIN public.schedule s ON sv.scheduleid = s.scheduleid
             JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-            WHERE UPPER(c.programcode) = UPPER(%s)
+            JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE UPPER(ao.offeringcode) = UPPER(%s)
               AND cs.yearlevel = %s
               AND s.semesterid = %s
               AND sv.source = %s
@@ -7097,10 +7477,11 @@ def api_save_draft():
                 JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
                 JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
                 JOIN   sections sec         ON sc.sectionid            = sec.sectionid
-                JOIN   cohort co            ON sec.cohortid             = co.cohortid
+                JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                JOIN   academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
                 JOIN   curriculumsubject cs2 ON sc.curriculumsubjectid = cs2.curriculumsubjectid
-                WHERE  UPPER(co.programcode) = UPPER(%s)
-                  AND  sec.yearlevel         = %s
+                WHERE  UPPER(ao.offeringcode) = UPPER(%s)
+                  AND  pyl.yearlevel           = %s
                   AND  sc.semesterid         = %s
                   AND  sv.status IN ('Published', 'Draft')
                   AND  UPPER(cs2.subjectcode) NOT IN ({})
@@ -7208,14 +7589,15 @@ def api_draft_sessions():
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub ON cs.subjectcode = sub.subjectcode
             JOIN curriculum cu ON cs.curriculumid = cu.curriculumid
+            JOIN academic_offering ao ON cu.academicofferingid = ao.academicofferingid
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-            LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
             WHERE sv.status = 'Draft'
-              AND UPPER(cu.programcode) = UPPER(%s)
+              AND UPPER(ao.offeringcode) = UPPER(%s)
               AND cs.yearlevel = %s
               AND sc.semesterid = (
                     SELECT semesterid FROM semester
@@ -7302,7 +7684,8 @@ def api_approve_schedule():
     JOIN public.schedule s ON sv.scheduleid = s.scheduleid
     JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
     JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-    WHERE UPPER(c.programcode) = UPPER(%s)
+    JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
+    WHERE UPPER(ao.offeringcode) = UPPER(%s)
       AND cs.yearlevel = %s
       AND s.semesterid = %s
       AND sv.source = 'manual_editor'
@@ -7381,11 +7764,12 @@ def api_delete_draft(version_id):
         # Resolve program/year/term/semesterid from the given versionid.
         # The versionid may belong to any one Draft row for this group — that's enough to identify the group.
         cur.execute("""
-            SELECT c.programcode, cs.yearlevel, cs.semester AS term, s.semesterid
+            SELECT ao.offeringcode AS programcode, cs.yearlevel, cs.semester AS term, s.semesterid
             FROM public.schedule_version sv
             JOIN public.schedule s ON sv.scheduleid = s.scheduleid
             JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
             WHERE sv.versionid = %s
             LIMIT 1
         """, (version_id,))
@@ -7448,7 +7832,7 @@ def api_faculty_teaching_assignments():
                 sub.subjectcode,
                 sub.subjectname,
                 (COALESCE(sub.lecturehours,0) + COALESCE(sub.laboratoryhours,0)) AS units,
-                COALESCE(co.programcode,'') || '-' || COALESCE(sec.yearlevel::text,'')
+                COALESCE(ao.offeringcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
                     || ' ' || COALESCE(sec.sectionname,'') AS year_section,
                 sem.semestertype AS subj_ref,
                 TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
@@ -7465,7 +7849,8 @@ def api_faculty_teaching_assignments():
             JOIN subject sub ON cs.subjectcode = sub.subjectcode
             JOIN semester sem ON sc.semesterid = sem.semesterid
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-            LEFT JOIN cohort co ON sec.cohortid = co.cohortid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
@@ -7520,7 +7905,7 @@ def api_faculty_assigned_list():
         extra_where = ''
         params = [ay_id, sem]
         if prog:
-            extra_where += ' AND UPPER(c.programcode) = UPPER(%s)'
+            extra_where += ' AND UPPER(ao.offeringcode) = UPPER(%s)'
             params.append(prog)
         if year_level:
             extra_where += ' AND cs.yearlevel = %s'
@@ -7537,6 +7922,7 @@ def api_faculty_assigned_list():
             JOIN schedule_version sv ON sv.scheduleid     = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN academic_offering ao ON c.academicofferingid   = ao.academicofferingid
             WHERE s.academicyearid = %s
               AND s.semestertype   = %s
               AND sv.status IN ('Draft', 'Published')
@@ -7564,18 +7950,19 @@ def api_list_versions():
         if is_drafts:
             # One consolidated entry per program/year/semester — use the latest versionid/version_number
             rows = query_db("""
-                SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid)
+                SELECT DISTINCT ON (ao.offeringcode, cs.yearlevel, cs.semester, ay.academicyearid)
                        sv.versionid, sv.version_number, sv.status, sv.datecreated,
                        COALESCE(sv.source, 'official') AS source,
-                       c.programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
+                       ao.offeringcode AS programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
                 FROM   public.schedule_version sv
                 JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
                 JOIN   public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN   public.curriculum c ON cs.curriculumid = c.curriculumid
+                JOIN   public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
                 JOIN   public.semester sem ON sg.semesterid = sem.semesterid
                 JOIN   public.academicyear ay ON sem.academicyearid = ay.academicyearid
                 WHERE  sv.status = 'Draft'
-                ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
+                ORDER BY ao.offeringcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
             """)
         else:
             # CTE groups all subjects per section per version_number into one aggregated row.
@@ -7594,7 +7981,7 @@ def api_list_versions():
                            MAX(sv.datecreated)      AS datecreated,
                            -- All rows for a version share the same original_status; MAX picks it up.
                            MAX(sv.original_status)  AS original_status,
-                           c.programcode,
+                           ao.offeringcode          AS programcode,
                            cs.yearlevel,
                            cs.semester              AS term,
                            ay.academicyearid        AS acadyear
@@ -7602,9 +7989,10 @@ def api_list_versions():
                     JOIN   public.schedule sg          ON sv.scheduleid           = sg.scheduleid
                     JOIN   public.curriculumsubject cs  ON sg.curriculumsubjectid  = cs.curriculumsubjectid
                     JOIN   public.curriculum c          ON cs.curriculumid         = c.curriculumid
+                    JOIN   public.academic_offering ao  ON c.academicofferingid    = ao.academicofferingid
                     JOIN   public.semester sem          ON sg.semesterid           = sem.semesterid
                     JOIN   public.academicyear ay       ON sem.academicyearid      = ay.academicyearid
-                    GROUP BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number
+                    GROUP BY ao.offeringcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number
                 )
                 SELECT *,
                        CASE WHEN COALESCE(original_status, status) = 'Draft' THEN
@@ -7664,13 +8052,14 @@ def api_restore_version(version_id):
 
         # Fetch context from any versionid that belongs to this snapshot group
         cur.execute("""
-            SELECT c.programcode, cs.yearlevel, cs.semester AS term, sg.semesterid,
+            SELECT ao.offeringcode AS programcode, cs.yearlevel, cs.semester AS term, sg.semesterid,
                    sv.version_number AS src_vn,
                    sv.original_status AS src_orig
             FROM   schedule_version sv
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
             WHERE  sv.versionid = %s LIMIT 1
         """, (version_id,))
         row = cur.fetchone()
@@ -7705,7 +8094,8 @@ def api_restore_version(version_id):
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-            WHERE  UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s AND sg.semesterid = %s
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
+            WHERE  UPPER(ao.offeringcode) = UPPER(%s) AND cs.yearlevel = %s AND sg.semesterid = %s
               AND  sv.source = 'manual_editor'
         """, (prog, year_level, sem_id))
         new_v = cur.fetchone()['max_v'] + 1
@@ -7717,7 +8107,8 @@ def api_restore_version(version_id):
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-            WHERE  UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
+            WHERE  UPPER(ao.offeringcode) = UPPER(%s) AND cs.yearlevel = %s
               AND  sg.semesterid = %s AND sv.version_number = %s
         """, (prog, year_level, sem_id, src_vn))
         src_rows = cur.fetchall()
@@ -7754,11 +8145,12 @@ def api_check_version_state(version_id):
         _ensure_original_status_col(cur)
 
         cur.execute("""
-            SELECT c.programcode, cs.yearlevel, sg.semesterid, sv.status
+            SELECT ao.offeringcode AS programcode, cs.yearlevel, sg.semesterid, sv.status
             FROM   schedule_version sv
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
             WHERE  sv.versionid = %s LIMIT 1
         """, (version_id,))
         row = cur.fetchone()
@@ -7776,7 +8168,8 @@ def api_check_version_state(version_id):
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-            WHERE  UPPER(c.programcode) = UPPER(%s)
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
+            WHERE  UPPER(ao.offeringcode) = UPPER(%s)
               AND  cs.yearlevel = %s
               AND  sg.semesterid = %s
               AND  sv.status IN ('Draft', 'Published')
@@ -7800,11 +8193,12 @@ def api_overlay_sessions(version_id):
     try:
         rows = query_db("""
             WITH ref AS (
-                SELECT sv.version_number, c.programcode, cs.yearlevel, sg.semesterid
+                SELECT sv.version_number, ao.offeringcode AS programcode, cs.yearlevel, sg.semesterid
                 FROM   schedule_version sv
                 JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
                 JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+                JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
                 WHERE  sv.versionid = %s
                 LIMIT  1
             )
@@ -7824,14 +8218,15 @@ def api_overlay_sessions(version_id):
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   subject sub           ON cs.subjectcode         = sub.subjectcode
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+            JOIN   academic_offering ao  ON c.academicofferingid   = ao.academicofferingid
             LEFT JOIN faculty f          ON sg.employeenumber      = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid         = sv.versionid
             LEFT JOIN room r             ON ss.roomid              = r.roomid
             LEFT JOIN timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
-            WHERE  c.programcode = ref.programcode
-              AND  cs.yearlevel  = ref.yearlevel
-              AND  sg.semesterid = ref.semesterid
+            WHERE  ao.offeringcode = ref.programcode
+              AND  cs.yearlevel    = ref.yearlevel
+              AND  sg.semesterid   = ref.semesterid
             ORDER BY sub.subjectname, ts_s.timevalue NULLS LAST, ss.daydesc
         """, (version_id,)) or []
         return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
@@ -7863,14 +8258,15 @@ def api_version_sessions():
             JOIN curriculumsubject cs  ON sc.curriculumsubjectid  = cs.curriculumsubjectid
             JOIN subject sub           ON cs.subjectcode          = sub.subjectcode
             JOIN sections sec          ON sc.sectionid            = sec.sectionid
-            JOIN cohort co             ON sec.cohortid            = co.cohortid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
             LEFT JOIN faculty f        ON sc.employeenumber       = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid        = sv.versionid
             LEFT JOIN room r           ON ss.roomid               = r.roomid
             LEFT JOIN timeslot ts_s    ON ss.starttimeid          = ts_s.timeid
             LEFT JOIN timeslot ts_e    ON ss.endtimeid            = ts_e.timeid
-            WHERE UPPER(co.programcode) = UPPER(%s)
-              AND sec.yearlevel          = %s
+            WHERE UPPER(ao.offeringcode) = UPPER(%s)
+              AND pyl.yearlevel           = %s
               AND sv.version_number      = %s
               AND sc.semesterid = (
                   SELECT semesterid FROM semester
@@ -7890,12 +8286,13 @@ def api_load_draft(version_id):
         cur.execute("""
             SELECT sv.version_number, sv.status, sv.scheduleid,
                    COALESCE(sv.source, 'official') AS source,
-                   c.programcode, cs.yearlevel, sem.semestertype AS term,
+                   ao.offeringcode AS programcode, cs.yearlevel, sem.semestertype AS term,
                    ay.academicyearid AS acadyear, sc.semesterid
             FROM schedule_version sv
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
             JOIN semester sem ON sc.semesterid = sem.semesterid
             JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
             WHERE sv.versionid = %s
@@ -7910,7 +8307,7 @@ def api_load_draft(version_id):
             return jsonify({'success': False, 'error': f'Version {version_id} exists (scheduleid={sv_raw["scheduleid"]}, status={sv_raw["status"]}) but join chain failed — linked schedule or curriculum data may be missing'}), 404
         cur.execute("""
             SELECT sub.subjectcode AS subject_code, sub.subjectname AS description, sub.lecturehours AS lec_hours,
-                   sub.laboratoryhours AS lab_hours, sub.creditunits AS units, c.programcode AS course,
+                   sub.laboratoryhours AS lab_hours, sub.creditunits AS units, ao.offeringcode AS course,
                    sc.employeenumber AS faculty_id, CONCAT(f.lastname, ', ', f.firstname) AS instructor,
                    ss.daydesc, TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time, TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
                    r.roomname AS room, r.roomid, sv.version_number AS row_version
@@ -7919,11 +8316,12 @@ def api_load_draft(version_id):
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN subject sub ON cs.subjectcode = sub.subjectcode
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
-            WHERE c.programcode = %s AND cs.yearlevel = %s AND sc.semesterid = %s AND sv.status = 'Draft'
+            WHERE ao.offeringcode = %s AND cs.yearlevel = %s AND sc.semesterid = %s AND sv.status = 'Draft'
         """, (m['programcode'], m['yearlevel'], m['semesterid']))
         rows = cur.fetchall(); cur.close(); conn.close()
         max_v = max((r['row_version'] for r in rows), default=m['version_number'])
@@ -7942,7 +8340,11 @@ def api_load_draft(version_id):
 def api_curriculum_by_year():
     p = request.args.get('program', '')
     try:
-        row = query_db("SELECT curriculumyear FROM curriculum WHERE programcode = %s ORDER BY curriculumyear DESC LIMIT 1", (p,))
+        row = query_db("""
+            SELECT c.curriculumyear FROM curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.offeringcode = %s ORDER BY c.curriculumyear DESC LIMIT 1
+        """, (p,))
         return jsonify({'curriculum': row[0]['curriculumyear'] if row else ''})
     except: return jsonify({'curriculum': ''}), 500
 
@@ -7955,11 +8357,12 @@ def api_sections_by_program():
         sql = """
             SELECT sec.sectionid, sec.sectionname
             FROM sections sec
-            JOIN cohort co ON sec.cohortid = co.cohortid
-            WHERE UPPER(co.programcode) = UPPER(%s) AND sec.isactive = TRUE
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
+            WHERE UPPER(ao.offeringcode) = UPPER(%s) AND sec.isactive = TRUE
         """
         if year_level:
-            sql += " AND sec.yearlevel = %s"
+            sql += " AND pyl.yearlevel = %s"
             params.append(int(year_level))
         sql += " ORDER BY sec.sectionname"
         rows = query_db(sql, tuple(params))

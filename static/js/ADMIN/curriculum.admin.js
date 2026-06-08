@@ -12,13 +12,13 @@ function filterAssignments() {
     });
 }
 
-function editAssignment(id, prog, curr, year, sec) {
+function editAssignment(id, prog, curr, year, progName) {
     document.getElementById('assignModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Assignment';
-    document.getElementById('assignCohortId').value = id;
+    document.getElementById('assignPylId').value = id;
     document.getElementById('hiddenProgramCode').value = prog;
     document.getElementById('hiddenStartYear').value = year;
     document.getElementById('assignStartYear').value = year;
-    document.getElementById('assignProgramCode').value = prog;
+    document.getElementById('assignProgramCode').value = progName || prog;
 
     const select = document.getElementById('assignCurriculumId');
     select.querySelectorAll('option').forEach(opt => {
@@ -29,7 +29,6 @@ function editAssignment(id, prog, curr, year, sec) {
     });
 
     select.value = curr;
-    document.getElementById('assignSections').value = sec;
     document.getElementById('assignModal').style.display = 'flex';
 }
 

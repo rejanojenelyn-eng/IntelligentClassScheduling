@@ -354,7 +354,8 @@
       {
         "programs":  {{ programs_mgmt  | tojson }},
         "curricula": {{ curricula_mgmt | tojson }},
-        "sections":  {{ sections_mgmt  | tojson }}
+        "sections":  {{ sections_mgmt  | tojson }},
+        "offerings": {{ offerings_mgmt | tojson }}
       }
     </script>
 
@@ -379,10 +380,8 @@
             <div class="pm-item-code">{{ p.programcode }}</div>
             <div class="pm-item-name">{{ p.programname }}</div>
             <div class="pm-item-meta">
-              {% set c_count = p.curr_count | int %}
-              <span class="pm-track-badge {% if c_count == 0 %}pm-track-zero{% endif %}">
-                {{ c_count }} CURRICULUM
-              </span>
+              <span class="pm-offers-label">{{ p.offering_count | int }} offering{{ 's' if (p.offering_count | int) != 1 }}</span>
+              <span class="pm-item-status pm-item-active"><span class="pm-dot-sm"></span> Active</span>
             </div>
           </div>
           {% endfor %}
@@ -398,64 +397,155 @@
           <p>Select a program from the list to view details.</p>
         </div>
 
-        <!-- Detail content (hidden until program selected) -->
-        <div class="pm-detail-content" id="pmDetailContent" style="display:none;">
+        <!-- Detail content -->
+        <div id="pmDetailContent" style="display:none;">
 
-          <!-- Program header -->
-          <div class="pm-detail-hd">
-            <div class="pm-detail-title-group">
-              <span class="pm-detail-code" id="pdCode"></span>
-              <span class="pm-detail-name" id="pdName"></span>
+          <!-- Program Header + Stats -->
+          <div class="pmd-header">
+            <div class="pmd-hd-left">
+              <h2 class="pmd-prog-title">
+                <span id="pdCode"></span> &mdash; <span id="pdName"></span>
+              </h2>
+              <div class="pmd-badge-row">
+                <span class="pmd-code-chip" id="pdCodeBadge"></span>
+                <span class="pmd-status-badge pmd-status-active" id="pdStatusBadge">
+                  <span class="pmd-dot"></span> Active
+                </span>
+              </div>
             </div>
-            <div class="pm-detail-actions">
-              <button class="pm-btn-edit" id="pdEditBtn" onclick="openEditProgram()">
-                <i class="fas fa-edit"></i> EDIT PROGRAM
-              </button>
-              <button class="pm-btn-delete" id="pdDeleteBtn" onclick="confirmDeleteProgram()">
-                <i class="fas fa-trash"></i> DELETE
-              </button>
+            <div class="pmd-stats">
+              <div class="pmd-stat-box">
+                <i class="fas fa-layer-group pmd-stat-icon"></i>
+                <div>
+                  <div class="pmd-stat-val" id="pdStatOfferings">—</div>
+                  <div class="pmd-stat-lbl">Academic Offerings</div>
+                </div>
+              </div>
+              <div class="pmd-stat-box">
+                <i class="fas fa-graduation-cap pmd-stat-icon"></i>
+                <div>
+                  <div class="pmd-stat-val" id="pdStatYearLevels">—</div>
+                  <div class="pmd-stat-lbl">Year Levels (Generated)</div>
+                </div>
+              </div>
+              <div class="pmd-stat-box">
+                <i class="fas fa-users pmd-stat-icon"></i>
+                <div>
+                  <div class="pmd-stat-val" id="pdStatSections">—</div>
+                  <div class="pmd-stat-lbl">Sections</div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Stats row -->
-          <div class="pm-stats-row">
-            <div class="pm-stat-box">
-              <span class="pm-stat-val" id="pdUnits">—</span>
-              <span class="pm-stat-lbl">YEAR LEVELS</span>
+          <!-- 1. Program Information (collapsible) -->
+          <div class="pmd-section">
+            <div class="pmd-section-hd pmd-collapsible" onclick="togglePmdSection('pmdInfo','pmdInfoChevron')">
+              <span class="pmd-section-title">Program Information</span>
+              <i class="fas fa-chevron-up pmd-chevron" id="pmdInfoChevron"></i>
             </div>
-            <div class="pm-stat-box">
-              <span class="pm-stat-val" id="pdCourses">—</span>
-              <span class="pm-stat-lbl">PROGRAM TYPE</span>
+            <div class="pmd-section-body" id="pmdInfo">
+              <div class="pmd-info-scroll">
+                
+                <!-- Added Style block for safe button stacking alignment inside table cells -->
+                <style>
+                  .pmd-info-table th:last-child {
+                    width: 140px; /* Reserve fixed space to prevent jumping */
+                  }
+                  #pmdInfoBody td:last-child {
+                    vertical-align: middle;
+                    padding: 8px 16px 8px 10px; /* Adjust padding nicely */
+                  }
+                  /* Target the buttons inside the last cell to behave as stacked blocks */
+                  #pmdInfoBody td:last-child button {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 130px; /* Give them an equal width for uniformity */
+                    margin-left: auto; /* Push them to the right edge */
+                    margin-bottom: 6px;
+                    box-sizing: border-box;
+                  }
+                  #pmdInfoBody td:last-child button:last-child {
+                    margin-bottom: 0;
+                  }
+                </style>
+
+                <table class="pmd-info-table">
+                  <thead>
+                    <tr>
+                      <th>Program Code</th>
+                      <th>Program Name</th>
+                      <th>Program Type</th>
+                      <th>Number of Year Levels</th>
+                      <th>Status</th>
+                      <th></th> <!-- Empty header for action buttons -->
+                    </tr>
+                  </thead>
+                  <tbody id="pmdInfoBody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
-          <!-- Majors / Branches -->
-          <div class="pm-section-card">
-            <div class="pm-section-hd">
-              <span class="pm-section-lbl">MAJOR AND BRANCHES</span>
-              <button class="pm-sub-btn" onclick="openAddMajor()">
-                <i class="fas fa-plus"></i> ADD MAJOR
+          <!-- 2. Academic Offerings -->
+          <div class="pmd-section">
+            <div class="pmd-section-hd">
+              <div class="pmd-section-hd-left">
+                <span class="pmd-section-title">Academic Offerings</span>
+                <p class="pmd-section-hint">
+                  <i class="fas fa-info-circle"></i>
+                  Add a track or specialization. The system will automatically generate academic offerings and year levels.
+                </p>
+              </div>
+              <button class="pmd-add-btn" onclick="openAddOffering()">
+                <i class="fas fa-plus"></i> ADD OFFERING
               </button>
             </div>
-            <div id="pdMajors" class="pm-majors-list">
-              <!-- rendered by JS -->
+            <div class="pmd-section-body">
+              <table class="pmd-data-table">
+                <thead>
+                  <tr>
+                    <th>Academic Offering</th>
+                    <th>Sections (Count)</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="pmdOfferingsBody"></tbody>
+              </table>
+              <div class="pmd-table-footer" id="pmdOfferingsFooter"></div>
             </div>
           </div>
 
-          <!-- Degree Specializations (Curricula / Tracks) -->
-          <div class="pm-section-card">
-            <div class="pm-section-hd">
-              <span class="pm-section-lbl">DEGREE SPECIALIZATIONS</span>
-              <button class="pm-sub-btn" id="pdAddTrackBtn" onclick="openAddTrack()">
-                <i class="fas fa-plus"></i> ADD TRACK
-              </button>
+          <!-- 3. Sections -->
+          <div class="pmd-section">
+            <div class="pmd-section-hd">
+              <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
+              <select class="pmd-filter-sel" id="pmdSecFilter" onchange="_renderSectionsPage(1)">
+                <option value="">All Status</option>
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </select>
             </div>
-            <div id="pdTracks" class="pm-tracks-list">
-              <!-- rendered by JS -->
+            <div class="pmd-section-body">
+              <table class="pmd-data-table">
+                <thead>
+                  <tr>
+                    <th>Section</th>
+                    <th>Academic Offering</th>
+                    <th>Year Level</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="pmdSectionsBody"></tbody>
+              </table>
+              <div class="pmd-pagination" id="pmdSecPagination"></div>
             </div>
           </div>
 
-        </div><!-- /pm-detail-content -->
+        </div><!-- /pmDetailContent -->
       </div><!-- /pm-right -->
 
     </div><!-- /pm-layout -->
@@ -1032,17 +1122,18 @@
     <form action="{{ url_for('settings_add_section') }}" method="POST">
       <input type="hidden" name="program_code" id="addSecProgCode">
       <div class="s-modal-body">
+        <div class="mg-1">
+          <div class="mf" id="addSecOfferingWrap" style="display:none;">
+            <label>ACADEMIC OFFERING / TRACK</label>
+            <select id="addSecOfferingSelect" class="m-input"
+              onchange="document.getElementById('addSecProgCode').value=this.value">
+            </select>
+          </div>
+        </div>
         <div class="mg-2">
           <div class="mf">
             <label>YEAR LEVEL</label>
-            <select name="year_level" id="addSecYearLevel" class="m-input" required>
-              <option value="1">Year 1</option>
-              <option value="2">Year 2</option>
-              <option value="3">Year 3</option>
-              <option value="4">Year 4</option>
-              <option value="5">Year 5</option>
-              <option value="6">Year 6</option>
-            </select>
+            <select name="year_level" id="addSecYearLevel" class="m-input" required></select>
           </div>
           <div class="mf">
             <label>SECTION NAME</label>
@@ -1086,17 +1177,23 @@
   </div>
 </div>
 
-<!-- ── MODAL: Add Curriculum Track ─────────────────── -->
+<!-- ── MODAL: Add Curriculum Version ───────────────── -->
 <div id="modalAddTrack" class="s-modal">
   <div class="s-modal-box w-sm">
     <div class="s-modal-hd">
-      <h2>ADD CURRICULUM TRACK — <span id="addTrackProgLabel"></span></h2>
+      <h2>ADD CURRICULUM VERSION — <span id="addTrackProgLabel"></span></h2>
       <button class="modal-x" onclick="closeSModal('modalAddTrack')"><i class="fas fa-times"></i></button>
     </div>
     <form action="{{ url_for('settings_add_curriculum') }}" method="POST">
       <input type="hidden" name="program_code" id="addTrackProgCode">
       <div class="s-modal-body">
         <div class="mg-1">
+          <div class="mf" id="addTrackOfferingWrap" style="display:none;">
+            <label>ACADEMIC OFFERING / TRACK</label>
+            <select id="addTrackOfferingSelect" class="m-input"
+              onchange="document.getElementById('addTrackProgCode').value=this.value">
+            </select>
+          </div>
           <div class="mf">
             <label>CURRICULUM YEAR</label>
             <input type="text" name="curriculum_year" id="addTrackYear" class="m-input" placeholder="e.g. 2025-2026" required>
@@ -1110,7 +1207,7 @@
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
         <button type="button" class="btn-mc" onclick="closeSModal('modalAddTrack')">CANCEL</button>
-        <button type="submit" class="btn-ms">ADD TRACK</button>
+        <button type="submit" class="btn-ms">ADD CURRICULUM</button>
       </div>
     </form>
   </div>
@@ -1168,6 +1265,125 @@
             <i class="fas fa-times"></i> Cancel
           </button>
         </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Academic Offering ─────────────────── -->
+<div id="modalAddOffering" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>Add Offerings</h2>
+      <button class="modal-x" onclick="closeSModal('modalAddOffering')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="mf-info-banner">
+      <i class="fas fa-info-circle"></i>
+      Adding a track or specialization will automatically generate academic offerings, year levels, and section structures.
+    </div>
+    <form action="{{ url_for('settings_add_offering') }}" method="POST">
+      <input type="hidden" name="program_code" id="addOfferProgCode">
+      <div class="s-modal-body">
+        <div class="mg-2">
+          <div class="mf">
+            <label>Type <span class="m-req">*</span></label>
+            <select name="track_type" class="m-input">
+              <option value="Track">Track</option>
+              <option value="Major">Major</option>
+              <option value="Specialization">Specialization</option>
+            </select>
+          </div>
+          <div class="mf">
+            <label>Track Name <span class="m-req">*</span></label>
+            <input type="text" name="track_name" class="m-input" required placeholder="e.g. Animal Technology">
+          </div>
+          <div class="mf">
+            <label>Short Code <span class="m-req">*</span></label>
+            <input type="text" name="short_code" class="m-input" required placeholder="e.g. AT"
+                   style="text-transform:uppercase;" maxlength="8"
+                   oninput="this.value=this.value.toUpperCase()">
+            <small class="m-hint">A short code used for generating offering codes and identifiers.</small>
+          </div>
+          <div class="mf">
+            <label>Initial Number of Sections <span class="m-req">*</span></label>
+            <input type="number" name="initial_sections" class="m-input" value="1" min="0" max="26" required>
+            <small class="m-hint">The system will use this value when generating sections per year level.</small>
+          </div>
+          <div class="mf span2">
+            <label>Status</label>
+            <div class="m-radio-row">
+              <label class="m-radio-opt"><input type="radio" name="status" value="active" checked> Active</label>
+              <label class="m-radio-opt"><input type="radio" name="status" value="inactive"> Inactive</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddOffering')">Cancel</button>
+        <button type="submit" class="btn-ms">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Academic Offering ────────────────── -->
+<div id="modalEditOffering" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>EDIT OFFERING</h2>
+      <button class="modal-x" onclick="closeSModal('modalEditOffering')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_edit_offering') }}" method="POST">
+      <input type="hidden" name="offering_id" id="editOfferAoId">
+      <div class="s-modal-body">
+        <div class="mg-1">
+          <div class="mf">
+            <label>TRACK NAME</label>
+            <input type="text" name="track_name" id="editOfferTrackName" class="m-input">
+          </div>
+          <div class="mf">
+            <label>TRACK CODE</label>
+            <input type="text" name="track_code" id="editOfferTrackCode" class="m-input"
+                   style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
+          </div>
+          <div class="mf">
+            <label>STATUS</label>
+            <div class="m-radio-row">
+              <label class="m-radio-opt"><input type="radio" name="status" id="editOfferStatusActive" value="active"> Active</label>
+              <label class="m-radio-opt"><input type="radio" name="status" id="editOfferStatusInactive" value="inactive"> Inactive</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditOffering')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE CHANGES</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Section Name ─────────────────────── -->
+<div id="modalEditSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>EDIT SECTION</h2>
+      <button class="modal-x" onclick="closeSModal('modalEditSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_edit_section') }}" method="POST">
+      <input type="hidden" name="section_id" id="editSecId">
+      <div class="s-modal-body">
+        <div class="mf">
+          <label>SECTION NAME</label>
+          <input type="text" name="section_name" id="editSecName" class="m-input" required>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditSection')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE</button>
       </div>
     </form>
   </div>
