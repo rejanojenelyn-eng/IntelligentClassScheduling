@@ -380,7 +380,7 @@
             <div class="pm-item-code">{{ p.programcode }}</div>
             <div class="pm-item-name">{{ p.programname }}</div>
             <div class="pm-item-meta">
-              <span class="pm-offers-label">{{ p.offering_count | int }} offering{{ 's' if (p.offering_count | int) != 1 }}</span>
+              <span class="pm-offers-label">{{ p.curr_count | int }} {{ 'curriculums' if (p.curr_count | int) > 1 else 'curriculum' }}</span>
               <span class="pm-item-status pm-item-active"><span class="pm-dot-sm"></span> Active</span>
             </div>
           </div>

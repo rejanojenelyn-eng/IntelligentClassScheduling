@@ -2185,9 +2185,9 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
     if sem_types:
         nf.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); np_.extend(sem_types)
     if programs:
-        nf.append(f"UPPER(co.programcode) IN ({','.join(['%s']*len(programs))})"); np_.extend([p.upper() for p in programs])
+        nf.append(f"UPPER(ao.offeringcode) IN ({','.join(['%s']*len(programs))})"); np_.extend([p.upper() for p in programs])
     if year_levels:
-        nf.append(f"sec.yearlevel IN ({','.join(['%s']*len(year_levels))})"); np_.extend(year_levels)
+        nf.append(f"pyl.yearlevel IN ({','.join(['%s']*len(year_levels))})"); np_.extend(year_levels)
 
     norm_q = """
         SELECT
@@ -2197,8 +2197,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
             COALESCE(sub.lecturehours,0)    AS "LectureHours",
             COALESCE(sub.laboratoryhours,0) AS "LaboratoryHours",
             COALESCE(sub.creditunits,0)     AS "CreditUnits",
-            co.programcode   AS "Program",
-            sec.yearlevel    AS "YearLevel",
+            ao.offeringcode  AS "Program",
+            pyl.yearlevel    AS "YearLevel",
             sec.sectionname  AS "Section",
             (COALESCE(sub.lecturehours,0)+COALESCE(sub.laboratoryhours,0)) AS "Hours",
             ss.daydesc       AS "Day/s",
@@ -2213,7 +2213,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
         JOIN curriculumsubject cs  ON sc.curriculumsubjectid=cs.curriculumsubjectid
         JOIN subject sub           ON cs.subjectcode=sub.subjectcode
         JOIN sections sec          ON sc.sectionid=sec.sectionid
-        JOIN cohort co             ON sec.cohortid=co.cohortid
+        JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+        JOIN academic_offering ao  ON pyl.academicofferingid=ao.academicofferingid
         JOIN semester sem          ON sc.semesterid=sem.semesterid
         JOIN academicyear ay       ON sem.academicyearid=ay.academicyearid
         LEFT JOIN faculty f        ON sc.employeenumber=f.employeenumber
@@ -2222,7 +2223,7 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
         LEFT JOIN timeslot ts_s    ON ss.starttimeid=ts_s.timeid
         LEFT JOIN timeslot ts_e    ON ss.endtimeid=ts_e.timeid
         WHERE """ + " AND ".join(nf) + """
-        ORDER BY co.programcode, sec.yearlevel, sub.subjectcode, ss.daydesc NULLS LAST
+        ORDER BY ao.offeringcode, pyl.yearlevel, sub.subjectcode, ss.daydesc NULLS LAST
     """
     cur.execute(norm_q, np_)
     norm_rows = cur.fetchall()
@@ -3477,7 +3478,8 @@ def sis_import_preview():
                     cur.execute("""
                         SELECT cs.curriculumsubjectid FROM curriculumsubject cs
                         JOIN curriculum c ON cs.curriculumid = c.curriculumid
-                        WHERE UPPER(c.programcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
+                        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                        WHERE UPPER(ao.offeringcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
                     """, (prog, s_code))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
                 if not cs_id:
@@ -3508,15 +3510,19 @@ def sis_import_preview():
             sec_id = None
             if prog and yl:
                 cur.execute("""
-                    SELECT sec.sectionid FROM sections sec JOIN cohort co ON sec.cohortid=co.cohortid
-                    WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s AND sec.isactive=TRUE
+                    SELECT sec.sectionid FROM sections sec
+                    JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                    JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                    WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
                     ORDER BY sec.sectionname LIMIT 1
                 """, (prog, yl))
                 r = cur.fetchone(); sec_id = r['sectionid'] if r else None
                 if not sec_id:
                     cur.execute("""
-                        SELECT sec.sectionid FROM sections sec JOIN cohort co ON sec.cohortid=co.cohortid
-                        WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                        WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
@@ -3687,7 +3693,8 @@ def sis_import_confirm():
                     cur.execute("""
                         SELECT cs.curriculumsubjectid FROM curriculumsubject cs
                         JOIN curriculum c ON cs.curriculumid=c.curriculumid
-                        WHERE UPPER(c.programcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
+                        JOIN academic_offering ao ON c.academicofferingid=ao.academicofferingid
+                        WHERE UPPER(ao.offeringcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
                     """, (prog, s_code))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
                 if not cs_id and s_code:
@@ -3697,15 +3704,19 @@ def sis_import_confirm():
                 sec_id = None
                 if prog and yl:
                     cur.execute("""
-                        SELECT sec.sectionid FROM sections sec JOIN cohort co ON sec.cohortid=co.cohortid
-                        WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s AND sec.isactive=TRUE
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                        WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
                     if not sec_id:
                         cur.execute("""
-                            SELECT sec.sectionid FROM sections sec JOIN cohort co ON sec.cohortid=co.cohortid
-                            WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s
+                            SELECT sec.sectionid FROM sections sec
+                            JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                            JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                            WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s
                             ORDER BY sec.sectionname LIMIT 1
                         """, (prog, yl))
                         r = cur.fetchone(); sec_id = r['sectionid'] if r else None
@@ -4394,7 +4405,8 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
                 cur.execute("""
                     SELECT cs.curriculumsubjectid FROM curriculumsubject cs
                     JOIN curriculum c ON cs.curriculumid=c.curriculumid
-                    WHERE UPPER(c.programcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
+                    JOIN academic_offering ao ON c.academicofferingid=ao.academicofferingid
+                    WHERE UPPER(ao.offeringcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
                 """, (prog, s_code))
                 r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
             if not cs_id:
@@ -4425,8 +4437,9 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
         if prog and yl:
             cur.execute("""
                 SELECT sec.sectionid, sec.sectionname FROM sections sec
-                JOIN cohort co ON sec.cohortid=co.cohortid
-                WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s AND sec.isactive=TRUE
+                JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
                 ORDER BY sec.sectionname LIMIT 1
             """, (prog, yl))
             r = cur.fetchone()
@@ -4435,8 +4448,9 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
             if not sec_id:
                 cur.execute("""
                     SELECT sec.sectionid, sec.sectionname FROM sections sec
-                    JOIN cohort co ON sec.cohortid=co.cohortid
-                    WHERE UPPER(co.programcode)=UPPER(%s) AND sec.yearlevel=%s
+                    JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                    JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                    WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s
                     ORDER BY sec.sectionname LIMIT 1
                 """, (prog, yl))
                 r = cur.fetchone()
@@ -7107,7 +7121,8 @@ def admin_curriculum_export_list():
                c.CurriculumID as curriculum_id, c.CurriculumCode as curriculum_code,
                c.CurriculumYear as curriculum_year
         FROM Programs p
-        LEFT JOIN Curriculum c ON c.ProgramCode = p.ProgramCode
+        LEFT JOIN academic_offering ao ON ao.programcode = p.programcode
+        LEFT JOIN Curriculum c ON c.academicofferingid = ao.academicofferingid
         WHERE p.IsActive = TRUE
         ORDER BY p.ProgramName ASC, c.CurriculumYear DESC
     """)
@@ -7138,12 +7153,13 @@ def admin_curriculum_export_data():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
-        SELECT c.CurriculumID as curriculum_id, c.CurriculumCode as curriculum_code,
-               c.CurriculumYear as curriculum_year, p.ProgramName as program_name,
-               p.ProgramCode as program_code
-        FROM Curriculum c
-        JOIN Programs p ON c.ProgramCode = p.ProgramCode
-        WHERE c.CurriculumID = ANY(%s)
+        SELECT c.curriculumid as curriculum_id, c.curriculumcode as curriculum_code,
+               c.curriculumyear as curriculum_year, p.programname as program_name,
+               ao.offeringcode as program_code
+        FROM curriculum c
+        JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+        JOIN programs p ON ao.programcode = p.programcode
+        WHERE c.curriculumid = ANY(%s)
     """, (curriculum_ids,))
     info_map = {r['curriculum_id']: dict(r) for r in cur.fetchall()}
     cur.execute("""
@@ -9197,7 +9213,7 @@ def import_curriculum():
             cur.execute("""
                 INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
+                ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO NOTHING
             """, (target_curr_id, s_code, final_yl, final_sem))
 
             pre_val = get_val(row, 'pre') or ''
@@ -9414,7 +9430,11 @@ def confirm_pdf_import():
 
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute("SELECT curriculumid FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s", (prog_code, curr_year))
+        cur.execute("""
+            SELECT c.curriculumid FROM Curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.offeringcode = %s AND c.curriculumyear = %s
+        """, (prog_code, curr_year))
         existing = cur.fetchone()
         if existing:
             if not override:
@@ -9427,12 +9447,18 @@ def confirm_pdf_import():
         if existing and override:
             curr_id = existing_id  # reuse existing curriculum record
         else:
+            cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s", (prog_code,))
+            ao_row = cur.fetchone()
+            if not ao_row:
+                flash(f"Import Failed: Program '{prog_code}' not found in the system.")
+                return redirect(url_for('admin_curriculum'))
+            ao_id = ao_row[0]
             years = curr_year.split('-')
             curr_code = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
             cur.execute("""
-                INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear)
+                INSERT INTO Curriculum (CurriculumCode, academicofferingid, CurriculumYear)
                 VALUES (%s, %s, %s) RETURNING CurriculumID
-            """, (curr_code, prog_code, curr_year))
+            """, (curr_code, ao_id, curr_year))
             curr_id = cur.fetchone()[0]
 
         for s in subjects:
@@ -9456,7 +9482,7 @@ def confirm_pdf_import():
             cur.execute("""
                 INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
+                ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO NOTHING
             """, (curr_id, sc, yl, sem))
 
             pre = str(s.get('pre', '')).strip()
@@ -9528,10 +9554,11 @@ def import_curriculum_xlsx():
 
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute(
-            "SELECT 1 FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s",
-            (prog_code, curr_year)
-        )
+        cur.execute("""
+            SELECT 1 FROM Curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.offeringcode = %s AND c.curriculumyear = %s
+        """, (prog_code, curr_year))
         if cur.fetchone():
             flash(f"Import Blocked: Curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
             return redirect(request.referrer)
@@ -9546,6 +9573,13 @@ def import_curriculum_xlsx():
             try: return int(float(val)) if val else 0
             except: return 0
 
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s", (prog_code,))
+        ao_row = cur.fetchone()
+        if not ao_row:
+            flash(f"Import Failed: Program '{prog_code}' not found in the system.")
+            return redirect(request.referrer)
+        ao_id = ao_row[0]
+
         csv_cc = get_val(data_rows[0], 'cc') if data_rows and 'cc' in idx else None
         if csv_cc:
             curr_code_str = csv_cc[:6]
@@ -9554,9 +9588,9 @@ def import_curriculum_xlsx():
             curr_code_str = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
 
         cur.execute(
-            "INSERT INTO Curriculum (CurriculumCode, ProgramCode, CurriculumYear) "
+            "INSERT INTO Curriculum (CurriculumCode, academicofferingid, CurriculumYear) "
             "VALUES (%s, %s, %s) RETURNING CurriculumID",
-            (curr_code_str, prog_code, curr_year)
+            (curr_code_str, ao_id, curr_year)
         )
         target_curr_id = cur.fetchone()[0]
 
@@ -9600,7 +9634,7 @@ def import_curriculum_xlsx():
             cur.execute("""
                 INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, YearLevel, Semester)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (CurriculumID, SubjectCode) DO NOTHING
+                ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO NOTHING
             """, (target_curr_id, s_code, final_yl, final_sem))
 
             pre_val   = get_val(row, 'pre') or ''
@@ -9671,10 +9705,11 @@ def check_curriculum_duplicate():
         return jsonify({'exists': False})
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute(
-            "SELECT curriculumid FROM Curriculum WHERE ProgramCode = %s AND CurriculumYear = %s",
-            (prog_code, curr_year)
-        )
+        cur.execute("""
+            SELECT c.curriculumid FROM Curriculum c
+            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+            WHERE ao.offeringcode = %s AND c.curriculumyear = %s
+        """, (prog_code, curr_year))
         row = cur.fetchone()
         return jsonify({'exists': bool(row), 'curriculum_id': row[0] if row else None})
     finally:
