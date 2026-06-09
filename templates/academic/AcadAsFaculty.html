@@ -1,47 +1,123 @@
 {% extends "academic/base.html" %}
+
 {% block head %}
+    {{ super() }}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_faculty.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
 {% endblock %}
 
 {% block content %}
 <div class="dashboard-wrapper">
-    <!-- UPDATED HEADER SECTION -->
-    <div class="dashboard-header">
-        <h2 class="welcome-heading">Welcome, {{ user.firstname }} {{ user.lastname }}!</h2>
-        <span class="role-badge">Academic Head</span>
+    
+    <!-- Welcome Header -->
+    <div class="welcome-section">
+        <h1 class="welcome-heading">Welcome, <span>{{ user.firstname }} {{ user.lastname }}!</span></h1>
+        <p class="welcome-subtext">You have <b>{{ schedule|length }} classes</b> scheduled for today.</p>
     </div>
 
-    <div class="main-stats-grid">
-        <div class="section-wrapper schedule-section">
-            <div class="section-tab">My Today's Schedule</div>
-            <div class="section-content">
+    <!-- Quick Action Cards -->
+    <div class="action-grid">
+        <a href="{{ url_for('faculty_schedule') }}" class="btn-action-outline">
+            <i class="fa-regular fa-calendar-check"></i> View My Schedule
+        </a>
+        <a href="{{ url_for('academic_my_teaching_assignment') }}" class="btn-action-outline">
+            <i class="fa-solid fa-book-open"></i> Teaching Assignment
+        </a>
+        <a href="{{ url_for('room') }}" class="btn-action-outline">
+            <i class="fa-solid fa-magnifying-glass"></i> Find Available Room
+        </a>
+        <a href="{{ url_for('requests_view') }}" class="btn-action-outline">
+            <i class="fa-solid fa-file-arrow-up"></i> Submit Request
+        </a>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="dashboard-grid">
+        
+        <!-- Left Column: Today's Schedule -->
+        <div class="schedule-column">
+            <div class="section-header">
+                <div class="section-title">TODAY'S SCHEDULE</div>
+                <div class="section-date">{{ current_date }}</div>
+            </div>
+
+            <div class="schedule-list">
                 {% for sess in schedule %}
                 <div class="schedule-card">
-                    <div class="card-left">
-                        <div class="subject-code">{{ sess.subjectcode }} – {{ sess.subjectname }}</div>
-                        <div class="subject-meta">ROOM: {{ sess.roomname }} &nbsp;&nbsp; TIME: {{ sess.start_time }} - {{ sess.end_time }}</div>
+                    <div class="sched-time">
+                        <i class="fa-regular fa-clock"></i>
+                        <span>{{ sess.start_time }} -<br>{{ sess.end_time }}</span>
                     </div>
-                    <div class="card-right">{{ sess.daydesc }}</div>
+                    <div class="sched-details">
+                        <h4 class="sched-title">{{ sess.subjectcode }} - {{ sess.subjectname }}</h4>
+                        <div class="sched-meta">
+                            <div><i class="fa-solid fa-location-dot"></i> ROOM {{ sess.roomname or 'TBA' }}</div>
+                            <div>
+                                <i class="fa-solid fa-user-group"></i> 
+                                {{ sess.offeringcode or 'N/A' }} {% if sess.yearlevel %}- {{ sess.yearlevel }}{% endif %}
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 {% else %}
-                <p style="padding: 20px;">No classes scheduled for you today.</p>
+                <div class="schedule-card" style="border-left: 1px solid #e0e0e0; border: 1px solid #e0e0e0;">
+                    <div class="sched-details" style="padding: 25px;">
+                        <p style="margin:0; color: #6c757d; font-weight: 500;">No classes scheduled for today.</p>
+                    </div>
+                </div>
                 {% endfor %}
+            </div>
+
+            <!-- Inbox Section -->
+            <div class="inbox-section">
+                <div class="section-header">
+                    <div class="section-title">INBOX</div>
+                </div>
+                <div class="inbox-card">
+                    <div class="inbox-left">
+                        <div class="inbox-icon"><i class="fa-solid fa-check"></i></div>
+                        <div class="inbox-text">
+                            <h4>Your schedule has been approved</h4>
+                            <p>&bull; 2h ago</p>
+                        </div>
+                    </div>
+                    <a href="{{ url_for('requests_view') }}" class="inbox-link">
+                        VIEW DETAILS &rarr;
+                    </a>
+                </div>
             </div>
         </div>
 
-        <div class="section-wrapper overview-section">
-            <div class="section-tab">Overview</div>
-            <div class="section-content overview-content">
-                <div class="stat-box">
-                    <div class="stat-title">TOTAL TEACHING<br>UNITS</div>
-                    <div class="stat-value">{{ total_units }}</div>
+        <!-- Right Column: Overview -->
+        <div class="overview-column">
+            <div class="section-header">
+                <div class="section-title">OVERVIEW</div>
+            </div>
+            
+            <div class="overview-grid">
+                <!-- Teaching Units Card -->
+                <div class="overview-card">
+                    <div class="overview-number">{{ total_units }}</div>
+                    <div class="overview-label">Total Teaching<br>Units</div>
+                    <div class="status-badge green">
+                        <i class="fa-solid fa-circle-check"></i> WITHIN LOAD LIMIT
+                    </div>
                 </div>
-                <div class="stat-box">
-                    <div class="stat-title">TOTAL ASSIGNED<br>SUBJECTS</div>
-                    <div class="stat-value">{{ total_subjects }}</div>
+                
+                <!-- Assigned Subjects Card -->
+                <div class="overview-card">
+                    <div class="overview-number">{{ total_subjects }}</div>
+                    <div class="overview-label">Assigned<br>Subjects</div>
+                    <div class="status-badge maroon">
+                        <i class="fa-solid fa-users"></i> CROSS-PROGRAM
+                    </div>
                 </div>
             </div>
+            
+            <!-- Empty Placeholder Card -->
+            <div class="empty-placeholder"></div>
         </div>
+
     </div>
 </div>
 {% endblock %}

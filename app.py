@@ -384,13 +384,15 @@ def login():
 # ==============================================================================
 # --- ACADEMIC HEAD PERSONAL FACULTY VIEW ---
 # ==============================================================================
-
 @app.route('/academic/my-dashboard')
 def academic_my_dashboard():
     if 'loggedin' not in session or session.get('role') != 'Academic Head':
         return redirect(url_for('login'))
     
     username = session.get('username')
+    today_day = datetime.now().strftime('%A')
+    current_date_formatted = datetime.now().strftime('%B %d, %Y, %A')
+    
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
@@ -406,11 +408,11 @@ def academic_my_dashboard():
     """, (emp_num,))
     user_data = cur.fetchone()
 
-    today_day = datetime.now().strftime('%A')
     cur.execute("""
-        SELECT ss.*, sub.subjectcode, sub.subjectname, r.roomname,
+        SELECT sub.subjectcode, sub.subjectname, r.roomname, ss.daydesc,
                TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
-               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time,
+               ao.offeringcode, pyl.yearlevel
         FROM schedule_sessions ss
         JOIN schedule_version sv ON ss.versionid = sv.versionid
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
@@ -419,8 +421,12 @@ def academic_my_dashboard():
         LEFT JOIN room r ON ss.roomid = r.roomid
         LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
         LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
         WHERE sc.employeenumber = %s AND sv.status = 'Published'
           AND ss.daydesc = %s
+        ORDER BY ts_s.timevalue
     """, (emp_num, today_day))
     my_schedule = cur.fetchall()
 
@@ -439,7 +445,7 @@ def academic_my_dashboard():
 
     cur.close(); conn.close()
     return render_template('academic/AcadAsFaculty.html', user=user_data, schedule=my_schedule,
-                           total_units=total_units, total_subjects=total_subjects)
+                           total_units=total_units, total_subjects=total_subjects, current_date=current_date_formatted)
 
 @app.route('/academic/my-teaching-assignment')
 def academic_my_teaching_assignment():
@@ -474,18 +480,142 @@ def requests_view():
 def dashboard():
     if 'loggedin' not in session: return redirect(url_for('login'))
     
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        f_data = query_db("SELECT COUNT(*) as t FROM Faculty", one=True)
-        r_data = query_db("SELECT COUNT(*) as t FROM Room", one=True)
-        s_data = query_db("SELECT COUNT(*) as t FROM Subject", one=True)
+        now = datetime.now().strftime("%B %d, %Y, %A")
+        
+        # --- 1. KPI Counts ---
+        cur.execute("SELECT COUNT(*) as t FROM programs WHERE isactive = TRUE")
+        prog_data = cur.fetchone()
+        
+        cur.execute("SELECT COUNT(*) as t FROM faculty WHERE employeestatus != 'Archive'")
+        fac_data = cur.fetchone()
+        
+        cur.execute("SELECT COUNT(*) as t FROM room")
+        room_data = cur.fetchone()
+        
+        # Safely count pending requests (handling potential missing tables)
+        pending_reqs = 0
+        try:
+            cur.execute("SELECT COUNT(*) as t FROM class_meeting_request WHERE status = 'Pending'")
+            req_data = cur.fetchone()
+            if req_data: pending_reqs += req_data['t']
+            
+            cur.execute("SELECT COUNT(*) as t FROM schedule_change_request WHERE status = 'Pending'")
+            change_data = cur.fetchone()
+            if change_data: pending_reqs += change_data['t']
+        except Exception:
+            conn.rollback()
+
+        # --- 2. Recent Requests (Mocked fallback if table empty) ---
+        recent_requests = []
+        try:
+            cur.execute("""
+                SELECT 'MAKE-UP CLASS' as req_type, cmr.status, 
+                       TO_CHAR(cmr.created_at, 'Mon DD, YYYY') as date_sub,
+                       UPPER(f.firstname || ' ' || f.lastname) as faculty_name,
+                       sub.subjectcode, r.roomname
+                FROM class_meeting_request cmr
+                JOIN faculty f ON cmr.submitted_by = f.employeenumber
+                JOIN schedule s ON cmr.scheduleid = s.scheduleid
+                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN subject sub ON cs.subjectcode = sub.subjectcode
+                LEFT JOIN room r ON cmr.new_roomid = r.roomid
+                ORDER BY cmr.created_at DESC LIMIT 3
+            """)
+            recent_requests = cur.fetchall()
+        except Exception:
+            conn.rollback()
+
+        # --- 3. Recent Schedule List ---
+        cur.execute("""
+            SELECT
+                ao.offeringcode AS programcode,
+                pyl.yearlevel,
+                ay.yearstart || '-' || ay.yearend AS acad_year,
+                sem.semestertype,
+                TO_CHAR(MAX(sv.datecreated), 'MM/DD/YYYY') AS date_imported
+            FROM schedule_version sv
+            JOIN schedule s ON sv.scheduleid = s.scheduleid
+            JOIN sections sec ON s.sectionid = sec.sectionid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+            JOIN semester sem          ON s.semesterid = sem.semesterid
+            JOIN academicyear ay       ON sem.academicyearid = ay.academicyearid
+            GROUP BY ao.offeringcode, pyl.yearlevel, ay.yearstart, ay.yearend, sem.semestertype
+            ORDER BY MAX(sv.datecreated) DESC
+            LIMIT 5
+        """)
+        scheds = cur.fetchall()
 
         return render_template('academic/dashboard.html', 
-                               faculty_count=f_data['t'] if f_data else 0,
-                               room_count=r_data['t'] if r_data else 0,
-                               course_count=s_data['t'] if s_data else 0)
+                               current_date=now,
+                               program_count=prog_data['t'] if prog_data else 0,
+                               faculty_count=fac_data['t'] if fac_data else 0,
+                               room_count=room_data['t'] if room_data else 0,
+                               pending_requests=pending_reqs,
+                               recent_requests=recent_requests,
+                               schedules=scheds)
     except Exception as e:
         print(f"Dashboard Database Error: {e}")
-        return render_template('academic/dashboard.html', faculty_count=0, room_count=0, course_count=0)
+        return render_template('academic/dashboard.html', 
+                               current_date="N/A", program_count=0, faculty_count=0,
+                               room_count=0, pending_requests=0, recent_requests=[], schedules=[])
+    finally:
+        cur.close()
+        conn.close()
+
+# --- API Endpoints for Dashboard Popups ---
+
+@app.route('/api/dashboard/programs_list')
+def api_dashboard_programs_list():
+    if 'loggedin' not in session: return jsonify([])
+    rows = query_db("SELECT programcode, programname, programtype FROM programs WHERE isactive = TRUE ORDER BY programname")
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/dashboard/faculty_list')
+def api_dashboard_faculty_list():
+    if 'loggedin' not in session: return jsonify([])
+    rows = query_db("""
+        SELECT f.employeenumber, f.lastname || ', ' || f.firstname AS name, 
+               et.typename, f.employeestatus 
+        FROM faculty f 
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        WHERE f.employeestatus != 'Archive' ORDER BY f.lastname
+    """)
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/dashboard/rooms_list')
+def api_dashboard_rooms_list():
+    if 'loggedin' not in session: return jsonify([])
+    rows = query_db("""
+        SELECT r.roomname, r.roomtype, b.buildingname 
+        FROM room r JOIN building b ON r.buildingid = b.buildingid 
+        ORDER BY b.buildingname, r.roomname
+    """)
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/dashboard/requests_list')
+def api_dashboard_requests_list():
+    if 'loggedin' not in session: return jsonify([])
+    # Combine make-up and change requests
+    rows = query_db("""
+        SELECT 'Make-up' as type, f.lastname as faculty, sub.subjectcode, status 
+        FROM class_meeting_request cmr
+        JOIN faculty f ON cmr.submitted_by = f.employeenumber
+        JOIN schedule s ON cmr.scheduleid = s.scheduleid
+        JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN subject sub ON cs.subjectcode = sub.subjectcode
+        WHERE cmr.status = 'Pending'
+    """)
+    return jsonify([dict(r) for r in (rows or [])])
+    
+@app.route('/api/dashboard/buildings_list')
+def api_dashboard_buildings_list():
+    if 'loggedin' not in session: return jsonify([])
+    rows = query_db("SELECT buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/employee')
 def employee():
@@ -6740,93 +6870,72 @@ def reports():
 @app.route('/admin/dashboard')
 def admin_dashboard():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
+    
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        now = datetime.now().strftime("%B %d, %Y")
-        u_data = query_db("SELECT COUNT(*) as t FROM Accounts", one=True)
-        f_data = query_db("SELECT COUNT(*) as t FROM Faculty", one=True)
+        now = datetime.now().strftime("%B %d, %Y, %A")
         
+        # --- 1. KPI Counts ---
+        cur.execute("SELECT COUNT(*) as t FROM programs WHERE isactive = TRUE")
+        prog_data = cur.fetchone()
+        
+        cur.execute("SELECT COUNT(*) as t FROM faculty WHERE employeestatus != 'Archive'")
+        fac_data = cur.fetchone()
+        
+        cur.execute("SELECT COUNT(*) as t FROM room")
+        room_data = cur.fetchone()
+        
+        cur.execute("SELECT COUNT(*) as t FROM building WHERE isactive = TRUE")
+        bldg_data = cur.fetchone()
+
+        # --- 2. Recent Activity Logs ---
+        _ensure_activity_log_table()
+        cur.execute("""
+            SELECT TO_CHAR(logtime, 'YYYY-MM-DD HH24:MI:SS') as logtime,
+                   action, details, initiated_by, log_color
+            FROM activity_log
+            ORDER BY logtime DESC LIMIT 6
+        """)
+        logs = cur.fetchall()
+
+        # --- 3. Recent Schedule List ---
+        cur.execute("""
+            SELECT
+                ao.offeringcode AS programcode,
+                pyl.yearlevel,
+                ay.yearstart || '-' || ay.yearend AS acad_year,
+                sem.semestertype,
+                TO_CHAR(MAX(sv.datecreated), 'MM/DD/YYYY') AS date_imported
+            FROM schedule_version sv
+            JOIN schedule s ON sv.scheduleid = s.scheduleid
+            JOIN sections sec ON s.sectionid = sec.sectionid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+            JOIN semester sem          ON s.semesterid = sem.semesterid
+            JOIN academicyear ay       ON sem.academicyearid = ay.academicyearid
+            GROUP BY ao.offeringcode, pyl.yearlevel, ay.yearstart, ay.yearend, sem.semestertype
+            ORDER BY MAX(sv.datecreated) DESC
+            LIMIT 6
+        """)
+        scheds = cur.fetchall()
+
         return render_template('admin/dashboard_admin.html', 
                                current_date=now,
-                               user_count=u_data['t'] if u_data else 0,
-                               total=f_data['t'] if f_data else 0)
+                               program_count=prog_data['t'] if prog_data else 0,
+                               faculty_count=fac_data['t'] if fac_data else 0,
+                               room_count=room_data['t'] if room_data else 0,
+                               building_count=bldg_data['t'] if bldg_data else 0,
+                               activity_logs=logs,
+                               schedules=scheds)
     except Exception as e:
-        return render_template('admin/dashboard_admin.html', user_count=0, total=0, current_date="N/A")
-
-# ── Employee DOCX Export ──────────────────────────────────────────────────────
-def _build_employee_docx():
-    """Generate a DOCX file from POSTed employee JSON and return a Flask Response."""
-    data = request.get_json(silent=True) or {}
-    employees = data.get('employees', [])
-    title     = data.get('title', 'Employee Records')
-    timestamp = data.get('timestamp', '')
-
-    from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
-
-    doc = Document()
-    sec = doc.sections[0]
-    sec.left_margin = Inches(0.9); sec.right_margin = Inches(0.9)
-    sec.top_margin  = Inches(0.8); sec.bottom_margin = Inches(0.8)
-
-    h = doc.add_heading(title, 0)
-    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in h.runs:
-        run.font.color.rgb = RGBColor(0x80, 0x00, 0x00)
-
-    if timestamp:
-        p = doc.add_paragraph(timestamp)
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for run in p.runs:
-            run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-            run.font.size = Pt(9)
-
-    doc.add_paragraph()
-
-    has_contact = any(str(e.get('contact', '')).strip() for e in employees)
-    headers = ['#', 'Employee Number', 'Employee Name', 'Specialization', 'Email']
-    if has_contact: headers.append('Contact')
-    headers += ['Employment Type', 'Status']
-
-    table = doc.add_table(rows=1, cols=len(headers))
-    table.style = 'Table Grid'
-
-    hdr = table.rows[0]
-    for i, h_text in enumerate(headers):
-        cell = hdr.cells[i]
-        cell.text = h_text
-        for para in cell.paragraphs:
-            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for run in para.runs:
-                run.bold = True; run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        tc = cell._tc; tcp = tc.get_or_add_tcPr()
-        shd = OxmlElement('w:shd')
-        shd.set(qn('w:fill'), '800000'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:val'), 'clear')
-        tcp.append(shd)
-
-    for idx, emp in enumerate(employees):
-        row = table.add_row()
-        vals = [str(idx + 1), emp.get('emp_num', ''), emp.get('name', ''),
-                emp.get('spec', ''), emp.get('email', '')]
-        if has_contact: vals.append(emp.get('contact', ''))
-        vals += [emp.get('type', ''), emp.get('status', '')]
-        for j, val in enumerate(vals):
-            cell = row.cells[j]
-            cell.text = val
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.font.size = Pt(9)
-
-    buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
-    return Response(
-        buf.getvalue(),
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        headers={'Content-Disposition': 'attachment; filename="employees.docx"'}
-    )
+        print(f"Dashboard Database Error: {e}")
+        return render_template('admin/dashboard_admin.html', 
+                               current_date="N/A", program_count=0, faculty_count=0,
+                               room_count=0, building_count=0, activity_logs=[], schedules=[])
+    finally:
+        cur.close()
+        conn.close()
 
 @app.route('/admin/employee/export/docx', methods=['POST'])
 def admin_export_employees_docx():
@@ -11475,6 +11584,7 @@ def faculty_dashboard():
 
     username = session.get('username')
     today_day = datetime.now().strftime('%A')
+    current_date_formatted = datetime.now().strftime('%B %d, %Y, %A')
     conn = None
     try:
         conn = get_db_connection()
@@ -11496,10 +11606,12 @@ def faculty_dashboard():
         total_subjects = 0
 
         if emp_num:
+            # Added offeringcode and yearlevel for the UI display
             cursor.execute("""
                 SELECT sub.subjectcode, sub.subjectname, r.roomname, ss.daydesc,
                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
-                       TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time
+                       TO_CHAR(ts_e.timevalue, 'HH12:MI AM') as end_time,
+                       ao.offeringcode, pyl.yearlevel
                 FROM schedule_sessions ss
                 JOIN schedule_version sv ON ss.versionid = sv.versionid
                 JOIN schedule sc ON sv.scheduleid = sc.scheduleid
@@ -11508,6 +11620,9 @@ def faculty_dashboard():
                 LEFT JOIN room r ON ss.roomid = r.roomid
                 LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
                 LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+                LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+                LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                LEFT JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
                 WHERE sc.employeenumber = %s AND sv.status = 'Published'
                   AND ss.daydesc = %s
                 ORDER BY ts_s.timevalue
@@ -11536,12 +11651,12 @@ def faculty_dashboard():
 
         return render_template('faculty/dashboard_faculty.html', user=user_data,
                                schedule=today_schedule, total_units=total_units,
-                               total_subjects=total_subjects)
+                               total_subjects=total_subjects, current_date=current_date_formatted)
 
     except Exception as e:
         if conn:
             conn.close()
-        return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>A Python Error Happened!</h2><p><b>Exact Error Message:</b> {str(e)}</p></div>"
+        return f"<div style='padding: 50px;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
 
 # --- Route for Teaching Assignment ---
 @app.route('/faculty_teaching_assignment')

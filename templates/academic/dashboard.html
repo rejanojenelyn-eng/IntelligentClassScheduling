@@ -2,132 +2,285 @@
 
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_acad.css') }}">
-    <!-- Ensure FontAwesome is included for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 {% endblock %}
 
 {% block content %}
 <div class="dashboard-wrapper">
     <!-- Header Section -->
-    <div class="welcome-header">
-        <h1>Welcome, {{ current_user_display }}!</h1>
-        <p class="current-date">{{ current_date }}</p>
+    <div class="header-flex">
+        <h1>ACADEMIC DASHBOARD</h1>
+        <p class="as-of-date">As of {{ current_date }}</p>
     </div>
 
-    <!-- Quick Action Buttons -->
+    <!-- Top KPI Status Grid (Now Clickable) -->
+    <div class="stats-grid">
+        <div class="stat-card" onclick="openKpiModal('programs')" style="cursor:pointer;" title="View Programs">
+            <div class="stat-info">
+                <span class="stat-label text-green">TOTAL PROGRAMS</span>
+                <span class="stat-value text-green">{{ program_count }}</span>
+            </div>
+            <i class="fas fa-book-open stat-icon text-green"></i>
+        </div>
+        <div class="stat-card" onclick="openKpiModal('faculty')" style="cursor:pointer;" title="View Faculty">
+            <div class="stat-info">
+                <span class="stat-label text-orange">TOTAL FACULTY</span>
+                <span class="stat-value text-orange">{{ faculty_count }}</span>
+            </div>
+            <i class="fas fa-users stat-icon text-orange"></i>
+        </div>
+        <div class="stat-card" onclick="openKpiModal('rooms')" style="cursor:pointer;" title="View Rooms">
+            <div class="stat-info">
+                <span class="stat-label text-blue">TOTAL ROOMS</span>
+                <span class="stat-value text-blue">{{ room_count }}</span>
+            </div>
+            <i class="fas fa-door-closed stat-icon text-blue"></i>
+        </div>
+        <div class="stat-card" onclick="openKpiModal('requests')" style="cursor:pointer;" title="View Requests">
+            <div class="stat-info">
+                <span class="stat-label text-maroon">PENDING REQUESTS</span>
+                <span class="stat-value text-maroon">{{ pending_requests }}</span>
+            </div>
+            <i class="fas fa-file-invoice stat-icon text-maroon"></i>
+        </div>
+    </div>
+
     <!-- Quick Action Buttons -->
     <div class="action-grid">
-        <a href="{{ url_for('schedule') }}" class="btn-action white">GENERATE SCHEDULE</a>
-        
-        <a href="{{ url_for('employee') }}" class="btn-action">MANAGE FACULTY</a>
-        
-        <a href="{{ url_for('curriculum') }}" class="btn-action">MANAGE CURRICULUM</a>
-        
-        <a href="{{ url_for('schedule') }}" class="btn-action">VIEW SCHEDULES</a>
-        
-        <a href="{{ url_for('reports') }}" class="btn-action">EXPORT REPORTS</a>
+        <a href="{{ url_for('schedule_generation_view') }}" class="btn-action primary">
+            <i class="fas fa-cogs"></i> GENERATE SCHEDULE
+        </a>
+        <a href="{{ url_for('employee') }}" class="btn-action outline">
+            <i class="fas fa-user-cog"></i> MANAGE FACULTY
+        </a>
+        <a href="{{ url_for('room') }}" class="btn-action outline">
+            <i class="fas fa-door-open"></i> MANAGE ROOMS
+        </a>
+        <a href="{{ url_for('requests_view') }}" class="btn-action outline">
+            <i class="fas fa-clipboard-list"></i> MANAGE REQUESTS
+        </a>
+        <a href="{{ url_for('reports') }}" class="btn-action outline">
+            <i class="fas fa-file-export"></i> EXPORT REPORTS
+        </a>
     </div>
 
-    <!-- Requests Table Section -->
-    <div class="section-container">
-        <div class="section-header">
-            <h2>Requests <span class="badge-count">2</span></h2>
-            <button class="view-all-btn">VIEW ALL</button>
-        </div>
+    <!-- Tables Grid Area -->
+    <div class="tables-grid">
         
-        <div class="table-controls maroon-bg">
-            <div class="search-filter">
-                <input type="text" placeholder="Search employee...">
-                <select><option>Status: Pending</option></select>
-                <select><option>Status: Pending</option></select>
+        <!-- Left: Recent Requests Section -->
+        <div class="table-card" style="background-color: #f8f9fa;">
+            <div class="card-header-flex">
+                <h2>RECENT REQUESTS</h2>
+                <a href="{{ url_for('requests_view') }}" class="view-link">VIEW HUB &rarr;</a>
             </div>
-            <div class="table-actions">
-                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
-                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
-            </div>
-        </div>
-
-        <table class="dashboard-table">
-            <thead>
-                <tr>
-                    <th>Employee Name</th>
-                    <th>Course code</th>
-                    <th>Program/Yr</th>
-                    <th>Requested date</th>
-                    <th>Status</th>
-                    <th>Date Submitted</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Obmerga, Icon</td>
-                    <td>COMP001</td>
-                    <td>BSIT-2</td>
-                    <td>03-20-26</td>
-                    <td><span class="status-pill pending">Pending</span></td>
-                    <td>03-14-26 00:03:00</td>
-                </tr>
-                <tr>
-                    <td>Zurbano, Andie</td>
-                    <td>COMP002</td>
-                    <td>BSIT-3</td>
-                    <td>03-23-26</td>
-                    <td><span class="status-pill pending">Pending</span></td>
-                    <td>03-15-26 00:02:00</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Schedule List Table Section -->
-    <div class="section-container">
-        <div class="section-header">
-            <h2>Schedule List</h2>
-            <button class="view-all-btn">VIEW ALL</button>
-        </div>
-
-        <div class="table-controls maroon-bg">
-            <div class="search-filter">
-                <input type="text" placeholder="Search...">
-                <select><option>Program</option></select>
-                <select><option>Acad Year</option></select>
-                <select><option>Semester</option></select>
-                <select><option>Status</option></select>
-            </div>
-            <div class="table-actions">
-                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
-                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            
+            <div class="table-container">
+                <div class="toolbar-red">
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">CATEGORY</span>
+                        <select class="toolbar-select">
+                            <option>ALL</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">FACULTY</span>
+                        <select class="toolbar-select">
+                            <option>SELECT</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="req-list-wrapper">
+                    {% for req in recent_requests %}
+                    <div class="req-card">
+                        <h3 class="req-name">{{ req.faculty_name }}</h3>
+                        <p class="req-subtitle">{{ req.subjectcode }} - ROOM {{ req.roomname or 'TBA' }}</p>
+                        
+                        {% if req.req_type == 'MAKE-UP CLASS' %}
+                            <span class="req-pill makeup">{{ req.req_type }}</span>
+                        {% else %}
+                            <span class="req-pill adjust">{{ req.req_type }}</span>
+                        {% endif %}
+                        
+                        <div class="req-status-pill">PENDING</div>
+                        <div class="req-date">DATE SUBMITTED:<br><b>{{ req.date_sub|upper }}</b></div>
+                    </div>
+                    {% else %}
+                    <!-- Static Fallback Mock Data as depicted in reference -->
+                    <div class="req-card">
+                        <h3 class="req-name">DAVE MARCAIDA</h3>
+                        <p class="req-subtitle">COMP003 - ROOM 203</p>
+                        <span class="req-pill makeup">MAKE-UP CLASS</span>
+                        <div class="req-status-pill">PENDING</div>
+                        <div class="req-date">DATE SUBMITTED:<br><b>MAY 23, 2026</b></div>
+                    </div>
+                    
+                    <div class="req-card">
+                        <h3 class="req-name">GRACE SILAYA</h3>
+                        <p class="req-subtitle">COMP003 - ROOM 203</p>
+                        <span class="req-pill adjust">SCHEDULE ADJUSTMENT</span>
+                        <div class="req-status-pill">PENDING</div>
+                        <div class="req-date">DATE SUBMITTED:<br><b>MAY 23, 2026</b></div>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
         </div>
 
-        <table class="dashboard-table">
-            <thead>
-                <tr>
-                    <th>Program</th>
-                    <th>Year level</th>
-                    <th>Acad year</th>
-                    <th>Semester</th>
-                    <th>Date Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>BSIT</td>
-                    <td>1</td>
-                    <td>2025-2026</td>
-                    <td>1st Semester</td>
-                    <td>03-14-26 00:03:00</td>
-                </tr>
-                <tr>
-                    <td>BSBA</td>
-                    <td>2</td>
-                    <td>2025-2026</td>
-                    <td>1st Semester</td>
-                    <td>03-14-26 00:03:00</td>
-                </tr>
-            </tbody>
-        </table>
+        <!-- Right: Schedule List Table Section -->
+        <div class="table-card">
+            <div class="card-header-flex">
+                <h2>SCHEDULE LIST</h2>
+                <a href="{{ url_for('schedule') }}" class="view-link">VIEW FULL LIST &rarr;</a>
+            </div>
+
+            <div class="table-container" style="border:none;">
+                <table class="table-full">
+                    <thead>
+                        <tr>
+                            <th>PROGRAM</th>
+                            <th>YEAR LEVEL</th>
+                            <th>ACAD YEAR</th>
+                            <th>SEMESTER</th>
+                            <th>DATE IMPORTED</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sched in schedules %}
+                        <tr>
+                            <td class="prog-bold">{{ sched.programcode }}</td>
+                            <td>{{ sched.yearlevel }}{% if sched.yearlevel == 1 %}st{% elif sched.yearlevel == 2 %}nd{% elif sched.yearlevel == 3 %}rd{% else %}th{% endif %} Year</td>
+                            <td class="acad-red">{{ sched.acad_year }}</td>
+                            <td>{{ '1ST SEMESTER' if sched.semestertype == 'A' else '2ND SEMESTER' if sched.semestertype == 'B' else 'SUMMER' }}</td>
+                            <td><span class="date-pill">{{ sched.date_imported }}</span></td>
+                        </tr>
+                        {% else %}
+                        <!-- Static Fallback Mock Data -->
+                        <tr>
+                            <td class="prog-bold">BSIT</td>
+                            <td>1st Year</td>
+                            <td class="acad-red">2025-2026</td>
+                            <td>1ST SEMESTER</td>
+                            <td><span class="date-pill">6/20/2025</span></td>
+                        </tr>
+                        <tr>
+                            <td class="prog-bold">BSIT</td>
+                            <td>2nd Year</td>
+                            <td class="acad-red">2025-2026</td>
+                            <td>1ST SEMESTER</td>
+                            <td><span class="date-pill">6/20/2025</span></td>
+                        </tr>
+                        <tr>
+                            <td class="prog-bold">BSCS</td>
+                            <td>1st Year</td>
+                            <td class="acad-red">2025-2026</td>
+                            <td>1ST SEMESTER</td>
+                            <td><span class="date-pill">6/20/2025</span></td>
+                        </tr>
+                        <tr>
+                            <td class="prog-bold">BSBA</td>
+                            <td>3rd Year</td>
+                            <td class="acad-red">2025-2026</td>
+                            <td>1ST SEMESTER</td>
+                            <td><span class="date-pill">6/20/2025</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
-{% endblock %}
 
+<!-- Modal for Clickable KPI Cards -->
+<div id="kpiModal" class="dashboard-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTitle">Details</h2>
+            <span class="close-modal" onclick="closeKpiModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="modalLoading" class="loading-spinner" style="display:none;">Loading data...</div>
+            <table class="modal-table" id="modalTable">
+                <thead id="modalTableHead"></thead>
+                <tbody id="modalTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function openKpiModal(type) {
+    const modal = document.getElementById('kpiModal');
+    const title = document.getElementById('modalTitle');
+    const head = document.getElementById('modalTableHead');
+    const body = document.getElementById('modalTableBody');
+    const loader = document.getElementById('modalLoading');
+    
+    // Reset Modal
+    modal.style.display = "flex";
+    body.innerHTML = "";
+    head.innerHTML = "";
+    loader.style.display = "block";
+
+    let url = '';
+    if (type === 'programs') {
+        title.innerText = "Active Programs";
+        url = '/api/dashboard/programs_list';
+        head.innerHTML = `<tr><th>Program Code</th><th>Program Name</th><th>Type</th></tr>`;
+    } else if (type === 'faculty') {
+        title.innerText = "Faculty Roster";
+        url = '/api/dashboard/faculty_list';
+        head.innerHTML = `<tr><th>Employee No.</th><th>Name</th><th>Employee Type</th><th>Status</th></tr>`;
+    } else if (type === 'rooms') {
+        title.innerText = "Room Masterlist";
+        url = '/api/dashboard/rooms_list';
+        head.innerHTML = `<tr><th>Room Name</th><th>Type</th><th>Building</th></tr>`;
+    } else if (type === 'requests') {
+        title.innerText = "Pending Requests";
+        url = '/api/dashboard/requests_list';
+        head.innerHTML = `<tr><th>Request Type</th><th>Faculty</th><th>Subject Code</th><th>Status</th></tr>`;
+    }
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            loader.style.display = "none";
+            if (data.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" style="text-align:center;">No records found.</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                let row = `<tr>`;
+                if (type === 'programs') {
+                    row += `<td>${item.programcode}</td><td>${item.programname}</td><td>${item.programtype}</td>`;
+                } else if (type === 'faculty') {
+                    row += `<td>${item.employeenumber}</td><td>${item.name}</td><td>${item.typename}</td><td>${item.employeestatus}</td>`;
+                } else if (type === 'rooms') {
+                    row += `<td>${item.roomname}</td><td>${item.roomtype}</td><td>${item.buildingname}</td>`;
+                } else if (type === 'requests') {
+                    row += `<td>${item.type}</td><td>${item.faculty}</td><td>${item.subjectcode}</td><td><span style="color:#ea580c; font-weight:700;">${item.status}</span></td>`;
+                }
+                row += `</tr>`;
+                body.innerHTML += row;
+            });
+        })
+        .catch(err => {
+            loader.style.display = "none";
+            body.innerHTML = `<tr><td colspan="4" style="text-align:center; color:red;">Failed to load data.</td></tr>`;
+        });
+}
+
+function closeKpiModal() {
+    document.getElementById('kpiModal').style.display = "none";
+}
+
+// Close modal if user clicks outside of the modal content
+window.onclick = function(event) {
+    const modal = document.getElementById('kpiModal');
+    if (event.target == modal) {
+        modal.style.display = "none";
+    }
+}
+</script>
+{% endblock %}

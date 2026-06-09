@@ -2,112 +2,253 @@
 
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_admin.css') }}">
+    <!-- Ensure FontAwesome is loaded for the icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 {% endblock %}
 
 {% block content %}
 <div class="dashboard-wrapper">
-    <!-- Header -->
-    <div class="welcome-header">
-        <h1>Welcome, Admin!</h1>
-        <p class="current-date">{{ current_date }}</p>
+    
+    <!-- Title Area -->
+    <div class="header-flex">
+        <h1>ADMIN DASHBOARD</h1>
+        <p class="as-of-date">As of {{ current_date }}</p>
     </div>
 
- <!-- Action Buttons Grid -->
-     <div class="action-grid">
-        <a href="{{ url_for('admin_schedule') }}" class="btn-action white">VIEW SCHEDULES</a>
-        <a href="{{ url_for('admin_employee') }}" class="btn-action">MANAGE FACULTY</a>
-        <a href="{{ url_for('admin_curriculum') }}" class="btn-action">MANAGE CURRICULUM</a>
-        <a href="{{ url_for('admin_reports') }}" class="btn-action">EXPORT REPORTS</a>
-    </div>
-    <!-- Activity Logs Section -->
-    <div class="section-container">
-        <div class="section-header">
-            <h2>Activity Logs</h2>
-            <a href="#" class="view-all-btn">VIEW ALL</a>
-        </div>
-        <div class="table-controls maroon-bg">
-            <div class="table-actions-right">
-                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
-                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+    <!-- Top KPI Status Grid (Clickable) -->
+    <div class="stats-grid">
+        <div class="stat-card" onclick="openKpiModal('programs')" style="cursor:pointer;" title="View Programs">
+            <div class="stat-info">
+                <span class="stat-label text-green">TOTAL PROGRAMS</span>
+                <span class="stat-value text-green">{{ program_count }}</span>
             </div>
+            <i class="fas fa-book stat-icon text-green"></i>
         </div>
-        <table class="dashboard-table">
-            <thead>
-                <tr>
-                    <th>Activity</th>
-                    <th>Performed by</th>
-                    <th>Date performed</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in activity_logs %}
-                <tr>
-                    <td>{{ log.activity }}</td>
-                    <td>{{ log.performed_by }}</td>
-                    <td class="date-col">{{ log.date_performed }}</td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td>Added faculty information</td>
-                    <td>Dr. Lourdes Avila</td>
-                    <td class="date-col">03-14-26 00:03:00</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="stat-card" onclick="openKpiModal('faculty')" style="cursor:pointer;" title="View Faculty">
+            <div class="stat-info">
+                <span class="stat-label text-orange">TOTAL FACULTY</span>
+                <span class="stat-value text-orange">{{ faculty_count }}</span>
+            </div>
+            <i class="fas fa-users stat-icon text-orange"></i>
+        </div>
+        <div class="stat-card" onclick="openKpiModal('rooms')" style="cursor:pointer;" title="View Rooms">
+            <div class="stat-info">
+                <span class="stat-label text-blue">TOTAL ROOMS</span>
+                <span class="stat-value text-blue">{{ room_count }}</span>
+            </div>
+            <i class="fas fa-door-open stat-icon text-blue"></i>
+        </div>
+        <div class="stat-card" onclick="openKpiModal('buildings')" style="cursor:pointer;" title="View Buildings">
+            <div class="stat-info">
+                <span class="stat-label text-maroon">TOTAL BUILDINGS</span>
+                <span class="stat-value text-maroon">{{ building_count }}</span>
+            </div>
+            <i class="fas fa-building stat-icon text-maroon"></i>
+        </div>
     </div>
 
-    <!-- Schedule List Section -->
-    <div class="section-container">
-        <div class="section-header">
-            <h2>Schedule List</h2>
-            <a href="#" class="view-all-btn">VIEW ALL</a>
-        </div>
-        <div class="table-controls maroon-bg">
-            <div class="search-filter">
-                <select><option>PROGRAM</option></select>
-                <select><option>ACAD YEAR</option></select>
-                <select><option>SEMESTER</option></select>
-                <select><option>STATUS</option></select>
+    <!-- Main Navigation Actions -->
+    <div class="action-grid">
+        <a href="{{ url_for('admin_schedule') }}" class="btn-action primary">
+            <i class="fas fa-calendar-alt"></i> VIEW SCHEDULE
+        </a>
+        <a href="{{ url_for('admin_employee') }}" class="btn-action outline">
+            <i class="fas fa-user-cog"></i> MANAGE FACULTY
+        </a>
+        <a href="{{ url_for('admin_rooms') }}" class="btn-action outline">
+            <i class="fas fa-door-open"></i> MANAGE ROOMS
+        </a>
+        <a href="{{ url_for('admin_user_management') }}" class="btn-action outline">
+            <i class="fas fa-user-check"></i> MANAGE USERS
+        </a>
+        <a href="{{ url_for('admin_reports') }}" class="btn-action outline">
+            <i class="fas fa-file-export"></i> EXPORT REPORTS
+        </a>
+    </div>
+
+    <!-- Data Tables Area -->
+    <div class="tables-grid">
+        
+        <!-- Activity Logs Table -->
+        <div class="table-card">
+            <div class="card-header-flex">
+                <h2>ACTIVITY LOGS</h2>
+                <a href="{{ url_for('admin_settings') }}" class="view-link">VIEW LOGS &rarr;</a>
             </div>
-            <div class="table-actions-right">
-                <span>Most recent <i class="fas fa-sort-amount-down"></i></span>
-                <button class="export-inline"><i class="fas fa-file-export"></i> Export</button>
+            
+            <div class="table-container">
+                <div class="toolbar-red">
+                    <div>
+                        CATEGORY 
+                        <select class="toolbar-select">
+                            <option>ALL</option>
+                        </select>
+                    </div>
+                    <div style="cursor: pointer;">
+                        <i class="fas fa-sort-amount-down"></i> SORT: A-Z <i class="fas fa-chevron-down" style="font-size:9px; margin-left:3px;"></i>
+                    </div>
+                </div>
+                <table class="table-full logs-table">
+                    <thead>
+                        <tr>
+                            <th>TIMESTAMP</th>
+                            <th>ACTION / TRANSACTION</th>
+                            <th>LOG CONTENT / DETAILS</th>
+                            <th>INITIATED BY</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in activity_logs %}
+                        <tr>
+                            <td style="color:#6c757d; font-size:11px;">{{ log.logtime }}</td>
+                            <td>
+                                <span class="dot {{ log.log_color }}"></span> 
+                                <span class="log-action-text">{{ log.action }}</span>
+                            </td>
+                            <td style="color:#6c757d;">{{ log.details }}</td>
+                            <td>{{ log.initiated_by }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" style="text-align: center; color:#6c757d; padding: 25px;">No recent activity found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
-        <table class="dashboard-table">
-            <thead>
-                <tr>
-                    <th>Program</th>
-                    <th>Year level</th>
-                    <th>Acad year</th>
-                    <th>Semester</th>
-                    <th>Created by</th>
-                    <th>Date Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for sched in schedules %}
-                <tr>
-                    <td>{{ sched.program }}</td>
-                    <td>{{ sched.year }}</td>
-                    <td>{{ sched.acad_year }}</td>
-                    <td>{{ sched.semester }}</td>
-                    <td>{{ sched.created_by }}</td>
-                    <td class="date-col">{{ sched.date_created }}</td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td>BSIT</td>
-                    <td>1</td>
-                    <td>2025-2026</td>
-                    <td>BSIT-2</td>
-                    <td>Dr. Lourdes Avila</td>
-                    <td class="date-col">03-14-26 00:03:00</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+
+        <!-- Schedule List Table -->
+        <div class="table-card">
+            <div class="card-header-flex">
+                <h2>SCHEDULE LIST</h2>
+                <a href="{{ url_for('admin_schedule') }}" class="view-link">VIEW FULL LIST &rarr;</a>
+            </div>
+
+            <div class="table-container" style="border:none;">
+                <table class="table-full sched-table">
+                    <thead>
+                        <tr>
+                            <th>PROGRAM</th>
+                            <th>YEAR LEVEL</th>
+                            <th>ACAD YEAR</th>
+                            <th>SEMESTER</th>
+                            <th>DATE IMPORTED</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sched in schedules %}
+                        <tr>
+                            <td class="prog-bold">{{ sched.programcode }}</td>
+                            <td>{{ sched.yearlevel }}{% if sched.yearlevel == 1 %}st{% elif sched.yearlevel == 2 %}nd{% elif sched.yearlevel == 3 %}rd{% else %}th{% endif %} Year</td>
+                            <td style="font-weight:600; color:#800000;">{{ sched.acad_year }}</td>
+                            <td>
+                                {{ '1ST SEMESTER' if sched.semestertype == 'A' else '2ND SEMESTER' if sched.semestertype == 'B' else 'SUMMER' }}
+                            </td>
+                            <td><span class="date-pill">{{ sched.date_imported }}</span></td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" style="text-align: center; color:#6c757d; padding: 25px;">No imported schedules found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
     </div>
 </div>
+
+<!-- Modal for Clickable KPI Cards -->
+<div id="kpiModal" class="dashboard-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTitle">Details</h2>
+            <span class="close-modal" onclick="closeKpiModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="modalLoading" class="loading-spinner" style="display:none;">Loading data...</div>
+            <table class="modal-table" id="modalTable">
+                <thead id="modalTableHead"></thead>
+                <tbody id="modalTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function openKpiModal(type) {
+    const modal = document.getElementById('kpiModal');
+    const title = document.getElementById('modalTitle');
+    const head = document.getElementById('modalTableHead');
+    const body = document.getElementById('modalTableBody');
+    const loader = document.getElementById('modalLoading');
+    
+    // Reset Modal
+    modal.style.display = "flex";
+    body.innerHTML = "";
+    head.innerHTML = "";
+    loader.style.display = "block";
+
+    let url = '';
+    if (type === 'programs') {
+        title.innerText = "Active Programs";
+        url = '/api/dashboard/programs_list';
+        head.innerHTML = `<tr><th>Program Code</th><th>Program Name</th><th>Type</th></tr>`;
+    } else if (type === 'faculty') {
+        title.innerText = "Faculty Roster";
+        url = '/api/dashboard/faculty_list';
+        head.innerHTML = `<tr><th>Employee No.</th><th>Name</th><th>Employee Type</th><th>Status</th></tr>`;
+    } else if (type === 'rooms') {
+        title.innerText = "Room Masterlist";
+        url = '/api/dashboard/rooms_list';
+        head.innerHTML = `<tr><th>Room Name</th><th>Type</th><th>Building</th></tr>`;
+    } else if (type === 'buildings') {
+        title.innerText = "Building List";
+        url = '/api/dashboard/buildings_list';
+        head.innerHTML = `<tr><th>Building Name</th><th>Status</th></tr>`;
+    }
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            loader.style.display = "none";
+            if (data.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" style="text-align:center;">No records found.</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                let row = `<tr>`;
+                if (type === 'programs') {
+                    row += `<td>${item.programcode}</td><td>${item.programname}</td><td>${item.programtype}</td>`;
+                } else if (type === 'faculty') {
+                    row += `<td>${item.employeenumber}</td><td>${item.name}</td><td>${item.typename}</td><td>${item.employeestatus}</td>`;
+                } else if (type === 'rooms') {
+                    row += `<td>${item.roomname}</td><td>${item.roomtype}</td><td>${item.buildingname}</td>`;
+                } else if (type === 'buildings') {
+                    row += `<td>${item.buildingname}</td><td><span style="color:#28a745; font-weight:700;">Active</span></td>`;
+                }
+                row += `</tr>`;
+                body.innerHTML += row;
+            });
+        })
+        .catch(err => {
+            loader.style.display = "none";
+            body.innerHTML = `<tr><td colspan="4" style="text-align:center; color:red;">Failed to load data.</td></tr>`;
+        });
+}
+
+function closeKpiModal() {
+    document.getElementById('kpiModal').style.display = "none";
+}
+
+// Close modal if user clicks outside of the modal content
+window.onclick = function(event) {
+    const modal = document.getElementById('kpiModal');
+    if (event.target == modal) {
+        modal.style.display = "none";
+    }
+}
+</script>
 {% endblock %}

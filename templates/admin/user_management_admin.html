@@ -1,190 +1,469 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <style>
-.role-badge, .status-badge {
-    display: inline-block;
-    padding: 3px 12px;
-    border-radius: 12px;
-    font-size: 0.7rem;
-    font-weight: 800;
-}
-.role-admin    { background: #630100; color: #fff; }
-.role-acadhead { background: #1a4d7a; color: #fff; }
-.role-faculty  { background: #2e7d32; color: #fff; }
-.status-active   { background: #e8f5e9; color: #2e7d32; }
-.status-inactive { background: #ffebee; color: #c62828; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-.acct-btn {
-    background: none;
-    border: 1px solid;
-    padding: 4px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-}
-.acct-btn-reset      { border-color: #630100; color: #630100; margin-right: 4px; }
-.acct-btn-deactivate { border-color: #888;    color: #888; }
-.acct-btn-activate   { border-color: #2e7d32; color: #2e7d32; }
+    body, * {
+        font-family: 'Inter', sans-serif;
+    }
+
+    .dashboard-wrapper {
+        padding: 35px 40px;
+        background-color: #f8f9fa;
+        min-height: 100vh;
+    }
+
+    /* Page Header */
+    .page-header {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin-bottom: 30px !important;
+        width: 100%;
+    }
+
+    .page-header h1 {
+        font-size: 28px !important;
+        font-weight: 800 !important;
+        color: #800000 !important;
+        margin: 0 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: block !important;
+    }
+
+    /* Add New User Button */
+    .btn-add-user {
+        background-color: #800000 !important;
+        color: #ffffff !important;
+        border: none !important;
+        padding: 12px 20px !important;
+        border-radius: 6px !important;
+        font-size: 12px !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        cursor: pointer !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        transition: background-color 0.2s, transform 0.2s !important;
+        box-shadow: 0 4px 10px rgba(128,0,0,0.15) !important;
+        text-decoration: none !important;
+    }
+
+    .btn-add-user:hover {
+        background-color: #600000 !important;
+        transform: translateY(-2px) !important;
+    }
+    
+    .btn-add-user i {
+        font-size: 14px !important;
+        color: #ffffff !important;
+    }
+
+    /* Table Styling */
+    .table-container {
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #800000;
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+    }
+
+    .table-users {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .table-users thead {
+        background-color: #800000;
+    }
+
+    .table-users th {
+        color: #fff;
+        font-weight: 800;
+        font-size: 11px;
+        padding: 16px 15px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-align: center;
+        border-right: 1px solid rgba(255,255,255,0.2);
+    }
+    .table-users th:last-child {
+        border-right: none;
+    }
+
+    .table-users td {
+        padding: 16px 15px;
+        text-align: center;
+        color: #495057;
+        font-weight: 500;
+        border-bottom: 1px solid #f0f0f0;
+        border-right: 1px solid #f0f0f0;
+        vertical-align: middle;
+    }
+    .table-users td:last-child {
+        border-right: none;
+    }
+    .table-users tbody tr:last-child td {
+        border-bottom: none;
+    }
+    .table-users tbody tr:hover {
+        background-color: #fdfafb;
+    }
+
+    /* Column Specifics */
+    .col-emp-no {
+        color: #6c757d;
+        font-weight: 600;
+    }
+    .col-name {
+        text-align: left !important;
+        padding-left: 30px !important;
+    }
+
+    /* Role Pills */
+    .role-pill {
+        display: inline-block;
+        padding: 4px 18px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .role-acadhead {
+        border: 1px solid #4caf50;
+        background-color: #e8f5e9;
+        color: #2e7d32;
+    }
+    .role-admin {
+        border: 1px solid #2196f3;
+        background-color: #e3f2fd;
+        color: #1565c0;
+    }
+    .role-faculty {
+        border: 1px solid #ff9800;
+        background-color: #fff3e0;
+        color: #e65100;
+    }
+
+    /* Status Text */
+    .status-active {
+        color: #198754;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .status-inactive {
+        color: #dc3545;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Action Buttons */
+    .action-group {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+    }
+    .action-btn {
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        width: 32px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .action-btn i { font-size: 12px; }
+    
+    .action-btn.reset {
+        border-color: #800000;
+        color: #800000;
+    }
+    .action-btn.reset:hover {
+        background: #800000;
+        color: #fff;
+    }
+    
+    .action-btn.toggle {
+        color: #6c757d;
+    }
+    .action-btn.toggle:hover {
+        background: #f8f9fa;
+        border-color: #adb5bd;
+        color: #343a40;
+    }
+
+    /* Modals */
+    .um-modal {
+        display: none;
+        position: fixed;
+        z-index: 2000;
+        left: 0; top: 0;
+        width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        align-items: center;
+        justify-content: center;
+    }
+    .um-modal-content {
+        background-color: #fff;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        width: 100%;
+    }
+    .um-modal-header {
+        background-color: #800000;
+        color: white;
+        padding: 18px 25px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .um-modal-header h2 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .um-modal-header i {
+        font-size: 24px;
+        cursor: pointer;
+    }
+    .um-modal-body {
+        padding: 25px;
+    }
+    .um-input-group {
+        margin-bottom: 15px;
+    }
+    .um-input-group label {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        color: #495057;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+    }
+    .um-input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        font-size: 13px;
+        outline: none;
+        transition: border-color 0.2s;
+        box-sizing: border-box;
+    }
+    .um-input:focus { border-color: #800000; }
+    
+    .um-modal-footer {
+        padding: 15px 25px;
+        background: #f8f9fa;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        border-top: 1px solid #e9ecef;
+    }
+    .um-btn {
+        padding: 10px 18px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        text-transform: uppercase;
+    }
+    .um-btn-cancel {
+        background: #e9ecef;
+        color: #495057;
+    }
+    .um-btn-cancel:hover { background: #dee2e6; }
+    .um-btn-confirm {
+        background: #800000;
+        color: white;
+    }
+    .um-btn-confirm:hover { background: #600000; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="settings-container">
-    <div class="settings-header">
-        <h1>USER ACCOUNTS</h1>
-    </div>
-
-    <div class="section-header-row" style="margin-top: 10px;">
-        <h2 class="section-main-title">SYSTEM ACCOUNTS</h2>
-        <button class="btn-action-maroon" onclick="openModal('modalAddAccount')"
-            style="background:#630100; color:white; border:none; padding:8px 20px; border-radius:4px; font-weight:800; cursor:pointer; font-size:0.7rem;">
-            <i class="fas fa-user-plus"></i> ADD ACCOUNT
+<div class="dashboard-wrapper">
+    
+    <!-- Header -->
+    <div class="page-header">
+        <h1>USER MANAGEMENT</h1>
+        <button class="btn-add-user" onclick="openModal('modalAddAccount')">
+            <i class="fas fa-user-plus"></i> ADD NEW USER
         </button>
     </div>
-    <p style="font-size:0.72rem; color:#777; margin:-6px 0 14px 0; font-style:italic;">
-        Manage login access for Admin, Academic Head, and Faculty roles.
-    </p>
 
-    <table class="table-pro" style="margin-bottom: 50px;">
-        <thead>
-            <tr>
-                <th style="text-align:left; padding-left:20px;">USERNAME</th>
-                <th style="text-align:left;">FULL NAME</th>
-                <th>ROLE</th>
-                <th>STATUS</th>
-                <th>DATE CREATED</th>
-                <th style="width:110px; border:none;"></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for acc in accounts %}
-            <tr>
-                <td style="text-align:left; padding-left:20px; font-weight:800; color:#630100;">{{ acc.username }}</td>
-                <td style="text-align:left; padding-left:10px;">{{ acc.fullname }}</td>
-                <td style="text-align:center;">
-                    {% if acc.role == 'Admin' %}
-                    <span class="role-badge role-admin">{{ acc.role }}</span>
-                    {% elif acc.role == 'Academic Head' %}
-                    <span class="role-badge role-acadhead">{{ acc.role }}</span>
-                    {% else %}
-                    <span class="role-badge role-faculty">{{ acc.role }}</span>
-                    {% endif %}
-                </td>
-                <td style="text-align:center;">
-                    {% if acc.isactive %}
-                    <span class="status-badge status-active">Active</span>
-                    {% else %}
-                    <span class="status-badge status-inactive">Inactive</span>
-                    {% endif %}
-                </td>
-                <td style="text-align:center; font-size:0.78rem; color:#555;">
-                    {{ acc.datecreated.strftime('%b %d, %Y') if acc.datecreated else '—' }}
-                </td>
-                <td style="text-align:center; border:none;">
-                    <button class="acct-btn acct-btn-reset" title="Reset Password"
-                        onclick="prepareReset('{{ acc.userid }}','{{ acc.username }}')">
-                        <i class="fas fa-key"></i>
-                    </button>
-                    {% if acc.isactive %}
-                    <button class="acct-btn acct-btn-deactivate" title="Deactivate"
-                        onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','True')">
-                        <i class="fas fa-user-slash"></i>
-                    </button>
-                    {% else %}
-                    <button class="acct-btn acct-btn-activate" title="Activate"
-                        onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','False')">
-                        <i class="fas fa-user-check"></i>
-                    </button>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <!-- Table Container -->
+    <div class="table-container">
+        <table class="table-users">
+            <thead>
+                <tr>
+                    <th>EMPLOYEE NO.</th>
+                    <th style="text-align: left; padding-left: 30px;">FULL NAME</th>
+                    <th>EMPLOYMENT TYPE</th>
+                    <th>STATUS</th>
+                    <th>DATE CREATED</th>
+                    <th>ACTIONS</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acc in accounts %}
+                <tr>
+                    <td class="col-emp-no">{{ acc.username }}</td>
+                    <td class="col-name">{{ acc.fullname }}</td>
+                    <td>
+                        {% if acc.role == 'Admin' %}
+                            <span class="role-pill role-admin">{{ acc.role }}</span>
+                        {% elif acc.role == 'Academic Head' %}
+                            <span class="role-pill role-acadhead">{{ acc.role }}</span>
+                        {% else %}
+                            <span class="role-pill role-faculty">{{ acc.role }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if acc.isactive %}
+                            <span class="status-active">ACTIVE</span>
+                        {% else %}
+                            <span class="status-inactive">INACTIVE</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ acc.datecreated.strftime('%m-%d-%y') if acc.datecreated else '—' }}
+                    </td>
+                    <td>
+                        <div class="action-group">
+                            <button class="action-btn reset" title="Reset Password"
+                                onclick="prepareReset('{{ acc.userid }}','{{ acc.username }}')">
+                                <i class="fas fa-key"></i>
+                            </button>
+                            {% if acc.isactive %}
+                            <button class="action-btn toggle" title="Deactivate Account"
+                                onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','True')">
+                                <i class="fas fa-user-slash"></i>
+                            </button>
+                            {% else %}
+                            <button class="action-btn toggle" title="Activate Account"
+                                onclick="prepareToggle('{{ acc.userid }}','{{ acc.username }}','False')">
+                                <i class="fas fa-user-check"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="padding:30px; text-align:center; color:#6c757d;">No system accounts found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
+<!-- ================= MODALS ================= -->
+
 <!-- ADD ACCOUNT MODAL -->
-<div id="modalAddAccount" class="logout-modal" style="display:none;">
-    <div class="modal-content-logout" style="width:480px;">
-        <div class="modal-header-logout">
-            <h2>ADD NEW ACCOUNT</h2>
+<div id="modalAddAccount" class="um-modal">
+    <div class="um-modal-content" style="max-width: 450px;">
+        <div class="um-modal-header">
+            <h2>Add New Account</h2>
+            <i class="fas fa-times" onclick="closeModal('modalAddAccount')"></i>
         </div>
         <form action="{{ url_for('account_add') }}" method="POST">
-            <div class="modal-grid-layout" style="grid-template-columns:1fr; padding:20px 25px; gap:14px;">
-                <div class="input-block">
-                    <label>Username</label>
-                    <input type="text" name="username" class="modal-input" required placeholder="e.g. EMP001 or admin2">
+            <div class="um-modal-body">
+                <div class="um-input-group">
+                    <label>Username / Employee No.</label>
+                    <input type="text" name="username" class="um-input" required placeholder="e.g. EMP001">
                 </div>
-                <div class="input-block">
-                    <label>Role</label>
-                    <select name="role" id="addRoleSelect" class="modal-input" onchange="toggleEmpField()" required>
+                <div class="um-input-group">
+                    <label>Role / Employment Type</label>
+                    <select name="role" id="addRoleSelect" class="um-input" onchange="toggleEmpField()" required>
                         <option value="">— Select Role —</option>
                         <option value="Admin">Admin</option>
                         <option value="Academic Head">Academic Head</option>
                         <option value="Faculty">Faculty</option>
                     </select>
                 </div>
-                <div class="input-block" id="empLinkRow" style="display:none;">
-                    <label>Link to Employee</label>
-                    <select name="employeenumber" class="modal-input">
-                        <option value="">— No link —</option>
+                <div class="um-input-group" id="empLinkRow" style="display:none;">
+                    <label>Link to Faculty Profile</label>
+                    <select name="employeenumber" class="um-input">
+                        <option value="">— No Profile Link —</option>
                         {% for emp in unlinked_employees %}
                         <option value="{{ emp.employeenumber }}">{{ emp.employeenumber }} — {{ emp.fullname }}</option>
                         {% endfor %}
                     </select>
                 </div>
-                <p style="font-size:0.72rem; color:#777; font-style:italic; margin:0;">
-                    Default password will be set to <strong>PUP@{username}</strong>. The user must change it on first login.
+                <p style="font-size:0.75rem; color:#6c757d; font-style:italic; margin: 15px 0 0 0; line-height:1.4;">
+                    * The default password will automatically be set to <strong>PUP@{username}</strong>. 
                 </p>
             </div>
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalAddAccount')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Create Account</button>
+            <div class="um-modal-footer">
+                <button type="button" class="um-btn um-btn-cancel" onclick="closeModal('modalAddAccount')">Cancel</button>
+                <button type="submit" class="um-btn um-btn-confirm">Create User</button>
             </div>
         </form>
     </div>
 </div>
 
 <!-- RESET PASSWORD MODAL -->
-<div id="modalResetPw" class="logout-modal" style="display:none;">
-    <div class="modal-content-logout" style="width:400px;">
-        <div class="modal-header-logout">
-            <i class="fas fa-key" style="font-size:1.4rem; color:#630100;"></i>
-        </div>
-        <div class="modal-body-logout">
-            <h2 style="margin-bottom:8px;">Reset Password</h2>
-            <p>This will reset the password for <strong id="resetUsernameLabel"></strong> to:</p>
-            <div style="background:#fff8f8; border:1px solid #630100; border-radius:4px; padding:8px 16px; text-align:center; font-weight:800; color:#630100; margin:10px 0; font-size:0.9rem;" id="resetPwPreview"></div>
-            <p style="font-size:0.75rem; color:#888;">Make sure to communicate the new password to the user.</p>
+<div id="modalResetPw" class="um-modal">
+    <div class="um-modal-content" style="max-width: 400px;">
+        <div class="um-modal-header" style="background-color: #fff; color: #800000; border-bottom: 1px solid #f0f0f0;">
+            <h2><i class="fas fa-key" style="margin-right:8px;"></i> Reset Password</h2>
+            <i class="fas fa-times" onclick="closeModal('modalResetPw')"></i>
         </div>
         <form action="{{ url_for('account_reset_password') }}" method="POST">
-            <input type="hidden" name="user_id" id="resetUserId">
-            <input type="hidden" name="username" id="resetUsername">
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalResetPw')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout">Reset Password</button>
+            <div class="um-modal-body" style="text-align: center;">
+                <p style="font-size: 14px; color: #495057; margin-bottom: 15px;">
+                    This will reset the password for <strong id="resetUsernameLabel" style="color:#800000;"></strong> to:
+                </p>
+                <div style="background:#fff8f8; border:1px dashed #800000; border-radius:6px; padding:12px; font-weight:800; color:#800000; font-size:16px; letter-spacing:1px; margin-bottom: 15px;" id="resetPwPreview"></div>
+                <p style="font-size: 11px; color: #888;">Ensure the user is informed of this new password.</p>
+                
+                <input type="hidden" name="user_id" id="resetUserId">
+                <input type="hidden" name="username" id="resetUsername">
+            </div>
+            <div class="um-modal-footer" style="justify-content: center;">
+                <button type="button" class="um-btn um-btn-cancel" onclick="closeModal('modalResetPw')">Cancel</button>
+                <button type="submit" class="um-btn um-btn-confirm">Confirm Reset</button>
             </div>
         </form>
     </div>
 </div>
 
 <!-- TOGGLE STATUS MODAL -->
-<div id="modalToggleStatus" class="logout-modal" style="display:none;">
-    <div class="modal-content-logout" style="width:380px;">
-        <div class="modal-header-logout">
-            <i id="toggleIcon" class="fas" style="font-size:1.4rem;"></i>
-        </div>
-        <div class="modal-body-logout">
-            <h2 id="toggleTitle" style="margin-bottom:8px;"></h2>
-            <p id="toggleDesc"></p>
+<div id="modalToggleStatus" class="um-modal">
+    <div class="um-modal-content" style="max-width: 400px;">
+        <div class="um-modal-header" style="background-color: #fff; color: #333; border-bottom: 1px solid #f0f0f0;">
+            <h2><i id="toggleIcon" class="fas" style="margin-right:8px;"></i> <span id="toggleTitle">Status Update</span></h2>
+            <i class="fas fa-times" onclick="closeModal('modalToggleStatus')"></i>
         </div>
         <form action="{{ url_for('account_toggle_status') }}" method="POST">
-            <input type="hidden" name="user_id" id="toggleUserId">
-            <input type="hidden" name="new_status" id="toggleNewStatus">
-            <div class="modal-footer-logout">
-                <button type="button" class="btn-modal btn-cancel-logout" onclick="closeModal('modalToggleStatus')">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm-logout" id="toggleConfirmBtn">Confirm</button>
+            <div class="um-modal-body">
+                <p id="toggleDesc" style="font-size: 13px; color: #495057; text-align: center; line-height: 1.5; margin: 10px 0;"></p>
+                
+                <input type="hidden" name="user_id" id="toggleUserId">
+                <input type="hidden" name="new_status" id="toggleNewStatus">
+            </div>
+            <div class="um-modal-footer" style="justify-content: center;">
+                <button type="button" class="um-btn um-btn-cancel" onclick="closeModal('modalToggleStatus')">Cancel</button>
+                <button type="submit" class="um-btn um-btn-confirm" id="toggleConfirmBtn">Confirm</button>
             </div>
         </form>
     </div>
@@ -193,6 +472,13 @@
 <script>
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function openModal(id)  { document.getElementById(id).style.display = 'flex'; }
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    if (event.target.classList.contains('um-modal')) {
+        event.target.style.display = "none";
+    }
+}
 
 function toggleEmpField() {
     const role = document.getElementById('addRoleSelect').value;
@@ -212,15 +498,21 @@ function prepareToggle(userId, username, isActive) {
     const active = isActive === 'True';
     document.getElementById('toggleUserId').value    = userId;
     document.getElementById('toggleNewStatus').value = active ? 'false' : 'true';
-    document.getElementById('toggleTitle').textContent =
-        active ? `Deactivate ${username}?` : `Activate ${username}?`;
-    document.getElementById('toggleDesc').textContent =
-        active
-            ? `This will prevent ${username} from logging in. You can re-activate them at any time.`
-            : `This will restore login access for ${username}.`;
+    
+    document.getElementById('toggleTitle').textContent = active ? `Deactivate User` : `Activate User`;
+    
+    document.getElementById('toggleDesc').innerHTML = active
+            ? `Are you sure you want to suspend access for <strong style="color:#800000;">${username}</strong>?<br>They will no longer be able to log in.`
+            : `Restore system access for <strong style="color:#2e7d32;">${username}</strong>?`;
+            
     const icon = document.getElementById('toggleIcon');
     icon.className = active ? 'fas fa-user-slash' : 'fas fa-user-check';
-    icon.style.color = active ? '#c62828' : '#2e7d32';
+    icon.style.color = active ? '#dc3545' : '#198754';
+    
+    const btn = document.getElementById('toggleConfirmBtn');
+    btn.style.backgroundColor = active ? '#dc3545' : '#198754';
+    btn.textContent = active ? 'Deactivate' : 'Activate';
+
     openModal('modalToggleStatus');
 }
 </script>
