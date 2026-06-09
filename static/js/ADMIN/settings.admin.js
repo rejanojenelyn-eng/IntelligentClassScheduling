@@ -715,7 +715,9 @@ function _renderProgInfo(prog) {
       <td>${sBadge}</td>
       <td class="pmd-info-actions-cell">
         <button class="pmd-btn-edit" onclick="openEditProgram()"><i class="fas fa-edit"></i> Edit Program</button>
-        <button class="pmd-btn-deactivate" onclick="confirmDeleteProgram()"><i class="fas fa-power-off"></i> Deactivate</button>
+        ${prog.isactive
+          ? `<button class="pmd-btn-deactivate" onclick="confirmDeleteProgram()"><i class="fas fa-power-off"></i> Deactivate</button>`
+          : `<button class="pmd-btn-edit" onclick="confirmActivateProgram()"><i class="fas fa-power-off"></i> Activate</button>`}
       </td>
     </tr>`;
 }
@@ -978,6 +980,28 @@ function confirmDeleteProgram() {
   document.getElementById('delProgCode').value     = PM_SELECTED;
   document.getElementById('delProgLabel').textContent = `Program: ${PM_SELECTED}`;
   openSModal('modalDeleteProgram');
+}
+
+function confirmActivateProgram() {
+  if (!PM_SELECTED) return;
+  document.getElementById('actProgCode').value       = PM_SELECTED;
+  document.getElementById('actProgLabel').textContent = `Program: ${PM_SELECTED}`;
+  openSModal('modalActivateProgram');
+}
+
+function doActivateProgram() {
+  const code = document.getElementById('actProgCode').value;
+  if (!code) return;
+  const fd = new FormData();
+  fd.append('program_code', code);
+  fd.append('isactive', 'true');
+  fetch('/admin/settings/program/toggle-active', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      closeSModal('modalActivateProgram');
+      if (d.success) location.reload();
+      else alert(d.error || 'Failed to activate program.');
+    });
 }
 
 /* ── Track / Curriculum CRUD openers ────────────────── */

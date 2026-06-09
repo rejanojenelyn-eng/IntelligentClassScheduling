@@ -260,6 +260,35 @@
     .prog-option:hover { background:#fff8f0; color:#630100; }
     .prog-option strong { color:#630100; font-weight:900; }
     .prog-option-name { color:#777; font-size:0.72rem; }
+
+    /* ── Approve All Schedules button (left panel bottom) ── */
+    .lp-approve-all-wrap {
+        padding: 10px 10px 12px;
+        background: #fff;
+        border-top: 1px solid #ead8d8;
+        flex-shrink: 0;
+    }
+    .btn-approve-all-main {
+        width: 100%;
+        background: #630100;
+        color: #fff;
+        border: none;
+        border-radius: 5px;
+        padding: 12px 8px;
+        font-size: 0.68rem;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: background 0.18s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+    }
+    .btn-approve-all-main:hover { background: #7a0100; }
+    .btn-approve-all-main:disabled { background: #b0b0b0; cursor: not-allowed; }
+
 /* ==========================================================
        LOCAL SCHEDULER THEME OVERRIDES (COMPLETE)
        ========================================================== */
@@ -686,12 +715,10 @@
                     </div>
                 </div>
 
-                <!-- Row 2: Course Filters label + Program + Year Level -->
+                <!-- Row 2: Academic Offerings + Year Level + Section -->
                 <div class="lp-filters-section">
-                    <div class="lp-section-label">
-                        <i class="fas fa-filter" style="font-size:0.58rem;"></i> Course Filters
-                    </div>
                     <div class="lp-filter-field">
+                        <div class="lp-ay-label" style="margin-bottom:4px;">Academic Offerings</div>
                         <div class="lp-filter-btn" onclick="toggleBcMenu('bc-prog-menu', event)">
                             <span id="bc-prog-text">-Select Program-</span>
                             <i class="fas fa-chevron-down lp-filter-caret"></i>
@@ -705,6 +732,7 @@
                         </div>
                     </div>
                     <div class="lp-filter-field">
+                        <div class="lp-ay-label" style="margin-bottom:4px;">Year Level</div>
                         <div class="lp-filter-btn" onclick="toggleBcMenu('bc-year-menu', event)">
                             <span id="bc-year-text">-Select Year-</span>
                             <i class="fas fa-chevron-down lp-filter-caret"></i>
@@ -715,6 +743,16 @@
                             <div class="bc-option" data-yl="3" onclick="selectBcYear('3','3rd Year')">3rd Year</div>
                             <div class="bc-option" data-yl="4" onclick="selectBcYear('4','4th Year')">4th Year</div>
                             <div class="bc-option" data-yl="5" onclick="selectBcYear('5','5th Year')">5th Year</div>
+                        </div>
+                    </div>
+                    <div class="lp-filter-field">
+                        <div class="lp-ay-label" style="margin-bottom:4px;">Section</div>
+                        <div class="lp-filter-btn" onclick="toggleBcMenu('bc-sect-menu', event)">
+                            <span id="bc-sect-text">-Select Section-</span>
+                            <i class="fas fa-chevron-down lp-filter-caret"></i>
+                        </div>
+                        <div class="bc-dropdown" id="bc-sect-menu">
+                            <div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Select Program &amp; Year Level first</div>
                         </div>
                     </div>
                 </div>
@@ -766,6 +804,7 @@
                     <span id="overall-progress-pct"></span>
                 </div>
             </div>
+            <input type="hidden" id="sel_section" value="">
             <input type="hidden" id="curr_id_hidden">
 
             <!-- Curriculum Guide header -->
@@ -801,6 +840,15 @@
                     <div class="subj-placeholder">Select AY, Semester, Program &amp; Year Level above</div>
                 </div>
             </div>
+
+            <!-- Approve All Schedules button -->
+            {% if scheduler_mode != 'local' %}
+            <div class="lp-approve-all-wrap" id="lp-approve-all-wrap">
+                <button class="btn-approve-all-main" id="btnApproveAllSchedules" onclick="approveAllSchedules()">
+                    <i class="fas fa-check-double"></i> APPROVE ALL SCHEDULES
+                </button>
+            </div>
+            {% endif %}
 
         </div><!-- /editor-left-panel -->
 
@@ -4185,6 +4233,7 @@ function selectBcProg(code) {
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
     if (typeof selectProg === 'function') selectProg(code); // also calls triggerCascade
     _updateBcSummary();
+    _loadSectionOptions();
 }
 
 function selectBcYear(val, label) {
@@ -4193,6 +4242,68 @@ function selectBcYear(val, label) {
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
     if (typeof selectYearLevel === 'function') selectYearLevel(val, label); // also calls triggerCascade
     _updateBcSummary();
+    _loadSectionOptions();
+}
+
+/* ── Section filter helpers ── */
+function selectBcSect(id, name) {
+    const textEl = document.getElementById('bc-sect-text');
+    if (textEl) textEl.textContent = name;
+    document.getElementById('sel_section').value = id;
+    document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+}
+
+async function _loadSectionOptions() {
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const menu = document.getElementById('bc-sect-menu');
+    const textEl = document.getElementById('bc-sect-text');
+    if (!menu) return;
+
+    // Reset selection
+    document.getElementById('sel_section').value = '';
+    if (textEl) textEl.textContent = '-Select Section-';
+
+    if (!prog || !yl) {
+        menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Select Program &amp; Year Level first</div>';
+        return;
+    }
+    menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Loading…</div>';
+    try {
+        const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}`);
+        const data = await res.json();
+        const secs = data.sections || [];
+        if (!secs.length) {
+            menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">No sections found</div>';
+        } else {
+            menu.innerHTML = secs.map(s =>
+                `<div class="bc-option" onclick="selectBcSect('${s.id}','${s.name.replace(/'/g,"\\'")}')"><strong>${s.name}</strong></div>`
+            ).join('');
+        }
+    } catch(e) {
+        menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Error loading sections</div>';
+    }
+}
+
+/* ── Approve All Schedules (publishes all draft subjects for current context) ── */
+async function approveAllSchedules() {
+    const ay   = (typeof formAyFilter  === 'function') ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || '');
+    const sem  = (typeof formSemFilter === 'function') ? formSemFilter() : (document.getElementById('sel_sem')?.value || '');
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+
+    if (!ay || !sem || !prog || !yl) {
+        if (typeof showValidationModal === 'function')
+            await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, and Year Level before publishing.');
+        return;
+    }
+
+    // Temporarily clear subject so the approve handler publishes ALL subjects
+    const prevSubj = document.getElementById('sel_subj').value;
+    document.getElementById('sel_subj').value = '';
+    document.getElementById('btnManualApprove').click();
+    // Restore subject value after the click handler captures it (handler reads it synchronously before first await)
+    setTimeout(() => { document.getElementById('sel_subj').value = prevSubj; }, 50);
 }
 
 function _updateBcSummary() {

@@ -8973,41 +8973,48 @@ def admin_curriculum():
     """)
     all_curriculums = [{k.lower(): v for k, v in row.items()} for row in all_curriculums_raw] if all_curriculums_raw else []
 
-    # Build the assignments table from program_yearlevel for the current AY
-    today = date.today()
+    # Build the assignments table from curriculum directly — robust even if program_yearlevel is unpopulated
     pylrows_raw = query_db("""
         SELECT
-            pyl.programyearlevelid,
+            c.curriculumid                                                           AS programyearlevelid,
             ao.offeringcode,
-            ao.offeringdescription AS programname,
+            p.programname,
             ao.programcode,
-            pyl.academicyearid,
-            pyl.yearlevel,
-            pyl.curriculumid,
-            COALESCE(curr.curriculumcode, '—') AS curriculumcode,
-            pyl.isactive,
-            COUNT(sec.sectionid) FILTER (WHERE sec.isactive = TRUE) AS section_count
-        FROM program_yearlevel pyl
-        JOIN academic_offering ao ON pyl.academicofferingid = ao.academicofferingid
-        LEFT JOIN curriculum curr ON pyl.curriculumid = curr.curriculumid
-        LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid
-        WHERE pyl.academicyearid = (
-            SELECT academicyearid FROM (
-                (SELECT academicyearid FROM semester WHERE %s BETWEEN semstartdate AND semenddate LIMIT 1)
-                UNION ALL
-                (SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1)
-            ) x LIMIT 1
-        )
-        GROUP BY pyl.programyearlevelid, ao.offeringcode, ao.offeringdescription,
-                 ao.programcode, pyl.academicyearid, pyl.yearlevel,
-                 pyl.curriculumid, curr.curriculumcode, pyl.isactive
-        ORDER BY ao.offeringcode ASC, pyl.yearlevel ASC
-    """, (today,))
+            c.curriculumyear                                                         AS academicyearid,
+            0                                                                        AS yearlevel,
+            c.curriculumid,
+            c.curriculumcode,
+            TRUE                                                                     AS isactive,
+            COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE)         AS section_count
+        FROM curriculum c
+        JOIN academic_offering ao  ON ao.academicofferingid = c.academicofferingid
+        JOIN programs p            ON p.programcode = ao.programcode
+        LEFT JOIN program_yearlevel pyl ON pyl.academicofferingid = ao.academicofferingid
+                                       AND pyl.curriculumid       = c.curriculumid
+        LEFT JOIN sections sec     ON sec.programyearlevelid = pyl.programyearlevelid
+        WHERE ao.isactive = TRUE
+        GROUP BY c.curriculumid, ao.offeringcode, p.programname,
+                 ao.programcode, c.curriculumyear, c.curriculumcode
+        ORDER BY p.programname, ao.offeringcode, c.curriculumyear DESC
+    """)
     cohorts = [{k.lower(): v for k, v in row.items()} for row in pylrows_raw] if pylrows_raw else []
+
+    import_offerings = query_db("""
+        SELECT ao.academicofferingid, ao.offeringcode, ao.offeringdescription,
+               ao.programcode, t.trackname, t.trackcode,
+               p.programname, COALESCE(p.numyearlevel, 4) AS numyearlevel
+        FROM academic_offering ao
+        LEFT JOIN track t ON t.trackid = ao.trackid
+        LEFT JOIN programs p ON p.programcode = ao.programcode
+        WHERE ao.isactive = TRUE
+        ORDER BY p.programname, ao.offeringcode
+    """)
+    import_offerings = [dict(r) for r in (import_offerings or [])]
 
     return render_template('admin/curriculum_admin.html', programs=programs, curriculums=curriculums,
                            selected_program=selected_program, cohorts=cohorts,
-                           unique_codes=unique_codes, all_curriculums=all_curriculums)
+                           unique_codes=unique_codes, all_curriculums=all_curriculums,
+                           import_offerings=import_offerings)
 
 @app.route('/admin/export/assignments')
 def export_assignments():
@@ -9142,8 +9149,13 @@ def import_curriculum():
     conn = get_db_connection(); cur = conn.cursor()
     
     try:
-        # Resolve offering to academicofferingid
-        cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s LIMIT 1", (prog_code,))
+        # Resolve offering to academicofferingid (match by offeringcode, or base offering for programcode)
+        cur.execute("""
+            SELECT academicofferingid FROM academic_offering
+            WHERE offeringcode = %s OR (programcode = %s AND trackid IS NULL)
+            ORDER BY CASE WHEN offeringcode = %s THEN 0 ELSE 1 END
+            LIMIT 1
+        """, (prog_code, prog_code, prog_code))
         ao_row = cur.fetchone()
         if not ao_row:
             flash(f"Import Blocked: No academic offering found for '{prog_code}'.")
@@ -9447,12 +9459,33 @@ def confirm_pdf_import():
         if existing and override:
             curr_id = existing_id  # reuse existing curriculum record
         else:
-            cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s", (prog_code,))
+            cur.execute("""
+                SELECT academicofferingid FROM academic_offering
+                WHERE offeringcode = %s OR (programcode = %s AND trackid IS NULL)
+                ORDER BY CASE WHEN offeringcode = %s THEN 0 ELSE 1 END
+                LIMIT 1
+            """, (prog_code, prog_code, prog_code))
             ao_row = cur.fetchone()
             if not ao_row:
-                flash(f"Import Failed: Program '{prog_code}' not found in the system.")
-                return redirect(url_for('admin_curriculum'))
-            ao_id = ao_row[0]
+                # Auto-create base offering for programs that have none yet
+                cur.execute("SELECT programcode FROM programs WHERE programcode = %s", (prog_code,))
+                prog_row = cur.fetchone()
+                if not prog_row:
+                    flash(f"Import Failed: Program '{prog_code}' not found in the system.")
+                    return redirect(url_for('admin_curriculum'))
+                cur.execute("""
+                    INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
+                    VALUES (%s, NULL, %s, %s, TRUE)
+                    ON CONFLICT DO NOTHING
+                    RETURNING academicofferingid
+                """, (prog_code, prog_code, prog_code))
+                new_ao = cur.fetchone()
+                if not new_ao:
+                    cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s LIMIT 1", (prog_code,))
+                    new_ao = cur.fetchone()
+                ao_id = new_ao[0]
+            else:
+                ao_id = ao_row[0]
             years = curr_year.split('-')
             curr_code = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
             cur.execute("""
@@ -9462,9 +9495,9 @@ def confirm_pdf_import():
             curr_id = cur.fetchone()[0]
 
         for s in subjects:
-            sc = str(s.get('sc', '')).strip()
+            sc = str(s.get('sc', '')).strip()[:50]
             if not sc: continue
-            sn = str(s.get('sn', sc)).strip() or sc
+            sn = (str(s.get('sn', sc)).strip() or sc)[:100]
             cur.execute("""
                 INSERT INTO Subject (SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -9475,7 +9508,7 @@ def confirm_pdf_import():
             """, (sc, sn, parse_int(s.get('u')), parse_int(s.get('lc')), parse_int(s.get('lb')), parse_int(s.get('th'))))
 
         for s in subjects:
-            sc = str(s.get('sc', '')).strip()
+            sc = str(s.get('sc', '')).strip()[:50]
             if not sc: continue
             yl  = parse_int(s.get('yl')) or 1
             sem = norm_sem(s.get('sem', 'A'))
@@ -9485,8 +9518,8 @@ def confirm_pdf_import():
                 ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO NOTHING
             """, (curr_id, sc, yl, sem))
 
-            pre = str(s.get('pre', '')).strip()
-            co  = str(s.get('co',  '')).strip()
+            pre = str(s.get('pre', '')).strip()[:100]
+            co  = str(s.get('co',  '')).strip()[:100]
             pre_clean = pre if pre.upper() not in ('NONE', '-', 'N/A', '') else None
             co_clean  = co  if co.upper()  not in ('NONE', '-', 'N/A', '') else None
             if pre_clean or co_clean:
@@ -9573,7 +9606,12 @@ def import_curriculum_xlsx():
             try: return int(float(val)) if val else 0
             except: return 0
 
-        cur.execute("SELECT academicofferingid FROM academic_offering WHERE offeringcode = %s", (prog_code,))
+        cur.execute("""
+            SELECT academicofferingid FROM academic_offering
+            WHERE offeringcode = %s OR (programcode = %s AND trackid IS NULL)
+            ORDER BY CASE WHEN offeringcode = %s THEN 0 ELSE 1 END
+            LIMIT 1
+        """, (prog_code, prog_code, prog_code))
         ao_row = cur.fetchone()
         if not ao_row:
             flash(f"Import Failed: Program '{prog_code}' not found in the system.")
@@ -10168,7 +10206,6 @@ def admin_settings():
             LEFT JOIN curriculum         c   ON c.academicofferingid = ao.academicofferingid
             LEFT JOIN program_yearlevel  pyl ON pyl.academicofferingid = ao.academicofferingid AND pyl.isactive = TRUE
             LEFT JOIN sections           sec ON sec.programyearlevelid = pyl.programyearlevelid
-            WHERE  p.isactive = TRUE
             GROUP  BY p.programcode, p.programname, p.programtype,
                       p.isactive, p.numyearlevel
             ORDER  BY p.programname
@@ -10906,6 +10943,34 @@ def settings_deactivate_section():
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
+
+
+@app.route('/admin/settings/program/toggle-active', methods=['POST'])
+def settings_toggle_program_active():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    prog_code = request.form.get('program_code', '').strip().upper()
+    is_active = request.form.get('isactive', 'false').lower() == 'true'
+    if not prog_code:
+        return jsonify({'success': False, 'error': 'Missing program_code'})
+    conn = get_db_connection()
+    cur  = conn.cursor()
+    try:
+        cur.execute("UPDATE programs SET isactive = %s WHERE programcode = %s", (is_active, prog_code))
+        conn.commit()
+        action = 'activated' if is_active else 'deactivated'
+        write_activity_log(
+            f'Program {action.capitalize()}',
+            f'Program {prog_code} was {action} via Settings',
+            category='program',
+            color=_LOG_COLORS.get('program', 'blue')
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        cur.close(); conn.close()
 
 
 @app.route('/admin/settings/section/edit', methods=['POST'])

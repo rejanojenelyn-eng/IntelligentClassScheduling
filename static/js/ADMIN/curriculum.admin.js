@@ -1,3 +1,36 @@
+// ── Import offerings data (lazy-loaded from embedded JSON) ────────────────────
+let _IMPORT_OFFERINGS = null;
+function _getImportOfferings() {
+    if (_IMPORT_OFFERINGS === null) {
+        try { _IMPORT_OFFERINGS = JSON.parse(document.getElementById('import-offerings-data').textContent); }
+        catch(e) { _IMPORT_OFFERINGS = []; }
+    }
+    return _IMPORT_OFFERINGS;
+}
+
+function populateOfferingDropdown(progSelectId, offerSelectId) {
+    const progCode = document.getElementById(progSelectId)?.value;
+    const sel      = document.getElementById(offerSelectId);
+    if (!sel) return;
+    sel.innerHTML = '';
+    const matches = _getImportOfferings().filter(o => o.programcode === progCode);
+    if (!matches.length) {
+        sel.innerHTML = '<option value="" disabled selected>No offerings found</option>';
+        return;
+    }
+    matches.forEach(o => {
+        const lbl = o.trackname
+            ? `${o.offeringcode} — ${o.trackname}`
+            : `${o.offeringcode} (Base / General)`;
+        const opt = document.createElement('option');
+        opt.value = o.offeringcode;
+        opt.textContent = lbl;
+        sel.appendChild(opt);
+    });
+    if (matches.length === 1) sel.selectedIndex = 0;
+    else { const ph = document.createElement('option'); ph.disabled = ph.selected = true; ph.textContent = 'Select offering'; sel.insertBefore(ph, sel.firstChild); }
+}
+
 // ── Tab switching with localStorage persistence ───────────────────────────────
 function switchCurrTab(tab) {
     const panels = { assignments: 'currPanelAssignments', syllabi: 'currPanelSyllabi' };
@@ -18,15 +51,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // ── Assignment table filter + sort ────────────────────────────────────────────
 function filterAssignments() {
-    const search   = (document.getElementById('searchAssign')?.value    || '').toLowerCase();
+    const search     = (document.getElementById('searchAssign')?.value    || '').toLowerCase();
     const currFilter = (document.getElementById('filterAssignCurr')?.value || '').toLowerCase();
     const progFilter = (document.getElementById('filterAssignProg')?.value || '').toLowerCase();
     document.querySelectorAll('#assignmentTable tbody tr').forEach(row => {
         const currText = (row.dataset.curr || row.cells[0]?.textContent || '').toLowerCase().trim();
-        const progText = (row.dataset.prog || row.cells[1]?.textContent || '').toLowerCase().trim();
-        const matchSearch = !search    || currText.includes(search) || progText.includes(search);
+        const progCode = (row.dataset.prog || '').toLowerCase().trim();
+        const progText = (row.cells[1]?.textContent || '').toLowerCase().trim();
+        const matchSearch = !search     || currText.includes(search) || progText.includes(search);
         const matchCurr   = !currFilter || currText === currFilter;
-        const matchProg   = !progFilter || progText === progFilter;
+        const matchProg   = !progFilter || progCode.startsWith(progFilter);
         row.style.display = (matchSearch && matchCurr && matchProg) ? '' : 'none';
     });
 }
@@ -1027,7 +1061,7 @@ async function analyzePdf() {
     const btn       = document.getElementById('pdfAnalyzeBtn');
     _hideAnalyzeError('pdfAnalyzeError');
 
-    if (!progCode) { _showPdfError('Please select a target program.'); return; }
+    if (!progCode) { _showPdfError('Please select a target academic offering.'); return; }
     if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
         _showPdfError('Please enter a valid curriculum year (e.g. 2024-2025).');
         return;
@@ -1084,7 +1118,7 @@ async function analyzeDocx() {
     const btn       = document.getElementById('docxAnalyzeBtn');
     _hideAnalyzeError('docxAnalyzeError');
 
-    if (!progCode) { _showDocxError('Please select a target program.'); return; }
+    if (!progCode) { _showDocxError('Please select a target academic offering.'); return; }
     if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
         _showDocxError('Please enter a valid curriculum year (e.g. 2024-2025).');
         return;

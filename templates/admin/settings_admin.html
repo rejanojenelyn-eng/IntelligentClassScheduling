@@ -381,7 +381,7 @@
             <div class="pm-item-name">{{ p.programname }}</div>
             <div class="pm-item-meta">
               <span class="pm-offers-label">{{ p.curr_count | int }} {{ 'curriculums' if (p.curr_count | int) > 1 else 'curriculum' }}</span>
-              <span class="pm-item-status pm-item-active"><span class="pm-dot-sm"></span> Active</span>
+              <span class="pm-item-status {{ 'pm-item-active' if p.isactive else 'pm-item-inactive' }}"><span class="pm-dot-sm"></span> {{ 'Active' if p.isactive else 'Inactive' }}</span>
             </div>
           </div>
           {% endfor %}
@@ -1174,6 +1174,31 @@
         </div>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Activate Program Confirm ─────────────── -->
+<div id="modalActivateProgram" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#1b5e20,#2e7d32);">
+      <i class="fas fa-power-off"></i>
+      <div>
+        <span class="lock-warn-title">ACTIVATE PROGRAM</span>
+        <span class="lock-warn-sub" id="actProgLabel">This will make the program active again.</span>
+      </div>
+    </div>
+    <input type="hidden" id="actProgCode">
+    <div class="s-modal-body">
+      <p class="lock-warn-body">The program will be marked as <strong>active</strong> and will be available for scheduling and curriculum management.</p>
+      <div class="lock-warn-actions">
+        <button type="button" class="btn-lock-view" style="background:#e8f5e9; color:#1b5e20; border-color:#a5d6a7;" onclick="doActivateProgram()">
+          <i class="fas fa-power-off"></i> Activate
+        </button>
+        <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalActivateProgram')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 

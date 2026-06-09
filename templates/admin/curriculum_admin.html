@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block content %}
+<script id="import-offerings-data" type="application/json">{{ import_offerings | tojson }}</script>
 <div class="curriculum-ui">
 
     <!-- ── PAGE HEADER WITH TOGGLE TABS ── -->
@@ -43,7 +44,7 @@
                     <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
                         <option value="">SELECT</option>
                         {% for p in programs %}
-                        <option value="{{ p.programname }}">{{ p.programname }}</option>
+                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -64,23 +65,23 @@
                 <thead>
                     <tr>
                         <th>CURRICULUM CODE</th>
-                        <th>ACADEMIC PROGRAM</th>
-                        <th>YEAR LEVEL</th>
-                        <th>NO. OF SECTION</th>
-                        <th>ACAD YEAR OF ENTRY</th>
+                        <th>ACADEMIC PROGRAM / OFFERING</th>
+                        <th>CURRICULUM YEAR</th>
+                        <th>NO. OF SECTIONS</th>
+                        <th>ACTIONS</th>
                         <th style="width: 50px;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in cohorts %}
-                    <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programname }}">
+                    <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programcode }}">
                         <td><span class="curr-code-pill">{{ c.curriculumcode }}</span></td>
-                        <td>{{ c.programname }}</td>
-                        <td>{{ c.year_level }}</td>
-                        <td>{{ c.numberofsections }}</td>
-                        <td>{{ c.startacademicyear }}</td>
+                        <td>{{ c.offeringcode }} — {{ c.programname }}</td>
+                        <td>{{ c.academicyearid }}</td>
+                        <td>{{ c.section_count or 0 }}</td>
+                        <td>{{ c.academicyearid }}</td>
                         <td style="text-align:center;">
-                            <button class="btn-edit-icon" onclick="editAssignment('{{ c.cohortid }}','{{ c.programcode }}','{{ c.curriculumid }}','{{ c.startacademicyear }}','{{ c.numberofsections }}')">
+                            <button class="btn-edit-icon" onclick="editAssignment('{{ c.curriculumid }}','{{ c.programcode }}','{{ c.curriculumid }}','{{ c.academicyearid }}','{{ c.offeringcode }}')">
                                 <i class="fas fa-edit"></i>
                             </button>
                         </td>
@@ -264,10 +265,12 @@
                 <div class="form-section-vert">
                     <h3>1. Setup Curriculum Environment</h3>
                     <div class="form-group-modal">
-                        <label>Target Program</label>
+                        <label>Target Academic Offering</label>
                         <select name="program_code" id="modalProgramCode" required>
-                            <option value="" disabled selected>Select Program</option>
-                            {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
+                            <option value="" disabled selected>Select Academic Offering</option>
+                            {% for o in import_offerings %}
+                            <option value="{{ o.offeringcode }}">{{ o.programname or o.offeringcode }}{% if o.trackname %} — {{ o.trackname }}{% endif %}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group-modal">
@@ -318,10 +321,12 @@
             <div class="form-section-vert">
                 <h3>1. Setup Curriculum Environment</h3>
                 <div class="form-group-modal">
-                    <label>Target Program</label>
+                    <label>Target Academic Offering</label>
                     <select id="pdfProgramCode" required>
-                        <option value="" disabled selected>Select Program</option>
-                        {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
+                        <option value="" disabled selected>Select Academic Offering</option>
+                        {% for o in import_offerings %}
+                        <option value="{{ o.offeringcode }}">{{ o.programname or o.offeringcode }}{% if o.trackname %} — {{ o.trackname }}{% endif %}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div class="form-group-modal">
@@ -407,10 +412,12 @@
                 <div class="form-section-vert">
                     <h3>1. Setup Curriculum Environment</h3>
                     <div class="form-group-modal">
-                        <label>Target Program</label>
+                        <label>Target Academic Offering</label>
                         <select name="program_code" id="xlsxModalProgramCode" required onchange="updateXlsxYearLevelDropdown()">
-                            <option value="" disabled selected data-years="4">Select Program</option>
-                            {% for p in programs %}<option value="{{ p.programcode }}" data-years="{{ p.numyearlevel }}">{{ p.programname }}</option>{% endfor %}
+                            <option value="" disabled selected data-years="4">Select Academic Offering</option>
+                            {% for o in import_offerings %}
+                            <option value="{{ o.offeringcode }}" data-years="{{ o.numyearlevel or 4 }}">{{ o.programname or o.offeringcode }}{% if o.trackname %} — {{ o.trackname }}{% endif %}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group-modal">
@@ -481,10 +488,12 @@
             <div class="form-section-vert">
                 <h3>1. Setup Curriculum Environment</h3>
                 <div class="form-group-modal">
-                    <label>Target Program</label>
+                    <label>Target Academic Offering</label>
                     <select id="docxProgramCode" required>
-                        <option value="" disabled selected>Select Program</option>
-                        {% for p in programs %}<option value="{{ p.programcode }}">{{ p.programname }}</option>{% endfor %}
+                        <option value="" disabled selected>Select Academic Offering</option>
+                        {% for o in import_offerings %}
+                        <option value="{{ o.offeringcode }}">{{ o.programname or o.offeringcode }}{% if o.trackname %} — {{ o.trackname }}{% endif %}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div class="form-group-modal">
