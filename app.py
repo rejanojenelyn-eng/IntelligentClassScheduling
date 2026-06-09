@@ -10089,6 +10089,20 @@ def admin_settings():
             return[dict(zip(columns, row)) for row in cursor.fetchall()]
 
         _ensure_ay_finalized_col(cur)
+        # Ensure numberofsections column exists on program_yearlevel
+        cur.execute("""
+            ALTER TABLE program_yearlevel
+            ADD COLUMN IF NOT EXISTS numberofsections INTEGER DEFAULT 1
+        """)
+        # Back-fill from actual section counts for any rows that are NULL
+        cur.execute("""
+            UPDATE program_yearlevel pyl
+            SET numberofsections = (
+                SELECT COUNT(*) FROM sections sec
+                WHERE sec.programyearlevelid = pyl.programyearlevelid
+            )
+            WHERE pyl.numberofsections IS NULL
+        """)
         conn.commit()
 
         # Academic Years are never auto-locked — only finalized AYs are locked.
@@ -10243,17 +10257,25 @@ def admin_settings():
             SELECT ao.academicofferingid, ao.offeringcode, ao.offeringdescription,
                    ao.programcode, ao.isactive,
                    t.trackname, t.trackcode, t.tracktype,
-                   COUNT(DISTINCT pyl.programyearlevelid)                          AS yearlevel_count,
-                   COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE) AS section_count
+                   COUNT(DISTINCT pyl.programyearlevelid)               AS yearlevel_count,
+                   COALESCE(SUM(pyl.numberofsections), 0)               AS section_count
             FROM   academic_offering ao
             LEFT JOIN track             t   ON t.trackid = ao.trackid
             LEFT JOIN program_yearlevel pyl ON pyl.academicofferingid = ao.academicofferingid AND pyl.isactive = TRUE
-            LEFT JOIN sections          sec ON sec.programyearlevelid = pyl.programyearlevelid
             GROUP  BY ao.academicofferingid, ao.offeringcode, ao.offeringdescription,
                       ao.programcode, ao.isactive, t.trackname, t.trackcode, t.tracktype
             ORDER  BY ao.programcode, ao.offeringcode
         """)
         offerings_mgmt = to_dict(cur)
+
+        cur.execute("""
+            SELECT pyl.programyearlevelid, pyl.academicofferingid, pyl.yearlevel,
+                   pyl.isactive, COALESCE(pyl.numberofsections, 1) AS numberofsections
+            FROM   program_yearlevel pyl
+            JOIN   academic_offering ao ON ao.academicofferingid = pyl.academicofferingid
+            ORDER  BY pyl.academicofferingid, pyl.yearlevel
+        """)
+        yearlevel_data = to_dict(cur)
 
         return render_template('admin/settings_admin.html',
                                ay_list=ay_data, emp_types=emp_types,
@@ -10265,6 +10287,7 @@ def admin_settings():
                                curricula_mgmt=curricula_mgmt,
                                sections_mgmt=sections_mgmt,
                                offerings_mgmt=offerings_mgmt,
+                               yearlevel_data=yearlevel_data,
                                activity_logs=activity_logs)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
@@ -10999,12 +11022,11 @@ def settings_edit_section():
 @app.route('/admin/settings/offering/add', methods=['POST'])
 def settings_add_offering():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    prog_code        = request.form.get('program_code', '').strip().upper()
-    track_name       = request.form.get('track_name', '').strip()
-    short_code       = request.form.get('short_code', '').strip().upper()
-    initial_sections = max(0, int(request.form.get('initial_sections', '0') or 0))
-    track_type       = request.form.get('track_type', 'Track').strip()
-    is_active        = request.form.get('status', 'active') == 'active'
+    prog_code  = request.form.get('program_code', '').strip().upper()
+    track_name = request.form.get('track_name', '').strip()
+    short_code = request.form.get('short_code', '').strip().upper()
+    track_type = request.form.get('track_type', 'Track').strip()
+    is_active  = request.form.get('status') == '1'
 
     if not prog_code or not track_name or not short_code:
         flash("Program, track name, and short code are all required.", "error")
@@ -11027,7 +11049,7 @@ def settings_add_offering():
             flash(f"Track '{track_name}' already exists for program '{prog_code}'.", "error")
             return redirect(url_for('admin_settings'))
 
-        # Step 2: Create track
+        # Step 1: Create track
         cur.execute("""
             INSERT INTO track (trackcode, trackname, parentprogramcode, tracktype, isactive)
             VALUES (%s, %s, %s, %s, %s)
@@ -11035,7 +11057,7 @@ def settings_add_offering():
         """, (short_code, track_name, prog_code, track_type, is_active))
         track_id = cur.fetchone()[0]
 
-        # Step 3: Auto-create base offering if this is the first track for the program
+        # Step 2: Auto-create base offering if this is the first track for the program
         cur.execute("""
             SELECT academicofferingid FROM academic_offering
             WHERE programcode = %s AND trackid IS NULL
@@ -11049,10 +11071,9 @@ def settings_add_offering():
                 VALUES (%s, NULL, %s, %s, TRUE)
             """, (prog_code, prog_code, prog_name))
 
-        # Generate offering code = programcode + shortcode (no separator)
+        # Step 3: Create academic offering
         offering_code = prog_code + short_code
         offering_desc = f"{prog_code} - {track_name}"
-
         cur.execute("""
             INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
             VALUES (%s, %s, %s, %s, %s)
@@ -11060,7 +11081,7 @@ def settings_add_offering():
         """, (prog_code, track_id, offering_code, offering_desc, is_active))
         ao_id = cur.fetchone()[0]
 
-        # Step 4: Generate program year levels for current active AY
+        # Step 4: Read number of year levels from program
         cur.execute("SELECT numyearlevel FROM programs WHERE programcode = %s", (prog_code,))
         prow = cur.fetchone()
         num_yr = prow[0] if prow else 4
@@ -11072,30 +11093,20 @@ def settings_add_offering():
             ay_row = cur.fetchone()
         ay_id = ay_row[0] if ay_row else None
 
-        letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        # Step 5: Create program year levels with section counts (no actual section rows)
         if ay_id:
             for yr in range(1, num_yr + 1):
+                sec_count  = max(0, int(request.form.get(f'sections_yr_{yr}', '1') or 1))
+                yr_active  = request.form.get(f'active_yr_{yr}') == '1'
                 cur.execute("""
-                    INSERT INTO program_yearlevel (academicofferingid, academicyearid, yearlevel, isactive)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO program_yearlevel
+                        (academicofferingid, academicyearid, yearlevel, isactive, numberofsections)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT ON CONSTRAINT uq_program_yearlevel DO NOTHING
-                    RETURNING programyearlevelid
-                """, (ao_id, ay_id, yr, is_active))
-                pyl_row = cur.fetchone()
-
-                # Step 5: Auto-create section rows if initial_sections > 0
-                if pyl_row and initial_sections > 0:
-                    pyl_id = pyl_row[0]
-                    for i in range(min(initial_sections, 26)):
-                        sec_name = f"{offering_code}-{yr}{letters[i]}"
-                        cur.execute("""
-                            INSERT INTO sections (programyearlevelid, sectionname, isactive)
-                            VALUES (%s, %s, TRUE)
-                        """, (pyl_id, sec_name))
+                """, (ao_id, ay_id, yr, yr_active, sec_count))
 
         conn.commit()
-        total_secs = num_yr * initial_sections if ay_id else 0
-        flash(f"Offering '{offering_code}' created — {num_yr} year levels, {total_secs} sections.", "success")
+        flash(f"Offering '{offering_code}' created with {num_yr} year levels.", "success")
         write_activity_log("Added Academic Offering",
                            f"Created {track_type} offering {offering_code} ({track_name}) for {prog_code}",
                            category='program', color=_LOG_COLORS.get('program', 'blue'))
@@ -11112,13 +11123,13 @@ def settings_edit_offering():
     ao_id      = request.form.get('offering_id')
     track_name = request.form.get('track_name', '').strip()
     track_code = request.form.get('track_code', '').strip().upper()
-    is_active  = request.form.get('status', 'active') == 'active'
+    is_active  = request.form.get('status') == '1'
 
     conn = get_db_connection(); cur = conn.cursor()
     try:
         cur.execute("UPDATE academic_offering SET isactive=%s WHERE academicofferingid=%s",
                     (is_active, ao_id))
-        # Also update the linked track (if any)
+        # Update linked track
         cur.execute("SELECT trackid FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
         row = cur.fetchone()
         if row and row[0]:
@@ -11126,6 +11137,22 @@ def settings_edit_offering():
                 UPDATE track SET trackname=%s, trackcode=%s, isactive=%s
                 WHERE trackid=%s
             """, (track_name, track_code, is_active, row[0]))
+
+        # Update per-year-level section counts
+        cur.execute("""
+            SELECT programyearlevelid, yearlevel FROM program_yearlevel
+            WHERE academicofferingid = %s ORDER BY yearlevel
+        """, (ao_id,))
+        year_levels = cur.fetchall()
+        for pyl_id, yr in year_levels:
+            sec_count = max(0, int(request.form.get(f'sections_yr_{yr}', '1') or 1))
+            yr_active = request.form.get(f'active_yr_{yr}') == '1'
+            cur.execute("""
+                UPDATE program_yearlevel
+                SET numberofsections=%s, isactive=%s
+                WHERE programyearlevelid=%s
+            """, (sec_count, yr_active, pyl_id))
+
         conn.commit()
         flash("Offering updated.", "success")
         write_activity_log("Updated Academic Offering",

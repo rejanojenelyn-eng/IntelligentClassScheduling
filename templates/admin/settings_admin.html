@@ -352,10 +352,11 @@
     <!-- Embed JSON data for JS consumption -->
     <script id="pm-data" type="application/json">
       {
-        "programs":  {{ programs_mgmt  | tojson }},
-        "curricula": {{ curricula_mgmt | tojson }},
-        "sections":  {{ sections_mgmt  | tojson }},
-        "offerings": {{ offerings_mgmt | tojson }}
+        "programs":     {{ programs_mgmt  | tojson }},
+        "curricula":    {{ curricula_mgmt | tojson }},
+        "sections":     {{ sections_mgmt  | tojson }},
+        "offerings":    {{ offerings_mgmt | tojson }},
+        "yearlevels":   {{ yearlevel_data | tojson }}
       }
     </script>
 
@@ -1299,7 +1300,7 @@
 <div id="modalAddOffering" class="s-modal">
   <div class="s-modal-box w-md">
     <div class="s-modal-hd">
-      <h2>Add Offerings</h2>
+      <h2>Add Offering</h2>
       <button class="modal-x" onclick="closeSModal('modalAddOffering')"><i class="fas fa-times"></i></button>
     </div>
     <div class="mf-info-banner">
@@ -1327,26 +1328,38 @@
             <input type="text" name="short_code" class="m-input" required placeholder="e.g. AT"
                    style="text-transform:uppercase;" maxlength="8"
                    oninput="this.value=this.value.toUpperCase()">
-            <small class="m-hint">A short code used for generating offering codes and identifiers.</small>
-          </div>
-          <div class="mf">
-            <label>Initial Number of Sections <span class="m-req">*</span></label>
-            <input type="number" name="initial_sections" class="m-input" value="1" min="0" max="26" required>
-            <small class="m-hint">The system will use this value when generating sections per year level.</small>
+            <small class="m-hint">A short code used for generating offering codes (e.g. BSBIO + AT = BSBIOAT).</small>
           </div>
           <div class="mf span2">
             <label>Status</label>
-            <div class="m-radio-row">
-              <label class="m-radio-opt"><input type="radio" name="status" value="active" checked> Active</label>
-              <label class="m-radio-opt"><input type="radio" name="status" value="inactive"> Inactive</label>
-            </div>
+            <label class="pmd-toggle-switch">
+              <input type="checkbox" name="status" id="addOfferStatus" value="1" checked>
+              <span class="pmd-toggle-slider"></span>
+              <span class="pmd-toggle-label" id="addOfferStatusLabel">Active</span>
+            </label>
           </div>
+        </div>
+
+        <!-- Year Level Initialization Table -->
+        <div class="pmd-yl-section">
+          <label class="pmd-yl-label">Year Levels &amp; Sections</label>
+          <p class="m-hint" style="margin-bottom:8px;">Set the initial number of sections for each year level.</p>
+          <table class="pmd-yl-table">
+            <thead>
+              <tr>
+                <th>Year Level</th>
+                <th>Initial Number of Sections</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody id="addOfferYLBody"></tbody>
+          </table>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
         <button type="button" class="btn-mc" onclick="closeSModal('modalAddOffering')">Cancel</button>
-        <button type="submit" class="btn-ms">Save</button>
+        <button type="submit" class="btn-ms"><i class="fas fa-save"></i> Save</button>
       </div>
     </form>
   </div>
@@ -1354,37 +1367,54 @@
 
 <!-- ── MODAL: Edit Academic Offering ────────────────── -->
 <div id="modalEditOffering" class="s-modal">
-  <div class="s-modal-box w-sm">
+  <div class="s-modal-box w-md">
     <div class="s-modal-hd">
-      <h2>EDIT OFFERING</h2>
+      <h2>Edit Offering</h2>
       <button class="modal-x" onclick="closeSModal('modalEditOffering')"><i class="fas fa-times"></i></button>
     </div>
     <form action="{{ url_for('settings_edit_offering') }}" method="POST">
       <input type="hidden" name="offering_id" id="editOfferAoId">
       <div class="s-modal-body">
-        <div class="mg-1">
+        <div class="mg-2">
           <div class="mf">
-            <label>TRACK NAME</label>
+            <label>Track Name</label>
             <input type="text" name="track_name" id="editOfferTrackName" class="m-input">
           </div>
           <div class="mf">
-            <label>TRACK CODE</label>
+            <label>Short Code</label>
             <input type="text" name="track_code" id="editOfferTrackCode" class="m-input"
                    style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
           </div>
-          <div class="mf">
-            <label>STATUS</label>
-            <div class="m-radio-row">
-              <label class="m-radio-opt"><input type="radio" name="status" id="editOfferStatusActive" value="active"> Active</label>
-              <label class="m-radio-opt"><input type="radio" name="status" id="editOfferStatusInactive" value="inactive"> Inactive</label>
-            </div>
+          <div class="mf span2">
+            <label>Status</label>
+            <label class="pmd-toggle-switch">
+              <input type="checkbox" name="status" id="editOfferStatus" value="1">
+              <span class="pmd-toggle-slider"></span>
+              <span class="pmd-toggle-label" id="editOfferStatusLabel">Active</span>
+            </label>
           </div>
+        </div>
+
+        <!-- Year Level Section Counts (editable) -->
+        <div class="pmd-yl-section">
+          <label class="pmd-yl-label">Year Levels &amp; Sections</label>
+          <p class="m-hint" style="margin-bottom:8px;">Update section counts per year level.</p>
+          <table class="pmd-yl-table">
+            <thead>
+              <tr>
+                <th>Year Level</th>
+                <th>Number of Sections</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody id="editOfferYLBody"></tbody>
+          </table>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalEditOffering')">CANCEL</button>
-        <button type="submit" class="btn-ms">SAVE CHANGES</button>
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditOffering')">Cancel</button>
+        <button type="submit" class="btn-ms"><i class="fas fa-save"></i> Save Changes</button>
       </div>
     </form>
   </div>

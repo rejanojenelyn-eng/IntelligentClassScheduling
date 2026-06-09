@@ -1051,11 +1051,56 @@ function openDeleteTrack(id) {
   openSModal('modalDeleteTrack');
 }
 
+/* ── Ordinal helper ──────────────────────────────────── */
+function _ordinal(n) {
+  const s = ['th','st','nd','rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]) + ' Year';
+}
+
+/* ── Build year-level rows for add/edit modals ───────── */
+function _buildYLRows(tbodyId, numYears, existingYLs) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  for (let yr = 1; yr <= numYears; yr++) {
+    const existing   = existingYLs.find(y => y.yearlevel === yr);
+    const secCount   = existing ? (existing.numberofsections || 1) : 1;
+    const isActive   = existing ? !!existing.isactive : true;
+    const toggleId   = `${tbodyId}_tog_${yr}`;
+    const labelId    = `${tbodyId}_lbl_${yr}`;
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${_ordinal(yr)}</td>
+      <td><input type="number" name="sections_yr_${yr}" class="m-input pmd-yl-input"
+           value="${secCount}" min="0" max="99" required></td>
+      <td>
+        <label class="pmd-toggle-switch pmd-toggle-sm">
+          <input type="checkbox" name="active_yr_${yr}" id="${toggleId}" value="1"
+                 ${isActive ? 'checked' : ''}
+                 onchange="document.getElementById('${labelId}').textContent=this.checked?'Active':'Inactive'">
+          <span class="pmd-toggle-slider"></span>
+          <span class="pmd-toggle-label" id="${labelId}">${isActive ? 'Active' : 'Inactive'}</span>
+        </label>
+      </td>`;
+    tbody.appendChild(row);
+  }
+}
+
 /* ── New offering / section modal openers ────────────── */
 function openAddOffering() {
   if (!PM_SELECTED) return;
-  const fld = document.getElementById('addOfferProgCode');
-  if (fld) fld.value = PM_SELECTED;
+  const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
+  if (!prog) return;
+
+  document.getElementById('addOfferProgCode').value = PM_SELECTED;
+
+  // Reset status toggle
+  const statusChk = document.getElementById('addOfferStatus');
+  const statusLbl = document.getElementById('addOfferStatusLabel');
+  if (statusChk) { statusChk.checked = true; }
+  if (statusLbl) { statusLbl.textContent = 'Active'; }
+
+  _buildYLRows('addOfferYLBody', prog.numyearlevel || 4, []);
   openSModal('modalAddOffering');
 }
 
@@ -1063,10 +1108,34 @@ function openEditOffering(aoId, code, trackName, trackCode, isActive) {
   document.getElementById('editOfferAoId').value      = aoId;
   document.getElementById('editOfferTrackName').value = trackName;
   document.getElementById('editOfferTrackCode').value = trackCode;
-  document.getElementById('editOfferStatusActive').checked   = !!isActive;
-  document.getElementById('editOfferStatusInactive').checked = !isActive;
+
+  const statusChk = document.getElementById('editOfferStatus');
+  const statusLbl = document.getElementById('editOfferStatusLabel');
+  if (statusChk) { statusChk.checked = !!isActive; }
+  if (statusLbl) { statusLbl.textContent = isActive ? 'Active' : 'Inactive'; }
+
+  // Load year levels for this offering
+  const existingYLs = (PM_DATA.yearlevels || []).filter(y => y.academicofferingid === aoId);
+  const prog = PM_DATA.programs.find(p =>
+    (PM_DATA.offerings || []).some(o => o.academicofferingid === aoId && o.programcode === p.programcode)
+  );
+  const numYears = prog ? (prog.numyearlevel || 4) : existingYLs.length || 4;
+  _buildYLRows('editOfferYLBody', numYears, existingYLs);
+
   openSModal('modalEditOffering');
 }
+
+/* Sync status toggle label for add-offer modal */
+document.addEventListener('change', e => {
+  if (e.target.id === 'addOfferStatus') {
+    const lbl = document.getElementById('addOfferStatusLabel');
+    if (lbl) lbl.textContent = e.target.checked ? 'Active' : 'Inactive';
+  }
+  if (e.target.id === 'editOfferStatus') {
+    const lbl = document.getElementById('editOfferStatusLabel');
+    if (lbl) lbl.textContent = e.target.checked ? 'Active' : 'Inactive';
+  }
+});
 
 function openEditSection(sectionId, sectionName) {
   document.getElementById('editSecId').value   = sectionId;
