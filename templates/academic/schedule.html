@@ -783,9 +783,9 @@
         <div class="si-filter-bar">
           <div class="si-filter-left">
             <div class="si-fg">
-              <label><i class="fas fa-graduation-cap"></i> Program</label>
+              <label><i class="fas fa-graduation-cap"></i> Academic Offering</label>
               <select id="siFilterProg" onchange="siApplyFilter()">
-                <option value="">All Programs</option>
+                <option value="">All Offerings</option>
               </select>
             </div>
             <div class="si-fg">
@@ -1433,7 +1433,7 @@
 
         /* Populate program filter */
         const pf = document.getElementById('siFilterProg');
-        pf.innerHTML = '<option value="">All Programs</option>';
+        pf.innerHTML = '<option value="">All Offerings</option>';
         Object.keys(progMap).sort().forEach(pk => {
             const opt = document.createElement('option'); opt.value=pk; opt.textContent=pk; pf.appendChild(opt);
         });
