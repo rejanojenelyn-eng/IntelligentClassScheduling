@@ -10285,6 +10285,17 @@ def admin_settings():
             )
             WHERE pyl.numberofsections IS NULL
         """)
+        # Backfill base academic_offering for programs that have none (programs with no tracks)
+        cur.execute("""
+            INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
+            SELECT p.programcode, NULL, p.programcode, p.programname, p.isactive
+            FROM   programs p
+            WHERE  NOT EXISTS (
+                SELECT 1 FROM academic_offering ao
+                WHERE ao.programcode = p.programcode AND ao.trackid IS NULL
+            )
+        """)
+
         # Backfill program_yearlevel for offerings that have no year-level rows at all
         cur.execute("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1")
         _ay_row = cur.fetchone()
@@ -10954,6 +10965,12 @@ def settings_add_program():
                 INSERT INTO Programs (ProgramCode, ProgramName, ProgramType, IsActive, NumYearLevel)
                 VALUES (%s, %s, %s, TRUE, %s)
             """, (code, name, ptype, int(yrs)))
+            # Rule 1: every program gets a base academic offering on creation
+            cur.execute("""
+                INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
+                VALUES (%s, NULL, %s, %s, TRUE)
+                ON CONFLICT DO NOTHING
+            """, (code, code, name))
             conn.commit()
             flash(f"Program '{code}' added successfully.", "success")
             write_activity_log("Added Academic Program", f'Created new program: {code} — {name}',
