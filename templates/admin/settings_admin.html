@@ -508,6 +508,7 @@
                 <thead>
                   <tr>
                     <th>Academic Offering</th>
+                    <th>Year Levels</th>
                     <th>Sections (Count)</th>
                     <th>Status</th>
                     <th>Actions</th>
@@ -1307,7 +1308,7 @@
       <i class="fas fa-info-circle"></i>
       Adding a track or specialization will automatically generate academic offerings, year levels, and section structures.
     </div>
-    <form action="{{ url_for('settings_add_offering') }}" method="POST">
+    <form id="formAddOffering" action="{{ url_for('settings_add_offering') }}" method="POST">
       <input type="hidden" name="program_code" id="addOfferProgCode">
       <div class="s-modal-body">
         <div class="mg-2">
@@ -1340,6 +1341,18 @@
           </div>
         </div>
 
+        <!-- Hierarchy warnings -->
+        <div id="addOfferInactiveWarn" class="offer-inactive-warn" style="display:none;">
+          <i class="fas fa-exclamation-triangle"></i>
+          <div><strong>This Academic Offering is inactive.</strong><br>
+          All Program Year Levels and Sections under this offering will also become inactive.</div>
+        </div>
+        <div id="addOfferNoYLWarn" class="offer-inactive-warn offer-warn-noyl" style="display:none;">
+          <i class="fas fa-info-circle"></i>
+          <div><strong>No active year levels remain.</strong><br>
+          This Academic Offering will automatically become inactive.</div>
+        </div>
+
         <!-- Year Level Initialization Table -->
         <div class="pmd-yl-section">
           <label class="pmd-yl-label">Year Levels &amp; Sections</label>
@@ -1354,6 +1367,24 @@
             </thead>
             <tbody id="addOfferYLBody"></tbody>
           </table>
+          <!-- Structure Summary -->
+          <div class="offer-summary-panel" id="addOfferSummary">
+            <div class="offer-sum-title">Structure Summary</div>
+            <div class="offer-sum-grid">
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Academic Offering</span>
+                <span class="offer-sum-val offer-sum-status offer-sum-active">Active</span>
+              </div>
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Active Year Levels</span>
+                <span class="offer-sum-val offer-sum-yl">0 of 0</span>
+              </div>
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Total Active Sections</span>
+                <span class="offer-sum-val offer-sum-sec">0</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1372,7 +1403,7 @@
       <h2>Edit Offering</h2>
       <button class="modal-x" onclick="closeSModal('modalEditOffering')"><i class="fas fa-times"></i></button>
     </div>
-    <form action="{{ url_for('settings_edit_offering') }}" method="POST">
+    <form id="formEditOffering" action="{{ url_for('settings_edit_offering') }}" method="POST">
       <input type="hidden" name="offering_id" id="editOfferAoId">
       <div class="s-modal-body">
         <div class="mg-2">
@@ -1395,6 +1426,18 @@
           </div>
         </div>
 
+        <!-- Hierarchy warnings -->
+        <div id="editOfferInactiveWarn" class="offer-inactive-warn" style="display:none;">
+          <i class="fas fa-exclamation-triangle"></i>
+          <div><strong>This Academic Offering is inactive.</strong><br>
+          All Program Year Levels and Sections under this offering will also become inactive.</div>
+        </div>
+        <div id="editOfferNoYLWarn" class="offer-inactive-warn offer-warn-noyl" style="display:none;">
+          <i class="fas fa-info-circle"></i>
+          <div><strong>No active year levels remain.</strong><br>
+          This Academic Offering will automatically become inactive.</div>
+        </div>
+
         <!-- Year Level Section Counts (editable) -->
         <div class="pmd-yl-section">
           <label class="pmd-yl-label">Year Levels &amp; Sections</label>
@@ -1409,6 +1452,24 @@
             </thead>
             <tbody id="editOfferYLBody"></tbody>
           </table>
+          <!-- Structure Summary -->
+          <div class="offer-summary-panel" id="editOfferSummary">
+            <div class="offer-sum-title">Structure Summary</div>
+            <div class="offer-sum-grid">
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Academic Offering</span>
+                <span class="offer-sum-val offer-sum-status offer-sum-active">Active</span>
+              </div>
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Active Year Levels</span>
+                <span class="offer-sum-val offer-sum-yl">0 of 0</span>
+              </div>
+              <div class="offer-sum-row">
+                <span class="offer-sum-label">Total Active Sections</span>
+                <span class="offer-sum-val offer-sum-sec">0</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1420,27 +1481,95 @@
   </div>
 </div>
 
+<!-- ── MODAL: Delete Academic Offering ──────────────── -->
+<div id="modalDeleteOffering" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>Delete Academic Offering</h2>
+      <button class="modal-x" onclick="closeSModal('modalDeleteOffering')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="s-modal-body">
+      <p style="margin:0 0 12px;font-size:.88rem;color:var(--text);">Are you sure you want to delete this academic offering?</p>
+      <div class="pmd-del-info-box">
+        <div class="pmd-del-info-label">Offering</div>
+        <div class="pmd-del-info-code" id="delOfferCode">—</div>
+        <div class="pmd-del-info-desc" id="delOfferDesc"></div>
+      </div>
+      <p style="margin:12px 0 0;font-size:.8rem;color:#888;">
+        <i class="fas fa-exclamation-triangle" style="color:#e67e22;"></i>
+        This action may affect generated year levels and sections associated with this offering.
+      </p>
+      <div id="delOfferErrorWrap" style="display:none;margin-top:12px;">
+        <div class="lock-warn-banner" style="background:linear-gradient(135deg,#b71c1c,#7f0000);border-radius:6px;margin:0;">
+          <i class="fas fa-ban"></i>
+          <div><span class="lock-warn-sub" id="delOfferError"></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="m-divider" style="margin:0 26px;"></div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalDeleteOffering')">Cancel</button>
+      <button type="button" class="btn-ms btn-ms-danger" id="btnConfirmDelete" onclick="_confirmDeleteOffering()">
+        <i class="fas fa-trash"></i> Delete
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ── MODAL: Edit Section Name ─────────────────────── -->
 <div id="modalEditSection" class="s-modal">
   <div class="s-modal-box w-sm">
     <div class="s-modal-hd">
-      <h2>EDIT SECTION</h2>
+      <h2><i class="fas fa-pencil-alt" style="margin-right:8px;font-size:1rem;"></i>Edit Section</h2>
       <button class="modal-x" onclick="closeSModal('modalEditSection')"><i class="fas fa-times"></i></button>
     </div>
-    <form action="{{ url_for('settings_edit_section') }}" method="POST">
-      <input type="hidden" name="section_id" id="editSecId">
+    <form id="formEditSection">
+      <input type="hidden" id="editSecId">
+      <input type="hidden" id="editSecPylId">
       <div class="s-modal-body">
         <div class="mf">
-          <label>SECTION NAME</label>
-          <input type="text" name="section_name" id="editSecName" class="m-input" required>
+          <label>Section Name <span style="color:#c0392b;">*</span></label>
+          <input type="text" id="editSecName" class="m-input" required placeholder="Enter section name">
+        </div>
+        <div id="editSecErrorWrap" style="display:none;margin-top:8px;">
+          <span style="color:#c0392b;font-size:.82rem;" id="editSecError"></span>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalEditSection')">CANCEL</button>
-        <button type="submit" class="btn-ms">SAVE</button>
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditSection')">Cancel</button>
+        <button type="submit" class="btn-ms">Save</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Delete Section ─────────────────────────── -->
+<div id="modalDeleteSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2><i class="fas fa-trash" style="margin-right:8px;font-size:1rem;"></i>Delete Section</h2>
+      <button class="modal-x" onclick="closeSModal('modalDeleteSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="s-modal-body">
+      <div class="pmd-del-info-box">
+        <span class="pmd-del-info-label">Section: </span>
+        <span class="pmd-del-info-code" id="delSecName"></span>
+      </div>
+      <p style="font-size:.85rem;color:#555;margin-top:12px;">
+        Are you sure you want to delete this section? If it has schedule records it will be deactivated rather than permanently removed.
+      </p>
+      <div id="delSecErrorWrap" style="display:none;margin-top:12px;">
+        <div class="lock-warn-box"><span class="lock-warn-sub" id="delSecError"></span></div>
+      </div>
+    </div>
+    <div class="m-divider" style="margin:0 26px;"></div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalDeleteSection')">Cancel</button>
+      <button type="button" class="btn-ms btn-ms-danger" id="btnConfirmSecDelete" onclick="_confirmDeleteSection()">
+        <i class="fas fa-trash"></i> Delete
+      </button>
+    </div>
   </div>
 </div>
 

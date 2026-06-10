@@ -1694,6 +1694,56 @@
 }
 .pmd-edit-btn:hover { background: var(--m); color: #fff; }
 
+/* Delete button in offerings table */
+.pmd-del-btn {
+  background: transparent;
+  color: #c0392b;
+  border: 1px solid #c0392b;
+  padding: 5px 12px;
+  border-radius: var(--r-sm);
+  font-size: .68rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all var(--ease);
+}
+.pmd-del-btn:hover { background: #c0392b; color: #fff; }
+
+/* Danger variant for modal confirm button */
+.btn-ms-danger {
+  background: #c0392b !important;
+  border-color: #c0392b !important;
+}
+.btn-ms-danger:hover { background: #922b21 !important; border-color: #922b21 !important; }
+
+/* Delete confirmation info box */
+.pmd-del-info-box {
+  background: #fdf3f2;
+  border: 1px solid #f5c6c6;
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+.pmd-del-info-label {
+  font-size: .65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.pmd-del-info-code {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--m);
+}
+.pmd-del-info-desc {
+  font-size: .78rem;
+  color: #555;
+  margin-top: 2px;
+}
+
 /* ── Toggle switch for offering modals ────────────────── */
 .pmd-toggle-switch {
   display: inline-flex;
@@ -1767,6 +1817,64 @@
   text-align: center;
   padding: 5px 8px !important;
 }
+.pmd-yl-input[readonly] {
+  background: #f0f0f0;
+  color: #999;
+  cursor: not-allowed;
+}
+/* Disabled toggle visual */
+.pmd-toggle-switch input:disabled + .pmd-toggle-slider {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.pmd-toggle-switch input:disabled ~ .pmd-toggle-label {
+  opacity: .55;
+}
+
+/* ── Offering hierarchy warnings ─────────────────────── */
+.offer-inactive-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fff8e1;
+  border: 1px solid #ffc107;
+  border-left: 4px solid #ffc107;
+  border-radius: 6px;
+  padding: 11px 14px;
+  margin: 0 0 12px 0;
+  font-size: .81rem;
+  color: #6d4c00;
+  line-height: 1.45;
+}
+.offer-inactive-warn i { margin-top: 2px; font-size: .9rem; flex-shrink: 0; }
+.offer-inactive-warn.offer-warn-noyl {
+  background: #e3f2fd;
+  border-color: #1976d2;
+  border-left-color: #1976d2;
+  color: #0d47a1;
+}
+/* ── Structure Summary panel ─────────────────────────── */
+.offer-summary-panel {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 12px;
+}
+.offer-sum-title {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: #888;
+  margin-bottom: 8px;
+}
+.offer-sum-grid  { display: flex; flex-direction: column; gap: 5px; }
+.offer-sum-row   { display: flex; justify-content: space-between; align-items: center; font-size: .82rem; }
+.offer-sum-label { color: #555; }
+.offer-sum-val   { font-weight: 700; }
+.offer-sum-active   { color: #2e7d32; }
+.offer-sum-inactive { color: #c62828; }
 
 /* Small icon buttons in sections table */
 .pmd-sec-actions { display: flex; gap: 6px; }

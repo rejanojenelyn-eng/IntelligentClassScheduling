@@ -659,7 +659,48 @@ function _offeringsFor(programcode) {
 
 /* ── Pagination + current section cache ─────────────── */
 let _PM_CURRENT_SECTIONS = [];
-const _PM_SEC_PER_PAGE   = 4;
+const _PM_SEC_PER_PAGE   = 8;
+
+/* ── Derive sections from PM_DATA.sections (real DB records) ─
+   Visibility rule: program active AND offering active AND
+   year level active AND section active.
+   All four must be true for a section to appear.              */
+function _deriveSections(progCode) {
+  // Only active offerings
+  const offerings = _offeringsFor(progCode).filter(o => o.isactive);
+  if (!offerings.length) return [];
+
+  const aoIds  = new Set(offerings.map(o => o.academicofferingid));
+  // Only active year levels
+  const yls    = (PM_DATA.yearlevels || []).filter(y => aoIds.has(y.academicofferingid) && y.isactive);
+  const pylIds = new Set(yls.map(y => y.programyearlevelid));
+
+  // Build lookup: programyearlevelid → {offeringcode, yearlevel, isactive}
+  const pylInfo = {};
+  yls.forEach(y => {
+    const o = offerings.find(o => o.academicofferingid === y.academicofferingid);
+    pylInfo[y.programyearlevelid] = {
+      programcode:        o ? o.offeringcode : '',
+      yearlevel:          y.yearlevel,
+      isactive:           y.isactive,
+      programyearlevelid: y.programyearlevelid,
+    };
+  });
+
+  return (PM_DATA.sections || [])
+    .filter(s => pylIds.has(s.programyearlevelid) && s.isactive)
+    .map(s => {
+      const info = pylInfo[s.programyearlevelid] || {};
+      return {
+        sectionid:          s.sectionid,
+        sectionname:        s.sectionname,
+        programcode:        info.programcode || s.programcode || '',
+        yearlevel:          info.yearlevel   || s.yearlevel   || 0,
+        isactive:           s.isactive,
+        programyearlevelid: s.programyearlevelid,
+      };
+    });
+}
 
 /* ── Select program → render new right panel ─────── */
 function selectProgram(code) {
@@ -674,13 +715,10 @@ function selectProgram(code) {
   document.getElementById('pmDetailContent').style.display = 'block';
 
   const progOfferings = _offeringsFor(code);
-  const offeringCodes = progOfferings.map(o => o.offeringcode);
-  const progSections  = (PM_DATA.sections || []).filter(s => offeringCodes.includes(s.programcode));
-
   _renderHeader(prog);
   _renderProgInfo(prog);
   _renderOfferingsTable(progOfferings);
-  _PM_CURRENT_SECTIONS = progSections;
+  _PM_CURRENT_SECTIONS = _deriveSections(code);
   const fEl = document.getElementById('pmdSecFilter');
   if (fEl) fEl.value = '';
   _renderSectionsPage(1);
@@ -728,26 +766,40 @@ function _renderOfferingsTable(offerings) {
   if (!tbody) return;
 
   if (offerings.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="pmd-empty-row">No academic offerings yet. Click + ADD OFFERING to create one.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="pmd-empty-row">No academic offerings yet. Click + ADD OFFERING to create one.</td></tr>`;
     if (footer) footer.textContent = '';
     return;
   }
 
   tbody.innerHTML = offerings.map(o => {
-    const isTrack  = !!o.trackcode;
-    const typeLbl  = isTrack ? (o.trackname || o.trackcode) : 'Base (General)';
-    const typeCls  = isTrack ? 'pmd-type-track' : 'pmd-type-base';
-    const sCls     = o.isactive ? 'pmd-status-active' : 'pmd-status-inactive';
-    const sLbl     = o.isactive ? 'Active' : 'Inactive';
-    const editFn   = isTrack
-      ? `openEditOffering(${o.academicofferingid},'${escHtml(o.offeringcode)}','${escHtml(o.trackname||'')}','${escHtml(o.trackcode||'')}',${!!o.isactive})`
-      : `openEditOffering(${o.academicofferingid},'${escHtml(o.offeringcode)}','','',${!!o.isactive})`;
+    const isTrack    = !!o.trackcode;
+    const typeLbl    = isTrack ? (o.trackname || o.trackcode) : 'Base (General)';
+    const typeCls    = isTrack ? 'pmd-type-track' : 'pmd-type-base';
+    // Computed active year levels from PM_DATA.yearlevels
+    const allYLs     = (PM_DATA.yearlevels || []).filter(y => y.academicofferingid === o.academicofferingid);
+    const activeYLCt = allYLs.filter(y => y.isactive).length;
+    const totalYLCt  = allYLs.length;
+    const computed   = o.isactive && activeYLCt > 0;
+    const sCls       = computed ? 'pmd-status-active' : 'pmd-status-inactive';
+    const sLbl       = computed ? 'Active' : 'Inactive';
+    const ylLbl      = totalYLCt ? `${activeYLCt} active of ${totalYLCt}` : '—';
+    const desc      = o.offeringdescription || '';
+    const editFn    = `openEditOffering(${o.academicofferingid},'${escHtml(o.offeringcode)}','${escHtml(o.trackname||'')}','${escHtml(o.trackcode||'')}',${!!o.isactive})`;
+    const delFn     = `openDeleteOffering(${o.academicofferingid},'${escHtml(o.offeringcode)}','${escHtml(desc)}')`;
     return `
     <tr>
-      <td><strong>${escHtml(o.offeringcode)}</strong><span class="pmd-type-chip ${typeCls}">${escHtml(typeLbl)}</span></td>
+      <td>
+        <strong>${escHtml(o.offeringcode)}</strong>
+        <span class="pmd-type-chip ${typeCls}">${escHtml(typeLbl)}</span>
+        ${desc ? `<div style="font-size:.75rem;color:#666;margin-top:3px;">${escHtml(desc)}</div>` : ''}
+      </td>
+      <td>${ylLbl}</td>
       <td>${o.section_count || 0}</td>
       <td><span class="pmd-status-badge ${sCls}"><span class="pmd-dot"></span>${sLbl}</span></td>
-      <td><button class="pmd-edit-btn" onclick="${editFn}"><i class="fas fa-edit"></i> Edit</button></td>
+      <td style="white-space:nowrap;">
+        <button class="pmd-edit-btn" onclick="${editFn}"><i class="fas fa-edit"></i> Edit</button>
+        <button class="pmd-del-btn"  onclick="${delFn}" style="margin-left:6px;"><i class="fas fa-trash"></i> Delete</button>
+      </td>
     </tr>`;
   }).join('');
 
@@ -780,18 +832,21 @@ function _renderSectionsPage(page) {
   }
 
   tbody.innerHTML = items.map(s => {
-    const yr   = _ordinalYear(s.yearlevel);
-    const sCls = s.isactive ? 'pmd-status-active' : 'pmd-status-inactive';
-    const sLbl = s.isactive ? 'Active' : 'Inactive';
+    const yr    = _ordinalYear(s.yearlevel);
+    const sCls  = s.isactive ? 'pmd-status-active' : 'pmd-status-inactive';
+    const sLbl  = s.isactive ? 'Active' : 'Inactive';
+    const secId = s.sectionid  || '';
+    const pylId = s.programyearlevelid || '';
+    const sName = s.sectionname.replace(/'/g, "\\'");
     return `
     <tr>
       <td><strong>${escHtml(s.sectionname)}</strong></td>
       <td>${escHtml(s.programcode)}</td>
       <td>${yr}</td>
       <td><span class="pmd-status-badge ${sCls}"><span class="pmd-dot"></span>${sLbl}</span></td>
-      <td class="pmd-sec-actions">
-        <button class="pmd-icon-sm" title="Edit" onclick="openEditSection(${s.sectionid},'${escHtml(s.sectionname)}')"><i class="fas fa-edit"></i></button>
-        <button class="pmd-icon-sm pmd-icon-del" title="Deactivate" onclick="deactivateSection(${s.sectionid},'${escHtml(s.sectionname)}')"><i class="fas fa-trash"></i></button>
+      <td style="white-space:nowrap;">
+        <button class="pmd-edit-btn" onclick="openEditSection('${secId}','${sName}',${pylId})"><i class="fas fa-edit"></i> Edit</button>
+        <button class="pmd-del-btn"  onclick="openDeleteSection('${secId}','${sName}',${pylId})" style="margin-left:6px;"><i class="fas fa-trash"></i> Delete</button>
       </td>
     </tr>`;
   }).join('');
@@ -1058,32 +1113,126 @@ function _ordinal(n) {
 }
 
 /* ── Build year-level rows for add/edit modals ───────── */
-function _buildYLRows(tbodyId, numYears, existingYLs) {
+function _buildYLRows(tbodyId, numYears, existingYLs, isOfferActive = true) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
   tbody.innerHTML = '';
   for (let yr = 1; yr <= numYears; yr++) {
     const existing   = existingYLs.find(y => y.yearlevel === yr);
     const secCount   = existing ? (existing.numberofsections || 1) : 1;
-    const isActive   = existing ? !!existing.isactive : true;
+    const isYLActive = isOfferActive ? (existing ? !!existing.isactive : true) : false;
     const toggleId   = `${tbodyId}_tog_${yr}`;
     const labelId    = `${tbodyId}_lbl_${yr}`;
+    const disabledA  = isOfferActive ? '' : ' disabled';
+    const readonlyA  = isOfferActive ? '' : ' readonly';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${_ordinal(yr)}</td>
       <td><input type="number" name="sections_yr_${yr}" class="m-input pmd-yl-input"
-           value="${secCount}" min="0" max="99" required></td>
+           value="${secCount}" min="1" max="99" required${readonlyA}></td>
       <td>
         <label class="pmd-toggle-switch pmd-toggle-sm">
           <input type="checkbox" name="active_yr_${yr}" id="${toggleId}" value="1"
-                 ${isActive ? 'checked' : ''}
-                 onchange="document.getElementById('${labelId}').textContent=this.checked?'Active':'Inactive'">
+                 ${isYLActive ? 'checked' : ''}${disabledA}>
           <span class="pmd-toggle-slider"></span>
-          <span class="pmd-toggle-label" id="${labelId}">${isActive ? 'Active' : 'Inactive'}</span>
+          <span class="pmd-toggle-label" id="${labelId}">${isYLActive ? 'Active' : 'Inactive'}</span>
         </label>
       </td>`;
     tbody.appendChild(row);
   }
+}
+
+/* ── Offering hierarchy management ──────────────────── */
+
+function _updateOfferSummary(prefix) {
+  const statusChk = document.getElementById(`${prefix}OfferStatus`);
+  const tbody     = document.getElementById(`${prefix}OfferYLBody`);
+  const summary   = document.getElementById(`${prefix}OfferSummary`);
+  if (!tbody || !summary) return;
+
+  const isActive  = statusChk ? statusChk.checked : false;
+  const toggles   = Array.from(tbody.querySelectorAll('input[type=checkbox][name^=active_yr_]'));
+  const secInputs = Array.from(tbody.querySelectorAll('input[type=number][name^=sections_yr_]'));
+
+  let activeYLs = 0, totalSecs = 0;
+  toggles.forEach((t, i) => {
+    if (t.checked) {
+      activeYLs++;
+      totalSecs += parseInt(secInputs[i]?.value || '0') || 0;
+    }
+  });
+
+  const statusEl = summary.querySelector('.offer-sum-status');
+  if (statusEl) {
+    statusEl.textContent = isActive ? 'Active' : 'Inactive';
+    statusEl.className   = `offer-sum-val offer-sum-status ${isActive ? 'offer-sum-active' : 'offer-sum-inactive'}`;
+  }
+  const ylEl  = summary.querySelector('.offer-sum-yl');
+  const secEl = summary.querySelector('.offer-sum-sec');
+  if (ylEl)  ylEl.textContent  = `${activeYLs} of ${toggles.length}`;
+  if (secEl) secEl.textContent = totalSecs;
+}
+
+function _setOfferWarn(prefix, type) {
+  const iWarn = document.getElementById(`${prefix}OfferInactiveWarn`);
+  const nWarn = document.getElementById(`${prefix}OfferNoYLWarn`);
+  if (iWarn) iWarn.style.display = (type === 'inactive') ? '' : 'none';
+  if (nWarn) nWarn.style.display = (type === 'noyl')     ? '' : 'none';
+}
+
+function _onOfferStatusChange(prefix) {
+  const statusChk = document.getElementById(`${prefix}OfferStatus`);
+  const statusLbl = document.getElementById(`${prefix}OfferStatusLabel`);
+  const tbody     = document.getElementById(`${prefix}OfferYLBody`);
+  if (!tbody) return;
+
+  const isActive  = statusChk ? statusChk.checked : false;
+  if (statusLbl)  statusLbl.textContent = isActive ? 'Active' : 'Inactive';
+
+  const toggles   = tbody.querySelectorAll('input[type=checkbox][name^=active_yr_]');
+  const secInputs = tbody.querySelectorAll('input[type=number][name^=sections_yr_]');
+
+  if (!isActive) {
+    toggles.forEach(t => {
+      t.checked  = false;
+      t.disabled = true;
+      const lbl = document.getElementById(t.id.replace('_tog_', '_lbl_'));
+      if (lbl) lbl.textContent = 'Inactive';
+    });
+    secInputs.forEach(i => { i.readOnly = true; });
+    _setOfferWarn(prefix, 'inactive');
+  } else {
+    toggles.forEach(t   => { t.disabled = false; });
+    secInputs.forEach(i => { i.readOnly = false; });
+    _setOfferWarn(prefix, 'none');
+  }
+  _updateOfferSummary(prefix);
+}
+
+function _onYLToggleChange(prefix, toggleEl) {
+  const lbl = document.getElementById(toggleEl.id.replace('_tog_', '_lbl_'));
+  if (lbl) lbl.textContent = toggleEl.checked ? 'Active' : 'Inactive';
+
+  const statusChk  = document.getElementById(`${prefix}OfferStatus`);
+  const statusLbl  = document.getElementById(`${prefix}OfferStatusLabel`);
+  const tbody      = document.getElementById(`${prefix}OfferYLBody`);
+  if (!tbody) return;
+
+  const toggles    = Array.from(tbody.querySelectorAll('input[type=checkbox][name^=active_yr_]'));
+  const activeCount = toggles.filter(t => t.checked).length;
+
+  if (activeCount === 0) {
+    if (statusChk)  statusChk.checked = false;
+    if (statusLbl)  statusLbl.textContent = 'Inactive';
+    _setOfferWarn(prefix, 'noyl');
+  } else if (statusChk && !statusChk.checked) {
+    statusChk.checked = true;
+    if (statusLbl) statusLbl.textContent = 'Active';
+    _setOfferWarn(prefix, 'none');
+  } else {
+    _setOfferWarn(prefix, 'none');
+  }
+  _updateOfferSummary(prefix);
 }
 
 /* ── New offering / section modal openers ────────────── */
@@ -1094,13 +1243,16 @@ function openAddOffering() {
 
   document.getElementById('addOfferProgCode').value = PM_SELECTED;
 
-  // Reset status toggle
   const statusChk = document.getElementById('addOfferStatus');
   const statusLbl = document.getElementById('addOfferStatusLabel');
   if (statusChk) { statusChk.checked = true; }
   if (statusLbl) { statusLbl.textContent = 'Active'; }
 
-  _buildYLRows('addOfferYLBody', prog.numyearlevel || 4, []);
+  const defaultYL = (prog.programtype || '').toLowerCase().includes('diploma') ? 3 : 4;
+  const numYL     = prog.numyearlevel || defaultYL;
+  _buildYLRows('addOfferYLBody', numYL, [], true);
+  _setOfferWarn('add', 'none');
+  _updateOfferSummary('add');
   openSModal('modalAddOffering');
 }
 
@@ -1114,50 +1266,514 @@ function openEditOffering(aoId, code, trackName, trackCode, isActive) {
   if (statusChk) { statusChk.checked = !!isActive; }
   if (statusLbl) { statusLbl.textContent = isActive ? 'Active' : 'Inactive'; }
 
-  // Load year levels for this offering
   const existingYLs = (PM_DATA.yearlevels || []).filter(y => y.academicofferingid === aoId);
   const prog = PM_DATA.programs.find(p =>
     (PM_DATA.offerings || []).some(o => o.academicofferingid === aoId && o.programcode === p.programcode)
   );
-  const numYears = prog ? (prog.numyearlevel || 4) : existingYLs.length || 4;
-  _buildYLRows('editOfferYLBody', numYears, existingYLs);
-
+  const defaultYL2 = prog && (prog.programtype || '').toLowerCase().includes('diploma') ? 3 : 4;
+  const numYears   = prog ? (prog.numyearlevel || defaultYL2) : existingYLs.length || 4;
+  _buildYLRows('editOfferYLBody', numYears, existingYLs, !!isActive);
+  _setOfferWarn('edit', !isActive ? 'inactive' : 'none');
+  _updateOfferSummary('edit');
   openSModal('modalEditOffering');
 }
 
-/* Sync status toggle label for add-offer modal */
-document.addEventListener('change', e => {
-  if (e.target.id === 'addOfferStatus') {
-    const lbl = document.getElementById('addOfferStatusLabel');
-    if (lbl) lbl.textContent = e.target.checked ? 'Active' : 'Inactive';
+/* ── Delete offering modal ───────────────────────────── */
+let _DELETE_OFFER_ID = null;
+
+function openDeleteOffering(aoId, code, desc) {
+  _DELETE_OFFER_ID = aoId;
+  document.getElementById('delOfferCode').textContent = code;
+  document.getElementById('delOfferDesc').textContent = desc || '';
+  const errWrap = document.getElementById('delOfferErrorWrap');
+  if (errWrap) errWrap.style.display = 'none';
+  const btn = document.getElementById('btnConfirmDelete');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> Delete'; }
+  openSModal('modalDeleteOffering');
+}
+
+async function _confirmDeleteOffering() {
+  if (!_DELETE_OFFER_ID) return;
+  const btn = document.getElementById('btnConfirmDelete');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting…'; }
+
+  try {
+    const fd = new FormData();
+    fd.append('offering_id', _DELETE_OFFER_ID);
+    const resp = await fetch('/admin/settings/offering/delete', {
+      method:  'POST',
+      body:    fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await resp.text();
+      console.error('[DeleteOffering] Non-JSON response:', text.slice(0, 400));
+      throw new Error(`Server returned status ${resp.status}.`);
+    }
+    const data = await resp.json();
+    console.log('[DeleteOffering] Response:', data);
+
+    if (data.success) {
+      const aoId = data.academicofferingid;
+
+      // Remove or mark inactive in PM_DATA
+      if (data.mode === 'hard') {
+        const removedPylIds = new Set((PM_DATA.yearlevels || [])
+          .filter(y => y.academicofferingid === aoId)
+          .map(y => y.programyearlevelid));
+        PM_DATA.offerings  = (PM_DATA.offerings  || []).filter(o => o.academicofferingid !== aoId);
+        PM_DATA.yearlevels = (PM_DATA.yearlevels || []).filter(y => y.academicofferingid !== aoId);
+        PM_DATA.sections   = (PM_DATA.sections   || []).filter(s => !removedPylIds.has(s.programyearlevelid));
+      } else {
+        // Soft delete — mark inactive
+        const o = (PM_DATA.offerings || []).find(o => o.academicofferingid === aoId);
+        if (o) o.isactive = false;
+      }
+
+      // Update program stats
+      const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
+      if (prog) {
+        const all = _offeringsFor(PM_SELECTED);
+        prog.offering_count  = all.filter(o => o.isactive).length;
+        prog.section_count   = all.reduce((s, o) => s + (o.section_count || 0), 0);
+      }
+
+      // Re-render
+      _renderHeader(prog);
+      _renderOfferingsTable(_offeringsFor(PM_SELECTED));
+      _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
+      _renderSectionsPage(1);
+
+      closeSModal('modalDeleteOffering');
+      _showToast('success', data.message);
+    } else {
+      // Show inline error in modal
+      const errWrap = document.getElementById('delOfferErrorWrap');
+      const errEl   = document.getElementById('delOfferError');
+      if (errWrap) errWrap.style.display = '';
+      if (errEl)   errEl.textContent = data.error || 'Delete failed.';
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> Delete'; }
+    }
+  } catch (err) {
+    console.error('[DeleteOffering] Error:', err);
+    _showToast('error', 'Delete failed: ' + err.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> Delete'; }
   }
-  if (e.target.id === 'editOfferStatus') {
-    const lbl = document.getElementById('editOfferStatusLabel');
-    if (lbl) lbl.textContent = e.target.checked ? 'Active' : 'Inactive';
+}
+
+/* Offering status master + year-level toggle hierarchy */
+document.addEventListener('change', e => {
+  if (e.target.id === 'addOfferStatus')  { _onOfferStatusChange('add');  return; }
+  if (e.target.id === 'editOfferStatus') { _onOfferStatusChange('edit'); return; }
+
+  if (e.target.type === 'checkbox' && e.target.name?.match(/^active_yr_\d+$/)) {
+    const addBody  = document.getElementById('addOfferYLBody');
+    const editBody = document.getElementById('editOfferYLBody');
+    _onYLToggleChange(addBody?.contains(e.target) ? 'add' : 'edit', e.target);
   }
 });
 
-function openEditSection(sectionId, sectionName) {
-  document.getElementById('editSecId').value   = sectionId;
-  document.getElementById('editSecName').value = sectionName;
+/* Live section-count update → refresh Structure Summary */
+document.addEventListener('input', e => {
+  if (e.target.type === 'number' && e.target.name?.match(/^sections_yr_\d+$/)) {
+    const addBody = document.getElementById('addOfferYLBody');
+    _updateOfferSummary(addBody?.contains(e.target) ? 'add' : 'edit');
+  }
+});
+
+/* ── Edit section modal ──────────────────────────────── */
+function openEditSection(sectionId, sectionName, pylId) {
+  document.getElementById('editSecId').value    = sectionId  || '';
+  document.getElementById('editSecName').value  = sectionName;
+  document.getElementById('editSecPylId').value = pylId || '';
+  const errWrap = document.getElementById('editSecErrorWrap');
+  if (errWrap) errWrap.style.display = 'none';
   openSModal('modalEditSection');
 }
 
-function deactivateSection(sectionId, sectionName) {
-  if (!confirm(`Deactivate section "${sectionName}"?`)) return;
-  const fd = new FormData();
-  fd.append('section_id', sectionId);
-  fd.append('sectionname', sectionName);
-  fd.append('action', 'deactivate');
-  fetch('/admin/settings/section/edit', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(d => { if (d.success) location.reload(); else alert(d.error || 'Error'); });
+async function _submitEditSection(e) {
+  e.preventDefault();
+  const secId  = document.getElementById('editSecId').value.trim();
+  const pylId  = document.getElementById('editSecPylId').value.trim();
+  const newName = document.getElementById('editSecName').value.trim();
+  const errWrap = document.getElementById('editSecErrorWrap');
+  const errEl   = document.getElementById('editSecError');
+  if (errWrap) errWrap.style.display = 'none';
+
+  const btn  = document.querySelector('#formEditSection [type="submit"]');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+
+  try {
+    const fd = new FormData();
+    if (secId)  fd.append('section_id', secId);
+    if (pylId)  fd.append('pyl_id', pylId);
+    fd.append('section_name', newName);
+
+    const resp = await fetch('/admin/settings/section/edit', {
+      method:  'POST',
+      body:    fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error(`Server returned status ${resp.status}.`);
+    const data = await resp.json();
+
+    if (data.success) {
+      // Update _PM_CURRENT_SECTIONS in-place
+      const match = _PM_CURRENT_SECTIONS.find(
+        s => (secId && String(s.sectionid) === String(secId)) ||
+             (!secId && String(s.programyearlevelid) === String(pylId) && s.sectionname === document.getElementById('editSecName').defaultValue)
+      );
+      if (match) {
+        match.sectionname = data.sectionname;
+        match.sectionid   = data.sectionid;
+      }
+      // Also update the matching virtual entry if renaming an unnamed virtual section
+      const oldName = document.getElementById('editSecName').getAttribute('data-orig') || '';
+      _PM_CURRENT_SECTIONS.forEach(s => {
+        if (!secId && String(s.programyearlevelid) === String(pylId) && s.sectionname === oldName) {
+          s.sectionname = data.sectionname;
+          s.sectionid   = data.sectionid;
+        }
+      });
+      _renderSectionsPage(1);
+      closeSModal('modalEditSection');
+      _showToast('success', `Section renamed to "${data.sectionname}".`);
+    } else {
+      if (errWrap) errWrap.style.display = '';
+      if (errEl)   errEl.textContent = data.error || 'Failed to rename section.';
+    }
+  } catch (err) {
+    _showToast('error', 'Error: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+/* ── Delete section modal ────────────────────────────── */
+let _DELETE_SEC_ID   = null;
+let _DELETE_SEC_NAME = null;
+let _DELETE_SEC_PYL  = null;
+
+function openDeleteSection(sectionId, sectionName, pylId) {
+  _DELETE_SEC_ID   = sectionId  || null;
+  _DELETE_SEC_NAME = sectionName;
+  _DELETE_SEC_PYL  = pylId;
+  const nameEl = document.getElementById('delSecName');
+  if (nameEl) nameEl.textContent = sectionName;
+  const errWrap = document.getElementById('delSecErrorWrap');
+  if (errWrap) errWrap.style.display = 'none';
+  const btn = document.getElementById('btnConfirmSecDelete');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash"></i> Delete'; }
+  openSModal('modalDeleteSection');
+}
+
+async function _confirmDeleteSection() {
+  const btn  = document.getElementById('btnConfirmSecDelete');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting…'; }
+
+  try {
+    const fd = new FormData();
+    if (_DELETE_SEC_ID) fd.append('section_id', _DELETE_SEC_ID);
+
+    const resp = await fetch('/admin/settings/section/delete', {
+      method:  'POST',
+      body:    fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error(`Server returned status ${resp.status}.`);
+    const data = await resp.json();
+
+    if (data.success) {
+      const sid = Number(data.sectionid);
+
+      // 1. Update PM_DATA.sections
+      if (data.mode === 'hard') {
+        PM_DATA.sections = (PM_DATA.sections || []).filter(s => s.sectionid !== sid);
+      } else {
+        const sec = (PM_DATA.sections || []).find(s => s.sectionid === sid);
+        if (sec) sec.isactive = false;
+      }
+
+      // 2. Update PM_DATA.yearlevels — numberofsections + isactive
+      const yl = (PM_DATA.yearlevels || []).find(y => y.programyearlevelid === data.pyl_id);
+      if (yl) {
+        yl.numberofsections = data.numberofsections;
+        yl.isactive         = data.pyl_isactive;
+      }
+
+      // 3. Update PM_DATA.offerings — isactive + recompute section_count
+      const ao = (PM_DATA.offerings || []).find(o => o.academicofferingid === data.ao_id);
+      if (ao) {
+        ao.isactive      = data.ao_isactive;
+        ao.section_count = (PM_DATA.yearlevels || [])
+          .filter(y => y.academicofferingid === data.ao_id && y.isactive)
+          .reduce((sum, y) => sum + (y.numberofsections || 0), 0);
+      }
+
+      // 4. Update PM_DATA.programs — isactive + recompute counts
+      const prog = PM_DATA.programs.find(p => p.programcode === data.prog_code);
+      if (prog) {
+        prog.isactive       = data.prog_isactive;
+        const activeOffers  = _offeringsFor(data.prog_code).filter(o => o.isactive);
+        prog.offering_count = activeOffers.length;
+        prog.section_count  = activeOffers.reduce((s, o) => s + (o.section_count || 0), 0);
+      }
+
+      // 5. Sync left-panel status badge
+      const listItem = document.querySelector(`.pm-list-item[data-code="${CSS.escape(data.prog_code)}"]`);
+      const statSpan = listItem ? listItem.querySelector('.pm-item-status') : null;
+      if (statSpan) {
+        statSpan.className = `pm-item-status ${data.prog_isactive ? 'pm-item-active' : 'pm-item-inactive'}`;
+        statSpan.innerHTML = `<span class="pm-dot-sm"></span> ${data.prog_isactive ? 'Active' : 'Inactive'}`;
+      }
+
+      // 6. Re-render all affected panels
+      if (prog) { _renderHeader(prog); _renderProgInfo(prog); }
+      _renderOfferingsTable(_offeringsFor(PM_SELECTED));
+      _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
+      _renderSectionsPage(1);
+
+      closeSModal('modalDeleteSection');
+      _showToast('success', `Section "${_DELETE_SEC_NAME}" deleted.`);
+    } else {
+      const errWrap = document.getElementById('delSecErrorWrap');
+      const errEl   = document.getElementById('delSecError');
+      if (errWrap) errWrap.style.display = '';
+      if (errEl)   errEl.textContent = data.error || 'Delete failed.';
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    }
+  } catch (err) {
+    _showToast('error', 'Delete failed: ' + err.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
 }
 
 /* ── Sections filter change ──────────────────────────── */
 document.addEventListener('change', e => {
   if (e.target.id === 'pmdSecFilter') _renderSectionsPage(1);
 });
+
+/* ── Toast notification ──────────────────────────────── */
+function _showToast(type, msg) {
+  let wrap = document.getElementById('pmToastWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'pmToastWrap';
+    wrap.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+    document.body.appendChild(wrap);
+  }
+  const t = document.createElement('div');
+  const bg = type === 'success' ? '#2e7d32' : '#c62828';
+  t.style.cssText = `background:${bg};color:#fff;padding:12px 20px;border-radius:8px;font-size:.85rem;font-weight:600;
+    box-shadow:0 4px 12px rgba(0,0,0,.25);max-width:340px;opacity:0;transition:opacity .25s;`;
+  t.textContent = msg;
+  wrap.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; });
+  setTimeout(() => {
+    t.style.opacity = '0';
+    setTimeout(() => t.remove(), 300);
+  }, 4000);
+}
+
+/* ── AJAX: Submit Add Offering form ─────────────────── */
+async function _submitAddOffering(e) {
+  e.preventDefault();
+  const form = document.getElementById('formAddOffering');
+  if (!form) return;
+
+  // Block: offering active + 0 active year levels
+  const addOfferToggle = document.getElementById('addOfferStatus');
+  const addYLToggles   = form.querySelectorAll('input[type=checkbox][name^=active_yr_]');
+  if (addOfferToggle?.checked && addYLToggles.length > 0 && !Array.from(addYLToggles).some(t => t.checked)) {
+    _showToast('error', 'An Academic Offering must contain at least one active Program Year Level before it can be activated.');
+    return;
+  }
+
+  const btn  = form.querySelector('[type=submit]');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+
+  try {
+    const fd   = new FormData(form);
+    const resp = await fetch(form.action, {
+      method:  'POST',
+      body:    fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await resp.text();
+      console.error('[AddOffering] Non-JSON response (status ' + resp.status + '):', text.slice(0, 400));
+      throw new Error(`Server returned status ${resp.status}. Check the server console for the full error.`);
+    }
+    const data = await resp.json();
+
+    console.log('[AddOffering] Response:', data);
+    if (data.log) console.log('[AddOffering] Debug log:', data.log);
+
+    if (data.success) {
+      // ── Update PM_DATA in-place ──
+      PM_DATA.offerings.push(data.offering);
+      (data.yearlevels || []).forEach(yl => {
+        if (!PM_DATA.yearlevels) PM_DATA.yearlevels = [];
+        PM_DATA.yearlevels.push(yl);
+      });
+      (data.sections || []).forEach(s => {
+        if (!PM_DATA.sections) PM_DATA.sections = [];
+        PM_DATA.sections.push(s);
+      });
+
+      // Update program-level stats
+      const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
+      if (prog) {
+        prog.offering_count  = (prog.offering_count  || 0) + 1;
+        prog.yearlevel_count = (prog.yearlevel_count || 0) + (data.yearlevels || []).length;
+        prog.section_count   = (prog.section_count   || 0) + (data.offering.section_count || 0);
+        if (data.prog_isactive !== undefined) prog.isactive = data.prog_isactive;
+      }
+
+      // Sync left-panel status badge if program was auto-activated
+      if (prog && data.prog_isactive !== undefined) {
+        const listItem = document.querySelector(`.pm-list-item[data-code="${CSS.escape(PM_SELECTED)}"]`);
+        const statSpan = listItem ? listItem.querySelector('.pm-item-status') : null;
+        if (statSpan) {
+          statSpan.className = `pm-item-status ${prog.isactive ? 'pm-item-active' : 'pm-item-inactive'}`;
+          statSpan.innerHTML = `<span class="pm-dot-sm"></span> ${prog.isactive ? 'Active' : 'Inactive'}`;
+        }
+      }
+
+      // ── Re-render panels ──
+      const progOfferings = _offeringsFor(PM_SELECTED);
+      _renderHeader(prog);
+      _renderProgInfo(prog);
+      _renderOfferingsTable(progOfferings);
+      _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
+      _renderSectionsPage(1);
+
+      closeSModal('modalAddOffering');
+      form.reset();
+      document.getElementById('addOfferYLBody').innerHTML = '';
+      _showToast('success', data.message || 'Offering created successfully.');
+    } else {
+      _showToast('error', data.error || 'Failed to create offering.');
+      console.error('[AddOffering] Error:', data.error);
+    }
+  } catch (err) {
+    console.error('[AddOffering] Network error:', err);
+    _showToast('error', 'Network error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+/* ── AJAX: Submit Edit Offering form ─────────────────── */
+async function _submitEditOffering(e) {
+  e.preventDefault();
+  const form = document.getElementById('formEditOffering');
+  if (!form) return;
+
+  // Block: offering active + 0 active year levels
+  const editOfferToggle = document.getElementById('editOfferStatus');
+  const editYLToggles   = form.querySelectorAll('input[type=checkbox][name^=active_yr_]');
+  if (editOfferToggle?.checked && editYLToggles.length > 0 && !Array.from(editYLToggles).some(t => t.checked)) {
+    _showToast('error', 'An Academic Offering must contain at least one active Program Year Level before it can be activated.');
+    return;
+  }
+
+  const btn  = form.querySelector('[type=submit]');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+
+  try {
+    const fd   = new FormData(form);
+    const resp = await fetch(form.action, {
+      method:  'POST',
+      body:    fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await resp.text();
+      console.error('[EditOffering] Non-JSON response (status ' + resp.status + '):', text.slice(0, 400));
+      throw new Error(`Server returned status ${resp.status}. Check the server console for the full error.`);
+    }
+    const data = await resp.json();
+
+    console.log('[EditOffering] Response:', data);
+
+    if (data.success) {
+      const aoId = parseInt(document.getElementById('editOfferAoId').value);
+
+      // ── Update PM_DATA.offerings in-place ──
+      if (data.offering) {
+        const idx = PM_DATA.offerings.findIndex(o => o.academicofferingid === aoId);
+        if (idx !== -1) PM_DATA.offerings[idx] = data.offering;
+      }
+
+      // ── Update PM_DATA.yearlevels in-place ──
+      if (data.yearlevels && data.yearlevels.length) {
+        PM_DATA.yearlevels = (PM_DATA.yearlevels || []).filter(y => y.academicofferingid !== aoId);
+        data.yearlevels.forEach(yl => PM_DATA.yearlevels.push(yl));
+      }
+
+      // ── Replace PM_DATA.sections for this offering's year levels ──
+      if (data.sections) {
+        const pylIds = new Set((PM_DATA.yearlevels || [])
+          .filter(y => y.academicofferingid === aoId)
+          .map(y => y.programyearlevelid));
+        PM_DATA.sections = (PM_DATA.sections || []).filter(s => !pylIds.has(s.programyearlevelid));
+        data.sections.forEach(s => PM_DATA.sections.push(s));
+      }
+
+      // Update program-level stats
+      const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
+      if (prog) {
+        if (data.prog_isactive !== undefined) prog.isactive = data.prog_isactive;
+        if (data.offering) {
+          const allOfferings = _offeringsFor(PM_SELECTED);
+          prog.offering_count = allOfferings.filter(o => o.isactive).length;
+          prog.section_count  = allOfferings.reduce((s, o) => s + (o.section_count || 0), 0);
+        }
+      }
+
+      // Sync left-panel status badge if program state changed
+      if (prog && data.prog_isactive !== undefined) {
+        const listItem = document.querySelector(`.pm-list-item[data-code="${CSS.escape(PM_SELECTED)}"]`);
+        const statSpan = listItem ? listItem.querySelector('.pm-item-status') : null;
+        if (statSpan) {
+          statSpan.className = `pm-item-status ${prog.isactive ? 'pm-item-active' : 'pm-item-inactive'}`;
+          statSpan.innerHTML = `<span class="pm-dot-sm"></span> ${prog.isactive ? 'Active' : 'Inactive'}`;
+        }
+      }
+
+      // ── Re-render panels ──
+      if (prog) { _renderHeader(prog); _renderProgInfo(prog); }
+      _renderOfferingsTable(_offeringsFor(PM_SELECTED));
+      _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
+      _renderSectionsPage(1);
+
+      closeSModal('modalEditOffering');
+      _showToast('success', data.message || 'Offering updated successfully.');
+    } else {
+      _showToast('error', data.error || 'Failed to update offering.');
+      console.error('[EditOffering] Error:', data.error);
+    }
+  } catch (err) {
+    console.error('[EditOffering] Network error:', err);
+    _showToast('error', 'Network error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
 
 /* ── Init ───────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1167,4 +1783,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   initDayPairs();
   initTimeSlots();
   initProgramPanel();
+
+  /* Wire AJAX submit for Add and Edit Offering forms */
+  const addOfferForm  = document.getElementById('formAddOffering');
+  const editOfferForm = document.getElementById('formEditOffering');
+  if (addOfferForm)  addOfferForm.addEventListener('submit',  _submitAddOffering);
+  if (editOfferForm) editOfferForm.addEventListener('submit', _submitEditOffering);
+
+  /* Wire AJAX submit for Edit Section form */
+  const editSecForm = document.getElementById('formEditSection');
+  if (editSecForm) editSecForm.addEventListener('submit', _submitEditSection);
+
+  /* Track original section name for virtual-section rename matching */
+  document.addEventListener('focusin', e => {
+    if (e.target.id === 'editSecName') e.target.setAttribute('data-orig', e.target.value);
+  });
 });

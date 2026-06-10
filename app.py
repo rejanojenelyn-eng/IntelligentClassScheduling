@@ -3605,6 +3605,7 @@ def sis_import_preview():
             cs_id = None
             if s_code:
                 if prog:
+                    # 1. Match by offering code (most specific)
                     cur.execute("""
                         SELECT cs.curriculumsubjectid FROM curriculumsubject cs
                         JOIN curriculum c ON cs.curriculumid = c.curriculumid
@@ -3612,6 +3613,15 @@ def sis_import_preview():
                         WHERE UPPER(ao.offeringcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
                     """, (prog, s_code))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
+                    # 2. Fall back to program code (handles canonical→offering code mismatch)
+                    if not cs_id:
+                        cur.execute("""
+                            SELECT cs.curriculumsubjectid FROM curriculumsubject cs
+                            JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
+                            WHERE UPPER(ao.programcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
+                        """, (prog, s_code))
+                        r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
                 if not cs_id:
                     cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE UPPER(subjectcode)=UPPER(%s) LIMIT 1", (s_code,))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
@@ -3639,6 +3649,7 @@ def sis_import_preview():
 
             sec_id = None
             if prog and yl:
+                # 1. Exact offering code match — active sections only
                 cur.execute("""
                     SELECT sec.sectionid FROM sections sec
                     JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
@@ -3647,12 +3658,33 @@ def sis_import_preview():
                     ORDER BY sec.sectionname LIMIT 1
                 """, (prog, yl))
                 r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                # 2. Fall back to program code — active sections (canonical→offering code mismatch)
+                if not sec_id:
+                    cur.execute("""
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                        WHERE UPPER(ao.programcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
+                        ORDER BY sec.sectionname LIMIT 1
+                    """, (prog, yl))
+                    r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                # 3. Offering code match — include inactive sections
                 if not sec_id:
                     cur.execute("""
                         SELECT sec.sectionid FROM sections sec
                         JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
                         JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
                         WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s
+                        ORDER BY sec.sectionname LIMIT 1
+                    """, (prog, yl))
+                    r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                # 4. Program code match — include inactive sections
+                if not sec_id:
+                    cur.execute("""
+                        SELECT sec.sectionid FROM sections sec
+                        JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                        JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                        WHERE UPPER(ao.programcode)=UPPER(%s) AND pyl.yearlevel=%s
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
@@ -3820,6 +3852,7 @@ def sis_import_confirm():
 
                 cs_id = None
                 if s_code and prog:
+                    # 1. Match by offering code
                     cur.execute("""
                         SELECT cs.curriculumsubjectid FROM curriculumsubject cs
                         JOIN curriculum c ON cs.curriculumid=c.curriculumid
@@ -3827,12 +3860,22 @@ def sis_import_confirm():
                         WHERE UPPER(ao.offeringcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
                     """, (prog, s_code))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
+                    # 2. Fall back to program code
+                    if not cs_id:
+                        cur.execute("""
+                            SELECT cs.curriculumsubjectid FROM curriculumsubject cs
+                            JOIN curriculum c ON cs.curriculumid=c.curriculumid
+                            JOIN academic_offering ao ON c.academicofferingid=ao.academicofferingid
+                            WHERE UPPER(ao.programcode)=UPPER(%s) AND UPPER(cs.subjectcode)=UPPER(%s) LIMIT 1
+                        """, (prog, s_code))
+                        r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
                 if not cs_id and s_code:
                     cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE UPPER(subjectcode)=UPPER(%s) LIMIT 1", (s_code,))
                     r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
 
                 sec_id = None
                 if prog and yl:
+                    # 1. Exact offering code — active sections only
                     cur.execute("""
                         SELECT sec.sectionid FROM sections sec
                         JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
@@ -3841,12 +3884,33 @@ def sis_import_confirm():
                         ORDER BY sec.sectionname LIMIT 1
                     """, (prog, yl))
                     r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                    # 2. Program code — active sections (canonical→offering code mismatch)
+                    if not sec_id:
+                        cur.execute("""
+                            SELECT sec.sectionid FROM sections sec
+                            JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                            JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                            WHERE UPPER(ao.programcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
+                            ORDER BY sec.sectionname LIMIT 1
+                        """, (prog, yl))
+                        r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                    # 3. Offering code — include inactive sections
                     if not sec_id:
                         cur.execute("""
                             SELECT sec.sectionid FROM sections sec
                             JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
                             JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
                             WHERE UPPER(ao.offeringcode)=UPPER(%s) AND pyl.yearlevel=%s
+                            ORDER BY sec.sectionname LIMIT 1
+                        """, (prog, yl))
+                        r = cur.fetchone(); sec_id = r['sectionid'] if r else None
+                    # 4. Program code — include inactive sections
+                    if not sec_id:
+                        cur.execute("""
+                            SELECT sec.sectionid FROM sections sec
+                            JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
+                            JOIN academic_offering ao ON pyl.academicofferingid=ao.academicofferingid
+                            WHERE UPPER(ao.programcode)=UPPER(%s) AND pyl.yearlevel=%s
                             ORDER BY sec.sectionname LIMIT 1
                         """, (prog, yl))
                         r = cur.fetchone(); sec_id = r['sectionid'] if r else None
@@ -10203,6 +10267,15 @@ def admin_settings():
             ALTER TABLE program_yearlevel
             ADD COLUMN IF NOT EXISTS numberofsections INTEGER DEFAULT 1
         """)
+        # Widen sectionname to accommodate generated names like BSBIO-AT-1A
+        cur.execute("""
+            ALTER TABLE sections
+            ALTER COLUMN sectionname TYPE VARCHAR(100)
+        """)
+        # Snapshot columns — store pre-deactivation states for program reactivation restoration
+        cur.execute("ALTER TABLE academic_offering ADD COLUMN IF NOT EXISTS snapshot_isactive BOOLEAN DEFAULT NULL")
+        cur.execute("ALTER TABLE program_yearlevel ADD COLUMN IF NOT EXISTS snapshot_isactive BOOLEAN DEFAULT NULL")
+        cur.execute("ALTER TABLE sections          ADD COLUMN IF NOT EXISTS snapshot_isactive BOOLEAN DEFAULT NULL")
         # Back-fill from actual section counts for any rows that are NULL
         cur.execute("""
             UPDATE program_yearlevel pyl
@@ -10212,6 +10285,67 @@ def admin_settings():
             )
             WHERE pyl.numberofsections IS NULL
         """)
+        # Backfill program_yearlevel for offerings that have no year-level rows at all
+        cur.execute("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1")
+        _ay_row = cur.fetchone()
+        if not _ay_row:
+            cur.execute("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC NULLS LAST LIMIT 1")
+            _ay_row = cur.fetchone()
+        if _ay_row:
+            _active_ay = _ay_row[0]
+            cur.execute("""
+                SELECT ao.academicofferingid, COALESCE(p.numyearlevel, 4) AS num_yr
+                FROM   academic_offering ao
+                JOIN   programs p ON p.programcode = ao.programcode
+                WHERE  ao.isactive = TRUE
+                AND    NOT EXISTS (
+                    SELECT 1 FROM program_yearlevel pyl
+                    WHERE pyl.academicofferingid = ao.academicofferingid
+                )
+            """)
+            _missing = cur.fetchall()
+            for _ao_id, _num_yr in _missing:
+                for _yr in range(1, _num_yr + 1):
+                    cur.execute("""
+                        INSERT INTO program_yearlevel
+                            (academicofferingid, academicyearid, yearlevel, isactive, numberofsections)
+                        VALUES (%s, %s, %s, TRUE, 1)
+                        ON CONFLICT ON CONSTRAINT uq_program_yearlevel DO NOTHING
+                    """, (_ao_id, _active_ay, _yr))
+
+        # Backfill sections for year levels that have fewer sections than numberofsections
+        _LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        cur.execute("""
+            SELECT pyl.programyearlevelid, pyl.yearlevel,
+                   COALESCE(pyl.numberofsections, 1) AS numberofsections,
+                   ao.offeringcode
+            FROM   program_yearlevel pyl
+            JOIN   academic_offering ao ON ao.academicofferingid = pyl.academicofferingid
+            WHERE  pyl.isactive = TRUE
+        """)
+        _pyl_rows = cur.fetchall()
+        for _pyl_id, _yr, _num_sec, _offer_code in _pyl_rows:
+            # Count ALL sections (active + inactive) — only create truly missing rows
+            cur.execute("SELECT COUNT(*) FROM sections WHERE programyearlevelid=%s", (_pyl_id,))
+            _existing_count = cur.fetchone()[0]
+            if _existing_count >= _num_sec:
+                continue
+            cur.execute("SELECT sectionname FROM sections WHERE programyearlevelid=%s", (_pyl_id,))
+            _existing_names = {row[0] for row in cur.fetchall()}
+            _added = 0
+            for _j in range(26):
+                if _existing_count + _added >= _num_sec:
+                    break
+                _sec_name = f"{_offer_code}-{_yr}{_LETTERS[_j]}"
+                if _sec_name not in _existing_names:
+                    cur.execute("""
+                        INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                        VALUES (%s, %s, TRUE)
+                        ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                    """, (_pyl_id, _sec_name))
+                    _existing_names.add(_sec_name)
+                    _added += 1
+
         conn.commit()
 
         # Academic Years are never auto-locked — only finalized AYs are locked.
@@ -10352,7 +10486,8 @@ def admin_settings():
 
         cur.execute("""
             SELECT sec.sectionid, sec.sectionname, pyl.yearlevel,
-                   ao.offeringcode AS programcode, sec.isactive
+                   ao.offeringcode AS programcode, sec.isactive,
+                   pyl.programyearlevelid, pyl.academicofferingid
             FROM   sections sec
             JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             JOIN   academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
@@ -10859,10 +10994,71 @@ def settings_delete_program():
     code = request.form.get('program_code', '').strip()
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute("UPDATE Programs SET IsActive=FALSE WHERE ProgramCode=%s", (code,))
+        # ── Block deactivation if program has sections in the current active semester ──
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule sc
+            JOIN semester sem ON sem.semesterid = sc.semesterid
+            JOIN sections sec ON sec.sectionid = sc.sectionid
+            JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+            JOIN academic_offering ao ON ao.academicofferingid = pyl.academicofferingid
+            WHERE ao.programcode = %s AND sem.isactive = TRUE
+        """, (code,))
+        if cur.fetchone()[0] > 0:
+            conn.rollback()
+            flash(f"Cannot deactivate program '{code}': it has sections assigned to the active academic year schedule.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # ── Step 1: Snapshot current states before cascade ──────
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE programcode=%s", (code,))
+        ao_ids_snap = [row[0] for row in cur.fetchall()]
+        if ao_ids_snap:
+            cur.execute("""
+                UPDATE academic_offering SET snapshot_isactive = isactive
+                WHERE academicofferingid = ANY(%s)
+            """, (ao_ids_snap,))
+            cur.execute("""
+                SELECT programyearlevelid FROM program_yearlevel
+                WHERE academicofferingid = ANY(%s)
+            """, (ao_ids_snap,))
+            pyl_ids_snap = [row[0] for row in cur.fetchall()]
+            if pyl_ids_snap:
+                cur.execute("""
+                    UPDATE program_yearlevel SET snapshot_isactive = isactive
+                    WHERE programyearlevelid = ANY(%s)
+                """, (pyl_ids_snap,))
+                cur.execute("""
+                    UPDATE sections SET snapshot_isactive = isactive
+                    WHERE programyearlevelid = ANY(%s)
+                """, (pyl_ids_snap,))
+
+        # ── Step 2: Cascade deactivation ────────────────────────
+        cur.execute("UPDATE programs SET isactive=FALSE WHERE programcode=%s", (code,))
+        cur.execute("""
+            UPDATE academic_offering SET isactive=FALSE
+            WHERE programcode=%s
+            RETURNING academicofferingid
+        """, (code,))
+        ao_ids = [row[0] for row in cur.fetchall()]
+
+        pyl_ids = []
+        if ao_ids:
+            cur.execute("""
+                UPDATE program_yearlevel SET isactive=FALSE
+                WHERE academicofferingid = ANY(%s)
+                RETURNING programyearlevelid
+            """, (ao_ids,))
+            pyl_ids = [row[0] for row in cur.fetchall()]
+
+        if pyl_ids:
+            cur.execute("""
+                UPDATE sections SET isactive=FALSE
+                WHERE programyearlevelid = ANY(%s)
+            """, (pyl_ids,))
+
         conn.commit()
-        flash(f"Program '{code}' deactivated.", "success")
-        write_activity_log("Deactivated Program", f'Program {code} marked as inactive',
+        flash(f"Program '{code}' deactivated along with its offerings, year levels, and sections.", "success")
+        write_activity_log("Deactivated Program",
+                           f'Program {code} and all its academic offerings/year levels/sections marked inactive',
                            category='program', color=_LOG_COLORS['program'])
     except Exception as e:
         conn.rollback(); flash(f"Error deactivating program: {e}", "error")
@@ -11088,7 +11284,69 @@ def settings_toggle_program_active():
     conn = get_db_connection()
     cur  = conn.cursor()
     try:
-        cur.execute("UPDATE programs SET isactive = %s WHERE programcode = %s", (is_active, prog_code))
+        if is_active:
+            # Reactivation: restore child entities to their pre-deactivation snapshot states.
+            cur.execute("UPDATE programs SET isactive=TRUE WHERE programcode=%s", (prog_code,))
+
+            cur.execute("SELECT academicofferingid FROM academic_offering WHERE programcode=%s", (prog_code,))
+            ao_ids = [row[0] for row in cur.fetchall()]
+            if ao_ids:
+                cur.execute("SELECT programyearlevelid FROM program_yearlevel WHERE academicofferingid = ANY(%s)", (ao_ids,))
+                pyl_ids = [row[0] for row in cur.fetchall()]
+
+                if pyl_ids:
+                    # 1. Restore sections from snapshot
+                    cur.execute("""
+                        UPDATE sections
+                        SET isactive = COALESCE(snapshot_isactive, FALSE),
+                            snapshot_isactive = NULL
+                        WHERE programyearlevelid = ANY(%s)
+                    """, (pyl_ids,))
+
+                # 2. Restore year levels from snapshot
+                cur.execute("""
+                    UPDATE program_yearlevel
+                    SET isactive = COALESCE(snapshot_isactive, FALSE),
+                        snapshot_isactive = NULL
+                    WHERE academicofferingid = ANY(%s)
+                """, (ao_ids,))
+
+                if pyl_ids:
+                    # 3. Cascade: year levels with no active sections must remain inactive
+                    cur.execute("""
+                        UPDATE program_yearlevel pyl
+                        SET isactive = FALSE
+                        WHERE pyl.programyearlevelid = ANY(%s)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM sections s
+                              WHERE s.programyearlevelid = pyl.programyearlevelid
+                                AND s.isactive = TRUE
+                          )
+                    """, (pyl_ids,))
+
+                # 4. Restore academic offerings from snapshot
+                cur.execute("""
+                    UPDATE academic_offering
+                    SET isactive = COALESCE(snapshot_isactive, FALSE),
+                        snapshot_isactive = NULL
+                    WHERE programcode = %s
+                """, (prog_code,))
+
+                # 5. Cascade: offerings with no active year levels must remain inactive
+                cur.execute("""
+                    UPDATE academic_offering ao
+                    SET isactive = FALSE
+                    WHERE ao.programcode = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM program_yearlevel pyl
+                          WHERE pyl.academicofferingid = ao.academicofferingid
+                            AND pyl.isactive = TRUE
+                      )
+                """, (prog_code,))
+        else:
+            # Deactivation via AJAX path — cascade handled by settings_delete_program (form POST).
+            cur.execute("UPDATE programs SET isactive=FALSE WHERE programcode=%s", (prog_code,))
+
         conn.commit()
         action = 'activated' if is_active else 'deactivated'
         write_activity_log(
@@ -11107,47 +11365,179 @@ def settings_toggle_program_active():
 
 @app.route('/admin/settings/section/edit', methods=['POST'])
 def settings_edit_section():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
-    section_id  = request.form.get('section_id')
-    sec_name    = request.form.get('section_name', '').strip()
-    if not section_id or not sec_name:
-        flash("Section ID and name are required.", "error")
-        return redirect(url_for('admin_settings'))
-    conn = get_db_connection(); cur = conn.cursor()
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    section_id = request.form.get('section_id', '').strip()
+    pyl_id     = request.form.get('pyl_id',     '').strip()
+    new_name   = request.form.get('section_name', '').strip()
+    if not new_name:
+        return jsonify({'success': False, 'error': 'Section name is required.'})
+    conn = None; cur = None
     try:
-        cur.execute("UPDATE sections SET sectionname=%s WHERE sectionid=%s", (sec_name, section_id))
+        conn = get_db_connection(); cur = conn.cursor()
+        if section_id:
+            cur.execute(
+                "UPDATE sections SET sectionname=%s WHERE sectionid=%s RETURNING sectionid, sectionname",
+                (new_name, section_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'success': False, 'error': 'Section not found.'})
+            sid, sname = row[0], row[1]
+        elif pyl_id:
+            # Materialise virtual section with the new name
+            cur.execute("""
+                INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (programyearlevelid, sectionname) DO UPDATE
+                    SET sectionname = EXCLUDED.sectionname
+                RETURNING sectionid, sectionname
+            """, (pyl_id, new_name))
+            row = cur.fetchone()
+            sid, sname = row[0], row[1]
+        else:
+            return jsonify({'success': False, 'error': 'Missing section_id or pyl_id.'})
         conn.commit()
-        flash(f"Section renamed to '{sec_name}'.", "success")
-        write_activity_log("Renamed Section",
-                           f"Section ID {section_id} renamed to {sec_name}",
-                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+        try:
+            write_activity_log("Renamed Section",
+                               f"Section renamed to '{sname}'",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except: pass
+        return jsonify({'success': True, 'sectionid': sid, 'sectionname': sname})
     except Exception as e:
-        conn.rollback(); flash(f"Error renaming section: {e}", "error")
+        if conn: conn.rollback()
+        return jsonify({'success': False, 'error': str(e)})
     finally:
-        cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
+        if cur:  cur.close()
+        if conn: conn.close()
+
+
+@app.route('/admin/settings/section/delete', methods=['POST'])
+def settings_delete_section():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    section_id = request.form.get('section_id', '').strip()
+    conn = None; cur = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        if not section_id:
+            return jsonify({'success': False, 'error': 'Section ID is required.'})
+
+        # Resolve full hierarchy IDs
+        cur.execute("""
+            SELECT s.programyearlevelid, ao.academicofferingid, ao.programcode
+            FROM sections s
+            JOIN program_yearlevel pyl ON s.programyearlevelid = pyl.programyearlevelid
+            JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+            WHERE s.sectionid = %s
+        """, (section_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Section not found.'})
+        pyl_id, ao_id, prog_code = row
+
+        # Check current-semester schedule (blocks deactivation entirely)
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule sc
+            JOIN semester sem ON sem.semesterid = sc.semesterid
+            WHERE sc.sectionid = %s AND sem.isactive = TRUE
+        """, (section_id,))
+        if cur.fetchone()[0] > 0:
+            return jsonify({'success': False,
+                            'error': 'Cannot deactivate this section: it is assigned to the active academic year schedule.'})
+
+        # Check any historical schedule (blocks hard delete, allows soft delete)
+        cur.execute("SELECT COUNT(*) FROM schedule WHERE sectionid=%s", (section_id,))
+        sch_count = cur.fetchone()[0]
+        if sch_count > 0:
+            cur.execute("UPDATE sections SET isactive=FALSE WHERE sectionid=%s", (section_id,))
+            mode = 'soft'
+        else:
+            cur.execute("DELETE FROM sections WHERE sectionid=%s", (section_id,))
+            mode = 'hard'
+
+        # ── Recalculate active section count and update year level ──
+        cur.execute("SELECT COUNT(*) FROM sections WHERE programyearlevelid=%s AND isactive=TRUE", (pyl_id,))
+        new_sec_count = cur.fetchone()[0]
+        cur.execute("UPDATE program_yearlevel SET numberofsections=%s WHERE programyearlevelid=%s",
+                    (new_sec_count, pyl_id))
+
+        # ── Cascade: deactivate year level if no active sections ──
+        if new_sec_count == 0:
+            cur.execute("UPDATE program_yearlevel SET isactive=FALSE WHERE programyearlevelid=%s", (pyl_id,))
+        cur.execute("SELECT isactive FROM program_yearlevel WHERE programyearlevelid=%s", (pyl_id,))
+        pyl_active = bool(cur.fetchone()[0])
+
+        # ── Cascade: deactivate offering if no active year levels ──
+        cur.execute("SELECT COUNT(*) FROM program_yearlevel WHERE academicofferingid=%s AND isactive=TRUE", (ao_id,))
+        if cur.fetchone()[0] == 0:
+            cur.execute("UPDATE academic_offering SET isactive=FALSE WHERE academicofferingid=%s", (ao_id,))
+        cur.execute("SELECT isactive FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
+        ao_active = bool(cur.fetchone()[0])
+
+        # ── Cascade: deactivate program if no active offerings ──
+        cur.execute("SELECT COUNT(*) FROM academic_offering WHERE programcode=%s AND isactive=TRUE", (prog_code,))
+        if cur.fetchone()[0] == 0:
+            cur.execute("UPDATE programs SET isactive=FALSE WHERE programcode=%s", (prog_code,))
+        cur.execute("SELECT isactive FROM programs WHERE programcode=%s", (prog_code,))
+        prog_active = bool(cur.fetchone()[0])
+
+        conn.commit()
+        try:
+            write_activity_log("Deleted Section",
+                               f"Section ID {section_id} {'deactivated' if mode=='soft' else 'removed'}; "
+                               f"YL {pyl_id} count→{new_sec_count}",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except: pass
+
+        return jsonify({
+            'success':          True,
+            'mode':             mode,
+            'sectionid':        int(section_id),
+            'pyl_id':           pyl_id,
+            'numberofsections': new_sec_count,
+            'pyl_isactive':     pyl_active,
+            'ao_id':            ao_id,
+            'ao_isactive':      ao_active,
+            'prog_code':        prog_code,
+            'prog_isactive':    prog_active,
+        })
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
 
 
 @app.route('/admin/settings/offering/add', methods=['POST'])
 def settings_add_offering():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
     prog_code  = request.form.get('program_code', '').strip().upper()
     track_name = request.form.get('track_name', '').strip()
     short_code = request.form.get('short_code', '').strip().upper()
     track_type = request.form.get('track_type', 'Track').strip()
     is_active  = request.form.get('status') == '1'
 
-    if not prog_code or not track_name or not short_code:
-        flash("Program, track name, and short code are all required.", "error")
-        return redirect(url_for('admin_settings'))
+    debug_log = {
+        'input': {
+            'prog_code': prog_code, 'track_name': track_name,
+            'short_code': short_code, 'track_type': track_type, 'is_active': is_active,
+        }
+    }
 
-    conn = get_db_connection(); cur = conn.cursor()
+    if not prog_code or not track_name or not short_code:
+        return jsonify({'success': False, 'error': 'Program, track name, and short code are all required.', 'log': debug_log})
+
+    conn = None; cur = None
     try:
+        conn = get_db_connection(); cur = conn.cursor()
         # Validate: duplicate track code
         cur.execute("SELECT 1 FROM track WHERE UPPER(trackcode) = UPPER(%s)", (short_code,))
         if cur.fetchone():
-            flash(f"Track code '{short_code}' already exists.", "error")
-            return redirect(url_for('admin_settings'))
+            return jsonify({'success': False, 'error': f"Track code '{short_code}' already exists.", 'log': debug_log})
 
         # Validate: duplicate track name under same program
         cur.execute("""
@@ -11155,89 +11545,295 @@ def settings_add_offering():
             WHERE UPPER(parentprogramcode) = UPPER(%s) AND LOWER(trackname) = LOWER(%s)
         """, (prog_code, track_name))
         if cur.fetchone():
-            flash(f"Track '{track_name}' already exists for program '{prog_code}'.", "error")
-            return redirect(url_for('admin_settings'))
+            return jsonify({'success': False, 'error': f"Track '{track_name}' already exists for program '{prog_code}'.", 'log': debug_log})
 
-        # Step 1: Create track
+        # ── STEP 1: Create Track ──────────────────────────────
         cur.execute("""
             INSERT INTO track (trackcode, trackname, parentprogramcode, tracktype, isactive)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING trackid
         """, (short_code, track_name, prog_code, track_type, is_active))
-        track_id = cur.fetchone()[0]
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Track insert returned no ID — creation failed.', 'log': debug_log})
+        track_id = row[0]
+        debug_log['track_id'] = track_id
+        print(f"[AddOffering] STEP 1 — Track created: trackid={track_id}, code={short_code}")
 
-        # Step 2: Auto-create base offering if this is the first track for the program
-        cur.execute("""
-            SELECT academicofferingid FROM academic_offering
-            WHERE programcode = %s AND trackid IS NULL
-        """, (prog_code,))
+        # ── STEP 2: Ensure base offering exists for program ───
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE programcode=%s AND trackid IS NULL", (prog_code,))
         if not cur.fetchone():
-            cur.execute("SELECT programname FROM programs WHERE programcode = %s", (prog_code,))
+            cur.execute("SELECT programname FROM programs WHERE programcode=%s", (prog_code,))
             prow = cur.fetchone()
             prog_name = prow[0] if prow else prog_code
             cur.execute("""
                 INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
                 VALUES (%s, NULL, %s, %s, TRUE)
             """, (prog_code, prog_code, prog_name))
+            print(f"[AddOffering] STEP 2 — Base offering created for {prog_code}")
 
-        # Step 3: Create academic offering
-        offering_code = prog_code + short_code
+        # ── STEP 3: Create Academic Offering ─────────────────
+        offering_code = f"{prog_code}-{short_code}"
         offering_desc = f"{prog_code} - {track_name}"
         cur.execute("""
             INSERT INTO academic_offering (programcode, trackid, offeringcode, offeringdescription, isactive)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING academicofferingid
         """, (prog_code, track_id, offering_code, offering_desc, is_active))
-        ao_id = cur.fetchone()[0]
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Academic offering insert returned no ID — creation failed.', 'log': debug_log})
+        ao_id = row[0]
+        debug_log['academicofferingid'] = ao_id
+        debug_log['offeringcode'] = offering_code
+        print(f"[AddOffering] STEP 3 — Academic Offering created: ao_id={ao_id}, code={offering_code}")
 
-        # Step 4: Read number of year levels from program
-        cur.execute("SELECT numyearlevel FROM programs WHERE programcode = %s", (prog_code,))
+        # Verify offering exists
+        cur.execute("SELECT academicofferingid FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
+        if not cur.fetchone():
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Offering verification failed — record not found after insert.', 'log': debug_log})
+
+        # ── STEP 4: Resolve number of year levels + active AY ─
+        cur.execute("SELECT numyearlevel FROM programs WHERE programcode=%s", (prog_code,))
         prow = cur.fetchone()
-        num_yr = prow[0] if prow else 4
+        num_yr = int(prow[0]) if prow and prow[0] else 4
+        debug_log['num_yr'] = num_yr
 
-        cur.execute("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1")
+        cur.execute("SELECT academicyearid FROM academicyear WHERE isactive=TRUE LIMIT 1")
         ay_row = cur.fetchone()
         if not ay_row:
             cur.execute("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC NULLS LAST LIMIT 1")
             ay_row = cur.fetchone()
-        ay_id = ay_row[0] if ay_row else None
+        if not ay_row:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'No academic year found. Please configure an academic year first.', 'log': debug_log})
+        ay_id = ay_row[0]
+        debug_log['academicyearid'] = ay_id
+        print(f"[AddOffering] STEP 4 — Program has {num_yr} year levels, AY={ay_id}")
 
-        # Step 5: Create program year levels with section counts (no actual section rows)
-        if ay_id:
-            for yr in range(1, num_yr + 1):
-                sec_count  = max(0, int(request.form.get(f'sections_yr_{yr}', '1') or 1))
-                yr_active  = request.form.get(f'active_yr_{yr}') == '1'
+        # ── STEP 5: Create Program Year Level records ─────────
+        pyl_ids = []
+        section_counts = []
+        for yr in range(1, num_yr + 1):
+            raw_sec = request.form.get(f'sections_yr_{yr}', '1')
+            sec_count = max(1, int(raw_sec) if str(raw_sec).isdigit() else 1)
+            yr_active = request.form.get(f'active_yr_{yr}') == '1'
+            cur.execute("""
+                INSERT INTO program_yearlevel
+                    (academicofferingid, academicyearid, yearlevel, isactive, numberofsections)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT ON CONSTRAINT uq_program_yearlevel DO UPDATE
+                    SET numberofsections = EXCLUDED.numberofsections,
+                        isactive         = EXCLUDED.isactive
+                RETURNING programyearlevelid
+            """, (ao_id, ay_id, yr, yr_active, sec_count))
+            pyl_row = cur.fetchone()
+            if not pyl_row:
+                conn.rollback()
+                return jsonify({'success': False, 'error': f'Year level {yr} insert failed — no ID returned.', 'log': debug_log})
+            pyl_ids.append(pyl_row[0])
+            section_counts.append({'year': yr, 'sections': sec_count, 'active': yr_active})
+            print(f"[AddOffering] STEP 5 — Year {yr}: pyl_id={pyl_row[0]}, sections={sec_count}, active={yr_active}")
+
+        # Verify at least one year level was created
+        cur.execute("SELECT COUNT(*) FROM program_yearlevel WHERE academicofferingid=%s", (ao_id,))
+        pyl_count = cur.fetchone()[0]
+        if pyl_count == 0:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'No year level records were created. Transaction rolled back.', 'log': debug_log})
+
+        debug_log['programyearlevelids'] = pyl_ids
+        debug_log['section_counts'] = section_counts
+
+        # ── STEP 6: Auto-create section records ────────────────
+        _LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        created_sections = []
+        for i, sc in enumerate(section_counts):
+            if not sc['active']:
+                continue
+            pyl_id = pyl_ids[i]
+            for j in range(sc['sections']):
+                sec_name = f"{offering_code}-{sc['year']}{_LETTERS[j]}"
                 cur.execute("""
-                    INSERT INTO program_yearlevel
-                        (academicofferingid, academicyearid, yearlevel, isactive, numberofsections)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT ON CONSTRAINT uq_program_yearlevel DO NOTHING
-                """, (ao_id, ay_id, yr, yr_active, sec_count))
+                    INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                    VALUES (%s, %s, TRUE)
+                    ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                    RETURNING sectionid
+                """, (pyl_id, sec_name))
+                row = cur.fetchone()
+                if row:
+                    created_sections.append({
+                        'sectionid':          row[0],
+                        'sectionname':        sec_name,
+                        'programyearlevelid': pyl_id,
+                        'academicofferingid': ao_id,
+                        'yearlevel':          sc['year'],
+                        'programcode':        offering_code,
+                        'isactive':           True,
+                    })
+            print(f"[AddOffering] STEP 6 — Year {sc['year']}: inserted {sc['sections']} section(s)")
+
+        # Validation: verify section counts match exactly
+        for i, sc in enumerate(section_counts):
+            if not sc['active']:
+                continue
+            pyl_id = pyl_ids[i]
+            cur.execute(
+                "SELECT COUNT(*) FROM sections WHERE programyearlevelid=%s AND isactive=TRUE",
+                (pyl_id,)
+            )
+            actual = cur.fetchone()[0]
+            if actual != sc['sections']:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': (f"Section sync failed for Year {sc['year']}: "
+                              f"expected {sc['sections']}, found {actual}. Transaction rolled back."),
+                    'log': debug_log,
+                })
+
+        debug_log['created_sections'] = len(created_sections)
+
+        # ── Enforce hierarchy: active offering requires at least one active year level ──
+        active_yls_count = sum(1 for sc in section_counts if sc['active'])
+        if active_yls_count == 0 and is_active:
+            conn.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'An Academic Offering must contain at least one active Program Year Level before it can be activated.',
+                'log': debug_log,
+            })
+
+        # ── Auto-activate parent program when offering is active ──
+        if is_active:
+            cur.execute("UPDATE programs SET isactive=TRUE WHERE programcode=%s AND isactive=FALSE", (prog_code,))
 
         conn.commit()
-        flash(f"Offering '{offering_code}' created with {num_yr} year levels.", "success")
-        write_activity_log("Added Academic Offering",
-                           f"Created {track_type} offering {offering_code} ({track_name}) for {prog_code}",
-                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+        print(f"[AddOffering] COMMIT — Offering '{offering_code}' fully created with {len(created_sections)} sections.")
+
+        # ── Build response payload (matches offerings_mgmt format) ──
+        total_sections = sum(s['sections'] for s in section_counts if s['active'])
+        offering_payload = {
+            'academicofferingid': ao_id,
+            'offeringcode':       offering_code,
+            'offeringdescription': offering_desc,
+            'programcode':        prog_code,
+            'isactive':           is_active,
+            'trackname':          track_name,
+            'trackcode':          short_code,
+            'tracktype':          track_type,
+            'yearlevel_count':    pyl_count,
+            'section_count':      total_sections,
+        }
+        yearlevel_payload = [
+            {
+                'programyearlevelid': pyl_ids[i],
+                'academicofferingid': ao_id,
+                'yearlevel':          section_counts[i]['year'],
+                'isactive':           section_counts[i]['active'],
+                'numberofsections':   section_counts[i]['sections'],
+            }
+            for i in range(len(pyl_ids))
+        ]
+
+        try:
+            write_activity_log("Added Academic Offering",
+                               f"Created {track_type} offering {offering_code} ({track_name}) for {prog_code}",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except Exception:
+            pass  # Activity log failure must not affect the JSON response
+
+        cur.execute("SELECT isactive FROM programs WHERE programcode=%s", (prog_code,))
+        prog_row = cur.fetchone()
+        prog_isactive = bool(prog_row[0]) if prog_row else True
+
+        return jsonify({
+            'success':      True,
+            'message':      f"Offering '{offering_code}' created successfully with {pyl_count} year levels and {len(created_sections)} sections.",
+            'offering':     offering_payload,
+            'yearlevels':   yearlevel_payload,
+            'sections':     created_sections,
+            'prog_isactive': prog_isactive,
+            'log':          debug_log,
+        })
+
     except Exception as e:
-        conn.rollback(); flash(f"Error creating offering: {e}", "error")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        import traceback
+        print(f"[AddOffering] ERROR: {e}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e), 'log': debug_log})
     finally:
-        cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
+        if cur:  cur.close()
+        if conn: conn.close()
 
 
 @app.route('/admin/settings/offering/edit', methods=['POST'])
 def settings_edit_offering():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
     ao_id      = request.form.get('offering_id')
     track_name = request.form.get('track_name', '').strip()
     track_code = request.form.get('track_code', '').strip().upper()
     is_active  = request.form.get('status') == '1'
 
-    conn = get_db_connection(); cur = conn.cursor()
+    if not ao_id:
+        return jsonify({'success': False, 'error': 'Offering ID is required.'})
+
+    conn = None; cur = None
     try:
+        conn = get_db_connection(); cur = conn.cursor()
+
+        # Read current AO state and programcode before any changes
+        cur.execute("SELECT programcode, isactive FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
+        ao_state = cur.fetchone()
+        if not ao_state:
+            return jsonify({'success': False, 'error': 'Offering not found.'})
+        prog_code, prev_ao_active = ao_state
+
+        # Read current YL states for schedule protection
+        cur.execute("""
+            SELECT programyearlevelid, yearlevel, isactive
+            FROM program_yearlevel WHERE academicofferingid=%s ORDER BY yearlevel
+        """, (ao_id,))
+        prev_yls = {row[1]: {'pyl_id': row[0], 'prev_active': row[2]} for row in cur.fetchall()}
+
+        # ── Schedule protection: block deactivation if current schedule exists ──
+        if prev_ao_active and not is_active:
+            cur.execute("""
+                SELECT COUNT(*) FROM schedule sc
+                JOIN semester sem ON sem.semesterid = sc.semesterid
+                JOIN sections sec ON sec.sectionid = sc.sectionid
+                JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+                WHERE pyl.academicofferingid = %s AND sem.isactive = TRUE
+            """, (ao_id,))
+            if cur.fetchone()[0] > 0:
+                return jsonify({'success': False,
+                                'error': 'Cannot deactivate this offering: it has sections assigned to the active academic year schedule.'})
+
+        for yr, yl_info in prev_yls.items():
+            new_yr_active = request.form.get(f'active_yr_{yr}') == '1'
+            if yl_info['prev_active'] and not new_yr_active:
+                cur.execute("""
+                    SELECT COUNT(*) FROM schedule sc
+                    JOIN semester sem ON sem.semesterid = sc.semesterid
+                    JOIN sections sec ON sec.sectionid = sc.sectionid
+                    WHERE sec.programyearlevelid = %s AND sem.isactive = TRUE
+                """, (yl_info['pyl_id'],))
+                if cur.fetchone()[0] > 0:
+                    return jsonify({'success': False,
+                                    'error': f'Cannot deactivate Year {yr}: its sections are assigned to the active academic year schedule.'})
+
+        # Update offering status
         cur.execute("UPDATE academic_offering SET isactive=%s WHERE academicofferingid=%s",
                     (is_active, ao_id))
+        print(f"[EditOffering] ao_id={ao_id}, is_active={is_active}")
+
         # Update linked track
         cur.execute("SELECT trackid FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
         row = cur.fetchone()
@@ -11246,6 +11842,7 @@ def settings_edit_offering():
                 UPDATE track SET trackname=%s, trackcode=%s, isactive=%s
                 WHERE trackid=%s
             """, (track_name, track_code, is_active, row[0]))
+            print(f"[EditOffering] Track updated: trackid={row[0]}, name={track_name}, code={track_code}")
 
         # Update per-year-level section counts
         cur.execute("""
@@ -11253,25 +11850,289 @@ def settings_edit_offering():
             WHERE academicofferingid = %s ORDER BY yearlevel
         """, (ao_id,))
         year_levels = cur.fetchall()
+        updated_yls = []
         for pyl_id, yr in year_levels:
-            sec_count = max(0, int(request.form.get(f'sections_yr_{yr}', '1') or 1))
+            raw_sec   = request.form.get(f'sections_yr_{yr}', '1')
+            sec_count = max(1, int(raw_sec) if str(raw_sec).isdigit() else 1)
             yr_active = request.form.get(f'active_yr_{yr}') == '1'
             cur.execute("""
                 UPDATE program_yearlevel
                 SET numberofsections=%s, isactive=%s
                 WHERE programyearlevelid=%s
             """, (sec_count, yr_active, pyl_id))
+            updated_yls.append({
+                'programyearlevelid': pyl_id,
+                'academicofferingid': int(ao_id),
+                'yearlevel':          yr,
+                'isactive':           yr_active,
+                'numberofsections':   sec_count,
+            })
+            print(f"[EditOffering] Year {yr}: pyl_id={pyl_id}, sections={sec_count}, active={yr_active}")
+
+        # ── Enforce hierarchy: active offering requires at least one active year level ──
+        active_yl_count = sum(1 for y in updated_yls if y['isactive'])
+        if active_yl_count == 0 and is_active:
+            conn.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'An Academic Offering must contain at least one active Program Year Level before it can be activated.',
+            })
+
+        # ── Sync sections for each year level ─────────────────
+        _LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        cur.execute("SELECT offeringcode FROM academic_offering WHERE academicofferingid=%s", (ao_id,))
+        _offer_row  = cur.fetchone()
+        _offer_code = _offer_row[0] if _offer_row else ''
+
+        all_sections = []
+        for yl_data in updated_yls:
+            pyl_id    = yl_data['programyearlevelid']
+            yr        = yl_data['yearlevel']
+            new_count = yl_data['numberofsections']
+            yr_active = yl_data['isactive']
+
+            # Load ALL sections (active + inactive) — never delete, only toggle isactive
+            cur.execute("""
+                SELECT sectionid, sectionname, isactive FROM sections
+                WHERE programyearlevelid=%s ORDER BY sectionname
+            """, (pyl_id,))
+            all_secs      = cur.fetchall()
+            active_secs   = [(sid, sn) for sid, sn, sa in all_secs if sa]
+            inactive_secs = [(sid, sn) for sid, sn, sa in all_secs if not sa]
+            active_count  = len(active_secs)
+            all_names     = {sn for _, sn, _ in all_secs}
+
+            if yr_active:
+                if new_count > active_count:
+                    needed = new_count - active_count
+                    # 1. Reactivate existing inactive sections first (preserves original records)
+                    reactivated = 0
+                    for sid, _ in inactive_secs:
+                        if reactivated >= needed:
+                            break
+                        cur.execute("UPDATE sections SET isactive=TRUE WHERE sectionid=%s", (sid,))
+                        reactivated += 1
+                    # 2. Only create new rows for genuinely new slots
+                    if reactivated < needed:
+                        still_needed = needed - reactivated
+                        inserted = 0
+                        for j in range(26):
+                            if inserted >= still_needed:
+                                break
+                            sec_name = f"{_offer_code}-{yr}{_LETTERS[j]}"
+                            if sec_name not in all_names:
+                                cur.execute("""
+                                    INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                                    VALUES (%s, %s, TRUE)
+                                    ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                                """, (pyl_id, sec_name))
+                                if cur.rowcount > 0:
+                                    inserted += 1
+                                    all_names.add(sec_name)
+                elif new_count < active_count:
+                    # Deactivate excess (last alphabetically) — do not delete
+                    for sid, _ in active_secs[new_count:]:
+                        cur.execute("UPDATE sections SET isactive=FALSE WHERE sectionid=%s", (sid,))
+            else:
+                # Year level inactive → deactivate all its sections (keep records)
+                cur.execute(
+                    "UPDATE sections SET isactive=FALSE WHERE programyearlevelid=%s AND isactive=TRUE",
+                    (pyl_id,)
+                )
+
+            # Collect final state for response
+            cur.execute("""
+                SELECT sectionid, sectionname, isactive FROM sections
+                WHERE programyearlevelid=%s ORDER BY sectionname
+            """, (pyl_id,))
+            for sid, sname, sactive in cur.fetchall():
+                all_sections.append({
+                    'sectionid':          sid,
+                    'sectionname':        sname,
+                    'programyearlevelid': pyl_id,
+                    'academicofferingid': int(ao_id),
+                    'yearlevel':          yr,
+                    'programcode':        _offer_code,
+                    'isactive':           sactive,
+                })
+            print(f"[EditOffering] Year {yr}: synced sections, new_count={new_count}, active={yr_active}")
+
+        # ── Auto-activate parent program when offering is active ──
+        if is_active:
+            cur.execute("UPDATE programs SET isactive=TRUE WHERE programcode=%s AND isactive=FALSE", (prog_code,))
+
+        # Read back offering data and final program state for response
+        cur.execute("""
+            SELECT ao.offeringcode, ao.offeringdescription, ao.programcode,
+                   t.trackname, t.trackcode, t.tracktype,
+                   COUNT(pyl.programyearlevelid) AS yearlevel_count,
+                   COALESCE(SUM(pyl.numberofsections), 0) AS section_count
+            FROM   academic_offering ao
+            LEFT JOIN track t ON t.trackid = ao.trackid
+            LEFT JOIN program_yearlevel pyl ON pyl.academicofferingid = ao.academicofferingid AND pyl.isactive = TRUE
+            WHERE  ao.academicofferingid = %s
+            GROUP  BY ao.offeringcode, ao.offeringdescription, ao.programcode,
+                      t.trackname, t.trackcode, t.tracktype
+        """, (ao_id,))
+        ao_row = cur.fetchone()
+        cur.execute("SELECT isactive FROM programs WHERE programcode=%s", (prog_code,))
+        prog_row = cur.fetchone()
+        prog_isactive = bool(prog_row[0]) if prog_row else True
 
         conn.commit()
-        flash("Offering updated.", "success")
-        write_activity_log("Updated Academic Offering",
-                           f"Modified offering ID {ao_id}",
-                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+        print(f"[EditOffering] COMMIT — offering ID {ao_id} updated.")
+
+        offering_payload = None
+        if ao_row:
+            offering_payload = {
+                'academicofferingid': int(ao_id),
+                'offeringcode':       ao_row[0],
+                'offeringdescription': ao_row[1],
+                'programcode':        ao_row[2],
+                'isactive':           is_active,
+                'trackname':          ao_row[3] or '',
+                'trackcode':          ao_row[4] or '',
+                'tracktype':          ao_row[5] or '',
+                'yearlevel_count':    ao_row[6],
+                'section_count':      int(ao_row[7]),
+            }
+
+        try:
+            write_activity_log("Updated Academic Offering",
+                               f"Modified offering ID {ao_id}",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except Exception:
+            pass
+
+        return jsonify({
+            'success':       True,
+            'message':       'Offering updated successfully.',
+            'offering':      offering_payload,
+            'yearlevels':    updated_yls,
+            'sections':      all_sections,
+            'prog_isactive': prog_isactive,
+        })
+
     except Exception as e:
-        conn.rollback(); flash(f"Error updating offering: {e}", "error")
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        import traceback
+        print(f"[EditOffering] ERROR: {e}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)})
     finally:
-        cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
+        if cur:  cur.close()
+        if conn: conn.close()
+
+
+@app.route('/admin/settings/offering/delete', methods=['POST'])
+def settings_delete_offering():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    ao_id = request.form.get('offering_id')
+    if not ao_id:
+        return jsonify({'success': False, 'error': 'Offering ID is required.'})
+
+    conn = None; cur = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+
+        # Read offering info for logging
+        cur.execute("""
+            SELECT ao.offeringcode, ao.offeringdescription, ao.programcode,
+                   ao.trackid, ao.isactive
+            FROM   academic_offering ao
+            WHERE  ao.academicofferingid = %s
+        """, (ao_id,))
+        ao_row = cur.fetchone()
+        if not ao_row:
+            return jsonify({'success': False, 'error': 'Offering not found.'})
+        offering_code, offering_desc, prog_code, track_id, _ = ao_row
+
+        # ── Schedule protection ────────────────────────────
+        # Block deactivation if offering has sections in the current active semester
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule sc
+            JOIN semester sem ON sem.semesterid = sc.semesterid
+            JOIN sections sec ON sec.sectionid = sc.sectionid
+            JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+            WHERE pyl.academicofferingid = %s AND sem.isactive = TRUE
+        """, (ao_id,))
+        if cur.fetchone()[0] > 0:
+            return jsonify({'success': False,
+                            'error': f"Cannot deactivate '{offering_code}': it has sections assigned to the active academic year schedule."})
+
+        # ── Check for operational records ─────────────────
+        cur.execute("""
+            SELECT COUNT(*) FROM sections sec
+            JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            WHERE  pyl.academicofferingid = %s
+        """, (ao_id,))
+        section_count = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule sc
+            JOIN   sections sec ON sc.sectionid = sec.sectionid
+            JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            WHERE  pyl.academicofferingid = %s
+        """, (ao_id,))
+        schedule_count = cur.fetchone()[0]
+
+        has_operational = section_count > 0 or schedule_count > 0
+
+        if has_operational:
+            # Soft delete only — preserve data integrity
+            cur.execute("UPDATE academic_offering SET isactive=FALSE WHERE academicofferingid=%s", (ao_id,))
+            if track_id:
+                cur.execute("UPDATE track SET isactive=FALSE WHERE trackid=%s", (track_id,))
+            conn.commit()
+            print(f"[DeleteOffering] Soft-deleted {offering_code} (sections={section_count}, schedules={schedule_count})")
+            try:
+                write_activity_log("Deactivated Academic Offering",
+                                   f"Soft-deleted {offering_code} — {section_count} sections, {schedule_count} schedules preserved",
+                                   category='program', color=_LOG_COLORS.get('program', 'blue'))
+            except Exception: pass
+            return jsonify({
+                'success': True,
+                'mode':    'soft',
+                'message': f"'{offering_code}' has been deactivated. Associated records are preserved.",
+                'academicofferingid': int(ao_id),
+            })
+
+        # ── Hard delete — no operational records ──────────
+        # Delete in FK-safe order
+        cur.execute("""
+            DELETE FROM program_yearlevel WHERE academicofferingid = %s
+        """, (ao_id,))
+        cur.execute("DELETE FROM academic_offering WHERE academicofferingid = %s", (ao_id,))
+        if track_id:
+            cur.execute("DELETE FROM track WHERE trackid = %s", (track_id,))
+
+        conn.commit()
+        print(f"[DeleteOffering] Hard-deleted {offering_code}")
+        try:
+            write_activity_log("Deleted Academic Offering",
+                               f"Permanently deleted {offering_code} ({offering_desc}) from {prog_code}",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except Exception: pass
+        return jsonify({
+            'success': True,
+            'mode':    'hard',
+            'message': f"'{offering_code}' has been permanently deleted.",
+            'academicofferingid': int(ao_id),
+        })
+
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        import traceback
+        print(f"[DeleteOffering] ERROR: {e}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
 
 
 @app.route('/admin/reports')
