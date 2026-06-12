@@ -101,6 +101,99 @@ function updateYearLevels() {
     }
 }
 
+async function updateSections() {
+    const prog = document.getElementById('view_prog').value;
+    const ay   = document.getElementById('view_ay').value;
+    const sem  = document.getElementById('view_sem').value;
+    const sel  = document.getElementById('view_section');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">ALL SECTIONS</option>';
+    if (!ay || !sem) return;
+    try {
+        let url;
+        if (prog) {
+            // When offering is known, omit yearLevel so all sections of the offering are visible;
+            // the API already ordered them by yearlevel, sectionname for readability
+            url = `/api/sections-by-program?program=${encodeURIComponent(prog)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
+        } else {
+            url = `/api/sections-by-program?ay=${encodeURIComponent(ay)}&semester=${sem}`;
+        }
+        const resp = await fetch(url);
+        const data = await resp.json();
+        (data.sections || []).forEach(s => {
+            const opt = document.createElement('option');
+            opt.value            = s.id;
+            opt.dataset.offering  = s.offeringcode || '';
+            opt.dataset.yearlevel = String(s.yearlevel || '');
+            opt.text = s.name;
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('[updateSections]', e);
+    }
+}
+
+async function onSectionChange() {
+    const secSel  = document.getElementById('view_section');
+    const progSel = document.getElementById('view_prog');
+    if (!secSel || !progSel) { refreshOfferings(); return; }
+
+    const selectedId      = secSel.value;
+    const selOpt          = secSel.options[secSel.selectedIndex];
+    const sectionOffering = selOpt?.dataset?.offering   || '';
+    const sectionYl       = selOpt?.dataset?.yearlevel  || '';
+
+    if (!selectedId) {
+        // Section cleared → reset program + year level and reload all sections
+        progSel.value = '';
+        const ylSel = document.getElementById('view_yl');
+        if (ylSel) ylSel.value = '';
+        await updateSections();
+        refreshOfferings();
+        return;
+    }
+
+    // Auto-set program + year level from selected section's metadata
+    if (sectionOffering) {
+        const match = Array.from(progSel.options)
+            .find(o => o.value.toUpperCase() === sectionOffering.toUpperCase());
+        if (match && progSel.value.toUpperCase() !== match.value.toUpperCase()) {
+            progSel.value = match.value;
+            updateYearLevels();
+            if (sectionYl) {
+                const ylSel = document.getElementById('view_yl');
+                if (ylSel) ylSel.value = sectionYl;
+            }
+            // Reload section dropdown scoped to this program, then re-select same section
+            const ay  = document.getElementById('view_ay').value;
+            const sem = document.getElementById('view_sem').value;
+            secSel.innerHTML = '<option value="">ALL SECTIONS</option>';
+            try {
+                const url = `/api/sections-by-program?program=${encodeURIComponent(match.value)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
+                const resp = await fetch(url);
+                const data = await resp.json();
+                (data.sections || []).forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value             = s.id;
+                    opt.dataset.offering  = s.offeringcode || '';
+                    opt.dataset.yearlevel = String(s.yearlevel || '');
+                    opt.text = s.name;
+                    secSel.appendChild(opt);
+                });
+            } catch(e) { console.error('[onSectionChange] fetch', e); }
+            const reselect = Array.from(secSel.options).find(o => o.value === selectedId);
+            if (reselect) secSel.value = reselect.value;
+        } else if (!match) {
+            // Program not in dropdown — set year level only
+            if (sectionYl) {
+                const ylSel = document.getElementById('view_yl');
+                if (ylSel) ylSel.value = sectionYl;
+            }
+        }
+    }
+    refreshOfferings();
+}
+
 
 /* ---- Color palette ---- */
 const colorPalette = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
@@ -258,8 +351,8 @@ function renderTable(sessions) {
         }
     });
 
-    tbody.innerHTML = Object.values(grouped).map(sess => {
-        const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+    const groupedRows = Object.values(grouped);
+    const dataHtml = groupedRows.map(sess => {
         const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';
@@ -282,15 +375,35 @@ function renderTable(sessions) {
             <td class="td-room">${roomDisplay}</td>
         </tr>`;
     }).join('');
+
+    const totLec   = groupedRows.reduce((s, r) => s + (+(r.lecturehours    || 0)), 0);
+    const totLab   = groupedRows.reduce((s, r) => s + (+(r.laboratoryhours || 0)), 0);
+    const totCred  = groupedRows.reduce((s, r) => s + (+(r.creditunits     || 0)), 0);
+    const totHours = groupedRows.reduce((s, r) => s + (+(r.total_hours     || 0)), 0);
+    const totalHtml = `<tr class="sis-total-row">
+        <td colspan="3">TOTAL</td>
+        <td>${totLec}</td>
+        <td>${totLab}</td>
+        <td class="td-units">${totCred}</td>
+        <td></td>
+        <td class="td-time"></td>
+        <td>${totHours}</td>
+        <td class="td-days"></td>
+        <td class="td-room"></td>
+    </tr>`;
+
+    tbody.innerHTML = dataHtml + totalHtml;
 }
 
 /* ---- Data fetch ---- */
 let _refreshController = null;
 async function refreshOfferings() {
-    const pSel = document.getElementById('view_prog');
-    const yl  = document.getElementById('view_yl').value;
-    const sem = document.getElementById('view_sem').value;
-    const ay  = document.getElementById('view_ay').value;
+    const pSel    = document.getElementById('view_prog');
+    const yl      = document.getElementById('view_yl').value;
+    const sem     = document.getElementById('view_sem').value;
+    const ay      = document.getElementById('view_ay').value;
+    const secSel  = document.getElementById('view_section');
+    const section = secSel ? secSel.value : '';
 
     if (!pSel.value || !ay) {
         document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
@@ -307,13 +420,14 @@ async function refreshOfferings() {
     const ylOrdinals = ['1st', '2nd', '3rd', '4th', '5th'];
     const ylOrd = (ylOrdinals[parseInt(yl) - 1] || yl + 'th') + ' Year';
     const ylNum = parseInt(yl) || '';
-    document.getElementById('gridLabel').innerText = `${pText.toUpperCase()}  —  ${ylNum}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+    const secName = secSel && section ? ` · ${secSel.options[secSel.selectedIndex].text}` : '';
+    document.getElementById('gridLabel').innerText = `${pText.toUpperCase()}  —  ${ylNum}${secName}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
 
     if (_refreshController) _refreshController.abort();
     _refreshController = new AbortController();
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}${section ? '&section_id=' + section : ''}&_t=${Date.now()}`;
         const resp = await fetch(url, { signal: _refreshController.signal, cache: 'no-store' });
         if (!resp.ok) { console.error('[Schedule] API error:', resp.status); return; }
         const data = await resp.json();
@@ -361,9 +475,10 @@ function initOverlayMode() {
         updateYearLevels();
     }
     if (window._OVERLAY_YL && ylEl) ylEl.value = window._OVERLAY_YL;
+    updateSections();
 
     // Lock filter controls so the overlay context stays consistent
-    ['view_ay', 'view_sem', 'view_prog', 'view_yl', 'view_instructor'].forEach(id => {
+    ['view_ay', 'view_sem', 'view_prog', 'view_yl', 'view_section', 'view_instructor'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.disabled = true; el.style.opacity = '0.65'; }
     });
@@ -618,5 +733,6 @@ window.onload = function () {
     document.getElementById('calendarViewWrapper').style.display = 'block';
     document.getElementById('tableViewWrapper').style.display    = 'none';
     updateYearLevels();
+    updateSections();
     initOverlayMode();
 };

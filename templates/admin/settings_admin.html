@@ -211,8 +211,8 @@
               <td class="td-type">{{ des.designationname }}</td>
               <td>{{ des.regularloadunit }}</td>
               <td>{{ des.nightteachingservice }}</td>
-              <td>{% if des.nightteachingservice == 0 %}08:00 AM - 05:00 PM{% else %}07:30 AM - 04:30 PM{% endif %}</td>
-              <td>{% if des.nightteachingservice > 0 %}04:30 PM - 06:00 PM{% else %}None (Weekdays){% endif %}</td>
+              <td>{% if (des.nightteachingservice or 0) == 0 %}08:00 AM - 05:00 PM{% else %}07:30 AM - 04:30 PM{% endif %}</td>
+              <td>{% if (des.nightteachingservice or 0) > 0 %}04:30 PM - 06:00 PM{% else %}None (Weekdays){% endif %}</td>
               <td class="td-action" onclick="prepareDesig(this)"
                   data-id="{{ des.designationid }}"
                   data-name="{{ des.designationname }}"
@@ -352,11 +352,10 @@
     <!-- Embed JSON data for JS consumption -->
     <script id="pm-data" type="application/json">
       {
-        "programs":     {{ programs_mgmt  | tojson }},
-        "curricula":    {{ curricula_mgmt | tojson }},
-        "sections":     {{ sections_mgmt  | tojson }},
-        "offerings":    {{ offerings_mgmt | tojson }},
-        "yearlevels":   {{ yearlevel_data | tojson }}
+        "programs":   {{ programs_mgmt       | tojson }},
+        "curricula":  {{ curricula_mgmt      | tojson }},
+        "sections":   {{ sections_mgmt       | tojson }},
+        "yearlevels": {{ prog_yearlevel_mgmt | tojson }}
       }
     </script>
 
@@ -381,7 +380,7 @@
             <div class="pm-item-code">{{ p.programcode }}</div>
             <div class="pm-item-name">{{ p.programname }}</div>
             <div class="pm-item-meta">
-              <span class="pm-offers-label">{{ p.curr_count | int }} {{ 'curriculums' if (p.curr_count | int) > 1 else 'curriculum' }}</span>
+              <span class="pm-offers-label">{{ p.curr_count | int }} {{ 'curricula' if (p.curr_count | int) != 1 else 'curriculum' }}</span>
               <span class="pm-item-status {{ 'pm-item-active' if p.isactive else 'pm-item-inactive' }}"><span class="pm-dot-sm"></span> {{ 'Active' if p.isactive else 'Inactive' }}</span>
             </div>
           </div>
@@ -416,30 +415,30 @@
             </div>
             <div class="pmd-stats">
               <div class="pmd-stat-box">
-                <i class="fas fa-layer-group pmd-stat-icon"></i>
+                <i class="fas fa-book pmd-stat-icon"></i>
                 <div>
-                  <div class="pmd-stat-val" id="pdStatOfferings">—</div>
-                  <div class="pmd-stat-lbl">Academic Offerings</div>
+                  <div class="pmd-stat-val" id="pdStatCurricula">—</div>
+                  <div class="pmd-stat-lbl">Curricula Count</div>
                 </div>
               </div>
               <div class="pmd-stat-box">
                 <i class="fas fa-graduation-cap pmd-stat-icon"></i>
                 <div>
                   <div class="pmd-stat-val" id="pdStatYearLevels">—</div>
-                  <div class="pmd-stat-lbl">Year Levels (Generated)</div>
+                  <div class="pmd-stat-lbl">Year Levels</div>
                 </div>
               </div>
               <div class="pmd-stat-box">
                 <i class="fas fa-users pmd-stat-icon"></i>
                 <div>
                   <div class="pmd-stat-val" id="pdStatSections">—</div>
-                  <div class="pmd-stat-lbl">Sections</div>
+                  <div class="pmd-stat-lbl">Sections Count</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- 1. Program Information (collapsible) -->
+          <!-- 1. Program Information -->
           <div class="pmd-section">
             <div class="pmd-section-hd pmd-collapsible" onclick="togglePmdSection('pmdInfo','pmdInfoChevron')">
               <span class="pmd-section-title">Program Information</span>
@@ -447,31 +446,12 @@
             </div>
             <div class="pmd-section-body" id="pmdInfo">
               <div class="pmd-info-scroll">
-                
-                <!-- Added Style block for safe button stacking alignment inside table cells -->
                 <style>
-                  .pmd-info-table th:last-child {
-                    width: 140px; /* Reserve fixed space to prevent jumping */
-                  }
-                  #pmdInfoBody td:last-child {
-                    vertical-align: middle;
-                    padding: 8px 16px 8px 10px; /* Adjust padding nicely */
-                  }
-                  /* Target the buttons inside the last cell to behave as stacked blocks */
-                  #pmdInfoBody td:last-child button {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 130px; /* Give them an equal width for uniformity */
-                    margin-left: auto; /* Push them to the right edge */
-                    margin-bottom: 6px;
-                    box-sizing: border-box;
-                  }
-                  #pmdInfoBody td:last-child button:last-child {
-                    margin-bottom: 0;
-                  }
+                  .pmd-info-table th:last-child { width: 140px; }
+                  #pmdInfoBody td:last-child { vertical-align:middle; padding:8px 16px 8px 10px; }
+                  #pmdInfoBody td:last-child button { display:flex; align-items:center; justify-content:center; width:130px; margin-left:auto; margin-bottom:6px; box-sizing:border-box; }
+                  #pmdInfoBody td:last-child button:last-child { margin-bottom:0; }
                 </style>
-
                 <table class="pmd-info-table">
                   <thead>
                     <tr>
@@ -480,7 +460,7 @@
                       <th>Program Type</th>
                       <th>Number of Year Levels</th>
                       <th>Status</th>
-                      <th></th> <!-- Empty header for action buttons -->
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody id="pmdInfoBody"></tbody>
@@ -489,53 +469,53 @@
             </div>
           </div>
 
-          <!-- 2. Academic Offerings -->
+          <!-- 2. Curricula -->
           <div class="pmd-section">
             <div class="pmd-section-hd">
               <div class="pmd-section-hd-left">
-                <span class="pmd-section-title">Academic Offerings</span>
-                <p class="pmd-section-hint">
-                  <i class="fas fa-info-circle"></i>
-                  Add a track or specialization. The system will automatically generate academic offerings and year levels.
-                </p>
+                <span class="pmd-section-title">Curricula</span>
               </div>
-              <button class="pmd-add-btn" onclick="openAddOffering()">
-                <i class="fas fa-plus"></i> ADD OFFERING
-              </button>
             </div>
             <div class="pmd-section-body">
               <table class="pmd-data-table">
                 <thead>
                   <tr>
-                    <th>Academic Offering</th>
-                    <th>Year Levels</th>
-                    <th>Sections (Count)</th>
+                    <th>Curriculum Code</th>
+                    <th>Curriculum Year</th>
+                    <th>Subjects Count</th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
-                <tbody id="pmdOfferingsBody"></tbody>
+                <tbody id="pmdCurriculaBody"></tbody>
               </table>
-              <div class="pmd-table-footer" id="pmdOfferingsFooter"></div>
+              <div class="pmd-table-footer" id="pmdCurriculaFooter"></div>
             </div>
           </div>
 
           <!-- 3. Sections -->
           <div class="pmd-section">
             <div class="pmd-section-hd">
-              <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
-              <select class="pmd-filter-sel" id="pmdSecFilter" onchange="_renderSectionsPage(1)">
-                <option value="">All Status</option>
-                <option value="true">Active</option>
-                <option value="false">Inactive</option>
-              </select>
+              <div class="pmd-section-hd-left">
+                <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="pmd-filter-sel" id="pmdSecFilter" onchange="_renderSectionsPage(1)">
+                  <option value="">All Status</option>
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+                <button class="pmd-add-btn" onclick="openAddSection()">
+                  <i class="fas fa-plus"></i> ADD SECTION
+                </button>
+              </div>
             </div>
             <div class="pmd-section-body">
               <table class="pmd-data-table">
                 <thead>
                   <tr>
                     <th>Section</th>
-                    <th>Academic Offering</th>
+                    <th>Curriculum</th>
                     <th>Year Level</th>
                     <th>Status</th>
                     <th>Actions</th>
@@ -1091,6 +1071,14 @@
           </div>
         </div>
 
+        <!-- Year Level Activation -->
+        <div class="ep-info-block" style="margin-top:14px;">
+          <div class="ep-section-label">YEAR LEVEL ACTIVATION</div>
+          <div id="editProgYearLevels" class="ep-yl-toggles">
+            <!-- populated by JS -->
+          </div>
+        </div>
+
         <!-- Sections panel -->
         <div class="ep-sections-block">
           <div class="ep-sections-hd">
@@ -1124,14 +1112,6 @@
     <form action="{{ url_for('settings_add_section') }}" method="POST">
       <input type="hidden" name="program_code" id="addSecProgCode">
       <div class="s-modal-body">
-        <div class="mg-1">
-          <div class="mf" id="addSecOfferingWrap" style="display:none;">
-            <label>ACADEMIC OFFERING / TRACK</label>
-            <select id="addSecOfferingSelect" class="m-input"
-              onchange="document.getElementById('addSecProgCode').value=this.value">
-            </select>
-          </div>
-        </div>
         <div class="mg-2">
           <div class="mf">
             <label>YEAR LEVEL</label>
@@ -1204,315 +1184,61 @@
   </div>
 </div>
 
-<!-- ── MODAL: Add Curriculum Version ───────────────── -->
-<div id="modalAddTrack" class="s-modal">
-  <div class="s-modal-box w-sm">
-    <div class="s-modal-hd">
-      <h2>ADD CURRICULUM VERSION — <span id="addTrackProgLabel"></span></h2>
-      <button class="modal-x" onclick="closeSModal('modalAddTrack')"><i class="fas fa-times"></i></button>
-    </div>
-    <form action="{{ url_for('settings_add_curriculum') }}" method="POST">
-      <input type="hidden" name="program_code" id="addTrackProgCode">
-      <div class="s-modal-body">
-        <div class="mg-1">
-          <div class="mf" id="addTrackOfferingWrap" style="display:none;">
-            <label>ACADEMIC OFFERING / TRACK</label>
-            <select id="addTrackOfferingSelect" class="m-input"
-              onchange="document.getElementById('addTrackProgCode').value=this.value">
-            </select>
-          </div>
-          <div class="mf">
-            <label>CURRICULUM YEAR</label>
-            <input type="text" name="curriculum_year" id="addTrackYear" class="m-input" placeholder="e.g. 2025-2026" required>
-          </div>
-          <div class="mf">
-            <label>CURRICULUM CODE <small style="font-size:.65rem;font-weight:500;">(leave blank to auto-generate)</small></label>
-            <input type="text" name="curriculum_code" id="addTrackCode" class="m-input" placeholder="e.g. CY2526" style="text-transform:uppercase;">
-          </div>
-        </div>
-      </div>
-      <div class="m-divider" style="margin:0 26px;"></div>
-      <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalAddTrack')">CANCEL</button>
-        <button type="submit" class="btn-ms">ADD CURRICULUM</button>
-      </div>
-    </form>
-  </div>
-</div>
 
-<!-- ── MODAL: Edit Curriculum Track ────────────────── -->
-<div id="modalEditTrack" class="s-modal">
+<!-- ── MODAL: Edit Curriculum ───────────────────────── -->
+<div id="modalEditCurriculum" class="s-modal">
   <div class="s-modal-box w-sm">
     <div class="s-modal-hd">
-      <h2>EDIT CURRICULUM TRACK</h2>
-      <button class="modal-x" onclick="closeSModal('modalEditTrack')"><i class="fas fa-times"></i></button>
+      <h2>EDIT CURRICULUM</h2>
+      <button class="modal-x" onclick="closeSModal('modalEditCurriculum')"><i class="fas fa-times"></i></button>
     </div>
     <form action="{{ url_for('settings_edit_curriculum') }}" method="POST">
-      <input type="hidden" name="curriculum_id" id="editTrackId">
+      <input type="hidden" name="curriculum_id" id="editCurrId">
       <div class="s-modal-body">
         <div class="mg-1">
           <div class="mf">
             <label>CURRICULUM YEAR</label>
-            <input type="text" name="curriculum_year" id="editTrackYear" class="m-input" required>
+            <input type="text" name="curriculum_year" id="editCurrYear" class="m-input" required>
           </div>
           <div class="mf">
             <label>CURRICULUM CODE</label>
-            <input type="text" name="curriculum_code" id="editTrackCode" class="m-input" required style="text-transform:uppercase;">
+            <input type="text" name="curriculum_code" id="editCurrCode" class="m-input" required style="text-transform:uppercase;">
           </div>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalEditTrack')">CANCEL</button>
-        <button type="submit" class="btn-ms">SAVE TRACK</button>
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditCurriculum')">CANCEL</button>
+        <button type="submit" class="btn-ms">SAVE CURRICULUM</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ── MODAL: Delete Track Confirm ─────────────────── -->
-<div id="modalDeleteTrack" class="s-modal">
+<!-- ── MODAL: Delete Curriculum Confirm ─────────────── -->
+<div id="modalDeleteCurriculum" class="s-modal">
   <div class="s-modal-box w-sm">
     <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
       <i class="fas fa-exclamation-triangle"></i>
       <div>
-        <span class="lock-warn-title">DELETE CURRICULUM TRACK</span>
+        <span class="lock-warn-title">DELETE CURRICULUM</span>
         <span class="lock-warn-sub">This action cannot be undone.</span>
       </div>
     </div>
     <form action="{{ url_for('settings_delete_curriculum') }}" method="POST">
-      <input type="hidden" name="curriculum_id" id="delTrackId">
+      <input type="hidden" name="curriculum_id" id="delCurrId">
       <div class="s-modal-body">
-        <p class="lock-warn-body">Only empty curricula (with no subjects assigned) can be deleted. Subjects linked to this track must be removed first.</p>
+        <p class="lock-warn-body">Only empty curricula (with no subjects assigned) can be deleted. Subjects linked to this curriculum must be removed first.</p>
         <div class="lock-warn-actions">
           <button type="submit" class="btn-lock-view" style="background:#fce4e4; color:#c0392b; border-color:#f5c6c6;">
-            <i class="fas fa-trash"></i> Delete Track
+            <i class="fas fa-trash"></i> Delete Curriculum
           </button>
-          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteTrack')">
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteCurriculum')">
             <i class="fas fa-times"></i> Cancel
           </button>
         </div>
       </div>
     </form>
-  </div>
-</div>
-
-<!-- ── MODAL: Add Academic Offering ─────────────────── -->
-<div id="modalAddOffering" class="s-modal">
-  <div class="s-modal-box w-md">
-    <div class="s-modal-hd">
-      <h2>Add Offering</h2>
-      <button class="modal-x" onclick="closeSModal('modalAddOffering')"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="mf-info-banner">
-      <i class="fas fa-info-circle"></i>
-      Adding a track or specialization will automatically generate academic offerings, year levels, and section structures.
-    </div>
-    <form id="formAddOffering" action="{{ url_for('settings_add_offering') }}" method="POST">
-      <input type="hidden" name="program_code" id="addOfferProgCode">
-      <div class="s-modal-body">
-        <div class="mg-2">
-          <div class="mf">
-            <label>Type <span class="m-req">*</span></label>
-            <select name="track_type" class="m-input">
-              <option value="Track">Track</option>
-              <option value="Major">Major</option>
-              <option value="Specialization">Specialization</option>
-            </select>
-          </div>
-          <div class="mf">
-            <label>Track Name <span class="m-req">*</span></label>
-            <input type="text" name="track_name" class="m-input" required placeholder="e.g. Animal Technology">
-          </div>
-          <div class="mf">
-            <label>Short Code <span class="m-req">*</span></label>
-            <input type="text" name="short_code" class="m-input" required placeholder="e.g. AT"
-                   style="text-transform:uppercase;" maxlength="8"
-                   oninput="this.value=this.value.toUpperCase()">
-            <small class="m-hint">A short code used for generating offering codes (e.g. BSBIO + AT = BSBIOAT).</small>
-          </div>
-          <div class="mf span2">
-            <label>Status</label>
-            <label class="pmd-toggle-switch">
-              <input type="checkbox" name="status" id="addOfferStatus" value="1" checked>
-              <span class="pmd-toggle-slider"></span>
-              <span class="pmd-toggle-label" id="addOfferStatusLabel">Active</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Hierarchy warnings -->
-        <div id="addOfferInactiveWarn" class="offer-inactive-warn" style="display:none;">
-          <i class="fas fa-exclamation-triangle"></i>
-          <div><strong>This Academic Offering is inactive.</strong><br>
-          All Program Year Levels and Sections under this offering will also become inactive.</div>
-        </div>
-        <div id="addOfferNoYLWarn" class="offer-inactive-warn offer-warn-noyl" style="display:none;">
-          <i class="fas fa-info-circle"></i>
-          <div><strong>No active year levels remain.</strong><br>
-          This Academic Offering will automatically become inactive.</div>
-        </div>
-
-        <!-- Year Level Initialization Table -->
-        <div class="pmd-yl-section">
-          <label class="pmd-yl-label">Year Levels &amp; Sections</label>
-          <p class="m-hint" style="margin-bottom:8px;">Set the initial number of sections for each year level.</p>
-          <table class="pmd-yl-table">
-            <thead>
-              <tr>
-                <th>Year Level</th>
-                <th>Initial Number of Sections</th>
-                <th>Active</th>
-              </tr>
-            </thead>
-            <tbody id="addOfferYLBody"></tbody>
-          </table>
-          <!-- Structure Summary -->
-          <div class="offer-summary-panel" id="addOfferSummary">
-            <div class="offer-sum-title">Structure Summary</div>
-            <div class="offer-sum-grid">
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Academic Offering</span>
-                <span class="offer-sum-val offer-sum-status offer-sum-active">Active</span>
-              </div>
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Active Year Levels</span>
-                <span class="offer-sum-val offer-sum-yl">0 of 0</span>
-              </div>
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Total Active Sections</span>
-                <span class="offer-sum-val offer-sum-sec">0</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="m-divider" style="margin:0 26px;"></div>
-      <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalAddOffering')">Cancel</button>
-        <button type="submit" class="btn-ms"><i class="fas fa-save"></i> Save</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- ── MODAL: Edit Academic Offering ────────────────── -->
-<div id="modalEditOffering" class="s-modal">
-  <div class="s-modal-box w-md">
-    <div class="s-modal-hd">
-      <h2>Edit Offering</h2>
-      <button class="modal-x" onclick="closeSModal('modalEditOffering')"><i class="fas fa-times"></i></button>
-    </div>
-    <form id="formEditOffering" action="{{ url_for('settings_edit_offering') }}" method="POST">
-      <input type="hidden" name="offering_id" id="editOfferAoId">
-      <div class="s-modal-body">
-        <div class="mg-2">
-          <div class="mf">
-            <label>Track Name</label>
-            <input type="text" name="track_name" id="editOfferTrackName" class="m-input">
-          </div>
-          <div class="mf">
-            <label>Short Code</label>
-            <input type="text" name="track_code" id="editOfferTrackCode" class="m-input"
-                   style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">
-          </div>
-          <div class="mf span2">
-            <label>Status</label>
-            <label class="pmd-toggle-switch">
-              <input type="checkbox" name="status" id="editOfferStatus" value="1">
-              <span class="pmd-toggle-slider"></span>
-              <span class="pmd-toggle-label" id="editOfferStatusLabel">Active</span>
-            </label>
-          </div>
-        </div>
-
-        <!-- Hierarchy warnings -->
-        <div id="editOfferInactiveWarn" class="offer-inactive-warn" style="display:none;">
-          <i class="fas fa-exclamation-triangle"></i>
-          <div><strong>This Academic Offering is inactive.</strong><br>
-          All Program Year Levels and Sections under this offering will also become inactive.</div>
-        </div>
-        <div id="editOfferNoYLWarn" class="offer-inactive-warn offer-warn-noyl" style="display:none;">
-          <i class="fas fa-info-circle"></i>
-          <div><strong>No active year levels remain.</strong><br>
-          This Academic Offering will automatically become inactive.</div>
-        </div>
-
-        <!-- Year Level Section Counts (editable) -->
-        <div class="pmd-yl-section">
-          <label class="pmd-yl-label">Year Levels &amp; Sections</label>
-          <p class="m-hint" style="margin-bottom:8px;">Update section counts per year level.</p>
-          <table class="pmd-yl-table">
-            <thead>
-              <tr>
-                <th>Year Level</th>
-                <th>Number of Sections</th>
-                <th>Active</th>
-              </tr>
-            </thead>
-            <tbody id="editOfferYLBody"></tbody>
-          </table>
-          <!-- Structure Summary -->
-          <div class="offer-summary-panel" id="editOfferSummary">
-            <div class="offer-sum-title">Structure Summary</div>
-            <div class="offer-sum-grid">
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Academic Offering</span>
-                <span class="offer-sum-val offer-sum-status offer-sum-active">Active</span>
-              </div>
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Active Year Levels</span>
-                <span class="offer-sum-val offer-sum-yl">0 of 0</span>
-              </div>
-              <div class="offer-sum-row">
-                <span class="offer-sum-label">Total Active Sections</span>
-                <span class="offer-sum-val offer-sum-sec">0</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="m-divider" style="margin:0 26px;"></div>
-      <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalEditOffering')">Cancel</button>
-        <button type="submit" class="btn-ms"><i class="fas fa-save"></i> Save Changes</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- ── MODAL: Delete Academic Offering ──────────────── -->
-<div id="modalDeleteOffering" class="s-modal">
-  <div class="s-modal-box w-sm">
-    <div class="s-modal-hd">
-      <h2>Delete Academic Offering</h2>
-      <button class="modal-x" onclick="closeSModal('modalDeleteOffering')"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="s-modal-body">
-      <p style="margin:0 0 12px;font-size:.88rem;color:var(--text);">Are you sure you want to delete this academic offering?</p>
-      <div class="pmd-del-info-box">
-        <div class="pmd-del-info-label">Offering</div>
-        <div class="pmd-del-info-code" id="delOfferCode">—</div>
-        <div class="pmd-del-info-desc" id="delOfferDesc"></div>
-      </div>
-      <p style="margin:12px 0 0;font-size:.8rem;color:#888;">
-        <i class="fas fa-exclamation-triangle" style="color:#e67e22;"></i>
-        This action may affect generated year levels and sections associated with this offering.
-      </p>
-      <div id="delOfferErrorWrap" style="display:none;margin-top:12px;">
-        <div class="lock-warn-banner" style="background:linear-gradient(135deg,#b71c1c,#7f0000);border-radius:6px;margin:0;">
-          <i class="fas fa-ban"></i>
-          <div><span class="lock-warn-sub" id="delOfferError"></span></div>
-        </div>
-      </div>
-    </div>
-    <div class="m-divider" style="margin:0 26px;"></div>
-    <div class="s-modal-ft">
-      <button type="button" class="btn-mc" onclick="closeSModal('modalDeleteOffering')">Cancel</button>
-      <button type="button" class="btn-ms btn-ms-danger" id="btnConfirmDelete" onclick="_confirmDeleteOffering()">
-        <i class="fas fa-trash"></i> Delete
-      </button>
-    </div>
   </div>
 </div>
 

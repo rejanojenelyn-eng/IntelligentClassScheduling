@@ -859,13 +859,11 @@ class IntelligentScheduler:
 
     def fetch_data(self, program, year_level, term, curriculum_year):
         subjects_query = """
-            SELECT s.subjectcode, s.subjectname, s.lecturehours, s.laboratoryhours,
-                   s.creditunits, ao.offeringcode
+            SELECT cs.subjectcode, cs.subjectname, cs.lecturehours, cs.laboratoryhours,
+                   cs.creditunits, c.programcode AS offeringcode
             FROM curriculumsubject cs
-            JOIN subject            s  ON cs.subjectcode       = s.subjectcode
-            JOIN curriculum         c  ON cs.curriculumid      = c.curriculumid
-            JOIN academic_offering  ao ON c.academicofferingid = ao.academicofferingid
-            WHERE ao.offeringcode  = %s
+            JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            WHERE c.programcode  = %s
               AND c.curriculumyear = %s
               AND cs.yearlevel     = %s
               AND cs.semester      = %s
@@ -939,9 +937,8 @@ class IntelligentScheduler:
                 JOIN public.schedule sg ON sv.scheduleid = sg.scheduleid
                 JOIN public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-                JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
                 JOIN public.semester sem ON sg.semesterid = sem.semesterid
-                WHERE ao.offeringcode = %s
+                WHERE c.programcode = %s
                   AND sem.semestertype = %s
                   AND sv.status IN ('Published', 'Draft')
                 ORDER BY sv.datecreated DESC
@@ -954,8 +951,7 @@ class IntelligentScheduler:
                 JOIN public.schedule sg ON sv.scheduleid = sg.scheduleid
                 JOIN public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-                JOIN public.academic_offering ao ON c.academicofferingid = ao.academicofferingid
-                WHERE ao.offeringcode = %s
+                WHERE c.programcode = %s
                   AND sv.status IN ('Published', 'Draft')
                 ORDER BY sv.datecreated DESC
             """
@@ -976,13 +972,11 @@ class IntelligentScheduler:
         Returns None when no historical schedule exists.
         """
         curr_rows = query_db("""
-            SELECT s.subjectcode, s.subjectname, s.lecturehours, s.laboratoryhours,
-                   s.creditunits
+            SELECT cs.subjectcode, cs.subjectname, cs.lecturehours, cs.laboratoryhours,
+                   cs.creditunits
             FROM curriculumsubject cs
-            JOIN subject s ON cs.subjectcode = s.subjectcode
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
-            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
-            WHERE ao.offeringcode = %s AND c.curriculumyear = %s
+            WHERE c.programcode = %s AND c.curriculumyear = %s
               AND cs.yearlevel = %s AND cs.semester = %s
         """, (program, curriculum_year, year_level, term))
         curr_subjects = {r['subjectcode']: r for r in (curr_rows or [])}
@@ -995,9 +989,8 @@ class IntelligentScheduler:
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
-            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
             JOIN semester sem ON sc.semesterid = sem.semesterid
-            WHERE ao.offeringcode = %s AND cs.yearlevel = %s AND sem.semestertype = %s
+            WHERE c.programcode = %s AND cs.yearlevel = %s AND sem.semestertype = %s
               AND sv.status IN ('Published', 'Draft')
             ORDER BY sv.datecreated DESC
             LIMIT 1
@@ -1009,7 +1002,7 @@ class IntelligentScheduler:
         rows = query_db("""
             SELECT cs.subjectcode, sc.employeenumber AS faculty_id,
                    CONCAT(f.lastname, ', ', f.firstname) AS instructor,
-                   ao.offeringcode AS course,
+                   c.programcode AS course,
                    ss.daydesc AS day, ts_s.timevalue AS start_time, ts_e.timevalue AS end_time,
                    r.roomname AS room, r.roomid AS room_id
             FROM schedule_sessions ss
@@ -1017,7 +1010,6 @@ class IntelligentScheduler:
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
-            JOIN academic_offering ao ON c.academicofferingid = ao.academicofferingid
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid

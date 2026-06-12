@@ -64,22 +64,22 @@
             <table class="curr-assign-table" id="assignmentTable">
                 <thead>
                     <tr>
-                        <th>CURRICULUM CODE</th>
-                        <th>ACADEMIC PROGRAM / OFFERING</th>
-                        <th>CURRICULUM YEAR</th>
+                        <th>ACADEMIC PROGRAM</th>
+                        <th>YEAR LEVEL</th>
+                        <th>YEAR ENTRY</th>
+                        <th>CURRICULUM</th>
                         <th>NO. OF SECTIONS</th>
-                        <th>ACTIONS</th>
                         <th style="width: 50px;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in cohorts %}
                     <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programcode }}">
-                        <td><span class="curr-code-pill">{{ c.curriculumcode }}</span></td>
                         <td>{{ c.offeringcode }} — {{ c.programname }}</td>
+                        <td>{{ c.yearlevel }}</td>
                         <td>{{ c.academicyearid }}</td>
+                        <td><span class="curr-code-pill">{{ c.curriculumcode or '—' }}</span></td>
                         <td>{{ c.section_count or 0 }}</td>
-                        <td>{{ c.academicyearid }}</td>
                         <td style="text-align:center;">
                             <button class="btn-edit-icon" onclick="editAssignment('{{ c.curriculumid }}','{{ c.programcode }}','{{ c.curriculumid }}','{{ c.academicyearid }}','{{ c.offeringcode }}')">
                                 <i class="fas fa-edit"></i>

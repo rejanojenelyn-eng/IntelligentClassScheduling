@@ -135,24 +135,73 @@ function _hhmm_to_slot_idx(hhmm, fallback_idx) {
     return idx;
 }
 
-// HC — subject-code prefix → required specialization (null = any faculty allowed)
-const _SUBJ_SPEC_MAP = [
-    [['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'], 'Computer and Information Sciences'],
-    [['ARCH', 'ARCHS'],                                        'Architecture, Design and the Built Environment'],
-    [['CIEN', 'ENSC'],                                         'Engineering'],
-    [['ACCO'],                                                  'Accountancy and Finance'],
-    [['BUMA', 'HRMA'],                                         'Business Administration'],
-    // GEED, NSTP, PATHFIT, PHED, ROTC, MATH → null (unrestricted)
+// Multi-tier specialization mapping: exact match + related fields per subject group.
+// 'exact'  → confirmed compatible; 'related' → acceptable, soft note only.
+// Prefixes not listed here → unrestricted (GEED, NSTP, PATHFIT, PHED, ROTC, MATH, etc.)
+const _SUBJ_SPEC_GROUPS = [
+    {
+        prefixes: ['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'],
+        primary:  'Computer and Information Sciences',
+        exact:    ['Computer and Information Sciences', 'Computer Science',
+                   'Information Technology', 'Information Systems',
+                   'Information and Communications Technology'],
+        related:  ['Software Engineering', 'Computer Engineering', 'Cybersecurity',
+                   'Information Security', 'Networking', 'Network Technology',
+                   'Data Science', 'Data Analytics', 'Artificial Intelligence',
+                   'Electronics and Communications Engineering'],
+    },
+    {
+        prefixes: ['ARCH', 'ARCHS'],
+        primary:  'Architecture, Design and the Built Environment',
+        exact:    ['Architecture, Design and the Built Environment', 'Architecture'],
+        related:  ['Interior Design', 'Urban Planning', 'Fine Arts', 'Industrial Design'],
+    },
+    {
+        prefixes: ['CIEN', 'ENSC'],
+        primary:  'Engineering',
+        exact:    ['Engineering', 'Civil Engineering', 'Mechanical Engineering'],
+        related:  ['Electrical Engineering', 'Electronics Engineering',
+                   'Chemical Engineering', 'Industrial Engineering',
+                   'Environmental Engineering'],
+    },
+    {
+        prefixes: ['ACCO'],
+        primary:  'Accountancy and Finance',
+        exact:    ['Accountancy and Finance', 'Accountancy', 'Accounting', 'Auditing'],
+        related:  ['Finance', 'Business Administration', 'Management', 'Economics'],
+    },
+    {
+        prefixes: ['BUMA', 'HRMA'],
+        primary:  'Business Administration',
+        exact:    ['Business Administration', 'Management', 'Human Resource Management',
+                   'Business Management'],
+        related:  ['Entrepreneurship', 'Marketing', 'Office Administration',
+                   'Public Administration', 'Accountancy and Finance', 'Economics'],
+    },
 ];
 
-function _getSubjectSpecGroup(subjectCode) {
+// Returns { level: 'exact'|'related'|'mismatch'|'unrestricted', label: string }
+function _getSpecCompatibility(facSpec, subjectCode) {
     const upper = (subjectCode || '').toUpperCase();
-    for (const [prefixes, specName] of _SUBJ_SPEC_MAP) {
-        for (const pfx of prefixes) {
-            if (upper.startsWith(pfx)) return specName;
-        }
+    const spec  = (facSpec || '').trim();
+
+    for (const group of _SUBJ_SPEC_GROUPS) {
+        if (!group.prefixes.some(pfx => upper.startsWith(pfx))) continue;
+
+        if (!spec) return { level: 'unrestricted', label: 'No Specialization on File' };
+
+        const specLower = spec.toLowerCase();
+        const inList = (list) => list.some(a =>
+            a.toLowerCase() === specLower ||
+            specLower.includes(a.toLowerCase()) ||
+            a.toLowerCase().includes(specLower)
+        );
+
+        if (inList(group.exact))   return { level: 'exact',   label: 'Highly Matched' };
+        if (inList(group.related)) return { level: 'related', label: 'Related Field'  };
+        return { level: 'mismatch', label: 'Potential Mismatch' };
     }
-    return null;
+    return { level: 'unrestricted', label: 'No Restriction' };
 }
 
 let _facLoadData = null;             // cached from /api/manual/faculty_load
@@ -304,29 +353,37 @@ async function onFacultySelect(empNum) {
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
 
-        // ── Specialization check: block assignment immediately if mismatch ──
+        // ── Specialization check ──
         if (SPEC_CONSTRAINT_ENABLED && _facInfo && _subjInfo) {
-            const spec         = (_facInfo.specializationname || '').trim();
-            const subjCode     = (document.getElementById('sel_subj')?.value || '').trim();
-            const requiredSpec = _getSubjectSpecGroup(subjCode);
+            const spec     = (_facInfo.specializationname || '').trim();
+            const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
+            const compat   = _getSpecCompatibility(spec, subjCode);
 
-            if (spec && requiredSpec && spec !== requiredSpec) {
+            if (compat.level === 'mismatch') {
                 const facName = (_facInfo.fullname || 'This faculty member').trim();
-                await showValidationModal(
-                    'Faculty Specialization Mismatch',
-                    `${facName} specializes in ${spec}, but ${subjCode} requires a ` +
-                    `${requiredSpec} specialization.\n\n` +
-                    `Please select a faculty member with a ${requiredSpec} specialization.`
-                );
-                // Reset faculty selection back to empty
-                _facInfo = null;
-                document.getElementById('sel_faculty').value            = '';
-                document.getElementById('fac_display_name').value       = '';
-                document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
-                if (typeof _clearFacultyLock === 'function') _clearFacultyLock();
-                if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
-                _checkFacultySpecWarning();
-                return; // don't proceed with time dropdowns
+                const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
+                const primary = group ? group.primary : 'the required field';
+
+                if (window.currentEditSession) {
+                    // Editing an existing/imported session — downgrade to informational note, never block
+                    _checkFacultySpecWarning();
+                } else {
+                    // New manual assignment — hard block
+                    await showValidationModal(
+                        'Faculty Specialization Mismatch',
+                        `${facName} specializes in ${spec}, but ${subjCode} requires a ` +
+                        `${primary} specialization.\n\n` +
+                        `Please select a faculty member with a compatible specialization.`
+                    );
+                    _facInfo = null;
+                    document.getElementById('sel_faculty').value            = '';
+                    document.getElementById('fac_display_name').value       = '';
+                    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+                    if (typeof _clearFacultyLock === 'function') _clearFacultyLock();
+                    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+                    _checkFacultySpecWarning();
+                    return;
+                }
             }
         }
     }
@@ -337,32 +394,59 @@ async function onFacultySelect(empNum) {
 function _checkFacultySpecWarning() {
     const container = document.getElementById('fac-spec-warning');
     if (!container) return;
-
-    // Clear previous warning
     container.innerHTML = '';
 
     if (!SPEC_CONSTRAINT_ENABLED || !_facInfo || !_subjInfo) return;
 
-    const spec = (_facInfo.specializationname || '').trim();
-    if (!spec) return; // faculty has no specialization → no restriction
+    const spec     = (_facInfo.specializationname || '').trim();
+    const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
+    const compat   = _getSpecCompatibility(spec, subjCode);
 
-    const subjCode    = (document.getElementById('sel_subj')?.value || '').trim();
-    const requiredSpec = _getSubjectSpecGroup(subjCode);
-    if (!requiredSpec) return; // subject is unrestricted
+    if (compat.level === 'unrestricted' || compat.level === 'exact') return;
 
-    if (spec === requiredSpec) return; // match — all good
+    const facName  = (_facInfo.fullname || 'This faculty member').trim();
+    const isImported = !!window.currentEditSession;
 
-    // Mismatch — show inline warning
-    const facName = (_facInfo.fullname || 'This faculty member').trim();
-    container.innerHTML =
-        `<div style="background:#fff3cd;border:1.5px solid #e6a817;border-radius:8px;` +
-        `padding:10px 14px;margin-top:8px;font-size:13px;color:#7a4a00;` +
-        `display:flex;gap:8px;align-items:flex-start;">` +
-        `<span style="font-size:15px;margin-top:1px">⚠️</span>` +
-        `<span><strong>${facName}</strong> specializes in <strong>${spec}</strong>, ` +
-        `but <strong>${subjCode}</strong> requires a ` +
-        `<strong>${requiredSpec}</strong> specialization. ` +
-        `Please select a different faculty member.</span></div>`;
+    if (compat.level === 'related') {
+        // Soft informational note — green-tinted
+        container.innerHTML =
+            `<div style="background:#eafaf1;border:1.5px solid #27ae60;border-radius:8px;` +
+            `padding:10px 14px;margin-top:8px;font-size:13px;color:#1a6b3c;` +
+            `display:flex;gap:8px;align-items:flex-start;">` +
+            `<span style="font-size:15px;margin-top:1px">&#10003;</span>` +
+            `<span><strong>${facName}</strong> (${spec}) — <strong>Related Field</strong> for ${subjCode}. ` +
+            `This specialization is acceptable for this subject.</span></div>`;
+        return;
+    }
+
+    if (compat.level === 'mismatch') {
+        if (isImported) {
+            // Imported/existing session — informational only, never blocking
+            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
+            const primary = group ? group.primary : 'the required field';
+            container.innerHTML =
+                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
+                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
+                `display:flex;gap:8px;align-items:flex-start;">` +
+                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
+                `<span>This assignment was imported from an approved official schedule. ` +
+                `Specialization analysis: <strong>Potential Mismatch</strong> — ` +
+                `${facName} (${spec}) vs. expected ${primary}. ` +
+                `No action required unless reviewed by the scheduler.</span></div>`;
+        } else {
+            // New manual assignment — strong warning (hard block already fired in onFacultySelect)
+            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
+            const primary = group ? group.primary : 'the required field';
+            container.innerHTML =
+                `<div style="background:#fff3cd;border:1.5px solid #e6a817;border-radius:8px;` +
+                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7a4a00;` +
+                `display:flex;gap:8px;align-items:flex-start;">` +
+                `<span style="font-size:15px;margin-top:1px">&#9888;&#65039;</span>` +
+                `<span><strong>${facName}</strong> specializes in <strong>${spec}</strong>, ` +
+                `but <strong>${subjCode}</strong> requires a <strong>${primary}</strong> specialization. ` +
+                `Please select a different faculty member.</span></div>`;
+        }
+    }
 }
 
 async function onDayChange() {
@@ -656,17 +740,33 @@ function switchMode(mode) {
     }
 }
 
-/* Convert "07:30:00" / "07:30" / "07:30 AM" to 1-based timeSlot index */
+/* Convert "07:30:00" / "07:30" / "07:30 AM" / "7:30 PM" to 1-based timeSlot index.
+   Grid origin: 07:30 AM = slot 1. Steps: 30-minute intervals. */
 function timeStrToSlotIdx(timeStr) {
     if (!timeStr) return 0;
-    const s = String(timeStr);
-    const parts = s.split(':');
-    if (parts.length < 2) return 0;
-    let h = parseInt(parts[0]), m = parseInt(parts[1]);
+    const s   = String(timeStr).trim();
+    const low = s.toLowerCase();
+
+    // Split on ':' — take only first two parts for h/m (ignore seconds)
+    const colonParts = s.split(':');
+    if (colonParts.length < 2) return 0;
+
+    let h = parseInt(colonParts[0], 10);
+    // minutes: strip any trailing am/pm/space before parsing
+    let m = parseInt(colonParts[1].replace(/[^0-9]/g, ''), 10);
     if (isNaN(h) || isNaN(m)) return 0;
-    if (s.toLowerCase().includes('pm') && h !== 12) h += 12;
-    if (s.toLowerCase().includes('am') && h === 12) h = 0;
-    return Math.round((h * 60 + m - 450) / 30) + 1; // 7:30 AM = slot 1
+
+    const hasPm = low.includes('pm');
+    const hasAm = low.includes('am');
+
+    if (hasPm && h !== 12) h += 12;      // 1:00 PM → 13, 11:30 PM → 23
+    if (hasAm && h === 12) h = 0;        // 12:00 AM → 0 (midnight)
+    // 12:00 PM → stays 12 (noon) — correct already
+
+    const totalMins = h * 60 + m;
+    const idx = Math.round((totalMins - 450) / 30) + 1; // 7:30 AM = 450 min = slot 1
+    if (idx < 1 || idx > timeSlots.length + 1) return 0;
+    return idx;
 }
 
 async function renderProgramTimetable() {
@@ -770,6 +870,7 @@ function _renderProgPills(sessions, prog, yl) {
             daySessions.forEach((other, oIdx) => {
                 const oS = other.starttimeid || timeStrToSlotIdx(other.start_time);
                 const oE = other.endtimeid   || timeStrToSlotIdx(other.end_time);
+                if (!oS || !oE || oE <= oS) return; // skip invalid siblings
                 if (startIdx < oE && endIdx > oS) { overlapCount++; if (idx > oIdx) overlapIndex++; }
             });
 
@@ -786,8 +887,8 @@ function _renderProgPills(sessions, prog, yl) {
                 if (editKey === sessKey) pill.classList.add('pill-editing');
             }
 
-            const w = (colWidth - 6) / (overlapCount || 1);
-            const pillH = (endIdx - startIdx) * rowHeight - 6;
+            const w     = (colWidth - 6) / (overlapCount || 1);
+            const pillH = Math.max((endIdx - startIdx) * rowHeight - 6, 20); // min 20px to remain visible
             pill.style.width  = (w - 2) + 'px';
             pill.style.height = pillH + 'px';
             pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
@@ -1289,17 +1390,18 @@ async function confirmAndPlace() {
     }
 
     // ── Specialization check — skipped in local mode (intentional overrides allowed) ──
-    if (_sm() !== 'local' && _facInfo && _facInfo.specializationname) {
-        const expectedSpec = _getSubjectSpecGroup(subjSel.value);
-        if (expectedSpec !== null) {
-            const facSpec = _facInfo.specializationname || '';
-            if (facSpec !== expectedSpec) {
-                await showValidationModal('Specialization Mismatch',
-                    `${facName}'s specialization (${facSpec}) does not match what is required ` +
-                    `for "${subjSel.value}" (${expectedSpec}). ` +
-                    `Only faculty with the matching specialization may be assigned.`);
-                return;
-            }
+    if (_sm() !== 'local' && _facInfo) {
+        const facSpec = (_facInfo.specializationname || '').trim();
+        const compat  = _getSpecCompatibility(facSpec, subjSel.value);
+        // 'exact' and 'related' are both acceptable; only true 'mismatch' blocks
+        if (compat.level === 'mismatch') {
+            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjSel.value.toUpperCase().startsWith(pfx)));
+            const primary = group ? group.primary : 'the required field';
+            await showValidationModal('Specialization Mismatch',
+                `${facName}'s specialization (${facSpec}) does not match what is required ` +
+                `for "${subjSel.value}" (${primary}). ` +
+                `Please select a faculty member with a compatible specialization.`);
+            return;
         }
     }
 
@@ -1868,9 +1970,14 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
 
             daySessions.forEach((sess, idx) => {
                 const start = sess.starttimeid, end = sess.endtimeid;
+                // Skip sessions with missing or invalid time indices to prevent misplaced pills
+                if (!start || !end || end <= start || start < 1 || end > timeSlots.length + 1) return;
+
                 let overlapCount = 0, overlapIndex = 0;
                 daySessions.forEach((other, oIdx) => {
-                    if (start < other.endtimeid && end > other.starttimeid) {
+                    const oS = other.starttimeid, oE = other.endtimeid;
+                    if (!oS || !oE || oE <= oS) return;
+                    if (start < oE && end > oS) {
                         overlapCount++;
                         if (idx > oIdx) overlapIndex++;
                     }
@@ -1889,8 +1996,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     if (editKey === sessKey) pill.classList.add('pill-editing');
                 }
 
-                const w = (colWidth - 6) / (overlapCount || 1);
-                const pillH = (end - start) * rowHeight - 6;
+                const w     = (colWidth - 6) / (overlapCount || 1);
+                const pillH = Math.max((end - start) * rowHeight - 6, 20); // min 20px to remain visible
                 pill.style.width  = (w - 2) + 'px';
                 pill.style.height = pillH + 'px';
                 pill.style.left   = (leftOffset + (dayIdx * colWidth) + (overlapIndex * w) + 3) + 'px';

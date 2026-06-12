@@ -191,15 +191,17 @@
         border-right: 1px solid rgba(255,255,255,.1);
     }
     .frs-time-cell {
-        font-size: 0.65rem;
+        font-size: 0.62rem;
         font-weight: 700;
         color: #888;
-        text-align: center;
-        height: 30px; /* 30 min intervals */
+        text-align: right;
+        padding-right: 6px;
+        padding-top: 2px;
+        height: 30px;
         box-sizing: border-box;
         border-right: 1px solid #ddd;
         border-bottom: 1px solid #eee;
-        transform: translateY(-8px); /* align with line */
+        /* no translateY — keeps 7:30 AM label inside first row, never behind header */
     }
     .frs-day-col-cell {
         position: relative;
@@ -358,7 +360,25 @@
         font-size: 0.65rem;
         color: #333;
         font-weight: 800;
+        display: block;
+        margin-top: 6px;
+    }
+    .frs-avail-detail {
+        font-size: 0.62rem;
+        color: #666;
+        margin-top: 4px;
+    }
+    .frs-avail-status-chip {
         display: inline-block;
+        margin-top: 8px;
+        padding: 2px 10px;
+        border-radius: 20px;
+        background: #eafaf1;
+        color: #1a6b3c;
+        font-size: 0.6rem;
+        font-weight: 900;
+        border: 1px solid #27ae60;
+        text-transform: uppercase;
     }
 
     /* ════════════════════════════════════
@@ -533,10 +553,7 @@
             <div class="frs-left">
                 <div class="frs-sidebar-label">Select Floor</div>
                 <select class="frs-floor-select" id="frsFloorSel" onchange="frsFilterFloor()">
-                    <option value="">1ST FLOOR</option>
-                    <option value="2">2ND FLOOR</option>
-                    <option value="3">3RD FLOOR</option>
-                    <option value="4">4TH FLOOR</option>
+                    <option value="">ALL FLOORS</option>
                 </select>
 
                 <div class="frs-sidebar-label">Room List</div>
@@ -583,12 +600,12 @@
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
-                        <input type="time" id="frsAvailStart" value="07:30" onchange="frsFindAvailable()">
+                        <input type="time" id="frsAvailStart" value="" onchange="frsFindAvailable()">
                     </div>
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
-                        <input type="time" id="frsAvailEnd" value="10:30" onchange="frsFindAvailable()">
+                        <input type="time" id="frsAvailEnd" value="" onchange="frsFindAvailable()">
                     </div>
 
                     <div class="frs-avail-filter-group">
@@ -631,6 +648,140 @@
         </div>
     </div>
 
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCHEDULE DETAIL MODAL
+══════════════════════════════════════════ -->
+<style>
+    .frs-detail-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.45);
+        z-index: 9500;
+        align-items: center;
+        justify-content: center;
+    }
+    .frs-detail-overlay.open { display: flex; }
+    .frs-detail-box {
+        background: #fff;
+        border-radius: 12px;
+        width: min(480px, 96vw);
+        box-shadow: 0 10px 36px rgba(0,0,0,.25);
+        overflow: hidden;
+        position: relative;
+    }
+    .frs-detail-accent {
+        height: 6px;
+        width: 100%;
+    }
+    .frs-detail-hdr {
+        padding: 18px 22px 10px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .frs-detail-code {
+        font-size: 1.35rem;
+        font-weight: 900;
+        color: #5c0000;
+        letter-spacing: .5px;
+        line-height: 1.2;
+    }
+    .frs-detail-name {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #555;
+        margin-top: 3px;
+    }
+    .frs-detail-close {
+        background: none;
+        border: none;
+        font-size: 1.1rem;
+        cursor: pointer;
+        color: #888;
+        padding: 0;
+        flex-shrink: 0;
+        line-height: 1;
+    }
+    .frs-detail-close:hover { color: #333; }
+    .frs-detail-badge {
+        display: inline-block;
+        font-size: 0.6rem;
+        font-weight: 900;
+        padding: 3px 10px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        margin-bottom: 14px;
+        margin-left: 22px;
+    }
+    .frs-detail-badge-pub   { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .frs-detail-badge-draft { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .frs-detail-divider { border: none; border-top: 1px solid #eee; margin: 0 22px 14px; }
+    .frs-detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 20px;
+        padding: 0 22px 20px;
+    }
+    .frs-detail-label {
+        font-size: 0.58rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: .8px;
+        color: #800000;
+        margin-bottom: 3px;
+    }
+    .frs-detail-value {
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #222;
+    }
+    .frs-detail-field.full { grid-column: 1 / -1; }
+</style>
+
+<div class="frs-detail-overlay" id="frsDetailOverlay">
+    <div class="frs-detail-box">
+        <div class="frs-detail-accent" id="frsDetailAccent"></div>
+        <div class="frs-detail-hdr">
+            <div>
+                <div class="frs-detail-code" id="frsDetailSubjCode">—</div>
+                <div class="frs-detail-name" id="frsDetailSubjName">—</div>
+            </div>
+            <button class="frs-detail-close" onclick="frsCloseDetail()">&#10005;</button>
+        </div>
+        <span class="frs-detail-badge" id="frsDetailStatus">—</span>
+        <hr class="frs-detail-divider">
+        <div class="frs-detail-grid">
+            <div class="frs-detail-field full">
+                <div class="frs-detail-label"><i class="fas fa-chalkboard-teacher"></i>&nbsp; Instructor</div>
+                <div class="frs-detail-value" id="frsDetailInstr">—</div>
+            </div>
+            <div class="frs-detail-field">
+                <div class="frs-detail-label"><i class="fas fa-calendar-day"></i>&nbsp; Day</div>
+                <div class="frs-detail-value" id="frsDetailDay">—</div>
+            </div>
+            <div class="frs-detail-field">
+                <div class="frs-detail-label"><i class="fas fa-clock"></i>&nbsp; Time</div>
+                <div class="frs-detail-value" id="frsDetailTime">—</div>
+            </div>
+            <div class="frs-detail-field">
+                <div class="frs-detail-label"><i class="fas fa-door-open"></i>&nbsp; Room</div>
+                <div class="frs-detail-value" id="frsDetailRoom">—</div>
+            </div>
+            <div class="frs-detail-field">
+                <div class="frs-detail-label"><i class="fas fa-graduation-cap"></i>&nbsp; Program</div>
+                <div class="frs-detail-value" id="frsDetailProg">—</div>
+            </div>
+            <div class="frs-detail-field">
+                <div class="frs-detail-label"><i class="fas fa-layer-group"></i>&nbsp; Year Level</div>
+                <div class="frs-detail-value" id="frsDetailYr">—</div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- ══════════════════════════════════════════

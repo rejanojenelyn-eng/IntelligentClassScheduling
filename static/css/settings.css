@@ -2223,6 +2223,66 @@
 }
 .ep-sec-del:hover { opacity: 1; }
 
+/* ── Year Level Activation toggles ───────────────── */
+.ep-yl-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 0 4px;
+}
+.ep-yl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fafafa;
+  border: 1.5px solid #e8d8d8;
+  border-radius: 8px;
+  padding: 8px 14px;
+  min-width: 130px;
+}
+.ep-yl-row.yl-active { border-color: var(--m-mid); background: #fff8f8; }
+.ep-yl-label {
+  font-size: .75rem;
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: .3px;
+  flex: 1;
+}
+.ep-yl-status {
+  font-size: .65rem;
+  font-weight: 600;
+  color: #999;
+}
+.ep-yl-row.yl-active .ep-yl-status { color: var(--m); }
+/* reuse the toggle switch pattern from curriculum active toggle */
+.ep-yl-toggle {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.ep-yl-toggle input { opacity: 0; width: 0; height: 0; }
+.ep-yl-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #ccc;
+  border-radius: 18px;
+  transition: .2s;
+}
+.ep-yl-slider:before {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  left: 3px; bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: .2s;
+}
+.ep-yl-toggle input:checked + .ep-yl-slider { background: var(--m); }
+.ep-yl-toggle input:checked + .ep-yl-slider:before { transform: translateX(16px); }
+
 /* ════════════════════════════════════════════════════
    ACADEMIC YEAR — STATUS BADGES & ROW BUTTONS
    ════════════════════════════════════════════════════ */

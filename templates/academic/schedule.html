@@ -89,6 +89,21 @@
         .schedule-table td.td-room {
             font-weight: 600;
         }
+        /* ── TOTAL row — SIS (TABLE VIEW) ── */
+        .schedule-table tr.sis-total-row td {
+            background: #f5e6e6;
+            border-top: 2px solid #800000;
+            font-weight: 700;
+            color: #2c0000;
+        }
+        .schedule-table tr.sis-total-row td:first-child {
+            font-weight: 800;
+            font-size: .85rem;
+            letter-spacing: .3px;
+            text-align: left;
+            padding-left: 14px;
+        }
+
         .empty-row td { text-align: center; padding: 40px 20px; }
         .empty-msg {
             font-size: 13px;
@@ -252,6 +267,15 @@
         .si-sched-tbl tbody td { padding:6px 7px; border-right:1px solid #f2eeee; border-bottom:1px solid #f0ecec; vertical-align:top; word-break:break-word; overflow:hidden; }
         .si-sched-tbl tbody td:last-child { border-right:none; }
         .si-sched-tbl tbody tr:last-child td { border-bottom:none; }
+        /* ── TOTAL row — Import Preview ── */
+        .si-sched-tbl tr.si-total-row td {
+            background:#2c0000; color:#fff;
+            border-top:2px solid #7a0000;
+            font-weight:700; font-size:.74rem;
+            padding:6px 7px;
+        }
+        .si-sched-tbl tr.si-total-row td.col-num { color:#ffd0d0; font-weight:800; text-align:center; }
+        .si-sched-tbl tr.si-total-row td:first-child { letter-spacing:.5px; font-size:.76rem; }
         /* Column widths as % of table — totals 100 */
         .col-inst { width:13%; }
         .col-code { width:8%; }
@@ -389,6 +413,45 @@
         @keyframes se-num-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
         /* Divider between year-level filter and semester */
         .se-filter-divider { border:none; border-top:1px solid #ece8e8; margin:12px 0; }
+
+        /* ══════════════════════════════════════════════════════════════
+           SCHEDULE LIST VIEW
+        ══════════════════════════════════════════════════════════════ */
+        .cs-page-header--flex { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+        .cs-view-sched-list-btn { background:#630100; color:#fff; border:none; padding:9px 16px; border-radius:8px; font-size:.78rem; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:7px; text-transform:uppercase; letter-spacing:.3px; transition:opacity .15s; white-space:nowrap; flex-shrink:0; margin-top:4px; }
+        .cs-view-sched-list-btn:hover { opacity:.85; }
+        .sl-page-header-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+        .cs-back-btn { background:#fff; color:#630100; border:1.5px solid #630100; padding:8px 16px; border-radius:8px; font-size:.78rem; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:7px; text-transform:uppercase; letter-spacing:.3px; transition:background .15s,color .15s; white-space:nowrap; }
+        .cs-back-btn:hover { background:#fff0f0; }
+        /* Filter bar */
+        .sl-filter-bar { background:linear-gradient(135deg,#5c0000,#3a0000); border-radius:10px; padding:14px 18px; margin-bottom:16px; display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; }
+        .sl-filter-unit { display:flex; flex-direction:column; gap:3px; min-width:140px; }
+        .sl-filter-unit label { font-size:.65rem; font-weight:700; color:rgba(255,255,255,.75); text-transform:uppercase; letter-spacing:.4px; }
+        .sl-filter-unit select { padding:7px 10px; border:1.5px solid rgba(255,255,255,.25); border-radius:6px; font-size:.82rem; background:rgba(0,0,0,.2); color:#fff; cursor:pointer; }
+        .sl-filter-unit select option { background:#3a0000; color:#fff; }
+        .sl-filter-right { display:flex; gap:8px; align-items:flex-end; margin-left:auto; }
+        .sl-sort-btn,.sl-export-btn { background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.25); color:#fff; padding:8px 14px; border-radius:6px; font-size:.77rem; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; transition:background .15s; white-space:nowrap; }
+        .sl-sort-btn:hover,.sl-export-btn:hover { background:rgba(255,255,255,.22); }
+        /* Table */
+        .sl-table-wrapper { background:#fff; border-radius:10px; border:1px solid #e8d0d0; overflow:hidden; box-shadow:0 2px 8px rgba(122,0,0,.1); }
+        .sl-table { width:100%; border-collapse:collapse; font-size:.83rem; }
+        .sl-table thead { background:#2c0000; color:#fff; }
+        .sl-table th { padding:10px 14px; font-weight:700; font-size:.67rem; letter-spacing:.4px; text-transform:uppercase; text-align:left; border-right:1px solid rgba(255,255,255,.1); }
+        .sl-table th:last-child { text-align:center; border-right:none; }
+        .sl-table tbody tr { border-bottom:1px solid #f0e8e8; transition:background .12s; }
+        .sl-table tbody tr:nth-child(odd)  { background:#fff; }
+        .sl-table tbody tr:nth-child(even) { background:#fdf5f5; }
+        .sl-table tbody tr:hover { background:#f8eaea !important; }
+        .sl-table td { padding:11px 14px; color:#333; font-size:.82rem; vertical-align:middle; border-right:1px solid #f0e8e8; }
+        .sl-table td:last-child { text-align:center; border-right:none; }
+        .sl-prog-code { font-weight:800; color:#630100; font-size:.88rem; }
+        .sl-prog-name { color:#888; font-size:.74rem; }
+        .sl-acad-year { font-weight:700; color:#630100; }
+        .sl-date-badge { display:inline-block; background:#f5f0f0; border:1px solid #e0d0d0; border-radius:12px; padding:3px 10px; font-size:.76rem; font-weight:600; color:#5c0000; }
+        .sl-sem-label { font-weight:600; }
+        .sl-btn-delete { width:34px; height:34px; border-radius:50%; background:#ffebee; border:none; color:#c62828; cursor:pointer; font-size:.88rem; display:inline-flex; align-items:center; justify-content:center; transition:background .15s; }
+        .sl-btn-delete:hover { background:#ffcdd2; }
+        .sl-empty-row td { text-align:center !important; padding:40px 20px; color:#aaa; font-size:.82rem; border:none !important; }
     </style>
 {% endblock %}
 
@@ -447,12 +510,31 @@
         </div>
     </div>
 
-    <!-- PAGE HEADER -->
-    <div class="cs-page-header">
-        <h1 class="cs-title">OFFICIAL CLASS SCHEDULE</h1>
-        <p class="cs-subtitle">This schedule reflects the Official and Approved Schedule in the PUP Student Information System (SIS).&nbsp; Unilateral direct modifications in this schedule view are locked.</p>
+    <!-- PAGE HEADER (Class Schedule mode) -->
+    <div id="csMainHeader" class="cs-page-header cs-page-header--flex">
+        <div>
+            <h1 class="cs-title">OFFICIAL CLASS SCHEDULE</h1>
+            <p class="cs-subtitle">This schedule reflects the Official and Approved Schedule in the PUP Student Information System (SIS).&nbsp; Unilateral direct modifications in this schedule view are locked.</p>
+        </div>
+        <button class="cs-view-sched-list-btn" onclick="showScheduleList()">
+            <i class="fas fa-list-alt"></i> VIEW SCHEDULE LIST
+        </button>
     </div>
 
+    <!-- PAGE HEADER (Schedule List mode) -->
+    <div id="slMainHeader" class="cs-page-header sl-page-header-bar" style="display:none;">
+        <h1 class="cs-title" style="margin:0;">SCHEDULE LIST</h1>
+        <div style="display:flex;gap:10px;align-items:center;">
+            <button class="cs-action-btn" onclick="openSchedImport()">
+                <i class="fas fa-file-import"></i> IMPORT SCHEDULE
+            </button>
+            <button class="cs-back-btn" onclick="hideScheduleList()">
+                <i class="fas fa-arrow-left"></i> BACK
+            </button>
+        </div>
+    </div>
+
+    <div id="mainScheduleContent">
     <!-- FILTER CONTROLS BOX -->
     <div class="cs-filter-box">
         <div class="cs-filter-box-top">
@@ -461,7 +543,7 @@
         <div class="cs-filter-row">
             <div class="cs-filter-unit">
                 <label>ACAD YEAR</label>
-                <select id="view_ay" onchange="refreshOfferings()">
+                <select id="view_ay" onchange="updateSections(); refreshOfferings()">
                     <option value="">Select Academic Year</option>
                     {% for ay in acad_years %}
                     <option value="{{ ay.academicyearid }}"
@@ -473,7 +555,7 @@
             </div>
             <div class="cs-filter-unit">
                 <label>SEMESTER</label>
-                <select id="view_sem" onchange="refreshOfferings()">
+                <select id="view_sem" onchange="updateSections(); refreshOfferings()">
                     <option value="A" {% if active_sem_type == 'A' %}selected{% endif %}>1ST SEMESTER</option>
                     <option value="B" {% if active_sem_type == 'B' %}selected{% endif %}>2ND SEMESTER</option>
                     <option value="C" {% if active_sem_type == 'C' %}selected{% endif %}>SUMMER</option>
@@ -481,7 +563,7 @@
             </div>
             <div class="cs-filter-unit cs-filter-program">
                 <label>PROGRAM</label>
-                <select id="view_prog" onchange="updateYearLevels(); refreshOfferings()">
+                <select id="view_prog" onchange="updateYearLevels(); updateSections(); refreshOfferings()">
                     <option value="">SELECT</option>
                     {% for p in programs %}
                     <option value="{{ p.programcode }}">{{ p.programname }}</option>
@@ -490,13 +572,19 @@
             </div>
             <div class="cs-filter-unit">
                 <label>YEAR LEVEL</label>
-                <select id="view_yl" onchange="refreshOfferings()">
+                <select id="view_yl" onchange="updateSections(); refreshOfferings()">
                     <option value="">SELECT</option>
                     <option value="1">1ST YEAR</option>
                     <option value="2">2ND YEAR</option>
                     <option value="3">3RD YEAR</option>
                     <option value="4">4TH YEAR</option>
                     <option value="5">5TH YEAR</option>
+                </select>
+            </div>
+            <div class="cs-filter-unit">
+                <label>SECTION</label>
+                <select id="view_section" onchange="onSectionChange()">
+                    <option value="">ALL SECTIONS</option>
                 </select>
             </div>
             <div class="cs-filter-unit cs-filter-instructor">
@@ -586,7 +674,66 @@
             </div>
         </div>
     </div>
-</div>
+    </div><!-- /mainScheduleContent -->
+
+    <!-- SCHEDULE LIST VIEW -->
+    <div id="scheduleListView" style="display:none;">
+        <!-- Filter bar -->
+        <div class="sl-filter-bar">
+            <div class="sl-filter-unit">
+                <label>Program</label>
+                <select id="slFilterProg" onchange="renderFilteredSchedList()">
+                    <option value="">ALL PROGRAMS</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programcode }}">{{ p.programcode }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="sl-filter-unit">
+                <label>Acad Year</label>
+                <select id="slFilterAy" onchange="renderFilteredSchedList()">
+                    <option value="">ALL YEARS</option>
+                    {% for ay in acad_years %}
+                    <option value="{{ ay.academicyearid }}">{{ ay.yearstart }}-{{ ay.yearend }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="sl-filter-unit">
+                <label>Semester</label>
+                <select id="slFilterSem" onchange="renderFilteredSchedList()">
+                    <option value="">ALL SEMESTERS</option>
+                    <option value="A">1ST SEMESTER</option>
+                    <option value="B">2ND SEMESTER</option>
+                    <option value="C">SUMMER</option>
+                </select>
+            </div>
+            <div class="sl-filter-right">
+                <button class="sl-sort-btn" id="slSortBtn" onclick="toggleSlSort()">
+                    <i class="fas fa-sort-alpha-down"></i>&nbsp; SORT: A-Z
+                </button>
+            </div>
+        </div>
+        <!-- Table -->
+        <div class="sl-table-wrapper">
+            <table class="sl-table">
+                <thead>
+                    <tr>
+                        <th>PROGRAM</th>
+                        <th>YEAR LEVEL</th>
+                        <th>ACAD YEAR</th>
+                        <th>SEMESTER</th>
+                        <th>DATE IMPORTED</th>
+                        <th>ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="slTableBody">
+                    <tr class="sl-empty-row"><td colspan="6">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div><!-- /scheduleListView -->
+
+</div><!-- /schedule-page-container -->
 
 <div id="schedule-init-data"
      data-sems="{{ sem_json | forceescape }}"
@@ -594,7 +741,126 @@
      data-active-ay="{{ active_ay }}"
      data-active-sem="{{ active_sem_type }}"
      hidden></div>
+<div id="sl-init-data"
+     data-schedules="{{ status_list_json | forceescape }}"
+     hidden></div>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
+<script>
+/* ─── Schedule List View ─── */
+(function () {
+    const SEM_LABELS = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' };
+    const YL_SUFFIX  = { 1:'st', 2:'nd', 3:'rd' };
+    let ALL_SCHEDULES = [];
+    let _slSortAsc = true;
+    let _dataLoaded = false;
+
+    function _loadData() {
+        if (_dataLoaded) return;
+        try {
+            const el = document.getElementById('sl-init-data');
+            ALL_SCHEDULES = el ? JSON.parse(el.dataset.schedules || '[]') : [];
+        } catch(e) { ALL_SCHEDULES = []; }
+        _dataLoaded = true;
+    }
+
+    window.showScheduleList = function() {
+        _loadData();
+        document.getElementById('csMainHeader').style.display = 'none';
+        document.getElementById('slMainHeader').style.display = 'flex';
+        document.getElementById('mainScheduleContent').style.display = 'none';
+        document.getElementById('scheduleListView').style.display = 'block';
+        renderFilteredSchedList();
+    };
+
+    window.hideScheduleList = function() {
+        document.getElementById('csMainHeader').style.display = '';
+        document.getElementById('slMainHeader').style.display = 'none';
+        document.getElementById('mainScheduleContent').style.display = '';
+        document.getElementById('scheduleListView').style.display = 'none';
+    };
+
+    window.renderFilteredSchedList = function() {
+        const prog = (document.getElementById('slFilterProg') || {}).value || '';
+        const ay   = (document.getElementById('slFilterAy')   || {}).value || '';
+        const sem  = (document.getElementById('slFilterSem')  || {}).value || '';
+        let list = ALL_SCHEDULES.filter(s =>
+            (!prog || s.programcode === prog) &&
+            (!ay   || s.academicyearid === ay) &&
+            (!sem  || s.semestertype === sem)
+        );
+        list = list.slice().sort((a, b) => {
+            const ka = a.programcode + a.yearlevel;
+            const kb = b.programcode + b.yearlevel;
+            return _slSortAsc ? ka.localeCompare(kb) : kb.localeCompare(ka);
+        });
+        _renderRows(list);
+    };
+
+    window.toggleSlSort = function() {
+        _slSortAsc = !_slSortAsc;
+        const btn  = document.getElementById('slSortBtn');
+        if (btn) btn.innerHTML = `<i class="fas fa-sort-alpha-${_slSortAsc ? 'down' : 'up'}"></i>&nbsp; SORT: ${_slSortAsc ? 'A-Z' : 'Z-A'}`;
+        renderFilteredSchedList();
+    };
+
+    function _renderRows(list) {
+        const tbody = document.getElementById('slTableBody');
+        if (!tbody) return;
+        if (!list.length) {
+            tbody.innerHTML = '<tr class="sl-empty-row"><td colspan="6">No schedule records found.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = list.map(s => {
+            const suf = YL_SUFFIX[s.yearlevel] || 'th';
+            const semLabel = SEM_LABELS[s.semestertype] || s.semestertype;
+            const progCell = (s.programname && s.programname !== s.programcode)
+                ? `<span class="sl-prog-code">${_esc(s.programcode)}</span> <span class="sl-prog-name">${_esc(s.programname)}</span>`
+                : `<span class="sl-prog-code">${_esc(s.programcode)}</span>`;
+            return `<tr>
+                <td>${progCell}</td>
+                <td>${s.yearlevel}${suf} Year</td>
+                <td><span class="sl-acad-year">${_esc(s.acad_year)}</span></td>
+                <td><span class="sl-sem-label">${semLabel}</span></td>
+                <td><span class="sl-date-badge">${_esc(s.date_imported)}</span></td>
+                <td>
+                    <button class="sl-btn-delete"
+                        onclick="slConfirmDelete(${JSON.stringify(s.programcode)},${s.yearlevel},${JSON.stringify(s.academicyearid)},${JSON.stringify(s.semestertype)},${JSON.stringify(s.acad_year)})"
+                        title="Delete schedule">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function _esc(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    window.slConfirmDelete = function(prog, yl, ayId, sem, ayLabel) {
+        const SEM = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
+        const msg = `Delete all schedule data for:\n\n  Program: ${prog}\n  Year Level: ${yl}\n  Academic Year: ${ayLabel}\n  Semester: ${SEM[sem] || sem}\n\nThis action cannot be undone.`;
+        if (!confirm(msg)) return;
+        fetch('/api/schedule/list/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ programcode: prog, yearlevel: yl, academicyearid: ayId, semestertype: sem })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                ALL_SCHEDULES = ALL_SCHEDULES.filter(s =>
+                    !(s.programcode === prog && s.yearlevel === yl && s.academicyearid === ayId && s.semestertype === sem)
+                );
+                renderFilteredSchedList();
+            } else {
+                alert('Delete failed: ' + (res.error || 'Unknown error'));
+            }
+        })
+        .catch(e => alert('Network error: ' + e.message));
+    };
+})();
+</script>
 
 <!-- ═══════════════════════════════════════════════════════════
      UNIFIED SCHEDULE IMPORT MODAL
@@ -783,9 +1049,15 @@
         <div class="si-filter-bar">
           <div class="si-filter-left">
             <div class="si-fg">
-              <label><i class="fas fa-graduation-cap"></i> Academic Offering</label>
-              <select id="siFilterProg" onchange="siApplyFilter()">
-                <option value="">All Offerings</option>
+              <label><i class="fas fa-graduation-cap"></i> Program</label>
+              <select id="siFilterProg" onchange="siOnProgChange()">
+                <option value="">All Programs</option>
+              </select>
+            </div>
+            <div class="si-fg">
+              <label><i class="fas fa-users"></i> Section</label>
+              <select id="siFilterSection" onchange="siOnSectionChange()">
+                <option value="">All Sections</option>
               </select>
             </div>
             <div class="si-fg">
@@ -1376,10 +1648,17 @@
                 siClose();
                 const ic = data.saved_current   || 0;
                 const ih = data.saved_historical || 0;
-                const msg = ic > 0
-                    ? `Schedule imported successfully! ${ic} record(s) saved to schedule.` +
-                      (ih > 0 ? ` ${ih} record(s) saved to historical data.` : '')
-                    : `Import complete. ${ih} record(s) saved to historical data (no matching curriculum found).`;
+                const iskip = data.saved_skipped || 0;
+                let msg;
+                if (ic > 0) {
+                    msg = `Schedule imported successfully! ${ic} record(s) saved to schedule.`;
+                    if (iskip > 0) msg += ` ${iskip} row(s) skipped (subject or section not found in system).`;
+                    if (ih > 0)   msg += ` ${ih} record(s) archived to historical data.`;
+                } else if (iskip > 0) {
+                    msg = `Import complete. 0 saved — ${iskip} row(s) skipped (subject code or section not found in the system).`;
+                } else {
+                    msg = `Import complete. ${ih} record(s) saved to historical data (no matching curriculum found).`;
+                }
                 _toast(msg, '#2e7d32');
                 setTimeout(() => location.reload(), 2200);
             }, 500);
@@ -1433,10 +1712,33 @@
 
         /* Populate program filter */
         const pf = document.getElementById('siFilterProg');
-        pf.innerHTML = '<option value="">All Offerings</option>';
+        pf.innerHTML = '<option value="">All Programs</option>';
         Object.keys(progMap).sort().forEach(pk => {
             const opt = document.createElement('option'); opt.value=pk; opt.textContent=pk; pf.appendChild(opt);
         });
+
+        /* Populate section filter — all unique course combos */
+        const sf = document.getElementById('siFilterSection');
+        if (sf) {
+            sf.innerHTML = '<option value="">All Sections</option>';
+            const secSeen = new Map();
+            (data.rows||[]).forEach(row => {
+                const pk = row.program || '';
+                const sc = (row.course  || '').trim();
+                if (!pk || !sc) return;
+                const k = pk + '::' + sc;
+                if (!secSeen.has(k)) secSeen.set(k, { prog: pk, course: sc });
+            });
+            Array.from(secSeen.values())
+                .sort((a, b) => a.prog.localeCompare(b.prog) || a.course.localeCompare(b.course))
+                .forEach(({ prog, course }) => {
+                    const opt = document.createElement('option');
+                    opt.value = course;
+                    opt.dataset.prog = prog;
+                    opt.textContent  = course;
+                    sf.appendChild(opt);
+                });
+        }
 
         /* Render */
         const content = document.getElementById('siPreviewContent');
@@ -1489,8 +1791,9 @@
                     // Row tooltip: show validation flags on hover
                     const rowTitle = row.flags ? ` title="${row.flags.replace(/"/g,'&quot;')}"` : '';
 
+                    const secAttr = (row.course||'').replace(/"/g,'&quot;');
                     rowsHtml +=
-                        `<tr class="row-${row.status}" data-search="${srch}"${rowTitle}>` +
+                        `<tr class="row-${row.status}" data-search="${srch}" data-section="${secAttr}"${rowTitle}>` +
                         `<td class="col-inst">${instCell}</td>` +
                         `<td class="col-code">${codeCell}</td>` +
                         `<td class="col-desc">${row.subj_name||'&mdash;'}</td>` +
@@ -1504,6 +1807,23 @@
                         `<td class="col-room">${roomCell}</td>` +
                         `</tr>`;
                 });
+
+                const _totLec   = rows.reduce((s, r) => s + (+(r.lec_hrs      || 0)), 0);
+                const _totLab   = rows.reduce((s, r) => s + (+(r.lab_hrs      || 0)), 0);
+                const _totCred  = rows.reduce((s, r) => s + (+(r.credit_units || 0)), 0);
+                const _totHours = rows.reduce((s, r) => s + (+(r.hours        || 0)), 0);
+                const _totalRow =
+                    `<tr class="si-total-row">` +
+                    `<td class="col-inst" colspan="3">TOTAL</td>` +
+                    `<td class="col-num">${_totLec}</td>` +
+                    `<td class="col-num">${_totLab}</td>` +
+                    `<td class="col-num">${_totCred}</td>` +
+                    `<td class="col-sec"></td>` +
+                    `<td class="col-time"></td>` +
+                    `<td class="col-num">${_totHours}</td>` +
+                    `<td class="col-day"></td>` +
+                    `<td class="col-room"></td>` +
+                    `</tr>`;
 
                 ylSections +=
                     `<div class="si-yl-section" data-yl="${yl}" id="siYL${ylKey}">` +
@@ -1531,7 +1851,7 @@
                             `<th class="col-day">Day/s</th>` +
                             `<th class="col-room">Room</th>` +
                         `</tr></thead>` +
-                        `<tbody id="siTB${ylKey}">${rowsHtml}</tbody>` +
+                        `<tbody id="siTB${ylKey}">${rowsHtml}${_totalRow}</tbody>` +
                         `</table></div>` +
                     `</div></div>`;
             });
@@ -1580,9 +1900,10 @@
 
     /* ── Filter ── */
     window.siApplyFilter = () => {
-        const selProg   = (document.getElementById('siFilterProg').value   ||'').toUpperCase();
-        const selYl     = (document.getElementById('siFilterYl').value     ||'');
-        const selSearch = (document.getElementById('siFilterSearch').value ||'').toLowerCase().trim();
+        const selProg   = (document.getElementById('siFilterProg')?.value    ||'').toUpperCase();
+        const selYl     = (document.getElementById('siFilterYl')?.value      ||'');
+        const selSec    = (document.getElementById('siFilterSection')?.value ||'').trim();
+        const selSearch = (document.getElementById('siFilterSearch')?.value  ||'').toLowerCase().trim();
 
         document.querySelectorAll('.si-prog-section').forEach(progEl => {
             const progMatch = !selProg || (progEl.dataset.prog||'').toUpperCase()===selProg;
@@ -1593,22 +1914,75 @@
                 const ylMatch = !selYl || ylEl.dataset.yl===selYl;
                 if (!ylMatch) { ylEl.style.display='none'; return; }
                 ylEl.style.display='';
-                if (selSearch) {
-                    let vis = false;
-                    ylEl.querySelectorAll('tbody tr').forEach(tr => {
-                        const show = (tr.dataset.search||'').includes(selSearch);
-                        tr.style.display = show ? '' : 'none';
-                        if (show) vis = true;
-                    });
-                    ylEl.style.display = vis ? '' : 'none';
-                    if (vis) progVisible = true;
-                } else {
-                    ylEl.querySelectorAll('tbody tr').forEach(tr=>{tr.style.display='';});
-                    progVisible = true;
-                }
+                let vis = false;
+                ylEl.querySelectorAll('tbody tr:not(.si-total-row)').forEach(tr => {
+                    let show = true;
+                    if (selSec  && (tr.dataset.section||'') !== selSec) show = false;
+                    if (show && selSearch) show = (tr.dataset.search||'').includes(selSearch);
+                    tr.style.display = show ? '' : 'none';
+                    if (show) vis = true;
+                });
+                // Keep TOTAL row in sync with data row visibility
+                ylEl.querySelectorAll('tbody tr.si-total-row').forEach(tr => {
+                    tr.style.display = vis ? '' : 'none';
+                });
+                ylEl.style.display = vis ? '' : 'none';
+                if (vis) progVisible = true;
             });
             progEl.style.display = progVisible ? '' : 'none';
         });
+    };
+
+    /* ── Section filter helpers ── */
+    function _siRebuildSectionFilter(filterProg) {
+        const sf = document.getElementById('siFilterSection');
+        if (!sf) return;
+        const currentSec = sf.value;
+        sf.innerHTML = '<option value="">All Sections</option>';
+        const secSeen = new Map();
+        (_preview?.rows || []).forEach(row => {
+            const pk = row.program || '';
+            const sc = (row.course  || '').trim();
+            if (!pk || !sc) return;
+            if (filterProg && pk !== filterProg) return;
+            const k = pk + '::' + sc;
+            if (!secSeen.has(k)) secSeen.set(k, { prog: pk, course: sc });
+        });
+        Array.from(secSeen.values())
+            .sort((a, b) => a.prog.localeCompare(b.prog) || a.course.localeCompare(b.course))
+            .forEach(({ prog, course }) => {
+                const opt = document.createElement('option');
+                opt.value = course;
+                opt.dataset.prog = prog;
+                opt.textContent  = course;
+                sf.appendChild(opt);
+            });
+        // Restore previous selection if still valid
+        const reselect = Array.from(sf.options).find(o => o.value === currentSec);
+        if (reselect) sf.value = reselect.value;
+    }
+
+    window.siOnProgChange = () => {
+        const progSel = document.getElementById('siFilterProg');
+        _siRebuildSectionFilter(progSel ? progSel.value : '');
+        siApplyFilter();
+    };
+
+    window.siOnSectionChange = () => {
+        const secSel  = document.getElementById('siFilterSection');
+        const progSel = document.getElementById('siFilterProg');
+        if (!secSel || !progSel) { siApplyFilter(); return; }
+        const selOpt  = secSel.options[secSel.selectedIndex];
+        const secProg = selOpt?.dataset?.prog || '';
+        // Auto-set offering if section was chosen first
+        if (secProg && !progSel.value) {
+            progSel.value = secProg;
+            _siRebuildSectionFilter(secProg);
+            // Re-select the section after rebuild
+            const reselect = Array.from(secSel.options).find(o => o.value === secSel.value);
+            if (reselect) secSel.value = reselect.value;
+        }
+        siApplyFilter();
     };
 
     /* ── Screen manager ── */
