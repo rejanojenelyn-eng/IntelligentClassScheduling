@@ -2,202 +2,241 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scheduleGeneration.css') }}">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 {% endblock %}
 
 {% block content %}
+<script>const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";</script>
+
 <div class="schedule-container">
 
-<<<<<<< HEAD
-    <!-- Top Action Links -->
-    <div class="top-action-links">
-        <button class="outline-btn" onclick="openDraftsModal()"><i class="fas fa-edit"></i> View Drafts</button>
-        <button class="outline-btn" onclick="openVersionHistoryModal()"><i class="fas fa-history"></i> Version History</button>
-=======
-    <!-- Page Title Bar -->
+    <!-- Full-width title bar -->
     <div class="page-title-bar">
         <div class="page-title-left">
-            <h2><i class="fas fa-calendar-alt"></i> GENERATE SCHEDULE</h2>
+            <h2>GENERATE SCHEDULE</h2>
         </div>
         <div class="page-title-right">
-            <button id="btnManualEditor" class="outline-btn" disabled>
+            <button id="btnManualEditor" class="btn-white-maroon" disabled>
                 <i class="fas fa-pen"></i> Go to Manual Editor
             </button>
         </div>
->>>>>>> 4323b880aa5b6d26a4684517beaa0afa2c16a224
     </div>
 
-    <!-- Filter and Generate Section -->
-    <div class="schedule-header-split">
-        <div class="filter-box">
-            <div class="filter-section-label">
-                <i class="fas fa-sliders-h"></i> FILTER CONTROLS
+    <!-- Two-column body -->
+    <div class="gen-body-split">
+
+        <!-- LEFT: main content -->
+        <div class="gen-main">
+
+            <!-- Filter bar -->
+            <div class="filter-box">
+                <div class="filter-section-label">
+                    <i class="fas fa-sliders-h"></i> FILTER CONTROLS
+                </div>
+                <form id="generateScheduleForm">
+                    <div class="form-group">
+                        <label>ACAD YEAR</label>
+                        <select id="acadYear" name="acadYear" required>
+                            <option value="">SELECT</option>
+                            {% for year in acad_years %}
+                                <option value="{{ year }}">{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>SEMESTER</label>
+                        <select id="term" name="term" required>
+                            <option value="">SELECT</option>
+                            {% for t in terms %}
+                                <option value="{{ t.id }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>PROGRAM</label>
+                        <select id="program" name="program" required>
+                            <option value="">SELECT</option>
+                            {% for prog in programs %}
+                                <option value="{{ prog.code }}">{{ prog.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>YEAR LEVEL</label>
+                        <select id="yearLevel" name="yearLevel" required>
+                            <option value="">SELECT</option>
+                            {% for level in year_levels %}
+                                <option value="{{ level }}">Year {{ level }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>SECTIONS</label>
+                        <select id="sectionFilter" name="sectionFilter" required>
+                            <option value="">SELECT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>CURRICULUM</label>
+                        <div id="curriculumDisplay" class="curriculum-display">
+                            <input type="hidden" id="curriculum" name="curriculum" value="">
+                            <span id="curriculumText">Select Program first</span>
+                        </div>
+                    </div>
+                </form>
             </div>
-            <form id="generateScheduleForm">
-                <div class="form-group">
-                    <label>ACAD YEAR</label>
-                    <select id="acadYear" name="acadYear" required>
-                        <option value="">SELECT</option>
-                        {% for year in acad_years %}
-                            <option value="{{ year }}">{{ year }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>SEMESTER</label>
-                    <select id="term" name="term" required>
-                        <option value="">SELECT</option>
-                        {% for term in terms %}
-                            <option value="{{ term.id }}">{{ term.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>PROGRAM</label>
-                    <select id="program" name="program" required>
-                        <option value="">SELECT</option>
-                        {% for prog in programs %}
-                            <option value="{{ prog.code }}">{{ prog.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>YEAR LEVEL</label>
-                    <select id="yearLevel" name="yearLevel" required>
-                        <option value="">SELECT</option>
-                        {% for level in year_levels %}
-                            <option value="{{ level }}">Year {{ level }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>SECTIONS</label>
-                    <select id="sectionFilter" name="sectionFilter" required>
-                        <option value="">SELECT</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>CURRICULUM</label>
-                    <div id="curriculumDisplay" class="curriculum-display">
-                        <input type="hidden" id="curriculum" name="curriculum" value="">
-                        <span id="curriculumText">Select Program first</span>
+
+            <!-- Content area -->
+            <div id="generatedContent">
+
+                <!-- View toggle + sort + export -->
+                <div class="view-control-row">
+                    <div class="view-toggles">
+                        <button class="toggle-btn" id="btnCalendarView">
+                            <i class="far fa-calendar-alt"></i> CALENDAR VIEW
+                        </button>
+                        <button class="toggle-btn active" id="btnTableView">
+                            <i class="fas fa-table"></i> TABLE VIEW
+                        </button>
+                    </div>
+                    <div class="right-controls-row">
+                        <div class="sort-control">
+                            <i class="fas fa-sort-amount-down-alt"></i>
+                            <select id="sortSelect">
+                                <option value="default">SORT: Default</option>
+                                <option value="az">SORT: A-Z</option>
+                                <option value="za">SORT: Z-A</option>
+                                <option value="time">SORT: By Time</option>
+                            </select>
+                        </div>
+                        <button class="btn-export-outline-dark" id="btnExport" disabled>
+                            <i class="fas fa-file-export"></i> EXPORT SCHEDULE
+                        </button>
                     </div>
                 </div>
-            </form>
-        </div>
 
-        <div class="generate-box">
+                <!-- Criteria header / table title -->
+                <div class="criteria-header" id="tableTitle">WAITING FOR SELECTION...</div>
+
+                <!-- Table View -->
+                <div id="tableViewContainer">
+                    <table class="offerings-list-table">
+                        <thead>
+                            <tr>
+                                <th class="col-instructor">INSTRUCTOR</th>
+                                <th class="col-code">SUBJECT<br>CODE</th>
+                                <th class="col-desc">SUBJECT DESCRIPTION</th>
+                                <th class="col-num">LEC<br>HRS</th>
+                                <th class="col-num">LAB<br>HRS</th>
+                                <th class="col-num">CREDIT<br>UNITS</th>
+                                <th class="col-course">COURSE</th>
+                                <th class="col-time">TIME</th>
+                                <th class="col-num">HOURS</th>
+                                <th class="col-days">DAYS</th>
+                                <th class="col-room">ROOM</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduleTableBody">
+                            <tr class="table-empty-row">
+                                <td colspan="11">
+                                    <i class="fas fa-calendar-plus"></i>
+                                    Select filters above and click Generate Schedule to begin
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div id="successToast" class="toast hidden">
+                        <i class="fas fa-check-circle"></i> Schedule Generated Successfully!
+                    </div>
+                </div>
+
+                <!-- Calendar View (hidden by default) -->
+                <div class="schedule-grid-card hidden" id="calendarViewContainer">
+                    <div class="grid-card-header" id="calendarTitle">SCHEDULE TIMETABLE</div>
+                    <div class="timetable-wrapper" id="genGridWrapper" style="position:relative;">
+                        <table class="timetable-grid" id="genMainTimetable">
+                            <thead>
+                                <tr>
+                                    <th class="time-header">TIME</th>
+                                    <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                                    <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
+                                                '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
+                                                '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
+                                {% for t in times %}
+                                <tr>
+                                    <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
+                                    <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Conflict Warning Banner -->
+                <div id="conflictBanner" class="conflict-banner hidden">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
+                    <button onclick="document.getElementById('conflictBanner').classList.add('hidden')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="actionButtons">
+                    <div class="left-actions">
+                        <a href="{{ url_for('schedule_drafts_list') }}" class="btn-white-maroon">
+                            <i class="fas fa-layer-group"></i> View Draft List
+                        </a>
+                        <button id="btnSaveDraft" class="btn-white-maroon" disabled>
+                            <i class="fas fa-save"></i> Save as Draft
+                        </button>
+                    </div>
+                    <div class="right-actions">
+                        <button id="btnRegenerate" class="btn-white-maroon" disabled>
+                            <i class="fas fa-sync-alt"></i> Re-generate
+                        </button>
+                        <button id="btnApprove" class="btn-maroon-solid" disabled>
+                            <i class="fas fa-check-circle"></i> Approve Schedule
+                        </button>
+                    </div>
+                </div>
+
+            </div><!-- /#generatedContent -->
+        </div><!-- /.gen-main -->
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="gen-sidebar">
             <button type="button" id="btnGenerate" disabled>
                 <i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE
             </button>
             <div class="checkbox-wrapper">
                 <input type="checkbox" id="useHistorical" name="useHistorical">
-                <label for="useHistorical"><i class="fas fa-clock-rotate-left"></i> Retrieve previous schedule</label>
+                <label for="useHistorical">Retrieve previous schedule</label>
             </div>
-        </div>
-    </div>
 
-    <div id="generatedContent">
-        <div class="criteria-header" id="tableTitle">
-            <i class="fas fa-calendar-alt"></i> WAITING FOR SELECTION...
-        </div>
-
-        <div class="table-toolbar">
-            <div class="view-toggles">
-                <button class="outline-btn" id="btnCalendarView"><i class="far fa-calendar-alt"></i> Calendar View</button>
-                <button class="active-btn" id="btnTableView"><i class="fas fa-table"></i> Table View</button>
-            </div>
-            <div class="toolbar-right">
-                <div class="sort-control">
-                    <i class="fas fa-sort-amount-down-alt"></i>
-                    <select id="sortSelect">
-                        <option value="default">SORT: Default</option>
-                        <option value="az">SORT: A-Z</option>
-                        <option value="za">SORT: Z-A</option>
-                        <option value="time">SORT: By Time</option>
-                    </select>
+            <!-- Accuracy Widget -->
+            <div class="accuracy-widget">
+                <div class="accuracy-row" id="accuracyRow">
+                    <div class="accuracy-icon" id="accuracyCircle">
+                        <i class="fas fa-chart-bar" id="accuracyIcon"></i>
+                    </div>
+                    <div class="accuracy-pct" id="accuracyPct">—</div>
                 </div>
-                <button class="outline-btn" id="btnExport" disabled><i class="fas fa-file-export"></i> Export Schedule</button>
+                <div class="accuracy-label" id="accuracyLabelEl">ACCURACY RATE</div>
+                <p class="accuracy-desc" id="accuracyDesc">Generate a schedule to see how closely it matches historical patterns.</p>
             </div>
-        </div>
+        </div><!-- /.gen-sidebar -->
 
-        <!-- Table View -->
-        <div class="table-wrapper" id="tableViewContainer">
-            <table class="schedule-table">
-                <thead>
-                    <tr>
-                        <th>INSTRUCTOR</th>
-                        <th>SUBJECT CODE</th>
-                        <th>SUBJECT DESCRIPTION</th>
-                        <th>LEC HRS</th>
-                        <th>LAB HRS</th>
-                        <th>CREDIT UNITS</th>
-                        <th>COURSE</th>
-                        <th>TIME</th>
-                        <th>HRS</th>
-                        <th>DAYS</th>
-                        <th>ROOM</th>
-                    </tr>
-                </thead>
-                <tbody id="scheduleTableBody">
-                    <tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> Select filters above and click Generate Schedule to begin</span></td></tr>
-                </tbody>
-            </table>
+    </div><!-- /.gen-body-split -->
+</div><!-- /.schedule-container -->
 
-            <div id="successToast" class="toast hidden">
-                <i class="fas fa-check-circle"></i> Schedule Generated Successfully!
-            </div>
-        </div>
-
-        <!-- Calendar View (hidden by default) -->
-        <div class="calendar-wrapper hidden" id="calendarViewContainer">
-            <div class="timetable-wrapper" id="genGridWrapper" style="position: relative;">
-                <table class="timetable-grid" id="genMainTimetable">
-                    <thead>
-                        <tr>
-                            <th class="time-header">TIME</th>
-                            <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
-                            <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
-                                        '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
-                                        '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
-                        {% for t in times %}
-                        <tr>
-                            <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
-                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Conflict Warning Banner -->
-        <div id="conflictBanner" class="conflict-banner hidden">
-            <i class="fas fa-exclamation-triangle"></i>
-            <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
-            <button onclick="document.getElementById('conflictBanner').classList.add('hidden')"><i class="fas fa-times"></i></button>
-        </div>
-
-        <div id="actionButtons">
-            <div class="left-actions">
-                <a href="{{ url_for('schedule_drafts_list') }}" class="outline-btn"><i class="fas fa-layer-group"></i> View Draft List</a>
-                <button id="btnSaveDraft" disabled><i class="fas fa-save"></i> Save as Draft</button>
-            </div>
-            <div class="right-actions">
-                <button id="btnRegenerate" disabled><i class="fas fa-sync-alt"></i> Re-generate</button>
-                <button id="btnApprove" disabled><i class="fas fa-check-circle"></i> Approve Schedule</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      LOADING MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="loadingModal" class="modal-overlay hidden">
     <div class="modal-content loading-modal-content">
         <div class="loading-icon-wrap">
@@ -219,9 +258,9 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      INFO MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="infoModal" class="modal-overlay hidden">
     <div class="modal-content info-modal-content">
         <div class="info-modal-icon" id="infoModalIcon">
@@ -236,16 +275,20 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      VIEW DRAFTS MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="draftsModal" class="modal-overlay hidden">
     <div class="modal-content">
         <div class="modal-header">
-            <h3><i class="fas fa-edit"></i> Saved Drafts</h3>
+            <h3><i class="fas fa-layer-group"></i> Saved Drafts</h3>
             <div style="display:flex;gap:8px;align-items:center;">
-                <a href="/schedule/drafts" class="btn-view-all-drafts"><i class="fas fa-layer-group"></i> View All</a>
-                <button onclick="document.getElementById('draftsModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+                <a href="{{ url_for('schedule_drafts_list') }}" class="btn-view-all-drafts">
+                    <i class="fas fa-external-link-alt"></i> View All
+                </a>
+                <button onclick="document.getElementById('draftsModal').classList.add('hidden')">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
         </div>
         <div class="modal-body" id="draftsModalBody">
@@ -254,14 +297,16 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      VERSION HISTORY MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="versionModal" class="modal-overlay hidden">
     <div class="modal-content">
         <div class="modal-header">
             <h3><i class="fas fa-history"></i> Version History</h3>
-            <button onclick="document.getElementById('versionModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+            <button onclick="document.getElementById('versionModal').classList.add('hidden')">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
         <div class="modal-body" id="versionModalBody">
             <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading...</p>
@@ -1063,9 +1108,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 </script>
-<<<<<<< HEAD
-{% endblock %}
-=======
 <script src="{{ url_for('static', filename='js/ACAD HEAD/scheduleGeneration.acad.js') }}"></script>
 {% endblock %}
 >>>>>>> 4323b880aa5b6d26a4684517beaa0afa2c16a224

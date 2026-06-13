@@ -802,17 +802,14 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
 
                 if s1 and s2_extra:
                     warnings = list(w1)
-                    warnings.insert(0, 'Extraction method: structured table parsing (+ word-position supplement).')
                     warnings.append(
                         f'Word-position layout recovered {len(s2_extra)} additional subject(s) '
                         f'from sections that the table detector missed.'
                     )
                 elif s1:
                     warnings = list(w1)
-                    warnings.insert(0, 'Extraction method: structured table parsing.')
                 else:
                     warnings = list(w2)
-                    warnings.insert(0, 'Extraction method: word-position layout analysis.')
 
             # Strategy 3: raw text lines (last resort – nothing extracted at all)
             if not subjects and raw_text.strip():
@@ -886,10 +883,6 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         if no_sem:
             warnings.append(
                 f'{no_sem} subject(s) have no detected semester — please set in the review screen.'
-            )
-        if no_th:
-            warnings.append(
-                f'{no_th} subject(s) have Tuition Hours = 0 — verify if correct.'
             )
 
     return {

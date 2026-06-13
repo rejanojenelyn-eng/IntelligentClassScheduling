@@ -1,0 +1,553 @@
+{% extends "admin/base_admin.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+    <style>
+        /* ── Main schedule table (Table View) ── */
+        .schedule-table { width:100%; border-collapse:collapse; font-size:0.8rem; table-layout:fixed; }
+        .schedule-table thead { background:#2c0000; color:#fff; position:sticky; top:0; z-index:2; }
+        .schedule-table th { padding:8px 7px; font-weight:700; font-size:0.67rem; letter-spacing:.4px; text-transform:uppercase; text-align:center; border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; overflow:hidden; }
+        .schedule-table th:first-child { text-align:left; padding-left:14px; }
+        .schedule-table th:nth-child(3) { text-align:left; padding-left:10px; }
+        .schedule-table th:last-child   { border-right:none; }
+        .schedule-table th:nth-child(1)  { width:15%; } .schedule-table th:nth-child(2)  { width:8%;  }
+        .schedule-table th:nth-child(3)  { width:20%; } .schedule-table th:nth-child(4)  { width:5%;  }
+        .schedule-table th:nth-child(5)  { width:5%;  } .schedule-table th:nth-child(6)  { width:6%;  }
+        .schedule-table th:nth-child(7)  { width:7%;  } .schedule-table th:nth-child(8)  { width:13%; }
+        .schedule-table th:nth-child(9)  { width:5%;  } .schedule-table th:nth-child(10) { width:6%;  }
+        .schedule-table th:nth-child(11) { width:10%; }
+        .schedule-table tbody tr { border-bottom:1px solid #f0e8e8; transition:background .12s; }
+        .schedule-table tbody tr:nth-child(odd)  { background:#fff; }
+        .schedule-table tbody tr:nth-child(even) { background:#fdf5f5; }
+        .schedule-table tbody tr:hover { background:#f8eaea !important; }
+        .schedule-table td { padding:7px 7px; color:#333; font-size:0.79rem; text-align:center; border-right:1px solid #f0e8e8; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .schedule-table td:last-child { border-right:none; }
+        .schedule-table td.td-instructor { text-align:left; padding-left:14px; font-weight:600; color:#1a0000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .schedule-table td.td-code    { font-weight:800; color:#630100; font-size:.82rem; letter-spacing:.2px; }
+        .schedule-table td.td-desc    { text-align:left; padding-left:10px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .schedule-table td.td-units   { font-weight:800; color:#630100; }
+        .schedule-table td.td-days    { font-weight:700; color:#630100; font-size:.78rem; }
+        .schedule-table td.td-time    { white-space:nowrap; font-size:.77rem; font-weight:600; }
+        .schedule-table td.td-room    { font-weight:600; }
+        .empty-row td { text-align:center; padding:40px 20px; }
+        .empty-msg { font-size:13px; color:#aaa; display:flex; align-items:center; justify-content:center; gap:8px; }
+        #tableViewWrapper.table-wrapper { background:#fff; overflow:hidden; }
+        .timetable-grid td.time-cell { padding:0; font-size:0.72rem; font-weight:900; white-space:nowrap; }
+        .schedule-grid-card { background:#fff; border:1px solid #e0c8c8; border-radius:10px; overflow:hidden; box-shadow:0 2px 8px rgba(122,0,0,.13); margin-top:4px; }
+        .grid-card-header { background:linear-gradient(135deg,#7a0000 0%,#5c0000 100%); border-radius:0; }
+
+        /* ══════════════════════════════════════════════════════════════
+           SCHEDULE EXPORT MODAL
+        ══════════════════════════════════════════════════════════════ */
+        .se-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:1500; align-items:center; justify-content:center; padding:16px; }
+        .se-dialog  { background:#fff; border-radius:12px; width:min(860px,98vw); max-height:92vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 12px 50px rgba(0,0,0,.4); animation:se-pop .22s cubic-bezier(.34,1.56,.64,1); position:relative; }
+        @keyframes se-pop { from{transform:scale(.93);opacity:0} to{transform:scale(1);opacity:1} }
+        .se-hdr { background:linear-gradient(135deg,#630100,#4b0a0a); color:#fff; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+        .se-hdr-title { font-size:1rem; font-weight:700; display:flex; align-items:center; gap:10px; }
+        .se-hdr-close { background:none; border:none; color:rgba(255,255,255,.75); font-size:1.1rem; cursor:pointer; padding:5px 9px; border-radius:5px; transition:color .15s,background .15s; }
+        .se-hdr-close:hover { color:#fff; background:rgba(255,255,255,.15); }
+        .se-body { padding:20px 24px; overflow-y:auto; flex:1; min-height:0; }
+        .se-sec-lbl { font-size:.73rem; font-weight:800; text-transform:uppercase; color:#630100; letter-spacing:.5px; border-left:3px solid #630100; padding-left:8px; margin-bottom:12px; margin-top:18px; }
+        .se-sec-lbl:first-child { margin-top:0; }
+        .se-summary { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:#f9f3f3; border:1px solid #e8d0d0; border-radius:9px; padding:12px 16px; margin-bottom:18px; }
+        .se-sum-stat { text-align:center; flex:1; min-width:60px; }
+        .se-sum-num  { font-size:1.4rem; font-weight:900; color:#630100; display:block; line-height:1; }
+        .se-sum-lbl  { font-size:.62rem; color:#888; text-transform:uppercase; letter-spacing:.3px; margin-top:2px; display:block; }
+        .se-sum-div  { width:1px; height:36px; background:#e8d0d0; flex-shrink:0; }
+        .se-sum-msg  { flex:2; font-size:.78rem; color:#888; line-height:1.5; min-width:120px; }
+        .se-filter-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:6px; }
+        .se-filter-box { border:1px solid #e8e8e8; border-radius:9px; padding:14px 16px; background:#fafafa; }
+        .se-filter-box h4 { font-size:.72rem; font-weight:800; color:#630100; text-transform:uppercase; letter-spacing:.4px; margin:0 0 10px; display:flex; align-items:center; gap:6px; }
+        .se-cb-list { display:flex; flex-wrap:wrap; gap:8px 14px; }
+        .se-cb-item { display:flex; align-items:center; gap:5px; cursor:pointer; }
+        .se-cb-item input[type=checkbox] { accent-color:#630100; width:14px; height:14px; cursor:pointer; flex-shrink:0; }
+        .se-cb-item label { font-size:.8rem; color:#444; cursor:pointer; white-space:nowrap; }
+        .se-prog-search { width:100%; padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:.82rem; margin-bottom:7px; background:#fff; outline:none; box-sizing:border-box; }
+        .se-prog-search:focus { border-color:#630100; }
+        .se-prog-actions { display:flex; gap:6px; margin-bottom:6px; }
+        .se-prog-actions button { background:none; border:1px solid #ddd; color:#666; padding:3px 10px; border-radius:5px; font-size:.72rem; cursor:pointer; transition:border-color .12s,color .12s; }
+        .se-prog-actions button:hover { border-color:#630100; color:#630100; }
+        .se-prog-list { max-height:140px; overflow-y:auto; border:1px solid #e8e8e8; border-radius:6px; background:#fff; }
+        .se-prog-item { display:flex; align-items:center; gap:8px; padding:5px 10px; cursor:pointer; border-bottom:1px solid #f5f0f0; transition:background .12s; }
+        .se-prog-item:last-child { border-bottom:none; }
+        .se-prog-item:hover { background:#fff8f8; }
+        .se-prog-item input[type=checkbox] { accent-color:#630100; width:13px; height:13px; flex-shrink:0; cursor:pointer; }
+        .se-prog-item label { font-size:.79rem; color:#444; cursor:pointer; flex:1; line-height:1.3; }
+        .se-fmt-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:6px; }
+        .se-fmt-card { border:2px solid #e0e0e0; border-radius:10px; padding:18px 12px 14px; text-align:center; cursor:pointer; background:#fafafa; transition:border-color .18s,background .18s,transform .15s,box-shadow .18s; position:relative; user-select:none; }
+        .se-fmt-card:hover { border-color:#630100; background:#fff8f8; transform:translateY(-2px); box-shadow:0 4px 12px rgba(99,1,0,.1); }
+        .se-fmt-card.sel { border-color:#630100; background:#fff0f0; box-shadow:0 0 0 3px rgba(99,1,0,.12); }
+        .se-fmt-chk { position:absolute; top:8px; right:8px; width:17px; height:17px; border-radius:50%; border:2px solid #ccc; background:#fff; display:flex; align-items:center; justify-content:center; font-size:.6rem; color:transparent; transition:all .15s; }
+        .se-fmt-card.sel .se-fmt-chk { border-color:#630100; background:#630100; color:#fff; }
+        .se-fmt-icon { font-size:2rem; margin-bottom:8px; display:block; }
+        .se-fmt-csv  .se-fmt-icon { color:#22863a; } .se-fmt-xlsx .se-fmt-icon { color:#1d6f42; }
+        .se-fmt-docx .se-fmt-icon { color:#2b5797; } .se-fmt-pdf  .se-fmt-icon { color:#c0392b; }
+        .se-fmt-name { font-size:.85rem; font-weight:800; color:#333; }
+        .se-fmt-desc { font-size:.68rem; color:#999; margin-top:3px; }
+        .se-fn-row { display:flex; gap:10px; align-items:flex-end; margin-top:14px; }
+        .se-fn-field { flex:1; display:flex; flex-direction:column; gap:4px; }
+        .se-fn-field label { font-size:.72rem; font-weight:700; color:#555; text-transform:uppercase; }
+        .se-fn-input { padding:9px 12px; border:1.5px solid #ddd; border-radius:7px; font-size:.88rem; outline:none; }
+        .se-fn-input:focus { border-color:#630100; box-shadow:0 0 0 2px rgba(99,1,0,.1); }
+        .se-footer { padding:14px 24px; border-top:1px solid #eee; background:#fafafa; display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+        .se-btn-cancel { background:none; border:1.5px solid #ccc; color:#666; padding:9px 22px; border-radius:8px; font-weight:600; cursor:pointer; font-size:.85rem; transition:border-color .15s,color .15s; }
+        .se-btn-cancel:hover { border-color:#630100; color:#630100; }
+        .se-btn-export { background:linear-gradient(135deg,#630100,#4b0a0a); color:#fff; border:none; padding:10px 24px; border-radius:8px; font-weight:700; font-size:.86rem; cursor:pointer; display:flex; align-items:center; gap:8px; transition:opacity .15s; }
+        .se-btn-export:hover { opacity:.88; } .se-btn-export:disabled { opacity:.4; cursor:not-allowed; }
+        .se-loading { display:none; position:absolute; inset:0; background:rgba(255,255,255,.92); z-index:10; align-items:center; justify-content:center; flex-direction:column; gap:6px; border-radius:12px; backdrop-filter:blur(2px); }
+        .se-loading.active { display:flex; }
+        .se-load-rings { width:64px; height:64px; position:relative; margin-bottom:12px; }
+        .se-ring { position:absolute; inset:0; border-radius:50%; border:3px solid transparent; animation:se-ring-spin 1.2s linear infinite; }
+        .se-ring:nth-child(1) { border-top-color:#630100; animation-duration:1.2s; }
+        .se-ring:nth-child(2) { border-right-color:#900000; inset:9px; animation-duration:.9s; animation-direction:reverse; }
+        .se-ring:nth-child(3) { border-bottom-color:#c44; inset:18px; animation-duration:.7s; }
+        @keyframes se-ring-spin { to{transform:rotate(360deg)} }
+        .se-spin-lbl { font-size:.9rem; font-weight:700; color:#630100; }
+        .se-spin-sub  { font-size:.75rem; color:#aaa; }
+        .se-summary.counting .se-sum-num { animation:se-num-pulse .7s ease-in-out infinite; color:#c8a8a8; }
+        @keyframes se-num-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .se-filter-divider { border:none; border-top:1px solid #ece8e8; margin:12px 0; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="schedule-page-container">
+
+    <!-- PAGE HEADER -->
+    <div class="cs-page-header">
+        <h1 class="cs-title">OFFICIAL CLASS SCHEDULE</h1>
+        <p class="cs-subtitle">This schedule reflects the Official and Approved Schedule in the PUP Student Information System (SIS).&nbsp; View-only access for Admin.</p>
+    </div>
+
+    <!-- FILTER CONTROLS BOX -->
+    <div class="cs-filter-box">
+        <div class="cs-filter-box-top">
+            <span class="cs-filter-label"><i class="fas fa-sliders-h"></i> FILTER CONTROLS</span>
+        </div>
+        <div class="cs-filter-row">
+            <div class="cs-filter-unit">
+                <label>ACAD YEAR</label>
+                <select id="view_ay" onchange="refreshOfferings()">
+                    <option value="">Select Academic Year</option>
+                    {% for ay in acad_years %}
+                    <option value="{{ ay.academicyearid }}"
+                        {% if ay.academicyearid == active_ay %}selected{% endif %}>
+                        {{ ay.yearstart }}-{{ ay.yearend }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="cs-filter-unit">
+                <label>SEMESTER</label>
+                <select id="view_sem" onchange="refreshOfferings()">
+                    <option value="A" {% if active_sem_type == 'A' %}selected{% endif %}>1ST SEMESTER</option>
+                    <option value="B" {% if active_sem_type == 'B' %}selected{% endif %}>2ND SEMESTER</option>
+                    <option value="C" {% if active_sem_type == 'C' %}selected{% endif %}>SUMMER</option>
+                </select>
+            </div>
+            <div class="cs-filter-unit cs-filter-program">
+                <label>PROGRAM</label>
+                <select id="view_prog" onchange="updateYearLevels(); refreshOfferings()">
+                    <option value="">SELECT</option>
+                    {% for p in programs %}
+                    <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="cs-filter-unit">
+                <label>YEAR LEVEL</label>
+                <select id="view_yl" onchange="refreshOfferings()">
+                    <option value="">SELECT</option>
+                    <option value="1">1ST YEAR</option>
+                    <option value="2">2ND YEAR</option>
+                    <option value="3">3RD YEAR</option>
+                    <option value="4">4TH YEAR</option>
+                    <option value="5">5TH YEAR</option>
+                </select>
+            </div>
+            <div class="cs-filter-unit cs-filter-instructor">
+                <label>INSTRUCTOR</label>
+                <select id="view_instructor"><option value="">SELECT</option></select>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUBJECT OFFERINGS VIEW -->
+    <div class="landing-section">
+        <div class="view-control-row">
+            <div class="view-toggles">
+                <button class="toggle-btn active" id="btn-calendar" onclick="setView('calendar')">
+                    <i class="fas fa-calendar-alt"></i> CALENDAR VIEW
+                </button>
+                <button class="toggle-btn" id="btn-table" onclick="setView('table')">
+                    <i class="fas fa-table"></i> TABLE VIEW
+                </button>
+            </div>
+            <div class="right-controls-row">
+                <button class="cs-action-btn" id="btn-export-schedule" onclick="openSchedExport()">
+                    <i class="fas fa-file-export"></i> EXPORT SCHEDULE
+                </button>
+            </div>
+        </div>
+
+        <div class="schedule-grid-card">
+            <div class="grid-card-header" id="gridLabel">SELECT FILTERS TO VIEW SCHEDULE</div>
+
+            <!-- CALENDAR VIEW -->
+            <div id="calendarViewWrapper">
+                <div class="timetable-wrapper" id="gridWrapper" style="position:relative;">
+                    <table class="timetable-grid" id="mainTimetable">
+                        <thead>
+                            <tr>
+                                <th class="time-header">TIME</th>
+                                <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                                <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
+                                            '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
+                                            '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
+                            {% for t in times %}
+                            <tr>
+                                <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
+                                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TABLE VIEW -->
+            <div id="tableViewWrapper" class="table-wrapper">
+                <table class="schedule-table" id="offeringsTable">
+                    <thead>
+                        <tr>
+                            <th>INSTRUCTOR</th>
+                            <th>SUBJECT CODE</th>
+                            <th>SUBJECT DESCRIPTION</th>
+                            <th>LEC HRS</th>
+                            <th>LAB HRS</th>
+                            <th>CREDIT UNITS</th>
+                            <th>COURSE</th>
+                            <th>TIME</th>
+                            <th>HOURS</th>
+                            <th>DAYS</th>
+                            <th>ROOM</th>
+                        </tr>
+                    </thead>
+                    <tbody id="offeringsTableBody">
+                        <tr class="empty-row">
+                            <td colspan="11"><span class="empty-msg">No data loaded. Select a program and year level.</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="schedule-init-data"
+     data-sems="{{ sem_json | forceescape }}"
+     data-today="{{ today }}"
+     data-active-ay="{{ active_ay }}"
+     data-active-sem="{{ active_sem_type }}"
+     hidden></div>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SCHEDULE EXPORT MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="seModal" class="se-overlay">
+  <div class="se-dialog">
+    <div class="se-loading" id="seLoading">
+      <div class="se-load-rings">
+        <div class="se-ring"></div><div class="se-ring"></div><div class="se-ring"></div>
+      </div>
+      <span class="se-spin-lbl" id="seLoadLbl">Generating export…</span>
+      <span class="se-spin-sub">This may take a few seconds</span>
+    </div>
+    <div class="se-hdr">
+      <div class="se-hdr-title"><i class="fas fa-file-export"></i> Export Schedule</div>
+      <button class="se-hdr-close" onclick="seClose()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="se-body">
+      <div class="se-summary">
+        <div class="se-sum-stat"><span class="se-sum-num" id="seCountRows">—</span><span class="se-sum-lbl">Rows</span></div>
+        <div class="se-sum-div"></div>
+        <div class="se-sum-stat"><span class="se-sum-num" id="seCountProgs">—</span><span class="se-sum-lbl">Programs</span></div>
+        <div class="se-sum-div"></div>
+        <span class="se-sum-msg" id="seSumMsg">Apply filters and select a format to begin.</span>
+      </div>
+      <div class="se-sec-lbl">Filters</div>
+      <div class="se-filter-grid">
+        <div class="se-filter-box">
+          <h4><i class="fas fa-calendar-alt"></i> Academic Year</h4>
+          <div class="se-cb-list" id="seAyList">
+            {% for ay in acad_years %}
+            <label class="se-cb-item">
+              <input type="checkbox" class="se-ay-cb" value="{{ ay.academicyearid }}" onchange="seUpdateCount()">
+              <label>AY {{ ay.yearstart }}-{{ ay.yearend }}</label>
+            </label>
+            {% endfor %}
+          </div>
+          <hr class="se-filter-divider">
+          <h4><i class="fas fa-book-open"></i> Semester</h4>
+          <div class="se-cb-list">
+            <label class="se-cb-item"><input type="checkbox" class="se-sem-cb" value="A" onchange="seUpdateCount()"><label>1st Semester</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-sem-cb" value="B" onchange="seUpdateCount()"><label>2nd Semester</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-sem-cb" value="C" onchange="seUpdateCount()"><label>Summer</label></label>
+          </div>
+          <hr class="se-filter-divider">
+          <h4><i class="fas fa-layer-group"></i> Year Level</h4>
+          <div class="se-cb-list">
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="1" onchange="seUpdateCount()"><label>1st Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="2" onchange="seUpdateCount()"><label>2nd Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="3" onchange="seUpdateCount()"><label>3rd Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="4" onchange="seUpdateCount()"><label>4th Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="5" onchange="seUpdateCount()"><label>5th Year</label></label>
+          </div>
+        </div>
+        <div class="se-filter-box">
+          <h4><i class="fas fa-graduation-cap"></i> Program</h4>
+          <div class="se-prog-actions">
+            <button onclick="seSelectAllProgs(true)">Select All</button>
+            <button onclick="seSelectAllProgs(false)">Clear All</button>
+          </div>
+          <input type="text" class="se-prog-search" id="seProgSearch" placeholder="Search program…" oninput="seFilterProgs()">
+          <div class="se-prog-list" id="seProgList">
+            {% for p in programs %}
+            <div class="se-prog-item" data-prog="{{ p.programcode }}">
+              <input type="checkbox" class="se-prog-cb" value="{{ p.programcode }}" id="seProg_{{ p.programcode }}" onchange="seUpdateCount()">
+              <label for="seProg_{{ p.programcode }}">{{ p.programcode }} &mdash; {{ p.programname }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="se-sec-lbl">Export Format <span style="font-size:.68rem;font-weight:500;color:#888;text-transform:none;border:none;padding:0;margin-left:6px;">(select one or more)</span></div>
+      <div class="se-fmt-grid">
+        <div class="se-fmt-card se-fmt-pdf" id="seFmtPdf" onclick="seToggleFmt('pdf')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-pdf"></i></span>
+          <div class="se-fmt-name">PDF</div><div class="se-fmt-desc">Official document</div>
+        </div>
+        <div class="se-fmt-card se-fmt-docx" id="seFmtDocx" onclick="seToggleFmt('docx')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-word"></i></span>
+          <div class="se-fmt-name">DOCX</div><div class="se-fmt-desc">Editable document</div>
+        </div>
+        <div class="se-fmt-card se-fmt-xlsx" id="seFmtXlsx" onclick="seToggleFmt('xlsx')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-excel"></i></span>
+          <div class="se-fmt-name">XLSX</div><div class="se-fmt-desc">Spreadsheet</div>
+        </div>
+        <div class="se-fmt-card se-fmt-csv" id="seFmtCsv" onclick="seToggleFmt('csv')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-csv"></i></span>
+          <div class="se-fmt-name">CSV</div><div class="se-fmt-desc">Flat table data</div>
+        </div>
+      </div>
+      <div class="se-fn-row">
+        <div class="se-fn-field">
+          <label>Filename</label>
+          <input type="text" class="se-fn-input" id="seFilename" placeholder="schedule_export">
+        </div>
+      </div>
+    </div>
+    <div class="se-footer">
+      <button class="se-btn-cancel" onclick="seClose()"><i class="fas fa-times"></i> Cancel</button>
+      <button class="se-btn-export" id="seBtnExport" onclick="seDoExport()" disabled>
+        <i class="fas fa-download"></i> <span id="seBtnLbl">Export</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SCHEDULE EXPORT ENGINE
+═══════════════════════════════════════════════════════════ */
+(function () {
+    const FMTS = ['pdf','docx','xlsx','csv'];
+    let _selFmts = new Set();
+    let _countTmr = null;
+
+    window.openSchedExport = () => {
+        _selFmts.clear();
+        document.querySelectorAll('.se-ay-cb,.se-sem-cb,.se-yl-cb,.se-prog-cb').forEach(cb => cb.checked = false);
+        document.getElementById('seProgSearch').value = '';
+        seFilterProgs();
+        FMTS.forEach(f => {
+            const card = document.getElementById('seFmt' + f[0].toUpperCase() + f.slice(1));
+            if (card) card.classList.remove('sel');
+        });
+        document.getElementById('seFilename').value = 'schedule_export';
+        document.getElementById('seCountRows').textContent = '—';
+        document.getElementById('seCountProgs').textContent = '—';
+        document.getElementById('seSumMsg').textContent = 'Apply filters and select a format to begin.';
+        document.getElementById('seBtnExport').disabled = true;
+        document.getElementById('seBtnLbl').textContent = 'Export';
+        document.getElementById('seLoading').classList.remove('active');
+        document.getElementById('seModal').style.display = 'flex';
+    };
+    window.seClose = () => { document.getElementById('seModal').style.display = 'none'; };
+
+    window.seToggleFmt = (fmt) => {
+        _selFmts.has(fmt) ? _selFmts.delete(fmt) : _selFmts.add(fmt);
+        FMTS.forEach(f => {
+            const card = document.getElementById('seFmt' + f[0].toUpperCase() + f.slice(1));
+            if (card) card.classList.toggle('sel', _selFmts.has(f));
+        });
+        _updateBtn();
+    };
+
+    window.seFilterProgs = () => {
+        const q = (document.getElementById('seProgSearch').value || '').toLowerCase();
+        document.querySelectorAll('.se-prog-item').forEach(item => {
+            const match = !q || item.dataset.prog.toLowerCase().includes(q) ||
+                          (item.querySelector('label')?.textContent || '').toLowerCase().includes(q);
+            item.style.display = match ? '' : 'none';
+        });
+    };
+    window.seSelectAllProgs = (checked) => {
+        document.querySelectorAll('.se-prog-item:not([style*="display: none"]) .se-prog-cb').forEach(cb => cb.checked = checked);
+        seUpdateCount();
+    };
+
+    function _filters() {
+        return {
+            ay_ids:      [...document.querySelectorAll('.se-ay-cb:checked')].map(c => c.value),
+            sem_types:   [...document.querySelectorAll('.se-sem-cb:checked')].map(c => c.value),
+            programs:    [...document.querySelectorAll('.se-prog-cb:checked')].map(c => c.value),
+            year_levels: [...document.querySelectorAll('.se-yl-cb:checked')].map(c => parseInt(c.value))
+        };
+    }
+
+    function _countUp(el, target, ms) {
+        if (target <= 0) { el.textContent = 0; return; }
+        const steps = Math.min(40, target);
+        const interval = Math.max(16, Math.round(ms / steps));
+        let cur = 0;
+        const tmr = setInterval(() => {
+            cur = Math.min(cur + Math.ceil(target / steps), target);
+            el.textContent = cur;
+            if (cur >= target) clearInterval(tmr);
+        }, interval);
+    }
+
+    window.seUpdateCount = () => { clearTimeout(_countTmr); _countTmr = setTimeout(_fetchCount, 420); };
+
+    async function _fetchCount() {
+        const f = _filters();
+        const summary = document.querySelector('.se-summary');
+        const hasAny = f.ay_ids.length || f.sem_types.length || f.programs.length || f.year_levels.length;
+        if (!hasAny) {
+            summary.classList.remove('counting');
+            document.getElementById('seCountRows').textContent  = '—';
+            document.getElementById('seCountProgs').textContent = '—';
+            document.getElementById('seSumMsg').textContent = 'Apply filters and select a format to begin.';
+            _updateBtn(); return;
+        }
+        summary.classList.add('counting');
+        document.getElementById('seCountRows').textContent  = '•••';
+        document.getElementById('seCountProgs').textContent = '•••';
+        document.getElementById('seSumMsg').textContent = 'Calculating…';
+        try {
+            const resp = await fetch('/academic/schedule/export/count', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(f)
+            });
+            const data = await resp.json();
+            summary.classList.remove('counting');
+            if (data.error) { document.getElementById('seSumMsg').textContent = 'Error: ' + data.error; return; }
+            _countUp(document.getElementById('seCountRows'),  data.count    || 0, 600);
+            _countUp(document.getElementById('seCountProgs'), data.programs || 0, 400);
+            document.getElementById('seSumMsg').textContent = data.count
+                ? `${data.count} row(s) across ${data.programs} program(s) ready for export.`
+                : 'No matching schedule data found for the selected filters.';
+            document.getElementById('seFilename').value = _genFilename();
+            _updateBtn();
+        } catch(e) {
+            summary.classList.remove('counting');
+            document.getElementById('seSumMsg').textContent = 'Network error — check server connection.';
+        }
+    }
+
+    function _updateBtn() {
+        const f = _filters();
+        const count = parseInt(document.getElementById('seCountRows').textContent) || 0;
+        const hasFmt = _selFmts.size > 0;
+        const hasFilter = f.ay_ids.length || f.sem_types.length || f.programs.length || f.year_levels.length;
+        const ok = hasFmt && hasFilter && count > 0;
+        const btn = document.getElementById('seBtnExport');
+        btn.disabled = !ok;
+        if (ok) {
+            document.getElementById('seBtnLbl').textContent = 'Export as ' + [..._selFmts].map(s => s.toUpperCase()).join(' + ');
+        } else {
+            document.getElementById('seBtnLbl').textContent = 'Export';
+        }
+    }
+
+    function _genFilename() {
+        const sems = [...document.querySelectorAll('.se-sem-cb:checked')].map(c => ({'A':'1stSem','B':'2ndSem','C':'Summer'})[c.value] || c.value);
+        const progs = [...document.querySelectorAll('.se-prog-cb:checked')].map(c => c.value);
+        const ayCbs = [...document.querySelectorAll('.se-ay-cb:checked')];
+        let ayLbl = '';
+        if (ayCbs.length === 1) {
+            const txt = ayCbs[0].closest('.se-cb-item')?.textContent?.trim() || '';
+            ayLbl = txt.replace(/^AY\s*/,'').replace(/\s+/g,'');
+        } else if (ayCbs.length > 1) { ayLbl = 'MultiAY'; }
+        const parts = ['schedule'];
+        if (progs.length === 1) parts.push(progs[0]);
+        else if (progs.length > 1) parts.push('MultiProg');
+        if (sems.length === 1) parts.push(sems[0]);
+        if (ayLbl) parts.push(ayLbl);
+        return parts.join('_');
+    }
+
+    window.seDoExport = async () => {
+        const formats  = [..._selFmts];
+        const filename = document.getElementById('seFilename').value.trim() || 'schedule_export';
+        if (!formats.length) { alert('Please select at least one export format.'); return; }
+        const loadEl  = document.getElementById('seLoading');
+        const loadLbl = document.getElementById('seLoadLbl');
+        const STEPS   = ['Fetching schedule data…','Building document…','Applying formatting…','Finalizing file…'];
+        let stepIdx = 0;
+        loadLbl.textContent = STEPS[0];
+        loadEl.classList.add('active');
+        const stepTmr = setInterval(() => {
+            stepIdx = Math.min(stepIdx + 1, STEPS.length - 1);
+            loadLbl.textContent = STEPS[stepIdx];
+        }, 900);
+        try {
+            const resp = await fetch('/academic/schedule/export', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ..._filters(), formats, filename })
+            });
+            clearInterval(stepTmr);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                alert('Export failed: ' + (err.error || resp.statusText));
+                return;
+            }
+            loadLbl.textContent = 'Download starting…';
+            const blob = await resp.blob();
+            const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href = url; a.download = filename + ext; a.click();
+            URL.revokeObjectURL(url);
+            seClose();
+        } catch(e) {
+            clearInterval(stepTmr);
+            alert('Network error: ' + e.message);
+        } finally {
+            loadEl.classList.remove('active');
+        }
+    };
+})();
+</script>
+{% endblock %}

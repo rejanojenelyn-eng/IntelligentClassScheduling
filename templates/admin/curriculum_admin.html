@@ -424,25 +424,8 @@
                         <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                         <input type="text" name="curriculum_year" id="xlsxModalCurriculumYear" required placeholder="YYYY-YYYY">
                     </div>
-                    <div style="display: flex; gap: 15px;">
-                        <div class="form-group-modal" style="flex: 1;">
-                            <label>Year Level</label>
-                            <select name="year_level" id="xlsxModalYearLevel">
-                                <option value="0" selected>All Year Levels</option>
-                                <option value="1">1st Year</option><option value="2">2nd Year</option>
-                                <option value="3">3rd Year</option><option value="4">4th Year</option>
-                                <option value="5">5th Year</option>
-                            </select>
-                        </div>
-                        <div class="form-group-modal" style="flex: 1;">
-                            <label>Semester</label>
-                            <select name="semester" id="xlsxModalSemester">
-                                <option value="All" selected>All Semesters</option>
-                                <option value="A">1st Semester</option><option value="B">2nd Semester</option>
-                                <option value="C">Summer</option>
-                            </select>
-                        </div>
-                    </div>
+                    <input type="hidden" name="year_level" id="xlsxModalYearLevel" value="0">
+                    <input type="hidden" name="semester" id="xlsxModalSemester" value="All">
                 </div>
                 <div class="form-section-vert">
                     <h3>2. Excel Column Format</h3>

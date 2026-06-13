@@ -151,6 +151,12 @@
                                 </a>
                             </li>
                             <li>
+                                <a href="{{ url_for('schedule_version_history') }}"
+                                    class="sub-menu-link {{ 'active' if '/schedule/version-history' in request.path }}">
+                                    Schedule List
+                                </a>
+                            </li>
+                            <li>
                                 <a href="{{ url_for('schedule_drafts_list') }}"
                                     class="sub-menu-link {{ 'active' if '/schedule/drafts' in request.path }}">
                                     Draft List

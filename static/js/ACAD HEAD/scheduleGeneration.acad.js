@@ -93,20 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
     btnCalendarView.addEventListener('click', () => {
         document.getElementById('tableViewContainer').classList.add('hidden');
         document.getElementById('calendarViewContainer').classList.remove('hidden');
-        btnCalendarView.classList.add('active-btn');
-        btnCalendarView.classList.remove('outline-btn');
-        btnTableView.classList.add('outline-btn');
-        btnTableView.classList.remove('active-btn');
+        btnCalendarView.classList.add('active');
+        btnTableView.classList.remove('active');
         if (currentScheduleData.length > 0) renderCalendarView(currentScheduleData);
     });
 
     btnTableView.addEventListener('click', () => {
         document.getElementById('calendarViewContainer').classList.add('hidden');
         document.getElementById('tableViewContainer').classList.remove('hidden');
-        btnTableView.classList.add('active-btn');
-        btnTableView.classList.remove('outline-btn');
-        btnCalendarView.classList.add('outline-btn');
-        btnCalendarView.classList.remove('active-btn');
+        btnTableView.classList.add('active');
+        btnCalendarView.classList.remove('active');
     });
 
     sortSelect.addEventListener('change', () => {
@@ -255,17 +251,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         tbody.innerHTML = entries.map((g) => `
             <tr>
-                <td>${g.instructor}</td>
-                <td class="subject-code-cell">${g.subject_code}</td>
-                <td>${g.description}</td>
-                <td>${g.lec_hours}</td>
-                <td>${g.lab_hours}</td>
-                <td class="credit-cell">${g.credit_units}</td>
-                <td>${g.course}</td>
-                <td>${g.times.join(' / ')}</td>
-                <td>${g.lec_hours + g.lab_hours}</td>
-                <td>${g.days_set.join('/')}</td>
-                <td>${g.rooms.join(' / ')}</td>
+                <td class="td-instructor">${g.instructor}</td>
+                <td class="td-code">${g.subject_code}</td>
+                <td class="td-desc">${g.description}</td>
+                <td class="td-num">${g.lec_hours}</td>
+                <td class="td-num">${g.lab_hours}</td>
+                <td class="td-num">${g.credit_units}</td>
+                <td class="td-course">${g.course}</td>
+                <td class="td-time">${g.times.join('\n')}</td>
+                <td class="td-num">${g.lec_hours + g.lab_hours}</td>
+                <td class="td-days">${g.days_set.join('\n')}</td>
+                <td class="td-room">${g.rooms.join('\n')}</td>
             </tr>
         `).join('');
     }
@@ -459,6 +455,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         toast.classList.remove('hidden');
         setTimeout(() => toast.classList.add('hidden'), 4000);
+
+        updateAccuracyWidget(currentScheduleData, getContext());
+    }
+
+    async function updateAccuracyWidget(scheduleData, ctx) {
+        const circleEl = document.getElementById('accuracyCircle');
+        const pctEl    = document.getElementById('accuracyPct');
+        const descEl   = document.getElementById('accuracyDesc');
+        const labelEl  = document.getElementById('accuracyLabelEl');
+        const iconEl   = document.getElementById('accuracyIcon');
+        if (!pctEl) return;
+
+        pctEl.textContent          = '...';
+        iconEl.className           = 'fas fa-spinner fa-spin';
+        circleEl.style.borderColor = '#aaa';
+        pctEl.style.color          = '#aaa';
+        if (labelEl) labelEl.style.color = '#aaa';
+
+        try {
+            const res  = await fetch('/api/schedule/accuracy', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    schedule_data: scheduleData,
+                    program:       ctx.program,
+                    year_level:    ctx.yearLevel,
+                    term:          ctx.term,
+                }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const pct   = data.accuracy || 0;
+                const color = pct >= 70 ? '#16a34a' : (pct >= 40 ? '#d97706' : '#dc2626');
+                pctEl.textContent          = pct + '%';
+                iconEl.className           = pct >= 70 ? 'fas fa-check' : (pct >= 40 ? 'fas fa-chart-bar' : 'fas fa-exclamation');
+                circleEl.style.borderColor = color;
+                pctEl.style.color          = color;
+                if (labelEl) labelEl.style.color = color;
+                if (descEl)  descEl.textContent  = `${data.matched_faculty || 0} of ${data.total || 0} subjects match historical faculty assignments.`;
+            } else {
+                pctEl.textContent          = 'N/A';
+                iconEl.className           = 'fas fa-question';
+                circleEl.style.borderColor = '#aaa';
+                pctEl.style.color          = '#aaa';
+                if (descEl) descEl.textContent = data.error || 'No historical data found for this program/term.';
+            }
+        } catch (e) {
+            pctEl.textContent = 'N/A';
+            iconEl.className  = 'fas fa-question';
+            if (descEl) descEl.textContent = 'Accuracy calculation unavailable.';
+        }
     }
 
     btnGenerate.addEventListener('click', async () => {
@@ -547,6 +595,46 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnRegenerate.addEventListener('click', () => { btnGenerate.click(); });
+
+    btnExport.addEventListener('click', () => {
+        if (!currentScheduleData.length) return;
+        const ctx = getContext();
+        const headers = ['INSTRUCTOR','SUBJECT CODE','SUBJECT DESCRIPTION','LEC HRS','LAB HRS','CREDIT UNITS','COURSE','TIME','HOURS','DAYS','ROOM'];
+        const groups = {};
+        currentScheduleData.forEach(cls => {
+            const key = (cls.subject_code || '') + '||' + (cls.instructor || '');
+            if (!groups[key]) {
+                groups[key] = {
+                    instructor:   cls.instructor || '-',
+                    subject_code: cls.subject_code || '-',
+                    description:  cls.subject_name || cls.description || '-',
+                    lec_hours:    cls.lec_hours || 0,
+                    lab_hours:    cls.lab_hours || 0,
+                    credit_units: cls.credit_units || 0,
+                    course:       cls.course || '-',
+                    times: [], days_set: [], rooms: [],
+                };
+            }
+            const g = groups[key];
+            const t = cls.time || '';
+            if (t && !g.times.includes(t)) g.times.push(t);
+            (cls.days || '').split('/').filter(Boolean).forEach(d => { if (!g.days_set.includes(d)) g.days_set.push(d); });
+            const room = cls.room || 'TBA';
+            if (!g.rooms.includes(room)) g.rooms.push(room);
+        });
+        const rows = Object.values(groups).map(g => [
+            g.instructor, g.subject_code, g.description,
+            g.lec_hours, g.lab_hours, g.credit_units, g.course,
+            g.times.join(' / '), g.lec_hours + g.lab_hours,
+            g.days_set.join('/'), g.rooms.join(' / '),
+        ]);
+        const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `Schedule_${ctx.program}_Year${ctx.yearLevel}_${ctx.acadYear}_${ctx.term}.csv`;
+        a.click();
+    });
 
     btnSaveDraft.addEventListener('click', async () => {
         if (!currentScheduleData.length) return;

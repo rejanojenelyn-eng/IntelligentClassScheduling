@@ -3,6 +3,7 @@
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
     <style>
         /* ── Main schedule table (Table View) ── */
         .schedule-table {
@@ -130,6 +131,7 @@
         ══════════════════════════════════════════════════ */
         .si-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:1500; align-items:center; justify-content:center; padding:16px; }
         .si-dialog  { background:#fff; border-radius:12px; width:min(1100px,98vw); max-height:94vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 12px 50px rgba(0,0,0,.4); animation:si-pop .22s cubic-bezier(.34,1.56,.64,1); position:relative; }
+        .si-dialog.si-dialog--narrow { width:min(550px,98vw); }
         @keyframes si-pop { from{transform:scale(.93);opacity:0} to{transform:scale(1);opacity:1} }
         .si-hdr { background:linear-gradient(135deg,#630100,#4b0a0a); color:#fff; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
         .si-hdr-title { font-size:1rem; font-weight:700; display:flex; align-items:center; gap:10px; }
@@ -173,19 +175,25 @@
         .si-btn-next:hover { opacity:.88; } .si-btn-next:disabled { opacity:.4; cursor:not-allowed; }
         .si-btn-confirm { background:linear-gradient(135deg,#1b5e20,#2e7d32); color:#fff; border:none; padding:10px 24px; border-radius:8px; font-weight:700; font-size:.86rem; cursor:pointer; display:flex; align-items:center; gap:8px; transition:opacity .15s; }
         .si-btn-confirm:hover { opacity:.88; } .si-btn-confirm:disabled { opacity:.4; cursor:not-allowed; }
-        /* Loading */
-        #siScrLoad { align-items:center; justify-content:center; padding:0; }
-        .si-load-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px 24px; min-height:0; flex:1; gap:0; }
-        .si-spinner-wrap { width:40px; height:40px; position:relative; margin-bottom:10px; flex-shrink:0; }
-        .si-ring { position:absolute; inset:0; border-radius:50%; border:2.5px solid transparent; animation:si-ring-spin 1.2s linear infinite; }
-        .si-ring:nth-child(1){border-top-color:#630100;animation-duration:1.2s}
-        .si-ring:nth-child(2){border-right-color:#a00000;inset:6px;animation-duration:.9s;animation-direction:reverse}
-        .si-ring:nth-child(3){border-bottom-color:#c44;inset:13px;animation-duration:.7s}
-        @keyframes si-ring-spin { to{transform:rotate(360deg)} }
-        .si-load-title { font-size:.84rem; font-weight:700; color:#630100; margin-bottom:3px; }
-        .si-load-step  { font-size:.75rem; color:#999; min-height:1.1em; margin-bottom:10px; }
-        .si-prog-wrap  { width:160px; height:4px; background:#f0e8e8; border-radius:4px; overflow:hidden; }
-        .si-prog-bar   { height:100%; background:linear-gradient(90deg,#630100,#a00000); border-radius:4px; transition:width .6s ease; width:0%; }
+        /* Loading overlay — matches faculty import style */
+        #siLoadOverlay { position:fixed; inset:0; background:rgba(0,0,0,.52); z-index:9999; display:none; align-items:center; justify-content:center; }
+        #siLoadOverlay .loa-card { background:#fff; border-radius:22px; padding:44px 52px 36px; display:flex; flex-direction:column; align-items:center; text-align:center; min-width:240px; }
+        #siLoadOverlay .loa-spinner { position:relative; width:78px; height:78px; margin:0 auto 20px; }
+        #siLoadOverlay .loa-ring { position:absolute; inset:0; border-radius:50%; border:4px solid transparent; }
+        #siLoadOverlay .loa-ring-1 { border-top-color:#800000; animation:siLoaSpin .9s linear infinite; }
+        #siLoadOverlay .loa-ring-2 { inset:10px; border-right-color:rgba(128,0,0,.45); animation:siLoaSpin 1.4s linear infinite reverse; }
+        #siLoadOverlay .loa-ring-3 { inset:20px; border-bottom-color:rgba(128,0,0,.2); animation:siLoaSpin 2s linear infinite; }
+        #siLoadOverlay .loa-icon { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:22px; color:#800000; }
+        @keyframes siLoaSpin { to { transform:rotate(360deg); } }
+        #siLoadOverlay .loa-title { font-size:1.1rem; font-weight:800; color:#1a1a2e; letter-spacing:.5px; margin-bottom:6px; }
+        #siLoadOverlay .loa-status { font-size:.82rem; color:#666; min-height:18px; margin-bottom:4px; }
+        #siLoadOverlay .loa-dots { display:flex; justify-content:center; gap:7px; margin-bottom:22px; }
+        #siLoadOverlay .loa-dots span { width:9px; height:9px; border-radius:50%; background:#800000; animation:siLoaBounce 1.1s ease-in-out infinite; }
+        #siLoadOverlay .loa-dots span:nth-child(2) { animation-delay:.18s; }
+        #siLoadOverlay .loa-dots span:nth-child(3) { animation-delay:.36s; }
+        @keyframes siLoaBounce { 0%,80%,100%{transform:scale(.55);opacity:.35;} 40%{transform:scale(1);opacity:1;} }
+        #siLoadOverlay .loa-bar { height:5px; background:#f0f0f0; border-radius:99px; overflow:hidden; width:160px; }
+        #siLoadOverlay .loa-bar-fill { height:100%; width:0%; background:linear-gradient(90deg,#800000,#cc2222); border-radius:99px; transition:width .6s ease; }
         /* Stats — hidden spans kept for JS count access, no visual display */
         /* ── Screen 3: Schedule Preview ── */
         .si-scr3-outer { flex:1; min-height:0; overflow:hidden; flex-direction:column; display:none; }
@@ -612,32 +620,37 @@
     </div>
 
     <!-- Screen 1: Format selection -->
-    <div id="siScr1" class="si-body">
-      <div class="si-sec-lbl">Select Import Format</div>
-      <p style="font-size:.82rem;color:#666;margin-bottom:18px;line-height:1.55;">
-        Choose the file format to import. The system supports flat tables and hierarchical SIS schedule documents including Excel SIS exports, Word documents, and PDFs.
-      </p>
-      <div class="si-fmt-grid">
-        <div class="si-fmt-card si-fmt-csv" onclick="siPickFmt('csv')">
-          <span class="si-fmt-icon"><i class="fas fa-file-csv"></i></span>
-          <div class="si-fmt-name">CSV</div>
-          <div class="si-fmt-desc">Flat schedule table</div>
-        </div>
-        <div class="si-fmt-card si-fmt-xlsx" onclick="siPickFmt('xlsx')">
-          <span class="si-fmt-icon"><i class="fas fa-file-excel"></i></span>
-          <div class="si-fmt-name">Excel / XLSX</div>
-          <div class="si-fmt-desc">SIS Excel format</div>
-        </div>
-        <div class="si-fmt-card si-fmt-docx" onclick="siPickFmt('docx')">
-          <span class="si-fmt-icon"><i class="fas fa-file-word"></i></span>
-          <div class="si-fmt-name">Word / DOCX</div>
-          <div class="si-fmt-desc">Schedule document</div>
-        </div>
-        <div class="si-fmt-card si-fmt-pdf" onclick="siPickFmt('pdf')">
-          <span class="si-fmt-icon"><i class="fas fa-file-pdf"></i></span>
-          <div class="si-fmt-name">PDF</div>
-          <div class="si-fmt-desc">Exported schedule</div>
-        </div>
+    <div id="siScr1" class="si-body" style="padding:25px 30px;display:flex;flex-direction:column;gap:15px;">
+      <p style="color:#555;font-size:0.9rem;margin:0;">Choose how you would like to import a class schedule:</p>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <button class="import-type-btn" onclick="siPickFmt('csv')">
+          <i class="fas fa-file-csv import-type-icon"></i>
+          <div>
+            <div class="import-type-title">Import via CSV</div>
+            <div class="import-type-desc">Upload a flat schedule table with column headers. Accepts .csv files.</div>
+          </div>
+        </button>
+        <button class="import-type-btn" onclick="siPickFmt('xlsx')">
+          <i class="fas fa-file-excel import-type-icon" style="color:#1d6f42;"></i>
+          <div>
+            <div class="import-type-title">Import via Excel (.xlsx)</div>
+            <div class="import-type-desc">Supports the official SIS schedule export format with program headers and year level sections.</div>
+          </div>
+        </button>
+        <button class="import-type-btn" onclick="siPickFmt('docx')">
+          <i class="fas fa-file-word import-type-icon" style="color:#2b5797;"></i>
+          <div>
+            <div class="import-type-title">Import via Word (.docx)</div>
+            <div class="import-type-desc">Extracts schedule tables from Word documents. Supports hierarchical layouts with program and year level headers.</div>
+          </div>
+        </button>
+        <button class="import-type-btn" onclick="siPickFmt('pdf')">
+          <i class="fas fa-file-pdf import-type-icon" style="color:#c0392b;"></i>
+          <div>
+            <div class="import-type-title">Import via PDF</div>
+            <div class="import-type-desc">Extracts schedule tables from PDF files. Best results with digitally-created PDFs. Scanned images may have lower accuracy.</div>
+          </div>
+        </button>
       </div>
     </div>
 
@@ -762,17 +775,8 @@
 
     </div>
 
-    <!-- Screen: Loading -->
-    <div id="siScrLoad" class="si-body" style="display:none;">
-      <div class="si-load-screen">
-        <div class="si-spinner-wrap">
-          <div class="si-ring"></div><div class="si-ring"></div><div class="si-ring"></div>
-        </div>
-        <div class="si-load-title">Processing File</div>
-        <div class="si-load-step" id="siLoadStep">Reading file…</div>
-        <div class="si-prog-wrap"><div class="si-prog-bar" id="siProgBar"></div></div>
-      </div>
-    </div>
+    <!-- Screen: Loading (placeholder — actual loading shown via #siLoadOverlay) -->
+    <div id="siScrLoad" style="display:none;"></div>
 
     <!-- Screen 3: Schedule Preview (registrar-style) -->
     <div id="siScr3" class="si-scr3-outer">
@@ -855,6 +859,22 @@
     </div>
 
   </div>
+</div>
+
+<!-- Loading overlay — same style as faculty import -->
+<div id="siLoadOverlay">
+    <div class="loa-card">
+        <div class="loa-spinner">
+            <div class="loa-ring loa-ring-1"></div>
+            <div class="loa-ring loa-ring-2"></div>
+            <div class="loa-ring loa-ring-3"></div>
+            <div class="loa-icon"><i class="fas fa-file-import"></i></div>
+        </div>
+        <div class="loa-title">Processing</div>
+        <div class="loa-status" id="siLoadStep">Reading file…</div>
+        <div class="loa-dots"><span></span><span></span><span></span></div>
+        <div class="loa-bar"><div class="loa-bar-fill" id="siProgBar"></div></div>
+    </div>
 </div>
 
 <div class="si-toast" id="siToast"></div>
@@ -1112,7 +1132,7 @@
         _importSemType = '';
         document.getElementById('siModal').style.display = 'flex';
     };
-    window.siClose = () => { document.getElementById('siModal').style.display = 'none'; clearInterval(_loadTmr); };
+    window.siClose = () => { document.getElementById('siModal').style.display = 'none'; document.getElementById('siLoadOverlay').style.display = 'none'; clearInterval(_loadTmr); };
 
     /* ── AY/Semester change in modal ── */
     window.siOnAyChange = () => {
@@ -1617,12 +1637,24 @@
         ['siScr1','siScr2','siScr25','siScrLoad','siScr3'].forEach(id => {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
         });
-        document.getElementById('siFooter').style.display = (n === 'load') ? 'none' : 'flex';
-        if      (n === 1)      document.getElementById('siScr1').style.display    = 'block';
-        else if (n === 2)      document.getElementById('siScr2').style.display    = 'block';
-        else if (n === 2.5)    document.getElementById('siScr25').style.display   = 'block';
-        else if (n === 'load') document.getElementById('siScrLoad').style.display = 'flex';
-        else if (n === 3)      document.getElementById('siScr3').style.display    = 'flex';
+        const lov = document.getElementById('siLoadOverlay');
+        const dlg = document.querySelector('.si-dialog');
+        if (n === 'load') {
+            if (lov) lov.style.display = 'flex';
+            if (dlg) dlg.style.visibility = 'hidden';
+        } else {
+            if (lov) lov.style.display = 'none';
+            if (dlg) { dlg.style.visibility = 'visible'; }
+        }
+        if (dlg) {
+            if (n === 1) dlg.classList.add('si-dialog--narrow');
+            else dlg.classList.remove('si-dialog--narrow');
+        }
+        document.getElementById('siFooter').style.display = (n === 'load' || n === 1) ? 'none' : 'flex';
+        if      (n === 1)   document.getElementById('siScr1').style.display  = 'block';
+        else if (n === 2)   document.getElementById('siScr2').style.display  = 'block';
+        else if (n === 2.5) document.getElementById('siScr25').style.display = 'block';
+        else if (n === 3)   document.getElementById('siScr3').style.display  = 'flex';
         document.getElementById('siHdrTitle').textContent =
             n === 1    ? 'Import Class Schedule'          :
             n === 2    ? `Import via ${FMT[_fmt]?.label||''}` :

@@ -3137,7 +3137,9 @@ def _parse_sis_excel(file_obj):
             return False
 
     def _cv(v):
-        return str(v).strip() if v is not None else ''
+        if v is None: return ''
+        if isinstance(v, float) and v == int(v): return str(int(v))
+        return str(v).strip()
 
     def _is_person_name(txt):
         """True when txt looks like  LASTNAME, FIRSTNAME [M.I.]"""
@@ -3449,7 +3451,8 @@ def sis_import_preview():
     def _si(val):
         if not val: return 0
         try:
-            num = ''.join(filter(str.isdigit, str(val))); return int(num) if num else 0
+            f = float(str(val).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _nr(raw):
@@ -3593,7 +3596,8 @@ def sis_import_confirm():
     def _si(val):
         if not val or str(val).strip() == '': return 0
         try:
-            num = ''.join(filter(str.isdigit, str(val))); return int(num) if num else 0
+            f = float(str(val).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _pd(days_raw):
@@ -3652,8 +3656,8 @@ def sis_import_confirm():
         e_dt   = sem_res['semenddate']
         from datetime import date as _date2
         _today2 = _date2.today()
-        # Current = semester has not ended yet (or no end date configured)
-        is_cur = not (e_dt and e_dt < _today2)
+        # Always attempt curriculum matching regardless of whether the semester is still active
+        is_cur = True
 
         for row in rows:
             inst     = row.get('instructor', '')
@@ -4012,7 +4016,8 @@ def _parse_schedule_csv(file_bytes):
     def _si(v):
         if not v: return 0
         try:
-            n = ''.join(filter(str.isdigit, str(v))); return int(n) if n else 0
+            f = float(str(v).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     rows_out = []
@@ -4343,7 +4348,8 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
     def _si(v):
         if not v: return 0
         try:
-            n = ''.join(filter(str.isdigit, str(v))); return int(n) if n else 0
+            f = float(str(v).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _nr(raw):
@@ -10018,6 +10024,55 @@ def admin_schedule():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     return render_template('admin/schedule_admin.html')
 
+@app.route('/admin/schedule/sis')
+def admin_class_schedule_sis():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    from datetime import date as _date
+    programs   = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+    today = _date.today()
+    active_sem_res = query_db("""
+        SELECT s.semestertype, ay.academicyearid
+        FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE %s BETWEEN s.semstartdate AND s.semenddate LIMIT 1
+    """, [today])
+    if active_sem_res:
+        active_sem_type = active_sem_res[0]['semestertype']
+        active_ay       = active_sem_res[0]['academicyearid']
+    else:
+        most_recent = query_db("""
+            SELECT sem.semestertype, sem.academicyearid
+            FROM historical_data hd JOIN semester sem ON hd.semesterid = sem.semesterid
+            GROUP BY sem.semestertype, sem.academicyearid
+            ORDER BY MAX(hd.semesterid) DESC LIMIT 1
+        """)
+        if most_recent:
+            active_sem_type = most_recent[0]['semestertype']
+            active_ay       = most_recent[0]['academicyearid']
+        else:
+            active_sem_type = 'B'
+            active_ay       = acad_years[0]['academicyearid'] if acad_years else ''
+    sem_data = query_db("""
+        SELECT academicyearid, semestertype, semenddate FROM semester
+        WHERE academicyearid IN (SELECT academicyearid FROM academicyear WHERE yearend >= %s)
+        ORDER BY academicyearid, semestertype
+    """, [today.year])
+    import json as _json
+    sem_json = _json.dumps([
+        {'ay': r['academicyearid'], 'type': r['semestertype'],
+         'end': r['semenddate'].isoformat() if r['semenddate'] else None}
+        for r in (sem_data or [])
+    ])
+    return render_template('admin/class_schedule_sis_admin.html',
+                           programs=programs, acad_years=acad_years,
+                           active_sem_type=active_sem_type, active_ay=active_ay,
+                           today=today.isoformat(), sem_json=sem_json)
+
+@app.route('/admin/schedule/room-schedule')
+def admin_room_schedule():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    return render_template('admin/room_schedule_admin.html')
+
 def format_time(t):
     if not t: return "-"
     if isinstance(t, time): return t.strftime("%I:%M %p")
@@ -11456,6 +11511,57 @@ def reports_data():
                     })
             return jsonify({'grouped': True, 'sections': sections})
 
+        # ── Room Schedule — classes grouped by room/building ────────
+        elif rtype == 'room_schedule':
+            where, p = ["sv.status IN ('Published','Archive','Draft')"], []
+            if ay:
+                where.append("sem.academicyearid = %s"); p.append(ay)
+            if sem and sem != 'All':
+                where.append("sem.semestertype = %s"); p.append(sem)
+            if bldg and bldg != 'All':
+                where.append("b.buildingid = %s"); p.append(int(bldg))
+            if room_type and room_type != 'All':
+                where.append("r.roomtype = %s"); p.append(room_type)
+            cur.execute(f"""
+                SELECT
+                    b.buildingname AS "Building",
+                    r.roomname AS "Room",
+                    sub.subjectcode AS "Subject Code",
+                    sub.subjectname AS "Subject",
+                    f.lastname || ', ' || f.firstname AS "Instructor",
+                    ao.offeringcode || ' ' || pyl.yearlevel AS "Course",
+                    string_agg(DISTINCT
+                        CASE ss.daydesc
+                            WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
+                            WHEN 'Wednesday' THEN 'WED' WHEN 'Thursday' THEN 'THU'
+                            WHEN 'Friday' THEN 'FRI' WHEN 'Saturday' THEN 'SAT'
+                            WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END, '/') AS "Days",
+                    string_agg(
+                        to_char(ts_s.timevalue::interval,'HH12:MI AM') || ' – ' ||
+                        to_char(ts_e.timevalue::interval,'HH12:MI AM'),
+                        '/' ORDER BY ts_s.timevalue) AS "Time"
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid           = sv.versionid
+                JOIN schedule sg         ON sv.scheduleid          = sg.scheduleid
+                JOIN semester sem        ON sg.semesterid          = sem.semesterid
+                JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN subject sub         ON cs.subjectcode         = sub.subjectcode
+                JOIN sections sec        ON sg.sectionid           = sec.sectionid
+                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+                JOIN faculty f           ON sg.employeenumber      = f.employeenumber
+                JOIN room r              ON ss.roomid              = r.roomid
+                JOIN building b          ON r.buildingid           = b.buildingid
+                LEFT JOIN timeslot ts_s  ON ss.starttimeid         = ts_s.timeid
+                LEFT JOIN timeslot ts_e  ON ss.endtimeid           = ts_e.timeid
+                WHERE {' AND '.join(where)}
+                GROUP BY b.buildingname, r.roomname, sub.subjectcode, sub.subjectname,
+                         f.lastname, f.firstname, ao.offeringcode, pyl.yearlevel
+                ORDER BY b.buildingname, r.roomname, sub.subjectcode
+            """, p)
+            payload = rows_to_payload(cur.fetchall())
+            return jsonify(payload or {'columns': [], 'rows': []})
+
         else:
             return jsonify({'error': 'Unknown report type'}), 400
 
@@ -12268,6 +12374,96 @@ def api_generate_schedule():
         'conflict_count': res['conflict_count'],
         'violations': res.get('violations', []),
     })
+
+
+@app.route('/api/schedule/accuracy', methods=['POST'])
+def api_schedule_accuracy():
+    """
+    Compare a generated schedule against historical_data to compute an accuracy rate.
+    Returns how many subjects match the historical faculty and room assignments.
+    """
+    try:
+        body          = request.json or {}
+        schedule_data = body.get('schedule_data', [])
+        program       = (body.get('program') or '').strip().upper()
+        year_level    = int(body.get('year_level') or 0)
+        term          = (body.get('term') or '').strip().upper()
+
+        if not schedule_data or not program or not year_level or not term:
+            return jsonify({'success': False, 'error': 'Missing required fields.'}), 400
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT hd."Subject Code"  AS subject_code,
+                   hd."Instructor"    AS instructor,
+                   hd."Room"          AS room,
+                   hd."Day/s"         AS days
+            FROM   historical_data hd
+            JOIN   semester s ON hd.semesterid = s.semesterid
+            WHERE  UPPER(hd."Program")    = %s
+              AND  hd."Year Level"        = %s
+              AND  UPPER(s.semestertype)  = %s
+        """, (program, year_level, term))
+        hist_rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not hist_rows:
+            return jsonify({
+                'success': False,
+                'error':   f'No historical data found for {program} Year {year_level} ({term}).',
+                'total': 0, 'matched_faculty': 0, 'matched_room': 0, 'accuracy': 0,
+            })
+
+        hist_map = {}
+        for r in hist_rows:
+            code = (r['subject_code'] or '').strip().upper()
+            if code not in hist_map:
+                hist_map[code] = {'instructors': set(), 'rooms': set()}
+            if r['instructor']:
+                hist_map[code]['instructors'].add(r['instructor'].strip().upper())
+            if r['room']:
+                hist_map[code]['rooms'].add(r['room'].strip().upper())
+
+        seen_codes    = set()
+        matched_fac   = 0
+        matched_room  = 0
+
+        for entry in schedule_data:
+            code = (entry.get('subject_code') or '').strip().upper()
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+
+            hist = hist_map.get(code)
+            if not hist:
+                continue
+
+            gen_instr = (entry.get('instructor') or '').strip().upper()
+            gen_room  = (entry.get('room')       or '').strip().upper()
+
+            if gen_instr and gen_instr in hist['instructors']:
+                matched_fac += 1
+            if gen_room and gen_room in hist['rooms']:
+                matched_room += 1
+
+        total    = len(seen_codes)
+        max_pts  = total * 2
+        accuracy = round((matched_fac + matched_room) / max_pts * 100) if max_pts > 0 else 0
+
+        return jsonify({
+            'success':         True,
+            'accuracy':        accuracy,
+            'matched_faculty': matched_fac,
+            'matched_room':    matched_room,
+            'total':           total,
+        })
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/schedule/retrieve-previous', methods=['POST'])

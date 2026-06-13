@@ -968,6 +968,86 @@ class IntelligentScheduler:
                 result[code] = row['employeenumber']
         return result
 
+    def fetch_all_preferences(self, program: str, year_level: int, term: str) -> dict:
+        """
+        Build a subject-level preference map from three sources in ascending priority
+        (lower priority stored first; higher priority overwrites):
+          3. Draft schedule_version   (manual editor assignments)
+          2. Published schedule_version
+          1. historical_data table    (imported SIS records — highest priority)
+
+        Returns {subjectcode: {faculty, room_id, room_name, source}} with one entry
+        per subject — the highest-priority source wins per subject.
+        """
+        prefs = {}
+
+        # ── Priority 3 → 2: schedule_version (Draft first, Published overwrites) ──
+        for status in ('Draft', 'Published'):
+            rows = query_db("""
+                SELECT DISTINCT ON (cs.subjectcode)
+                    cs.subjectcode,
+                    sg.employeenumber   AS faculty,
+                    r.roomid            AS room_id,
+                    r.roomname          AS room_name
+                FROM public.schedule_version sv
+                JOIN public.schedule sg          ON sv.scheduleid          = sg.scheduleid
+                JOIN public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN public.curriculum c         ON cs.curriculumid        = c.curriculumid
+                JOIN public.academic_offering ao ON c.academicofferingid   = ao.academicofferingid
+                JOIN public.semester sem          ON sg.semesterid          = sem.semesterid
+                LEFT JOIN public.schedule_sessions ss ON ss.versionid = sv.versionid
+                LEFT JOIN public.room r               ON ss.roomid    = r.roomid
+                WHERE UPPER(ao.offeringcode) = UPPER(%s)
+                  AND cs.yearlevel            = %s
+                  AND UPPER(sem.semestertype) = UPPER(%s)
+                  AND sv.status               = %s
+                ORDER BY cs.subjectcode, sv.datecreated DESC
+            """, (program, year_level, term, status))
+            for row in (rows or []):
+                code = (row.get('subjectcode') or '').strip()
+                if code:
+                    prefs[code] = {
+                        'faculty':   row.get('faculty'),
+                        'room_id':   row.get('room_id'),
+                        'room_name': row.get('room_name'),
+                        'source':    status.lower(),
+                    }
+
+        # ── Priority 1: historical_data (overwrites both Draft and Published above) ──
+        hist_rows = query_db("""
+            SELECT
+                TRIM(hd."Subject Code")   AS subjectcode,
+                f.employeenumber          AS faculty,
+                rm.roomid                 AS room_id,
+                rm.roomname               AS room_name
+            FROM historical_data hd
+            JOIN semester sem
+                ON hd.semesterid = sem.semesterid
+            LEFT JOIN faculty f
+                ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1)))
+                 = UPPER(TRIM(f.lastname))
+               AND f.employeestatus != 'Archive'
+            LEFT JOIN room rm
+                ON UPPER(TRIM(hd."Room")) = UPPER(TRIM(rm.roomname))
+            WHERE UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = UPPER(%s)
+              AND CAST(hd."Year Level" AS TEXT) = %s
+              AND UPPER(sem.semestertype) = UPPER(%s)
+              AND hd."Subject Code" IS NOT NULL
+              AND TRIM(hd."Subject Code") != ''
+        """, (program, str(year_level), term))
+
+        for row in (hist_rows or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                prefs[code] = {
+                    'faculty':   row.get('faculty'),
+                    'room_id':   row.get('room_id'),
+                    'room_name': row.get('room_name'),
+                    'source':    'historical',
+                }
+
+        return prefs
+
     def fetch_historical_schedule(self, program: str, year_level: int, term: str,
                                   curriculum_year: str) -> list:
         """
@@ -1108,7 +1188,7 @@ class IntelligentScheduler:
     # ── Individual builder ───────────────────────────────────────
 
     def _build_individual(self, subjects, faculty_list, faculty_map, rooms,
-                          historical_faculty: dict = None):
+                          historical_faculty: dict = None, preferences: dict = None):
         """
         Build one schedule candidate.
 
@@ -1126,6 +1206,7 @@ class IntelligentScheduler:
         """
         individual = []
         historical_faculty = historical_faculty or {}
+        preferences        = preferences        or {}
 
         # Track slots during building to minimise hard overlaps in generated individuals
         faculty_slots = defaultdict(list)   # fac_id  → [(day, start, end)]
@@ -1154,9 +1235,15 @@ class IntelligentScheduler:
                                for p in SUNDAY_ALLOWED_PREFIXES)
 
             # ── Faculty selection (shared by lec + lab parts) ──
+            pref       = preferences.get(sub['subjectcode'], {})
+            pref_fnum  = pref.get('faculty')
             hist_fnum  = historical_faculty.get(sub['subjectcode'])
             chosen_fac = None
-            if hist_fnum and hist_fnum in faculty_map and random.random() < 0.70:
+            # Priority 1: preference map (historical_data > published > draft)
+            if pref_fnum and pref_fnum in faculty_map and random.random() < 0.82:
+                chosen_fac = faculty_map[pref_fnum]
+            # Priority 2: merged historical/CBR faculty hint
+            elif hist_fnum and hist_fnum in faculty_map and random.random() < 0.68:
                 chosen_fac = faculty_map[hist_fnum]
             if chosen_fac is None:
                 chosen_fac = random.choice(faculty_list)
@@ -1188,6 +1275,12 @@ class IntelligentScheduler:
                     req_type    = 'Lecture'
                     valid_rooms = list(rooms)
 
+                # Room preference from preference map (re-checked per part type)
+                pref_room_id = pref.get('room_id')
+                pref_room    = next(
+                    (r for r in valid_rooms if r['roomid'] == pref_room_id), None
+                ) if pref_room_id else None
+
                 # Faculty-allowed blocks
                 allowed_blks = self._get_allowed_blocks_for_faculty(chosen_fac, valid_blks)
                 regular_blks = [(s, e) for (s, e, k) in allowed_blks if k == 'regular']
@@ -1211,7 +1304,10 @@ class IntelligentScheduler:
                         _s, _e = random.choice(valid_blks)
 
                     _dur = duration_hours(_s, _e)
-                    _r   = random.choice(valid_rooms)
+                    if pref_room and random.random() < 0.65:
+                        _r = pref_room
+                    else:
+                        _r = random.choice(valid_rooms)
 
                     # Day selection (uses DB-configurable pairs and NSTP toggle)
                     if is_nstp_ou and self._nstp_force_sunday:
