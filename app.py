@@ -4151,6 +4151,7 @@ def sis_import_confirm():
             print(f"[SIS Confirm] Purged historical_data rows for current semesterid={sem_id}")
 
         saved_skip = 0; created_subj = 0; created_sec = 0
+        skipped_details = []
 
         # Build a normalization map so "BSBIO AT" (space) → "BSBIO-AT" (hyphen),
         # "BSBIO-AT" → "BSBIO-AT", etc. — handles all format variants the SIS
@@ -4479,9 +4480,25 @@ def sis_import_confirm():
 
             if not ins_cur:
                 if is_cur:
-                    # Still unresolved — log and skip (no program code, or DB constraint blocked auto-create)
-                    print(f"[SIS skip] prog={offering_code!r} subj={s_code!r} yl={yl} cs_id={cs_id} sec_id={sec_id}")
+                    # Build a human-readable reason for the skip
+                    _reasons = []
+                    if not best_curr_id:
+                        _reasons.append('no curriculum found for program')
+                    elif not cs_id:
+                        _reasons.append('subject not in curriculum')
+                    if not _pyl_id:
+                        _reasons.append('program year level not set up')
+                    elif not sec_id:
+                        _reasons.append('no section found')
+                    _reason_str = '; '.join(_reasons) if _reasons else 'unresolved'
+                    print(f"[SIS skip] prog={offering_code!r} subj={s_code!r} yl={yl} reason={_reason_str}")
                     saved_skip += 1
+                    skipped_details.append({
+                        'program': offering_code or prog or '—',
+                        'subject': s_code or '—',
+                        'yearlevel': yl,
+                        'reason': _reason_str,
+                    })
                 else:
                     nr3 = _nr(room_raw) if room_raw else ''
                     _insert_historical(cur, inst, s_code, subj_nm, prog, yl, days_raw, time_raw, nr3, sem_id, ay_id, lec, lab, unit, hrs)
@@ -4497,7 +4514,7 @@ def sis_import_confirm():
             msg += f' {saved_skip} row(s) skipped (no valid program code or subject code in row).'
         if saved_h:
             msg += f' {saved_h} row(s) archived to historical data (past semester).'
-        return jsonify({'success': True, 'message': msg, 'saved_current': saved_c, 'saved_historical': saved_h, 'saved_skipped': saved_skip})
+        return jsonify({'success': True, 'message': msg, 'saved_current': saved_c, 'saved_historical': saved_h, 'saved_skipped': saved_skip, 'skipped_details': skipped_details})
 
     except Exception as e:
         conn.rollback()
@@ -7332,8 +7349,11 @@ def api_get_subjects():
             try:
                 # Local mode: only count Published Official sessions as the base.
                 # Official Scheduler drafts are irrelevant inside the Local Scheduler.
-                version_filter = "sv.status = 'Published'" if scheduler_mode == 'local' \
-                                 else "sv.status IN ('Draft', 'Published')"
+                # Two aliases are used in the query: sv2 (CTE) and sv (outer); keep separate strings.
+                version_filter_sv2 = "sv2.status = 'Published'" if scheduler_mode == 'local' \
+                                     else "sv2.status IN ('Draft', 'Published')"
+                version_filter_sv  = "sv.status = 'Published'"  if scheduler_mode == 'local' \
+                                     else "sv.status IN ('Draft', 'Published')"
 
                 sched_rows = query_db(f"""
                     WITH sem_cte AS (
@@ -7354,9 +7374,9 @@ def api_get_subjects():
                         JOIN   sections sec2          ON sc2.sectionid           = sec2.sectionid
                         JOIN   program_yearlevel pyl2 ON sec2.programyearlevelid  = pyl2.programyearlevelid
                         JOIN   sem_cte                ON sc2.semesterid          = sem_cte.semesterid
-                        WHERE  {version_filter}
-                          AND  pyl2.yearlevel          = %s
-                          AND  pyl2.programcode = (SELECT programcode FROM prog_cte)
+                        WHERE  {version_filter_sv2}
+                          AND  pyl2.yearlevel                    = %s
+                          AND  UPPER(pyl2.programcode) = UPPER((SELECT programcode FROM prog_cte))
                         GROUP BY UPPER(cs2.subjectcode)
                     )
                     SELECT mv.subjectcode,
@@ -7372,10 +7392,10 @@ def api_get_subjects():
                     JOIN   sem_cte                ON sc.semesterid             = sem_cte.semesterid
                     JOIN   schedule_version sv    ON sv.scheduleid             = sc.scheduleid
                                                  AND sv.version_number        = mv.max_v
-                                                 AND {version_filter}
+                                                 AND {version_filter_sv}
                     JOIN   schedule_sessions ss   ON ss.versionid              = sv.versionid
-                    WHERE  pyl.yearlevel          = %s
-                      AND  pyl.programcode = (SELECT programcode FROM prog_cte)
+                    WHERE  pyl.yearlevel                    = %s
+                      AND  UPPER(pyl.programcode) = UPPER((SELECT programcode FROM prog_cte))
                     GROUP BY mv.subjectcode
                 """, (ay_id, sem, curr_id, int(yl), int(yl))) or []
                 for r in sched_rows:
@@ -7404,8 +7424,8 @@ def api_get_subjects():
                         JOIN   program_yearlevel pyl  ON sec.programyearlevelid  = pyl.programyearlevelid
                         JOIN   sem_cte               ON sc.semesterid          = sem_cte.semesterid
                         WHERE  sv.status IN ('Draft', 'Published')
-                          AND  pyl.yearlevel         = %s
-                          AND  pyl.programcode = (SELECT programcode FROM prog_cte)
+                          AND  pyl.yearlevel                    = %s
+                          AND  UPPER(pyl.programcode) = UPPER((SELECT programcode FROM prog_cte))
                         GROUP BY UPPER(cs.subjectcode)
                         HAVING COUNT(DISTINCT sv.status) > 1
                     """, (ay_id, sem, curr_id, int(yl))) or []
@@ -10631,6 +10651,7 @@ def admin_settings():
             return[dict(zip(columns, row)) for row in cursor.fetchall()]
 
         _ensure_ay_finalized_col(cur)
+        cur.execute("ALTER TABLE program_yearlevel ADD COLUMN IF NOT EXISTS section_naming_format VARCHAR(30)")
         # Widen sectionname to accommodate long generated names
         cur.execute("""
             ALTER TABLE sections
@@ -10807,12 +10828,44 @@ def admin_settings():
         """)
         offerings_mgmt = to_dict(cur)
 
-        # Per-program year-level activation from program_yearlevel table
+        # Per-program year-level management (latest pyl row per program+yearlevel,
+        # but section counts span ALL pyl rows for the same program+yearlevel)
         cur.execute("""
-            SELECT programcode, yearlevel, bool_or(isactive) AS isactive
-            FROM program_yearlevel
-            GROUP BY programcode, yearlevel
-            ORDER BY programcode, yearlevel
+            WITH pyl_latest AS (
+                SELECT DISTINCT ON (programcode, yearlevel)
+                    programyearlevelid, programcode, yearlevel, isactive,
+                    COALESCE(section_naming_format, '') AS section_naming_format,
+                    startacademicyear, academicyearid
+                FROM program_yearlevel
+                ORDER BY programcode, yearlevel, startacademicyear DESC NULLS LAST
+            )
+            SELECT
+                pl.programyearlevelid,
+                pl.programcode,
+                pl.yearlevel,
+                pl.isactive,
+                pl.section_naming_format,
+                pl.startacademicyear,
+                pl.academicyearid,
+                (
+                    SELECT COUNT(sec.sectionid)
+                    FROM sections sec
+                    JOIN program_yearlevel pyl2
+                      ON sec.programyearlevelid = pyl2.programyearlevelid
+                    WHERE UPPER(pyl2.programcode) = UPPER(pl.programcode)
+                      AND pyl2.yearlevel = pl.yearlevel
+                      AND sec.isactive = TRUE
+                ) AS active_section_count,
+                (
+                    SELECT COUNT(sec.sectionid)
+                    FROM sections sec
+                    JOIN program_yearlevel pyl2
+                      ON sec.programyearlevelid = pyl2.programyearlevelid
+                    WHERE UPPER(pyl2.programcode) = UPPER(pl.programcode)
+                      AND pyl2.yearlevel = pl.yearlevel
+                ) AS total_section_count
+            FROM pyl_latest pl
+            ORDER BY pl.programcode, pl.yearlevel
         """)
         prog_yearlevel_mgmt = to_dict(cur)
 
@@ -11084,6 +11137,16 @@ def upsert_ay():
         existing = cur.fetchone()
         if existing and existing[0]:
             flash(f"Academic Year {ay_id} is finalized and cannot be edited.", "error")
+            return redirect(url_for('admin_settings'))
+        # Block save if this AY has a published schedule
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule_version sv
+            JOIN schedule sc ON sc.scheduleid = sv.scheduleid
+            JOIN semester s  ON s.semesterid  = sc.semesterid
+            WHERE s.academicyearid = %s AND sv.status = 'Published'
+        """, (ay_id,))
+        if cur.fetchone()[0] > 0:
+            flash(f"Academic Year {ay_id} has a Published schedule and cannot be edited. Delete the schedule first.", "error")
             return redirect(url_for('admin_settings'))
 
         cur.execute("""
@@ -11491,6 +11554,113 @@ def settings_toggle_curriculum_active():
 
 
 ## ── Section Management CRUD ─────────────────────────────────
+
+@app.route('/admin/settings/program/yearlevel/update', methods=['POST'])
+def settings_update_program_yearlevel():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    pyl_id        = request.form.get('pyl_id', '').strip()
+    is_active     = request.form.get('isactive') == 'true'
+    num_sections  = int(request.form.get('num_sections', 0) or 0)
+    naming_format = request.form.get('section_naming_format', '').strip().upper()
+    if not pyl_id:
+        return jsonify({'success': False, 'error': 'Missing pyl_id.'})
+    conn = None; cur = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT pyl.programcode, pyl.yearlevel
+            FROM program_yearlevel pyl WHERE pyl.programyearlevelid = %s
+        """, (pyl_id,))
+        pyl_row = cur.fetchone()
+        if not pyl_row:
+            return jsonify({'success': False, 'error': 'Year level not found.'})
+        prog_code = pyl_row['programcode']
+        yearlevel = pyl_row['yearlevel']
+        prefix    = naming_format or (prog_code + str(yearlevel))
+
+        # If activating, ensure at least 1 section will exist
+        if is_active and num_sections == 0:
+            cur.execute("SELECT COUNT(*) FROM sections WHERE programyearlevelid=%s AND isactive=TRUE", (pyl_id,))
+            if cur.fetchone()['count'] == 0:
+                num_sections = 1  # auto-create default
+
+        # Sync sections to match target count
+        if num_sections > 0:
+            suffix_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            target_names = [prefix] + [prefix + suffix_letters[i] for i in range(num_sections - 1)]
+            cur.execute("SELECT sectionid, sectionname FROM sections WHERE programyearlevelid=%s", (pyl_id,))
+            existing = cur.fetchall()
+            existing_names = {r['sectionname'] for r in existing}
+            for name in target_names:
+                if name not in existing_names:
+                    cur.execute("""
+                        INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                        VALUES (%s, %s, TRUE)
+                        ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                    """, (pyl_id, name))
+            for sec in existing:
+                if sec['sectionname'] not in target_names:
+                    cur.execute("SELECT COUNT(*) FROM schedule WHERE sectionid=%s", (sec['sectionid'],))
+                    if cur.fetchone()['count'] == 0:
+                        cur.execute("DELETE FROM sections WHERE sectionid=%s", (sec['sectionid'],))
+                    else:
+                        cur.execute("UPDATE sections SET isactive=FALSE WHERE sectionid=%s", (sec['sectionid'],))
+
+        # Update the pyl row
+        cur.execute("""
+            UPDATE program_yearlevel
+            SET isactive=%s, section_naming_format=%s
+            WHERE programyearlevelid=%s
+        """, (is_active, naming_format or None, pyl_id))
+
+        # Cascade program active status
+        if not is_active:
+            cur.execute("""
+                SELECT COUNT(*) FROM program_yearlevel
+                WHERE programcode=%s AND isactive=TRUE AND programyearlevelid != %s
+            """, (prog_code, pyl_id))
+            if cur.fetchone()['count'] == 0:
+                cur.execute("UPDATE programs SET isactive=FALSE WHERE programcode=%s", (prog_code,))
+        else:
+            cur.execute("UPDATE programs SET isactive=TRUE WHERE programcode=%s", (prog_code,))
+
+        # Return updated sections
+        cur.execute("""
+            SELECT sectionid, sectionname, isactive
+            FROM sections WHERE programyearlevelid=%s ORDER BY sectionname
+        """, (pyl_id,))
+        sections = [dict(r) for r in cur.fetchall()]
+        active_count = sum(1 for s in sections if s['isactive'])
+
+        # Re-check program active
+        cur.execute("SELECT isactive FROM programs WHERE programcode=%s", (prog_code,))
+        prog_row = cur.fetchone()
+        prog_active = bool(prog_row['isactive']) if prog_row else False
+
+        conn.commit()
+        try:
+            write_activity_log(
+                'Updated Program Year Level',
+                f'Year {yearlevel} of {prog_code}: {"activated" if is_active else "deactivated"}, '
+                f'{num_sections} sections, prefix={prefix}',
+                category='program', color=_LOG_COLORS.get('program', 'blue')
+            )
+        except: pass
+        return jsonify({
+            'success': True, 'pyl_id': int(pyl_id),
+            'prog_code': prog_code, 'yearlevel': yearlevel,
+            'isactive': is_active, 'active_section_count': active_count,
+            'sections': sections, 'prog_isactive': prog_active,
+            'section_naming_format': naming_format or '',
+        })
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
+
 
 @app.route('/admin/settings/section/add', methods=['POST'])
 def settings_add_section():
@@ -14418,8 +14588,9 @@ def _run_startup_migrations():
     try:
         _c = get_db_connection()
         _cur = _c.cursor(cursor_factory=RealDictCursor)
+        _cur.execute("DROP VIEW IF EXISTS public.curriculum_view")
         _cur.execute("""
-            CREATE OR REPLACE VIEW public.curriculum_view AS
+            CREATE VIEW public.curriculum_view AS
             SELECT
                 c.curriculumcode,
                 c.curriculumid,
@@ -14437,6 +14608,10 @@ def _run_startup_migrations():
                 cs.semester
             FROM curriculumsubject cs
             INNER JOIN curriculum c ON cs.curriculumid = c.curriculumid
+        """)
+        _cur.execute("""
+            ALTER TABLE program_yearlevel
+            ADD COLUMN IF NOT EXISTS section_naming_format VARCHAR(30)
         """)
         _auto_setup_program_yearlevels(_cur)
         _c.commit()

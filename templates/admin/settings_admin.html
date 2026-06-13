@@ -353,7 +353,6 @@
     <script id="pm-data" type="application/json">
       {
         "programs":   {{ programs_mgmt       | tojson }},
-        "curricula":  {{ curricula_mgmt      | tojson }},
         "sections":   {{ sections_mgmt       | tojson }},
         "yearlevels": {{ prog_yearlevel_mgmt | tojson }}
       }
@@ -380,7 +379,7 @@
             <div class="pm-item-code">{{ p.programcode }}</div>
             <div class="pm-item-name">{{ p.programname }}</div>
             <div class="pm-item-meta">
-              <span class="pm-offers-label">{{ p.curr_count | int }} {{ 'curricula' if (p.curr_count | int) != 1 else 'curriculum' }}</span>
+              <span class="pm-offers-label">{{ p.numyearlevel | int }} year level{{ 's' if (p.numyearlevel | int) != 1 else '' }}</span>
               <span class="pm-item-status {{ 'pm-item-active' if p.isactive else 'pm-item-inactive' }}"><span class="pm-dot-sm"></span> {{ 'Active' if p.isactive else 'Inactive' }}</span>
             </div>
           </div>
@@ -415,24 +414,24 @@
             </div>
             <div class="pmd-stats">
               <div class="pmd-stat-box">
-                <i class="fas fa-book pmd-stat-icon"></i>
+                <i class="fas fa-layer-group pmd-stat-icon"></i>
                 <div>
-                  <div class="pmd-stat-val" id="pdStatCurricula">—</div>
-                  <div class="pmd-stat-lbl">Curricula Count</div>
+                  <div class="pmd-stat-val" id="pdStatActiveYL">—</div>
+                  <div class="pmd-stat-lbl">Active Year Levels</div>
                 </div>
               </div>
               <div class="pmd-stat-box">
                 <i class="fas fa-graduation-cap pmd-stat-icon"></i>
                 <div>
                   <div class="pmd-stat-val" id="pdStatYearLevels">—</div>
-                  <div class="pmd-stat-lbl">Year Levels</div>
+                  <div class="pmd-stat-lbl">Total Year Levels</div>
                 </div>
               </div>
               <div class="pmd-stat-box">
                 <i class="fas fa-users pmd-stat-icon"></i>
                 <div>
                   <div class="pmd-stat-val" id="pdStatSections">—</div>
-                  <div class="pmd-stat-lbl">Sections Count</div>
+                  <div class="pmd-stat-lbl">Active Sections</div>
                 </div>
               </div>
             </div>
@@ -469,27 +468,27 @@
             </div>
           </div>
 
-          <!-- 2. Curricula -->
+          <!-- 2. Year Level Management -->
           <div class="pmd-section">
             <div class="pmd-section-hd">
               <div class="pmd-section-hd-left">
-                <span class="pmd-section-title">Curricula</span>
+                <span class="pmd-section-title">Year Level Management</span>
               </div>
             </div>
             <div class="pmd-section-body">
               <table class="pmd-data-table">
                 <thead>
                   <tr>
-                    <th>Curriculum Code</th>
-                    <th>Curriculum Year</th>
-                    <th>Subjects Count</th>
+                    <th>Year Level</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th>No. of Sections</th>
+                    <th>Section Prefix</th>
+                    <th>Generated Sections</th>
+                    <th></th>
                   </tr>
                 </thead>
-                <tbody id="pmdCurriculaBody"></tbody>
+                <tbody id="pmdYearLevelsBody"></tbody>
               </table>
-              <div class="pmd-table-footer" id="pmdCurriculaFooter"></div>
             </div>
           </div>
 
@@ -500,6 +499,9 @@
                 <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
               </div>
               <div style="display:flex;align-items:center;gap:8px;">
+                <select class="pmd-filter-sel" id="pmdSecYLFilter" onchange="_renderSectionsPage(1)">
+                  <option value="">All Year Levels</option>
+                </select>
                 <select class="pmd-filter-sel" id="pmdSecFilter" onchange="_renderSectionsPage(1)">
                   <option value="">All Status</option>
                   <option value="true">Active</option>
@@ -515,7 +517,6 @@
                 <thead>
                   <tr>
                     <th>Section</th>
-                    <th>Curriculum</th>
                     <th>Year Level</th>
                     <th>Status</th>
                     <th>Actions</th>
@@ -777,7 +778,7 @@
 
         <div class="mf" style="margin-bottom:18px;">
           <label>ACADEMIC YEAR TAG</label>
-          <div class="m-input-tag" id="ay_tag_display">AY __ - __</div>
+          <input type="text" id="ay_tag_display" class="m-input ay-tag-input" placeholder="e.g. AY 25-26">
         </div>
 
         <div class="mg-2">
@@ -1040,7 +1041,7 @@
 
 <!-- ── MODAL: Edit Program ──────────────────────────── -->
 <div id="modalEditProgram" class="s-modal">
-  <div class="s-modal-box ep-modal-box">
+  <div class="s-modal-box w-md">
     <div class="s-modal-hd">
       <h2>EDIT PROGRAM — <span id="editProgCode"></span></h2>
       <button class="modal-x" onclick="closeSModal('modalEditProgram')"><i class="fas fa-times"></i></button>
@@ -1048,50 +1049,23 @@
     <form action="{{ url_for('settings_edit_program') }}" method="POST">
       <input type="hidden" name="program_code" id="editProgCodeInput">
       <div class="s-modal-body">
-
-        <!-- Program info fields -->
-        <div class="ep-info-block">
-          <div class="ep-section-label">PROGRAM INFORMATION</div>
-          <div class="ep-fields-grid">
-            <div class="mf ep-span2">
-              <label>PROGRAM NAME</label>
-              <input type="text" name="program_name" id="editProgName" class="m-input" required>
-            </div>
-            <div class="mf">
-              <label>PROGRAM TYPE</label>
-              <select name="program_type" id="editProgType" class="m-input">
-                <option value="Undergraduate">Undergraduate</option>
-                <option value="Diploma">Diploma</option>
-              </select>
-            </div>
-            <div class="mf">
-              <label>YEAR LEVELS</label>
-              <input type="number" name="num_year_level" id="editProgYrs" class="m-input" min="1" max="6" required>
-            </div>
+        <div class="mg-2">
+          <div class="mf span2">
+            <label>PROGRAM NAME</label>
+            <input type="text" name="program_name" id="editProgName" class="m-input" required>
+          </div>
+          <div class="mf">
+            <label>PROGRAM TYPE</label>
+            <select name="program_type" id="editProgType" class="m-input">
+              <option value="Undergraduate">Undergraduate</option>
+              <option value="Diploma">Diploma</option>
+            </select>
+          </div>
+          <div class="mf">
+            <label>YEAR LEVELS</label>
+            <input type="number" name="num_year_level" id="editProgYrs" class="m-input" min="1" max="6" required>
           </div>
         </div>
-
-        <!-- Year Level Activation -->
-        <div class="ep-info-block" style="margin-top:14px;">
-          <div class="ep-section-label">YEAR LEVEL ACTIVATION</div>
-          <div id="editProgYearLevels" class="ep-yl-toggles">
-            <!-- populated by JS -->
-          </div>
-        </div>
-
-        <!-- Sections panel -->
-        <div class="ep-sections-block">
-          <div class="ep-sections-hd">
-            <div class="ep-section-label">SECTIONS PER YEAR LEVEL</div>
-            <button type="button" class="ep-add-sec-btn" onclick="openAddSection()">
-              <i class="fas fa-plus"></i> ADD SECTION
-            </button>
-          </div>
-          <div id="editProgSectionsList" class="ep-sections-list">
-            <!-- populated by JS -->
-          </div>
-        </div>
-
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
@@ -1112,15 +1086,18 @@
     <form action="{{ url_for('settings_add_section') }}" method="POST">
       <input type="hidden" name="program_code" id="addSecProgCode">
       <div class="s-modal-body">
-        <div class="mg-2">
-          <div class="mf">
-            <label>YEAR LEVEL</label>
-            <select name="year_level" id="addSecYearLevel" class="m-input" required></select>
-          </div>
-          <div class="mf">
-            <label>SECTION NAME</label>
-            <input type="text" name="section_name" class="m-input" placeholder="e.g. BSIT 1-A" required>
-          </div>
+        <div class="mf" style="margin-bottom:4px;">
+          <label style="font-size:.75rem;color:#888;">YEAR LEVEL</label>
+          <select name="year_level" id="addSecYearLevel" class="m-input" required>
+            <!-- populated by openAddSection() -->
+          </select>
+        </div>
+        <div class="mf">
+          <label>SECTION NAME</label>
+          <input type="text" name="section_name" id="addSecName" class="m-input" placeholder="e.g. BSIT1A" required style="text-transform:uppercase;">
+        </div>
+        <div id="addSecError" style="display:none;margin-top:8px;">
+          <span style="color:#c0392b;font-size:.82rem;" id="addSecErrorMsg"></span>
         </div>
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1184,63 +1161,6 @@
   </div>
 </div>
 
-
-<!-- ── MODAL: Edit Curriculum ───────────────────────── -->
-<div id="modalEditCurriculum" class="s-modal">
-  <div class="s-modal-box w-sm">
-    <div class="s-modal-hd">
-      <h2>EDIT CURRICULUM</h2>
-      <button class="modal-x" onclick="closeSModal('modalEditCurriculum')"><i class="fas fa-times"></i></button>
-    </div>
-    <form action="{{ url_for('settings_edit_curriculum') }}" method="POST">
-      <input type="hidden" name="curriculum_id" id="editCurrId">
-      <div class="s-modal-body">
-        <div class="mg-1">
-          <div class="mf">
-            <label>CURRICULUM YEAR</label>
-            <input type="text" name="curriculum_year" id="editCurrYear" class="m-input" required>
-          </div>
-          <div class="mf">
-            <label>CURRICULUM CODE</label>
-            <input type="text" name="curriculum_code" id="editCurrCode" class="m-input" required style="text-transform:uppercase;">
-          </div>
-        </div>
-      </div>
-      <div class="m-divider" style="margin:0 26px;"></div>
-      <div class="s-modal-ft">
-        <button type="button" class="btn-mc" onclick="closeSModal('modalEditCurriculum')">CANCEL</button>
-        <button type="submit" class="btn-ms">SAVE CURRICULUM</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- ── MODAL: Delete Curriculum Confirm ─────────────── -->
-<div id="modalDeleteCurriculum" class="s-modal">
-  <div class="s-modal-box w-sm">
-    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
-      <i class="fas fa-exclamation-triangle"></i>
-      <div>
-        <span class="lock-warn-title">DELETE CURRICULUM</span>
-        <span class="lock-warn-sub">This action cannot be undone.</span>
-      </div>
-    </div>
-    <form action="{{ url_for('settings_delete_curriculum') }}" method="POST">
-      <input type="hidden" name="curriculum_id" id="delCurrId">
-      <div class="s-modal-body">
-        <p class="lock-warn-body">Only empty curricula (with no subjects assigned) can be deleted. Subjects linked to this curriculum must be removed first.</p>
-        <div class="lock-warn-actions">
-          <button type="submit" class="btn-lock-view" style="background:#fce4e4; color:#c0392b; border-color:#f5c6c6;">
-            <i class="fas fa-trash"></i> Delete Curriculum
-          </button>
-          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteCurriculum')">
-            <i class="fas fa-times"></i> Cancel
-          </button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
 
 <!-- ── MODAL: Edit Section Name ─────────────────────── -->
 <div id="modalEditSection" class="s-modal">

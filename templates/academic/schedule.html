@@ -968,6 +968,7 @@
       <!-- No-program fallback: shown when file has no program column -->
       <div id="siCfgNoProgRow" style="display:none;margin-bottom:14px;">
         <div class="si-cfg-noprog-box">
+            
           <i class="fas fa-exclamation-triangle" style="color:#e67e22;margin-right:6px;"></i>
           No program column detected in file. Assign a program to all imported rows:
           <select id="siDefaultProg" class="si-cfg-sel" style="margin-left:10px;min-width:240px;">
@@ -1649,17 +1650,25 @@
                 const ic = data.saved_current   || 0;
                 const ih = data.saved_historical || 0;
                 const iskip = data.saved_skipped || 0;
+                const skipDetails = data.skipped_details || [];
                 let msg;
                 if (ic > 0) {
                     msg = `Schedule imported successfully! ${ic} record(s) saved to schedule.`;
-                    if (iskip > 0) msg += ` ${iskip} row(s) skipped (subject or section not found in system).`;
-                    if (ih > 0)   msg += ` ${ih} record(s) archived to historical data.`;
-                } else if (iskip > 0) {
-                    msg = `Import complete. 0 saved — ${iskip} row(s) skipped (subject code or section not found in the system).`;
+                    if (ih > 0) msg += ` ${ih} record(s) archived to historical data.`;
                 } else {
-                    msg = `Import complete. ${ih} record(s) saved to historical data (no matching curriculum found).`;
+                    msg = `Import complete. ${ih > 0 ? ih + ' record(s) archived to historical data.' : '0 saved.'}`;
                 }
-                _toast(msg, '#2e7d32');
+                if (iskip > 0) {
+                    msg += `\n\n${iskip} row(s) skipped:`;
+                    const show = skipDetails.slice(0, 10);
+                    show.forEach(r => {
+                        msg += `\n• ${r.program} | Year ${r.yearlevel} | ${r.subject} — ${r.reason}`;
+                    });
+                    if (skipDetails.length > 10) {
+                        msg += `\n• …and ${skipDetails.length - 10} more (check server log)`;
+                    }
+                }
+                _toast(msg, ic > 0 ? '#2e7d32' : (iskip > 0 ? '#e65100' : '#2e7d32'));
                 setTimeout(() => location.reload(), 2200);
             }, 500);
         } catch(err) {
@@ -2038,8 +2047,11 @@
     function _toast(msg, bg) {
         const el = document.getElementById('siToast');
         el.style.background = bg||'#2e7d32';
+        el.style.whiteSpace = 'pre-line';
         el.textContent = msg; el.style.display = 'block';
-        setTimeout(() => { el.style.display='none'; }, 5500);
+        const lines = (msg.match(/\n/g)||[]).length;
+        const duration = lines >= 2 ? 15000 : lines === 1 ? 8000 : 6000;
+        setTimeout(() => { el.style.display='none'; }, duration);
     }
 
     /* ── Reset ── */

@@ -1883,7 +1883,7 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
 
 function getTimeSlotIndex(timeStr) {
     const idx = timeSlots.indexOf(timeStr);
-    return idx >= 0 ? idx + 1 : 1;
+    return idx >= 0 ? idx + 1 : 0;
 }
 
 async function renderGrid(roomId, ayFilter = '', semFilter = '') {
