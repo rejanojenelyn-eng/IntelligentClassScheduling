@@ -335,6 +335,15 @@ function prepareEmp(el) {
     buildTimeSelect(document.getElementById('modal_et_re'), clean(d.re) || null);
     buildTimeSelect(document.getElementById('modal_et_ps'), clean(d.ps) || null);
     buildTimeSelect(document.getElementById('modal_et_pe'), clean(d.pe) || null);
+    const restrict = d.restrict !== 'false';
+    const cb  = document.getElementById('modal_et_restrict');
+    const hid = document.getElementById('modal_et_restrict_hidden');
+    const lbl = document.getElementById('modal_et_restrict_label');
+    if (cb)  cb.checked = restrict;
+    if (hid) hid.value  = restrict ? 'true' : 'false';
+    if (lbl) lbl.textContent = restrict
+      ? 'ON — schedules must fall within the configured PT Hours range'
+      : 'OFF — only load limits are enforced; PT Hours are informational';
   };
   validateAndOpen('modalEditEmpType', populate);
 }
@@ -342,7 +351,7 @@ function prepareEmp(el) {
 /* ── DESIGNEE MODALS ────────────────────────────────────── */
 
 /* Pre-build time selects */
-['desig_reg_from','desig_reg_to','desig_pt_from','desig_pt_to'].forEach(id => {
+['desig_reg_from','desig_reg_to'].forEach(id => {
   buildTimeSelect(document.getElementById(id), null);
 });
 
@@ -366,14 +375,11 @@ function updateDesigHours() {
 function applyDesigHours(nt, prefix) {
   buildTimeSelect(document.getElementById(prefix + '_reg_from'), nt > 0 ? '07:30' : '08:00');
   buildTimeSelect(document.getElementById(prefix + '_reg_to'),   nt > 0 ? '16:30' : '17:00');
-  buildTimeSelect(document.getElementById(prefix + '_pt_from'),  nt > 0 ? '16:30' : '08:00');
-  buildTimeSelect(document.getElementById(prefix + '_pt_to'),    nt > 0 ? '18:00' : '17:00');
 }
 
 function updateAddDesigHours() {
   const nt = parseInt(document.getElementById('add_des_night').value) || 0;
   document.getElementById('add_des_reg_band').value = nt > 0 ? '07:30 AM - 04:30 PM' : '08:00 AM - 05:00 PM';
-  document.getElementById('add_des_pt_band').value  = nt > 0 ? '04:30 PM - 06:00 PM' : 'None (Weekdays)';
 }
 
 function openAddDesigModal() { openSModal('modalAddDesig'); }

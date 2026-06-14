@@ -692,7 +692,14 @@ function buildDSSMenu(type, sections) {
                         </div>
                     </div>`;
             } else {
-                div.textContent = item.text;
+                if (item.type) {
+                    const isLab = item.type === 'Laboratory';
+                    div.className += ' room-dss-opt';
+                    div.innerHTML = `<span class="room-opt-name">${item.text}</span>`
+                        + `<span class="room-type-tag ${isLab ? 'lab' : 'lec'}">${isLab ? 'LAB' : 'LEC'}</span>`;
+                } else {
+                    div.textContent = item.text;
+                }
             }
             div.onclick = () => selectDSSOption(type, item.value, item.text);
             menu.appendChild(div);
@@ -1063,6 +1070,7 @@ async function triggerDSSLogic() {
         const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(_ay)}&sem=${encodeURIComponent(_sem)}`).then(r => r.json());
         if (!data.success) { initDSSMenus(); return; }
 
+        console.log('[DSS] recommended faculty:', data.faculty.recommended.map(f => `${f.name} (src:${f._src||'?'}, hist:"${f._hist_name||''}", count:${f.count||0})`));
         _dssRecommendedFacultyIds = new Set(data.faculty.recommended.map(f => f.id));
         buildDSSMenu('fac', [
             { cls: 'recommended', label: 'RECOMMENDATIONS', items: data.faculty.recommended.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) },
@@ -1070,18 +1078,17 @@ async function triggerDSSLogic() {
         ]);
 
         const isPreferredType = (r) => data.is_lab ? r.type === 'Laboratory' : r.type !== 'Laboratory';
-        const recommendedRooms = [
-            ...data.rooms.recommended.filter(isPreferredType),
-            ...data.rooms.others.filter(isPreferredType)
-        ];
-        const otherRooms = [
-            ...data.rooms.recommended.filter(r => !isPreferredType(r)),
-            ...data.rooms.others.filter(r => !isPreferredType(r))
-        ];
+
+        // Historical rooms always come first (they were actually used for this subject)
+        // then type-compatible non-historical rooms, then everything else
+        const historicalRooms = data.rooms.recommended;
+        const suitableRooms   = data.rooms.others.filter(isPreferredType);
+        const remainingRooms  = data.rooms.others.filter(r => !isPreferredType(r));
 
         buildDSSMenu('room', [
-            { cls: 'recommended', label: 'RECOMMENDATIONS', items: recommendedRooms.map(r => ({ value: String(r.id), text: r.name })) },
-            { cls: 'others',      label: 'OTHERS',          items: otherRooms.map(r => ({ value: String(r.id), text: r.name })) }
+            { cls: 'recommended', label: 'MOST USED', items: historicalRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
+            { cls: 'optional',    label: 'RECOMMENDATIONS',    items: suitableRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
+            { cls: 'others',      label: 'OTHERS',            items: remainingRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) }
         ]);
 
         const labCon = data.lab_constraint_enabled !== undefined ? data.lab_constraint_enabled : LAB_CONSTRAINT_ENABLED;
@@ -1779,12 +1786,29 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             const roomName = (typeof allRooms !== 'undefined' && allRooms.find(r => String(r.id) === String(roomId))?.name)
                           || row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
 
+            // Read existingJson (if any) for DB conflict exclusion in confirmAndPlace.
+            let _sessData = null;
+            try { if (row.dataset.existingJson) _sessData = JSON.parse(row.dataset.existingJson); } catch(e) {}
+
+            // Remove any matching pending entry (e.g. fromExisting loaded from DB) before
+            // confirmAndPlace so it isn't double-counted in scheduledAlready.
+            const _sc   = document.getElementById('sel_subj').value;
+            const _ayV  = document.getElementById('sel_ay').value;
+            const _semV = document.getElementById('sel_sem').value;
+            const _dup  = pendingManualSchedule.find(c =>
+                (c.subject_code || c.subjectcode) === _sc && c.ay === _ayV && c.sem === _semV &&
+                (c.day || c.daydesc) === day && c.start_time === start && c.end_time === end
+            );
+            if (_dup) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
+
             document.getElementById('sel_day').value = day;
             if (typeof _injectTimeOpt === 'function') { _injectTimeOpt('sel_start_time', start); _injectTimeOpt('sel_end_time', end); }
             document.getElementById('sel_room').value = roomId;
             document.getElementById('room_display_name').value = roomName;
             if (typeof allRooms !== 'undefined') _roomInfo = allRooms.find(r => String(r.id) === String(roomId)) || null;
-            window.currentEditSession = null;
+            // Use sessData so confirmAndPlace can exclude this DB session from conflict checks.
+            // For newly added rows (no existingJson), null is correct — they're not in the DB yet.
+            window.currentEditSession = _sessData;
 
             const prevLen = pendingManualSchedule.length;
             await confirmAndPlace();
@@ -2151,6 +2175,8 @@ async function triggerCascade(skipGridRender = false) {
             if (data.success) {
                 currDisplay.innerText = data.curriculum_code;
                 currHidden.value = data.curriculum_id;
+                const _cyHid = document.getElementById('curr_year_hidden');
+                if (_cyHid) _cyHid.value = data.curriculum_year || '';
 
                 if (year && sem && !window.currentEditSession) {
                     const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}&ay_id=${encodeURIComponent(ay)}`);
@@ -2173,6 +2199,8 @@ async function triggerCascade(skipGridRender = false) {
                 }
             } else {
                 currDisplay.innerText = 'No Curriculum';
+                const _cyHidNo = document.getElementById('curr_year_hidden');
+                if (_cyHidNo) _cyHidNo.value = '';
                 if (!window.currentEditSession) subjSelect.innerHTML = '<option value="">-- No Subjects --</option>';
             }
         } catch (e) {

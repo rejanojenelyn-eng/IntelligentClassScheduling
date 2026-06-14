@@ -36,6 +36,14 @@
     .dss-option.recommended-item { background: #fff8e1; }
     .dss-option.recommended-item:hover { background: #ffe0b2; color: #e65100; font-weight: 700; }
 
+    /* ── Room option with type badge ── */
+    .dss-option.room-dss-opt { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .room-opt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .room-type-tag { font-size: 0.48rem; font-weight: 900; padding: 1px 5px; border-radius: 3px;
+        text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; flex-shrink: 0; }
+    .room-type-tag.lab { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
+    .room-type-tag.lec { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+
     /* ── Pill editing highlight ── */
     .schedule-pill.pill-editing {
         outline: 3px solid #ffc107; outline-offset: 2px; z-index: 15 !important;
@@ -806,10 +814,12 @@
             </div>
             <input type="hidden" id="sel_section" value="">
             <input type="hidden" id="curr_id_hidden">
+            <input type="hidden" id="curr_year_hidden" value="">
 
             <!-- Curriculum Guide header -->
             <div class="cg-header">
                 <span class="cg-title"><i class="fas fa-list-alt cg-title-icon"></i> CURRICULUM GUIDE</span>
+                <span id="cg-cy-label" class="cg-cy-label" style="display:none;"></span>
                 <span class="cg-count-badge" id="cg-count-badge" style="display:none;">0 subjects</span>
             </div>
 
@@ -2177,8 +2187,23 @@ window.confirmAndPlace = async function() {
 
 /* ── Curriculum year tag ── */
 function _updateCurrYearTag() {
-    const curr = document.getElementById('display_curr').innerText || '---';
-    document.getElementById('curr-year-tag').textContent = curr !== '------' ? `C.Y ${curr}` : 'C.Y --';
+    const raw = document.getElementById('curr_year_hidden')?.value || '';
+    let fmt = '--';
+    if (raw) {
+        const p = raw.split('-');
+        fmt = p.length >= 2 ? `${String(p[0]).slice(-2)}-${String(p[1]).slice(-2)}` : raw;
+    }
+    document.getElementById('curr-year-tag').textContent = raw ? `C.Y ${fmt}` : 'C.Y --';
+    const cgCy = document.getElementById('cg-cy-label');
+    if (cgCy) {
+        if (raw) {
+            cgCy.textContent = `C.Y ${fmt}`;
+            cgCy.style.display = '';
+        } else {
+            cgCy.textContent = '';
+            cgCy.style.display = 'none';
+        }
+    }
 }
 
 /* ── Section open/close helpers ── */
@@ -2330,16 +2355,33 @@ async function _refreshSubjectScheduledHours() {
         const data = await resp.json();
         if (!data.subjects) return;
         const subjSel = document.getElementById('sel_subj');
-        data.subjects.forEach(s => {
-            const opt = Array.from(subjSel.options).find(o => o.value === s.subjectcode);
-            if (opt) {
-                // Only overwrite if the new value is defined — never reset a subject to 0
-                // while the user is mid-session. Subjects keep their last-known values
-                // so the overall progress and badges stay stable across subject switches.
-                if (s.scheduled_hours !== undefined) opt.dataset.dbScheduled = s.scheduled_hours || 0;
-                if (s.saved_status    !== undefined) opt.dataset.savedStatus  = s.saved_status   || '';
-            }
-        });
+        if (subjSel.options.length <= 1 && data.subjects.length > 0) {
+            // sel_subj is empty (e.g. blocked by currentEditSession or sem was blank during
+            // cascade). Rebuild it fully so the curriculum guide can render the correct list.
+            subjSel.innerHTML = '<option value="">-- Select Subject --</option>';
+            data.subjects.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.subjectcode;
+                opt.textContent = s.subjectname;
+                opt.dataset.units       = s.creditunits      || 0;
+                opt.dataset.hours       = s.total_hours      || 0;
+                opt.dataset.labhours    = s.laboratoryhours  || 0;
+                opt.dataset.dbScheduled = s.scheduled_hours  || 0;
+                opt.dataset.savedStatus = s.saved_status     || '';
+                subjSel.appendChild(opt);
+            });
+        } else {
+            data.subjects.forEach(s => {
+                const opt = Array.from(subjSel.options).find(o => o.value === s.subjectcode);
+                if (opt) {
+                    // Only overwrite if the new value is defined — never reset a subject to 0
+                    // while the user is mid-session. Subjects keep their last-known values
+                    // so the overall progress and badges stay stable across subject switches.
+                    if (s.scheduled_hours !== undefined) opt.dataset.dbScheduled = s.scheduled_hours || 0;
+                    if (s.saved_status    !== undefined) opt.dataset.savedStatus  = s.saved_status   || '';
+                }
+            });
+        }
     } catch(e) {}
 }
 
@@ -3740,8 +3782,24 @@ function duplicateTimeSlot(id) {
     const end    = row.querySelector('.ts-end-hidden')?.value   || '';
     const roomId = row.querySelector('.ts-room-hidden')?.value  || '';
     const newId  = addNewTimeSlot(day, start, end, roomId);
-    // After creating, dim time slots unavailable for the same day+room
-    if (newId) setTimeout(() => _filterConflictingStartTimes(newId, day, roomId), 50);
+    if (newId) {
+        // Tag the new row with the origin values so save/drop can detect it is still unmodified.
+        const newRow = document.getElementById(`ts-row-${newId}`);
+        if (newRow) newRow.dataset.dupOrigin = [day, start, end, roomId].join('|');
+        setTimeout(() => _filterConflictingStartTimes(newId, day, roomId), 50);
+    }
+}
+
+/* ── Returns true when slice id was created by duplication and still has the original values ── */
+function _isDupUnmodified(id) {
+    const row = document.getElementById(`ts-row-${id}`);
+    if (!row || !row.dataset.dupOrigin) return false;
+    const [oDay, oStart, oEnd, oRoom] = row.dataset.dupOrigin.split('|');
+    const curDay   = row.querySelector('.ts-day-sel')?.value      || '';
+    const curStart = row.querySelector('.ts-start-hidden')?.value || '';
+    const curEnd   = row.querySelector('.ts-end-hidden')?.value   || '';
+    const curRoom  = row.querySelector('.ts-room-hidden')?.value  || '';
+    return curDay === oDay && curStart === oStart && curEnd === oEnd && String(curRoom) === String(oRoom);
 }
 
 async function removeTimeSlot(id) {
@@ -3749,6 +3807,15 @@ async function removeTimeSlot(id) {
     if (!row) return;
 
     const existingJson = row.dataset.existingJson || '';
+
+    // Block drop of an unmodified duplicate — removing it without any changes would
+    // accidentally clear the original slice's pending entry (same subject/day/time key).
+    if (!existingJson && _isDupUnmodified(id)) {
+        await showValidationModal('Unmodified Duplicate',
+            'This slice is an exact copy of an existing slice and has not been modified. ' +
+            'Please change the day, room, or time to make it a distinct session before removing it.');
+        return;
+    }
 
     if (existingJson) {
         let sess = {};
@@ -4387,7 +4454,7 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             if (valData.has_violations) {
                 await _showFirstViolation(valData.violations);
                 if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> SAVE AS DRAFT'; btn.disabled = false; }
-                return;
+                return false;
             }
         } catch(e) {
             // validation endpoint unreachable — allow save to proceed (server will re-validate)
@@ -4454,15 +4521,18 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             await _initFlFacultyMenu();
             _refreshFlIfVisible();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
+            return true;
         } else {
             if (data.violations && data.violations.length) {
                 await _showFirstViolation(data.violations);
             } else {
                 await showValidationModal('Save Failed', data.error || 'Unknown error occurred.');
             }
+            return false;
         }
     } catch(e) {
         await showValidationModal('Connection Error', 'Could not reach the server. Please try again.');
+        return false;
     } finally {
         if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> SAVE AS DRAFT'; btn.disabled = false; }
     }
@@ -4522,6 +4592,24 @@ async function confirmAllSlots() {
         rowsToSave = selected;
     }
 
+    // Block saving any unmodified duplicate — it is identical to an existing slice and
+    // would conflict with or overwrite the original.
+    const _dupRows = rowsToSave.filter(r => _isDupUnmodified(r.rowId));
+    if (_dupRows.length) {
+        const _allRows = Array.from(document.querySelectorAll('.ts-row'));
+        const _sliceLabel = r => {
+            const idx = _allRows.findIndex(el => el.id === `ts-row-${r.rowId}`);
+            return `Slice ${idx >= 0 ? idx + 1 : '?'} (${r.day || '—'}, ${r.start || '—'}–${r.end || '—'})`;
+        };
+        await showValidationModal('Unmodified Duplicate',
+            `The following slice${_dupRows.length > 1 ? 's are' : ' is'} an exact copy of ` +
+            `an existing slice and cannot be saved without modification:\n\n` +
+            _dupRows.map(_sliceLabel).join('\n') + '\n\n' +
+            `Please change the day, room, or time on ${_dupRows.length > 1 ? 'each of these slices' : 'this slice'} before saving.`
+        );
+        return;
+    }
+
     // Validate only the rows being saved
     for (let i = 0; i < rowsToSave.length; i++) {
         const { row, day, start, end, roomId } = rowsToSave[i];
@@ -4562,6 +4650,11 @@ async function confirmAllSlots() {
     // Remove all preview entries before processing to avoid double-counting
     pendingManualSchedule = pendingManualSchedule.filter(c => !c.isPreview);
 
+    // Snapshot state before modifying — used to roll back if the save fails so that
+    // progress and grid do not count unsaved entries.
+    const _pmSnapshot  = [...pendingManualSchedule];
+    const _hdbSnapshot = new Set(hiddenDbSchedules);
+
     // Process each selected row into pendingManualSchedule
     for (const { row, rowId, hasExisting, day, start, end, roomId, roomName } of rowsToSave) {
         if (hasExisting) {
@@ -4601,6 +4694,17 @@ async function confirmAllSlots() {
                 if (sessData) hiddenDbSchedules.delete(`${sessData.subjectcode}_${sessData.daydesc}_${sessData.starttimeid}`);
             }
         } else {
+            // Remove any matching locally-added entry from pending before confirmAndPlace
+            // so it isn't counted twice in scheduledAlready (once in pending + once as sessionHours).
+            const _sc   = document.getElementById('sel_subj').value;
+            const _ayV  = document.getElementById('sel_ay').value;
+            const _semV = document.getElementById('sel_sem').value;
+            const _dup  = pendingManualSchedule.find(c =>
+                c.subject_code === _sc && c.ay === _ayV && c.sem === _semV &&
+                c.day === day && c.start_time === start && c.end_time === end
+            );
+            if (_dup) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
+
             document.getElementById('sel_day').value = day;
             _injectTimeOpt('sel_start_time', start);
             _injectTimeOpt('sel_end_time', end);
@@ -4628,7 +4732,21 @@ async function confirmAllSlots() {
     const facName = document.getElementById('fac_display_name').value;
     if (facId && facName) _setFacultyLock(facId, facName);
 
-    await _triggerSaveDraft();
+    const _saveOk = await _triggerSaveDraft();
+
+    if (!_saveOk) {
+        // Save failed — roll back any entries added to pendingManualSchedule and
+        // hiddenDbSchedules during this attempt so progress doesn't count unsaved hours.
+        pendingManualSchedule = _pmSnapshot;
+        hiddenDbSchedules     = _hdbSnapshot;
+        const _ay  = document.getElementById('sel_ay').value;
+        const _sem = document.getElementById('sel_sem').value;
+        const _rm  = document.getElementById('sel_room').value;
+        if (currentMode === 'program') renderProgramTimetable();
+        else renderGrid(_rm, _ay, _sem);
+        _updateOverallProgress();
+        return;
+    }
 
     // After save, deselect all slices
     _activeSliceId = null;
@@ -4666,6 +4784,14 @@ async function saveIndividualSlice(id) {
         const typedRoom = row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
         await showValidationModal('Room Required',
             typedRoom ? `"${typedRoom}" not found — pick a room from the list.` : 'Please select a room for this slice.');
+        return;
+    }
+
+    // Block saving an unmodified duplicate to prevent it from conflicting with or overwriting the original.
+    if (_isDupUnmodified(id)) {
+        await showValidationModal('Unmodified Duplicate',
+            'This slice is an exact copy of an existing slice. ' +
+            'Please change the day, room, or time to make it a distinct session before saving.');
         return;
     }
 

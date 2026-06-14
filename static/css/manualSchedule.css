@@ -2081,6 +2081,18 @@
     gap: 6px;
 }
 .cg-title-icon { color: rgba(255,255,255,0.65); font-size: 0.68rem; }
+.cg-cy-label {
+    font-size: 0.52rem;
+    font-weight: 800;
+    color: rgba(255,255,255,0.80);
+    letter-spacing: 0.6px;
+    background: rgba(255,255,255,0.12);
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.18);
+    margin-left: auto;
+    margin-right: 5px;
+}
 .cg-count-badge {
     font-size: 0.52rem;
     font-weight: 800;

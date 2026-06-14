@@ -242,7 +242,8 @@ class CSPValidator:
     def _enabled(self, key: str) -> bool:
         return bool(self._cfg.get(key, 1))
 
-    def validate(self, schedule: list, faculty_map: dict) -> list:
+    def validate(self, schedule: list, faculty_map: dict, skip_rules: set = None) -> list:
+        skip_rules = skip_rules or set()
         violations = []
         # HC1/HC2/HC3  Faculty time-window & load limits
         if self._enabled('hc_faculty_load_enabled'):
@@ -250,8 +251,8 @@ class CSPValidator:
         # HC4  Sunday / NSTP restriction
         if self._enabled('hc_weekend_enabled'):
             violations += self._check_sunday_restriction(schedule)
-        # HC6  Day pairing
-        if self._enabled('hc_day_pairing_enabled'):
+        # HC6  Day pairing — skipped during draft saves; only enforced at publish time
+        if self._enabled('hc_day_pairing_enabled') and 'HC6' not in skip_rules:
             violations += self._check_day_pairing(schedule)
         # HC7  Night PT cap (designees)
         if self._enabled('hc_faculty_load_enabled'):
@@ -307,12 +308,19 @@ class CSPValidator:
             # is always validated under HC2 rules, regardless of employment status.
             if designation is not None:
                 if is_regular_slot:
-                    if start < time(8, 0) or end > time(17, 0):
+                    # Designees with approved night service (nightteachingservice > 0) use 07:30–16:30;
+                    # designees without it use the standard 08:00–17:00 window.
+                    if night_svc and night_svc > 0:
+                        desig_min, desig_max = regular_start, regular_end
+                    else:
+                        desig_min, desig_max = time(8, 0), time(17, 0)
+                    if start < desig_min or end > desig_max:
                         violations.append({
                             'rule': 'HC2',
                             'subject': subj_code,
                             'detail': (
-                                f'Designee/administrator teaching hours are 8:00 AM–5:00 PM on weekdays. '
+                                f'Designee/administrator teaching hours are '
+                                f'{format_time_12h(desig_min)}–{format_time_12h(desig_max)} on weekdays. '
                                 f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) is outside this window.'
                             )
                         })
@@ -341,13 +349,16 @@ class CSPValidator:
                             })
 
             elif emp_status == 'Part-Time':
-                if not is_weekend:
-                    if start < time(16, 30) or end > time(21, 0):
+                if not is_weekend and et.get('restrict_pt_hours', True):
+                    pt_start = et.get('parttime_start') or time(16, 30)
+                    pt_end   = et.get('parttime_end')   or time(21, 0)
+                    if start < pt_start or end > pt_end:
                         violations.append({
                             'rule': 'HC3',
                             'subject': subj_code,
                             'detail': (
-                                f'Part-time faculty may only be scheduled between 4:30 PM and 9:00 PM on weekdays '
+                                f'Part-time faculty may only be scheduled between '
+                                f'{format_time_12h(pt_start)} and {format_time_12h(pt_end)} on weekdays '
                                 f'based on the configured faculty hours settings. '
                                 f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
                                 f'falls outside this allowed window.'
@@ -882,6 +893,7 @@ class IntelligentScheduler:
                    et.regular_end,
                    et.parttime_start,
                    et.parttime_end,
+                   COALESCE(et.restrict_pt_hours, TRUE) AS restrict_pt_hours,
                    d.nightteachingservice,
                    COALESCE(d.regularloadunit, 0) AS designation_regular_load,
                    sp.specializationname
@@ -915,6 +927,7 @@ class IntelligentScheduler:
                     'regular_end':          row['regular_end']   or time(16, 30),
                     'parttime_start':       row['parttime_start'],
                     'parttime_end':         row['parttime_end'],
+                    'restrict_pt_hours':    row.get('restrict_pt_hours', True),
                 },
             }
             faculty_map[fnum] = fac

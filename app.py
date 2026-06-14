@@ -185,7 +185,7 @@ def _ensure_activity_log_table():
 #  RANDOM FOREST DSS  (Manual Scheduling — see rf_dss.py)
 # ─────────────────────────────────────────────────────────────
 from rf_dss import SKLEARN_OK as _SKLEARN_OK, train_rf_dss as _train_rf_dss
-from rf_dss import rf_score_faculty as _rf_score_faculty, rf_score_room as _rf_score_room
+from rf_dss import rf_get_faculty_info as _rf_get_faculty_info, rf_score_room as _rf_score_room
 
 
 # 1. INITIALIZE APP FIRST
@@ -1514,33 +1514,36 @@ def archived_employees():
                            employee_types=et_rows,
                            specializations=spec_rows)
 
-def _auto_setup_program_yearlevels(cur):
+def _auto_setup_program_yearlevels(cur, prog_filter=None):
     """
-    For every active program, upsert program_yearlevel rows for the current AY.
-    For each year level 1..numyearlevel:
-        startacademicyear = f"{active_yearstart-(yl-1)}-{active_yearstart-(yl-1)+1}"
-        curriculumid      = latest curriculum where curriculumyear start <= startacademicyear start
+    For every active program and EVERY academic year, upsert program_yearlevel rows
+    using cohort-based curriculum assignment:
+        startacademicyear = AY_yearstart - (year_level - 1)  (the year this cohort entered)
+        curriculumid      = latest curriculum where curriculumyear start <= cohort entry year
     Also ensures a default section exists for each program_yearlevel row.
+    Pass prog_filter (programcode string) to limit to a single program.
     Returns count of rows upserted.
     """
-    # Active (or latest) academic year
-    cur.execute("""
-        SELECT academicyearid, yearstart FROM academicyear
-        ORDER BY isactive DESC NULLS LAST, yearstart DESC LIMIT 1
-    """)
-    ay_row = cur.fetchone()
-    if not ay_row:
+    # All academic years — cohort rows must exist for every AY a scheduler might work with
+    cur.execute("SELECT academicyearid, yearstart FROM academicyear ORDER BY yearstart ASC")
+    all_ays = cur.fetchall()
+    if not all_ays:
         return 0
-    active_ay_id    = ay_row['academicyearid']
-    active_yearstart = int(ay_row['yearstart'])
 
-    # All active programs
-    cur.execute("""
-        SELECT p.programcode, COALESCE(p.numyearlevel, 4) AS numyearlevel
-        FROM programs p
-        WHERE p.isactive = TRUE
-        ORDER BY p.programcode
-    """)
+    # Active programs, optionally filtered to one program
+    if prog_filter:
+        cur.execute("""
+            SELECT p.programcode, COALESCE(p.numyearlevel, 4) AS numyearlevel
+            FROM programs p
+            WHERE p.isactive = TRUE AND UPPER(p.programcode) = UPPER(%s)
+        """, (prog_filter,))
+    else:
+        cur.execute("""
+            SELECT p.programcode, COALESCE(p.numyearlevel, 4) AS numyearlevel
+            FROM programs p
+            WHERE p.isactive = TRUE
+            ORDER BY p.programcode
+        """)
     programs = cur.fetchall()
 
     upserted = 0
@@ -1549,63 +1552,71 @@ def _auto_setup_program_yearlevels(cur):
         prog_code = prog_row['programcode']
         num_years = int(prog_row['numyearlevel'])
 
-        for yl in range(1, num_years + 1):
-            start_yr = active_yearstart - (yl - 1)
-            startacademicyear = f"{start_yr}-{start_yr + 1}"
+        for ay_row in all_ays:
+            ay_id        = ay_row['academicyearid']
+            ay_yearstart = int(ay_row['yearstart'])
 
-            # Best curriculum: latest whose curriculumyear start <= startacademicyear start
-            cur.execute("""
-                SELECT curriculumid FROM curriculum
-                WHERE UPPER(programcode) = UPPER(%s)
-                  AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
-                ORDER BY curriculumyear DESC LIMIT 1
-            """, (prog_code, start_yr))
-            best = cur.fetchone()
-            best_curr_id = best['curriculumid'] if best else None
+            for yl in range(1, num_years + 1):
+                # Cohort's entry year: subtract (year_level - 1) from the AY start
+                start_yr = ay_yearstart - (yl - 1)
+                startacademicyear = f"{start_yr}-{start_yr + 1}"
 
-            # Upsert program_yearlevel
-            try:
-                cur.execute("SAVEPOINT pyl_auto")
+                # Best curriculum: latest whose curriculumyear start <= cohort's entry year
                 cur.execute("""
-                    INSERT INTO program_yearlevel
-                        (programcode, academicyearid, startacademicyear, yearlevel, curriculumid, isactive)
-                    VALUES (%s, %s, %s, %s, %s, TRUE)
-                    ON CONFLICT (programcode, academicyearid, startacademicyear, yearlevel)
-                        DO UPDATE SET curriculumid = EXCLUDED.curriculumid, isactive = TRUE
-                """, (prog_code.upper(), active_ay_id, startacademicyear, yl, best_curr_id))
-                cur.execute("RELEASE SAVEPOINT pyl_auto")
-                upserted += 1
-            except Exception:
-                cur.execute("ROLLBACK TO SAVEPOINT pyl_auto")
-                continue
+                    SELECT curriculumid FROM curriculum
+                    WHERE UPPER(programcode) = UPPER(%s)
+                      AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
+                    ORDER BY curriculumyear DESC LIMIT 1
+                """, (prog_code, start_yr))
+                best = cur.fetchone()
+                best_curr_id = best['curriculumid'] if best else None
 
-            # Ensure a default section exists for this program_yearlevel
-            cur.execute("""
-                SELECT pyl.programyearlevelid FROM program_yearlevel pyl
-                WHERE pyl.programcode = %s AND pyl.academicyearid = %s
-                  AND pyl.startacademicyear = %s AND pyl.yearlevel = %s
-                LIMIT 1
-            """, (prog_code.upper(), active_ay_id, startacademicyear, yl))
-            pyl_row = cur.fetchone()
-            if not pyl_row:
-                continue
-            pyl_id = pyl_row['programyearlevelid']
-
-            cur.execute("""
-                SELECT sectionid FROM sections WHERE programyearlevelid = %s LIMIT 1
-            """, (pyl_id,))
-            if not cur.fetchone():
-                sec_nm = f"{prog_code.upper()}-{yl}A"
+                # Upsert — COALESCE preserves a previously-set curriculumid when no cohort
+                # curriculum is found (avoids overwriting a manual assignment with NULL).
                 try:
-                    cur.execute("SAVEPOINT sec_auto")
+                    cur.execute("SAVEPOINT pyl_auto")
                     cur.execute("""
-                        INSERT INTO sections (programyearlevelid, sectionname, isactive)
-                        VALUES (%s, %s, TRUE)
-                        ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
-                    """, (pyl_id, sec_nm))
-                    cur.execute("RELEASE SAVEPOINT sec_auto")
+                        INSERT INTO program_yearlevel
+                            (programcode, academicyearid, startacademicyear, yearlevel, curriculumid, isactive)
+                        VALUES (%s, %s, %s, %s, %s, TRUE)
+                        ON CONFLICT (programcode, academicyearid, startacademicyear, yearlevel)
+                            DO UPDATE SET
+                                curriculumid = COALESCE(EXCLUDED.curriculumid, program_yearlevel.curriculumid),
+                                isactive = TRUE
+                    """, (prog_code.upper(), ay_id, startacademicyear, yl, best_curr_id))
+                    cur.execute("RELEASE SAVEPOINT pyl_auto")
+                    upserted += 1
                 except Exception:
-                    cur.execute("ROLLBACK TO SAVEPOINT sec_auto")
+                    cur.execute("ROLLBACK TO SAVEPOINT pyl_auto")
+                    continue
+
+                # Ensure a default section exists for this program_yearlevel
+                cur.execute("""
+                    SELECT pyl.programyearlevelid FROM program_yearlevel pyl
+                    WHERE pyl.programcode = %s AND pyl.academicyearid = %s
+                      AND pyl.startacademicyear = %s AND pyl.yearlevel = %s
+                    LIMIT 1
+                """, (prog_code.upper(), ay_id, startacademicyear, yl))
+                pyl_row = cur.fetchone()
+                if not pyl_row:
+                    continue
+                pyl_id = pyl_row['programyearlevelid']
+
+                cur.execute("""
+                    SELECT sectionid FROM sections WHERE programyearlevelid = %s LIMIT 1
+                """, (pyl_id,))
+                if not cur.fetchone():
+                    sec_nm = f"{prog_code.upper()}-{yl}A"
+                    try:
+                        cur.execute("SAVEPOINT sec_auto")
+                        cur.execute("""
+                            INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                            VALUES (%s, %s, TRUE)
+                            ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+                        """, (pyl_id, sec_nm))
+                        cur.execute("RELEASE SAVEPOINT sec_auto")
+                    except Exception:
+                        cur.execute("ROLLBACK TO SAVEPOINT sec_auto")
 
     return upserted
 
@@ -1613,19 +1624,24 @@ def _auto_setup_program_yearlevels(cur):
 def _reassign_curriculum_for_program(cur, programcode):
     """
     Recalculate and UPDATE curriculumid for all program_yearlevel rows of a program.
-    Rule: highest curriculumyear that is <= startacademicyear for each row.
+    Rule: highest curriculumyear that is <= the cohort's startacademicyear.
+    COALESCE preserves the existing curriculumid when no matching curriculum is found,
+    so a manually-assigned or previously-correct value is never overwritten with NULL.
     Call this after any curriculum INSERT/UPDATE for that program.
     """
     cur.execute("""
         UPDATE program_yearlevel pyl
-        SET curriculumid = (
-            SELECT c.curriculumid
-            FROM curriculum c
-            WHERE UPPER(c.programcode) = UPPER(pyl.programcode)
-              AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT)
-                  <= CAST(SUBSTRING(pyl.startacademicyear, 1, 4) AS INT)
-            ORDER BY c.curriculumyear DESC
-            LIMIT 1
+        SET curriculumid = COALESCE(
+            (
+                SELECT c.curriculumid
+                FROM curriculum c
+                WHERE UPPER(c.programcode) = UPPER(pyl.programcode)
+                  AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT)
+                      <= CAST(SUBSTRING(pyl.startacademicyear, 1, 4) AS INT)
+                ORDER BY c.curriculumyear DESC
+                LIMIT 1
+            ),
+            pyl.curriculumid
         )
         WHERE UPPER(pyl.programcode) = UPPER(%s)
     """, (programcode,))
@@ -6494,23 +6510,45 @@ def api_get_curriculum():
             """, (prog, ay_id, int(yl)))
             res = cur.fetchone()
 
-        # Fallback: latest curriculum for this program
+        # Fallback: compute the cohort's entry year from AY + year_level and find the
+        # correct curriculum via cohort logic, matching program_yearlevel's own rule.
         if not res and prog:
-            cur.execute("""
-                SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
-                       ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
-                             WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
-                FROM curriculum c
-                WHERE UPPER(c.programcode) = UPPER(%s)
-                ORDER BY c.curriculumyear DESC LIMIT 1
-            """, (prog,))
-            res = cur.fetchone()
+            entry_start = None
+            if ay_id and yl and yl.isdigit():
+                cur.execute("SELECT yearstart FROM academicyear WHERE academicyearid = %s", (ay_id,))
+                _ay = cur.fetchone()
+                if _ay:
+                    entry_start = int(_ay['yearstart']) - (int(yl) - 1)
+            if entry_start is not None:
+                cur.execute("""
+                    SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
+                           ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
+                                 WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
+                    FROM curriculum c
+                    WHERE UPPER(c.programcode) = UPPER(%s)
+                      AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT) <= %s
+                    ORDER BY c.curriculumyear DESC LIMIT 1
+                """, (prog, entry_start))
+                res = cur.fetchone()
+            if not res:
+                # Last resort: oldest available curriculum for the program — better than
+                # returning the newest, which would be wrong for senior cohorts.
+                cur.execute("""
+                    SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
+                           ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
+                                 WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
+                    FROM curriculum c
+                    WHERE UPPER(c.programcode) = UPPER(%s)
+                    ORDER BY c.curriculumyear ASC LIMIT 1
+                """, (prog,))
+                res = cur.fetchone()
 
         if res:
             return jsonify({
                 "success": True,
                 "curriculum_id": res['curriculumid'],
                 "curriculum_code": res['curriculumcode'],
+                "curriculum_year": str(res['curriculumyear'] or ''),
                 "label": f"{res['curriculumcode']} (C.Y {res['curriculumyear']})",
                 "available_year_levels": res['year_levels']
             })
@@ -6575,10 +6613,11 @@ def api_dss_suggest():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 1. Is this a lab subject?
-        cur.execute("SELECT LaboratoryHours FROM curriculumsubject WHERE UPPER(SubjectCode) = UPPER(%s) LIMIT 1", (subject_code,))
+        # 1. Is this a lab subject? Fetch subject name for fallback matching.
+        cur.execute("SELECT LaboratoryHours, SubjectName FROM curriculumsubject WHERE UPPER(SubjectCode) = UPPER(%s) LIMIT 1", (subject_code,))
         subj_row = cur.fetchone()
-        is_lab = bool(subj_row and subj_row.get('laboratoryhours') and subj_row['laboratoryhours'] > 0)
+        is_lab   = bool(subj_row and subj_row.get('laboratoryhours') and subj_row['laboratoryhours'] > 0)
+        subj_name = (subj_row.get('subjectname') or '').strip() if subj_row else ''
 
         # 2. All active faculty with type info
         cur.execute("""
@@ -6596,7 +6635,7 @@ def api_dss_suggest():
             FROM Faculty f
             LEFT JOIN EmployeeType et ON f.EmployeeTypeID = et.EmployeeTypeID
             LEFT JOIN Designation d   ON f.DesignationID  = d.DesignationID
-            WHERE f.EmployeeStatus != 'Archived' ORDER BY f.LastName
+            WHERE (f.EmployeeStatus IS NULL OR f.EmployeeStatus != 'Archive') ORDER BY f.LastName
         """)
         all_faculty = [dict(r) for r in cur.fetchall()]
 
@@ -6646,30 +6685,190 @@ def api_dss_suggest():
             item.update(extra)
             return item
 
-        # 3. Historical instructor frequency for this subject
+        # 3a. Schedule-table frequency (most reliable — uses exact curriculumsubjectid FK,
+        #     no subject code format mismatch possible).  Covers current + archived schedules.
+        cur.execute("""
+            SELECT sc.employeenumber, COUNT(DISTINCT sv.scheduleid) AS freq
+            FROM schedule sc
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN schedule_version sv  ON sv.scheduleid = sc.scheduleid
+            WHERE UPPER(cs.subjectcode) = UPPER(%s)
+              AND sc.employeenumber IS NOT NULL
+              AND sv.status IN ('Published', 'Archive', 'Draft')
+            GROUP BY sc.employeenumber
+            ORDER BY freq DESC
+        """, (subject_code,))
+        sched_fac_counts = {r['employeenumber']: int(r['freq']) for r in cur.fetchall()}
+
+        # 3b. Historical_data frequency — code match first (normalized to strip spaces/hyphens/symbols).
+        #     Fall back to exact subject-name match only when the code returns 0 rows, so
+        #     subjects with generic names ("Physical Education") never bleed across codes.
         cur.execute("""
             SELECT TRIM("Instructor") AS instructor, COUNT(*) AS freq
             FROM historical_data
-            WHERE UPPER(TRIM("Subject Code")) = UPPER(TRIM(%s))
+            WHERE REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') =
+                  REGEXP_REPLACE(UPPER(TRIM(%s)), '[^A-Z0-9]', '', 'g')
               AND "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
             GROUP BY TRIM("Instructor")
             ORDER BY freq DESC
-            LIMIT 15
+            LIMIT 200
         """, (subject_code,))
         hist_faculty = cur.fetchall()
+        print(f'[DSS DEBUG] hist_faculty (code match, {len(hist_faculty)} rows): {[(r["instructor"], r["freq"]) for r in hist_faculty[:5]]}')
 
-        # 4. Match historical names to faculty records (by last name prefix)
+        # Fallback 1: exact subject-name match when the code produced 0 results.
+        if not hist_faculty and subj_name:
+            cur.execute("""
+                SELECT TRIM("Instructor") AS instructor, COUNT(*) AS freq
+                FROM historical_data
+                WHERE LOWER(TRIM("Subject Name")) = LOWER(TRIM(%s))
+                  AND "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
+                GROUP BY TRIM("Instructor")
+                ORDER BY freq DESC
+                LIMIT 200
+            """, (subj_name,))
+            hist_faculty = cur.fetchall()
+            print(f'[DSS DEBUG] hist_faculty (name fallback, {len(hist_faculty)} rows): {[(r["instructor"], r["freq"]) for r in hist_faculty[:5]]}')
+
+        # Fallback 2: when both exact lookups return nothing, try a partial subject-name
+        # ILIKE match.  This bridges cases where "Subject Name" differs slightly (e.g.
+        # "Computer Programming 2" vs "Computer Prog 2").
+        if not hist_faculty and subj_name and len(subj_name) >= 6:
+            # Use the first 6+ characters of the subject name as a wildcard prefix
+            like_pat = subj_name[:max(6, len(subj_name) // 2)] + '%'
+            cur.execute("""
+                SELECT TRIM("Instructor") AS instructor, COUNT(*) AS freq
+                FROM historical_data
+                WHERE LOWER(TRIM("Subject Name")) ILIKE %s
+                  AND "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
+                GROUP BY TRIM("Instructor")
+                ORDER BY freq DESC
+                LIMIT 200
+            """, (like_pat.lower(),))
+            hist_faculty = cur.fetchall()
+            if hist_faculty:
+                print(f'[DSS DEBUG] hist_faculty (name ILIKE fallback "{like_pat}", {len(hist_faculty)} rows): {[(r["instructor"], r["freq"]) for r in hist_faculty[:5]]}')
+
+        # ── DEBUG: print what the two data sources found ────────────────────────
+        print(f'[DSS DEBUG] subject_code={subject_code!r}')
+        print(f'[DSS DEBUG] sched_fac_counts keys={list(sched_fac_counts.keys())[:20]}')
+        print(f'[DSS DEBUG] all_faculty count={len(all_faculty)}')
+        # ────────────────────────────────────────────────────────────────────────
+
+        # 4. Build recommended list — schedule-table hits first (ID-based, no name guessing),
+        #    then historical_data hits for anyone not yet captured.
         recommended_ids = set()
         recommended_faculty = []
+
+        # 4a. From schedule tables — direct employee-number match
+        fac_by_emp = {f['employeenumber']: f for f in all_faculty}
+        for emp_num, freq in sched_fac_counts.items():
+            f = fac_by_emp.get(emp_num)
+            if f and emp_num not in recommended_ids:
+                recommended_ids.add(emp_num)
+                recommended_faculty.append(_fac_item(f, count=freq, _src='schedule'))
+            elif not f:
+                print(f'[DSS DEBUG] empnum {emp_num!r} in sched_fac_counts but NOT found in all_faculty (may be archived or status mismatch)')
+
+        # 4b. From historical_data — name-based match with first-name disambiguation.
+        #
+        # For "LAST, FIRST [MIDDLE]" names we compare BOTH the last-name segment AND
+        # the first name (full when both sides have it, initial otherwise).  This prevents
+        # two problems:
+        #   (a) "SANTOS, MARIA" incorrectly matching Faculty "SANTOS, JOSE" → wrong person
+        #       shown in recommendations.
+        #   (b) "SANTOS, JOSE" and "SANTOS, MARIA" both collapsing to the first Santos
+        #       found in all_faculty → only one of the two historically-teaching faculty
+        #       ever appears in recommendations.
+        # For no-comma names (ambiguous format) we keep the original last-name heuristics
+        # since we cannot reliably extract first vs last in that case.
+        # Academic titles that may appear as the first token of a name's first-name part.
+        # When a historical record says "DELA CRUZ, DR. JUAN", hist_fi becomes "dr" instead
+        # of "juan" — stripping these tokens lets us reach the actual first name.
+        _NAME_TITLES = {'dr', 'prof', 'engr', 'atty', 'arch', 'rev', 'mr', 'ms', 'mrs', 'phd'}
+
         for hf in hist_faculty:
             hist_name = (hf['instructor'] or '').strip().lower()
             for f in all_faculty:
                 last = f['fullname'].split(',')[0].strip().lower()
-                if last and (hist_name.startswith(last + ',') or hist_name.startswith(last + ' ') or hist_name == last):
+                if not last:
+                    continue
+
+                if ',' in hist_name:
+                    # "LAST, FIRST [MIDDLE]" format
+                    hist_last = hist_name.split(',')[0].strip()
+                    hist_rest = hist_name.split(',', 1)[1].strip()
+
+                    # Extract first name token, skipping academic titles (DR., PROF., etc.)
+                    # so "DELA CRUZ, DR. JUAN" → hist_fi = "juan" not "dr"
+                    hist_fi = ''
+                    for _tok in hist_rest.split():
+                        _clean = _tok.rstrip('.')
+                        if _clean and _clean not in _NAME_TITLES:
+                            hist_fi = _clean
+                            break
+
+                    # Normalize both last names: treat hyphens the same as spaces so that
+                    # Faculty "SANTOS-REYES" matches historical "SANTOS REYES" and vice versa.
+                    last_n  = last.replace('-', ' ')
+                    hlast_n = hist_last.replace('-', ' ')
+
+                    # Bidirectional compound-surname matching.
+                    # Forward:  hist_last is the longer side (historical had more words than Faculty last)
+                    # Backward: Faculty last is the longer side (Faculty has "DELA CRUZ JR." but
+                    #           historical only wrote "DELA CRUZ").
+                    last_matched = (
+                        hlast_n == last_n or
+                        hlast_n.startswith(last_n + ' ') or                            # hist compound, last is prefix
+                        (len(last_n) >= 4 and hlast_n.endswith(' ' + last_n)) or       # last at end of hist
+                        (len(hlast_n) >= 4 and last_n.startswith(hlast_n + ' ')) or    # Faculty compound, hist is prefix
+                        (len(hlast_n) >= 4 and last_n.endswith(' ' + hlast_n))         # hist at end of Faculty last
+                    )
+
+                    matched = last_matched
+                    if last_matched and hist_fi:
+                        # Refine with first-name check to separate same-surname faculty.
+                        fac_rest = f['fullname'].split(',', 1)[1].strip().lower() if ',' in f['fullname'] else ''
+                        fac_fi   = fac_rest.split()[0].rstrip('.') if fac_rest else ''
+                        if fac_fi:
+                            if len(hist_fi) > 1 and len(fac_fi) > 1:
+                                # Both sides have a multi-char first name.
+                                # Use bidirectional prefix so that common Filipino name
+                                # variations ("JOSE"/"JOSEPH", "MA."/"MARIA", "JUAN"/"JUANITO")
+                                # still match without requiring exact spelling equality.
+                                matched = (
+                                    hist_fi == fac_fi or
+                                    fac_fi.startswith(hist_fi) or
+                                    hist_fi.startswith(fac_fi)
+                                )
+                            else:
+                                # At least one side is a single initial — compare initial only.
+                                matched = (hist_fi[0] == fac_fi[0])
+                else:
+                    # No comma — could be "FIRST LAST", just "LAST", or abbreviated.
+                    # Cannot reliably split first/last, so fall back to last-name heuristics.
+                    # Also add reverse compound checks for Faculty names like "DELA ROSA"
+                    # when historical only recorded "ROSA".
+                    matched = (
+                        hist_name == last or
+                        hist_name.startswith(last + ' ') or         # compound last name first
+                        hist_name.endswith(' ' + last) or           # "JUAN DELA CRUZ"
+                        (len(last) >= 4 and (' ' + last + ' ') in hist_name) or
+                        (len(hist_name) >= 4 and last.startswith(hist_name + ' ')) or  # Faculty compound, hist abbreviated
+                        (len(hist_name) >= 4 and last.endswith(' ' + hist_name))       # hist at end of Faculty last
+                    )
+
+                if matched:
                     if f['employeenumber'] not in recommended_ids:
                         recommended_ids.add(f['employeenumber'])
-                        recommended_faculty.append(_fac_item(f, count=int(hf['freq'])))
+                        total = int(hf['freq']) + sched_fac_counts.get(f['employeenumber'], 0)
+                        recommended_faculty.append(_fac_item(f, count=total, _src='historical', _hist_name=hf['instructor']))
+                        print(f'[DSS DEBUG] hist match: "{hf["instructor"]}" → {f["fullname"]} (empnum={f["employeenumber"]})')
                     break
+            else:
+                # Inner loop completed without break = no Faculty record matched this historical name
+                print(f'[DSS DEBUG] hist NO MATCH: "{hf["instructor"]}" — not found in {len(all_faculty)} active faculty')
+
         others_faculty = [
             _fac_item(f)
             for f in all_faculty if f['employeenumber'] not in recommended_ids
@@ -6681,7 +6880,15 @@ def api_dss_suggest():
         if _SKLEARN_OK:
             _train_rf_dss()
             for entry in recommended_faculty:
-                entry['rf_score'] = _rf_score_faculty(subject_code, entry['name'])
+                info = _rf_get_faculty_info(
+                    subject_code,
+                    entry['name'],
+                    entry.get('_hist_name'),
+                    entry.get('id'),        # employee_number — primary identity key
+                )
+                entry['rf_score'] = info['score']
+                if info.get('rf_explanation'):
+                    entry['rf_explanation'] = info['rf_explanation']
             recommended_faculty.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
 
         # 5. All rooms with type
@@ -6696,11 +6903,28 @@ def api_dss_suggest():
         """)
         all_rooms = [dict(r) for r in cur.fetchall()]
 
-        # 6. Historical room frequency for this subject
+        # 6a. Schedule-table room frequency (exact FK match — no room name ambiguity)
+        cur.execute("""
+            SELECT ss.roomid, COUNT(*) AS freq
+            FROM schedule_sessions ss
+            JOIN schedule_version sv  ON ss.versionid = sv.versionid
+            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            WHERE UPPER(cs.subjectcode) = UPPER(%s)
+              AND ss.roomid IS NOT NULL
+              AND sv.status IN ('Published', 'Archive')
+            GROUP BY ss.roomid
+            ORDER BY freq DESC
+        """, (subject_code,))
+        sched_room_counts = {r['roomid']: int(r['freq']) for r in cur.fetchall()}
+
+        # 6b. Historical_data room frequency — code match first; name match only if both
+        #     the code and the schedule-table lookups returned nothing.
         cur.execute("""
             SELECT TRIM("Room") AS room, COUNT(*) AS freq
             FROM historical_data
-            WHERE UPPER(TRIM("Subject Code")) = UPPER(TRIM(%s))
+            WHERE REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') =
+                  REGEXP_REPLACE(UPPER(TRIM(%s)), '[^A-Z0-9]', '', 'g')
               AND "Room" IS NOT NULL AND TRIM("Room") != ''
             GROUP BY TRIM("Room")
             ORDER BY freq DESC
@@ -6708,22 +6932,37 @@ def api_dss_suggest():
         """, (subject_code,))
         hist_rooms = cur.fetchall()
 
-        # 7. Match historical room names to room records
+        # 7. Build recommended room list — schedule-table IDs first, then historical names
+        room_by_id = {r['roomid']: r for r in all_rooms}
         recommended_room_ids = set()
         recommended_rooms = []
+
+        # 7a. From schedule tables (roomid-based — no name guessing)
+        for room_id, freq in sorted(sched_room_counts.items(), key=lambda x: -x[1]):
+            r = room_by_id.get(room_id)
+            if r and room_id not in recommended_room_ids:
+                recommended_room_ids.add(room_id)
+                recommended_rooms.append({
+                    "id": r['roomid'], "name": r['roomname'],
+                    "type": r['roomtype'], "count": freq
+                })
+
+        # 7b. From historical_data (name-based matching for any room not already captured)
         for hr in hist_rooms:
             hist_room = (hr['room'] or '').strip().upper()
             for r in all_rooms:
                 if r['roomname'].upper() == hist_room or hist_room in r['roomname'].upper():
                     if r['roomid'] not in recommended_room_ids:
                         recommended_room_ids.add(r['roomid'])
+                        total = int(hr['freq']) + sched_room_counts.get(r['roomid'], 0)
                         recommended_rooms.append({
-                            "id": r['roomid'],
-                            "name": r['roomname'],
-                            "type": r['roomtype'],
-                            "count": int(hr['freq'])
+                            "id": r['roomid'], "name": r['roomname'],
+                            "type": r['roomtype'], "count": total
                         })
                     break
+        # Sort recommended_rooms by combined count descending before RF re-rank
+        recommended_rooms.sort(key=lambda x: x.get('count', 0), reverse=True)
+
         others_rooms = [
             {"id": r['roomid'], "name": r['roomname'], "type": r['roomtype']}
             for r in all_rooms if r['roomid'] not in recommended_room_ids
@@ -9912,6 +10151,7 @@ def import_curriculum():
                     cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
                     print(f"[WARN] Could not save prereq/coreq for {s_code!r}: {_e}")
 
+        _auto_setup_program_yearlevels(cur, prog_filter=prog_code)
         _reassign_curriculum_for_program(cur, prog_code)
         conn.commit()
         flash(f"Import Successful for {prog_code} C.Y {curr_year}")
@@ -10170,6 +10410,7 @@ def confirm_pdf_import():
                 except Exception as _e:
                     cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
 
+        _auto_setup_program_yearlevels(cur, prog_filter=prog_code)
         _reassign_curriculum_for_program(cur, prog_code)
         conn.commit()
         action_word = "overridden" if (existing and override) else "imported"
@@ -10311,6 +10552,7 @@ def import_curriculum_xlsx():
                 except Exception as _e:
                     cur.execute("ROLLBACK TO SAVEPOINT prereq_sp")
 
+        _auto_setup_program_yearlevels(cur, prog_filter=prog_code)
         _reassign_curriculum_for_program(cur, prog_code)
         conn.commit()
         flash(f"Import Successful for {prog_code} C.Y {curr_year}")
@@ -10640,6 +10882,16 @@ def _ensure_ay_finalized_col(cur):
         cur.execute("ALTER TABLE academicyear ADD COLUMN isfinalized BOOLEAN NOT NULL DEFAULT FALSE")
 
 
+def _ensure_restrict_pt_col(cur):
+    """Add restrict_pt_hours BOOLEAN DEFAULT TRUE to employeetype if not present."""
+    cur.execute("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'employeetype' AND column_name = 'restrict_pt_hours'
+    """)
+    if not cur.fetchone():
+        cur.execute("ALTER TABLE employeetype ADD COLUMN restrict_pt_hours BOOLEAN NOT NULL DEFAULT TRUE")
+
+
 @app.route('/admin/settings')
 def admin_settings():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -10651,6 +10903,7 @@ def admin_settings():
             return[dict(zip(columns, row)) for row in cursor.fetchall()]
 
         _ensure_ay_finalized_col(cur)
+        _ensure_restrict_pt_col(cur)
         cur.execute("ALTER TABLE program_yearlevel ADD COLUMN IF NOT EXISTS section_naming_format VARCHAR(30)")
         # Widen sectionname to accommodate long generated names
         cur.execute("""
@@ -11189,11 +11442,6 @@ def update_emp_type():
     
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute("SELECT COUNT(*) FROM Schedule s JOIN Semester sem ON s.SemesterID = sem.SemesterID WHERE sem.IsActive = TRUE")
-        if cur.fetchone()[0] > 0:
-            flash("Cannot edit settings while an active schedule exists.", "error")
-            return redirect(url_for('admin_settings'))
-
         et_id = request.form.get('emp_type_id')
         r_load = request.form.get('reg_load') or None
         pt_load = request.form.get('pt_load') or None
@@ -11202,13 +11450,15 @@ def update_emp_type():
         re = request.form.get('reg_end') or None
         ps = request.form.get('pt_start') or None
         pe = request.form.get('pt_end') or None
+        restrict_pt = request.form.get('restrict_pt', 'true') == 'true'
 
         cur.execute("""
-            UPDATE EmployeeType 
-            SET RegularLoad=%s, PartTimeLoad=%s, TeachingSubstitution=%s, 
-                Regular_Start=%s, Regular_End=%s, PartTime_Start=%s, PartTime_End=%s
+            UPDATE EmployeeType
+            SET RegularLoad=%s, PartTimeLoad=%s, TeachingSubstitution=%s,
+                Regular_Start=%s, Regular_End=%s, PartTime_Start=%s, PartTime_End=%s,
+                restrict_pt_hours=%s
             WHERE EmployeeTypeID=%s
-        """, (r_load, pt_load, sub_load, rs, re, ps, pe, et_id))
+        """, (r_load, pt_load, sub_load, rs, re, ps, pe, restrict_pt, et_id))
         conn.commit()
         flash("Employee Type constraints updated.", "success")
         write_activity_log(
@@ -13649,13 +13899,15 @@ def api_save_draft():
         all_codes_to_archive = list(set(submitted_codes + [s.upper() for s in deleted_subjects]))
 
         # ── Pre-save CSP validation — block if any hard constraint is violated ──
+        # HC6 (day-pairing) is intentionally excluded: a scheduler may save a single
+        # slice as draft first and add the paired day later. HC6 is enforced at publish.
         _pre_rehydrated = _rehydrate_schedule(list(schedule_list))
         if _pre_rehydrated:
             from scheduler import CSPValidator as _CSP
             from database import load_scheduler_config as _lsc_pre
             _hc_cfg_pre = _lsc_pre()
             _fmap_pre   = _load_faculty_map()
-            _viols_pre  = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre)
+            _viols_pre  = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre, skip_rules={'HC6'})
             if _viols_pre:
                 cur.close(); conn.close()
                 return jsonify({
@@ -13855,7 +14107,9 @@ def api_validate_schedule():
         from scheduler import CSPValidator
         from database import load_scheduler_config as _lsc
         _hc_cfg    = _lsc()
-        violations  = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map)
+        # HC6 (day-pairing) is skipped here — partial schedules are valid drafts.
+        # It is enforced at publish time via /api/schedule/approve.
+        violations  = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map, skip_rules={'HC6'})
         return jsonify({'success': True, 'violations': violations, 'has_violations': bool(violations)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

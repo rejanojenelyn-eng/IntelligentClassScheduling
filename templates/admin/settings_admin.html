@@ -154,11 +154,13 @@
               <th>TEACHING SUBSTITUTION</th>
               <th>REGULAR HOURS</th>
               <th>PART-TIME HOURS</th>
+              <th>RESTRICT PT HOURS</th>
               <th class="col-action"></th>
             </tr>
           </thead>
           <tbody>
             {% for et in emp_types %}
+            {% set rpt_on = et.restrict_pt_hours %}
             <tr>
               <td class="td-type">{{ et.typename }}</td>
               <td>{{ et.regularload or '—' }}</td>
@@ -166,13 +168,21 @@
               <td>{{ et.teachingsubstitution or '—' }}</td>
               <td>{{ et.reg_time_str }}</td>
               <td>{{ et.pt_time_str }}</td>
+              <td>
+                <span class="rpt-badge {{ 'rpt-off' if rpt_on == false else 'rpt-on' }}">
+                  {{ 'OFF' if rpt_on == false else 'ON' }}
+                </span>
+              </td>
               <td class="td-action" onclick="prepareEmp(this)"
                   data-id="{{ et.employeetypeid }}"
                   data-name="{{ et.typename }}"
                   data-rl="{{ et.regularload }}" data-ptl="{{ et.parttimeload }}"
                   data-sub="{{ et.teachingsubstitution }}"
-                  data-rs="{{ et.regular_start }}" data-re="{{ et.regular_end }}"
-                  data-ps="{{ et.parttime_start }}" data-pe="{{ et.parttime_end }}">
+                  data-rs="{{ et.regular_start.strftime('%H:%M') if et.regular_start else '' }}"
+                  data-re="{{ et.regular_end.strftime('%H:%M') if et.regular_end else '' }}"
+                  data-ps="{{ et.parttime_start.strftime('%H:%M') if et.parttime_start else '' }}"
+                  data-pe="{{ et.parttime_end.strftime('%H:%M') if et.parttime_end else '' }}"
+                  data-restrict="{{ 'false' if rpt_on == false else 'true' }}">
                 <i class="fas fa-edit"></i>
               </td>
             </tr>
@@ -201,7 +211,6 @@
               <th>REGULAR LOAD UNITS</th>
               <th>PT/NIGHT TEACHING SERVICE</th>
               <th>REGULAR HOURS</th>
-              <th>PART-TIME HOURS</th>
               <th class="col-action"></th>
             </tr>
           </thead>
@@ -212,7 +221,6 @@
               <td>{{ des.regularloadunit }}</td>
               <td>{{ des.nightteachingservice }}</td>
               <td>{% if (des.nightteachingservice or 0) == 0 %}08:00 AM - 05:00 PM{% else %}07:30 AM - 04:30 PM{% endif %}</td>
-              <td>{% if (des.nightteachingservice or 0) > 0 %}04:30 PM - 06:00 PM{% else %}None (Weekdays){% endif %}</td>
               <td class="td-action" onclick="prepareDesig(this)"
                   data-id="{{ des.designationid }}"
                   data-name="{{ des.designationname }}"
@@ -874,6 +882,27 @@
           </div>
         </div>
 
+        <div class="m-divider" style="margin:18px 0 14px;"></div>
+
+        <div class="mf">
+          <label>RESTRICT PART-TIME TEACHING HOURS</label>
+          <div class="rpt-toggle-row">
+            <input type="hidden" name="restrict_pt" id="modal_et_restrict_hidden" value="true">
+            <label class="tog">
+              <input type="checkbox" id="modal_et_restrict"
+                     onchange="
+                       document.getElementById('modal_et_restrict_hidden').value = this.checked ? 'true' : 'false';
+                       document.getElementById('modal_et_restrict_label').textContent = this.checked
+                         ? 'ON — schedules must fall within the configured PT Hours range'
+                         : 'OFF — only load limits are enforced; PT Hours are informational';
+                     ">
+              <span class="tog-slider"></span>
+            </label>
+            <span class="rpt-tog-label" id="modal_et_restrict_label">ON — schedules must fall within the configured PT Hours range</span>
+          </div>
+          <p class="m-note" style="margin-top:6px;">When OFF, the Part-Time Hours band above becomes informational only and scheduling may extend beyond it.</p>
+        </div>
+
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
       <div class="s-modal-ft">
@@ -915,7 +944,7 @@
           </div>
         </div>
 
-        <div class="mg-2">
+        <div class="mg-1">
           <div class="mf">
             <label>REGULAR HOURS SLOT</label>
             <div class="ts-group">
@@ -924,17 +953,9 @@
               <select id="desig_reg_to" disabled></select>
             </div>
           </div>
-          <div class="mf">
-            <label>PART-TIME HOURS SLOT</label>
-            <div class="ts-group">
-              <select id="desig_pt_from" disabled></select>
-              <span class="ts-to">to</span>
-              <select id="desig_pt_to" disabled></select>
-            </div>
-          </div>
         </div>
 
-        <p class="m-note">* Hours slots are computed automatically from the night teaching service value.</p>
+        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service sets the maximum evening assignments allowed, not a fixed time restriction.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -976,18 +997,14 @@
           </div>
         </div>
 
-        <div class="mg-2">
+        <div class="mg-1">
           <div class="mf">
             <label>REGULAR HOURS BAND</label>
             <input type="text" id="add_des_reg_band" class="m-input" value="07:30 AM - 04:30 PM" readonly>
           </div>
-          <div class="mf">
-            <label>PART-TIME HOURS BAND</label>
-            <input type="text" id="add_des_pt_band" class="m-input" value="04:30 PM - 06:00 PM" readonly>
-          </div>
         </div>
 
-        <p class="m-note">* Hours bands are computed from the night teaching service value.</p>
+        <p class="m-note">* Regular hours band is computed from the night teaching service value. PT/Night Teaching Service sets the maximum evening assignments allowed.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
