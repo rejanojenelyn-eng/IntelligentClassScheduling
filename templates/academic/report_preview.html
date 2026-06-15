@@ -1,0 +1,391 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+/* ══════════════════════════════════════
+   REPORT PREVIEW PAGE
+══════════════════════════════════════ */
+.rpt-preview-wrap { padding: 0 0 40px 0; font-family: Arial, sans-serif; }
+
+.rpt-prev-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
+.rpt-prev-title { font-size: 1.35rem; font-weight: 900; color: #2c0000; text-transform: uppercase; letter-spacing: .5px; margin: 0; }
+.rpt-prev-subtitle { font-size: .79rem; color: #888; margin-top: 3px; }
+
+.rpt-prev-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rpt-btn-back { padding: 9px 18px; border: 1.5px solid #ccc; border-radius: 8px; background: #fff; color: #555; font-size: .84rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 7px; text-decoration: none; transition: background .15s; }
+.rpt-btn-back:hover { background: #f5f5f5; }
+
+.rpt-btn-export { padding: 9px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; font-size: .84rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: opacity .15s, transform .1s; text-decoration: none; }
+.rpt-btn-export:hover { opacity: .9; transform: translateY(-1px); }
+
+.rpt-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.rpt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; background: #fff0f0; border: 1px solid #f0c0c0; border-radius: 20px; font-size: .74rem; color: #630100; font-weight: 600; }
+.rpt-chip i { font-size: .7rem; opacity: .7; }
+
+.rpt-row-count { font-size: .78rem; color: #888; margin-bottom: 14px; }
+.rpt-row-count strong { color: #2c0000; }
+
+.rpt-table-wrapper { background: #fff; border-radius: 10px; border: 1px solid #f0e8e8; box-shadow: 0 2px 8px rgba(122,0,0,.08); overflow: hidden; margin-bottom: 24px; }
+.rpt-table-scroll { overflow-x: auto; }
+.rpt-table { width: 100%; border-collapse: collapse; font-size: .81rem; }
+.rpt-table thead { background: #2c0000; color: #fff; position: sticky; top: 0; z-index: 2; }
+.rpt-table thead th { padding: 10px 12px; font-weight: 700; font-size: .7rem; letter-spacing: .4px; text-transform: uppercase; text-align: left; border-right: 1px solid rgba(255,255,255,.1); white-space: nowrap; }
+.rpt-table thead th:last-child { border-right: none; }
+.rpt-table tbody tr { border-bottom: 1px solid #f5eded; transition: background .1s; }
+.rpt-table tbody tr:nth-child(even) { background: #fdf5f5; }
+.rpt-table tbody tr:hover { background: #f8eaea !important; }
+.rpt-table tbody td { padding: 9px 12px; color: #333; vertical-align: middle; border-right: 1px solid #f5eded; }
+.rpt-table tbody td:last-child { border-right: none; }
+
+.rpt-section-hdr { background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; padding: 11px 18px; font-size: .84rem; font-weight: 800; letter-spacing: .3px; border-radius: 8px 8px 0 0; margin-top: 20px; }
+.rpt-section-hdr:first-child { margin-top: 0; }
+
+.rpt-no-data { text-align: center; padding: 60px 24px; color: #aaa; }
+.rpt-no-data i { font-size: 2.5rem; margin-bottom: 12px; display: block; }
+.rpt-no-data p { font-size: .9rem; margin: 0; }
+
+/* ══════════════════════════════════════
+   NEW UNIFORM EXPORT MODAL
+══════════════════════════════════════ */
+.rpt-exp-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1500; align-items: center; justify-content: center; padding: 16px; font-family: 'Inter', 'Segoe UI', sans-serif; }
+.rpt-exp-overlay.open { display: flex !important; }
+.rpt-exp-dialog { background: #fff; border-radius: 16px; width: min(520px, 96vw); box-shadow: 0 20px 40px rgba(0,0,0,.2); animation: rpt-pop .2s ease-out; overflow: hidden; }
+@keyframes rpt-pop { from { transform: scale(.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.exp-header { display: flex; align-items: center; padding: 20px 24px 15px; gap: 15px; position: relative; }
+.exp-icon-box { background: #900000; color: #fff; width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+.exp-title-box h3 { margin: 0; font-size: 1.15rem; font-weight: 800; color: #222; }
+.exp-title-box p { margin: 2px 0 0; font-size: 0.8rem; color: #777; }
+.exp-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 1.2rem; color: #999; cursor: pointer; transition: color 0.2s; }
+.exp-close:hover { color: #333; }
+
+.exp-banner { background: #900000; color: #fff; margin: 0 24px; padding: 16px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; }
+.exp-banner-left { display: flex; align-items: center; gap: 12px; }
+.exp-banner-left i { font-size: 1.5rem; opacity: 0.9; }
+.exp-banner-left .count { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+.exp-banner-left .label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; opacity: 0.9; }
+.exp-banner-badge { background: rgba(255,255,255,0.15); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; }
+
+.exp-body { padding: 20px 24px; }
+.exp-sec-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.exp-sec-title { font-size: 0.75rem; font-weight: 800; color: #555; letter-spacing: 0.5px; }
+.exp-select-all { background: #fff; border: 1px solid #900000; color: #900000; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+.exp-select-all:hover { background: #fff0f0; }
+
+.exp-fmt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+.exp-fmt-card { border: 2px solid #eaeaea; border-radius: 12px; padding: 16px; position: relative; cursor: pointer; transition: all 0.2s; background: #fff; }
+.exp-fmt-card:hover { border-color: #d0d0d0; }
+.exp-fmt-card.selected { border-color: #900000; background: #fffcfc; }
+.fmt-check { position: absolute; top: 12px; right: 12px; font-size: 1.1rem; color: #d0d0d0; transition: color 0.2s; }
+.exp-fmt-card.selected .fmt-check { color: #900000; }
+.fmt-icon { font-size: 1.8rem; margin-bottom: 8px; display: block; }
+.exp-fmt-card h4 { margin: 0 0 2px; font-size: 0.9rem; font-weight: 700; color: #222; }
+.exp-fmt-card p { margin: 0; font-size: 0.75rem; color: #888; }
+
+.exp-input-box { display: flex; align-items: center; gap: 10px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; }
+.exp-input-box i { color: #aaa; }
+.exp-input-box input { border: none; outline: none; width: 100%; font-size: 0.9rem; font-family: inherit; color: #333; }
+
+.exp-toggle-box { display: flex; justify-content: space-between; align-items: center; border: 1px solid #e0e0e0; border-radius: 10px; padding: 14px 16px; }
+.exp-toggle-text h4 { margin: 0 0 2px; font-size: 0.8rem; font-weight: 700; color: #444; }
+.exp-toggle-text p { margin: 0; font-size: 0.75rem; color: #888; }
+
+.exp-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.exp-switch input { opacity: 0; width: 0; height: 0; }
+.exp-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .3s; border-radius: 24px; }
+.exp-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+.exp-switch input:checked + .exp-slider { background-color: #900000; }
+.exp-switch input:checked + .exp-slider:before { transform: translateX(20px); }
+
+.exp-footer { padding: 16px 24px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 12px; background: #fafafa; }
+.btn-exp-cancel { padding: 10px 20px; border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #444; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.btn-exp-cancel:hover { background: #f5f5f5; }
+.btn-exp-submit { padding: 10px 24px; border: none; border-radius: 8px; background: #900000; color: #fff; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: opacity 0.2s; }
+.btn-exp-submit:hover { opacity: 0.9; }
+.btn-exp-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rpt-preview-wrap">
+    <!-- Page Header -->
+    <div class="rpt-prev-header">
+        <div class="rpt-prev-title-group">
+            <h1 class="rpt-prev-title">{{ title }}</h1>
+            <div class="rpt-prev-subtitle">
+                Report Preview &mdash; {{ row_count }} record(s) found
+            </div>
+        </div>
+        <div class="rpt-prev-actions">
+            <a href="{{ back_url|default('/reports') }}" class="rpt-btn-back">
+                <i class="fas fa-arrow-left"></i> Back to Reports
+            </a>
+            {% if row_count > 0 %}
+            <button class="rpt-btn-export" onclick="openExportModal()">
+                <i class="fas fa-download"></i> Export Report
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Active filter chips -->
+    {% if active_filters %}
+    <div class="rpt-filter-chips">
+        {% for chip in active_filters %}
+        <span class="rpt-chip"><i class="fas fa-filter"></i> {{ chip }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ── GROUPED SECTIONS (room_schedule, assignments, offerings) ── -->
+    {% if sections %}
+        {% for sec in sections %}
+        <div class="rpt-section-hdr">{{ sec.title }}</div>
+        <div class="rpt-table-wrapper">
+            <div class="rpt-table-scroll">
+                <table class="rpt-table">
+                    <thead>
+                        <tr>
+                            {% for col in sec.columns %}
+                            <th>{{ col }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in sec.rows %}
+                        <tr>
+                            {% for cell in row %}
+                            <td>{{ cell }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+
+    <!-- ── SINGLE TABLE (faculty, rooms, curriculum, class_schedule, programs) ── -->
+    {% elif columns %}
+    <div class="rpt-table-wrapper">
+        <div class="rpt-table-scroll">
+            <table class="rpt-table">
+                <thead>
+                    <tr>
+                        {% for col in columns %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        {% for cell in row %}
+                        <td>{{ cell }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% else %}
+    <!-- No data -->
+    <div class="rpt-no-data">
+        <i class="fas fa-inbox"></i>
+        <p>No records found for the selected filters.</p>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- ══════════════════════════════════════
+     NEW UNIFORM EXPORT MODAL
+══════════════════════════════════════ -->
+<div id="rptExpModal" class="rpt-exp-overlay" onclick="if(event.target===this)closeExportModal()">
+    <div class="rpt-exp-dialog">
+        <!-- Header -->
+        <div class="exp-header">
+            <div class="exp-icon-box"><i class="fas fa-file-export"></i></div>
+            <div class="exp-title-box">
+                <h3>Export Data</h3>
+                <p>Select format(s) and options below</p>
+            </div>
+            <button class="exp-close" onclick="closeExportModal()"><i class="fas fa-times"></i></button>
+        </div>
+
+        <!-- Red Banner -->
+        <div class="exp-banner">
+            <div class="exp-banner-left">
+                <i class="fas fa-users"></i>
+                <span class="count">{{ row_count }}</span>
+                <div style="display: flex; flex-direction: column;">
+                    <span class="label">RECORDS TO EXPORT</span>
+                </div>
+            </div>
+            <div class="exp-banner-badge">All visible records</div>
+        </div>
+
+        <!-- Body -->
+        <div class="exp-body">
+            <div class="exp-sec-hdr">
+                <span class="exp-sec-title">EXPORT FORMAT</span>
+                <button class="exp-select-all" onclick="toggleAllFormats()">Select All</button>
+            </div>
+
+            <!-- 2x2 Grid -->
+            <div class="exp-fmt-grid">
+                <div class="exp-fmt-card" data-fmt="csv" onclick="_rptToggleFmt(this)">
+                    <i class="fas fa-check-circle fmt-check"></i>
+                    <i class="fas fa-file-csv fmt-icon" style="color: #2e7d32;"></i>
+                    <h4>CSV</h4>
+                    <p>Comma separated values</p>
+                </div>
+                <div class="exp-fmt-card" data-fmt="xlsx" onclick="_rptToggleFmt(this)">
+                    <i class="fas fa-check-circle fmt-check"></i>
+                    <i class="fas fa-file-excel fmt-icon" style="color: #1b5e20;"></i>
+                    <h4>Excel (XLSX)</h4>
+                    <p>Microsoft Excel workbook</p>
+                </div>
+                <div class="exp-fmt-card" data-fmt="pdf" onclick="_rptToggleFmt(this)">
+                    <i class="fas fa-check-circle fmt-check"></i>
+                    <i class="fas fa-file-pdf fmt-icon" style="color: #c62828;"></i>
+                    <h4>PDF</h4>
+                    <p>Portable document format</p>
+                </div>
+                <div class="exp-fmt-card" data-fmt="docx" onclick="_rptToggleFmt(this)">
+                    <i class="fas fa-check-circle fmt-check"></i>
+                    <i class="fas fa-file-word fmt-icon" style="color: #1565c0;"></i>
+                    <h4>Word (DOCX)</h4>
+                    <p>Microsoft Word document</p>
+                </div>
+            </div>
+
+            <div class="exp-sec-hdr">
+                <span class="exp-sec-title">EXPORT FILENAME</span>
+            </div>
+            <div class="exp-input-box">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="rptExpFilename" value="{{ export_filename }}" placeholder="Enter filename...">
+            </div>
+
+            <div class="exp-toggle-box">
+                <div class="exp-toggle-text">
+                    <h4>INCLUDE DATE & TIME IN FILENAME</h4>
+                    <p>e.g. {{ export_filename }}_20240615_143022</p>
+                </div>
+                <label class="exp-switch">
+                    <input type="checkbox" id="rptExpDatetimeToggle" checked>
+                    <span class="exp-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="exp-footer">
+            <button class="btn-exp-cancel" onclick="closeExportModal()">Cancel</button>
+            <button class="btn-exp-submit" id="rptExpConfirmBtn" onclick="doExport()" disabled>
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// Safely grab the report type
+const RPT_TYPE = "{{ report_type }}";
+
+// Automatically figure out the Export URL based on if user is Admin or Acad Head
+const RPT_EXPORT_URL = window.location.pathname.includes('/admin') 
+    ? '/admin/reports/export/' + RPT_TYPE 
+    : '/reports/export/' + RPT_TYPE;
+
+// Automatically grab all the filters directly from the browser URL!
+const RPT_PARAMS = {};
+new URLSearchParams(window.location.search).forEach((value, key) => {
+    RPT_PARAMS[key] = value;
+});
+
+let _rptSelFmts = new Set();
+
+function openExportModal()  { document.getElementById('rptExpModal').classList.add('open'); }
+function closeExportModal() { document.getElementById('rptExpModal').classList.remove('open'); }
+
+function _rptToggleFmt(card) {
+    const fmt = card.dataset.fmt;
+    if (_rptSelFmts.has(fmt)) {
+        _rptSelFmts.delete(fmt);
+        card.classList.remove('selected');
+    } else {
+        _rptSelFmts.add(fmt);
+        card.classList.add('selected');
+    }
+    _validateExportBtn();
+}
+
+function toggleAllFormats() {
+    const cards = document.querySelectorAll('.exp-fmt-card');
+    if (_rptSelFmts.size === 4) {
+        _rptSelFmts.clear();
+        cards.forEach(c => c.classList.remove('selected'));
+    } else {
+        cards.forEach(c => {
+            _rptSelFmts.add(c.dataset.fmt);
+            c.classList.add('selected');
+        });
+    }
+    _validateExportBtn();
+}
+
+function _validateExportBtn() {
+    document.getElementById('rptExpConfirmBtn').disabled = _rptSelFmts.size === 0;
+}
+
+async function doExport() {
+    const formats  = [..._rptSelFmts];
+    let baseName = document.getElementById('rptExpFilename').value.trim() || 'report_export';
+    
+    if (document.getElementById('rptExpDatetimeToggle').checked) {
+        const now = new Date();
+        const pad = (n) => n.toString().padStart(2, '0');
+        const dtStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        baseName += `_${dtStr}`;
+    }
+
+    if (!formats.length) return;
+
+    const btn = document.getElementById('rptExpConfirmBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting…';
+
+    try {
+        const resp = await fetch(RPT_EXPORT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert('Export failed: ' + (err.error || resp.statusText));
+            return;
+        }
+
+        const blob = await resp.blob();
+        const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url; a.download = baseName + ext; a.click();
+        URL.revokeObjectURL(url);
+        closeExportModal();
+    } catch(e) {
+        alert('Network error: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-download"></i> Export';
+    }
+}
+</script>
+{% endblock %}
