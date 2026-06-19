@@ -2,69 +2,556 @@
 
 {% block head %}
     {{ super() }}
-    <!-- Link to the CSS for the My Requests page -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/request_faculty.css') }}">
-    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+    <style>
+    #toast-container {
+        position: fixed; bottom: 28px; right: 28px; z-index: 99999;
+        display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+    }
+    .toast-item {
+        display: flex; align-items: flex-start; gap: 12px;
+        padding: 14px 18px; border-radius: 10px;
+        min-width: 280px; max-width: 380px;
+        box-shadow: 0 6px 24px rgba(0,0,0,.18);
+        font-family: 'Inter', sans-serif; font-size: 0.82rem;
+        animation: toastIn .25s ease; pointer-events: auto;
+        background: #fff; border-left: 5px solid transparent;
+    }
+    .toast-item.toast-success { border-color: #28a745; }
+    .toast-item.toast-error   { border-color: #dc3545; }
+    .toast-item.toast-warning { border-color: #f0a500; }
+    .toast-item.toast-info    { border-color: #800000; }
+    .toast-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+    .toast-item.toast-success .toast-icon { color: #28a745; }
+    .toast-item.toast-error   .toast-icon { color: #dc3545; }
+    .toast-item.toast-warning .toast-icon { color: #f0a500; }
+    .toast-item.toast-info    .toast-icon { color: #800000; }
+    .toast-body  { flex: 1; }
+    .toast-title { font-weight: 800; font-size: 0.78rem; margin-bottom: 2px; color: #222; }
+    .toast-msg   { color: #555; line-height: 1.4; }
+    .toast-close { background: none; border: none; color: #aaa; font-size: 1rem;
+        cursor: pointer; padding: 0; flex-shrink: 0; line-height: 1; }
+    .toast-close:hover { color: #555; }
+    .toast-fade-out { animation: toastOut .3s ease forwards; }
+    @keyframes toastIn  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes toastOut { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(8px); } }
+    </style>
 {% endblock %}
 
 {% block content %}
 <div class="requests-wrapper">
-    <!-- Page Header -->
+
+    <!-- Header -->
     <div class="requests-header">
-        <h1>My Requests</h1>
-        <button class="btn-request-room"><i class="fa-regular fa-file-lines"></i> REQUEST ROOM</button>
+        <h1>MY REQUEST</h1>
     </div>
 
-    <!-- Requests Table -->
+    <!-- Table -->
     <div class="table-container">
-        <table>
+        <table id="reqTable">
             <thead>
                 <tr>
-                    <th>Course code</th>
-                    <th>Program/Yr</th>
-                    <th>Requested date</th>
-                    <th>Status</th>
-                    <th>Date Submitted</th>
-                    <th>Actions</th>
+                    <th>PROGRAM/YR LEVEL</th>
+                    <th>STATUS</th>
+                    <th>SUBJECT DESCRIPTION</th>
+                    <th>REQUEST TYPE</th>
+                    <th>ROOM</th>
+                    <th>REQUESTED DATE</th>
+                    <th>DATE SUBMITTED</th>
+                    <th>ACTIONS</th>
                 </tr>
             </thead>
-            <tbody>
-                <tr>
-                    <td>COMP001</td>
-                    <td>BSIT-2</td>
-                    <td>03-20-26</td>
-                    <td><span class="status-badge approved">Approved</span></td>
-                    <td>03-14-26 00:03:00</td>
-                    <td class="actions-cell">
-                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
-                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
-                    </td>
-                </tr>
-                <tr>
-                    <td>COMP002</td>
-                    <td>BSIT-3</td>
-                    <td>03-23-26</td>
-                    <td><span class="status-badge pending">Pending</span></td>
-                    <td>03-15-26 00:02:00</td>
-                    <td class="actions-cell">
-                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
-                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
-                    </td>
-                </tr>
-                <tr>
-                    <td>COMP002</td>
-                    <td>BSIT-3</td>
-                    <td>03-23-26</td>
-                    <td><span class="status-badge rejected">Rejected</span></td>
-                    <td>03-15-26 00:02:00</td>
-                    <td class="actions-cell">
-                        <a href="#" class="action-btn view" title="View Details"><i class="fa-solid fa-eye"></i></a>
-                        <a href="#" class="action-btn delete" title="Cancel Request"><i class="fa-solid fa-trash"></i></a>
-                    </td>
-                </tr>
+            <tbody id="reqTableBody">
+                <tr><td colspan="8" style="text-align:center;color:#aaa;padding:30px;">Loading...</td></tr>
             </tbody>
         </table>
     </div>
 </div>
+
+<!-- ══════════════════════════════════════════
+     EDIT MODAL — Make-up Class
+══════════════════════════════════════════ -->
+<div class="rfeq-overlay" id="editMakeupOverlay">
+    <div class="rfeq-modal">
+        <div class="rfeq-hdr makeup">
+            <span>Edit Make-up Class Request</span>
+            <button onclick="rfCloseEdit()" class="rfeq-close">✕</button>
+        </div>
+        <div class="rfeq-body">
+            <input type="hidden" id="editMuId">
+            <div class="rfeq-row">
+                <div class="rfeq-group">
+                    <label>*Date</label>
+                    <input type="date" id="editMuDate" onchange="editMuLoadRooms()">
+                </div>
+                <div class="rfeq-group">
+                    <label>*Start Time</label>
+                    <select id="editMuStart" onchange="editMuLoadRooms()"><option value="">SELECT</option></select>
+                </div>
+                <div class="rfeq-group">
+                    <label>*End Time</label>
+                    <select id="editMuEnd" onchange="editMuLoadRooms()"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="rfeq-row">
+                <div class="rfeq-group full">
+                    <label>*Room <span class="rfeq-room-status" id="editMuRoomStatus"></span></label>
+                    <select id="editMuRoom"><option value="">— Select date &amp; time first —</option></select>
+                </div>
+            </div>
+            <div class="rfeq-row">
+                <div class="rfeq-group full">
+                    <label>Reason</label>
+                    <textarea id="editMuReason" placeholder="Reason for this make-up class..."></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="rfeq-ftr">
+            <button class="rfeq-btn-cancel" onclick="rfCloseEdit()">CANCEL</button>
+            <button class="rfeq-btn-submit" onclick="rfSaveEdit('makeup')">SAVE &amp; RESUBMIT</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     EDIT MODAL — Schedule Adjustment
+══════════════════════════════════════════ -->
+<div class="rfeq-overlay" id="editAdjOverlay">
+    <div class="rfeq-modal">
+        <div class="rfeq-hdr adjustment">
+            <span>Edit Schedule Adjustment</span>
+            <button onclick="rfCloseEdit()" class="rfeq-close">✕</button>
+        </div>
+        <div class="rfeq-body">
+            <input type="hidden" id="editAdjId">
+            <div class="rfeq-row">
+                <div class="rfeq-group">
+                    <label>*New Day</label>
+                    <select id="editAdjDay" onchange="editAdjLoadRooms()">
+                        <option value="">SELECT</option>
+                        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                    </select>
+                </div>
+                <div class="rfeq-group">
+                    <label>*New Start Time</label>
+                    <select id="editAdjStart" onchange="editAdjLoadRooms()"><option value="">SELECT</option></select>
+                </div>
+                <div class="rfeq-group">
+                    <label>*New End Time</label>
+                    <select id="editAdjEnd" onchange="editAdjLoadRooms()"><option value="">SELECT</option></select>
+                </div>
+            </div>
+            <div class="rfeq-row">
+                <div class="rfeq-group full">
+                    <label>*Room <span class="rfeq-room-status" id="editAdjRoomStatus"></span></label>
+                    <select id="editAdjRoom"><option value="">— Select day &amp; time first —</option></select>
+                </div>
+            </div>
+            <div class="rfeq-row">
+                <div class="rfeq-group">
+                    <label>*Effective From</label>
+                    <input type="date" id="editAdjFrom">
+                </div>
+                <div class="rfeq-group">
+                    <label>End Date (optional)</label>
+                    <input type="date" id="editAdjEndDate">
+                </div>
+            </div>
+            <div class="rfeq-row">
+                <div class="rfeq-group full">
+                    <label>Reason</label>
+                    <textarea id="editAdjReason" placeholder="Reason for this schedule adjustment..."></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="rfeq-ftr">
+            <button class="rfeq-btn-cancel" onclick="rfCloseEdit()">CANCEL</button>
+            <button class="rfeq-btn-submit" onclick="rfSaveEdit('adjustment')">SAVE &amp; RESUBMIT</button>
+        </div>
+    </div>
+</div>
+
+<!-- Cancel Confirm Modal -->
+<div class="rfeq-overlay" id="cancelConfirmOverlay">
+    <div class="rfeq-confirm">
+        <div class="rfeq-confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <p class="rfeq-confirm-msg">Cancel this request?<br><small>This action cannot be undone.</small></p>
+        <input type="hidden" id="cancelReqType">
+        <input type="hidden" id="cancelReqId">
+        <div class="rfeq-confirm-btns">
+            <button class="rfeq-btn-cancel" onclick="rfCloseCancel()">BACK</button>
+            <button class="rfeq-btn-danger" onclick="rfConfirmCancel()">YES, CANCEL IT</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* ══ Table tweaks ══ */
+#reqTable th, #reqTable td { font-size:0.82rem; padding:12px 14px; }
+#reqTable .req-type-chip {
+    display:inline-block; font-size:0.6rem; font-weight:900; padding:3px 9px;
+    border-radius:20px; text-transform:uppercase; letter-spacing:.5px;
+}
+#reqTable .chip-makeup { background:#FFF3CD; color:#856404; border:1px solid #FFECB5; }
+#reqTable .chip-adj    { background:#D1ECF1; color:#0C5460; border:1px solid #BEE5EB; }
+#reqTable .actions-cell { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+#reqTable .action-btn { width:28px; height:28px; font-size:0.75rem; border-radius:50%; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; border:none; }
+#reqTable .action-btn.edit   { background:#800000; color:#fff; }
+#reqTable .action-btn.cancel { background:#fff; color:#800000; border:1.5px solid #800000; }
+#reqTable .action-btn:disabled { opacity:.35; cursor:not-allowed; }
+#reqTable .prog-cell { font-weight:700; color:#5c0a0a; }
+
+/* ══ Edit modals ══ */
+.rfeq-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
+    z-index:9500; align-items:center; justify-content:center; }
+.rfeq-overlay.open { display:flex; }
+.rfeq-modal { background:#fff; border-radius:10px; width:min(620px,95vw);
+    max-height:90vh; overflow-y:auto; box-shadow:0 8px 40px rgba(0,0,0,.25);
+    font-family:'Inter',sans-serif; }
+.rfeq-hdr { display:flex; justify-content:space-between; align-items:center;
+    padding:16px 22px; border-radius:10px 10px 0 0; color:#fff; }
+.rfeq-hdr.makeup     { background:#800000; }
+.rfeq-hdr.adjustment { background:#1a4a7a; }
+.rfeq-hdr span { font-size:0.9rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
+.rfeq-close { background:none; border:none; color:#fff; font-size:1.1rem; cursor:pointer; line-height:1; }
+.rfeq-body  { padding:20px 22px; display:flex; flex-direction:column; gap:12px; }
+.rfeq-row   { display:flex; gap:14px; flex-wrap:wrap; }
+.rfeq-group { display:flex; flex-direction:column; gap:5px; flex:1; min-width:130px; }
+.rfeq-group.full { flex:0 0 100%; }
+.rfeq-group label { font-size:0.72rem; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:.4px; }
+.rfeq-group input, .rfeq-group select, .rfeq-group textarea {
+    padding:7px 10px; border:1.5px solid #ccc; border-radius:5px; font-size:0.8rem;
+    font-family:'Inter',sans-serif; color:#333; box-sizing:border-box; }
+.rfeq-group input:focus, .rfeq-group select:focus, .rfeq-group textarea:focus {
+    outline:none; border-color:#800000; }
+.rfeq-group textarea { min-height:70px; resize:vertical; }
+.rfeq-room-status { font-size:0.58rem; font-weight:600; color:#888; margin-left:6px; }
+.rfeq-ftr { display:flex; justify-content:flex-end; gap:10px; padding:14px 22px;
+    border-top:1px solid #eee; }
+.rfeq-btn-cancel { background:#fff; color:#800000; border:1.5px solid #800000;
+    padding:8px 20px; border-radius:5px; font-weight:700; font-size:0.78rem; cursor:pointer; }
+.rfeq-btn-submit { background:#800000; color:#fff; border:none;
+    padding:8px 20px; border-radius:5px; font-weight:700; font-size:0.78rem; cursor:pointer; }
+.rfeq-btn-submit:hover { background:#5c0a0a; }
+
+/* ══ Confirm modal ══ */
+.rfeq-confirm { background:#fff; border-radius:10px; padding:32px 30px; width:340px;
+    text-align:center; box-shadow:0 8px 40px rgba(0,0,0,.25); }
+.rfeq-confirm-icon { font-size:2.2rem; color:#dc3545; margin-bottom:12px; }
+.rfeq-confirm-msg  { font-size:0.9rem; font-weight:600; color:#333; margin:0 0 20px; line-height:1.5; }
+.rfeq-confirm-msg small { font-weight:400; color:#888; }
+.rfeq-confirm-btns { display:flex; gap:10px; justify-content:center; }
+.rfeq-btn-danger { background:#dc3545; color:#fff; border:none;
+    padding:8px 20px; border-radius:5px; font-weight:700; font-size:0.78rem; cursor:pointer; }
+.rfeq-btn-danger:hover { background:#b02a37; }
+
+/* ══ Room select optgroup ══ */
+.rfeq-group select optgroup { font-weight:900; color:#800000; }
+</style>
+
+<script>
+/* ═══════════════════════════════════════════
+   CONSTANTS & STATE
+═══════════════════════════════════════════ */
+const _RF_SLOTS = [
+    '07:30 AM','08:00 AM','08:30 AM','09:00 AM','09:30 AM','10:00 AM','10:30 AM',
+    '11:00 AM','11:30 AM','12:00 PM','12:30 PM','01:00 PM','01:30 PM','02:00 PM',
+    '02:30 PM','03:00 PM','03:30 PM','04:00 PM','04:30 PM','05:00 PM','05:30 PM',
+    '06:00 PM','06:30 PM','07:00 PM','07:30 PM','08:00 PM','08:30 PM','09:00 PM'
+];
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+    _rfPopulateTimeSelects();
+    rfLoadRequests();
+});
+
+function _rfPopulateTimeSelects() {
+    ['editMuStart','editMuEnd','editAdjStart','editAdjEnd'].forEach(id => {
+        const s = document.getElementById(id);
+        if (!s) return;
+        s.innerHTML = '<option value="">SELECT</option>';
+        _RF_SLOTS.forEach(t => { const o = document.createElement('option'); o.value = o.textContent = t; s.appendChild(o); });
+    });
+}
+
+/* ═══════════════════════════════════════════
+   LOAD & RENDER TABLE
+═══════════════════════════════════════════ */
+async function rfLoadRequests() {
+    const tbody = document.getElementById('reqTableBody');
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:30px;">Loading...</td></tr>';
+    try {
+        const res  = await fetch('/api/faculty/my_requests');
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Failed');
+        const reqs = data.requests || [];
+        if (!reqs.length) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:30px;">No requests yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = reqs.map(r => {
+            const prog    = `${r.programcode || ''}${r.yearlevel ? ' - ' + r.yearlevel : ''}${r.sectionname ? ' (' + r.sectionname + ')' : ''}`;
+            const typeChip = r.req_type === 'makeup'
+                ? '<span class="req-type-chip chip-makeup">MAKE-UP CLASS</span>'
+                : '<span class="req-type-chip chip-adj">SCHEDULE ADJUSTMENT</span>';
+            const statusBadge = _rfStatusBadge(r.status, r.remarks);
+            const room   = r.roomname ? `ROOM ${r.roomname}` : '—';
+            const isPending = r.status === 'Pending';
+            const editBtn   = `<button class="action-btn edit" title="Edit" ${isPending ? '' : 'disabled'}
+                onclick="rfOpenEdit(${JSON.stringify(r).replace(/"/g,'&quot;')})"><i class="fas fa-edit"></i></button>`;
+            const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
+                onclick="rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-times"></i></button>`;
+            return `<tr>
+                <td class="prog-cell">${_rfEsc(prog)}</td>
+                <td>${statusBadge}</td>
+                <td>${_rfEsc(r.subjectcode)}${r.subjectname ? ' — ' + _rfEsc(r.subjectname) : ''}</td>
+                <td>${typeChip}</td>
+                <td>${_rfEsc(room)}</td>
+                <td>${_rfEsc(r.requested_date || '—')}</td>
+                <td>${_rfEsc(r.date_submitted || '—')}</td>
+                <td class="actions-cell">${editBtn}${cancelBtn}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:red;padding:30px;">${e.message}</td></tr>`;
+    }
+}
+
+function _rfStatusBadge(status, remarks) {
+    const map = {
+        'Pending':   'pending',
+        'Approved':  'approved',
+        'Rejected':  'rejected',
+        'Cancelled': 'cancelled'
+    };
+    const cls = map[status] || 'pending';
+    let extra = '';
+    if (remarks && (status === 'Rejected' || status === 'Approved')) {
+        extra = `<div class="req-remark">${_rfEsc(remarks)}</div>`;
+    }
+    return `<div class="req-status-wrap"><span class="status-badge ${cls}">${status || 'Pending'}</span>${extra}</div>`;
+}
+
+/* ═══════════════════════════════════════════
+   EDIT FLOW
+═══════════════════════════════════════════ */
+function rfOpenEdit(req) {
+    if (typeof req === 'string') req = JSON.parse(req);
+    if (req.req_type === 'makeup') {
+        document.getElementById('editMuId').value     = req.requestid;
+        document.getElementById('editMuDate').value   = _isoDate(req.requested_date);
+        _rfSetSelect('editMuStart', req.start_time);
+        _rfSetSelect('editMuEnd',   req.end_time);
+        document.getElementById('editMuReason').value = req.reason || '';
+        document.getElementById('editMakeupOverlay').classList.add('open');
+        editMuLoadRooms(req.roomid);
+    } else {
+        document.getElementById('editAdjId').value       = req.requestid;
+        _rfSetSelect('editAdjDay',   req.new_daydesc);
+        _rfSetSelect('editAdjStart', req.start_time);
+        _rfSetSelect('editAdjEnd',   req.end_time);
+        document.getElementById('editAdjFrom').value    = req.effective_from || '';
+        document.getElementById('editAdjEndDate').value = req.end_date || '';
+        document.getElementById('editAdjReason').value  = req.reason || '';
+        document.getElementById('editAdjOverlay').classList.add('open');
+        editAdjLoadRooms(req.roomid);
+    }
+}
+
+function rfCloseEdit() {
+    document.getElementById('editMakeupOverlay').classList.remove('open');
+    document.getElementById('editAdjOverlay').classList.remove('open');
+}
+
+/* ═══════════════════════════════════════════
+   ROOM LOADERS FOR EDIT MODALS
+═══════════════════════════════════════════ */
+async function editMuLoadRooms(preselect) {
+    const date  = document.getElementById('editMuDate').value;
+    const start = document.getElementById('editMuStart').value;
+    const end   = document.getElementById('editMuEnd').value;
+    const sel   = document.getElementById('editMuRoom');
+    const st    = document.getElementById('editMuRoomStatus');
+    if (!date || !start || !end) {
+        sel.innerHTML = '<option value="">— Select date & time first —</option>';
+        if (st) st.textContent = '';
+        return;
+    }
+    sel.innerHTML = '<option value="">Loading...</option>';
+    if (st) st.textContent = 'checking...';
+    try {
+        const res  = await fetch(`/api/faculty/available_rooms?date=${date}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`);
+        const data = await res.json();
+        _rfBuildRoomSelect(sel, data.rooms || []);
+        if (st) st.textContent = (data.rooms||[]).length ? `${data.rooms.length} available` : 'No rooms available';
+        if (preselect) sel.value = String(preselect);
+    } catch(e) { sel.innerHTML = '<option value="">Error loading rooms</option>'; }
+}
+
+async function editAdjLoadRooms(preselect) {
+    const day   = document.getElementById('editAdjDay').value;
+    const start = document.getElementById('editAdjStart').value;
+    const end   = document.getElementById('editAdjEnd').value;
+    const sel   = document.getElementById('editAdjRoom');
+    const st    = document.getElementById('editAdjRoomStatus');
+    if (!day || !start || !end) {
+        sel.innerHTML = '<option value="">— Select day & time first —</option>';
+        if (st) st.textContent = '';
+        return;
+    }
+    sel.innerHTML = '<option value="">Loading...</option>';
+    if (st) st.textContent = 'checking...';
+    try {
+        const res  = await fetch(`/api/faculty/available_rooms?day=${encodeURIComponent(day)}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`);
+        const data = await res.json();
+        _rfBuildRoomSelect(sel, data.rooms || []);
+        if (st) st.textContent = (data.rooms||[]).length ? `${data.rooms.length} available` : 'No rooms available';
+        if (preselect) sel.value = String(preselect);
+    } catch(e) { sel.innerHTML = '<option value="">Error loading rooms</option>'; }
+}
+
+function _rfBuildRoomSelect(sel, rooms) {
+    sel.innerHTML = '<option value="">SELECT ROOM</option>';
+    if (!rooms.length) { sel.innerHTML = '<option value="">No rooms available</option>'; return; }
+    const byBldg = {};
+    rooms.forEach(r => { const b = r.buildingname||'Other'; if(!byBldg[b]) byBldg[b]=[]; byBldg[b].push(r); });
+    Object.entries(byBldg).forEach(([bname, bRooms]) => {
+        const grp = document.createElement('optgroup'); grp.label = bname.toUpperCase();
+        bRooms.forEach(r => {
+            const o = document.createElement('option'); o.value = r.roomid;
+            const typ = (r.roomtype||'').toLowerCase()==='laboratory' ? 'Lab' : 'Lecture';
+            const cap = r.roomcapacity ? ` · Cap ${r.roomcapacity}` : '';
+            o.textContent = `${r.roomname}  [${typ}${cap}]`;
+            grp.appendChild(o);
+        });
+        sel.appendChild(grp);
+    });
+}
+
+/* ═══════════════════════════════════════════
+   SAVE EDIT
+═══════════════════════════════════════════ */
+async function rfSaveEdit(type) {
+    let payload, id;
+    if (type === 'makeup') {
+        id = document.getElementById('editMuId').value;
+        payload = {
+            request_date: document.getElementById('editMuDate').value,
+            start_time:   document.getElementById('editMuStart').value,
+            end_time:     document.getElementById('editMuEnd').value,
+            room_id:      document.getElementById('editMuRoom').value,
+            reason:       document.getElementById('editMuReason').value,
+        };
+        if (!payload.request_date) return showToast('Please select a date.', 'warning');
+        if (!payload.room_id)      return showToast('Please select a room.', 'warning');
+    } else {
+        id = document.getElementById('editAdjId').value;
+        payload = {
+            day:        document.getElementById('editAdjDay').value,
+            start_time: document.getElementById('editAdjStart').value,
+            end_time:   document.getElementById('editAdjEnd').value,
+            room_id:    document.getElementById('editAdjRoom').value,
+            start_date: document.getElementById('editAdjFrom').value,
+            end_date:   document.getElementById('editAdjEndDate').value,
+            reason:     document.getElementById('editAdjReason').value,
+        };
+        if (!payload.day)        return showToast('Please select a new day.', 'warning');
+        if (!payload.start_date) return showToast('Please enter an effective from date.', 'warning');
+    }
+    try {
+        const res  = await fetch(`/api/faculty/my_requests/${type}/${id}`, {
+            method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+            rfCloseEdit();
+            showToast('Request updated and resubmitted successfully.', 'success');
+            await rfLoadRequests();
+        } else {
+            showToast(data.error || 'Could not save.', 'error');
+        }
+    } catch(e) { showToast('Network error. Please try again.', 'error'); }
+}
+
+/* ═══════════════════════════════════════════
+   CANCEL FLOW
+═══════════════════════════════════════════ */
+function rfAskCancel(type, id) {
+    document.getElementById('cancelReqType').value = type;
+    document.getElementById('cancelReqId').value   = id;
+    document.getElementById('cancelConfirmOverlay').classList.add('open');
+}
+function rfCloseCancel() {
+    document.getElementById('cancelConfirmOverlay').classList.remove('open');
+}
+async function rfConfirmCancel() {
+    const type = document.getElementById('cancelReqType').value;
+    const id   = document.getElementById('cancelReqId').value;
+    rfCloseCancel();
+    try {
+        const res  = await fetch(`/api/faculty/my_requests/${type}/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('Request cancelled successfully.', 'info');
+            await rfLoadRequests();
+        } else {
+            showToast(data.error || 'Could not cancel.', 'error');
+        }
+    } catch(e) { showToast('Network error. Please try again.', 'error'); }
+}
+
+/* ═══════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════ */
+/* MM/DD/YYYY → YYYY-MM-DD for date input */
+function _isoDate(d) {
+    if (!d) return '';
+    const parts = d.split('/');
+    if (parts.length === 3) return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
+    return d;
+}
+function _rfSetSelect(id, val) {
+    const s = document.getElementById(id); if (!s || !val) return;
+    for (const o of s.options) { if (o.value===val||o.textContent.trim()===val) { s.value=o.value; return; } }
+}
+function _rfEsc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* Close overlays on backdrop click */
+['editMakeupOverlay','editAdjOverlay','cancelConfirmOverlay'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); });
+});
+
+/* ═══ Toast System ═══ */
+const _TOAST_ICONS = { success:'fa-circle-check', error:'fa-circle-xmark', warning:'fa-triangle-exclamation', info:'fa-circle-info' };
+const _TOAST_TITLES = { success:'Success', error:'Error', warning:'Notice', info:'Info' };
+function showToast(msg, type='info', duration=4000) {
+    const container = document.getElementById('rf-toast-container');
+    if (!container) return;
+    const item = document.createElement('div');
+    item.className = `toast-item toast-${type}`;
+    item.innerHTML = `<i class="fas ${_TOAST_ICONS[type]||'fa-circle-info'} toast-icon"></i>
+        <div class="toast-body"><div class="toast-title">${_TOAST_TITLES[type]||'Info'}</div>
+        <div class="toast-msg">${msg}</div></div>
+        <button class="toast-close" onclick="this.closest('.toast-item').remove()">&#x2715;</button>`;
+    container.appendChild(item);
+    if (duration > 0) {
+        setTimeout(() => {
+            item.classList.add('toast-fade-out');
+            setTimeout(() => item.remove(), 320);
+        }, duration);
+    }
+}
+</script>
+
+<div id="rf-toast-container" style="position:fixed;bottom:28px;right:28px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none;"></div>
 {% endblock %}

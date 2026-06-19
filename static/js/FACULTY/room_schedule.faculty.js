@@ -315,6 +315,18 @@ function _buildAvailBuildingFilter() {
     });
 }
 
+/* Auto-fill day-of-week when a date is selected */
+function frsDateChanged() {
+    const dateEl = document.getElementById('frsAvailDate');
+    const dayEl  = document.getElementById('frsAvailDay');
+    if (dateEl && dateEl.value) {
+        const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const d    = new Date(dateEl.value + 'T00:00:00');
+        dayEl.value = days[d.getDay()];
+    }
+    frsFindAvailable();
+}
+
 async function frsFindAvailable() {
     const day   = document.getElementById('frsAvailDay').value;
     const start = document.getElementById('frsAvailStart').value;
@@ -322,6 +334,7 @@ async function frsFindAvailable() {
     const type  = document.getElementById('frsAvailType').value;
     const bid   = document.getElementById('frsAvailBuilding').value;
     const rnum  = document.getElementById('frsAvailRoomNum').value;
+    const selDate = document.getElementById('frsAvailDate') ? document.getElementById('frsAvailDate').value : '';
 
     // Availability is only computed when all three time criteria are provided
     const hasTimeFilter = !!(day && start && end);
@@ -336,11 +349,12 @@ async function frsFindAvailable() {
         `HERE ARE THE AVAILABLE ROOMS FOR (${bldgName.toUpperCase()})`;
 
     const params = new URLSearchParams();
-    if (day)   params.set('day',         day);
-    if (start) params.set('start_time',  start);
-    if (end)   params.set('end_time',    end);
-    if (type)  params.set('room_type',   type);
-    if (bid)   params.set('building_id', bid);
+    if (day)     params.set('day',         day);
+    if (start)   params.set('start_time',  start);
+    if (end)     params.set('end_time',    end);
+    if (type)    params.set('room_type',   type);
+    if (bid)     params.set('building_id', bid);
+    if (selDate) params.set('date',        selDate);  // pass specific date for makeup checks
 
     try {
         const res  = await fetch('/api/faculty/available_rooms?' + params.toString());
@@ -389,24 +403,34 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter) {
             const cap  = r.roomcapacity
                 ? `<div class="frs-avail-detail"><i class="fas fa-users"></i> Capacity: ${_esc(String(r.roomcapacity))}</div>`
                 : '';
-            // Time range and Available chip — only shown when Day+Start+End are all set
             const timeLbl    = timeLabel ? `<div class="frs-avail-time">${_esc(timeLabel)}</div>` : '';
             const statusChip = hasTimeFilter
                 ? `<div class="frs-avail-status-chip">&#10003; Available</div>`
                 : '';
+            const roomData = JSON.stringify({
+                id: r.roomid, name: r.roomname || '', building: r.buildingname || ''
+            }).replace(/"/g, '&quot;');
             html += `
-            <div class="frs-avail-card">
+            <div class="frs-avail-card frs-avail-card-clickable" title="Request this room"
+                 onclick="frsRoomCardClick(${r.roomid}, '${_esc(r.roomname || '')}', '${_esc(r.buildingname || '')}')">
                 ${hasTimeFilter ? '<div class="frs-avail-dot"></div>' : ''}
                 <div class="frs-avail-room-name">ROOM ${_esc(r.roomname || '')}</div>
                 ${badge}
                 ${timeLbl}
                 ${cap}
                 ${statusChip}
+                <div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>
             </div>`;
         });
         html += `</div>`;
     });
     content.innerHTML = html;
+}
+
+function frsRoomCardClick(roomId, roomName, buildingName) {
+    if (typeof frsOpenRequestFromRoom === 'function') {
+        frsOpenRequestFromRoom(roomId, roomName, buildingName);
+    }
 }
 
 /* ═══════════════════════════════════════════

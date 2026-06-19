@@ -353,28 +353,22 @@ async function onFacultySelect(empNum) {
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
 
-        // ── Specialization check ──
-        if (SPEC_CONSTRAINT_ENABLED && _facInfo && _subjInfo) {
+        // When spec toggle is ON and this is a new assignment (not editing an imported session),
+        // show a confirm prompt on mismatch — user can still proceed, it's not a block.
+        if (SPEC_CONSTRAINT_ENABLED && _facInfo && _subjInfo && !window.currentEditSession) {
             const spec     = (_facInfo.specializationname || '').trim();
             const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
             const compat   = _getSpecCompatibility(spec, subjCode);
-
             if (compat.level === 'mismatch') {
-                const facName = (_facInfo.fullname || 'This faculty member').trim();
+                const facName = (_facInfo.fullname || 'This faculty').trim();
                 const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
                 const primary = group ? group.primary : 'the required field';
-
-                if (window.currentEditSession) {
-                    // Editing an existing/imported session — downgrade to informational note, never block
-                    _checkFacultySpecWarning();
-                } else {
-                    // New manual assignment — hard block
-                    await showValidationModal(
-                        'Faculty Specialization Mismatch',
-                        `${facName} specializes in ${spec}, but ${subjCode} requires a ` +
-                        `${primary} specialization.\n\n` +
-                        `Please select a faculty member with a compatible specialization.`
-                    );
+                const proceed = await showConfirmModal(
+                    `${facName}'s specialization (${spec || 'none on file'}) may not match ${subjCode}, ` +
+                    `which expects ${primary} specialization.\n\nDo you still want to proceed with this assignment?`,
+                    'Specialization Mismatch'
+                );
+                if (!proceed) {
                     _facInfo = null;
                     document.getElementById('sel_faculty').value            = '';
                     document.getElementById('fac_display_name').value       = '';
@@ -382,12 +376,16 @@ async function onFacultySelect(empNum) {
                     if (typeof _clearFacultyLock === 'function') _clearFacultyLock();
                     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
                     _checkFacultySpecWarning();
+                    await updateTimeDropdowns();
                     return;
                 }
+                // User confirmed proceed — skip the redundant note, go straight to time dropdowns
+                await updateTimeDropdowns();
+                return;
             }
         }
     }
-    _checkFacultySpecWarning(); // clear any previous warning if now valid
+    _checkFacultySpecWarning();
     await updateTimeDropdowns();
 }
 
@@ -434,17 +432,16 @@ function _checkFacultySpecWarning() {
                 `${facName} (${spec}) vs. expected ${primary}. ` +
                 `No action required unless reviewed by the scheduler.</span></div>`;
         } else {
-            // New manual assignment — strong warning (hard block already fired in onFacultySelect)
+            // New manual assignment — informational note only (no longer a hard block)
             const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
             const primary = group ? group.primary : 'the required field';
             container.innerHTML =
-                `<div style="background:#fff3cd;border:1.5px solid #e6a817;border-radius:8px;` +
-                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7a4a00;` +
+                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
+                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
                 `display:flex;gap:8px;align-items:flex-start;">` +
-                `<span style="font-size:15px;margin-top:1px">&#9888;&#65039;</span>` +
-                `<span><strong>${facName}</strong> specializes in <strong>${spec}</strong>, ` +
-                `but <strong>${subjCode}</strong> requires a <strong>${primary}</strong> specialization. ` +
-                `Please select a different faculty member.</span></div>`;
+                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
+                `<span>Specialization note: <strong>${facName}</strong> (${spec}) may not be the ideal fit ` +
+                `for <strong>${subjCode}</strong> (expected: ${primary}). This is for reference only.</span></div>`;
         }
     }
 }
@@ -796,16 +793,25 @@ async function renderProgramTimetable() {
         if (labelEl)   labelEl.textContent  = 'SELECT PROGRAM, YEAR LEVEL, AND SEMESTER TO VIEW';
         return;
     }
+    const _pvSectId = document.getElementById('sel_section')?.value || '';
+    if (!_pvSectId) {
+        const noSectMsg = '— Select a Section to view its schedule —';
+        if (pvLabelEl) pvLabelEl.innerHTML = noSectMsg;
+        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        return;
+    }
 
     const semLabels = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' };
     const yrLabels  = { '1':'1ST YEAR','2':'2ND YEAR','3':'3RD YEAR','4':'4TH YEAR','5':'5TH YEAR' };
     const progName  = document.getElementById('prog_trigger_text').innerText || prog;
-    const headerTxt = `${progName.toUpperCase()} &mdash; ${yrLabels[yl] || yl} &nbsp;|&nbsp; A.Y ${ay} &nbsp;|&nbsp; ${semLabels[sem] || sem}`;
+    const _sectNameHdr = document.getElementById('bc-sect-text')?.textContent?.trim() || '';
+    const sectSuffix   = (_sectNameHdr && _sectNameHdr !== '-Select Section-') ? ` &nbsp;|&nbsp; ${_sectNameHdr}` : '';
+    const headerTxt = `${progName.toUpperCase()} &mdash; ${yrLabels[yl] || yl} &nbsp;|&nbsp; A.Y ${ay} &nbsp;|&nbsp; ${semLabels[sem] || sem}${sectSuffix}`;
     if (pvLabelEl) pvLabelEl.innerHTML  = headerTxt;
     if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&_t=${Date.now()}`;
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok) return;
         const raw = await resp.json();
@@ -1042,7 +1048,8 @@ async function triggerDSSLogic() {
         const yl   = document.getElementById('sel_year').value;
         if (ay && sem && prog && yl) {
             try {
-                const url = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&scheduler_mode=${_sm()}`;
+                const _sectId1 = document.getElementById('sel_section')?.value || '';
+                const url = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId1)}`;
                 const er = await fetch(url).then(r => r.json());
                 if (er.success && er.sessions && er.sessions.length > 0) {
                     // Exclude any version the user deleted this session
@@ -1071,10 +1078,28 @@ async function triggerDSSLogic() {
         if (!data.success) { initDSSMenus(); return; }
 
         console.log('[DSS] recommended faculty:', data.faculty.recommended.map(f => `${f.name} (src:${f._src||'?'}, hist:"${f._hist_name||''}", count:${f.count||0})`));
-        _dssRecommendedFacultyIds = new Set(data.faculty.recommended.map(f => f.id));
+
+        // When no history exists for this subject and spec constraint is ON,
+        // use specialization to populate RECOMMENDATIONS from the others pool.
+        let facRec = data.faculty.recommended;
+        let facOth = data.faculty.others;
+        if (SPEC_CONSTRAINT_ENABLED && facRec.length === 0) {
+            const _subj = (document.getElementById('sel_subj')?.value || '').trim();
+            facRec = facOth.filter(f => {
+                const c = _getSpecCompatibility(f.specialization || '', _subj);
+                return c.level === 'exact' || c.level === 'related';
+            });
+            facOth = facOth.filter(f => {
+                const c = _getSpecCompatibility(f.specialization || '', _subj);
+                return c.level !== 'exact' && c.level !== 'related';
+            });
+            if (facRec.length > 0) console.log('[DSS] spec fallback: no history, using specialization for recommendations');
+        }
+
+        _dssRecommendedFacultyIds = new Set(facRec.map(f => f.id));
         buildDSSMenu('fac', [
-            { cls: 'recommended', label: 'RECOMMENDATIONS', items: data.faculty.recommended.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) },
-            { cls: 'others',      label: 'OTHERS',          items: data.faculty.others.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) }
+            { cls: 'recommended', label: 'RECOMMENDATIONS', items: facRec.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) },
+            { cls: 'others',      label: 'OTHERS',          items: facOth.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) }
         ]);
 
         const isPreferredType = (r) => data.is_lab ? r.type === 'Laboratory' : r.type !== 'Laboratory';
@@ -1867,7 +1892,8 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
                 try {
                     // Use existing_sessions (returns both Draft and Published with correct statuses)
                     // so the editor immediately shows the correct Published/remaining-Draft state.
-                    const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}`);
+                    const _sectId2 = document.getElementById('sel_section')?.value || '';
+                    const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
                     const exData2 = await exResp2.json();
                     if (exData2.success && exData2.sessions && exData2.sessions.length) {
                         if (typeof _loadExistingSessionsIntoSlices === 'function') {
@@ -2166,7 +2192,7 @@ async function triggerCascade(skipGridRender = false) {
     document.getElementById('sum_course').innerText = '-';
     document.getElementById('sum_prog').innerText   = prog ? document.getElementById('prog_trigger_text').innerText : '-';
 
-   if (prog) {
+   if (prog && year) {
             try {
                 // --- FIX: Ipadala ang ay_id at year_level para makuha ang tamang Cohort Curriculum ---
                 const resp = await fetch(`/api/get_curriculum?program=${encodeURIComponent(prog)}&ay_id=${encodeURIComponent(ay)}&year_level=${encodeURIComponent(year)}`);

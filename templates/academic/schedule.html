@@ -452,6 +452,33 @@
         .sl-btn-delete { width:34px; height:34px; border-radius:50%; background:#ffebee; border:none; color:#c62828; cursor:pointer; font-size:.88rem; display:inline-flex; align-items:center; justify-content:center; transition:background .15s; }
         .sl-btn-delete:hover { background:#ffcdd2; }
         .sl-empty-row td { text-align:center !important; padding:40px 20px; color:#aaa; font-size:.82rem; border:none !important; }
+        /* ── Delete Confirmation Modal ── */
+        .sl-del-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.52); z-index:99000; display:flex; align-items:center; justify-content:center; animation:slFadeIn .18s ease; }
+        @keyframes slFadeIn { from{opacity:0} to{opacity:1} }
+        .sl-del-dialog { background:#fff; border-radius:12px; width:420px; max-width:92vw; box-shadow:0 16px 48px rgba(0,0,0,0.24); overflow:hidden; font-family:inherit; animation:slSlideUp .2s ease; }
+        @keyframes slSlideUp { from{transform:translateY(18px);opacity:0} to{transform:translateY(0);opacity:1} }
+        .sl-del-hdr { background:#8b0000; color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; }
+        .sl-del-hdr i { font-size:1rem; }
+        .sl-del-hdr-title { font-size:.88rem; font-weight:900; letter-spacing:.5px; text-transform:uppercase; }
+        .sl-del-body { padding:22px 24px 8px; }
+        .sl-del-warn { display:flex; align-items:flex-start; gap:11px; background:#fff3e0; border:1px solid #ffe082; border-radius:8px; padding:11px 14px; margin-bottom:16px; }
+        .sl-del-warn i { color:#b45309; font-size:.95rem; flex-shrink:0; margin-top:2px; }
+        .sl-del-warn p { margin:0; font-size:.78rem; color:#92400e; font-weight:700; line-height:1.55; }
+        .sl-del-info { background:#fdf5f5; border:1px solid #f0dede; border-radius:8px; padding:12px 16px; margin-bottom:4px; }
+        .sl-del-info-row { display:flex; gap:8px; align-items:baseline; margin-bottom:5px; font-size:.78rem; }
+        .sl-del-info-row:last-child { margin-bottom:0; }
+        .sl-del-info-label { color:#8b0000; font-weight:800; min-width:88px; font-size:.72rem; text-transform:uppercase; letter-spacing:.3px; }
+        .sl-del-info-val { color:#222; font-weight:600; }
+        .sl-del-footer { padding:14px 24px 20px; display:flex; gap:10px; justify-content:flex-end; border-top:1px solid #f0f0f0; margin-top:16px; }
+        .sl-del-btn-cancel { padding:9px 22px; border-radius:6px; border:1.5px solid #ddd; background:#fff; color:#555; font-weight:800; font-size:.74rem; letter-spacing:.8px; text-transform:uppercase; cursor:pointer; font-family:inherit; transition:border-color .15s; }
+        .sl-del-btn-cancel:hover { border-color:#999; }
+        .sl-del-btn-confirm { padding:9px 22px; border-radius:6px; border:none; background:#8b0000; color:#fff; font-weight:800; font-size:.74rem; letter-spacing:.8px; text-transform:uppercase; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:7px; transition:background .15s; }
+        .sl-del-btn-confirm:hover { background:#a50000; }
+        .sl-del-btn-confirm:disabled { background:#ccc; cursor:not-allowed; }
+        /* ── Delete toast ── */
+        .sl-toast { position:fixed; bottom:28px; right:28px; padding:12px 20px; border-radius:8px; font-size:.8rem; font-weight:800; display:flex; align-items:center; gap:8px; box-shadow:0 4px 20px rgba(0,0,0,.2); z-index:99999; letter-spacing:.3px; animation:slFadeIn .2s ease; }
+        .sl-toast.success { background:#1a7a2e; color:#fff; }
+        .sl-toast.error   { background:#8b0000; color:#fff; }
     </style>
 {% endblock %}
 
@@ -584,7 +611,6 @@
             <div class="cs-filter-unit">
                 <label>SECTION</label>
                 <select id="view_section" onchange="onSectionChange()">
-                    <option value="">ALL SECTIONS</option>
                 </select>
             </div>
             <div class="cs-filter-unit cs-filter-instructor">
@@ -824,7 +850,7 @@
                 <td><span class="sl-date-badge">${_esc(s.date_imported)}</span></td>
                 <td>
                     <button class="sl-btn-delete"
-                        onclick="slConfirmDelete(${JSON.stringify(s.programcode)},${s.yearlevel},${JSON.stringify(s.academicyearid)},${JSON.stringify(s.semestertype)},${JSON.stringify(s.acad_year)})"
+                        onclick='slConfirmDelete(${JSON.stringify(s.programcode)},${s.yearlevel},${JSON.stringify(s.academicyearid)},${JSON.stringify(s.semestertype)},${JSON.stringify(s.acad_year)})'
                         title="Delete schedule">
                         <i class="fas fa-trash"></i>
                     </button>
@@ -837,27 +863,93 @@
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    /* ── Delete confirmation modal ── */
+    const _DEL_SEM = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
+    const _DEL_YL  = ['','1st','2nd','3rd','4th','5th'];
+
+    function _slShowToast(msg, type) {
+        const t = document.createElement('div');
+        t.className = `sl-toast ${type}`;
+        t.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'times-circle'}"></i> ${_esc(msg)}`;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 3500);
+    }
+
     window.slConfirmDelete = function(prog, yl, ayId, sem, ayLabel) {
-        const SEM = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
-        const msg = `Delete all schedule data for:\n\n  Program: ${prog}\n  Year Level: ${yl}\n  Academic Year: ${ayLabel}\n  Semester: ${SEM[sem] || sem}\n\nThis action cannot be undone.`;
-        if (!confirm(msg)) return;
-        fetch('/api/schedule/list/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ programcode: prog, yearlevel: yl, academicyearid: ayId, semestertype: sem })
-        })
-        .then(r => r.json())
-        .then(res => {
-            if (res.success) {
-                ALL_SCHEDULES = ALL_SCHEDULES.filter(s =>
-                    !(s.programcode === prog && s.yearlevel === yl && s.academicyearid === ayId && s.semestertype === sem)
-                );
-                renderFilteredSchedList();
-            } else {
-                alert('Delete failed: ' + (res.error || 'Unknown error'));
+        const overlay = document.createElement('div');
+        overlay.className = 'sl-del-overlay';
+        overlay.innerHTML = `
+            <div class="sl-del-dialog" role="dialog" aria-modal="true">
+                <div class="sl-del-hdr">
+                    <i class="fas fa-trash-alt"></i>
+                    <span class="sl-del-hdr-title">Delete Schedule</span>
+                </div>
+                <div class="sl-del-body">
+                    <div class="sl-del-warn">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>This will permanently delete all schedule sessions and version history for this entry. <strong>This action cannot be undone.</strong></p>
+                    </div>
+                    <div class="sl-del-info">
+                        <div class="sl-del-info-row">
+                            <span class="sl-del-info-label">Program</span>
+                            <span class="sl-del-info-val">${_esc(prog)}</span>
+                        </div>
+                        <div class="sl-del-info-row">
+                            <span class="sl-del-info-label">Year Level</span>
+                            <span class="sl-del-info-val">${_DEL_YL[yl] || yl} Year</span>
+                        </div>
+                        <div class="sl-del-info-row">
+                            <span class="sl-del-info-label">Acad Year</span>
+                            <span class="sl-del-info-val">${_esc(ayLabel)}</span>
+                        </div>
+                        <div class="sl-del-info-row">
+                            <span class="sl-del-info-label">Semester</span>
+                            <span class="sl-del-info-val">${_DEL_SEM[sem] || sem}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="sl-del-footer">
+                    <button class="sl-del-btn-cancel" id="slDelCancel">Cancel</button>
+                    <button class="sl-del-btn-confirm" id="slDelConfirm">
+                        <i class="fas fa-trash-alt"></i> Delete
+                    </button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const closeModal = () => overlay.remove();
+
+        overlay.querySelector('#slDelCancel').onclick = closeModal;
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+        overlay.querySelector('#slDelConfirm').onclick = async function() {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting…';
+
+            try {
+                const res = await fetch('/api/schedule/list/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ programcode: prog, yearlevel: yl, academicyearid: ayId, semestertype: sem })
+                }).then(r => r.json());
+
+                closeModal();
+
+                if (res.success) {
+                    ALL_SCHEDULES = ALL_SCHEDULES.filter(s =>
+                        !(s.programcode === prog && s.yearlevel === yl && s.academicyearid === ayId && s.semestertype === sem)
+                    );
+                    renderFilteredSchedList();
+                    _slShowToast(`Schedule deleted — ${prog} ${_DEL_YL[yl] || yl} Year, ${_DEL_SEM[sem] || sem}`, 'success');
+                } else {
+                    _slShowToast('Delete failed: ' + (res.error || 'Unknown error'), 'error');
+                }
+            } catch(e) {
+                closeModal();
+                _slShowToast('Network error: ' + e.message, 'error');
             }
-        })
-        .catch(e => alert('Network error: ' + e.message));
+        };
     };
 })();
 </script>
@@ -1310,7 +1402,7 @@
     const PCTS  = [15, 40, 70, 95];
 
     let _fmt = null, _preview = null, _analyzeResult = null, _screen = 1, _loadTmr = null;
-    let _importAyId = '', _importSemType = '', _confirmCallback = null;
+    let _importAyId = '', _importSemType = '', _confirmCallback = null, _importOverride = false;
 
     const SEM_LABELS = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
 
@@ -1479,9 +1571,10 @@
                     `Proceeding will import new records alongside the existing ones.<br><br>` +
                     `Choose an option to continue:`,
                     'Override Existing Schedule', true,
-                    () => _analyze()
+                    () => { _importOverride = true; _analyze(); }
                 );
             } else {
+                _importOverride = false;
                 _analyze();
             }
         } catch(e) {
@@ -1636,7 +1729,7 @@
         try {
             const resp = await fetch('/academic/schedule/import/sis/confirm', {
                 method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({ ay_id:_preview.ay_id, semester_type:_preview.semester_type, rows })
+                body: JSON.stringify({ ay_id:_preview.ay_id, semester_type:_preview.semester_type, rows, override: _importOverride })
             });
             const data = await resp.json();
             _stopLoad(); _setLoad('Done!', 100);

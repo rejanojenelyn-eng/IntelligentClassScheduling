@@ -1,0 +1,862 @@
+{% extends "academic/base.html" %}
+
+{% block head %}
+<style>
+/* ═══════════════════════════════════════════
+   REQUESTS HUB STYLES
+═══════════════════════════════════════════ */
+.rhub-wrap {
+    padding: 28px 32px;
+    font-family: 'Inter', sans-serif;
+    background: #f5f5f5;
+    min-height: calc(100vh - 80px);
+    box-sizing: border-box;
+}
+.rhub-title {
+    font-size: 2rem;
+    font-weight: 900;
+    color: #800000;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0 0 20px;
+}
+
+/* Stats Row */
+.rhub-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+}
+.rhub-stat-card {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05);
+}
+.rhub-stat-label {
+    font-size: 0.62rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    color: #888;
+}
+.rhub-stat-value {
+    font-size: 2.4rem;
+    font-weight: 900;
+    line-height: 1;
+    color: #333;
+}
+.rhub-stat-icon { font-size: 1.6rem; opacity: 0.25; color: #333; }
+.stat-pending   .rhub-stat-label,
+.stat-pending   .rhub-stat-value { color: #e67e22; }
+.stat-pending   .rhub-stat-icon  { color: #e67e22; opacity: 0.4; }
+.stat-approved  .rhub-stat-label,
+.stat-approved  .rhub-stat-value { color: #1a6b3c; }
+.stat-approved  .rhub-stat-icon  { color: #1a6b3c; opacity: 0.4; }
+.stat-rejected  .rhub-stat-label,
+.stat-rejected  .rhub-stat-value { color: #c0392b; }
+.stat-rejected  .rhub-stat-icon  { color: #c0392b; opacity: 0.4; }
+
+/* Two-panel layout */
+.rhub-main {
+    display: grid;
+    grid-template-columns: 370px 1fr;
+    gap: 14px;
+    align-items: start;
+}
+
+/* ── INBOX ── */
+.rhub-inbox {
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+.rhub-inbox-hdr {
+    background: #800000;
+    color: #fff;
+    padding: 13px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.rhub-inbox-title {
+    font-size: 0.95rem;
+    font-weight: 900;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+}
+.rhub-inbox-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    align-items: end;
+}
+.rhub-flabel {
+    font-size: 0.55rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #800000;
+    display: block;
+    margin-bottom: 3px;
+}
+.rhub-inbox-filters select {
+    width: 100%;
+    padding: 5px 7px;
+    border: 1px solid #800000;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #333;
+    background: #fff;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+.rhub-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 9px;
+    border: 1px solid #800000;
+    border-radius: 4px;
+    background: #fff;
+    color: #800000;
+    font-size: 0.6rem;
+    font-weight: 900;
+    cursor: pointer;
+    text-transform: uppercase;
+    white-space: nowrap;
+    letter-spacing: .5px;
+}
+.rhub-sort-btn:hover { background: #fff5f5; }
+
+/* Status tabs */
+.rhub-tabs {
+    display: flex;
+    border-bottom: 1px solid #eee;
+}
+.rhub-tab {
+    flex: 1;
+    padding: 7px 0;
+    text-align: center;
+    font-size: 0.62rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border: none;
+    background: #fff;
+    color: #aaa;
+    border-bottom: 2.5px solid transparent;
+    transition: all 0.15s;
+}
+.rhub-tab.active { color: #800000; border-bottom-color: #800000; }
+.rhub-tab:hover:not(.active) { color: #800000; background: #fef9f9; }
+
+/* Request list */
+.rhub-list {
+    max-height: 540px;
+    overflow-y: auto;
+}
+.rhub-request-card {
+    padding: 11px 14px;
+    border-bottom: 1px solid #f5f5f5;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-left: 3px solid transparent;
+}
+.rhub-request-card:hover { background: #fef9f9; }
+.rhub-request-card.active { background: #fff5f5; border-left-color: #800000; }
+.rhub-card-row1 {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 3px;
+}
+.rhub-card-name { font-size: 0.78rem; font-weight: 900; color: #222; text-transform: uppercase; }
+.rhub-card-info { font-size: 0.62rem; color: #666; margin-bottom: 5px; }
+.rhub-card-type-chip {
+    display: inline-block;
+    font-size: 0.55rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: .5px;
+}
+.chip-makeup     { background: #FDE08B; color: #7a5c00; }
+.chip-adjustment { background: #FFE0E0; color: #800000; border: 1px solid #f5c6c6; }
+.rhub-status-badge {
+    font-size: 0.58rem;
+    font-weight: 900;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.status-Pending  { background: #FFF3CD; color: #856404; }
+.status-Approved { background: #D4EDDA; color: #155724; }
+.status-Rejected { background: #F8D7DA; color: #721C24; }
+.status-Cancelled{ background: #e2e3e5; color: #495057; }
+
+/* ── DETAILS PANEL ── */
+.rhub-details {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    min-height: 480px;
+    overflow: hidden;
+}
+.rhub-details-lbl {
+    font-size: 0.58rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #bbb;
+    padding: 12px 20px 10px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.rhub-details-body { padding: 20px 22px; }
+.rhub-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 70px 20px;
+    color: #ccc;
+    font-size: 0.85rem;
+    font-weight: 600;
+    gap: 12px;
+    text-align: center;
+}
+.rhub-empty-state i { font-size: 2.8rem; }
+
+/* Request header */
+.rhub-req-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+.rhub-req-num {
+    font-size: 1.7rem;
+    font-weight: 900;
+    color: #800000;
+    letter-spacing: 1px;
+}
+
+/* Faculty row */
+.rhub-fac-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    background: #800000;
+    color: #fff;
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin-bottom: 14px;
+    gap: 12px;
+}
+.rhub-fac-name { font-size: 1.2rem; font-weight: 900; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+.rhub-fac-desig { font-size: 0.62rem; font-weight: 700; opacity: 0.85; text-transform: uppercase; letter-spacing: .5px; }
+.rhub-fac-date { font-size: 0.62rem; font-weight: 700; text-align: right; line-height: 1.6; }
+.rhub-fac-date-lbl { font-size: 0.52rem; opacity: .75; text-transform: uppercase; letter-spacing: .8px; }
+
+/* Detail grid */
+.rhub-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.rhub-detail-box {
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 12px 14px;
+}
+.rhub-dbox-lbl {
+    font-size: 0.52rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #aaa;
+    margin-bottom: 7px;
+}
+.rhub-dbox-val {
+    font-size: 0.8rem;
+    font-weight: 900;
+    color: #800000;
+    text-transform: uppercase;
+    line-height: 1.4;
+}
+.rhub-dbox-val::before { content: '• '; }
+.rhub-dbox-sub { font-size: 0.68rem; color: #777; margin-top: 3px; font-weight: 600; }
+
+/* Analytics */
+.rhub-analytics {
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+.rhub-analytics-lbl {
+    font-size: 0.52rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #aaa;
+    margin-bottom: 9px;
+}
+.rhub-chips { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 7px; }
+.rhub-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.62rem;
+    font-weight: 900;
+    padding: 5px 11px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.chip-ok      { background: #1e7e34; color: #fff; }
+.chip-warn    { background: #e65100; color: #fff; }
+.chip-bad     { background: #c62828; color: #fff; }
+.chip-spin    { background: #888; color: #fff; }
+.rhub-analytics-msg {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #555;
+    font-style: italic;
+    margin-top: 5px;
+}
+
+/* Reason box */
+.rhub-reason-box {
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+
+/* Actions */
+.rhub-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 14px;
+    border-top: 1px solid #eee;
+}
+.btn-rhub-approve {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 22px;
+    border-radius: 6px;
+    background: #1a6b3c;
+    color: #fff;
+    font-weight: 900;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    border: none;
+    cursor: pointer;
+    letter-spacing: .5px;
+    transition: background .15s;
+}
+.btn-rhub-approve:hover { background: #145230; }
+.btn-rhub-reject {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 22px;
+    border-radius: 6px;
+    background: #fff;
+    color: #c0392b;
+    font-weight: 900;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    border: 2px solid #c0392b;
+    cursor: pointer;
+    letter-spacing: .5px;
+    transition: all .15s;
+}
+.btn-rhub-reject:hover { background: #fdf0f0; }
+
+/* Reject modal */
+.rhub-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 9500;
+    align-items: center;
+    justify-content: center;
+}
+.rhub-modal-overlay.open { display: flex; }
+.rhub-modal-box {
+    background: #fff;
+    border-radius: 12px;
+    width: min(420px, 94vw);
+    padding: 26px 24px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.22);
+}
+.rhub-modal-title {
+    font-size: 0.9rem;
+    font-weight: 900;
+    color: #c0392b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0 0 14px;
+}
+.rhub-modal-label {
+    font-size: 0.6rem;
+    font-weight: 900;
+    color: #800000;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    display: block;
+    margin-bottom: 5px;
+}
+.rhub-modal-box textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1.5px solid #ccc;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+    resize: vertical;
+    min-height: 72px;
+}
+.rhub-modal-box textarea:focus { outline: none; border-color: #800000; }
+.rhub-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 16px;
+}
+.btn-modal-cancel {
+    padding: 8px 18px;
+    border: 1.5px solid #ccc;
+    border-radius: 5px;
+    background: #fff;
+    color: #555;
+    font-weight: 800;
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.btn-modal-cancel:hover { border-color: #800000; color: #800000; }
+.btn-modal-confirm {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 5px;
+    background: #c0392b;
+    color: #fff;
+    font-weight: 800;
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    transition: background .15s;
+}
+.btn-modal-confirm:hover { background: #a02820; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rhub-wrap">
+    <h1 class="rhub-title">REQUESTS HUB</h1>
+
+    <!-- ── Stats row ── -->
+    <div class="rhub-stats">
+        <div class="rhub-stat-card">
+            <div>
+                <div class="rhub-stat-label">TOTAL RECEIVED</div>
+                <div class="rhub-stat-value" id="statTotal">—</div>
+            </div>
+            <i class="fas fa-envelope-open-text rhub-stat-icon"></i>
+        </div>
+        <div class="rhub-stat-card stat-pending">
+            <div>
+                <div class="rhub-stat-label">PENDING DECISIONS</div>
+                <div class="rhub-stat-value" id="statPending">—</div>
+            </div>
+            <i class="fas fa-envelope rhub-stat-icon"></i>
+        </div>
+        <div class="rhub-stat-card stat-approved">
+            <div>
+                <div class="rhub-stat-label">APPROVED</div>
+                <div class="rhub-stat-value" id="statApproved">—</div>
+            </div>
+            <i class="fas fa-envelope-open rhub-stat-icon"></i>
+        </div>
+        <div class="rhub-stat-card stat-rejected">
+            <div>
+                <div class="rhub-stat-label">REJECTED/CANCELLED</div>
+                <div class="rhub-stat-value" id="statRejected">—</div>
+            </div>
+            <i class="fas fa-envelope rhub-stat-icon"></i>
+        </div>
+    </div>
+
+    <!-- ── Two-panel layout ── -->
+    <div class="rhub-main">
+
+        <!-- INBOX -->
+        <div class="rhub-inbox">
+            <div class="rhub-inbox-hdr">
+                <span class="rhub-inbox-title">INBOX</span>
+                <i class="fas fa-bell"></i>
+            </div>
+
+            <div class="rhub-inbox-filters">
+                <div>
+                    <span class="rhub-flabel">CATEGORY</span>
+                    <select id="filterCategory" onchange="rhubLoad()">
+                        <option value="all">ALL</option>
+                        <option value="makeup">MAKE-UP CLASS</option>
+                        <option value="adjustment">SCHEDULE ADJUSTMENT</option>
+                    </select>
+                </div>
+                <div>
+                    <span class="rhub-flabel">FACULTY</span>
+                    <select id="filterFaculty" onchange="rhubLoad()">
+                        <option value="">SELECT</option>
+                    </select>
+                </div>
+                <button class="rhub-sort-btn" onclick="rhubToggleSort()" title="Toggle sort order">
+                    <i class="fas fa-sort-amount-down" id="sortIcon"></i>
+                    SORT: <span id="sortLabel">RECENT</span>
+                </button>
+            </div>
+
+            <div class="rhub-tabs">
+                <button class="rhub-tab active" onclick="rhubTab('all', this)">ALL</button>
+                <button class="rhub-tab" onclick="rhubTab('pending', this)">PENDING</button>
+                <button class="rhub-tab" onclick="rhubTab('approved', this)">APPROVED</button>
+                <button class="rhub-tab" onclick="rhubTab('rejected', this)">REJECTED</button>
+            </div>
+
+            <div class="rhub-list" id="rhubList">
+                <div class="rhub-empty-state">
+                    <i class="fas fa-circle-notch fa-spin"></i>
+                    Loading...
+                </div>
+            </div>
+        </div>
+
+        <!-- DETAILS PANEL -->
+        <div class="rhub-details">
+            <div class="rhub-details-lbl">REQUEST DETAILS PANEL</div>
+            <div id="rhubDetailsBody">
+                <div class="rhub-empty-state">
+                    <i class="fas fa-mouse-pointer"></i>
+                    Select a request from the inbox to view details.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- REJECT MODAL -->
+<div class="rhub-modal-overlay" id="rejectModal">
+    <div class="rhub-modal-box">
+        <div class="rhub-modal-title"><i class="fas fa-times-circle"></i> Reject Request</div>
+        <label class="rhub-modal-label">Remarks (Optional)</label>
+        <textarea id="rejectRemarks" placeholder="Reason for rejection..."></textarea>
+        <div class="rhub-modal-actions">
+            <button class="btn-modal-cancel" onclick="rhubCloseReject()">CANCEL</button>
+            <button class="btn-modal-confirm" onclick="rhubConfirmReject()">CONFIRM REJECT</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ════ STATE ════ */
+let _reqs      = [];
+let _activeKey = null;   // "makeup_5" or "adjustment_3"
+let _statusTab = 'all';
+let _sortAsc   = false;
+let _facPopulated = false;
+
+/* ════ LOAD ════ */
+async function rhubLoad() {
+    const cat = document.getElementById('filterCategory').value;
+    const fac = document.getElementById('filterFaculty').value;
+    const qs  = new URLSearchParams({ status: _statusTab, category: cat, faculty: fac });
+    try {
+        const res  = await fetch('/api/requests/list?' + qs);
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+
+        _reqs = data.requests || [];
+        const s = data.stats || {};
+        document.getElementById('statTotal').textContent    = s.total    ?? 0;
+        document.getElementById('statPending').textContent  = s.pending  ?? 0;
+        document.getElementById('statApproved').textContent = s.approved ?? 0;
+        document.getElementById('statRejected').textContent = s.rejected ?? 0;
+
+        // Populate faculty dropdown once
+        if (!_facPopulated && _reqs.length > 0) {
+            const sel = document.getElementById('filterFaculty');
+            const seen = new Set();
+            // gather from all requests (not just filtered)
+            _reqs.forEach(r => {
+                if (!seen.has(r.faculty_name)) {
+                    seen.add(r.faculty_name);
+                    const o = document.createElement('option');
+                    o.value = r.faculty_name;
+                    o.textContent = r.faculty_name;
+                    sel.appendChild(o);
+                }
+            });
+            _facPopulated = true;
+        }
+
+        rhubRenderList();
+    } catch(e) {
+        document.getElementById('rhubList').innerHTML =
+            `<div class="rhub-empty-state"><i class="fas fa-exclamation-triangle"></i>Could not load requests.</div>`;
+        console.error(e);
+    }
+}
+
+/* ════ RENDER LIST ════ */
+function rhubRenderList() {
+    const list = document.getElementById('rhubList');
+    if (_reqs.length === 0) {
+        list.innerHTML = `<div class="rhub-empty-state"><i class="fas fa-inbox"></i>No requests found.</div>`;
+        return;
+    }
+    list.innerHTML = _reqs.map(r => {
+        const key = r.req_type + '_' + r.requestid;
+        return `
+        <div class="rhub-request-card ${key === _activeKey ? 'active' : ''}"
+             onclick="rhubSelect('${r.req_type}', ${r.requestid}, this)">
+            <div class="rhub-card-row1">
+                <span class="rhub-card-name">${r.faculty_name}</span>
+                <span class="rhub-status-badge status-${r.status}">${r.status}</span>
+            </div>
+            <div class="rhub-card-info">${r.subjectcode} &ndash; ${r.room_name || 'N/A'}</div>
+            <span class="rhub-card-type-chip ${r.req_type === 'makeup' ? 'chip-makeup' : 'chip-adjustment'}">
+                ${r.req_type_label}
+            </span>
+        </div>`;
+    }).join('');
+}
+
+/* ════ SELECT ════ */
+async function rhubSelect(type, id, el) {
+    _activeKey = type + '_' + id;
+    document.querySelectorAll('.rhub-request-card').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    const req = _reqs.find(r => r.req_type === type && r.requestid === id);
+    if (!req) return;
+    rhubRenderDetail(req, null);     // immediate render
+    rhubValidate(type, id, req);     // async constraint check
+}
+
+/* ════ RENDER DETAIL ════ */
+function rhubRenderDetail(req, v) {
+    const body = document.getElementById('rhubDetailsBody');
+
+    const reqLabel = req.req_type === 'makeup' ? 'MAKE-UP CLASS' : 'SCHEDULE ADJUSTMENT';
+    const timeStr  = (req.start_time && req.end_time) ? `${req.start_time} – ${req.end_time}` : '';
+    const dayExtra = (req.req_type === 'adjustment' && req.new_daydesc) ? ` (${req.new_daydesc})` : '';
+
+    // Analytics section
+    let analyticsHtml;
+    if (!v) {
+        analyticsHtml = `
+            <div class="rhub-chips">
+                <span class="rhub-chip chip-spin"><i class="fas fa-spinner fa-spin"></i> VALIDATING...</span>
+            </div>
+            <div class="rhub-analytics-msg">Checking constraints, please wait...</div>`;
+    } else {
+        const rBadge = v.room_available
+            ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> ROOM SLOT AVAILABLE</span>`
+            : `<span class="rhub-chip chip-bad"><i class="fas fa-times-circle"></i> ROOM CONFLICT</span>`;
+        const fBadge = v.faculty_free
+            ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> FACULTY FREE</span>`
+            : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> FACULTY CONFLICT</span>`;
+        const pBadge = v.program_ok
+            ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> PROGRAM OKAY</span>`
+            : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> PROGRAM CONFLICT</span>`;
+        const msg     = v.all_ok
+            ? 'CONSTRAINT VALIDATION SUCCESSFUL, THERE ARE NO CONFLICTS TO THIS REQUEST'
+            : (v.conflicts || []).join(' | ') || 'Conflicts detected.';
+        const msgColor = v.all_ok ? '#1a6b3c' : '#c0392b';
+        analyticsHtml = `
+            <div class="rhub-chips">${rBadge}${fBadge}${pBadge}</div>
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>`;
+    }
+
+    const actionBtns = req.status === 'Pending' ? `
+        <div class="rhub-actions">
+            <button class="btn-rhub-approve" onclick="rhubApprove()">
+                <i class="fas fa-check-circle"></i> APPROVE
+            </button>
+            <button class="btn-rhub-reject" onclick="rhubReject()">
+                <i class="fas fa-times-circle"></i> REJECT
+            </button>
+        </div>` : '';
+
+    body.innerHTML = `
+    <div class="rhub-details-body">
+        <div class="rhub-req-hdr">
+            <div class="rhub-req-num">REQ #${req.request_number}</div>
+            <span class="rhub-status-badge status-${req.status}" style="font-size:.75rem;padding:4px 14px;">
+                ${req.status.toUpperCase()}
+            </span>
+        </div>
+
+        <div class="rhub-fac-row">
+            <div>
+                <div class="rhub-fac-name">${req.faculty_name}</div>
+                <div class="rhub-fac-desig">${req.designation || 'FACULTY'}</div>
+            </div>
+            <div class="rhub-fac-date">
+                <div class="rhub-fac-date-lbl">DATE SUBMITTED:</div>
+                <div>${req.date_submitted || '—'}</div>
+            </div>
+        </div>
+
+        <div class="rhub-detail-grid">
+            <div class="rhub-detail-box">
+                <div class="rhub-dbox-lbl">REQUESTED ADJUSTMENT</div>
+                <div class="rhub-dbox-val">${reqLabel}${dayExtra}</div>
+                ${timeStr ? `<div class="rhub-dbox-sub">${timeStr}</div>` : ''}
+                ${req.requested_date_fmt ? `<div class="rhub-dbox-sub">${req.requested_date_fmt}</div>` : ''}
+            </div>
+            <div class="rhub-detail-box">
+                <div class="rhub-dbox-lbl">PROGRAM/YEAR LEVEL</div>
+                <div class="rhub-dbox-val">${req.program_code ? req.program_code + ' – ' + req.year_level : 'N/A'}</div>
+                ${req.section_name ? `<div class="rhub-dbox-sub">Section: ${req.section_name}</div>` : ''}
+            </div>
+            <div class="rhub-detail-box">
+                <div class="rhub-dbox-lbl">TARGET BUILDING/ROOM</div>
+                <div class="rhub-dbox-val">${req.room_full || req.room_name || 'N/A'}</div>
+            </div>
+            <div class="rhub-detail-box">
+                <div class="rhub-dbox-lbl">SUBJECT</div>
+                <div class="rhub-dbox-val">${req.subjectcode || 'N/A'}</div>
+                ${req.subjectname ? `<div class="rhub-dbox-sub">${req.subjectname}</div>` : ''}
+            </div>
+        </div>
+
+        ${req.reason ? `
+        <div class="rhub-reason-box">
+            <div class="rhub-dbox-lbl">REASON FOR REQUEST</div>
+            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${req.reason}</div>
+        </div>` : ''}
+
+        <div class="rhub-analytics">
+            <div class="rhub-analytics-lbl">ANALYTICS</div>
+            ${analyticsHtml}
+        </div>
+
+        ${actionBtns}
+    </div>`;
+}
+
+/* ════ VALIDATE ════ */
+async function rhubValidate(type, id, req) {
+    try {
+        const res  = await fetch(`/api/requests/validate?type=${type}&id=${id}`);
+        const data = await res.json();
+        if (data.success) rhubRenderDetail(req, data);
+    } catch(e) { console.error('Validate error:', e); }
+}
+
+/* ════ TABS ════ */
+function rhubTab(status, el) {
+    _statusTab = status;
+    document.querySelectorAll('.rhub-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    rhubLoad();
+}
+
+/* ════ SORT ════ */
+function rhubToggleSort() {
+    _sortAsc = !_sortAsc;
+    _reqs.reverse();
+    document.getElementById('sortLabel').textContent = _sortAsc ? 'OLDEST' : 'RECENT';
+    document.getElementById('sortIcon').className = _sortAsc
+        ? 'fas fa-sort-amount-up' : 'fas fa-sort-amount-down';
+    rhubRenderList();
+}
+
+/* ════ APPROVE ════ */
+async function rhubApprove() {
+    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
+    if (!req) return;
+    if (!confirm(`Approve ${req.req_type_label} request from ${req.faculty_name}?`)) return;
+    try {
+        const res  = await fetch('/api/requests/decide', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Approved', remarks: '' })
+        });
+        const data = await res.json();
+        if (data.success) {
+            _activeKey = null;
+            document.getElementById('rhubDetailsBody').innerHTML =
+                `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved successfully.</div>`;
+            rhubLoad();
+        } else {
+            alert('Error: ' + (data.error || 'Could not approve.'));
+        }
+    } catch(e) { alert('Network error.'); }
+}
+
+/* ════ REJECT ════ */
+function rhubReject() {
+    document.getElementById('rejectRemarks').value = '';
+    document.getElementById('rejectModal').classList.add('open');
+}
+function rhubCloseReject() {
+    document.getElementById('rejectModal').classList.remove('open');
+}
+async function rhubConfirmReject() {
+    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
+    if (!req) return;
+    const remarks = document.getElementById('rejectRemarks').value.trim();
+    try {
+        const res  = await fetch('/api/requests/decide', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Rejected', remarks })
+        });
+        const data = await res.json();
+        if (data.success) {
+            rhubCloseReject();
+            _activeKey = null;
+            document.getElementById('rhubDetailsBody').innerHTML =
+                `<div class="rhub-empty-state"><i class="fas fa-times-circle" style="color:#c0392b"></i>Request rejected.</div>`;
+            rhubLoad();
+        } else {
+            alert('Error: ' + (data.error || 'Could not reject.'));
+        }
+    } catch(e) { alert('Network error.'); }
+}
+
+/* Close reject modal on backdrop click */
+document.getElementById('rejectModal').addEventListener('click', function(e) {
+    if (e.target === this) rhubCloseReject();
+});
+
+/* Init */
+document.addEventListener('DOMContentLoaded', rhubLoad);
+</script>
+{% endblock %}

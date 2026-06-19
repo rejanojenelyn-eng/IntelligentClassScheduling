@@ -380,6 +380,24 @@
         border: 1px solid #27ae60;
         text-transform: uppercase;
     }
+    .frs-avail-card-clickable {
+        cursor: pointer;
+        transition: box-shadow 0.15s, transform 0.1s, border-color 0.15s;
+    }
+    .frs-avail-card-clickable:hover {
+        box-shadow: 0 4px 18px rgba(128,0,0,0.18);
+        transform: translateY(-2px);
+        border-color: #5c0a0a;
+    }
+    .frs-avail-request-hint {
+        display: none;
+        margin-top: 8px;
+        font-size: 0.6rem;
+        font-weight: 700;
+        color: #800000;
+        text-transform: uppercase;
+    }
+    .frs-avail-card-clickable:hover .frs-avail-request-hint { display: block; }
 
     /* ════════════════════════════════════
        REQUEST MODALS
@@ -518,6 +536,40 @@
         transition: background .15s;
     }
     .btn-req-submit:hover { background: #5c0000; }
+
+    /* ── Toast Notifications ── */
+    #toast-container {
+        position: fixed; bottom: 28px; right: 28px;
+        z-index: 99999; display: flex; flex-direction: column; gap: 10px;
+        pointer-events: none;
+    }
+    .toast-item {
+        display: flex; align-items: flex-start; gap: 12px;
+        padding: 14px 18px; border-radius: 10px;
+        min-width: 280px; max-width: 380px;
+        box-shadow: 0 6px 24px rgba(0,0,0,.18);
+        font-family: 'Inter', sans-serif; font-size: 0.82rem;
+        animation: toastIn .25s ease; pointer-events: auto;
+        border-left: 5px solid transparent;
+    }
+    .toast-item.toast-success { background:#fff; border-color:#28a745; }
+    .toast-item.toast-error   { background:#fff; border-color:#dc3545; }
+    .toast-item.toast-warning { background:#fff; border-color:#f0a500; }
+    .toast-item.toast-info    { background:#fff; border-color:#800000; }
+    .toast-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+    .toast-item.toast-success .toast-icon { color: #28a745; }
+    .toast-item.toast-error   .toast-icon { color: #dc3545; }
+    .toast-item.toast-warning .toast-icon { color: #f0a500; }
+    .toast-item.toast-info    .toast-icon { color: #800000; }
+    .toast-body { flex: 1; }
+    .toast-title { font-weight: 800; font-size: 0.78rem; margin-bottom: 2px; color: #222; }
+    .toast-msg   { color: #555; line-height: 1.4; }
+    .toast-close { background: none; border: none; color: #aaa; font-size: 1rem;
+        cursor: pointer; padding: 0; flex-shrink: 0; line-height: 1; }
+    .toast-close:hover { color: #555; }
+    .toast-fade-out { animation: toastOut .3s ease forwards; }
+    @keyframes toastIn  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes toastOut { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(8px); } }
 </style>
 {% endblock %}
 
@@ -584,6 +636,10 @@
                     <i class="fas fa-filter"></i> FILTERS
                 </div>
                 <div class="frs-avail-filters-body">
+                    <div class="frs-avail-filter-group">
+                        <label class="frs-avail-filter-label">Date <span style="font-weight:500;color:#aaa;">(for Make-up)</span></label>
+                        <input type="date" id="frsAvailDate" onchange="frsDateChanged()" style="width:100%;padding:6px 8px;border:1px solid #800000;border-radius:4px;font-size:0.75rem;font-weight:700;color:#800000;background:#fff;box-sizing:border-box;">
+                    </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Day</label>
                         <select id="frsAvailDay" onchange="frsFindAvailable()">
@@ -798,6 +854,64 @@
     </div>
 </div>
 
+<style>
+/* ── Room status label ── */
+.req-room-status { font-size:0.6rem; font-weight:700; color:#aaa; margin-top:2px; min-height:14px; }
+/* auto-fill readonly inputs */
+.req-form-group input[readonly] { background:#f8f8f8; color:#555; }
+/* subject select styling */
+.req-subj-wrap { position:relative; }
+.req-subj-wrap select { width:100%; padding:7px 10px; border:1.5px solid #ccc; border-radius:5px;
+    font-size:0.8rem; font-weight:600; color:#333; font-family:'Inter',sans-serif;
+    box-sizing:border-box; cursor:pointer; }
+.req-subj-wrap select:focus { outline:none; border-color:#800000; }
+/* ── Custom searchable room dropdown ── */
+.room-sel-wrap { position:relative; width:100%; }
+.room-sel-box {
+    display:flex; align-items:center; justify-content:space-between;
+    border:1.5px solid #ccc; border-radius:6px; padding:7px 10px;
+    background:#fff; cursor:pointer; min-height:36px; font-size:0.82rem;
+    box-sizing:border-box; width:100%; user-select:none;
+}
+.room-sel-box:hover { border-color:#800000; }
+.room-sel-text { flex:1; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.room-sel-text.ph { color:#aaa; }
+.room-sel-arrow { color:#666; font-size:0.7rem; margin-left:6px; transition:transform .15s; flex-shrink:0; }
+.room-sel-wrap.open .room-sel-box { border-color:#800000; }
+.room-sel-wrap.open .room-sel-arrow { transform:rotate(180deg); }
+.room-sel-drop {
+    position:absolute; left:0; right:0; top:calc(100% + 3px);
+    background:#fff; border:1.5px solid #800000; border-radius:6px;
+    box-shadow:0 6px 20px rgba(0,0,0,.13); z-index:9999; display:none;
+}
+.room-sel-wrap.open .room-sel-drop { display:block; }
+.room-sel-search {
+    width:100%; border:none; border-bottom:1px solid #eee;
+    padding:7px 10px; font-size:0.8rem; outline:none;
+    border-radius:6px 6px 0 0; box-sizing:border-box;
+    font-family:'Inter',sans-serif;
+}
+.room-sel-list { max-height:210px; overflow-y:auto; padding:3px 0; }
+.room-grp-lbl {
+    font-size:0.62rem; font-weight:900; color:#800000; text-transform:uppercase;
+    letter-spacing:.5px; padding:6px 10px 3px;
+}
+.room-grp-lbl.hidden { display:none; }
+.room-item {
+    padding:6px 10px; cursor:pointer; font-size:0.8rem; color:#333;
+    display:flex; align-items:center; gap:6px;
+}
+.room-item:hover { background:#fff5f5; }
+.room-item.sel { background:#800000; color:#fff; }
+.room-item.hidden { display:none !important; }
+.room-item-badge {
+    font-size:0.58rem; font-weight:800; border-radius:10px; padding:1px 6px; white-space:nowrap;
+}
+.badge-lab { background:#D1ECF1; color:#0C5460; }
+.badge-lec { background:#d4edda; color:#155724; }
+.room-item.sel .room-item-badge { background:rgba(255,255,255,0.25); color:#fff; }
+</style>
+
 <!-- ══════════════════════════════════════════
      MODAL 2 — Make Up Class Request
 ══════════════════════════════════════════ -->
@@ -808,65 +922,89 @@
             <button class="req-modal-close" onclick="frsCloseForm('makeup')">✕</button>
         </div>
         <div class="req-modal-body">
+            <!-- Row 1: Date · Start · End -->
             <div class="req-form-row">
                 <div class="req-form-group">
-                    <label class="req-form-label">*Room</label>
-                    <select id="muRoom"><option value="">SELECT</option></select>
-                </div>
-                <div class="req-form-group">
                     <label class="req-form-label">*Date</label>
-                    <input type="date" id="muDate">
+                    <input type="date" id="muDate" onchange="muOnDateTimeChange()">
                 </div>
                 <div class="req-form-group">
                     <label class="req-form-label">*Start Time</label>
-                    <select id="muStart"><option value="">SELECT</option></select>
+                    <select id="muStart" onchange="muTimeSelectChanged()"><option value="">SELECT</option></select>
                 </div>
                 <div class="req-form-group">
                     <label class="req-form-label">*End Time</label>
-                    <select id="muEnd"><option value="">SELECT</option></select>
+                    <select id="muEnd" onchange="muTimeSelectChanged()"><option value="">SELECT</option></select>
                 </div>
             </div>
+            <!-- Row 2: Room (filtered by date+time) -->
             <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Faculty Name</label>
-                    <input type="text" id="muFaculty" placeholder="Type...">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*Program Name</label>
-                    <select id="muProgram" onchange="reqLoadSections('mu')"><option value="">SELECT</option></select>
-                </div>
-            </div>
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">Year Level</label>
-                    <select id="muYl" onchange="reqLoadSections('mu')">
-                        <option value="">SELECT</option>
-                        <option>1</option><option>2</option><option>3</option>
-                        <option>4</option><option>5</option>
-                    </select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Section</label>
-                    <select id="muSection"><option value="">SELECT</option></select>
-                </div>
                 <div class="req-form-group full">
-                    <label class="req-form-label">*Subject Code / Description</label>
-                    <div class="req-search-wrap">
-                        <input type="text" id="muSubject" placeholder="Type...">
-                        <i class="fas fa-search"></i>
+                    <label class="req-form-label">*Room <span class="req-room-status" id="muRoomStatus"></span></label>
+                    <div class="room-sel-wrap" id="muRoomWrap">
+                        <div class="room-sel-box" onclick="roomDropToggle('mu')">
+                            <span class="room-sel-text ph" id="muRoomDisplay">— Select date &amp; time first —</span>
+                            <i class="fas fa-chevron-down room-sel-arrow"></i>
+                        </div>
+                        <div class="room-sel-drop" id="muRoomDrop">
+                            <input type="text" class="room-sel-search" id="muRoomSearch" placeholder="Type to search room..." oninput="roomSearchFilter('mu')" autocomplete="off">
+                            <div class="room-sel-list" id="muRoomList"></div>
+                        </div>
+                        <input type="hidden" id="muRoom">
                     </div>
                 </div>
             </div>
+            <!-- Row 3: Faculty Name -->
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Faculty Name</label>
+                    <input type="text" id="muFaculty" placeholder="Loading...">
+                </div>
+            </div>
+            <!-- Row 4: Subject (faculty's assigned subjects only) -->
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Subject</label>
+                    <div class="req-subj-wrap">
+                        <select id="muSubjectSel" onchange="reqSubjectChanged('mu')">
+                            <option value="">— Select your assigned subject —</option>
+                        </select>
+                    </div>
+                    <input type="hidden" id="muSubject">
+                    <input type="hidden" id="muSection">
+                    <input type="hidden" id="muProgram">
+                    <input type="hidden" id="muYl">
+                </div>
+            </div>
+            <!-- Row 5: Section select + Program/Year auto-fill -->
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Section <span style="font-weight:400;color:#aaa;font-size:0.6rem;">(select subject first)</span></label>
+                    <select id="muSectionSel" onchange="reqSectionChanged('mu')">
+                        <option value="">— Select subject first —</option>
+                    </select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Program</label>
+                    <input type="text" id="muProgramDisplay" readonly placeholder="Auto-filled">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Year Level</label>
+                    <input type="text" id="muYlDisplay" readonly placeholder="Auto-filled">
+                </div>
+            </div>
+            <!-- Row 6: Reason -->
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">Reason for Request</label>
-                    <textarea id="muReason"></textarea>
+                    <textarea id="muReason" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event."></textarea>
                 </div>
             </div>
+            <!-- Row 7: Note -->
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">Note</label>
-                    <textarea id="muNote"></textarea>
+                    <textarea id="muNote" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea>
                 </div>
             </div>
         </div>
@@ -887,73 +1025,97 @@
             <button class="req-modal-close" onclick="frsCloseForm('adjustment')">✕</button>
         </div>
         <div class="req-modal-body">
+            <!-- Row 1: New Day · Start · End -->
             <div class="req-form-row">
                 <div class="req-form-group">
-                    <label class="req-form-label">*Room</label>
-                    <select id="adjRoom"><option value="">SELECT</option></select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*Day</label>
-                    <select id="adjDay">
+                    <label class="req-form-label">*New Day</label>
+                    <select id="adjDay" onchange="adjOnDayTimeChange()">
                         <option value="">SELECT</option>
                         <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
                         <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
                     </select>
                 </div>
                 <div class="req-form-group">
-                    <label class="req-form-label">*Start Time</label>
-                    <select id="adjStart"><option value="">SELECT</option></select>
+                    <label class="req-form-label">*New Start Time</label>
+                    <select id="adjStart" onchange="adjTimeSelectChanged()"><option value="">SELECT</option></select>
                 </div>
                 <div class="req-form-group">
-                    <label class="req-form-label">*End Time</label>
-                    <select id="adjEnd"><option value="">SELECT</option></select>
+                    <label class="req-form-label">*New End Time</label>
+                    <select id="adjEnd" onchange="adjTimeSelectChanged()"><option value="">SELECT</option></select>
                 </div>
             </div>
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Program Name</label>
-                    <select id="adjProgram" onchange="reqLoadSections('adj')"><option value="">SELECT</option></select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*Start Date</label>
-                    <input type="date" id="adjStartDate">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*End Date</label>
-                    <input type="date" id="adjEndDate">
-                </div>
-            </div>
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Faculty Name</label>
-                    <input type="text" id="adjFaculty" placeholder="Type...">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Year Level</label>
-                    <select id="adjYl" onchange="reqLoadSections('adj')">
-                        <option value="">SELECT</option>
-                        <option>1</option><option>2</option><option>3</option>
-                        <option>4</option><option>5</option>
-                    </select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Section</label>
-                    <select id="adjSection"><option value="">SELECT</option></select>
-                </div>
-            </div>
+            <!-- Row 2: Room (filtered by day+time) -->
             <div class="req-form-row">
                 <div class="req-form-group full">
-                    <label class="req-form-label">*Subject Code / Description</label>
-                    <div class="req-search-wrap">
-                        <input type="text" id="adjSubject" placeholder="Type...">
-                        <i class="fas fa-search"></i>
+                    <label class="req-form-label">*New Room <span class="req-room-status" id="adjRoomStatus"></span></label>
+                    <div class="room-sel-wrap" id="adjRoomWrap">
+                        <div class="room-sel-box" onclick="roomDropToggle('adj')">
+                            <span class="room-sel-text ph" id="adjRoomDisplay">— Select day &amp; time first —</span>
+                            <i class="fas fa-chevron-down room-sel-arrow"></i>
+                        </div>
+                        <div class="room-sel-drop" id="adjRoomDrop">
+                            <input type="text" class="room-sel-search" id="adjRoomSearch" placeholder="Type to search room..." oninput="roomSearchFilter('adj')" autocomplete="off">
+                            <div class="room-sel-list" id="adjRoomList"></div>
+                        </div>
+                        <input type="hidden" id="adjRoom">
                     </div>
                 </div>
             </div>
+            <!-- Row 3: Effective From · End Date -->
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Effective From</label>
+                    <input type="date" id="adjStartDate">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">End Date (optional)</label>
+                    <input type="date" id="adjEndDate">
+                </div>
+            </div>
+            <!-- Row 4: Faculty Name -->
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Faculty Name</label>
+                    <input type="text" id="adjFaculty" placeholder="Loading...">
+                </div>
+            </div>
+            <!-- Row 5: Subject -->
+            <div class="req-form-row">
+                <div class="req-form-group full">
+                    <label class="req-form-label">*Subject</label>
+                    <div class="req-subj-wrap">
+                        <select id="adjSubjectSel" onchange="reqSubjectChanged('adj')">
+                            <option value="">— Select your assigned subject —</option>
+                        </select>
+                    </div>
+                    <input type="hidden" id="adjSubject">
+                    <input type="hidden" id="adjSection">
+                    <input type="hidden" id="adjProgram">
+                    <input type="hidden" id="adjYl">
+                </div>
+            </div>
+            <!-- Row 6: Section select + Program/Year auto-fill -->
+            <div class="req-form-row">
+                <div class="req-form-group">
+                    <label class="req-form-label">*Section <span style="font-weight:400;color:#aaa;font-size:0.6rem;">(select subject first)</span></label>
+                    <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
+                        <option value="">— Select subject first —</option>
+                    </select>
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Program</label>
+                    <input type="text" id="adjProgramDisplay" readonly placeholder="Auto-filled">
+                </div>
+                <div class="req-form-group">
+                    <label class="req-form-label">Year Level</label>
+                    <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled">
+                </div>
+            </div>
+            <!-- Row 7: Reason -->
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">Reason for Request</label>
-                    <textarea id="adjReason"></textarea>
+                    <textarea id="adjReason" placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event."></textarea>
                 </div>
             </div>
         </div>
@@ -965,7 +1127,9 @@
 </div>
 
 <script>
-/* ── Request modal helpers ── */
+/* ══════════════════════════════════════════
+   REQUEST FORM — STATE & INIT
+══════════════════════════════════════════ */
 const _REQ_SLOTS = [
     '07:30 AM','08:00 AM','08:30 AM','09:00 AM','09:30 AM','10:00 AM','10:30 AM',
     '11:00 AM','11:30 AM','12:00 PM','12:30 PM','01:00 PM','01:30 PM','02:00 PM',
@@ -973,98 +1137,484 @@ const _REQ_SLOTS = [
     '06:00 PM','06:30 PM','07:00 PM','07:30 PM','08:00 PM','08:30 PM','09:00 PM'
 ];
 
+let _myAssignments = [];   // faculty's published schedule assignments
+let _pendingRoom   = null; // room pre-selected from Available Rooms click
+let _muRoomChosen  = null; // { id, name, building } explicitly chosen for makeup
+let _adjRoomChosen = null; // { id, name, building } explicitly chosen for adjustment
+let _muBlockedSlots  = []; // blocked {start,end} pairs for the selected makeup date/day
+let _adjBlockedSlots = []; // blocked pairs for adjustment day
+
+/* Populate time selects with ALL slots initially */
 function _populateTimeSelects() {
     ['muStart','muEnd','adjStart','adjEnd'].forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
-        sel.innerHTML = '<option value="">SELECT</option>';
-        _REQ_SLOTS.forEach(t => {
-            const o = document.createElement('option');
-            o.value = o.textContent = t;
-            sel.appendChild(o);
-        });
+        _fillTimeSelect(sel, []);
     });
 }
 
-function _populateRoomSelects() {
-    ['muRoom','adjRoom'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        sel.innerHTML = '<option value="">SELECT</option>';
-        _rooms.forEach(r => {
-            const o = document.createElement('option');
-            o.value = r.id;
-            o.textContent = `${r.name} (${r.bname})`;
-            sel.appendChild(o);
-        });
-    });
-}
-
-function _populateProgramSelects() {
-    const progData = JSON.parse(document.getElementById('frs-init-data').dataset.programs || '[]');
-    ['muProgram','adjProgram'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        sel.innerHTML = '<option value="">SELECT</option>';
-        progData.forEach(p => {
-            const o = document.createElement('option');
-            o.value = p.code;
-            o.textContent = p.name;
-            sel.appendChild(o);
-        });
-    });
-}
-
-async function reqLoadSections(prefix) {
-    const prog = document.getElementById(prefix + 'Program').value;
-    const yl   = document.getElementById(prefix + 'Yl').value;
-    const sel  = document.getElementById(prefix + 'Section');
+/* Build time select, marking blocked slots with "(occupied)" and disabling them */
+function _fillTimeSelect(sel, blocked) {
+    const cur = sel.value;
     sel.innerHTML = '<option value="">SELECT</option>';
-    if (!prog || !yl) return;
-    try {
-        const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${yl}`);
-        const data = await res.json();
-        (data.sections || []).forEach(s => {
-            const o = document.createElement('option');
-            o.value = s.id; o.textContent = s.name;
-            sel.appendChild(o);
-        });
-    } catch(e) {}
+    _REQ_SLOTS.forEach(t => {
+        const occupied = _isTimeBlocked(t, blocked);
+        const o = document.createElement('option');
+        o.value = t;
+        o.textContent = occupied ? `${t}  — occupied` : t;
+        o.disabled = occupied;
+        o.style.color = occupied ? '#aaa' : '';
+        sel.appendChild(o);
+    });
+    if (cur && !_isTimeBlocked(cur, blocked)) sel.value = cur;
 }
 
+/* Returns true if the given "HH:MM AM/PM" slot falls within any blocked range */
+function _isTimeBlocked(slotStr, blocked) {
+    if (!blocked || !blocked.length) return false;
+    const slotMins = _amPmToMins(slotStr);
+    return blocked.some(b => {
+        const s = _amPmToMins(b.start_time);
+        const e = _amPmToMins(b.end_time);
+        return slotMins >= s && slotMins < e;
+    });
+}
+
+function _amPmToMins(t) {
+    if (!t) return 0;
+    const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!m) return 0;
+    let h = parseInt(m[1], 10), min = parseInt(m[2], 10);
+    const ap = m[3].toUpperCase();
+    if (ap === 'AM' && h === 12) h = 0;
+    if (ap === 'PM' && h !== 12) h += 12;
+    return h * 60 + min;
+}
+
+/* Load faculty name + assignments on init */
+async function _reqInitFacultyData() {
+    try {
+        const r = await fetch('/api/faculty/me');
+        const me = await r.json();
+        if (me.success) {
+            document.getElementById('muFaculty').value  = me.fullname.trim();
+            document.getElementById('adjFaculty').value = me.fullname.trim();
+        }
+    } catch(e) {}
+
+    try {
+        const r2   = await fetch('/api/faculty/my_assignments');
+        const data = await r2.json();
+        console.log('[my_assignments]', data);
+        if (data.success && data.assignments && data.assignments.length) {
+            _myAssignments = data.assignments;
+            _buildSubjectSelects();
+        } else if (!data.success) {
+            ['muSubjectSel','adjSubjectSel'].forEach(id => {
+                const s = document.getElementById(id);
+                if (s) s.innerHTML = `<option value="">Error: ${data.error || 'unknown'}</option>`;
+            });
+        } else {
+            const emp = data._debug_emp || '?';
+            ['muSubjectSel','adjSubjectSel'].forEach(id => {
+                const s = document.getElementById(id);
+                if (s) s.innerHTML = `<option value="">No subjects found (emp#${emp})</option>`;
+            });
+        }
+    } catch(e) {
+        console.error('[my_assignments]', e);
+    }
+}
+
+/* Build subject <select> — unique by subjectcode only (section chosen separately) */
+function _buildSubjectSelects() {
+    const seen = new Set();
+    const opts = [];
+    _myAssignments.forEach(a => {
+        if (!seen.has(a.subjectcode)) {
+            seen.add(a.subjectcode);
+            opts.push(a);
+        }
+    });
+    ['muSubjectSel','adjSubjectSel'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Select your assigned subject —</option>';
+        opts.forEach(a => {
+            const o = document.createElement('option');
+            o.value = a.subjectcode;
+            o.textContent = `${a.subjectcode} — ${a.subjectname || ''}`;
+            sel.appendChild(o);
+        });
+    });
+}
+
+/* Called when subject dropdown changes — populate section select */
+function reqSubjectChanged(p) {
+    const code = document.getElementById(p + 'SubjectSel').value;
+    // Clear hidden fields & displays
+    ['Subject','Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
+    ['ProgramDisplay','YlDisplay'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
+    const secSel = document.getElementById(p + 'SectionSel');
+    if (secSel) { secSel.innerHTML = '<option value="">— Select subject first —</option>'; }
+    if (!code) return;
+
+    // Set subject code
+    document.getElementById(p + 'Subject').value = code;
+
+    // Build section dropdown with all sections for this subject
+    const sections = _myAssignments.filter(a => a.subjectcode === code);
+    const seenSec  = new Set();
+    if (secSel) {
+        secSel.innerHTML = '<option value="">— Select section —</option>';
+        sections.forEach(a => {
+            const sid = String(a.sectionid);
+            if (!seenSec.has(sid) && a.sectionid) {
+                seenSec.add(sid);
+                const o = document.createElement('option');
+                o.value = sid;
+                o.dataset.prog = a.programcode || '';
+                o.dataset.yl   = a.yearlevel   || '';
+                o.dataset.name = a.sectionname || '';
+                o.textContent  = a.sectionname || `Section ${sid}`;
+                secSel.appendChild(o);
+            }
+        });
+        // Auto-select if only one section
+        if (seenSec.size === 1) {
+            secSel.value = [...seenSec][0];
+            reqSectionChanged(p);
+        }
+    }
+}
+
+/* Called when section dropdown changes */
+function reqSectionChanged(p) {
+    const secSel = document.getElementById(p + 'SectionSel');
+    if (!secSel) return;
+    const opt = secSel.options[secSel.selectedIndex];
+    if (!opt || !opt.value) {
+        ['Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
+        ['ProgramDisplay','YlDisplay'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
+        return;
+    }
+    document.getElementById(p + 'Section').value       = opt.value;
+    document.getElementById(p + 'Program').value       = opt.dataset.prog || '';
+    document.getElementById(p + 'Yl').value            = opt.dataset.yl   || '';
+    document.getElementById(p + 'ProgramDisplay').value = opt.dataset.prog || '';
+    document.getElementById(p + 'YlDisplay').value      = opt.dataset.yl   || '';
+}
+
+/* ══════════════════════════════════════════
+   AVAILABLE ROOM LOADERS FOR FORM
+══════════════════════════════════════════ */
+/* ── Custom searchable room dropdown functions ── */
+function roomDropToggle(p) {
+    const wrap = document.getElementById(p + 'RoomWrap');
+    const isOpen = wrap.classList.contains('open');
+    document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+    if (!isOpen) {
+        const list = document.getElementById(p + 'RoomList');
+        if (!list.children.length) return; // no rooms loaded yet
+        wrap.classList.add('open');
+        const si = document.getElementById(p + 'RoomSearch');
+        si.value = '';
+        roomSearchFilter(p);
+        si.focus();
+    }
+}
+
+function roomSearchFilter(p) {
+    const q    = (document.getElementById(p + 'RoomSearch').value || '').toLowerCase().trim();
+    const list = document.getElementById(p + 'RoomList');
+    list.querySelectorAll('.room-item').forEach(el => {
+        el.classList.toggle('hidden', q !== '' && !el.dataset.label.includes(q));
+    });
+    list.querySelectorAll('.room-grp-lbl').forEach(lbl => {
+        let sib = lbl.nextElementSibling, any = false;
+        while (sib && !sib.classList.contains('room-grp-lbl')) {
+            if (!sib.classList.contains('hidden')) any = true;
+            sib = sib.nextElementSibling;
+        }
+        lbl.classList.toggle('hidden', !any);
+    });
+}
+
+function roomSelectItem(p, id, name, building, typ) {
+    document.getElementById(p + 'Room').value = String(id);
+    const disp = document.getElementById(p + 'RoomDisplay');
+    disp.textContent = `${name}  [${typ}]`;
+    disp.classList.remove('ph');
+    const chosen = { id: String(id), name, building: building || '', typ };
+    if (p === 'mu') _muRoomChosen = chosen;
+    else            _adjRoomChosen = chosen;
+    document.getElementById(p + 'RoomWrap').classList.remove('open');
+    document.getElementById(p + 'RoomList').querySelectorAll('.room-item').forEach(el => {
+        el.classList.toggle('sel', el.dataset.rid === String(id));
+    });
+}
+
+function _buildRoomDropdown(p, rooms) {
+    const list = document.getElementById(p + 'RoomList');
+    list.innerHTML = '';
+    if (!rooms.length) {
+        list.innerHTML = '<div style="padding:10px 12px;color:#aaa;font-size:0.8rem;">No available rooms for this slot</div>';
+        return;
+    }
+    const byBldg = {};
+    rooms.forEach(r => {
+        const b = r.buildingname || 'Other';
+        if (!byBldg[b]) byBldg[b] = [];
+        byBldg[b].push(r);
+    });
+    const chosen = p === 'mu' ? _muRoomChosen : _adjRoomChosen;
+    Object.entries(byBldg).forEach(([bname, bRooms]) => {
+        const lbl = document.createElement('div');
+        lbl.className = 'room-grp-lbl';
+        lbl.textContent = bname.toUpperCase();
+        list.appendChild(lbl);
+        bRooms.forEach(r => {
+            const isLab = (r.roomtype || '').toLowerCase() === 'laboratory';
+            const typ   = isLab ? 'Lab' : 'Lecture';
+            const item  = document.createElement('div');
+            item.className = 'room-item';
+            item.dataset.rid   = String(r.roomid);
+            item.dataset.label = (r.roomname + ' ' + typ + ' ' + bname).toLowerCase();
+            if (chosen && String(r.roomid) === String(chosen.id)) item.classList.add('sel');
+            const nameSpan  = document.createElement('span');
+            nameSpan.textContent = r.roomname;
+            const badge = document.createElement('span');
+            badge.className = `room-item-badge ${isLab ? 'badge-lab' : 'badge-lec'}`;
+            badge.textContent = typ;
+            item.appendChild(nameSpan);
+            item.appendChild(badge);
+            item.onclick = () => roomSelectItem(p, r.roomid, r.roomname, r.buildingname, typ);
+            list.appendChild(item);
+        });
+    });
+}
+
+async function _loadFormRooms(p, statusId, params) {
+    const status  = document.getElementById(statusId);
+    const chosen  = p === 'mu' ? _muRoomChosen : _adjRoomChosen;
+    const pending = _pendingRoom;
+    if (status) status.textContent = 'checking availability...';
+    try {
+        const res   = await fetch('/api/faculty/available_rooms?' + params.toString());
+        const data  = await res.json();
+        const rooms = data.rooms || [];
+        _buildRoomDropdown(p, rooms);
+        if (status) status.textContent = rooms.length
+            ? `${rooms.length} available room(s)`
+            : 'No rooms available for this slot';
+        const targetId = pending || (chosen ? String(chosen.id) : null);
+        if (targetId) {
+            const found = rooms.find(r => String(r.roomid) === String(targetId));
+            if (found) {
+                const isLab = (found.roomtype || '').toLowerCase() === 'laboratory';
+                roomSelectItem(p, found.roomid, found.roomname, found.buildingname, isLab ? 'Lab' : 'Lecture');
+            } else {
+                // Previously chosen room not available for new time — clear and warn
+                document.getElementById(p + 'Room').value = '';
+                const disp = document.getElementById(p + 'RoomDisplay');
+                disp.textContent = '— Select room —';
+                disp.classList.add('ph');
+                const prevName = chosen ? (chosen.name || 'Selected room') : 'Selected room';
+                if (p === 'mu') _muRoomChosen = null;
+                else            _adjRoomChosen = null;
+                if (typeof showToast === 'function') {
+                    showToast(`${prevName} is not available for this time slot. Please choose a different room.`, 'warning', 5000);
+                }
+            }
+        } else if (rooms.length) {
+            const disp = document.getElementById(p + 'RoomDisplay');
+            if (disp.classList.contains('ph')) disp.textContent = '— Select room —';
+        }
+        _pendingRoom = null;
+    } catch(e) {
+        const list = document.getElementById(p + 'RoomList');
+        if (list) list.innerHTML = '<div style="padding:10px 12px;color:#aaa;font-size:0.8rem;">Error loading rooms</div>';
+        if (status) status.textContent = '';
+        _pendingRoom = null;
+    }
+}
+
+/* Make-up: when DATE changes — update blocked times + rebuild time selects (preserve room) */
+async function muOnDateTimeChange() {
+    const date = document.getElementById('muDate').value;
+    if (date) {
+        try {
+            const r = await fetch(`/api/faculty/blocked_times?date=${date}`);
+            const d = await r.json();
+            _muBlockedSlots = d.success ? (d.blocked || []) : [];
+        } catch(e) { _muBlockedSlots = []; }
+    } else {
+        _muBlockedSlots = [];
+    }
+    // Rebuild time selects while preserving selected values
+    _fillTimeSelect(document.getElementById('muStart'), _muBlockedSlots);
+    _fillTimeSelect(document.getElementById('muEnd'),   _muBlockedSlots);
+    // Don't touch the room — user may have already selected one.
+    // Only reload rooms if all three values are present.
+    const start = document.getElementById('muStart').value;
+    const end   = document.getElementById('muEnd').value;
+    if (date && start && end) {
+        const p = new URLSearchParams({ date, start_time: start, end_time: end });
+        await _loadFormRooms('mu', 'muRoomStatus', p);
+    }
+}
+
+/* Make-up: when START or END time changes — reload available rooms only */
+async function muTimeSelectChanged() {
+    const date  = document.getElementById('muDate').value;
+    const start = document.getElementById('muStart').value;
+    const end   = document.getElementById('muEnd').value;
+    if (!date || !start || !end) return; // wait until all three are set
+    const p = new URLSearchParams({ date, start_time: start, end_time: end });
+    await _loadFormRooms('mu', 'muRoomStatus', p);
+}
+
+/* Adjustment: when DAY changes — update blocked times + rebuild time selects */
+async function adjOnDayTimeChange() {
+    const day = document.getElementById('adjDay').value;
+    if (day) {
+        try {
+            const r = await fetch(`/api/faculty/blocked_times?day=${encodeURIComponent(day)}`);
+            const d = await r.json();
+            _adjBlockedSlots = d.success ? (d.blocked || []) : [];
+        } catch(e) { _adjBlockedSlots = []; }
+    } else {
+        _adjBlockedSlots = [];
+    }
+    _fillTimeSelect(document.getElementById('adjStart'), _adjBlockedSlots);
+    _fillTimeSelect(document.getElementById('adjEnd'),   _adjBlockedSlots);
+    const start = document.getElementById('adjStart').value;
+    const end   = document.getElementById('adjEnd').value;
+    if (day && start && end) {
+        const p = new URLSearchParams({ day, start_time: start, end_time: end });
+        await _loadFormRooms('adj', 'adjRoomStatus', p);
+    }
+}
+
+/* Adjustment: when START or END time changes — reload available rooms only */
+async function adjTimeSelectChanged() {
+    const day   = document.getElementById('adjDay').value;
+    const start = document.getElementById('adjStart').value;
+    const end   = document.getElementById('adjEnd').value;
+    if (!day || !start || !end) return;
+    const p = new URLSearchParams({ day, start_time: start, end_time: end });
+    await _loadFormRooms('adj', 'adjRoomStatus', p);
+}
+
+/* ══════════════════════════════════════════
+   PICKER / OPEN / CLOSE
+══════════════════════════════════════════ */
 function frsOpenRequest() {
+    _pendingRoom = null;
     document.getElementById('reqPickerOverlay').classList.add('open');
+}
+
+/* Called from Available Rooms card click — pre-select room */
+function frsOpenRequestFromRoom(roomId, roomName, buildingName) {
+    _pendingRoom = String(roomId);
+    // Pre-fill date/time from current filter values
+    window._preRoom = { id: roomId, name: roomName, building: buildingName };
+    document.getElementById('reqPickerOverlay').classList.add('open');
+}
+
+function _resetRoomDisplay(p, msg) {
+    document.getElementById(p + 'Room').value = '';
+    document.getElementById(p + 'RoomList').innerHTML = '';
+    const disp = document.getElementById(p + 'RoomDisplay');
+    disp.textContent = msg;
+    disp.classList.add('ph');
+    if (p === 'mu') _muRoomChosen = null;
+    else            _adjRoomChosen = null;
 }
 
 function frsOpenForm(type) {
     document.getElementById('reqPickerOverlay').classList.remove('open');
     if (type === 'makeup') {
         document.getElementById('reqMakeupOverlay').classList.add('open');
+        const pre = window._preRoom;
+        const filterDate  = document.getElementById('frsAvailDate')?.value  || '';
+        const filterStart = document.getElementById('frsAvailStart')?.value || '';
+        const filterEnd   = document.getElementById('frsAvailEnd')?.value   || '';
+        if (!pre) _resetRoomDisplay('mu', '— Select date & time first —');
+        if (filterDate)  document.getElementById('muDate').value  = filterDate;
+        if (filterStart) _setSelectVal('muStart', _toAmPm(filterStart));
+        if (filterEnd)   _setSelectVal('muEnd',   _toAmPm(filterEnd));
+        if (pre) {
+            _muRoomChosen = { id: String(pre.id), name: pre.name, building: pre.building || '' };
+            document.getElementById('muRoom').value = String(pre.id);
+            const disp = document.getElementById('muRoomDisplay');
+            disp.textContent = `ROOM ${pre.name}`;
+            disp.classList.remove('ph');
+            _pendingRoom = String(pre.id);
+        }
+        if (filterDate || filterStart || filterEnd) {
+            muOnDateTimeChange();
+        }
     } else {
         document.getElementById('reqAdjOverlay').classList.add('open');
+        const pre         = window._preRoom;
+        const filterDay   = document.getElementById('frsAvailDay')?.value   || '';
+        const filterStart = document.getElementById('frsAvailStart')?.value || '';
+        const filterEnd   = document.getElementById('frsAvailEnd')?.value   || '';
+        if (!pre) _resetRoomDisplay('adj', '— Select day & time first —');
+        if (filterDay)   document.getElementById('adjDay').value   = filterDay;
+        if (filterStart) _setSelectVal('adjStart', _toAmPm(filterStart));
+        if (filterEnd)   _setSelectVal('adjEnd',   _toAmPm(filterEnd));
+        if (pre) {
+            _adjRoomChosen = { id: String(pre.id), name: pre.name, building: pre.building || '' };
+            document.getElementById('adjRoom').value = String(pre.id);
+            const disp = document.getElementById('adjRoomDisplay');
+            disp.textContent = `ROOM ${pre.name}`;
+            disp.classList.remove('ph');
+            _pendingRoom = String(pre.id);
+        }
+        if (filterDay || filterStart || filterEnd) {
+            adjOnDayTimeChange();
+        }
     }
+    window._preRoom = null;
 }
 
 function frsCloseForm(type) {
-    if (type === 'makeup') document.getElementById('reqMakeupOverlay').classList.remove('open');
-    else                   document.getElementById('reqAdjOverlay').classList.remove('open');
+    if (type === 'makeup') {
+        document.getElementById('reqMakeupOverlay').classList.remove('open');
+        document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+    } else {
+        document.getElementById('reqAdjOverlay').classList.remove('open');
+        document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+    }
 }
 
+/* Close room dropdown when clicking outside */
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.room-sel-wrap')) {
+        document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+    }
+});
+
+/* ══════════════════════════════════════════
+   SUBMIT
+══════════════════════════════════════════ */
 async function reqSubmit(type) {
     const isMakeup = type === 'makeup';
     const p = isMakeup ? 'mu' : 'adj';
 
     const payload = {
         request_type: type,
-        room_id:     document.getElementById(p + 'Room').value,
-        start_time:  document.getElementById(p + 'Start').value,
-        end_time:    document.getElementById(p + 'End').value,
+        room_id:      document.getElementById(p + 'Room').value,
+        start_time:   isMakeup ? document.getElementById('muStart').value : document.getElementById('adjStart').value,
+        end_time:     isMakeup ? document.getElementById('muEnd').value   : document.getElementById('adjEnd').value,
         faculty_name: document.getElementById(p + 'Faculty').value,
-        program:     document.getElementById(p + 'Program').value,
-        year_level:  document.getElementById(p + 'Yl').value,
-        section_id:  document.getElementById(p + 'Section').value,
+        program:      document.getElementById(p + 'Program').value,
+        year_level:   document.getElementById(p + 'Yl').value,
+        section_id:   document.getElementById(p + 'Section').value,
         subject_code: document.getElementById(p + 'Subject').value,
-        reason:      document.getElementById(p + 'Reason').value,
+        reason:       document.getElementById(p + 'Reason').value,
     };
 
     if (isMakeup) {
@@ -1076,38 +1626,67 @@ async function reqSubmit(type) {
         payload.end_date   = document.getElementById('adjEndDate').value;
     }
 
+    // Basic validation
+    if (!payload.room_id)      return showToast('Please select a room.', 'warning');
+    if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
+    if (!payload.section_id)   return showToast('Please select a section.', 'warning');
+    if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
+
+    const submitBtn = document.querySelector(`#req${isMakeup ? 'Makeup' : 'Adj'}Overlay .btn-req-submit`);
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'SUBMITTING...'; }
+
     try {
         const res  = await fetch('/api/faculty/submit_request', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (data.success) {
             frsCloseForm(type);
-            alert('Request submitted successfully!');
+            showToast('Request submitted successfully! The academic head will review your request.', 'success', 5000);
         } else {
-            alert('Error: ' + (data.error || 'Could not submit request.'));
+            showToast(data.error || 'Could not submit request.', 'error');
         }
     } catch(e) {
-        alert('Network error. Please try again.');
+        showToast('Network error. Please try again.', 'error');
+    } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'SUBMIT REQUEST'; }
     }
 }
 
-/* Close overlay on background click */
+/* ══════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════ */
+/* Convert "HH:MM" (24h) → "HH:MM AM/PM" (12h) */
+function _toAmPm(t24) {
+    if (!t24 || !t24.includes(':')) return '';
+    const [hStr, mStr] = t24.split(':');
+    let h = parseInt(hStr, 10), m = parseInt(mStr, 10);
+    const ap = h >= 12 ? 'PM' : 'AM';
+    if (h === 0) h = 12; else if (h > 12) h -= 12;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`;
+}
+
+/* Set a <select> value by option text or value */
+function _setSelectVal(id, val) {
+    const sel = document.getElementById(id);
+    if (!sel || !val) return;
+    for (const o of sel.options) {
+        if (o.value === val || o.textContent.trim() === val) { sel.value = o.value; return; }
+    }
+}
+
+/* Close overlays on backdrop click */
 ['reqPickerOverlay','reqMakeupOverlay','reqAdjOverlay'].forEach(id => {
     document.getElementById(id).addEventListener('click', function(e) {
-        if (e.target === this) {
-            this.classList.remove('open');
-        }
+        if (e.target === this) this.classList.remove('open');
     });
 });
 
-/* Init selects once DOM is ready */
+/* Init on DOMContentLoaded */
 document.addEventListener('DOMContentLoaded', () => {
     _populateTimeSelects();
-    _populateRoomSelects();
-    _populateProgramSelects();
+    _reqInitFacultyData();
 });
 </script>
 
@@ -1119,4 +1698,39 @@ document.addEventListener('DOMContentLoaded', () => {
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}"></script>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<script>
+/* ══ Toast Notification System ══ */
+const _TOAST_ICONS = {
+    success: 'fa-circle-check',
+    error:   'fa-circle-xmark',
+    warning: 'fa-triangle-exclamation',
+    info:    'fa-circle-info'
+};
+const _TOAST_TITLES = { success:'Success', error:'Error', warning:'Notice', info:'Info' };
+
+function showToast(msg, type='info', duration=4000) {
+    const container = document.getElementById('toast-container');
+    const item = document.createElement('div');
+    item.className = `toast-item toast-${type}`;
+    item.innerHTML = `
+        <i class="fas ${_TOAST_ICONS[type] || 'fa-circle-info'} toast-icon"></i>
+        <div class="toast-body">
+            <div class="toast-title">${_TOAST_TITLES[type] || 'Info'}</div>
+            <div class="toast-msg">${msg}</div>
+        </div>
+        <button class="toast-close" onclick="this.closest('.toast-item').remove()">&#x2715;</button>
+    `;
+    container.appendChild(item);
+    if (duration > 0) {
+        setTimeout(() => {
+            item.classList.add('toast-fade-out');
+            setTimeout(() => item.remove(), 320);
+        }, duration);
+    }
+}
+</script>
 {% endblock %}

@@ -55,6 +55,13 @@
         box-shadow: 0 0 0 4px rgba(240,192,48,0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
         transform: scale(1.04);
     }
+    /* ── Subject-focus pill highlight — white glow when subject is selected from curriculum guide ── */
+    .schedule-pill.pill-subject-focus {
+        outline: 2.5px solid rgba(255,255,255,0.95) !important; outline-offset: 1px; z-index: 12 !important;
+        box-shadow: 0 0 0 4px rgba(255,255,255,0.28), 2px 2px 8px rgba(0,0,0,0.3) !important;
+        filter: brightness(1.15);
+        transform: scale(1.03);
+    }
 
     /* ── Constraint notes ── */
     .constraint-note { font-size: 0.62rem; font-weight: 700; margin-top: 4px; padding: 4px 8px; border-radius: 3px; display: none; }
@@ -1905,9 +1912,69 @@ window.handlePillClick = async function(sessJson) {
     const sess = JSON.parse(decodeURIComponent(sessJson));
     const code = sess.subjectcode || sess.subject_code;
 
+    // ── Sync left panel: program, year level, section dropdowns ──────────
+    const progStr  = (sess.programcode || sess.course || sess.program || '').toString().trim();
+    const ylVal    = (sess.year_level  || sess.yearlevel || sess.yearLevel || '').toString().trim();
+    const ylLabels = { '1':'1ST YEAR', '2':'2ND YEAR', '3':'3RD YEAR', '4':'4TH YEAR', '5':'5TH YEAR' };
+    const prevProg = document.getElementById('sel_prog').value;
+    const prevYl   = document.getElementById('sel_year').value;
+
+    if (progStr) {
+        document.getElementById('sel_prog').value = progStr;
+        const bcProg = document.getElementById('bc-prog-text');
+        if (bcProg) bcProg.textContent = progStr;
+        const progTrigger = document.getElementById('prog_trigger_text');
+        if (progTrigger) progTrigger.innerText = progStr;
+    }
+    if (ylVal) {
+        document.getElementById('sel_year').value = ylVal;
+        const ylLabel = ylLabels[ylVal] || (ylVal + 'TH YEAR');
+        const bcYear = document.getElementById('bc-year-text');
+        if (bcYear) bcYear.textContent = ylLabel;
+        const yearTrigger = document.getElementById('year_trigger_text');
+        if (yearTrigger) yearTrigger.textContent = ylLabel;
+    }
+
+    // If program or year level changed, rebuild the curriculum guide subject list
+    const progChanged = !!progStr && progStr !== prevProg;
+    const ylChanged   = !!ylVal   && ylVal   !== prevYl;
+    if (progChanged || ylChanged) {
+        // Clear currentEditSession so triggerCascade re-fetches subjects for the new prog/yl
+        // (setting it would block the fetch, leaving stale subjects from the old program)
+        window.currentEditSession = null;
+        // Temporarily hold _currentSubjectCode to block _localAutoSelectFirstSubject from firing
+        _currentSubjectCode = code;
+        await triggerCascade(true); // fetches correct subjects, rebuilds left panel
+        // After cascade, ensure sel_subj points to the clicked subject
+        // (cascade re-populated sel_subj; add option only if still missing)
+        const subjSel = document.getElementById('sel_subj');
+        if (!Array.from(subjSel.options).some(o => o.value === code)) {
+            const tmp = document.createElement('option');
+            tmp.value = code; tmp.textContent = sess.subjectname || code;
+            subjSel.appendChild(tmp);
+        }
+        subjSel.value = code;
+        // Reset so _onSubjectClick runs its full DSS + slice load below
+        _currentSubjectCode = null;
+        // Reload section options for the new program + year level
+        if (typeof _loadSectionOptions === 'function') _loadSectionOptions();
+        const bcSect = document.getElementById('bc-sect-text');
+        if (bcSect) bcSect.textContent = '-Select Section-';
+        document.getElementById('sel_section').value = '';
+    }
+
     if (_currentSubjectCode !== code) {
         const meta = _subjectMeta[code] || {};
         await _onSubjectClick(code, sess.subjectname || code, meta.units || 0, meta.total_hours || 0);
+    }
+
+    // Scroll left panel to the active subject card and ensure it's highlighted
+    const activeCard = document.querySelector(`.subj-item[data-code="${CSS.escape(code)}"]`);
+    if (activeCard) {
+        document.querySelectorAll('.subj-item').forEach(el =>
+            el.classList.toggle('subj-item-active', el.dataset.code === code)
+        );
+        activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     const timeAllotHdr = document.querySelector('.time-allot-hdr');
@@ -1941,6 +2008,13 @@ window.confirmAndPlace = async function() {
 
     if (!ay || !sem || !prog || !yl) {
         await showValidationModal('Incomplete Form', 'Please set the Academic Year, Semester, Program, and Year Level.');
+        return;
+    }
+
+    const sectionId   = document.getElementById('sel_section').value;
+    const sectionName = document.getElementById('bc-sect-text')?.textContent?.trim() || '';
+    if (!sectionId) {
+        await showValidationModal('Section Required', 'Please select a Section from the left panel before creating a schedule.');
         return;
     }
 
@@ -2113,9 +2187,10 @@ window.confirmAndPlace = async function() {
         }
     }
 
-    // Section conflict — DB sessions
+    // Section conflict — DB sessions (filtered to the selected section so two different sections don't cross-conflict)
     try {
-        const sResp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+        const _sectId = document.getElementById('sel_section')?.value || '';
+        const sResp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(_sectId)}`);
         const sSessions = await sResp.json();
         for (const s of sSessions) {
             if (s.daydesc !== dayVal) continue;
@@ -2175,6 +2250,8 @@ window.confirmAndPlace = async function() {
         time:              `${startVal} - ${endVal}`,
         course:            prog,
         year_level:        yl,
+        section_id:        sectionId,
+        section_name:      sectionName,
         units:             typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 3,
         total_subject_hrs: typeof _subjInfo !== 'undefined' && _subjInfo ? parseFloat(_subjInfo.total_hours || 0) : 0,
         fromExisting:      (window.currentEditSession && window.currentEditSession.fromExisting) || false,
@@ -2345,13 +2422,14 @@ async function _updateSubjectList() {
 
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
 async function _refreshSubjectScheduledHours() {
-    const ay    = document.getElementById('sel_ay').value;
-    const sem   = document.getElementById('sel_sem').value;
-    const currId = document.getElementById('curr_id_hidden')?.value;
-    const yl    = document.getElementById('sel_year').value;
+    const ay       = document.getElementById('sel_ay').value;
+    const sem      = document.getElementById('sel_sem').value;
+    const currId   = document.getElementById('curr_id_hidden')?.value;
+    const yl       = document.getElementById('sel_year').value;
+    const sectId   = document.getElementById('sel_section')?.value || '';
     if (!ay || !sem || !currId || !yl) return;
     try {
-        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}`);
+        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}&section_id=${encodeURIComponent(sectId)}`);
         const data = await resp.json();
         if (!data.subjects) return;
         const subjSel = document.getElementById('sel_subj');
@@ -2691,6 +2769,12 @@ async function _onSubjectClick(code, name, units, hours) {
         el.classList.toggle('subj-item-active', el.dataset.code === code);
     });
 
+    // Highlight calendar pills that belong to the selected subject
+    document.querySelectorAll('.schedule-pill').forEach(p => {
+        const key = p.dataset.pillKey || '';
+        p.classList.toggle('pill-subject-focus', key.startsWith(code + '_'));
+    });
+
     _updateWorkflowBar();
 
     // If this subject already has fromExisting entries loaded into pendingManualSchedule,
@@ -2716,7 +2800,14 @@ async function _onSubjectClick(code, name, units, hours) {
     // in the DOM), those slices stay visible — only the + button and save buttons are locked.
     if (IS_LOCAL) {
         const _hasLoadedSlices = document.querySelectorAll('.ts-row').length > 0;
-        if (!_hasExistingSchedule && !_hasLoadedSlices) {
+        // Additional check: if pendingManualSchedule has fromExisting entries for this subject,
+        // we KNOW a published or LA schedule exists even if _hasExistingSchedule was reset.
+        const _subjHasFromExisting = pendingManualSchedule.some(
+            c => c.subject_code === code && c.fromExisting
+        );
+        const _effectiveHasSchedule = _hasExistingSchedule || _subjHasFromExisting;
+
+        if (!_effectiveHasSchedule && !_hasLoadedSlices) {
             // Truly empty: no sessions loaded and no existing slices — full block.
             _localSetBlockPanel(true);
             // Still refresh calendar so Official pills (from other contexts) render correctly
@@ -2728,13 +2819,12 @@ async function _onSubjectClick(code, name, units, hours) {
             }
             _updateAssignFacultyBtn();
             return;
-        } else if (!_hasExistingSchedule && _hasLoadedSlices) {
-            // Existing Local Arrangement slices are still in the DOM (subject was previously
-            // loaded), but the Official schedule is no longer available. Keep slices visible,
-            // block only new additions and saving.
+        } else if (!_effectiveHasSchedule && _hasLoadedSlices) {
+            // Existing slices in the DOM, but no Official schedule confirmed —
+            // keep slices visible, block only new additions and saving.
             _localSetBlockPanel(true);
         } else {
-            // Sessions loaded normally — full edit mode
+            // Sessions confirmed (existing or already loaded) — full edit mode
             _localSetBlockPanel(false);
         }
     }
@@ -3298,9 +3388,9 @@ async function _updateFacultyUnitDisplay(empNum) {
             const remEl  = document.getElementById('fac-metric-remaining');
             const remBox = document.getElementById('fac-metric-remaining-box');
             const fillEl = document.getElementById('fac-stats-prog-fill');
-            if (maxEl)  maxEl.textContent  = data.total_units       + 'u';
-            if (asgEl)  asgEl.textContent  = _effectiveAssigned     + 'u';
-            if (remEl)  remEl.textContent  = _effectiveRemaining     + 'u';
+            if (maxEl)  maxEl.textContent  = data.total_units;
+            if (asgEl)  asgEl.textContent  = _effectiveAssigned;
+            if (remEl)  remEl.textContent  = _effectiveRemaining;
             if (remBox) remBox.classList.toggle('ok', _effectiveRemaining > 3);
             const pct = data.total_units > 0 ? Math.round((_effectiveAssigned / data.total_units) * 100) : 0;
             if (fillEl) fillEl.style.width = Math.min(100, pct) + '%';
@@ -4318,6 +4408,23 @@ function selectBcSect(id, name) {
     if (textEl) textEl.textContent = name;
     document.getElementById('sel_section').value = id;
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+
+    // Refresh subject statuses (badges/hours) and visible panels for the selected section
+    _updateSubjectList().catch(() => {});
+    const dlPanel = document.getElementById('draftListPanel');
+    if (dlPanel && dlPanel.style.display !== 'none') _loadDraftListPanel();
+    const vhPanel = document.getElementById('versionHistoryPanel');
+    if (vhPanel && vhPanel.style.display !== 'none') _loadVersionHistoryPanel();
+
+    // Refresh the timetable so it shows sessions for the newly selected section
+    const _ay  = document.getElementById('sel_ay')?.value  || '';
+    const _sem = document.getElementById('sel_sem')?.value || '';
+    if (currentMode === 'program') {
+        renderProgramTimetable();
+    } else {
+        const _room = document.getElementById('sel_room')?.value || '';
+        renderGrid(_room, _ay, _sem);
+    }
 }
 
 async function _loadSectionOptions() {
@@ -4431,14 +4538,21 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
         return;
     }
 
+    const _saveSectionId = document.getElementById('sel_section').value;
+    if (!_saveSectionId) {
+        await showValidationModal('Section Required', 'Please select a Section from the left panel before saving.');
+        return;
+    }
+
     const btn = document.getElementById('btnSaveDraftRight');
     if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating...'; btn.disabled = true; }
 
     const context = {
-        program:   document.getElementById('sel_prog').value,
-        yearLevel: parseInt(document.getElementById('sel_year').value) || 0,
-        term:      sem,
-        acadYear:  ay
+        program:    document.getElementById('sel_prog').value,
+        yearLevel:  parseInt(document.getElementById('sel_year').value) || 0,
+        term:       sem,
+        acadYear:   ay,
+        section_id: _saveSectionId
     };
 
     // ── Pre-save validation gate — block immediately if any constraint is violated ──
@@ -4497,7 +4611,8 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const currentSubj = document.getElementById('sel_subj').value;
             if (currentSubj) {
                 try {
-                    const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+                    const _postSaveSectId = document.getElementById('sel_section')?.value || '';
+                    const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(_postSaveSectId)}`);
                     const exData = await exResp.json();
                     if (exData.success && exData.sessions && exData.sessions.length) {
                         await _loadExistingSessionsIntoSlices(exData.sessions);
@@ -4520,6 +4635,11 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             else renderGrid(gridRoom, ay, sem);
             await _initFlFacultyMenu();
             _refreshFlIfVisible();
+            // Refresh draft and version history panels if they are currently visible
+            const _dlPanelPost = document.getElementById('draftListPanel');
+            if (_dlPanelPost && _dlPanelPost.style.display !== 'none') _loadDraftListPanel();
+            const _vhPanelPost = document.getElementById('versionHistoryPanel');
+            if (_vhPanelPost && _vhPanelPost.style.display !== 'none') _loadVersionHistoryPanel();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
             return true;
         } else {
@@ -4983,6 +5103,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (initYl) {
         const labels = {'1':'1st Year','2':'2nd Year','3':'3rd Year','4':'4th Year','5':'5th Year'};
         selectYearLevel(initYl, labels[initYl] || initYl + 'th Year');
+    }
+
+    // Load section options if program + year level are both known (needed for Program View)
+    if (initProg && initYl && typeof _loadSectionOptions === 'function') {
+        _loadSectionOptions();
     }
 
     // Fire ONE cascade after ALL values are set so the curriculum guide loads immediately
@@ -6048,7 +6173,8 @@ async function _loadDraftListPanel() {
         const res  = await fetch('/api/schedule/drafts');
         const data = await res.json();
         if (!res.ok || !Array.isArray(data)) {
-            cards.innerHTML = '<div class="dlp-error"><i class="fas fa-exclamation-circle"></i> Failed to load drafts.</div>';
+            cards.innerHTML = '<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>No Drafts available.</div></div>';
+            if (subtitle) subtitle.textContent = 'No drafts';
             return;
         }
 
@@ -6071,7 +6197,7 @@ async function _loadDraftListPanel() {
         const sorted = Object.values(groups).sort((a,b) => (b.datecreated||'').localeCompare(a.datecreated||''));
 
         if (!sorted.length) {
-            cards.innerHTML = `<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>No drafts saved yet.</div></div>`;
+            cards.innerHTML = `<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>No Drafts available.</div></div>`;
             if (subtitle) subtitle.textContent = 'No drafts';
             return;
         }
@@ -6331,8 +6457,8 @@ async function _loadVersionHistoryPanel() {
         const res  = await fetch('/api/schedule/versions');
         const data = await res.json();
         if (!res.ok || !Array.isArray(data)) {
-            cards.innerHTML = '<div class="vhp-error"><i class="fas fa-exclamation-circle"></i> Failed to load versions.</div>';
-            if (subtitle) subtitle.textContent = 'Error';
+            cards.innerHTML = '<div class="vhp-empty"><i class="fas fa-history"></i><div>No version history available.</div></div>';
+            if (subtitle) subtitle.textContent = 'No revisions';
             return;
         }
 
@@ -6372,10 +6498,16 @@ async function _loadVersionHistoryPanel() {
             const ayRaw      = String(v.acadyear||'');
             const ayDisp     = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
 
+            const isImportedVer = (v.source === 'import');
+            const importBadge   = isImportedVer
+                ? '<span class="vhp-snap-badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #b6ccfc;"><i class="fas fa-file-import"></i> Imported</span>'
+                : '';
+
             let badgeHtml;
             if (isCurrent && isPub)  badgeHtml = '<span class="vhp-snap-badge badge-cur-pub"><i class="fas fa-check-circle"></i> Current</span>';
             else if (isCurrent)      badgeHtml = '<span class="vhp-snap-badge badge-cur-draft"><i class="fas fa-file-alt"></i> Current</span>';
             else                     badgeHtml = '<span class="vhp-snap-badge badge-archived"><i class="fas fa-box-archive"></i> Archived</span>';
+            badgeHtml = importBadge + badgeHtml;
 
             return `
             <div class="vhp-tl-entry">

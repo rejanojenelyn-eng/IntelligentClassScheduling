@@ -105,16 +105,16 @@ async function updateSections() {
     const prog = document.getElementById('view_prog').value;
     const ay   = document.getElementById('view_ay').value;
     const sem  = document.getElementById('view_sem').value;
+    const yl   = document.getElementById('view_yl')?.value || '';
     const sel  = document.getElementById('view_section');
     if (!sel) return;
-    sel.innerHTML = '<option value="">ALL SECTIONS</option>';
+    sel.innerHTML = '';
     if (!ay || !sem) return;
     try {
         let url;
         if (prog) {
-            // When offering is known, omit yearLevel so all sections of the offering are visible;
-            // the API already ordered them by yearlevel, sectionname for readability
             url = `/api/sections-by-program?program=${encodeURIComponent(prog)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
+            if (yl) url += `&yearLevel=${encodeURIComponent(yl)}`;
         } else {
             url = `/api/sections-by-program?ay=${encodeURIComponent(ay)}&semester=${sem}`;
         }

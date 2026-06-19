@@ -206,12 +206,61 @@ body, * {
 .status-badge.green { color: #28a745; }
 .status-badge.maroon { color: #800000; }
 
-.empty-placeholder {
+/* Requests Summary Card */
+.req-summary-card {
     background-color: #ffffff;
     border: 1px solid #e0e0e0;
     border-radius: 8px;
-    height: 160px;
+    padding: 20px 22px;
     margin-top: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+}
+.req-summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+}
+.req-summary-viewall {
+    font-size: 11px;
+    font-weight: 700;
+    color: #800000;
+    text-decoration: none;
+    letter-spacing: 0.3px;
+}
+.req-summary-viewall:hover { text-decoration: underline; }
+.req-summary-stats {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+}
+.req-stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+}
+.req-stat-num {
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+}
+.req-stat-lbl {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #888;
+}
+.req-stat-pending .req-stat-num  { color: #6c757d; }
+.req-stat-approved .req-stat-num { color: #28a745; }
+.req-stat-rejected .req-stat-num { color: #dc3545; }
+.req-stat-divider {
+    width: 1px;
+    height: 45px;
+    background: #e9ecef;
+    flex-shrink: 0;
 }
 
 /* Inbox Section */
@@ -219,40 +268,48 @@ body, * {
     margin-top: 35px;
 }
 .inbox-card {
-    background-color: #800000;
     color: #ffffff;
-    padding: 22px 25px;
+    padding: 16px 20px;
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    box-shadow: 0 4px 10px rgba(128, 0, 0, 0.2);
+    margin-bottom: 10px;
 }
+.inbox-card:last-child { margin-bottom: 0; }
+
+.inbox-approved { background-color: #800000; box-shadow: 0 4px 10px rgba(128,0,0,0.18); }
+.inbox-rejected { background-color: #c0392b; box-shadow: 0 4px 10px rgba(192,57,43,0.18); }
+.inbox-pending  { background-color: #5a6268; box-shadow: 0 4px 10px rgba(90,98,104,0.15); }
+.inbox-empty    { background-color: #f1f3f5; color: #868e96; box-shadow: none; border: 1px solid #e9ecef; }
+.inbox-empty .inbox-icon { background-color: #dee2e6; color: #868e96; }
+.inbox-empty .inbox-link { display: none; }
+
 .inbox-left {
     display: flex;
     align-items: center;
-    gap: 18px;
+    gap: 15px;
 }
 .inbox-icon {
-    background-color: #ffffff;
-    color: #800000;
-    width: 42px;
-    height: 42px;
+    background-color: rgba(255,255,255,0.25);
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: 16px;
+    flex-shrink: 0;
 }
 .inbox-text h4 {
-    margin: 0 0 4px 0;
-    font-size: 14px;
+    margin: 0 0 3px 0;
+    font-size: 13px;
     font-weight: 700;
 }
 .inbox-text p {
     margin: 0;
     font-size: 11px;
-    opacity: 0.85;
+    opacity: 0.80;
 }
 .inbox-link {
     color: #ffffff;
@@ -261,10 +318,7 @@ body, * {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
-.inbox-link:hover {
-    text-decoration: underline;
-}
+.inbox-link:hover { text-decoration: underline; }

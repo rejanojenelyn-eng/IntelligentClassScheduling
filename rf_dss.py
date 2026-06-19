@@ -92,9 +92,11 @@ def _build_name_to_empnum(cur):
 
     cur.execute("""
         SELECT DISTINCT UPPER(TRIM("Instructor")) AS inst_key,
-                        TRIM("Instructor")        AS inst_raw
+                        TRIM("Instructor")        AS inst_raw,
+                        MAX(employeenumber)        AS employeenumber
         FROM historical_data
         WHERE "Instructor" IS NOT NULL AND TRIM("Instructor") != ''
+        GROUP BY UPPER(TRIM("Instructor")), TRIM("Instructor")
     """)
     rows = cur.fetchall() or []
 
@@ -103,6 +105,10 @@ def _build_name_to_empnum(cur):
 
     for row in rows:
         key        = row['inst_key']
+        # If the stored employee number is already in historical_data, use it directly.
+        if row.get('employeenumber'):
+            name_to_empnum[key] = str(row['employeenumber'])
+            continue
         last, fi   = _parse_inst_name(row['inst_raw'])
 
         if not last:
@@ -313,56 +319,48 @@ def train_rf_dss():
                     'distinct': int(r['distinct_subjects']),
                 }
 
-            # 5b-5: Recent counts from schedule (uses the now-updated max_ay_int)
-            if max_ay_int > 0:
-                cur.execute("""
-                    SELECT
-                        REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
-                        CAST(sch.employeenumber AS TEXT)                                    AS empnum,
-                        COUNT(*)                                                            AS recent_count
-                    FROM schedule sch
-                    JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
-                    JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
-                    JOIN semester sm          ON sch.semesterid = sm.semesterid
-                    WHERE sch.employeenumber IS NOT NULL
-                      AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
-                      AND sv.status IN ('Published', 'Archive')
-                      AND sm.academicyearid IS NOT NULL AND TRIM(sm.academicyearid) != ''
-                      AND CAST(REGEXP_REPLACE(sm.academicyearid, '[^0-9]', '', 'g') AS INTEGER) >= %s
-                    GROUP BY
-                        REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g'),
-                        CAST(sch.employeenumber AS TEXT)
-                """, (max_ay_int - 101,))
-                for r in (cur.fetchall() or []):
-                    sched_recent[(r['sc'], r['empnum'])] = int(r['recent_count'])
+            # 5b-5: Counts from schedule across ALL available AYs (no recency cutoff)
+            cur.execute("""
+                SELECT
+                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
+                    CAST(sch.employeenumber AS TEXT)                                    AS empnum,
+                    COUNT(*)                                                            AS recent_count
+                FROM schedule sch
+                JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
+                WHERE sch.employeenumber IS NOT NULL
+                  AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
+                  AND sv.status IN ('Published', 'Archive')
+                GROUP BY
+                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g'),
+                    CAST(sch.employeenumber AS TEXT)
+            """)
+            for r in (cur.fetchall() or []):
+                sched_recent[(r['sc'], r['empnum'])] = int(r['recent_count'])
         except Exception:
             pass
 
-        # ── Step 6: Recent counts per (sc, inst-name) — last 2 AYs
-        # AY numeric step = 101 (AY2425=2425, AY2324=2324, diff=101)
+        # ── Step 6: Counts per (sc, inst-name) across ALL years in historical data
         raw_recent = {}
-        if max_ay_int > 0:
-            try:
-                cur.execute("""
-                    SELECT
-                        REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
-                        UPPER(TRIM("Instructor"))                                           AS inst,
-                        COUNT(*)                                                            AS recent_count
-                    FROM historical_data
-                    WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-                      AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
-                      AND academicyearid IS NOT NULL AND TRIM(academicyearid) != ''
-                      AND CAST(REGEXP_REPLACE(academicyearid, '[^0-9]', '', 'g') AS INTEGER) >= %s
-                    GROUP BY
-                        REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g'),
-                        UPPER(TRIM("Instructor"))
-                """, (max_ay_int - 101,))
-                raw_recent = {
-                    (r['sc'], r['inst']): int(r['recent_count'])
-                    for r in (cur.fetchall() or [])
-                }
-            except Exception:
-                pass
+        try:
+            cur.execute("""
+                SELECT
+                    REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
+                    UPPER(TRIM("Instructor"))                                           AS inst,
+                    COUNT(*)                                                            AS recent_count
+                FROM historical_data
+                WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
+                  AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
+                GROUP BY
+                    REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g'),
+                    UPPER(TRIM("Instructor"))
+            """)
+            raw_recent = {
+                (r['sc'], r['inst']): int(r['recent_count'])
+                for r in (cur.fetchall() or [])
+            }
+        except Exception:
+            pass
 
         # ── Step 7: Merge raw name-based data → empnum-based buckets ──────────
         #

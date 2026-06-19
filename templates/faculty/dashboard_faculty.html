@@ -72,19 +72,58 @@
             <div class="inbox-section">
                 <div class="section-header">
                     <div class="section-title">INBOX</div>
+                    {% if inbox_items %}
+                    <a href="{{ url_for('faculty_requests') }}" style="font-size:11px;font-weight:700;color:#800000;text-decoration:none;">VIEW ALL &rarr;</a>
+                    {% endif %}
                 </div>
-                <div class="inbox-card">
+                {% if inbox_items %}
+                    {% for item in inbox_items %}
+                    {% if item.status == 'Approved' %}
+                    <div class="inbox-card inbox-approved">
+                        <div class="inbox-left">
+                            <div class="inbox-icon"><i class="fa-solid fa-check"></i></div>
+                            <div class="inbox-text">
+                                <h4>{{ item.subjectcode or 'Request' }} — {{ 'Make-up class' if item.req_type == 'makeup' else 'Schedule adjustment' }} approved</h4>
+                                <p>&bull; {{ item.time_ago }}</p>
+                            </div>
+                        </div>
+                        <a href="{{ url_for('faculty_requests') }}" class="inbox-link">VIEW &rarr;</a>
+                    </div>
+                    {% elif item.status == 'Rejected' %}
+                    <div class="inbox-card inbox-rejected">
+                        <div class="inbox-left">
+                            <div class="inbox-icon"><i class="fa-solid fa-xmark"></i></div>
+                            <div class="inbox-text">
+                                <h4>{{ item.subjectcode or 'Request' }} — {{ 'Make-up class' if item.req_type == 'makeup' else 'Schedule adjustment' }} rejected</h4>
+                                <p>&bull; {{ item.time_ago }}</p>
+                            </div>
+                        </div>
+                        <a href="{{ url_for('faculty_requests') }}" class="inbox-link">VIEW &rarr;</a>
+                    </div>
+                    {% else %}
+                    <div class="inbox-card inbox-pending">
+                        <div class="inbox-left">
+                            <div class="inbox-icon"><i class="fa-regular fa-clock"></i></div>
+                            <div class="inbox-text">
+                                <h4>{{ item.subjectcode or 'Request' }} — {{ 'Make-up class' if item.req_type == 'makeup' else 'Schedule adjustment' }} pending review</h4>
+                                <p>&bull; {{ item.time_ago }}</p>
+                            </div>
+                        </div>
+                        <a href="{{ url_for('faculty_requests') }}" class="inbox-link">VIEW &rarr;</a>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                {% else %}
+                <div class="inbox-card inbox-empty">
                     <div class="inbox-left">
-                        <div class="inbox-icon"><i class="fa-solid fa-check"></i></div>
+                        <div class="inbox-icon"><i class="fa-regular fa-bell"></i></div>
                         <div class="inbox-text">
-                            <h4>Your schedule has been approved</h4>
-                            <p>&bull; 2h ago</p>
+                            <h4>No recent activity</h4>
+                            <p>Submit a request to get started.</p>
                         </div>
                     </div>
-                    <a href="{{ url_for('faculty_requests') }}" class="inbox-link">
-                        VIEW DETAILS &rarr;
-                    </a>
                 </div>
+                {% endif %}
             </div>
         </div>
 
@@ -114,8 +153,29 @@
                 </div>
             </div>
             
-            <!-- Empty Placeholder Card -->
-            <div class="empty-placeholder"></div>
+            <!-- Requests Summary Card -->
+            <div class="req-summary-card">
+                <div class="req-summary-header">
+                    <div class="section-title">MY REQUESTS</div>
+                    <a href="{{ url_for('faculty_requests') }}" class="req-summary-viewall">VIEW ALL &rarr;</a>
+                </div>
+                <div class="req-summary-stats">
+                    <div class="req-stat-item req-stat-pending">
+                        <div class="req-stat-num">{{ req_summary.pending }}</div>
+                        <div class="req-stat-lbl">Pending</div>
+                    </div>
+                    <div class="req-stat-divider"></div>
+                    <div class="req-stat-item req-stat-approved">
+                        <div class="req-stat-num">{{ req_summary.approved }}</div>
+                        <div class="req-stat-lbl">Approved</div>
+                    </div>
+                    <div class="req-stat-divider"></div>
+                    <div class="req-stat-item req-stat-rejected">
+                        <div class="req-stat-num">{{ req_summary.rejected }}</div>
+                        <div class="req-stat-lbl">Rejected</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
     </div>
