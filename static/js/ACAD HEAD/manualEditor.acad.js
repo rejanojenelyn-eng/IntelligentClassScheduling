@@ -1732,11 +1732,15 @@ async function confirmAndPlace() {
         const isTimeChanged = dayVal !== oldDay || startVal !== oldStart || endVal !== oldEnd;
 
         if (!isRoomChanged && !isFacChanged && !isTimeChanged) {
-            await showNochangeModal();
+            // In batch mode (confirmAllSlots), skip the no-change modal so unchanged
+            // slices are silently skipped rather than blocking the whole batch.
+            if (!window._batchSaveMode) await showNochangeModal();
             return;
         }
 
-        if (!confirm("Are you sure you want to apply these changes?")) return;
+        // In batch mode the outer confirmAllSlots already handled confirmation;
+        // don't show a per-slice confirm() that interrupts the loop.
+        if (!window._batchSaveMode && !confirm("Are you sure you want to apply these changes?")) return;
 
         if (window.currentEditSession.isLocal) {
             pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== window.currentEditSession.temp_id);
@@ -2051,6 +2055,38 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
 
     const selectedDrafts = selectedCandidates.map(c => c._raw);
 
+    // ── Lab room validation (mirrors the check in _triggerSaveDraft) ──
+    // Approval must enforce the same lab-room requirement as Save Draft.
+    const _labEnabled = typeof LAB_CONSTRAINT_ENABLED !== 'undefined' ? LAB_CONSTRAINT_ENABLED : false;
+    if (_labEnabled && typeof _subjectMeta !== 'undefined' && typeof allRooms !== 'undefined') {
+        const _approveSubjCodes = [...new Set(selectedDrafts.map(c => c.subject_code || c.subjectcode).filter(Boolean))];
+        for (const _acode of _approveSubjCodes) {
+            const _ameta = _subjectMeta[_acode];
+            if (!_ameta || !(_ameta.labhours > 0)) continue;
+            const _required = _ameta.labhours;
+            let _coveredHrs = 0;
+            for (const c of selectedDrafts) {
+                if ((c.subject_code || c.subjectcode) !== _acode) continue;
+                const _cRoom = allRooms.find(r => String(r.id) === String(c.room_id));
+                if (_cRoom && (_cRoom.type || '').toLowerCase() === 'laboratory') {
+                    const _si = typeof timeSlots !== 'undefined' ? timeSlots.indexOf(c.start_time) : -1;
+                    const _ei = typeof timeSlots !== 'undefined' ? timeSlots.indexOf(c.end_time)   : -1;
+                    if (_si >= 0 && _ei > _si) _coveredHrs += (_ei - _si) * 0.5;
+                }
+            }
+            if (_coveredHrs < _required - 0.01) {
+                const _aName = _ameta.name || _acode;
+                const _still = +(_required - _coveredHrs).toFixed(1);
+                await showValidationModal(
+                    'Laboratory Room Required',
+                    `"${_aName}" requires ${_required} laboratory hour${_required !== 1 ? 's' : ''}. ` +
+                    `${_still}h of lab hours must be in a designated Laboratory room before approving.`
+                );
+                return;
+            }
+        }
+    }
+
     const context = { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay };
 
 
@@ -2067,6 +2103,9 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
         const data = await res.json();
 
         if (data.success) {
+            // Reset button immediately — don't make the user wait for post-publish refreshes
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> APPROVE SCHEDULE';
+            btn.disabled = false;
             window.isLeavingIntentionally = true;
             await showValidationModal('Schedule Published', 'The schedule has been published successfully.');
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
@@ -2104,6 +2143,12 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
             data.violations.forEach(v => errorMsg += `• ${v.detail}\n`);
             await showValidationModal('Constraint Violations', errorMsg);
+        } else if (data.load_violations && data.load_violations.length) {
+            const details = data.load_violations.map(v =>
+                `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+            ).join('\n');
+            await showValidationModal('Faculty Load Exceeded',
+                `Cannot approve — the following faculty exceed their allowed teaching load across all sections this term:\n\n${details}`);
         } else {
             await showValidationModal('Publish Failed', data.error || 'An unknown error occurred. Please try again.');
         }

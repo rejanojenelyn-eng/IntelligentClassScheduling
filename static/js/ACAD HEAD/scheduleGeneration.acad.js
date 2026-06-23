@@ -33,35 +33,56 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnTableView     = document.getElementById('btnTableView');
     const sortSelect       = document.getElementById('sortSelect');
 
-    // ── #3: Searchable program dropdown ──────────────────────────────────────
-    const programSearch = document.getElementById('programSearch');
-    // Snapshot all program options once so filtering can restore them.
-    const _allProgOpts = Array.from(program.options)
-        .filter(o => o.value)
-        .map(o => ({ value: o.value, text: o.textContent, name: o.dataset.name || '' }));
+    // ── Custom searchable program dropdown ───────────────────────────────────
+    const genProgWrapper     = document.getElementById('genProgWrapper');
+    const genProgTrigger     = document.getElementById('genProgTrigger');
+    const genProgTriggerText = document.getElementById('genProgTriggerText');
+    const genProgSearch      = document.getElementById('genProgSearch');
+    const genProgList        = document.getElementById('genProgList');
 
-    if (programSearch) {
-        programSearch.addEventListener('input', function () {
-            const q = this.value.trim().toLowerCase();
-            // Rebuild select options matching the query
-            while (program.options.length > 1) program.remove(1); // keep "SELECT"
-            const filtered = q
-                ? _allProgOpts.filter(o =>
-                    o.value.toLowerCase().includes(q) ||
-                    o.text.toLowerCase().includes(q) ||
-                    o.name.toLowerCase().includes(q))
-                : _allProgOpts;
-            filtered.forEach(o => {
-                const opt = document.createElement('option');
-                opt.value = o.value;
-                opt.textContent = o.text;
-                opt.dataset.name = o.name;
-                program.appendChild(opt);
-            });
-            program.value = '';
-            checkFormValidity();
+    function openProgDropdown() {
+        genProgWrapper.classList.add('open');
+        genProgSearch.value = '';
+        filterProgOptions('');
+        genProgSearch.focus();
+    }
+    function closeProgDropdown() {
+        genProgWrapper.classList.remove('open');
+    }
+
+    genProgTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        genProgWrapper.classList.contains('open') ? closeProgDropdown() : openProgDropdown();
+    });
+
+    genProgSearch.addEventListener('click', e => e.stopPropagation());
+
+    genProgSearch.addEventListener('input', function() {
+        filterProgOptions(this.value.trim().toLowerCase());
+    });
+
+    function filterProgOptions(q) {
+        genProgList.querySelectorAll('.gen-prog-option').forEach(opt => {
+            const code = (opt.dataset.value || '').toLowerCase();
+            const name = (opt.dataset.name  || '').toLowerCase();
+            opt.style.display = (!q || code.includes(q) || name.includes(q)) ? '' : 'none';
         });
     }
+
+    genProgList.addEventListener('click', function(e) {
+        const opt = e.target.closest('.gen-prog-option');
+        if (!opt) return;
+        const val  = opt.dataset.value;
+        const name = opt.dataset.name;
+        program.value = val;
+        genProgTriggerText.textContent = val ? `${val} – ${name}` : '-SELECT PROGRAM-';
+        closeProgDropdown();
+        program.dispatchEvent(new Event('change'));
+    });
+
+    document.addEventListener('click', (e) => {
+        if (genProgWrapper && !genProgWrapper.contains(e.target)) closeProgDropdown();
+    });
     // ─────────────────────────────────────────────────────────────────────────
 
     async function loadSections() {
@@ -119,12 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     program.addEventListener('change', async function() {
         const programValue = this.value;
-        // #3: Keep search input in sync with the selected option
-        if (programSearch) {
-            programSearch.value = programValue
-                ? (this.options[this.selectedIndex]?.dataset?.name || this.options[this.selectedIndex]?.textContent || '')
-                : '';
-        }
         if (!programValue) {
             curriculumText.textContent = "Select Program first";
             curriculum.value = "";
@@ -207,6 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let _generating = false; // #13: prevent concurrent generation calls
+    let _generateController = null; // AbortController for the active generate fetch
 
     const _LS_KEY = 'schedGen_lastResult';
 
@@ -236,8 +252,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sectionFilter.innerHTML = '<option value="">SELECT</option>';
         curriculum.value      = '';
         curriculumText.textContent = 'Select Program first';
-        const progSearch = document.getElementById('programSearch');
-        if (progSearch) progSearch.value = '';
+        if (genProgTriggerText) genProgTriggerText.textContent = '-SELECT PROGRAM-';
+        if (genProgWrapper) genProgWrapper.classList.remove('open');
 
         btnRegenerate.disabled   = true;
         btnSaveDraft.disabled    = true;
@@ -385,13 +401,18 @@ document.addEventListener('DOMContentLoaded', () => {
         let stepIndex = 0;
 
         const interval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 95) progress = 95;
+            // Fast progress to 88%, then slow creep up to 99% so the bar never freezes
+            if (progress < 88) {
+                progress += Math.random() * 15;
+            } else {
+                progress += Math.random() * 0.25;
+            }
+            if (progress > 99) progress = 99;
 
             document.getElementById('progressBarFill').style.width = progress + '%';
             document.getElementById('progressLabel').textContent = Math.floor(progress) + '%';
 
-            if (stepIndex < steps.length && progress > (stepIndex + 1) * (95 / steps.length)) {
+            if (stepIndex < steps.length && progress > (stepIndex + 1) * (88 / steps.length)) {
                 document.getElementById('loadingStep').textContent = steps[stepIndex];
                 stepIndex++;
             }
@@ -670,10 +691,14 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => toast.classList.add('hidden'), 4000);
 
         _saveStateToStorage();
-        updateAccuracyWidget(currentScheduleData, getContext());
+        if (data && data.accuracy_data && data.accuracy_data.success) {
+            _renderAccuracyResult(data.accuracy_data);
+        } else {
+            updateAccuracyWidget(currentScheduleData, getContext());
+        }
     }
 
-    async function updateAccuracyWidget(scheduleData, ctx) {
+    function _renderAccuracyResult(data) {
         const circleEl    = document.getElementById('accuracyCircle');
         const pctEl       = document.getElementById('accuracyPct');
         const descEl      = document.getElementById('accuracyDesc');
@@ -682,7 +707,74 @@ document.addEventListener('DOMContentLoaded', () => {
         const breakdownEl = document.getElementById('accuracyBreakdown');
         if (!pctEl) return;
 
-        // Loading state
+        if (data && data.success) {
+            const pct   = data.accuracy || 0;
+            const color = pct >= 85 ? '#16a34a' : pct >= 60 ? '#d97706' : '#dc2626';
+            const icon  = pct >= 85 ? 'fas fa-check' : pct >= 60 ? 'fas fa-chart-bar' : 'fas fa-exclamation';
+
+            pctEl.textContent          = pct + '%';
+            iconEl.className           = icon;
+            circleEl.style.borderColor = color;
+            pctEl.style.color          = color;
+            if (labelEl) labelEl.style.color = color;
+
+            const noHist = !data.hist_total;
+            if (descEl) {
+                descEl.textContent = noHist
+                    ? 'No historical data — score reflects constraint compliance only.'
+                    : `${data.matched_faculty || 0} of ${data.hist_total || 0} subjects match historical faculty.`;
+            }
+
+            if (breakdownEl && Array.isArray(data.breakdown)) {
+                const GROUPS = [
+                    { heading: 'Conflict Validation',    keys: ['faculty_conflict','room_conflict','section_conflict'] },
+                    { heading: 'Constraint Compliance',  keys: ['faculty_qual','lab_compliance','weekend','day_pairing','load_compliance'] },
+                    { heading: 'Recommendation Quality', keys: ['hist_faculty','hist_room','hist_time'] },
+                ];
+                const byKey = {};
+                data.breakdown.forEach(b => { byKey[b.key] = b; });
+                function itemColor(sc) { return sc >= 85 ? '#16a34a' : sc >= 60 ? '#d97706' : '#dc2626'; }
+                let html = '';
+                GROUPS.forEach((grp, gi) => {
+                    if (gi > 0) html += '<hr class="acc-divider">';
+                    html += `<div class="acc-section-label">${grp.heading}</div>`;
+                    grp.keys.forEach(key => {
+                        const item = byKey[key];
+                        if (!item) return;
+                        const sc = item.score;
+                        const bc = itemColor(sc);
+                        html += `<div class="acc-item">
+                          <div class="acc-item-header">
+                            <span class="acc-item-label" title="${item.label}">${item.label}</span>
+                            <span class="acc-item-score" style="color:${bc}">${sc}%</span>
+                          </div>
+                          <div class="acc-bar-track">
+                            <div class="acc-bar-fill" style="width:${sc}%;background:${bc}"></div>
+                          </div>
+                        </div>`;
+                    });
+                });
+                breakdownEl.innerHTML = html;
+                breakdownEl.classList.add('visible');
+            }
+        } else {
+            pctEl.textContent          = 'N/A';
+            iconEl.className           = 'fas fa-question';
+            circleEl.style.borderColor = '#aaa';
+            pctEl.style.color          = '#aaa';
+            if (labelEl) labelEl.style.color = '#aaa';
+            if (descEl)  descEl.textContent  = (data && data.error) || 'Could not calculate accuracy.';
+        }
+    }
+
+    async function updateAccuracyWidget(scheduleData, ctx) {
+        const pctEl       = document.getElementById('accuracyPct');
+        const iconEl      = document.getElementById('accuracyIcon');
+        const circleEl    = document.getElementById('accuracyCircle');
+        const labelEl     = document.getElementById('accuracyLabelEl');
+        const breakdownEl = document.getElementById('accuracyBreakdown');
+        if (!pctEl) return;
+
         pctEl.textContent          = '...';
         iconEl.className           = 'fas fa-spinner fa-spin';
         circleEl.style.borderColor = '#aaa';
@@ -702,80 +794,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 }),
             });
             const data = await res.json();
-
-            if (data.success) {
-                const pct   = data.accuracy || 0;
-                const color = pct >= 85 ? '#16a34a' : pct >= 60 ? '#d97706' : '#dc2626';
-                const icon  = pct >= 85 ? 'fas fa-check' : pct >= 60 ? 'fas fa-chart-bar' : 'fas fa-exclamation';
-
-                pctEl.textContent          = pct + '%';
-                iconEl.className           = icon;
-                circleEl.style.borderColor = color;
-                pctEl.style.color          = color;
-                if (labelEl) labelEl.style.color = color;
-
-                // Summary description
-                const noHist = !data.hist_total;
-                if (descEl) {
-                    descEl.textContent = noHist
-                        ? 'No historical data — score reflects constraint compliance only.'
-                        : `${data.matched_faculty || 0} of ${data.hist_total || 0} subjects match historical faculty.`;
-                }
-
-                // ── Breakdown panel ───────────────────────────────────────
-                if (breakdownEl && Array.isArray(data.breakdown)) {
-                    const GROUPS = [
-                        { heading: 'Conflict Validation',     keys: ['faculty_conflict','room_conflict','section_conflict'] },
-                        { heading: 'Constraint Compliance',   keys: ['faculty_qual','lab_compliance','weekend','day_pairing','load_compliance'] },
-                        { heading: 'Recommendation Quality',  keys: ['hist_faculty','hist_room','hist_time'] },
-                    ];
-
-                    const byKey = {};
-                    data.breakdown.forEach(b => { byKey[b.key] = b; });
-
-                    function itemColor(score) {
-                        return score >= 85 ? '#16a34a' : score >= 60 ? '#d97706' : '#dc2626';
-                    }
-
-                    let html = '';
-                    GROUPS.forEach((grp, gi) => {
-                        if (gi > 0) html += '<hr class="acc-divider">';
-                        html += `<div class="acc-section-label">${grp.heading}</div>`;
-                        grp.keys.forEach(key => {
-                            const item = byKey[key];
-                            if (!item) return;
-                            const sc = item.score;
-                            const bc = itemColor(sc);
-                            html += `
-                            <div class="acc-item">
-                              <div class="acc-item-header">
-                                <span class="acc-item-label" title="${item.label}">${item.label}</span>
-                                <span class="acc-item-score" style="color:${bc}">${sc}%</span>
-                              </div>
-                              <div class="acc-bar-track">
-                                <div class="acc-bar-fill" style="width:${sc}%;background:${bc}"></div>
-                              </div>
-                            </div>`;
-                        });
-                    });
-
-                    breakdownEl.innerHTML = html;
-                    breakdownEl.classList.add('visible');
-                }
-            } else {
-                pctEl.textContent          = 'N/A';
-                iconEl.className           = 'fas fa-question';
-                circleEl.style.borderColor = '#aaa';
-                pctEl.style.color          = '#aaa';
-                if (labelEl) labelEl.style.color = '#aaa';
-                if (descEl)  descEl.textContent  = data.error || 'Could not calculate accuracy.';
-            }
+            _renderAccuracyResult(data);
         } catch (e) {
-            pctEl.textContent          = 'N/A';
-            iconEl.className           = 'fas fa-question';
-            circleEl.style.borderColor = '#aaa';
-            pctEl.style.color          = '#aaa';
-            if (descEl) descEl.textContent = 'Accuracy calculation unavailable.';
+            if (pctEl)    pctEl.textContent          = 'N/A';
+            if (iconEl)   iconEl.className            = 'fas fa-question';
+            if (circleEl) circleEl.style.borderColor  = '#aaa';
+            if (pctEl)    pctEl.style.color           = '#aaa';
+            const descEl = document.getElementById('accuracyDesc');
+            if (descEl)   descEl.textContent           = 'Accuracy calculation unavailable.';
         }
     }
 
@@ -849,6 +875,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } else {
+                _generateController = new AbortController();
                 const res = await fetch('/api/schedule/generate', {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -860,7 +887,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         section:    ctx.section,
                         acadYear:   ctx.acadYear,  // #9: needed for faculty load lookup
                     }),
+                    signal: _generateController.signal,
                 });
+                _generateController = null;
                 const data = await res.json();
                 completeProgress();
 
@@ -871,9 +900,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         } catch (e) {
+            if (e.name === 'AbortError') return; // user hit Cancel — button already reset by cancel handler
             completeProgress();
             await showInfo('Error', 'Connection error. Please try again.', 'error');
         } finally {
+            _generateController = null;
             _generating = false; // #13: release lock
             btnGenerate.disabled = false;
             btnGenerate.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE';
@@ -884,6 +915,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnRegenerate.addEventListener('click', () => { btnGenerate.click(); });
+
+    const btnCancelGenerate = document.getElementById('btnCancelGenerate');
+    if (btnCancelGenerate) {
+        btnCancelGenerate.addEventListener('click', () => {
+            if (_generateController) {
+                _generateController.abort();
+                _generateController = null;
+            }
+            if (btnGenerate._progressInterval) {
+                clearInterval(btnGenerate._progressInterval);
+                btnGenerate._progressInterval = null;
+            }
+            hideLoading();
+            _generating = false;
+            btnGenerate.disabled = false;
+            btnGenerate.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE';
+        });
+    }
 
     // ── Export modal wiring ──────────────────────────────────────────────
     const exportModal    = document.getElementById('exportModal');
@@ -1012,8 +1061,9 @@ document.addEventListener('DOMContentLoaded', () => {
         btnManualEditor.disabled = true;
         btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
+        const _saveTimeout = new Promise(resolve => setTimeout(() => resolve({ _timedOut: true }), 10000));
         try {
-            const res = await fetch('/api/schedule/save-draft', {
+            const _saveFetch = fetch('/api/schedule/save-draft', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1021,17 +1071,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     schedule_data: currentScheduleData,
                     context:       ctx,
                 }),
-            });
-            const data = await res.json();
-            if (!data.success) {
+            }).then(r => r.json());
+            const result = await Promise.race([_saveFetch, _saveTimeout]);
+            if (result && result._timedOut) {
+                // Save is taking too long — navigate anyway; draft can be saved later
+            } else if (result && !result.success) {
                 await showInfo('Warning', 'Could not auto-save draft. The editor will still open.', 'error');
             }
         } catch (e) {
             // proceed anyway
         }
 
+        const sectName = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
         const url = MANUAL_EDITOR_URL
-            + `?mode=program&prog=${encodeURIComponent(ctx.program)}&yl=${encodeURIComponent(ctx.yearLevel)}&ay=${encodeURIComponent(ctx.acadYear)}&sem=${encodeURIComponent(ctx.term)}`;
+            + `?mode=program&prog=${encodeURIComponent(ctx.program)}&yl=${encodeURIComponent(ctx.yearLevel)}&ay=${encodeURIComponent(ctx.acadYear)}&sem=${encodeURIComponent(ctx.term)}&sect=${encodeURIComponent(ctx.section)}&sect_name=${encodeURIComponent(sectName)}`;
         window.location.href = url;
     });
 

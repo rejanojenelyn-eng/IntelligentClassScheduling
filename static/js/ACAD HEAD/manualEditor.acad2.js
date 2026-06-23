@@ -677,14 +677,6 @@ function buildDSSMenu(type, sections) {
                 const initials  = _facInitials(item.text);
                 const typCls    = _facTypeCls(item.typename);
                 const typLabel  = _facTypeLabel(item.typename);
-                let unitsHtml   = '';
-                if (item.max_units != null) {
-                    const assigned  = item.assigned_units || 0;
-                    const remaining = item.max_units - assigned;
-                    const remCls    = remaining <= 0 ? 'over' : remaining <= 3 ? 'warn' : 'good';
-                    unitsHtml = `<span class="fac-opt-units">${assigned}/${item.max_units}u</span>
-                                 <span class="fac-opt-remaining ${remCls}">${remaining}u left</span>`;
-                }
                 div.innerHTML = `
                     <div class="fac-opt-inner">
                         <div class="fac-opt-avatar${isRec ? ' rec' : ''}">${initials}</div>
@@ -692,7 +684,6 @@ function buildDSSMenu(type, sections) {
                             <span class="fac-opt-name">${item.text}</span>
                             <div class="fac-opt-sub">
                                 <span class="fac-type-pill ${typCls}">${typLabel}</span>
-                                ${unitsHtml}
                             </div>
                         </div>
                     </div>`;
@@ -905,9 +896,10 @@ function _renderProgPills(sessions, prog, yl) {
                 : getSubjectColor(sess.subjectcode);
             if (isDraft) pill.style.border = '2px dashed #2c3e50';
 
-            // Mark as merge-candidate when the active policy covers this subject.
-            const _pvMergeMode = _getMergeMode(sess.subjectcode || '');
-            if (_pvMergeMode !== 'none') pill.classList.add('pill-merged');
+            // pill-merged class only when actually merged (multiple sections, data from server)
+            const _pvMergedSects = sess._mergedSections || [];
+            const _pvIsMerged = _pvMergedSects.length > 1;
+            if (_pvIsMerged) pill.classList.add('pill-merged');
 
             if (window.currentEditSession) {
                 const editKey = `${window.currentEditSession.subjectcode}_${window.currentEditSession.daydesc}_${window.currentEditSession.starttimeid}`;
@@ -927,15 +919,11 @@ function _renderProgPills(sessions, prog, yl) {
             const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
             const roomDisp  = sess.roomname || 'TBA';
             const subjName  = sess.subjectname || sess.subjectcode;
-            const _pvMergeLabel = _pvMergeMode === 'flexible' ? ' · MERGED (multi-section)' : _pvMergeMode === 'strict' ? ' · MERGE-ELIGIBLE' : '';
-            pill.title = `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}${_pvMergeLabel}`;
+            pill.title = `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}`;
 
             // Pill height thresholds for progressive info density
             const compact   = pillH < 42;   // code only
             const medium    = pillH < 70;   // code + room
-            const _pvMergeBadge = (!compact && _pvMergeMode !== 'none')
-                ? `<div class="pill-merge-badge"><i class="fas fa-layer-group"></i> ${_pvMergeMode === 'flexible' ? 'MERGED' : 'MERGE'}</div>`
-                : '';
             const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
             const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
             const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null }));
@@ -945,12 +933,10 @@ function _renderProgPills(sessions, prog, yl) {
                 : medium
                     ? `${dropBtn}
                        <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
-                       ${_pvMergeBadge}
                        <div style="font-size:0.55rem;opacity:0.85;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`
                     : `${dropBtn}
                        <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
                        <div style="font-size:0.6rem;margin-top:1px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${instrLast}</div>
-                       ${_pvMergeBadge}
                        <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
 
             pill.onclick = (e) => {
@@ -2232,7 +2218,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     const lbl = ms.sectionname || `${ms.programcode} Yr${ms.year_level}`;
                     return `${lbl} (${ms.status})`;
                 }).join('\n');
-                pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${instrLast}${isMerged ? `\n\n⟨MERGED · ${_mergedSects.length} sections⟩` : ''}${_sectLines ? '\n' + _sectLines : ''}`;
+                pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${instrLast}${_sectLines ? '\n' + _sectLines : ''}`;
 
                 const _dbKey  = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
                 const _label  = `${sess.subjectcode} — ${sess.daydesc} ${sess.start_fmt || ''} – ${sess.end_fmt || ''} in ${sess.roomname || 'TBA'}`;
@@ -2263,15 +2249,10 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     return `<div style="font-size:0.52rem;background:${clr};color:#222;border-radius:2px;padding:1px 3px;margin-top:2px;font-weight:700;">${lbl}${suffix}</div>`;
                 }).join('');
 
-                const mergeBadge = isMerged
-                    ? `<div class="pill-merge-badge"><i class="fas fa-layer-group"></i> MERGED &times;${_mergedSects.length}</div>`
-                    : '';
-
                 pill.innerHTML = `
                     ${dropBtn}
                     <div class="pill-subject" style="margin-top:8px;">${sess.subjectcode}</div>
                     <div style="font-size:0.6rem;">${instrLast}</div>
-                    ${mergeBadge}
                     ${_sectHtml}`;
 
                 pill.onclick = (e) => {

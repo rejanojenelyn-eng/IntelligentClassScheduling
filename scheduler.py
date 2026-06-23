@@ -387,7 +387,7 @@ class CSPValidator:
                             if et.get('restrict_pt_hours', True):
                                 pt_start = et.get('parttime_start') or time(16, 30)
                                 pt_end   = et.get('parttime_end')   or time(18, 0)
-                                if start < pt_start or end > pt_end:
+                                if end <= pt_start or start >= pt_end:
                                     violations.append({
                                         'rule': 'HC3',
                                         'subject': subj_code,
@@ -419,7 +419,7 @@ class CSPValidator:
                     else:
                         pt_start = et.get('parttime_start') or time(16, 30)
                         pt_end   = et.get('parttime_end')   or time(21, 0)
-                        if start < pt_start or end > pt_end:
+                        if end <= pt_start or start >= pt_end:
                             violations.append({
                                 'rule': 'HC3',
                                 'subject': subj_code,
@@ -449,7 +449,10 @@ class CSPValidator:
                     if not is_weekend and end > regular_end:
                         ft_pt_start = et.get('parttime_start') or time(16, 30)
                         ft_pt_end   = et.get('parttime_end')   or time(21, 0)
-                        if start < ft_pt_start or end > ft_pt_end:
+                        # Violation only when the slot has NO overlap with the allowed evening window.
+                        # A slot that starts slightly before ft_pt_start (e.g. 4:00–5:30 PM with
+                        # a 4:30 PM window) is still valid because it overlaps the allowed range.
+                        if end <= ft_pt_start or start >= ft_pt_end:
                             violations.append({
                                 'rule': 'HC3',
                                 'subject': subj_code,
@@ -782,11 +785,13 @@ class CSPValidator:
                 fac_name     = fac.get('fullname') or 'The assigned faculty'
                 required_spec = _required_spec_for_subject(subj_code)
                 violations.append({
-                    'rule': 'HC_SPEC',
-                    'subject': subj_code or '?',
+                    'rule':     'HC_SPEC',
+                    'severity': 'warning',   # Advisory only — Academic Head may override
+                    'subject':  subj_code or '?',
                     'detail': (
-                        f'"{fac_name}" ({spec}) cannot teach "{subj_code}" — '
-                        f'this subject requires a {required_spec} specialization.'
+                        f'"{fac_name}" ({spec}) may not match the expected specialization for '
+                        f'"{subj_code}" (expected: {required_spec}). '
+                        f'You may still save and approve — this is an advisory notice only.'
                     )
                 })
         return violations
@@ -1183,12 +1188,15 @@ class IntelligentScheduler:
                     ) AS rn
                 FROM historical_data hd
                 JOIN semester sem ON hd.semesterid = sem.semesterid
-                JOIN room rm ON UPPER(TRIM(hd."Room")) = UPPER(TRIM(rm.roomname))
+                JOIN room rm ON REGEXP_REPLACE(UPPER(TRIM(hd."Room")), '[^A-Z0-9]', '', 'g')
+                             = REGEXP_REPLACE(UPPER(TRIM(rm.roomname)), '[^A-Z0-9]', '', 'g')
                 WHERE UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = UPPER(%s)
                   AND CAST(hd."Year Level" AS TEXT) = %s
                   AND UPPER(sem.semestertype) = UPPER(%s)
                   AND hd."Subject Code" IS NOT NULL
                   AND TRIM(hd."Subject Code") != ''
+                  AND hd."Room" IS NOT NULL
+                  AND TRIM(hd."Room") != ''
                 GROUP BY UPPER(TRIM(hd."Subject Code")), rm.roomid, rm.roomname
             )
             SELECT subjectcode, roomid AS room_id, roomname AS room_name
@@ -1232,10 +1240,13 @@ class IntelligentScheduler:
             code = (row.get('subjectcode') or '').strip()
             if code:
                 room_info = hist_room_map.get(code, {})
+                existing  = prefs.get(code, {})
                 prefs[code] = {
                     'faculty':   row.get('faculty'),
-                    'room_id':   room_info.get('room_id'),
-                    'room_name': room_info.get('room_name'),
+                    # Prefer historical room; fall back to any room already found from
+                    # schedule_version so the historical pass never clears a valid room.
+                    'room_id':   room_info.get('room_id')   or existing.get('room_id'),
+                    'room_name': room_info.get('room_name') or existing.get('room_name'),
                     'source':    'historical',
                 }
 
@@ -1694,6 +1705,10 @@ class IntelligentScheduler:
             else:
                 parts.append(('Lecture', lec_hrs or 3, False, credit_units))
 
+            # Track the day chosen for the lecture part so the lab part
+            # can be placed on the paired day (e.g. Wed lecture → Sat lab).
+            _lec_day_chosen = None
+
             for (class_type, target_hrs, is_lab_part, units) in parts:
 
                 # Valid time blocks for this part.
@@ -1762,6 +1777,16 @@ class IntelligentScheduler:
                         # HC6: pair only for 1.5-hr sessions of 3+ hr/week subjects
                         _pair = random.choice(self._builder_pairs)
                         _days = list(_pair)
+                    elif is_lab_part and _lec_day_chosen and _day_pair_on:
+                        # Pair the lab day with the lecture's day using the configured pairs.
+                        # e.g. if lecture is on Wednesday and pairs are Wed/Sat, lab goes Saturday.
+                        _paired = None
+                        for _p in self._builder_pairs:
+                            if _lec_day_chosen in _p:
+                                _idx = _p.index(_lec_day_chosen)
+                                _paired = _p[1 - _idx]
+                                break
+                        _days = [_paired] if _paired else [random.choice(_avail_days)]
                     else:
                         # Single-day; labs always single-day
                         _days = [random.choice(_avail_days)]
@@ -1770,7 +1795,11 @@ class IntelligentScheduler:
                         start_t, end_t, chosen_room, days_list = _s, _e, _r, _days
                         break
 
-                # Fallback if all 8 attempts overlapped (overlap handled by GA validator)
+                # After successful lecture placement, record the day so the lab can pair with it.
+                if not is_lab_part and days_list:
+                    _lec_day_chosen = days_list[0]
+
+                # Fallback if all 20 attempts overlapped (overlap handled by GA validator)
                 if start_t is None:
                     if regular_blks:
                         start_t, end_t = random.choice(regular_blks)
@@ -1784,6 +1813,14 @@ class IntelligentScheduler:
                     elif abs(_dur - 1.5) < 0.1 and lec_hrs >= 3 and not is_lab_part:
                         _pair = random.choice(self._builder_pairs)
                         days_list = list(_pair)
+                    elif is_lab_part and _lec_day_chosen and _day_pair_on:
+                        _paired = None
+                        for _p in self._builder_pairs:
+                            if _lec_day_chosen in _p:
+                                _idx = _p.index(_lec_day_chosen)
+                                _paired = _p[1 - _idx]
+                                break
+                        days_list = [_paired] if _paired else [random.choice(_avail_days)]
                     else:
                         days_list = [random.choice(_avail_days)]
                     chosen_room = pref_room or random.choice(valid_rooms)

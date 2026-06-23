@@ -220,16 +220,17 @@ def _is_skip_row(row):
     cells = [_clean(c) for c in row if _clean(c)]
     if not cells:
         return True
-    # pdfplumber occasionally merges the last subject row with the TOTAL UNITS
-    # footer into one row.  If the first non-empty cell is a valid subject code
-    # we must keep the row even if "TOTAL UNITS" appears later in that same row.
-    if _looks_like_code(cells[0]):
-        return False
     joined = ' '.join(cells).upper()
-    return any(tok in joined for tok in (
+    skip_keyword = any(tok in joined for tok in (
         'TOTAL UNITS', 'GRAND TOTAL', 'SUBTOTAL', 'TOTAL:', 'SUM:',
         'TOTAL UNIT'
     ))
+    if not skip_keyword:
+        return False
+    # Even if "TOTAL UNITS" appears in the row, keep it if any cell looks like
+    # a subject code — pdfplumber sometimes merges the last subject row with the
+    # TOTAL UNITS footer, placing the total data either before or after the subject.
+    return not any(_looks_like_code(c) for c in cells)
 
 # ---------------------------------------------------------------------------
 # Column-header matching (whole-word for short patterns)

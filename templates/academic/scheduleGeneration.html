@@ -53,16 +53,31 @@
                     </div>
                     <div class="form-group">
                         <label>PROGRAM</label>
-                        <!-- #3: Searchable program dropdown — text input filters the select below -->
-                        <input type="text" id="programSearch"
-                               placeholder="Type code or name to search..."
-                               autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:4px;">
-                        <select id="program" name="program" required>
-                            <option value="">SELECT</option>
-                            {% for prog in programs %}
-                                <option value="{{ prog.code }}" data-name="{{ prog.name }}">{{ prog.code }} – {{ prog.name }}</option>
-                            {% endfor %}
-                        </select>
+                        <div class="gen-prog-wrapper" id="genProgWrapper">
+                            <div class="gen-prog-trigger" id="genProgTrigger">
+                                <span id="genProgTriggerText">-SELECT PROGRAM-</span>
+                                <i class="fas fa-chevron-down gen-prog-chevron" id="genProgChevron"></i>
+                            </div>
+                            <div class="gen-prog-menu" id="genProgMenu">
+                                <div class="gen-prog-search-box">
+                                    <input type="text" id="genProgSearch" class="gen-prog-search-input"
+                                           placeholder="Ex., BSIT..." autocomplete="off">
+                                </div>
+                                <div class="gen-prog-list" id="genProgList">
+                                    {% for prog in programs %}
+                                    <div class="gen-prog-option" data-value="{{ prog.code }}" data-name="{{ prog.name }}">
+                                        <strong>{{ prog.code }}</strong> &mdash; {{ prog.name }}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <select id="program" name="program" required style="display:none;">
+                                <option value="">SELECT</option>
+                                {% for prog in programs %}
+                                    <option value="{{ prog.code }}" data-name="{{ prog.name }}">{{ prog.code }} – {{ prog.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label>YEAR LEVEL</label>

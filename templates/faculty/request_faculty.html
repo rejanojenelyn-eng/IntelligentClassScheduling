@@ -125,6 +125,8 @@
         </div>
         <div class="rfeq-body">
             <input type="hidden" id="editAdjId">
+            <input type="hidden" id="editAdjScheduleId">
+            <input type="hidden" id="editAdjSectionId">
             <div class="rfeq-row">
                 <div class="rfeq-group">
                     <label>*New Day</label>
@@ -134,6 +136,13 @@
                         <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
                     </select>
                 </div>
+                <div class="rfeq-group">
+                    <label>Current Day</label>
+                    <input type="text" id="editAdjCurrentDay" readonly
+                        style="background:#f5f5f5;border-color:#e0e0e0;color:#666;cursor:default;">
+                </div>
+            </div>
+            <div class="rfeq-row">
                 <div class="rfeq-group">
                     <label>*New Start Time</label>
                     <select id="editAdjStart" onchange="editAdjLoadRooms()"><option value="">SELECT</option></select>
@@ -372,7 +381,10 @@ function rfOpenEdit(req) {
         document.getElementById('editMakeupOverlay').classList.add('open');
         editMuLoadRooms(req.roomid);
     } else {
-        document.getElementById('editAdjId').value       = req.requestid;
+        document.getElementById('editAdjId').value          = req.requestid;
+        document.getElementById('editAdjScheduleId').value  = req.scheduleid || '';
+        document.getElementById('editAdjSectionId').value   = req.sectionid  || '';
+        document.getElementById('editAdjCurrentDay').value  = req.current_daydesc || req.new_daydesc || '—';
         _rfSetSelect('editAdjDay',   req.new_daydesc);
         _rfSetSelect('editAdjStart', req.start_time);
         _rfSetSelect('editAdjEnd',   req.end_time);
@@ -428,7 +440,10 @@ async function editAdjLoadRooms(preselect) {
     sel.innerHTML = '<option value="">Loading...</option>';
     if (st) st.textContent = 'checking...';
     try {
-        const res  = await fetch(`/api/faculty/available_rooms?day=${encodeURIComponent(day)}&start_time=${encodeURIComponent(start)}&end_time=${encodeURIComponent(end)}`);
+        const schedId = document.getElementById('editAdjScheduleId').value;
+        const params = new URLSearchParams({ day, start_time: start, end_time: end });
+        if (schedId) params.set('schedule_id', schedId);
+        const res  = await fetch(`/api/faculty/available_rooms?${params}`);
         const data = await res.json();
         _rfBuildRoomSelect(sel, data.rooms || []);
         if (st) st.textContent = (data.rooms||[]).length ? `${data.rooms.length} available` : 'No rooms available';
@@ -472,17 +487,43 @@ async function rfSaveEdit(type) {
         if (!payload.room_id)      return showToast('Please select a room.', 'warning');
     } else {
         id = document.getElementById('editAdjId').value;
+        const _adjDay    = document.getElementById('editAdjDay').value;
+        const _adjStart  = document.getElementById('editAdjStart').value;
+        const _adjEnd    = document.getElementById('editAdjEnd').value;
+        const _adjRoom   = document.getElementById('editAdjRoom').value;
+        const _adjSchedId  = document.getElementById('editAdjScheduleId').value;
+        const _adjSectId   = document.getElementById('editAdjSectionId').value;
         payload = {
-            day:        document.getElementById('editAdjDay').value,
-            start_time: document.getElementById('editAdjStart').value,
-            end_time:   document.getElementById('editAdjEnd').value,
-            room_id:    document.getElementById('editAdjRoom').value,
+            day:        _adjDay,
+            start_time: _adjStart,
+            end_time:   _adjEnd,
+            room_id:    _adjRoom,
             start_date: document.getElementById('editAdjFrom').value,
             end_date:   document.getElementById('editAdjEndDate').value,
             reason:     document.getElementById('editAdjReason').value,
         };
         if (!payload.day)        return showToast('Please select a new day.', 'warning');
         if (!payload.start_date) return showToast('Please enter an effective from date.', 'warning');
+
+        // Conflict validation before saving
+        if (_adjDay && _adjStart && _adjEnd) {
+            try {
+                const _cParams = new URLSearchParams({ day: _adjDay, start_time: _adjStart, end_time: _adjEnd });
+                if (_adjRoom)    _cParams.set('room_id', _adjRoom);
+                if (_adjSectId)  _cParams.set('section_id', _adjSectId);
+                if (_adjSchedId) _cParams.set('schedule_id', _adjSchedId);
+                const _cRes  = await fetch('/api/faculty/check_request_conflicts?' + _cParams);
+                const _cData = await _cRes.json();
+                const _msgs  = [];
+                if (_cData.faculty_conflict) _msgs.push(_cData.faculty_detail || 'Faculty conflict detected.');
+                if (_cData.section_conflict) _msgs.push(_cData.section_detail || 'Section conflict detected.');
+                if (_cData.room_conflict)    _msgs.push(_cData.room_detail    || 'Room conflict detected.');
+                if (_msgs.length) {
+                    showToast(_msgs[0], 'error');
+                    return;
+                }
+            } catch(e) { /* allow save if conflict check unreachable */ }
+        }
     }
     try {
         const res  = await fetch(`/api/faculty/my_requests/${type}/${id}`, {

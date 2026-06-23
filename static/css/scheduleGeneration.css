@@ -430,6 +430,91 @@
 }
 .form-group select option { color: #222; background: var(--white); }
 
+/* ── Custom searchable program dropdown ── */
+.gen-prog-wrapper select { display: none !important; }
+.gen-prog-wrapper { position: relative; width: 100%; }
+.gen-prog-trigger {
+    height: 36px;
+    background: rgba(255,255,255,.12);
+    color: var(--white);
+    border: 1.5px solid rgba(255,255,255,.4);
+    border-radius: var(--radius);
+    font-size: 11px;
+    padding: 0 8px;
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: var(--transition);
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.gen-prog-trigger:hover,
+.gen-prog-wrapper.open .gen-prog-trigger {
+    border-color: rgba(255,255,255,.9);
+    background: rgba(255,255,255,.2);
+}
+.gen-prog-trigger span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+.gen-prog-chevron { font-size: 9px; opacity: .7; flex-shrink: 0; margin-left: 5px; transition: transform .2s; }
+.gen-prog-wrapper.open .gen-prog-chevron { transform: rotate(180deg); }
+.gen-prog-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    width: max-content;
+    max-width: 300px;
+    background: white;
+    border: 1px solid #630100;
+    border-radius: 4px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.18);
+    z-index: 500;
+    display: none;
+    overflow: hidden;
+}
+.gen-prog-wrapper.open .gen-prog-menu { display: block; }
+.gen-prog-search-box {
+    padding: 7px 8px;
+    border-bottom: 1px solid #e8e8e8;
+    background: #fafafa;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.gen-prog-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: .73rem;
+    color: #333;
+    outline: none;
+}
+.gen-prog-search-input:focus { border-color: #630100; }
+.gen-prog-search-input::placeholder { color: #bbb; font-style: italic; }
+.gen-prog-list { max-height: 200px; overflow-y: auto; }
+.gen-prog-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: .78rem;
+    color: #333;
+    border-bottom: 1px solid #f0f0f0;
+    white-space: nowrap;
+}
+.gen-prog-option:last-child { border-bottom: none; }
+.gen-prog-option:hover { background: #fff8f0; color: #630100; }
+.gen-prog-option strong { color: #630100; font-weight: 900; }
+
 /* ── VIEW CONTROL ROW (SIS-matching toolbar) ── */
 .view-control-row {
     display: flex;
