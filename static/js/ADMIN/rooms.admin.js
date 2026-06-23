@@ -136,7 +136,16 @@ function openEditRoomModal(id, name, type, capacity, bldgId) {
     document.getElementById('edit_room_name').value     = name;
     document.getElementById('edit_room_type').value     = type;
     document.getElementById('edit_room_capacity').value = capacity;
-    document.getElementById('edit_room_bldg_id').value  = bldgId;
+    const bldgSel = document.getElementById('edit_room_bldg_id');
+    if (bldgSel && bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined') {
+        bldgSel.value = String(bldgId);
+        // If the value didn't match any option, try adding the option dynamically
+        if (!bldgSel.value || bldgSel.value !== String(bldgId)) {
+            bldgSel.value = '';
+        }
+    } else if (bldgSel) {
+        bldgSel.value = '';
+    }
     openRoomModal('modalEditRoom');
 }
 // legacy alias
@@ -360,7 +369,7 @@ function _domAddRoomRow(r) {
                     <i class="fas fa-eye"></i>
                 </button>
                 <button class="btn-action edit" title="Edit"
-                    onclick="openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid})">
+                    onclick="openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid ?? null})">
                     <i class="fas fa-pen"></i>
                 </button>
                 <button class="btn-action delete" title="Delete"

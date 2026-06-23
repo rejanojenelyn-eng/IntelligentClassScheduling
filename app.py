@@ -1,6 +1,8 @@
-﻿from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
+﻿import os
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
 from database import get_db_connection, query_db
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from datetime import datetime, date, time, timedelta
 import csv
 import io
@@ -204,7 +206,7 @@ def _ensure_request_tables():
                 created_at       TIMESTAMP DEFAULT NOW()
             )
         """)
-        for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT"]:
+        for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT", "notes TEXT"]:
             _cur.execute(f"ALTER TABLE public.class_meeting_request ADD COLUMN IF NOT EXISTS {_col}")
 
         _cur.execute("""
@@ -402,20 +404,39 @@ def login():
                     session['loggedin'] = True
                     session['username'] = user_data.get('username')
                     session['role'] = db_role
-                    
+                    try:
+                        _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
+                        _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
+                        _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
+                        _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
+                        _conn2.commit(); _cur2.close(); _conn2.close()
+                    except Exception: pass
+
                     if db_role == 'Admin':
                         return redirect(url_for('admin_dashboard'))
                     elif db_role == 'Academic Head':
-                        return redirect(url_for('dashboard'))
+                        return redirect(url_for('academic_my_dashboard'))
                     elif db_role == 'Faculty':
                         return redirect(url_for('faculty_dashboard'))
                     else:
                         flash("Your role does not have an assigned dashboard.")
                         return redirect(url_for('login'))
                 else:
-                    flash(f"Role mismatch. You are registered as {db_role}.")
-                    session['active_role'] = db_role
-                    session['saved_username'] = username  # <-- SAVE USERNAME
+                    # Credentials valid but wrong role tab selected — set session to actual role and redirect
+                    session.clear()
+                    session['loggedin'] = True
+                    session['username'] = user_data.get('username')
+                    session['role'] = db_role
+                    if db_role == 'Admin':
+                        return redirect(url_for('admin_dashboard'))
+                    elif db_role == 'Academic Head':
+                        return redirect(url_for('academic_my_dashboard'))
+                    elif db_role == 'Faculty':
+                        return redirect(url_for('faculty_dashboard'))
+                    else:
+                        flash("Your account does not have an assigned dashboard.")
+                        session['active_role'] = db_role
+                        session['saved_username'] = username
             else:
                 flash("Wrong password. Try again.")
                 session['active_role'] = role_selected
@@ -427,12 +448,9 @@ def login():
         
         return redirect(url_for('login'))
 
-    active_role = session.pop('active_role', 'Admin') 
-    saved_username = session.pop('saved_username', '') # <-- GRAB THE SAVED USERNAME
-    
-    session.pop('loggedin', None)
-    session.pop('username', None)
-    session.pop('role', None)
+    active_role   = session.get('active_role', 'Academic Head')
+    saved_username = session.get('saved_username', '')
+    session.clear()   # wipe any stale admin/faculty session so it can't bleed into the new login
 
     # Pass BOTH the active_role and saved_username to the HTML
     return render_template('login.html', active_role=active_role, saved_username=saved_username)
@@ -562,23 +580,73 @@ def dashboard():
         except Exception:
             conn.rollback()
 
-        # --- 2. Recent Requests (Mocked fallback if table empty) ---
+        # --- 2. Recent Requests (both makeup + adjustment, with status/reason/remarks) ---
         recent_requests = []
         try:
             cur.execute("""
-                SELECT 'MAKE-UP CLASS' as req_type, cmr.status,
-                       TO_CHAR(cmr.created_at, 'Mon DD, YYYY') as date_sub,
-                       UPPER(f.firstname || ' ' || f.lastname) as faculty_name,
-                       cs.subjectcode, r.roomname
-                FROM class_meeting_request cmr
-                JOIN faculty f ON cmr.submitted_by = f.employeenumber
-                JOIN schedule s ON cmr.scheduleid = s.scheduleid
-                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
-                LEFT JOIN room r ON cmr.new_roomid = r.roomid
-                ORDER BY cmr.created_at DESC LIMIT 3
+                SELECT * FROM (
+                    SELECT
+                        'MAKE-UP CLASS'                           AS req_type,
+                        cmr.requestid,
+                        cmr.status,
+                        TO_CHAR(cmr.created_at, 'Mon DD, YYYY')  AS date_sub,
+                        cmr.created_at                            AS sort_ts,
+                        UPPER(f.firstname || ' ' || f.lastname)  AS faculty_name,
+                        cs.subjectcode,
+                        COALESCE(cs.subjectname, '')              AS subjectname,
+                        COALESCE(r.roomname, '')                  AS roomname,
+                        TO_CHAR(cmr.requested_date, 'MM/DD/YYYY') AS requested_date,
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM')    AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM')    AS end_time,
+                        COALESCE(cmr.reason, '')                  AS reason,
+                        COALESCE(cmr.remarks, '')                 AS remarks,
+                        COALESCE(pyl.programcode, '')             AS programcode,
+                        COALESCE(CAST(pyl.yearlevel AS TEXT), '') AS yearlevel,
+                        COALESCE(sec.sectionname, '')             AS sectionname
+                    FROM class_meeting_request cmr
+                    JOIN faculty f   ON cmr.submitted_by = f.employeenumber
+                    JOIN schedule sc ON cmr.scheduleid   = sc.scheduleid
+                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                    LEFT JOIN room r      ON cmr.new_roomid      = r.roomid
+                    LEFT JOIN timeslot ts_s ON cmr.new_starttimeid = ts_s.timeid
+                    LEFT JOIN timeslot ts_e ON cmr.new_endtimeid   = ts_e.timeid
+                    LEFT JOIN sections sec  ON sc.sectionid = sec.sectionid
+                    LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                    UNION ALL
+                    SELECT
+                        'SCHEDULE ADJUSTMENT'                     AS req_type,
+                        scr.requestid,
+                        scr.status,
+                        TO_CHAR(scr.created_at, 'Mon DD, YYYY')  AS date_sub,
+                        scr.created_at                            AS sort_ts,
+                        UPPER(f.firstname || ' ' || f.lastname)  AS faculty_name,
+                        cs.subjectcode,
+                        COALESCE(cs.subjectname, '')              AS subjectname,
+                        COALESCE(r.roomname, '')                  AS roomname,
+                        TO_CHAR(scr.effective_from, 'MM/DD/YYYY') AS requested_date,
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM')    AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM')    AS end_time,
+                        COALESCE(scr.reason, '')                  AS reason,
+                        COALESCE(scr.remarks, '')                 AS remarks,
+                        COALESCE(pyl.programcode, '')             AS programcode,
+                        COALESCE(CAST(pyl.yearlevel AS TEXT), '') AS yearlevel,
+                        COALESCE(sec.sectionname, '')             AS sectionname
+                    FROM schedule_change_request scr
+                    JOIN faculty f   ON scr.submitted_by = f.employeenumber
+                    JOIN schedule sc ON scr.scheduleid   = sc.scheduleid
+                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                    LEFT JOIN room r      ON scr.new_roomid      = r.roomid
+                    LEFT JOIN timeslot ts_s ON scr.new_starttimeid = ts_s.timeid
+                    LEFT JOIN timeslot ts_e ON scr.new_endtimeid   = ts_e.timeid
+                    LEFT JOIN sections sec  ON sc.sectionid = sec.sectionid
+                    LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                ) combined
+                ORDER BY sort_ts DESC
+                LIMIT 5
             """)
             recent_requests = cur.fetchall()
-        except Exception:
+        except Exception as _re:
+            print(f"Dashboard recent_requests error: {_re}")
             conn.rollback()
 
         # --- 3. Recent Schedule List ---
@@ -686,6 +754,7 @@ def api_requests_list():
                 TO_CHAR(cmr.requested_date, 'Mon DD, YYYY') AS requested_date_fmt,
                 COALESCE(cmr.requested_date::text, '')  AS requested_date,
                 COALESCE(cmr.reason, '')                AS reason,
+                COALESCE(cmr.notes,  '')                AS notes,
                 UPPER(f.firstname || ' ' || f.lastname) AS faculty_name,
                 f.employeenumber,
                 COALESCE(d.designationname, et.typename, '') AS designation,
@@ -842,7 +911,7 @@ def api_requests_validate():
 
             room_available = not rc1 and not rc2
 
-            # 3. Faculty: published schedule
+            # 3. Faculty: published schedule (all schedules — makeup is an extra session, not a replacement)
             fc1 = query_db("""
                 SELECT 1 FROM schedule_sessions ss
                 JOIN schedule_version sv ON ss.versionid = sv.versionid
@@ -852,9 +921,8 @@ def api_requests_validate():
                 WHERE sv.status = 'Published' AND sc2.employeenumber = %s
                   AND UPPER(ss.daydesc) = UPPER(%s)
                   AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                  AND sc2.scheduleid != %s
                 LIMIT 1
-            """, [emp_num, day_name, end_t, start_t, sched_id]) or []
+            """, [emp_num, day_name, end_t, start_t]) or []
 
             # 4. Faculty: other approved makeup on same date
             fc2 = query_db("""
@@ -6192,6 +6260,7 @@ def manual_schedule_editor():
     init_yl   = request.args.get('yl', '')
     init_ay   = request.args.get('ay', '')
     init_sem  = request.args.get('sem', '')
+    init_sect = request.args.get('sect', '')
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -6296,6 +6365,8 @@ def manual_schedule_editor():
         weekend_day             = _sched_cfg.get('hc_weekend_day', 'sunday_only')
         weekend_subject         = _sched_cfg.get('hc_weekend_subject', 'nstp_only')
         spec_constraint_enabled = bool(_sched_cfg.get('hc_faculty_spec_enabled', 1))
+        merge_enabled           = bool(_sched_cfg.get('hc_merge_enabled', 1))
+        merge_scope             = _sched_cfg.get('hc_merge_scope', 'nstp_only')
 
         return render_template('academic/manualScheduleEditor.html',
                                scheduler_mode=scheduler_mode,
@@ -6305,12 +6376,14 @@ def manual_schedule_editor():
                                buildings=buildings, rooms_json=json.dumps(rooms_list),
                                available_sems_json=available_sems_json,
                                init_mode=init_mode, init_prog=init_prog,
-                               init_yl=init_yl, init_ay=init_ay, init_sem=init_sem,
+                               init_yl=init_yl, init_ay=init_ay, init_sem=init_sem, init_sect=init_sect,
                                lab_constraint_enabled=lab_constraint_enabled,
                                weekend_enabled=weekend_enabled,
                                weekend_day=weekend_day,
                                weekend_subject=weekend_subject,
-                               spec_constraint_enabled=spec_constraint_enabled)
+                               spec_constraint_enabled=spec_constraint_enabled,
+                               merge_enabled=merge_enabled,
+                               merge_scope=merge_scope)
     finally:
         cur.close()
         conn.close()
@@ -6973,8 +7046,12 @@ def get_room_schedule(room_id):
                 )
             """)
 
-        # Always exclude semesters that have already ended
-        filters.append("(sem.semenddate IS NULL OR sem.semenddate >= CURRENT_DATE)")
+        # When ay_id is explicitly provided the user already scoped to that academic year,
+        # so there is no need to filter by semester end date.  When browsing by room only
+        # (no ay_id), limit to semesters that ended within the last 12 months so very old
+        # data stays out of a single-room weekly view while recently-ended semesters still show.
+        if not ay_id:
+            filters.append("(sem.semenddate IS NULL OR sem.semenddate >= (CURRENT_DATE - INTERVAL '12 months'))")
 
         if ay_id:
             joins += " JOIN academicyear ay ON sem.academicyearid = ay.academicyearid"
@@ -6987,16 +7064,18 @@ def get_room_schedule(room_id):
             filters.append("pyl.programcode = %s")
             params.append(program)
 
-        cur.execute(f"""
+        main_q = f"""
             SELECT
                 cs.subjectcode,
                 cs.subjectname,
+                f.employeenumber AS employee_number,
                 f.lastname || ', ' || f.firstname AS instructor,
                 ss.daydesc,
                 ss.starttimeid,
                 ss.endtimeid,
                 pyl.yearlevel AS year_level,
                 pyl.programcode,
+                sec.sectionname,
                 r.roomname,
                 sv.status,
                 sv.versionid
@@ -7007,7 +7086,57 @@ def get_room_schedule(room_id):
             JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
             JOIN faculty f ON s.employeenumber = f.employeenumber
             WHERE {' AND '.join(filters)}
-        """, params)
+        """
+        all_params = list(params)
+
+        if scheduler_mode == 'local':
+            la_filters = ["las.roomid = %s", "la.is_active = TRUE", "la.status = 'Published'"]
+            la_params  = [room_id]
+            la_joins   = "JOIN semester sem2 ON la.semesterid = sem2.semesterid"
+            if not ay_id:
+                la_filters.append("(sem2.semenddate IS NULL OR sem2.semenddate >= (CURRENT_DATE - INTERVAL '12 months'))")
+            if ay_id:
+                la_joins += " JOIN academicyear ay2 ON sem2.academicyearid = ay2.academicyearid"
+                la_filters.append("ay2.academicyearid = %s")
+                la_params.append(ay_id)
+            if semester:
+                la_filters.append("sem2.semestertype = %s")
+                la_params.append(semester)
+            if program:
+                la_filters.append("UPPER(la.programcode) = UPPER(%s)")
+                la_params.append(program)
+
+            la_q = f"""
+                SELECT
+                    las.subjectcode,
+                    COALESCE(cs_la.subjectname, las.subjectcode) AS subjectname,
+                    las.faculty_employeenumber AS employee_number,
+                    COALESCE(f_la.lastname || ', ' || f_la.firstname, 'TBA') AS instructor,
+                    las.daydesc,
+                    las.starttimeid,
+                    las.endtimeid,
+                    la.yearlevel AS year_level,
+                    la.programcode,
+                    NULL AS sectionname,
+                    r_la.roomname,
+                    'Local' AS status,
+                    NULL AS versionid
+                FROM public.local_arrangement_sessions las
+                JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
+                {la_joins}
+                LEFT JOIN LATERAL (
+                    SELECT subjectname FROM curriculumsubject
+                    WHERE UPPER(subjectcode) = UPPER(las.subjectcode) LIMIT 1
+                ) cs_la ON TRUE
+                LEFT JOIN faculty f_la ON las.faculty_employeenumber = f_la.employeenumber
+                LEFT JOIN room r_la ON las.roomid = r_la.roomid
+                WHERE {' AND '.join(la_filters)}
+            """
+            all_params += la_params
+            cur.execute(main_q + " UNION ALL " + la_q, all_params)
+        else:
+            cur.execute(main_q, all_params)
+
         return jsonify(cur.fetchall())
     except Exception as e:
         print(f"Error fetching room schedule: {e}")
@@ -7786,6 +7915,12 @@ def api_manual_faculty_info():
 
 @app.route('/api/manual/faculty_load')
 def api_manual_faculty_load():
+    try:
+        return _api_manual_faculty_load_impl()
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+def _api_manual_faculty_load_impl():
     emp_num        = request.args.get('emp_num', '').strip()
     ay_id          = request.args.get('ay_id', '').strip()
     sem            = request.args.get('sem', '').strip()
@@ -7800,7 +7935,7 @@ def api_manual_faculty_load():
                COALESCE(d.regularloadunit, 0)        AS designation_regular_load,
                COALESCE(d.nightteachingservice, 0)   AS designation_night_service
         FROM faculty f
-        JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
         LEFT JOIN designation d ON f.designationid = d.designationid
         WHERE f.employeenumber = %s
     """, (emp_num,), one=True)
@@ -7821,64 +7956,74 @@ def api_manual_faculty_load():
     max_load = reg_load + pt_load + teach_sub
     scheduled = 0
     if ay_id and sem:
-        # --- FIX: Ginamit ang Lecture + Lab Hours bilang load units ---
-        sched = query_db("""
-            SELECT COALESCE(SUM(d.load_units), 0) AS sched_units
-            FROM (
-                SELECT DISTINCT cs.subjectcode,
-                       (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS load_units
-                FROM schedule_version sv
-                JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN semester s ON sc.semesterid = s.semesterid
-                WHERE sc.employeenumber = %s
-                  AND s.academicyearid = %s
-                  AND s.semestertype = %s
-                  AND sv.status IN ('Published', {})
-            ) AS d
-        """.format("'Published'" if scheduler_mode == 'local' else "'Published', 'Draft'"),
-        (emp_num, ay_id, sem), one=True)
-        if sched:
-            scheduled = int(sched['sched_units'] or 0)
+        try:
+            sched = query_db("""
+                SELECT COALESCE(SUM(d.load_units), 0) AS sched_units
+                FROM (
+                    SELECT DISTINCT cs.subjectcode, sc.scheduleid,
+                           (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS load_units
+                    FROM schedule_version sv
+                    JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                    JOIN semester s ON sc.semesterid = s.semesterid
+                    WHERE sc.employeenumber = %s
+                      AND s.academicyearid = %s
+                      AND s.semestertype = %s
+                      AND sv.status IN ('Published', {})
+                ) AS d
+            """.format("'Published'" if scheduler_mode == 'local' else "'Published', 'Draft'"),
+            (emp_num, ay_id, sem), one=True)
+            if sched:
+                scheduled = int(sched['sched_units'] or 0)
+        except Exception as _e:
+            import traceback; traceback.print_exc()
+            scheduled = 0
     available = max(0, max_load - scheduled)
 
     # HC7 — count weekday night sessions
     night_classes = 0
     if ay_id and sem:
-        nq = query_db("""
-            SELECT COUNT(DISTINCT ss.sessionid) AS night_count
-            FROM schedule_sessions ss
-            JOIN schedule_version sv ON sv.versionid = sv.versionid
-            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
-            JOIN semester s           ON sc.semesterid  = s.semesterid
-            JOIN timeslot ts          ON ss.starttimeid  = ts.timeid
-            WHERE sc.employeenumber = %s
-              AND s.academicyearid  = %s
-              AND s.semestertype    = %s
-              AND sv.status IN ('Published', 'Draft')
-              AND ss.daydesc IN ('Monday','Tuesday','Wednesday','Thursday','Friday')
-              AND ts.timevalue >= '18:00:00'
-        """, (emp_num, ay_id, sem), one=True)
-        if nq:
-            night_classes = int(nq['night_count'] or 0)
+        try:
+            nq = query_db("""
+                SELECT COUNT(*) AS night_count
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
+                JOIN semester s           ON sc.semesterid  = s.semesterid
+                JOIN timeslot ts          ON ss.starttimeid  = ts.timeid
+                WHERE sc.employeenumber = %s
+                  AND s.academicyearid  = %s
+                  AND s.semestertype    = %s
+                  AND sv.status IN ('Published', 'Draft')
+                  AND ss.daydesc IN ('Monday','Tuesday','Wednesday','Thursday','Friday')
+                  AND ts.timevalue >= '18:00:00'
+            """, (emp_num, ay_id, sem), one=True)
+            if nq:
+                night_classes = int(nq['night_count'] or 0)
+        except Exception:
+            night_classes = 0
 
     assigned_subjects = []
     if ay_id and sem:
-        # --- FIX: Gamitin ang sum ng Lec + Lab para sa display sa UI ---
-        rows = query_db("""
-            SELECT DISTINCT cs.subjectcode, cs.subjectname,
-                   (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS creditunits
-            FROM schedule_version sv
-            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
-            JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN semester s            ON sc.semesterid  = s.semesterid
-            WHERE sc.employeenumber = %s
-              AND s.academicyearid  = %s
-              AND s.semestertype    = %s
-              AND sv.status IN ('Published', 'Draft')
-            ORDER BY cs.subjectcode
-        """, (emp_num, ay_id, sem))
-        assigned_subjects = [dict(r) for r in (rows or [])]
+        try:
+            rows = query_db("""
+                SELECT DISTINCT cs.subjectcode, cs.subjectname, sc.scheduleid,
+                       COALESCE(sec.sectionname, '') AS sectionname,
+                       (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS creditunits
+                FROM schedule_version sv
+                JOIN schedule sc          ON sv.scheduleid  = sc.scheduleid
+                JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                LEFT JOIN sections sec     ON sc.sectionid   = sec.sectionid
+                JOIN semester s            ON sc.semesterid  = s.semesterid
+                WHERE sc.employeenumber = %s
+                  AND s.academicyearid  = %s
+                  AND s.semestertype    = %s
+                  AND sv.status IN ('Published', 'Draft')
+                ORDER BY cs.subjectcode, sec.sectionname
+            """, (emp_num, ay_id, sem))
+            assigned_subjects = [dict(r) for r in (rows or [])]
+        except Exception:
+            assigned_subjects = []
 
     return jsonify({'success': True, 'total_units': max_load,
                     'available_units': available, 'scheduled_units': scheduled,
@@ -8139,22 +8284,24 @@ def api_manual_existing_sessions():
         # No Local Arrangement found — fall back to Official Published sessions
         rows = [dict(r) for r in pub_rows]
     elif draft_rows:
-        # Official Scheduler: merge Draft + Published, promoting overlap slots to Published colour
-        pub_slot_keys = {(r['daydesc'], r['starttimeid']) for r in pub_rows}
+        # Official Scheduler: merge Draft + Published, promoting overlap slots to Published colour.
+        # Published-only slots (existing confirmed sessions) appear FIRST so they stay as Slice 1,
+        # Slice 2, etc. — new Draft-only additions appear after them.
+        pub_slot_keys   = {(r['daydesc'], r['starttimeid']) for r in pub_rows}
+        draft_slot_keys = {(r['daydesc'], r['starttimeid']) for r in draft_rows}
+
         rows = []
+        # 1) Published slots NOT already in the Draft come first (original sessions)
+        for r in pub_rows:
+            if (r['daydesc'], r['starttimeid']) not in draft_slot_keys:
+                rows.append(dict(r))
+
+        # 2) Draft slots come after (new additions); promote to Published colour if overlap
         for r in draft_rows:
             r = dict(r)
             if (r['daydesc'], r['starttimeid']) in pub_slot_keys:
                 r['status'] = 'Published'
             rows.append(r)
-
-        # With draft_only=True carry-forward, Published slots that are NOT in the Draft
-        # snapshot were never "removed" — they still exist and must be shown alongside the
-        # Draft additions. Include them here unless they were explicitly deleted this session.
-        draft_slot_keys = {(r['daydesc'], r['starttimeid']) for r in draft_rows}
-        for r in pub_rows:
-            if (r['daydesc'], r['starttimeid']) not in draft_slot_keys:
-                rows.append(dict(r))
     else:
         rows = [dict(r) for r in pub_rows]
     return jsonify({'success': True, 'sessions': rows})
@@ -11663,7 +11810,11 @@ def admin_settings():
         cur.execute("SELECT * FROM EmployeeType ORDER BY EmployeeTypeID ASC")
         emp_types = to_dict(cur)
         for et in emp_types:
-            et['reg_time_str'] = f"{format_time(et.get('regular_start'))} - {format_time(et.get('regular_end'))}" if et.get('regular_start') else "-"
+            _rs, _re = et.get('regular_start'), et.get('regular_end')
+            et['reg_time_str'] = (
+                f"{format_time(_rs)} - {format_time(_re)}"
+                if _rs and _re and _rs != _re else "—"
+            )
             et['pt_time_str'] = f"{format_time(et.get('parttime_start'))} - {format_time(et.get('parttime_end'))}" if et.get('parttime_start') else "-"
 
         designee_base = next((et for et in emp_types if et['typename'] == 'Designee'), None)
@@ -12087,7 +12238,7 @@ def upsert_ay():
         if existing and existing[0]:
             flash(f"Academic Year {ay_id} is finalized and cannot be edited.", "error")
             return redirect(url_for('admin_settings'))
-        # Block save if this AY has a published schedule
+        # If this AY has a published schedule, only allow dates to move forward (not backward)
         cur.execute("""
             SELECT COUNT(*) FROM schedule_version sv
             JOIN schedule sc ON sc.scheduleid = sv.scheduleid
@@ -12095,8 +12246,22 @@ def upsert_ay():
             WHERE s.academicyearid = %s AND sv.status = 'Published'
         """, (ay_id,))
         if cur.fetchone()[0] > 0:
-            flash(f"Academic Year {ay_id} has a Published schedule and cannot be edited. Delete the schedule first.", "error")
-            return redirect(url_for('admin_settings'))
+            today_str = date.today().strftime('%Y-%m-%d')
+            cur.execute("""
+                SELECT semestertype, semstartdate, semenddate
+                FROM semester WHERE academicyearid = %s
+            """, (ay_id,))
+            existing_sems = {row[0]: (str(row[1]) if row[1] else None, str(row[2]) if row[2] else None)
+                             for row in cur.fetchall()}
+            for label, s_start, s_end, s_type in sem_configs:
+                old_start, old_end = existing_sems.get(s_type, (None, None))
+                # Only reject if the admin actually changed the value to something in the past
+                if s_start and s_start != old_start and s_start < today_str:
+                    flash(f"Validation Error: {label} start date cannot be set to a past date.", "error")
+                    return redirect(url_for('admin_settings'))
+                if s_end and s_end != old_end and s_end < today_str:
+                    flash(f"Validation Error: {label} end date cannot be set to a past date.", "error")
+                    return redirect(url_for('admin_settings'))
 
         cur.execute("""
             INSERT INTO AcademicYear (AcademicYearID, YearStart, YearEnd, IsActive)
@@ -13864,6 +14029,7 @@ def api_faculty_my_requests():
                 TO_CHAR(cmr.created_at,'MM/DD/YYYY HH24:MI') AS date_submitted,
                 cmr.status,
                 cmr.reason,
+                COALESCE(cmr.notes,'')                AS notes,
                 COALESCE(r.roomname,'')               AS roomname,
                 COALESCE(r.roomid::text,'')           AS roomid,
                 COALESCE(b.buildingname,'')           AS buildingname,
@@ -14091,6 +14257,249 @@ def api_faculty_me():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# ── User profile API ────────────────────────────────────────────────────────
+_PROFILE_PHOTO_DIR = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'profile_photos')
+os.makedirs(_PROFILE_PHOTO_DIR, exist_ok=True)
+
+@app.route('/api/search')
+def api_search():
+    if 'loggedin' not in session: return jsonify({'results': []}), 401
+    q = request.args.get('q', '').strip()
+    if len(q) < 2: return jsonify({'results': []})
+    role = session.get('role', '')
+    like = f'%{q}%'
+    results = []
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # Rooms — all roles
+        cur.execute("""
+            SELECT r.roomname, r.roomtype, b.buildingname
+            FROM room r LEFT JOIN building b ON r.buildingid = b.buildingid
+            WHERE r.roomname ILIKE %s OR r.roomtype ILIKE %s OR b.buildingname ILIKE %s
+            ORDER BY r.roomname LIMIT 5
+        """, (like, like, like))
+        room_url = '/admin/rooms' if role == 'Admin' else '/room'
+        for row in cur.fetchall():
+            sub = ' · '.join(filter(None, [row.get('roomtype'), row.get('buildingname')]))
+            results.append({'category': 'Room', 'label': row['roomname'], 'sub': sub, 'url': room_url, 'icon': 'fa-door-open'})
+
+        # Faculty/Employees — all roles (Faculty role shows info-only, no nav)
+        cur.execute("""
+            SELECT f.employeenumber, f.firstname, f.lastname, et.typename
+            FROM faculty f
+            LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+            WHERE f.employeestatus != 'Archive'
+              AND (f.firstname ILIKE %s OR f.lastname ILIKE %s
+                   OR f.employeenumber ILIKE %s
+                   OR CONCAT(f.firstname, ' ', f.lastname) ILIKE %s)
+            ORDER BY f.lastname LIMIT 5
+        """, (like, like, like, like))
+        if role == 'Academic Head':
+            emp_url = '/employee'
+        elif role == 'Admin':
+            emp_url = '/admin/employee'
+        else:
+            emp_url = None
+        for row in cur.fetchall():
+            results.append({'category': 'Faculty', 'label': f"{row['firstname']} {row['lastname']}",
+                'sub': ' · '.join(filter(None, [row.get('employeenumber'), row.get('typename')])),
+                'url': emp_url, 'icon': 'fa-user'})
+
+        # Programs — Academic Head and Admin
+        if role in ('Academic Head', 'Admin'):
+            cur.execute("""
+                SELECT programcode, programname FROM programs
+                WHERE isactive = TRUE AND (programcode ILIKE %s OR programname ILIKE %s)
+                ORDER BY programcode LIMIT 4
+            """, (like, like))
+            cur_url = '/curriculum' if role == 'Academic Head' else '/admin/curriculum'
+            for row in cur.fetchall():
+                results.append({'category': 'Program', 'label': row['programcode'],
+                    'sub': row['programname'], 'url': cur_url, 'icon': 'fa-graduation-cap'})
+
+        # Curriculum subjects — Academic Head and Admin
+        if role in ('Academic Head', 'Admin'):
+            cur.execute("""
+                SELECT cs.subjectcode, cs.subjectname
+                FROM curriculumsubject cs
+                WHERE cs.subjectcode ILIKE %s OR cs.subjectname ILIKE %s
+                GROUP BY cs.subjectcode, cs.subjectname
+                ORDER BY cs.subjectcode LIMIT 5
+            """, (like, like))
+            for row in cur.fetchall():
+                results.append({'category': 'Subject', 'label': row['subjectcode'],
+                    'sub': row['subjectname'], 'url': cur_url, 'icon': 'fa-book'})
+
+        # Sections — Academic Head and Admin
+        if role in ('Academic Head', 'Admin'):
+            cur.execute("""
+                SELECT s.sectionname, pyl.programcode
+                FROM sections s
+                LEFT JOIN program_yearlevel pyl ON s.programyearlevelid = pyl.programyearlevelid
+                WHERE s.isactive = TRUE AND s.sectionname ILIKE %s
+                ORDER BY s.sectionname LIMIT 5
+            """, (like,))
+            sched_url = '/schedule' if role == 'Academic Head' else '/admin/schedule'
+            for row in cur.fetchall():
+                results.append({'category': 'Section', 'label': row['sectionname'],
+                    'sub': row.get('programcode') or '', 'url': sched_url, 'icon': 'fa-users'})
+
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'results': [], 'error': str(e)})
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/api/user/me')
+def api_user_me():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
+        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
+        conn.commit()
+        username = session.get('username')
+        cur.execute("""
+            SELECT a.last_login, a.profile_photo,
+                   f.employeenumber, f.firstname, f.lastname, f.email, f.employeestatus,
+                   d.designationid, d.designationname,
+                   s.specializationid, s.specializationname,
+                   et.employeetypeid, et.typename
+            FROM accounts a
+            LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+            LEFT JOIN designation d ON f.designationid = d.designationid
+            LEFT JOIN specialization s ON f.specializationid = s.specializationid
+            LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+            WHERE a.username = %s
+        """, (username,))
+        row = cur.fetchone()
+        if not row: return jsonify({'success': False}), 404
+        ll = row['last_login']
+        return jsonify({
+            'success': True,
+            'emp_num': row['employeenumber'] or '',
+            'fullname': f"{row['firstname'] or ''} {row['lastname'] or ''}".strip(),
+            'firstname': row['firstname'] or '',
+            'lastname': row['lastname'] or '',
+            'designation': row['designationname'] or '',
+            'designation_id': row['designationid'],
+            'specialization': row['specializationname'] or '',
+            'specialization_id': row['specializationid'],
+            'employment_status': row['employeestatus'] or 'Active',
+            'employee_type': row['typename'] or '',
+            'last_login': ll.strftime('%B %d, %Y %I:%M %p') if ll else None,
+            'photo_url': row['profile_photo'] or None,
+            'email': row['email'] or '',
+            'role': session.get('role', ''),
+        })
+    except Exception as e:
+        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+    finally: cur.close(); conn.close()
+
+@app.route('/api/user/options')
+def api_user_options():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    try:
+        designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
+        specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
+        return jsonify({
+            'success': True,
+            'designations': [dict(r) for r in designations],
+            'specializations': [dict(r) for r in specializations],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/user/profile/update', methods=['POST'])
+def api_user_profile_update():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        username = session.get('username')
+        cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
+        acc = cur.fetchone()
+        emp_num = acc['employeenumber'] if acc else None
+        if not emp_num: return jsonify({'success': False, 'error': 'No linked faculty record'}), 400
+        designation_id    = request.form.get('designation_id') or None
+        specialization_id = request.form.get('specialization_id') or None
+        employment_status = request.form.get('employment_status') or None
+        cur.execute("""
+            UPDATE faculty SET
+                designationid    = COALESCE(%s::int, designationid),
+                specializationid = COALESCE(%s::int, specializationid),
+                employeestatus   = COALESCE(%s, employeestatus)
+            WHERE employeenumber = %s
+        """, (designation_id, specialization_id, employment_status, emp_num))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+    finally: cur.close(); conn.close()
+
+@app.route('/api/user/photo/upload', methods=['POST'])
+def api_user_photo_upload():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    if 'photo' not in request.files: return jsonify({'success': False, 'error': 'No file'}), 400
+    file = request.files['photo']
+    if not file.filename: return jsonify({'success': False, 'error': 'No file selected'}), 400
+    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
+    if ext not in ('.jpg', '.jpeg', '.png'): return jsonify({'success': False, 'error': 'Only JPG/PNG allowed'}), 400
+    username   = session.get('username')
+    filename   = secure_filename(f"profile_{username}{ext}")
+    save_path  = os.path.join(_PROFILE_PHOTO_DIR, filename)
+    file.save(save_path)
+    photo_url  = f"/static/uploads/profile_photos/{filename}"
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
+        cur.execute("UPDATE accounts SET profile_photo = %s WHERE username = %s", (photo_url, username))
+        conn.commit()
+        return jsonify({'success': True, 'photo_url': photo_url})
+    except Exception as e:
+        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+    finally: cur.close(); conn.close()
+
+@app.route('/api/user/password/change', methods=['POST'])
+def api_user_password_change():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        username     = session.get('username')
+        current_pw   = request.form.get('current_password', '')
+        new_pw       = request.form.get('new_password', '')
+        confirm_pw   = request.form.get('confirm_password', '')
+        if new_pw != confirm_pw: return jsonify({'success': False, 'error': 'New passwords do not match'}), 400
+        if len(new_pw) < 6: return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+        cur.execute("SELECT passwordhash FROM accounts WHERE username = %s", (username,))
+        row = cur.fetchone()
+        if not row or not check_password_hash(row['passwordhash'], current_pw):
+            return jsonify({'success': False, 'error': 'Current password is incorrect'}), 400
+        cur.execute("UPDATE accounts SET passwordhash = %s WHERE username = %s",
+                    (generate_password_hash(new_pw), username))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+    finally: cur.close(); conn.close()
+
+@app.route('/api/user/email/update', methods=['POST'])
+def api_user_email_update():
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        username = session.get('username')
+        email    = request.form.get('email', '').strip()
+        cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
+        acc = cur.fetchone()
+        emp_num = acc['employeenumber'] if acc else None
+        if emp_num and email:
+            cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s", (email, emp_num))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+    finally: cur.close(); conn.close()
+
 # --- API: Faculty's own published-schedule assignments (for subject/section dropdown) ---
 @app.route('/api/faculty/my_assignments')
 def api_faculty_my_assignments():
@@ -14149,8 +14558,10 @@ def api_faculty_my_assignments():
 def api_faculty_blocked_times():
     if 'loggedin' not in session:
         return jsonify({'success': False}), 401
-    day      = request.args.get('day', '').strip()
-    req_date = request.args.get('date', '').strip()
+    day        = request.args.get('day', '').strip()
+    req_date   = request.args.get('date', '').strip()
+    room_id    = request.args.get('room_id', '').strip()
+    section_id = request.args.get('section_id', '').strip()
     if req_date and not day:
         try:
             from datetime import date as _date
@@ -14183,11 +14594,114 @@ def api_faculty_blocked_times():
               AND UPPER(ss.daydesc) = UPPER(%s)
             ORDER BY ts_s.timevalue
         """, [str(emp_num), day]) or []
-        return jsonify({'success': True, 'blocked': [
+        blocked = [
             {'start_time': r['start_time'], 'end_time': r['end_time'],
              'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
             for r in rows
-        ]})
+        ]
+        # When a specific room is provided, also block times that room is already occupied
+        # so the time dropdown grays out those slots before the user selects them.
+        if room_id:
+            try:
+                room_rows = query_db("""
+                    SELECT DISTINCT
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                        ts_s.timevalue                          AS start_raw,
+                        ts_e.timevalue                          AS end_raw
+                    FROM schedule_sessions ss
+                    JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                    JOIN timeslot ts_s       ON ss.starttimeid = ts_s.timeid
+                    JOIN timeslot ts_e       ON ss.endtimeid   = ts_e.timeid
+                    WHERE sv.status = 'Published'
+                      AND ss.roomid = %s
+                      AND UPPER(ss.daydesc) = UPPER(%s)
+                    ORDER BY ts_s.timevalue
+                """, [int(room_id), day]) or []
+                blocked += [
+                    {'start_time': r['start_time'], 'end_time': r['end_time'],
+                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
+                    for r in room_rows
+                ]
+            except Exception:
+                pass
+        # When a section is provided, also block times that section already has another class.
+        if section_id:
+            try:
+                sect_rows = query_db("""
+                    SELECT DISTINCT
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                        ts_s.timevalue                          AS start_raw,
+                        ts_e.timevalue                          AS end_raw
+                    FROM schedule_sessions ss
+                    JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                    JOIN schedule sc         ON sv.scheduleid = sc.scheduleid
+                    JOIN timeslot ts_s       ON ss.starttimeid = ts_s.timeid
+                    JOIN timeslot ts_e       ON ss.endtimeid   = ts_e.timeid
+                    WHERE sv.status = 'Published'
+                      AND sc.sectionid = %s
+                      AND UPPER(ss.daydesc) = UPPER(%s)
+                    ORDER BY ts_s.timevalue
+                """, [int(section_id), day]) or []
+                blocked += [
+                    {'start_time': r['start_time'], 'end_time': r['end_time'],
+                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
+                    for r in sect_rows
+                ]
+            except Exception:
+                pass
+        # Also block times where the faculty has an active Local Arrangement on this day.
+        if emp_num:
+            try:
+                la_rows = query_db("""
+                    SELECT DISTINCT
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                        ts_s.timevalue                          AS start_raw,
+                        ts_e.timevalue                          AS end_raw
+                    FROM local_arrangement_sessions las
+                    JOIN local_arrangement la ON las.arrangementid = la.arrangementid
+                    JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+                    JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+                    WHERE la.status = 'Approved'
+                      AND las.faculty_employeenumber = %s
+                      AND UPPER(las.daydesc) = UPPER(%s)
+                    ORDER BY ts_s.timevalue
+                """, [str(emp_num), day]) or []
+                blocked += [
+                    {'start_time': r['start_time'], 'end_time': r['end_time'],
+                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
+                    for r in la_rows
+                ]
+            except Exception:
+                pass
+        # Also block times for the selected room via Local Arrangements.
+        if room_id:
+            try:
+                la_room_rows = query_db("""
+                    SELECT DISTINCT
+                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                        TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                        ts_s.timevalue                          AS start_raw,
+                        ts_e.timevalue                          AS end_raw
+                    FROM local_arrangement_sessions las
+                    JOIN local_arrangement la ON las.arrangementid = la.arrangementid
+                    JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+                    JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+                    WHERE la.status = 'Approved'
+                      AND las.roomid = %s
+                      AND UPPER(las.daydesc) = UPPER(%s)
+                    ORDER BY ts_s.timevalue
+                """, [int(room_id), day]) or []
+                blocked += [
+                    {'start_time': r['start_time'], 'end_time': r['end_time'],
+                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
+                    for r in la_room_rows
+                ]
+            except Exception:
+                pass
+        return jsonify({'success': True, 'blocked': blocked})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -14285,6 +14799,7 @@ def api_faculty_submit_request():
         section_id = data.get('section_id')
         subject    = data.get('subject_code', '').strip()
         reason     = data.get('reason', '')
+        notes      = data.get('note', '')
         start_time = data.get('start_time', '')     # "07:30 AM"
         end_time   = data.get('end_time', '')
 
@@ -14344,21 +14859,40 @@ def api_faculty_submit_request():
                         'error': 'No published schedule found for the given subject and section.'}), 400
                 if not start_tid or not end_tid:
                     return jsonify({'success': False, 'error': 'Invalid time selection.'}), 400
+                # Block submission if faculty already has a committed schedule at the requested day/time
+                if req_date and start_time and end_time:
+                    try:
+                        day_of_week = _dt.strptime(req_date, '%Y-%m-%d').strftime('%A')
+                        fac_conflict = query_db("""
+                            SELECT cs.subjectcode FROM schedule_sessions ss
+                            JOIN schedule_version sv ON ss.versionid = sv.versionid
+                            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                            JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                            JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+                            WHERE sv.status = 'Published'
+                              AND sc.employeenumber = %s
+                              AND UPPER(ss.daydesc) = UPPER(%s)
+                              AND ts_s.timevalue < %s::time AND ts_e.timevalue > %s::time
+                            LIMIT 1
+                        """, [submitted_by, day_of_week, end_time, start_time], one=True)
+                        if fac_conflict:
+                            return jsonify({'success': False,
+                                'error': f"You already have {fac_conflict['subjectcode']} scheduled on {day_of_week} at this time. Make-up class cannot be submitted when you have an existing commitment."}), 400
+                    except Exception as _ce:
+                        print(f"[submit_request conflict check] {_ce}")
                 cur.execute("""
                     INSERT INTO class_meeting_request
                         (scheduleid, requested_date, new_starttimeid, new_endtimeid,
-                         new_roomid, reason, submitted_by, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pending')
-                """, (scheduleid, req_date, start_tid, end_tid, rid, reason, submitted_by))
+                         new_roomid, reason, notes, submitted_by, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+                """, (scheduleid, req_date, start_tid, end_tid, rid, reason, notes, submitted_by))
 
             elif req_type == 'adjustment':
-                day        = data.get('day', '') or None
-                start_date = data.get('start_date') or None
+                day = data.get('day', '') or None
                 if not scheduleid or not versionid:
                     return jsonify({'success': False,
                         'error': 'No published schedule found for the given subject and section.'}), 400
-                if not start_date:
-                    return jsonify({'success': False, 'error': 'Effective start date is required.'}), 400
                 parts = []
                 if day:                   parts.append('Day')
                 if start_tid and end_tid: parts.append('Time')
@@ -14369,9 +14903,9 @@ def api_faculty_submit_request():
                         (scheduleid, versionid, change_type, new_daydesc,
                          new_starttimeid, new_endtimeid, new_roomid,
                          effective_from, reason, submitted_by, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_DATE, %s, %s, 'Pending')
                 """, (scheduleid, versionid, change_type, day,
-                      start_tid, end_tid, rid, start_date, reason, submitted_by))
+                      start_tid, end_tid, rid, reason, submitted_by))
             else:
                 return jsonify({'success': False, 'error': 'Unknown request type.'}), 400
 
@@ -14385,6 +14919,173 @@ def api_faculty_submit_request():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # --- API: Available rooms for a given day/time window ---
+@app.route('/api/faculty/check_request_conflicts')
+def api_faculty_check_request_conflicts():
+    """Check room, faculty, and section conflicts at the requested day+time."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False}), 401
+    req_date   = request.args.get('date', '').strip()
+    start_time = request.args.get('start_time', '').strip()
+    end_time   = request.args.get('end_time', '').strip()
+    section_id = request.args.get('section_id', '').strip()
+    day        = request.args.get('day', '').strip()
+    room_id    = request.args.get('room_id', '').strip()
+    if not (start_time and end_time):
+        return jsonify({'success': True,
+                        'faculty_conflict': False, 'section_conflict': False, 'room_conflict': False})
+    # Derive day-of-week from date if not provided
+    if req_date and not day:
+        try:
+            from datetime import date as _date
+            day = _date.fromisoformat(req_date).strftime('%A')
+        except Exception:
+            pass
+    if not day:
+        return jsonify({'success': True,
+                        'faculty_conflict': False, 'section_conflict': False, 'room_conflict': False})
+    try:
+        emp_num = session.get('employeenumber')
+        if not emp_num:
+            acc = query_db("SELECT employeenumber FROM accounts WHERE username=%s", [session.get('username')], one=True)
+            emp_num = acc['employeenumber'] if acc else None
+
+        faculty_conflict = False
+        section_conflict = False
+        room_conflict    = False
+        faculty_detail   = ''
+        section_detail   = ''
+        room_detail      = ''
+
+        if emp_num:
+            rows = query_db("""
+                SELECT cs.subjectcode,
+                       TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
+                       TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                JOIN schedule sc         ON sv.scheduleid  = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+                WHERE sv.status IN ('Published','Draft')
+                  AND sc.employeenumber = %s
+                  AND UPPER(ss.daydesc) = UPPER(%s)
+                  AND ts_s.timevalue < %s::time
+                  AND ts_e.timevalue > %s::time
+                LIMIT 1
+            """, [str(emp_num), day, end_time, start_time]) or []
+            if rows:
+                faculty_conflict = True
+                r = rows[0]
+                faculty_detail = f"You already have {r['subjectcode']} ({r['start_t']}–{r['end_t']}) on {day}."
+            # Also check Local Arrangement sessions for this faculty
+            if not faculty_conflict:
+                try:
+                    la_rows = query_db("""
+                        SELECT las.subjectcode,
+                               TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
+                               TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+                        FROM local_arrangement_sessions las
+                        JOIN local_arrangement la ON las.arrangementid = la.arrangementid
+                        JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+                        JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+                        WHERE la.status = 'Approved'
+                          AND las.faculty_employeenumber = %s
+                          AND UPPER(las.daydesc) = UPPER(%s)
+                          AND ts_s.timevalue < %s::time
+                          AND ts_e.timevalue > %s::time
+                        LIMIT 1
+                    """, [str(emp_num), day, end_time, start_time]) or []
+                    if la_rows:
+                        faculty_conflict = True
+                        r = la_rows[0]
+                        faculty_detail = f"You have a Local Arrangement ({r['subjectcode'] or 'session'}) on {day} at {r['start_t']}–{r['end_t']}."
+                except Exception:
+                    pass
+
+        if section_id:
+            rows2 = query_db("""
+                SELECT cs.subjectcode,
+                       TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
+                       TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                JOIN schedule sc         ON sv.scheduleid  = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+                WHERE sv.status IN ('Published','Draft')
+                  AND sc.sectionid = %s
+                  AND UPPER(ss.daydesc) = UPPER(%s)
+                  AND ts_s.timevalue < %s::time
+                  AND ts_e.timevalue > %s::time
+                LIMIT 1
+            """, [int(section_id), day, end_time, start_time]) or []
+            if rows2:
+                section_conflict = True
+                r2 = rows2[0]
+                section_detail = f"This section already has {r2['subjectcode']} ({r2['start_t']}–{r2['end_t']}) on {day}."
+
+        if room_id:
+            try:
+                rows3 = query_db("""
+                    SELECT cs.subjectcode,
+                           TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
+                           TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+                    FROM schedule_sessions ss
+                    JOIN schedule_version sv ON ss.versionid  = sv.versionid
+                    JOIN schedule sc         ON sv.scheduleid  = sc.scheduleid
+                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                    JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                    JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+                    WHERE sv.status = 'Published'
+                      AND ss.roomid = %s
+                      AND UPPER(ss.daydesc) = UPPER(%s)
+                      AND ts_s.timevalue < %s::time
+                      AND ts_e.timevalue > %s::time
+                    LIMIT 1
+                """, [int(room_id), day, end_time, start_time]) or []
+                if rows3:
+                    room_conflict = True
+                    r3 = rows3[0]
+                    room_detail = f"The selected room is already occupied by {r3['subjectcode']} ({r3['start_t']}–{r3['end_t']}) on {day}."
+                # Also check Local Arrangement room occupancy
+                if not room_conflict:
+                    la_room = query_db("""
+                        SELECT las.subjectcode,
+                               TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
+                               TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+                        FROM local_arrangement_sessions las
+                        JOIN local_arrangement la ON las.arrangementid = la.arrangementid
+                        JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+                        JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+                        WHERE la.status = 'Approved'
+                          AND las.roomid = %s
+                          AND UPPER(las.daydesc) = UPPER(%s)
+                          AND ts_s.timevalue < %s::time
+                          AND ts_e.timevalue > %s::time
+                        LIMIT 1
+                    """, [int(room_id), day, end_time, start_time]) or []
+                    if la_room:
+                        room_conflict = True
+                        r_la = la_room[0]
+                        room_detail = f"The selected room has a Local Arrangement ({r_la['subjectcode'] or 'session'}) at {r_la['start_t']}–{r_la['end_t']} on {day}."
+            except Exception:
+                pass
+
+        return jsonify({
+            'success':          True,
+            'faculty_conflict': faculty_conflict,
+            'section_conflict': section_conflict,
+            'room_conflict':    room_conflict,
+            'faculty_detail':   faculty_detail,
+            'section_detail':   section_detail,
+            'room_detail':      room_detail,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/faculty/available_rooms')
 def api_faculty_available_rooms():
     if 'loggedin' not in session:
@@ -14506,6 +15207,7 @@ def _load_faculty_map():
                f.employeestatus, f.designationid, et.regularload, et.parttimeload,
                COALESCE(et.teachingsubstitution, 0) AS teachingsubstitution,
                et.regular_start, et.regular_end, et.parttime_start, et.parttime_end,
+               COALESCE(et.restrict_pt_hours, TRUE) AS restrict_pt_hours,
                d.nightteachingservice, COALESCE(d.regularloadunit, 0) AS designation_regular_load,
                sp.specializationname
         FROM faculty f
@@ -14531,6 +15233,7 @@ def _load_faculty_map():
                 'regular_start': row['regular_start'] or time(7, 30),
                 'regular_end': row['regular_end'] or time(16, 30),
                 'parttime_start': row['parttime_start'], 'parttime_end': row['parttime_end'],
+                'restrict_pt_hours': bool(row['restrict_pt_hours']),
             },
         }
     return faculty_map
@@ -14574,6 +15277,15 @@ def _rehydrate_schedule(schedule_data: list) -> list:
             cls['days_list'] = _parse_days(cls['days'])
         if 'day' not in cls and 'days_list' in cls and cls['days_list']:
             cls['day'] = cls['days_list'][0]
+        # Normalize the hours field: manual editor sends 'units'; CSP validator
+        # expects 'total_hours' or 'total_subject_hrs' for HC6 day-pairing check.
+        if 'total_hours' not in cls and 'total_subject_hrs' not in cls:
+            u = cls.get('units')
+            if u is not None:
+                try:
+                    cls['total_hours'] = float(u)
+                except (ValueError, TypeError):
+                    pass
     return schedule_data
 
 def _fmt_12h(t_str):
@@ -14816,7 +15528,37 @@ def schedule_version_history():
 @app.route('/schedule/room-schedule')
 def room_schedule_view():
     if 'loggedin' not in session: return redirect(url_for('login'))
-    return render_template('academic/roomScheduleView.html')
+    import json as _json
+
+    buildings = query_db(
+        "SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname"
+    ) or []
+
+    rooms = query_db("""
+        SELECT r.roomid, r.roomname, r.roomtype, r.roomcapacity,
+               b.buildingid, b.buildingname
+        FROM room r JOIN building b ON r.buildingid = b.buildingid
+        WHERE b.isactive = TRUE
+        ORDER BY b.buildingname, r.roomname
+    """) or []
+
+    def _room_floor(name):
+        n = (name or '').replace(' ', '')
+        if 'LQ1' in n: return '1'
+        if 'LQ2' in n: return '2'
+        if 'LQ3' in n: return '3'
+        return 'other'
+
+    return render_template('academic/roomScheduleView.html',
+        buildings_json=_json.dumps([{'id': b['buildingid'], 'name': b['buildingname']} for b in buildings]),
+        rooms_json=_json.dumps([{
+            'id': r['roomid'], 'name': r['roomname'],
+            'type': r['roomtype'] or 'Lecture',
+            'bid': r['buildingid'], 'bname': r['buildingname'],
+            'capacity': r['roomcapacity'] or 0,
+            'floor': _room_floor(r['roomname'])
+        } for r in rooms])
+    )
 
 @app.route('/academic/schedule-generation')
 def schedule_generation_view():
@@ -15044,15 +15786,15 @@ def api_save_draft():
         all_codes_to_archive = list(set(submitted_codes + [s.upper() for s in deleted_subjects]))
 
         # ── Pre-save CSP validation — block if any hard constraint is violated ──
-        # HC6 (day-pairing) is intentionally excluded: a scheduler may save a single
-        # slice as draft first and add the paired day later. HC6 is enforced at publish.
+        # HC6 (day-pairing) is enforced here too: it only fires when ≥ 2 days are
+        # present for the same subject, so saving a single slice still passes.
         _pre_rehydrated = _rehydrate_schedule(list(schedule_list))
         if _pre_rehydrated:
             from scheduler import CSPValidator as _CSP
             from database import load_scheduler_config as _lsc_pre
             _hc_cfg_pre = _lsc_pre()
             _fmap_pre   = _load_faculty_map()
-            _viols_pre  = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre, skip_rules={'HC6'})
+            _viols_pre  = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre)
             if _viols_pre:
                 cur.close(); conn.close()
                 return jsonify({
@@ -15252,9 +15994,7 @@ def api_validate_schedule():
         from scheduler import CSPValidator
         from database import load_scheduler_config as _lsc
         _hc_cfg    = _lsc()
-        # HC6 (day-pairing) is skipped here — partial schedules are valid drafts.
-        # It is enforced at publish time via /api/schedule/approve.
-        violations  = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map, skip_rules={'HC6'})
+        violations  = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map)
         return jsonify({'success': True, 'violations': violations, 'has_violations': bool(violations)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -15268,15 +16008,23 @@ def api_approve_schedule():
 
         # ── Server-side CSP guard ── block approval if any hard constraint is violated
         from scheduler import CSPValidator
-        rehydrated  = _rehydrate_schedule(list(data.get('schedule_data', [])))
+        sched_data  = _rehydrate_schedule(list(data.get('schedule_data', [])))
         faculty_map = _load_faculty_map()
+
+        # Guard: nothing to publish
+        if not sched_data:
+            return jsonify({
+                'success': False,
+                'error':   'No sessions to publish. Please add schedule entries before approving.',
+            }), 400
 
         # Load HC config to honour the publish-gate toggle
         from database import load_scheduler_config as _load_hc_cfg
         _hc_cfg = _load_hc_cfg()
         publish_gate_on = bool(_hc_cfg.get('hc_publish_gate_enabled', 1))
 
-        violations = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map)
+        # Intra-payload check: HC1–HC10 among the submitted sessions themselves
+        violations = CSPValidator(config=_hc_cfg).validate(sched_data, faculty_map)
 
         if publish_gate_on and violations:
             return jsonify({
@@ -15285,24 +16033,11 @@ def api_approve_schedule():
                            'Resolve all conflicts in the Manual Editor before approving.',
                 'violations': violations,
             }), 400
+
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
-
         _ensure_source_col(cur)
-        cur.execute("""
-    SELECT COALESCE(MAX(sv.version_number), 0) AS max_v
-    FROM public.schedule_version sv
-    JOIN public.schedule s ON sv.scheduleid = s.scheduleid
-    JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
-    JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
-    WHERE UPPER(c.programcode) = UPPER(%s)
-      AND cs.yearlevel = %s
-      AND s.semesterid = %s
-      AND sv.source = 'manual_editor'
-""", (program, year_level, sem_id))
-        max_v = cur.fetchone()['max_v']
 
-        sched_data = _rehydrate_schedule(list(data.get('schedule_data', [])))
         submitted_codes = list({
             (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
             for cls in sched_data
@@ -15322,6 +16057,69 @@ def api_approve_schedule():
         # replaces the entire Published schedule for that subject.
         published_baseline = _build_published_baseline(cur, program, year_level, sem_id,
                                                         submitted_codes, sched_data)
+
+        # Cross-session HC9: check new sessions against already-published existing sessions
+        # (the intra-payload check above only compares new sessions with each other).
+        if publish_gate_on:
+            from scheduler import format_time_12h as _fmt12h
+            existing_for_conflict = other_sessions + published_baseline
+            cross_violations = []
+            for new in sched_data:
+                r_new   = str(new.get('room_id') or new.get('roomid') or '')
+                day_new = new.get('day') or new.get('daydesc') or ''
+                st_new  = new.get('start_time')
+                et_new  = new.get('end_time')
+                if not r_new or not day_new or not st_new or not et_new:
+                    continue
+                for ex in existing_for_conflict:
+                    r_ex   = str(ex.get('roomid') or ex.get('room_id') or '')
+                    day_ex = ex.get('daydesc') or ex.get('day') or ''
+                    st_ex  = ex.get('start_time')
+                    et_ex  = ex.get('end_time')
+                    if r_new != r_ex or day_new != day_ex:
+                        continue
+                    if isinstance(st_ex, str): st_ex = _parse_time_str(st_ex)
+                    if isinstance(et_ex, str): et_ex = _parse_time_str(et_ex)
+                    if st_ex and et_ex and st_new < et_ex and et_new > st_ex:
+                        sc_new = (new.get('subject_code') or new.get('subjectcode') or '?').upper()
+                        sc_ex  = (ex.get('subjectcode') or ex.get('subject_code') or '?').upper()
+                        fac_new = str(new.get('faculty_id') or new.get('employeenumber') or '')
+                        fac_ex  = str(ex.get('employeenumber') or ex.get('faculty_id') or '')
+                        # Merge class: same subject + same faculty in same room/time is allowed
+                        if sc_new == sc_ex and fac_new and fac_new == fac_ex:
+                            continue
+                        room_label = new.get('room') or r_new
+                        cross_violations.append({
+                            'rule':    'HC9',
+                            'subject': f'{sc_new} / {sc_ex}',
+                            'detail':  (
+                                f'Room {room_label} is already occupied on {day_new} '
+                                f'{_fmt12h(st_ex)}–{_fmt12h(et_ex)} '
+                                f'by {sc_ex}. The new session '
+                                f'({_fmt12h(st_new)}–{_fmt12h(et_new)}) '
+                                f'cannot be published into the same slot.'
+                            )
+                        })
+            if cross_violations:
+                cur.close(); conn.close()
+                return jsonify({
+                    'success': False,
+                    'error':   f'Cannot approve: {len(cross_violations)} room conflict(s) with already-published sessions.',
+                    'violations': cross_violations,
+                }), 400
+
+        cur.execute("""
+    SELECT COALESCE(MAX(sv.version_number), 0) AS max_v
+    FROM public.schedule_version sv
+    JOIN public.schedule s ON sv.scheduleid = s.scheduleid
+    JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+    JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+    WHERE UPPER(c.programcode) = UPPER(%s)
+      AND cs.yearlevel = %s
+      AND s.semesterid = %s
+      AND sv.source = 'manual_editor'
+""", (program, year_level, sem_id))
+        max_v = cur.fetchone()['max_v']
 
         # Archive only the existing Published revisions — Draft history must remain intact.
         # Publishing creates a new independent Published snapshot; it does not consume the Draft.
@@ -15553,20 +16351,25 @@ def api_list_versions():
             pass
         is_drafts = 'drafts' in request.path
         if is_drafts:
-            # One consolidated entry per program/year/semester — use the latest versionid/version_number
+            # One entry per program/year/semester/section — use the latest versionid/version_number.
+            # Including sectionid in DISTINCT ON keeps each section as a separate draft card.
             rows = query_db("""
-                SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid)
+                SELECT DISTINCT ON (c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sg.sectionid)
                        sv.versionid, sv.version_number, sv.status, sv.datecreated,
                        COALESCE(sv.source, 'official') AS source,
-                       c.programcode AS programcode, cs.yearlevel, cs.semester AS term, ay.academicyearid AS acadyear
+                       c.programcode AS programcode, cs.yearlevel, cs.semester AS term,
+                       ay.academicyearid AS acadyear,
+                       sg.sectionid, COALESCE(sec.sectionname, '') AS sectionname
                 FROM   public.schedule_version sv
-                JOIN   public.schedule sg ON sv.scheduleid = sg.scheduleid
+                JOIN   public.schedule sg    ON sv.scheduleid             = sg.scheduleid
+                LEFT JOIN public.sections sec ON sg.sectionid             = sec.sectionid
                 JOIN   public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN   public.curriculum c ON cs.curriculumid = c.curriculumid
-                JOIN   public.semester sem ON sg.semesterid = sem.semesterid
-                JOIN   public.academicyear ay ON sem.academicyearid = ay.academicyearid
+                JOIN   public.curriculum c   ON cs.curriculumid           = c.curriculumid
+                JOIN   public.semester sem   ON sg.semesterid             = sem.semesterid
+                JOIN   public.academicyear ay ON sem.academicyearid       = ay.academicyearid
                 WHERE  sv.status = 'Draft'
-                ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number DESC
+                ORDER BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid,
+                         sg.sectionid, sv.version_number DESC
             """)
         else:
             # CTE groups all subjects per section per version_number into one aggregated row.
@@ -15583,36 +16386,39 @@ def api_list_versions():
                                ELSE 'Archive'
                            END                      AS status,
                            MAX(sv.datecreated)      AS datecreated,
-                           -- All rows for a version share the same original_status; MAX picks it up.
                            MAX(sv.original_status)  AS original_status,
                            MAX(sv.source)           AS source,
-                           c.programcode          AS programcode,
+                           c.programcode            AS programcode,
                            cs.yearlevel,
                            cs.semester              AS term,
-                           ay.academicyearid        AS acadyear
+                           ay.academicyearid        AS acadyear,
+                           sg.sectionid,
+                           MAX(sec.sectionname)     AS sectionname
                     FROM   public.schedule_version sv
                     JOIN   public.schedule sg          ON sv.scheduleid           = sg.scheduleid
+                    LEFT JOIN public.sections sec      ON sg.sectionid            = sec.sectionid
                     JOIN   public.curriculumsubject cs  ON sg.curriculumsubjectid  = cs.curriculumsubjectid
                     JOIN   public.curriculum c          ON cs.curriculumid         = c.curriculumid
                     JOIN   public.semester sem          ON sg.semesterid           = sem.semesterid
                     JOIN   public.academicyear ay       ON sem.academicyearid      = ay.academicyearid
-                    GROUP BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid, sv.version_number
+                    GROUP BY c.programcode, cs.yearlevel, cs.semester, ay.academicyearid,
+                             sv.version_number, sg.sectionid
                 )
                 SELECT *,
                        CASE WHEN COALESCE(original_status, status) = 'Draft' THEN
                            SUM(CASE WHEN COALESCE(original_status, status) = 'Draft' THEN 1 ELSE 0 END)
-                               OVER (PARTITION BY programcode, yearlevel, term, acadyear
+                               OVER (PARTITION BY programcode, yearlevel, term, acadyear, sectionid
                                      ORDER BY version_number
                                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
                        END AS draft_version_number,
                        CASE WHEN COALESCE(original_status, status) = 'Published' THEN
                            SUM(CASE WHEN COALESCE(original_status, status) = 'Published' THEN 1 ELSE 0 END)
-                               OVER (PARTITION BY programcode, yearlevel, term, acadyear
+                               OVER (PARTITION BY programcode, yearlevel, term, acadyear, sectionid
                                      ORDER BY version_number
                                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
                        END AS published_version_number
                 FROM versioned
-                ORDER BY programcode, yearlevel, term, acadyear, version_number
+                ORDER BY programcode, yearlevel, term, acadyear, sectionid, version_number
             """)
         output = []
         for r in (rows or []):
@@ -15630,6 +16436,8 @@ def api_list_versions():
                 'term':                    r['term'],
                 'acadyear':                r['acadyear'],
                 'source':                  r.get('source', 'official'),
+                'sectionid':               r.get('sectionid'),
+                'sectionname':             r.get('sectionname', ''),
             })
         return jsonify(sorted(output, key=lambda x: x['datecreated'], reverse=True))
     except Exception as e: return jsonify({"error": str(e)}), 500

@@ -20,15 +20,63 @@
             <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
             <h1>PUPLC Scheduling System</h1>
         </div>
-        <div class="search-container">
+        <div class="search-container" id="globalSearchWrap">
             <i class="fas fa-search"></i>
-            <input type="text" placeholder="Search...">
+            <input type="text" id="globalSearch" placeholder="Search faculty, rooms, subjects..." autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
+            <div class="search-results" id="searchResults"></div>
         </div>
         <div class="nav-right">
             <span class="ay-label">{{ current_ay_label }}</span>
-            <div class="user-profile">
-                <div class="user-avatar"><i class="fas fa-user"></i></div>
-                <span class="user-name">{{ current_user_display }}</span>
+            <div class="up-wrap" id="upWrap">
+                <div class="user-profile" onclick="toggleUpDropdown(event)">
+                    <div class="user-avatar" id="navAvatar">
+                        <i class="fas fa-user" id="navAvatarIcon"></i>
+                    </div>
+                    <div class="up-info">
+                        <span class="user-name">{{ current_user_display }}</span>
+                        <span class="up-role">{{ session.get('role', '') }}</span>
+                    </div>
+                    <i class="fas fa-chevron-down up-caret" id="upCaret"></i>
+                </div>
+
+                <!-- ── User Dropdown Card ── -->
+                <div class="up-dropdown" id="upDropdown">
+                    <div class="upd-profile-card">
+                        <div class="upd-avatar" id="updAvatar">
+                            <i class="fas fa-user" id="updAvatarIcon"></i>
+                        </div>
+                        <div class="upd-name" id="updName">{{ current_user_display }}</div>
+                        <div class="upd-role" id="updRole">{{ session.get('role', '') }}</div>
+                        <div class="upd-dept" id="updDept">—</div>
+                    </div>
+
+                    <div class="upd-menu">
+                        <button class="upd-menu-item" onclick="openProfilePanel()">
+                            <div class="upd-mi-left"><i class="fas fa-user-circle"></i><div><span class="upd-mi-title">Profile</span><span class="upd-mi-sub">Manage your personal information</span></div></div>
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                        <button class="upd-menu-item" onclick="openEmailPanel()">
+                            <div class="upd-mi-left"><i class="fas fa-envelope"></i><div><span class="upd-mi-title">Email</span><span class="upd-mi-sub">Manage your email address</span></div></div>
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                        <button class="upd-menu-item" onclick="openPasswordPanel()">
+                            <div class="upd-mi-left"><i class="fas fa-lock"></i><div><span class="upd-mi-title">Password</span><span class="upd-mi-sub">Change your password</span></div></div>
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+
+                    <div class="upd-status-card">
+                        <div class="upd-status-row">
+                            <span class="upd-status-label">Account Status</span>
+                            <span class="upd-status-badge">Active</span>
+                        </div>
+                        <div class="upd-last-login" id="updLastLogin">Last login: —</div>
+                    </div>
+
+                    <button class="upd-signout" onclick="openLogoutModal(event)">
+                        <i class="fas fa-sign-out-alt"></i> Sign out
+                    </button>
+                </div>
             </div>
         </div>
     </header>
@@ -211,6 +259,128 @@
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════════
+         PROFILE SETTINGS PANEL
+    ══════════════════════════════════════════ -->
+    <div id="profilePanel" class="up-panel" style="display:none;">
+        <div class="up-panel-box">
+            <div class="up-panel-hd">
+                <button class="up-panel-back" onclick="closeProfilePanel()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button class="up-panel-close" onclick="closeProfilePanel()"><i class="fas fa-times"></i></button>
+            </div>
+            <h2 class="up-panel-title">Profile Settings</h2>
+            <p class="up-panel-sub">Manage your personal information.</p>
+
+            <div class="up-photo-wrap">
+                <div class="up-photo-circle" id="profilePhotoCircle">
+                    <i class="fas fa-user" id="profilePhotoIcon"></i>
+                    <img id="profilePhotoImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                </div>
+                <label class="up-change-photo-btn" for="profilePhotoInput">
+                    <i class="fas fa-upload"></i> Change Photo
+                </label>
+                <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
+                <div class="up-photo-hint">JPG, PNG up to 2MB</div>
+            </div>
+
+            <div class="up-form">
+                <div class="up-field">
+                    <label>Employee ID</label>
+                    <input type="text" id="pfEmpId" class="up-input" readonly>
+                </div>
+                <div class="up-field">
+                    <label>Full Name</label>
+                    <input type="text" id="pfFullName" class="up-input" readonly>
+                </div>
+                <div class="up-field" id="pfDesignationSection">
+                    <label>Designation</label>
+                    <select id="pfDesignation" class="up-select"></select>
+                </div>
+                <div class="up-field" id="pfSpecializationSection">
+                    <label>Specialization</label>
+                    <select id="pfSpecialization" class="up-select"></select>
+                </div>
+                <div class="up-field" id="pfStatusSection">
+                    <label>Employment Status</label>
+                    <select id="pfStatus" class="up-select">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                        <option value="Part-time">Part-time</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="up-panel-ft">
+                <button class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
+                <button class="up-btn-save" onclick="saveProfile()">Save Changes</button>
+            </div>
+
+            <div class="up-panel-notice">
+                <i class="fas fa-info-circle"></i>
+                <span>Changes to your profile information will be reflected across the system.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════
+         PASSWORD CHANGE PANEL
+    ══════════════════════════════════════════ -->
+    <div id="passwordPanel" class="up-panel" style="display:none;">
+        <div class="up-panel-box">
+            <div class="up-panel-hd">
+                <button class="up-panel-back" onclick="closePasswordPanel()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button class="up-panel-close" onclick="closePasswordPanel()"><i class="fas fa-times"></i></button>
+            </div>
+            <h2 class="up-panel-title">Change Password</h2>
+            <p class="up-panel-sub">Update your account password.</p>
+            <div class="up-form">
+                <div class="up-field">
+                    <label>Current Password</label>
+                    <input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password">
+                </div>
+                <div class="up-field">
+                    <label>New Password</label>
+                    <input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters">
+                </div>
+                <div class="up-field">
+                    <label>Confirm New Password</label>
+                    <input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password">
+                </div>
+                <div id="pwError" class="up-error" style="display:none;"></div>
+            </div>
+            <div class="up-panel-ft">
+                <button class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
+                <button class="up-btn-save" onclick="savePassword()">Update Password</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════
+         EMAIL PANEL
+    ══════════════════════════════════════════ -->
+    <div id="emailPanel" class="up-panel" style="display:none;">
+        <div class="up-panel-box">
+            <div class="up-panel-hd">
+                <button class="up-panel-back" onclick="closeEmailPanel()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button class="up-panel-close" onclick="closeEmailPanel()"><i class="fas fa-times"></i></button>
+            </div>
+            <h2 class="up-panel-title">Email Address</h2>
+            <p class="up-panel-sub">Your email address linked to this account.</p>
+            <div class="up-form">
+                <div class="up-field">
+                    <label>Email Address</label>
+                    <input type="email" id="pfEmail" class="up-input" placeholder="your@email.com">
+                </div>
+                <div id="emailError" class="up-error" style="display:none;"></div>
+            </div>
+            <div class="up-panel-ft">
+                <button class="up-btn-cancel" onclick="closeEmailPanel()">Cancel</button>
+                <button class="up-btn-save" onclick="saveEmail()">Save Email</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ACAD HEAD/base.acad.js') }}"></script>
 </body>
 

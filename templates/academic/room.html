@@ -84,7 +84,7 @@
                     <div class="filter-item">
                         <label>SEARCH ROOM</label>
                         <div class="filter-input-wrap">
-                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" placeholder="Search..">
+                            <input type="text" id="searchRoom" onkeyup="filterRoomTable()" oninput="filterRoomTable()" placeholder="Search.." autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly onfocus="this.removeAttribute('readonly')">
                         </div>
                     </div>
                     <div class="filter-item">
@@ -142,7 +142,7 @@
                                         <i class="fas fa-eye"></i>
                                     </button>
                                     <button class="btn-action edit" title="Edit"
-                                        onclick="openEditRoomModal({{ r.roomid }}, '{{ r.roomname }}', '{{ r.roomtype }}', {{ r.roomcapacity }}, {{ r.buildingid }})">
+                                        onclick="openEditRoomModal({{ r.roomid }}, '{{ r.roomname }}', '{{ r.roomtype }}', {{ r.roomcapacity }}, {{ r.buildingid or 'null' }})">
                                         <i class="fas fa-pen"></i>
                                     </button>
                                     <button class="btn-action delete" title="Delete"
@@ -267,6 +267,7 @@
                 <div class="rm-field">
                     <label>Building <span class="rm-req">*</span></label>
                     <select id="edit_room_bldg_id" class="rm-input">
+                        <option value="">— Select Building —</option>
                         {% for bldg in buildings %}
                         <option value="{{ bldg.buildingid }}">{{ bldg.buildingname }}</option>
                         {% endfor %}

@@ -113,6 +113,15 @@ function openViewOnly() {
   _pendingModalId = _pendingViewFn = null;
 }
 
+/* Called when admin chooses "Edit Anyway" — bypasses the lock for constraint-hour edits */
+function openEditAnyway() {
+  closeSModal('modalLockWarning');
+  if (!_pendingViewFn || !_pendingModalId) return;
+  _pendingViewFn();
+  openEditModal(_pendingModalId);
+  _pendingModalId = _pendingViewFn = null;
+}
+
 function openEditModal(id) {
   /* Ensure view-only mode is cleared */
   setViewOnlyMode(id, false);
@@ -163,14 +172,14 @@ function setViewOnlyMode(modalId, isViewOnly) {
 /* ── Time helpers ───────────────────────────────────────── */
 const TIMES = (() => {
   const list = [];
-  for (let h = 6; h <= 22; h++) {
-    for (let m = 0; m < 60; m += 30) {
-      const hh   = h % 12 || 12;
-      const ampm = h < 12 ? 'AM' : 'PM';
-      const mm   = m === 0 ? '00' : '30';
-      const val  = `${String(h).padStart(2,'0')}:${mm}`;
-      list.push({ val, label: `${hh}:${mm} ${ampm}` });
-    }
+  for (let total = 7 * 60 + 30; total <= 21 * 60; total += 30) {
+    const h    = Math.floor(total / 60);
+    const m    = total % 60;
+    const hh   = h % 12 || 12;
+    const ampm = h < 12 ? 'AM' : 'PM';
+    const mm   = m === 0 ? '00' : '30';
+    const val  = `${String(h).padStart(2,'0')}:${mm}`;
+    list.push({ val, label: `${hh}:${mm} ${ampm}` });
   }
   return list;
 })();
@@ -193,7 +202,7 @@ function clean(v) { return (v && v !== 'None') ? v : ''; }
 function openAYModal() {
   document.getElementById('ay_modal_title').innerText    = 'ADD NEW ACADEMIC YEAR';
   document.getElementById('ay_submit_btn').textContent   = 'ADD CALENDAR';
-  document.querySelectorAll('#modalAY input[type="date"]').forEach(i => i.value = '');
+  document.querySelectorAll('#modalAY input[type="date"]').forEach(i => { i.value = ''; i.removeAttribute('min'); });
   document.getElementById('ay_year_start').value = '';
   document.getElementById('ay_year_end').value   = '';
   document.getElementById('ay_tag_display').value = '';
@@ -236,34 +245,53 @@ function prepareAY(el) {
   const computedStatus  = d.status    || 'current';
 
   const populate = () => {
-    document.getElementById('ay_modal_title').innerText  = (isFinalized || hasPub) ? 'VIEW ACADEMIC YEAR' : 'EDIT ACADEMIC YEAR';
+    document.getElementById('ay_modal_title').innerText  = isFinalized ? 'VIEW ACADEMIC YEAR' : 'EDIT ACADEMIC YEAR';
     document.getElementById('ay_submit_btn').textContent = 'SAVE CALENDAR';
     document.getElementById('ay_year_start').value = d.start;
     document.getElementById('ay_year_end').value   = d.end;
     const yy1 = d.start?.slice(2), yy2 = d.end?.slice(2);
     document.getElementById('ay_tag_display').value = `AY ${yy1}-${yy2}`;
-    document.getElementById('ay_s1s').value = clean(d.s1s);
-    document.getElementById('ay_s1e').value = clean(d.s1e);
-    document.getElementById('ay_s2s').value = clean(d.s2s);
-    document.getElementById('ay_s2e').value = clean(d.s2e);
-    document.getElementById('ay_s3s').value = clean(d.s3s);
-    document.getElementById('ay_s3e').value = clean(d.s3e);
+    /* Forward-only rule: only enforce min=today on fields that are already today or future.
+       Past-dated fields (already elapsed sems) get no min so they pass browser validation
+       unchanged — the backend handles it if the admin actually edits them. */
+    const today = new Date().toISOString().slice(0, 10);
+    const setDateForward = (id, raw) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const val = clean(raw);
+      el.value = val;
+      if (!val || val < today) el.removeAttribute('min');
+      else el.min = today;
+    };
+    setDateForward('ay_s1s', d.s1s);
+    setDateForward('ay_s1e', d.s1e);
+    setDateForward('ay_s2s', d.s2s);
+    setDateForward('ay_s2e', d.s2e);
+    setDateForward('ay_s3s', d.s3s);
+    setDateForward('ay_s3e', d.s3e);
   };
 
   if (isFinalized) {
     populate();
     openViewOnlyModal('modalAY');
-    const text = document.getElementById('ay-view-notice-text');
+    const notice = document.getElementById('ay-view-notice');
+    const text   = document.getElementById('ay-view-notice-text');
+    const icon   = notice?.querySelector('i');
+    if (icon) icon.className = 'fas fa-lock';
     if (text) text.textContent = 'This Academic Year is finalized and cannot be edited.';
     return;
   }
 
   if (hasPub) {
-    /* Has a published schedule — lock all fields until schedule is deleted */
+    /* Has a published schedule — allow edits but dates can only move forward (min enforced) */
     populate();
-    openViewOnlyModal('modalAY');
-    const text = document.getElementById('ay-view-notice-text');
-    if (text) text.textContent = 'This Academic Year has a Published schedule. Delete the schedule first to make changes.';
+    openEditModal('modalAY');
+    const notice  = document.getElementById('ay-view-notice');
+    const text    = document.getElementById('ay-view-notice-text');
+    const icon    = notice?.querySelector('i');
+    if (notice) notice.style.display = 'flex';
+    if (icon)   { icon.className = 'fas fa-forward'; }
+    if (text)   text.textContent = 'This Academic Year has a Published schedule. Dates can only be adjusted forward, not backward.';
     return;
   }
 
@@ -325,14 +353,32 @@ function openFinalizeModal(ayId) {
 
 function prepareEmp(el) {
   const d = el.dataset;
+  const isPartTime = d.name === 'Part-time';
   const populate = () => {
     document.getElementById('et_name_label').innerText = d.name;
     document.getElementById('modal_et_id').value       = d.id;
     document.getElementById('modal_et_reg').value      = clean(d.rl)  || '';
     document.getElementById('modal_et_pt').value       = clean(d.ptl) || '';
     document.getElementById('modal_et_sub').value      = clean(d.sub) || '';
-    buildTimeSelect(document.getElementById('modal_et_rs'), clean(d.rs) || null);
-    buildTimeSelect(document.getElementById('modal_et_re'), clean(d.re) || null);
+
+    const regRow = document.getElementById('et_reg_hours_row');
+    if (regRow) regRow.style.display = isPartTime ? 'none' : '';
+
+    // Clear regular hours for Part-time so they aren't saved (disabled fields aren't submitted)
+    const rsEl = document.getElementById('modal_et_rs');
+    const reEl = document.getElementById('modal_et_re');
+    if (isPartTime) {
+      buildTimeSelect(rsEl, null);
+      buildTimeSelect(reEl, null);
+      if (rsEl) rsEl.disabled = true;
+      if (reEl) reEl.disabled = true;
+    } else {
+      buildTimeSelect(rsEl, clean(d.rs) || null);
+      buildTimeSelect(reEl, clean(d.re) || null);
+      if (rsEl) rsEl.disabled = false;
+      if (reEl) reEl.disabled = false;
+    }
+
     buildTimeSelect(document.getElementById('modal_et_ps'), clean(d.ps) || null);
     buildTimeSelect(document.getElementById('modal_et_pe'), clean(d.pe) || null);
     const restrict = d.restrict !== 'false';
@@ -411,6 +457,7 @@ const TOGGLE_MAP = [
   { id:'tog-day-pair',    key:'hc_day_pairing_enabled'   },
   { id:'tog-lab',         key:'hc_lab_session_enabled'   },
   { id:'tog-faculty-spec',key:'hc_faculty_spec_enabled'  },
+  { id:'tog-merge',       key:'hc_merge_enabled'         },
 ];
 
 /* In-memory cache so saves batch nicely */
@@ -477,6 +524,22 @@ function saveConstraintParam(key, val) {
   _scheduleHCSave();
 }
 
+/* Merge toggle — also shows/dims the scope selector */
+function saveMergeConstraint(checked) {
+  _hcState['hc_merge_enabled'] = checked ? 1 : 0;
+  _scheduleHCSave();
+  _applyMergeBodyState(checked);
+}
+
+function _applyMergeBodyState(enabled) {
+  const body = document.getElementById('merge-body');
+  if (!body) return;
+  body.style.opacity      = enabled ? '1'        : '0.4';
+  body.style.pointerEvents = enabled ? 'auto'    : 'none';
+  const scopeSel = document.getElementById('param-merge-scope');
+  if (scopeSel) scopeSel.disabled = !enabled;
+}
+
 async function initHCToggles() {
   const data = await _loadHCFromBackend();
 
@@ -492,6 +555,12 @@ async function initHCToggles() {
   const wd = document.getElementById('param-weekend-day');
   if (ws && data.hc_weekend_subject) ws.value = data.hc_weekend_subject;
   if (wd && data.hc_weekend_day)     wd.value = data.hc_weekend_day;
+
+  /* Merge params */
+  const mergeEnabled = ('hc_merge_enabled' in data) ? (Number(data.hc_merge_enabled) !== 0) : true;
+  const ms = document.getElementById('param-merge-scope');
+  if (ms && data.hc_merge_scope) ms.value = data.hc_merge_scope;
+  _applyMergeBodyState(mergeEnabled);
 }
 
 /* ── Day Pairs ──────────────────────────────────────────── */

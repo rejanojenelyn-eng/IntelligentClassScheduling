@@ -102,7 +102,15 @@ function openEditRoomModal(id, name, type, capacity, bldgId) {
     document.getElementById('edit_room_name').value     = name;
     document.getElementById('edit_room_type').value     = type;
     document.getElementById('edit_room_capacity').value = capacity;
-    document.getElementById('edit_room_bldg_id').value  = bldgId;
+    const bldgSel = document.getElementById('edit_room_bldg_id');
+    if (bldgSel && bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined') {
+        bldgSel.value = String(bldgId);
+        if (!bldgSel.value || bldgSel.value !== String(bldgId)) {
+            bldgSel.value = '';
+        }
+    } else if (bldgSel) {
+        bldgSel.value = '';
+    }
     openRoomModal('modalEditRoom');
 }
 

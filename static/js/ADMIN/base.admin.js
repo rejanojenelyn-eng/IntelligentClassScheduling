@@ -21,6 +21,7 @@
         // --- LOGOUT MODAL ---
         function openLogoutModal(e) {
             if (e) e.preventDefault();
+            if (typeof closeUpDropdown === 'function') closeUpDropdown();
             const modal = document.getElementById("logoutModal");
             if (modal) modal.style.display = "flex";
         }

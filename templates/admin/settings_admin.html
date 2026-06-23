@@ -338,11 +338,43 @@
                 <span class="tog-slider"></span>
               </label>
             </div>
-            <h3 class="card-title">Faculty Specialization Restriction</h3>
-            <p class="card-desc">When disabled, subjects can only be assigned to faculty whose specialization matches the subject's curriculum program area. If disabled, specialization will be ignored.</p>
+            <h3 class="card-title">Faculty Specialization Guidance</h3>
+            <p class="card-desc">When enabled, the system checks whether a faculty member's specialization matches the assigned subject and displays a warning notice if a mismatch is detected. The assignment is still allowed — the warning is advisory only. When disabled, no specialization check or notice is shown.</p>
           </div>
           <div class="card-body simple-status">
-            <div class="status-row"><i class="fas fa-check-circle ic-green"></i><span>Validated automatically during schedule generation and official scheduling.</span></div>
+            <div class="status-row"><i class="fas fa-info-circle ic-green"></i><span>Shows an advisory notice in Manual Editor when a faculty's specialization does not match the subject. Assignment is always permitted.</span></div>
+          </div>
+        </div>
+
+        <!-- Card: Class Merging Policy -->
+        <div class="constraint-card">
+          <div class="card-head">
+            <div class="card-toprow">
+              <span class="card-category">CLASS MERGING</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-merge" onchange="saveMergeConstraint(this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
+            <h3 class="card-title">Class Merging Policy</h3>
+            <p class="card-desc">When enabled, multiple sections may share the same schedule slot, room, and faculty. The merge scope defines which subjects are eligible. Commonly used for NSTP subjects held on Sundays where multiple sections attend a single class.</p>
+          </div>
+          <div class="card-body" id="merge-body">
+            <div class="cparam-label"><i class="fas fa-sliders-h"></i> CONSTRAINT PARAMETERS CONFIGURATION</div>
+            <div class="param-row">
+              <div class="param-group" style="flex:1;">
+                <label class="param-label">MERGE SCOPE</label>
+                <select class="param-select" id="param-merge-scope" onchange="saveConstraintParam('merge_scope',this.value)">
+                  <option value="nstp_only">NSTP Subjects Only</option>
+                  <option value="non_nstp">All Subjects Except NSTP</option>
+                  <option value="all_subjects">All Subjects</option>
+                </select>
+              </div>
+            </div>
+            <div class="status-row" style="margin-top:10px;">
+              <i class="fas fa-check-circle ic-green"></i>
+              <span>Merge policy is system-enforced during automated schedule generation, official scheduling, and manual assignment validation.</span>
+            </div>
           </div>
         </div>
 
@@ -668,6 +700,9 @@
         <button class="btn-lock-view" id="btnViewOnly" onclick="openViewOnly()">
           <i class="fas fa-eye"></i> View Only Mode
         </button>
+        <button class="btn-lock-edit" onclick="openEditAnyway()" style="flex:1;padding:9px 14px;background:#8b1a1a;color:white;border:none;border-radius:6px;font-size:0.78rem;font-weight:700;cursor:pointer;letter-spacing:0.4px;">
+          <i class="fas fa-pen"></i> Edit Anyway
+        </button>
         <button class="btn-lock-cancel" onclick="closeSModal('modalLockWarning')">
           <i class="fas fa-times"></i> Cancel
         </button>
@@ -864,7 +899,7 @@
         </div>
 
         <div class="mg-2">
-          <div class="mf">
+          <div class="mf" id="et_reg_hours_row">
             <label>WEEKDAY REGULAR HOURS BAND</label>
             <div class="ts-group">
               <select name="reg_start" id="modal_et_rs"></select>

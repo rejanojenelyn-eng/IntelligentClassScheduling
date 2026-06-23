@@ -9,7 +9,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Modal functions
         function openLogoutModal(e) {
-            e.preventDefault();
+            if (e) e.preventDefault();
+            if (typeof closeUpDropdown === 'function') closeUpDropdown();
             document.getElementById("logoutModal").style.display = "flex";
         }
         function closeLogoutModal() {

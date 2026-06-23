@@ -229,6 +229,8 @@
     .frs-pill-code { font-weight: 900; font-size: 0.7rem; display: block; margin-bottom: 2px;}
     .frs-pill-name { font-weight: 500; font-size: 0.6rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;}
     .frs-pill-meta { display: flex; align-items: center; gap: 4px; font-size: 0.6rem; opacity: .85; }
+    .frs-pill-local { border-left: 3px solid #0056b3 !important; }
+    .frs-pill-la-badge { display: inline-block; font-size: 0.5rem; font-weight: 900; background: #0056b3; color: #fff; border-radius: 3px; padding: 1px 4px; margin-bottom: 3px; letter-spacing: .5px; }
 
     /* Loading state */
     .frs-cal-loading {
@@ -656,12 +658,16 @@
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
-                        <input type="time" id="frsAvailStart" value="" onchange="frsFindAvailable()">
+                        <select id="frsAvailStart" onchange="frsFindAvailable()">
+                            <option value="">-- Start Time --</option>
+                        </select>
                     </div>
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
-                        <input type="time" id="frsAvailEnd" value="" onchange="frsFindAvailable()">
+                        <select id="frsAvailEnd" onchange="frsFindAvailable()">
+                            <option value="">-- End Time --</option>
+                        </select>
                     </div>
 
                     <div class="frs-avail-filter-group">
@@ -776,6 +782,7 @@
     }
     .frs-detail-badge-pub   { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .frs-detail-badge-draft { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .frs-detail-badge-local { background: #cce5ff; color: #004085; border: 1px solid #b8daff; }
     .frs-detail-divider { border: none; border-top: 1px solid #eee; margin: 0 22px 14px; }
     .frs-detail-grid {
         display: grid;
@@ -993,6 +1000,12 @@
                     <input type="text" id="muYlDisplay" readonly placeholder="Auto-filled">
                 </div>
             </div>
+            <!-- Conflict Warning Banner -->
+            <div id="muConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
+                <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
+                <div id="muConflictText"></div>
+                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">This request will still be submitted for admin review. The academic head can override if necessary.</div>
+            </div>
             <!-- Row 6: Reason -->
             <div class="req-form-row">
                 <div class="req-form-group full">
@@ -1061,18 +1074,7 @@
                     </div>
                 </div>
             </div>
-            <!-- Row 3: Effective From · End Date -->
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Effective From</label>
-                    <input type="date" id="adjStartDate">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">End Date (optional)</label>
-                    <input type="date" id="adjEndDate">
-                </div>
-            </div>
-            <!-- Row 4: Faculty Name -->
+            <!-- Row 3: Faculty Name -->
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">*Faculty Name</label>
@@ -1110,6 +1112,12 @@
                     <label class="req-form-label">Year Level</label>
                     <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled">
                 </div>
+            </div>
+            <!-- Conflict Warning Banner -->
+            <div id="adjConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
+                <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
+                <div id="adjConflictText"></div>
+                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">This request will still be submitted for admin review. The academic head can override if necessary.</div>
             </div>
             <!-- Row 7: Reason -->
             <div class="req-form-row">
@@ -1161,12 +1169,12 @@ function _fillTimeSelect(sel, blocked) {
         const occupied = _isTimeBlocked(t, blocked);
         const o = document.createElement('option');
         o.value = t;
+        // Mark as occupied for awareness but keep selectable — academic head approves/denies
         o.textContent = occupied ? `${t}  — occupied` : t;
-        o.disabled = occupied;
-        o.style.color = occupied ? '#aaa' : '';
+        o.style.color = occupied ? '#b06000' : '';
         sel.appendChild(o);
     });
-    if (cur && !_isTimeBlocked(cur, blocked)) sel.value = cur;
+    if (cur) sel.value = cur;
 }
 
 /* Returns true if the given "HH:MM AM/PM" slot falls within any blocked range */
@@ -1296,13 +1304,62 @@ function reqSectionChanged(p) {
     if (!opt || !opt.value) {
         ['Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
         ['ProgramDisplay','YlDisplay'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
+        _hideConflictBanner(p);
         return;
     }
-    document.getElementById(p + 'Section').value       = opt.value;
-    document.getElementById(p + 'Program').value       = opt.dataset.prog || '';
-    document.getElementById(p + 'Yl').value            = opt.dataset.yl   || '';
+    document.getElementById(p + 'Section').value        = opt.value;
+    document.getElementById(p + 'Program').value        = opt.dataset.prog || '';
+    document.getElementById(p + 'Yl').value             = opt.dataset.yl   || '';
     document.getElementById(p + 'ProgramDisplay').value = opt.dataset.prog || '';
     document.getElementById(p + 'YlDisplay').value      = opt.dataset.yl   || '';
+    _checkConflicts(p);
+    // Re-check time dropdowns now that we know the section — block its existing class slots
+    if (p === 'mu') _muRefreshTimeDropdowns();
+    else            _adjRefreshTimeDropdowns();
+}
+
+/* ══════════════════════════════════════════
+   CONFLICT CHECK
+══════════════════════════════════════════ */
+function _hideConflictBanner(p) {
+    const banner = document.getElementById(p + 'ConflictBanner');
+    if (banner) banner.style.display = 'none';
+}
+
+async function _checkConflicts(p) {
+    const isMakeup = p === 'mu';
+    const sectionId = document.getElementById(p + 'Section')?.value;
+    const start     = document.getElementById(isMakeup ? 'muStart' : 'adjStart')?.value;
+    const end       = document.getElementById(isMakeup ? 'muEnd'   : 'adjEnd')?.value;
+    const date      = isMakeup ? (document.getElementById('muDate')?.value || '') : '';
+    const day       = isMakeup ? '' : (document.getElementById('adjDay')?.value || '');
+    const roomId    = (isMakeup ? _muRoomChosen : _adjRoomChosen)?.id || '';
+    if (!start || !end || (!date && !day)) { _hideConflictBanner(p); return; }
+
+    const params = new URLSearchParams({ start_time: start, end_time: end });
+    if (date)      params.set('date',       date);
+    if (day)       params.set('day',        day);
+    if (sectionId) params.set('section_id', sectionId);
+    if (roomId)    params.set('room_id',    roomId);
+
+    try {
+        const res  = await fetch('/api/faculty/check_request_conflicts?' + params.toString());
+        const data = await res.json();
+        if (!data.success) return;
+        const banner   = document.getElementById(p + 'ConflictBanner');
+        const textEl   = document.getElementById(p + 'ConflictText');
+        if (!banner || !textEl) return;
+        const lines = [];
+        if (data.room_conflict)    lines.push(`<b>Room conflict:</b> ${data.room_detail}`);
+        if (data.faculty_conflict) lines.push(`<b>Faculty conflict:</b> ${data.faculty_detail}`);
+        if (data.section_conflict) lines.push(`<b>Section conflict:</b> ${data.section_detail}`);
+        if (lines.length) {
+            textEl.innerHTML = lines.join('<br>');
+            banner.style.display = '';
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch(e) { /* non-blocking */ }
 }
 
 /* ══════════════════════════════════════════
@@ -1352,15 +1409,42 @@ function roomSelectItem(p, id, name, building, typ) {
     document.getElementById(p + 'RoomList').querySelectorAll('.room-item').forEach(el => {
         el.classList.toggle('sel', el.dataset.rid === String(id));
     });
+    // Re-run conflict check so the room conflict line updates immediately after selection.
+    _checkConflicts(p);
+    // Refresh time dropdowns to also grey out slots when the chosen room is busy.
+    // Use the time-only helpers (not the full day/date change handlers) to avoid
+    // triggering _loadFormRooms → roomSelectItem → infinite loop.
+    if (p === 'mu') _muRefreshTimeDropdowns();
+    else            _adjRefreshTimeDropdowns();
 }
 
 function _buildRoomDropdown(p, rooms) {
     const list = document.getElementById(p + 'RoomList');
     list.innerHTML = '';
+    const wrap = document.getElementById(p + 'RoomWrap');
+    const box  = wrap ? wrap.querySelector('.room-sel-box') : null;
     if (!rooms.length) {
-        list.innerHTML = '<div style="padding:10px 12px;color:#aaa;font-size:0.8rem;">No available rooms for this slot</div>';
+        // Show clear blocking state — no clickable dropdown
+        list.innerHTML = '';
+        const disp = document.getElementById(p + 'RoomDisplay');
+        disp.textContent = 'No rooms available for this time slot';
+        disp.classList.add('ph');
+        document.getElementById(p + 'Room').value = '';
+        if (p === 'mu') _muRoomChosen = null; else _adjRoomChosen = null;
+        if (wrap)  { wrap.classList.add('no-rooms'); wrap.classList.remove('open'); }
+        if (box)   { box.style.pointerEvents = 'none'; box.style.opacity = '.55'; box.style.borderColor = '#dc3545'; }
+        // Disable submit button
+        const overlay = document.getElementById(p === 'mu' ? 'reqMakeupOverlay' : 'reqAdjOverlay');
+        const submitBtn = overlay ? overlay.querySelector('.btn-req-submit') : null;
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.title = 'No available rooms for this time slot'; }
         return;
     }
+    // Rooms available — restore interactive state
+    if (wrap)  { wrap.classList.remove('no-rooms'); }
+    if (box)   { box.style.pointerEvents = ''; box.style.opacity = ''; box.style.borderColor = ''; }
+    const overlay = document.getElementById(p === 'mu' ? 'reqMakeupOverlay' : 'reqAdjOverlay');
+    const submitBtn = overlay ? overlay.querySelector('.btn-req-submit') : null;
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.title = ''; }
     const byBldg = {};
     rooms.forEach(r => {
         const b = r.buildingname || 'Other';
@@ -1398,7 +1482,13 @@ async function _loadFormRooms(p, statusId, params) {
     const status  = document.getElementById(statusId);
     const chosen  = p === 'mu' ? _muRoomChosen : _adjRoomChosen;
     const pending = _pendingRoom;
-    if (status) status.textContent = 'checking availability...';
+    if (status) status.textContent = 'checking...';
+    // While loading: restore submit button + room box so we don't leave stale disabled state
+    const overlay = document.getElementById(p === 'mu' ? 'reqMakeupOverlay' : 'reqAdjOverlay');
+    const submitBtn = overlay ? overlay.querySelector('.btn-req-submit') : null;
+    const wrap = document.getElementById(p + 'RoomWrap');
+    const box  = wrap ? wrap.querySelector('.room-sel-box') : null;
+    if (box) { box.style.pointerEvents = ''; box.style.opacity = ''; box.style.borderColor = ''; }
     try {
         const res   = await fetch('/api/faculty/available_rooms?' + params.toString());
         const data  = await res.json();
@@ -1439,23 +1529,34 @@ async function _loadFormRooms(p, statusId, params) {
     }
 }
 
-/* Make-up: when DATE changes — update blocked times + rebuild time selects (preserve room) */
-async function muOnDateTimeChange() {
+/* Make-up: re-fetch blocked times (incl. chosen room + section occupancy) and rebuild time selects.
+   Call this whenever the date, selected room, or section changes. Does NOT reload the room list. */
+async function _muRefreshTimeDropdowns() {
     const date = document.getElementById('muDate').value;
-    if (date) {
-        try {
-            const r = await fetch(`/api/faculty/blocked_times?date=${date}`);
-            const d = await r.json();
-            _muBlockedSlots = d.success ? (d.blocked || []) : [];
-        } catch(e) { _muBlockedSlots = []; }
-    } else {
-        _muBlockedSlots = [];
-    }
-    // Rebuild time selects while preserving selected values
+    if (!date) { _muBlockedSlots = []; return; }
+    try {
+        const roomParam = _muRoomChosen ? `&room_id=${encodeURIComponent(_muRoomChosen.id)}` : '';
+        const sectId    = document.getElementById('muSection')?.value || '';
+        const sectParam = sectId ? `&section_id=${encodeURIComponent(sectId)}` : '';
+        const r = await fetch(`/api/faculty/blocked_times?date=${encodeURIComponent(date)}${roomParam}${sectParam}`);
+        const d = await r.json();
+        _muBlockedSlots = d.success ? (d.blocked || []) : [];
+    } catch(e) { _muBlockedSlots = []; }
+
+    const prevStart = document.getElementById('muStart').value;
+    const prevEnd   = document.getElementById('muEnd').value;
     _fillTimeSelect(document.getElementById('muStart'), _muBlockedSlots);
     _fillTimeSelect(document.getElementById('muEnd'),   _muBlockedSlots);
-    // Don't touch the room — user may have already selected one.
+    // Restore previous selection — occupied slots are advisory only, not hard-blocked
+    if (prevStart) document.getElementById('muStart').value = prevStart;
+    if (prevEnd)   document.getElementById('muEnd').value   = prevEnd;
+}
+
+/* Make-up: when DATE changes — update blocked times + rebuild time selects (preserve room) */
+async function muOnDateTimeChange() {
+    await _muRefreshTimeDropdowns();
     // Only reload rooms if all three values are present.
+    const date  = document.getElementById('muDate').value;
     const start = document.getElementById('muStart').value;
     const end   = document.getElementById('muEnd').value;
     if (date && start && end) {
@@ -1472,22 +1573,37 @@ async function muTimeSelectChanged() {
     if (!date || !start || !end) return; // wait until all three are set
     const p = new URLSearchParams({ date, start_time: start, end_time: end });
     await _loadFormRooms('mu', 'muRoomStatus', p);
+    _checkConflicts('mu');
+}
+
+/* Adjustment: re-fetch blocked times (incl. chosen room + section occupancy) and rebuild time selects.
+   Does NOT reload the room list — avoids roomSelectItem → adjOnDayTimeChange infinite loop. */
+async function _adjRefreshTimeDropdowns() {
+    const day = document.getElementById('adjDay').value;
+    if (!day) { _adjBlockedSlots = []; return; }
+    try {
+        const chosenRoomId = _adjRoomChosen ? _adjRoomChosen.id : '';
+        const roomParam = chosenRoomId ? `&room_id=${encodeURIComponent(chosenRoomId)}` : '';
+        const sectId    = document.getElementById('adjSection')?.value || '';
+        const sectParam = sectId ? `&section_id=${encodeURIComponent(sectId)}` : '';
+        const r = await fetch(`/api/faculty/blocked_times?day=${encodeURIComponent(day)}${roomParam}${sectParam}`);
+        const d = await r.json();
+        _adjBlockedSlots = d.success ? (d.blocked || []) : [];
+    } catch(e) { _adjBlockedSlots = []; }
+
+    const prevStart = document.getElementById('adjStart').value;
+    const prevEnd   = document.getElementById('adjEnd').value;
+    _fillTimeSelect(document.getElementById('adjStart'), _adjBlockedSlots);
+    _fillTimeSelect(document.getElementById('adjEnd'),   _adjBlockedSlots);
+    // Restore previous selection — occupied slots are advisory only, not hard-blocked
+    if (prevStart) document.getElementById('adjStart').value = prevStart;
+    if (prevEnd)   document.getElementById('adjEnd').value   = prevEnd;
 }
 
 /* Adjustment: when DAY changes — update blocked times + rebuild time selects */
 async function adjOnDayTimeChange() {
-    const day = document.getElementById('adjDay').value;
-    if (day) {
-        try {
-            const r = await fetch(`/api/faculty/blocked_times?day=${encodeURIComponent(day)}`);
-            const d = await r.json();
-            _adjBlockedSlots = d.success ? (d.blocked || []) : [];
-        } catch(e) { _adjBlockedSlots = []; }
-    } else {
-        _adjBlockedSlots = [];
-    }
-    _fillTimeSelect(document.getElementById('adjStart'), _adjBlockedSlots);
-    _fillTimeSelect(document.getElementById('adjEnd'),   _adjBlockedSlots);
+    await _adjRefreshTimeDropdowns();
+    const day   = document.getElementById('adjDay').value;
     const start = document.getElementById('adjStart').value;
     const end   = document.getElementById('adjEnd').value;
     if (day && start && end) {
@@ -1504,6 +1620,7 @@ async function adjTimeSelectChanged() {
     if (!day || !start || !end) return;
     const p = new URLSearchParams({ day, start_time: start, end_time: end });
     await _loadFormRooms('adj', 'adjRoomStatus', p);
+    _checkConflicts('adj');
 }
 
 /* ══════════════════════════════════════════
@@ -1583,11 +1700,12 @@ function frsOpenForm(type) {
 function frsCloseForm(type) {
     if (type === 'makeup') {
         document.getElementById('reqMakeupOverlay').classList.remove('open');
-        document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+        _hideConflictBanner('mu');
     } else {
         document.getElementById('reqAdjOverlay').classList.remove('open');
-        document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
+        _hideConflictBanner('adj');
     }
+    document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
 }
 
 /* Close room dropdown when clicking outside */
@@ -1621,9 +1739,7 @@ async function reqSubmit(type) {
         payload.request_date = document.getElementById('muDate').value;
         payload.note         = document.getElementById('muNote').value;
     } else {
-        payload.day        = document.getElementById('adjDay').value;
-        payload.start_date = document.getElementById('adjStartDate').value;
-        payload.end_date   = document.getElementById('adjEndDate').value;
+        payload.day = document.getElementById('adjDay').value;
     }
 
     // Basic validation
@@ -1658,9 +1774,11 @@ async function reqSubmit(type) {
    HELPERS
 ══════════════════════════════════════════ */
 /* Convert "HH:MM" (24h) → "HH:MM AM/PM" (12h) */
-function _toAmPm(t24) {
-    if (!t24 || !t24.includes(':')) return '';
-    const [hStr, mStr] = t24.split(':');
+function _toAmPm(t) {
+    if (!t || !t.includes(':')) return '';
+    // Already in AM/PM format — return as-is
+    if (/AM|PM/i.test(t)) return t.toUpperCase();
+    const [hStr, mStr] = t.split(':');
     let h = parseInt(hStr, 10), m = parseInt(mStr, 10);
     const ap = h >= 12 ? 'PM' : 'AM';
     if (h === 0) h = 12; else if (h > 12) h -= 12;
@@ -1683,10 +1801,32 @@ function _setSelectVal(id, val) {
     });
 });
 
+/* Populate filter time dropdowns with same slots as request form */
+function _populateFilterTimeSelects() {
+    ['frsAvailStart', 'frsAvailEnd'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const placeholder = sel.options[0];
+        sel.innerHTML = '';
+        sel.appendChild(placeholder);
+        _REQ_SLOTS.forEach(t => {
+            const o = document.createElement('option');
+            o.value = t;
+            o.textContent = t;
+            sel.appendChild(o);
+        });
+    });
+}
+
 /* Init on DOMContentLoaded */
 document.addEventListener('DOMContentLoaded', () => {
     _populateTimeSelects();
+    _populateFilterTimeSelects();
     _reqInitFacultyData();
+    // Prevent past date selection for make-up class
+    const today = new Date().toISOString().split('T')[0];
+    const muDateEl = document.getElementById('muDate');
+    if (muDateEl) muDateEl.min = today;
 });
 </script>
 

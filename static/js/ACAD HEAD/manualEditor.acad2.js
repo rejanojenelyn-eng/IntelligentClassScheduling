@@ -375,6 +375,37 @@ async function onFacultySelect(empNum) {
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
 
+        // When spec toggle is ON and this is a new assignment (not editing an imported session),
+        // show a confirm prompt on mismatch — user can still proceed, it's not a block.
+        if (SPEC_CONSTRAINT_ENABLED && _facInfo && _subjInfo && !window.currentEditSession) {
+            const spec     = (_facInfo.specializationname || '').trim();
+            const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
+            const compat   = _getSpecCompatibility(spec, subjCode);
+            if (compat.level === 'mismatch') {
+                const facName = (_facInfo.fullname || 'This faculty').trim();
+                const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
+                const primary = group ? group.primary : 'the required field';
+                const proceed = await showConfirmModal(
+                    `${facName}'s specialization (${spec || 'none on file'}) may not match ${subjCode}, ` +
+                    `which expects ${primary} specialization.\n\nDo you still want to proceed with this assignment?`,
+                    'Specialization Mismatch'
+                );
+                if (!proceed) {
+                    _facInfo = null;
+                    document.getElementById('sel_faculty').value            = '';
+                    document.getElementById('fac_display_name').value       = '';
+                    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+                    if (typeof _clearFacultyLock === 'function') _clearFacultyLock();
+                    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+                    _checkFacultySpecWarning();
+                    await updateTimeDropdowns();
+                    return;
+                }
+                // User confirmed proceed — skip the redundant note, go straight to time dropdowns
+                await updateTimeDropdowns();
+                return;
+            }
+        }
     }
     _checkFacultySpecWarning();
     await updateTimeDropdowns();
@@ -619,37 +650,13 @@ function buildDSSMenu(type, sections) {
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'dss-search-input';
-    searchInput.setAttribute('autocomplete', 'one-time-code');
-    searchInput.setAttribute('autocorrect', 'off');
-    searchInput.setAttribute('autocapitalize', 'off');
-    searchInput.setAttribute('spellcheck', 'false');
-    searchInput.setAttribute('data-lpignore', 'true');
-    searchInput.setAttribute('data-form-type', 'other');
-    searchInput.readOnly = true;
-    searchInput.addEventListener('focus', function() { this.readOnly = false; }, { once: false });
-    searchInput.placeholder = type === 'room' ? 'Search room code or name…' : 'Ex., Dela Cruz, Juan';
+    searchInput.placeholder = 'Ex., Dela Cruz, Juan';
     searchInput.addEventListener('input', function() {
         const q = this.value.toLowerCase();
-        // Track which section headers have any visible items
-        const headerVisibility = new Map();
-        menu.querySelectorAll('.dss-section-header').forEach(hdr => headerVisibility.set(hdr, false));
-
-        let lastHeader = null;
-        menu.querySelectorAll('.dss-section-header, .dss-option').forEach(el => {
-            if (el.classList.contains('dss-section-header')) {
-                lastHeader = el;
-            } else {
-                // Support both faculty (.fac-opt-name) and room (.room-opt-name) name elements
-                const nameEl = el.querySelector('.fac-opt-name') || el.querySelector('.room-opt-name');
-                const text   = nameEl ? nameEl.textContent : el.textContent;
-                const visible = !q || text.toLowerCase().includes(q);
-                el.style.display = visible ? '' : 'none';
-                if (visible && lastHeader) headerVisibility.set(lastHeader, true);
-            }
-        });
-        // Hide section headers that have no visible items
-        headerVisibility.forEach((hasVisible, hdr) => {
-            hdr.style.display = hasVisible ? '' : 'none';
+        menu.querySelectorAll('.dss-option').forEach(opt => {
+            const nameEl = opt.querySelector('.fac-opt-name');
+            const text   = nameEl ? nameEl.textContent : opt.textContent;
+            opt.style.display = text.toLowerCase().includes(q) ? '' : 'none';
         });
     });
     searchBox.appendChild(searchInput);
@@ -898,9 +905,7 @@ function _renderProgPills(sessions, prog, yl) {
                 : getSubjectColor(sess.subjectcode);
             if (isDraft) pill.style.border = '2px dashed #2c3e50';
 
-            // Mark as a merge-candidate pill when the active policy covers this subject.
-            // Program View shows a single section's schedule, so we use the policy heuristic
-            // rather than a count (Room View has the definitive merged-section count).
+            // Mark as merge-candidate when the active policy covers this subject.
             const _pvMergeMode = _getMergeMode(sess.subjectcode || '');
             if (_pvMergeMode !== 'none') pill.classList.add('pill-merged');
 
@@ -976,6 +981,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const initYl   = _initData.dataset.initYl   || '';
     const initAy   = _initData.dataset.initAy   || '';
     const initSem  = _initData.dataset.initSem  || '';
+    const initSect = _initData.dataset.initSect || '';
 
     if (initAy)   document.getElementById('sel_ay').value = initAy;
     if (initSem)  document.getElementById('sel_sem').value = initSem;
@@ -987,6 +993,17 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     if (initProg || initAy) await triggerCascade(true);
     if (initMode === 'program') switchMode('program');
+
+    // Auto-select section when arriving from "Edit to Manual Editor" on a draft card
+    if (initSect && initProg && initYl) {
+        try {
+            if (typeof _loadSectionOptions === 'function') await _loadSectionOptions();
+            const r = await fetch(`/api/sections-by-program?program=${encodeURIComponent(initProg)}&yearLevel=${encodeURIComponent(initYl)}`);
+            const d = await r.json();
+            const match = (d.sections || []).find(s => String(s.id) === String(initSect));
+            if (match && typeof selectBcSect === 'function') selectBcSect(match.id, match.name);
+        } catch(e) { /* silently ignore */ }
+    }
 });
 
 function toggleProgMenu(event) {
@@ -1355,9 +1372,17 @@ async function confirmAndPlace() {
         }
     }
 
-    // Lab room constraint note: checked in aggregate at save time, not per-session.
-    // A subject may have both lecture and lab sessions — only lab hours need a lab room.
-    // The save guard in _triggerSaveDraft enforces that lab hours are covered.
+    // Lab room constraint: subjects with lab hours must use a Laboratory room
+    if (LAB_CONSTRAINT_ENABLED && _subjInfo && _subjInfo.laboratoryhours > 0 && roomVal) {
+        const chosenRoom = allRooms.find(r => String(r.id) === String(roomVal));
+        if (chosenRoom && (chosenRoom.type || '').toLowerCase() !== 'laboratory') {
+            await showValidationModal('Laboratory Room Required',
+                `"${subjSel.value}" has ${_subjInfo.laboratoryhours} lab hour(s) and must be assigned to a Laboratory room. ` +
+                `"${roomName}" is a ${chosenRoom.type || 'non-laboratory'} room.\n\n` +
+                `Please select a Laboratory room, or disable the Laboratory Session Constraint in Settings.`);
+            return;
+        }
+    }
 
     if (_facInfo && dayVal) {
         const isWkd    = MAN_WEEKDAYS.has(dayVal);
@@ -1468,7 +1493,7 @@ async function confirmAndPlace() {
                 const _mergeMode = _getMergeMode(currentSubjCode);
                 const _sameSubj  = (s.subjectcode || '').toUpperCase() === currentSubjCode;
                 const _sameFac   = String(s.employee_number) === String(facVal);
-                // flexible (NSTP): same subject is enough — different faculty allowed
+                // flexible (NSTP/OU): same subject is enough — different faculty allowed
                 // strict (non-NSTP): same subject AND same faculty required
                 if (_mergeMode !== 'none' && _sameSubj &&
                     (_mergeMode === 'flexible' || _sameFac)) {
@@ -1490,11 +1515,9 @@ async function confirmAndPlace() {
                     if (!proceed) return;
                     break; // merge confirmed — stop checking further room sessions
                 }
-                const _sSection = (s.programcode && s.year_level) ? `${s.programcode}-${s.year_level}` : (s.instructor || 'TBA');
                 await showConflictModal(
-                    `Room Conflict: ${roomName} is already occupied by "${s.subjectname}" (${_sSection}) ` +
-                    `on ${dayVal} from ${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
-                    `Please select another room or time slot.`
+                    `"${s.subjectname}" (${s.instructor || 'TBA'}) is already scheduled in ${roomName} on ${dayVal} — ` +
+                    `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}.`
                 );
                 return;
             }
@@ -1526,12 +1549,7 @@ async function confirmAndPlace() {
                 if (!proceed) return;
                 break; // merge confirmed
             }
-            const _cSection = (c.course && c.year_level) ? `${c.course}-${c.year_level}` : 'another section';
-            await showConflictModal(
-                `Room Conflict: ${roomName} is already occupied by "${c.subject_name}" (${_cSection}) ` +
-                `on ${dayVal} from ${c.start_time} to ${c.end_time}. ` +
-                `Please select another room or time slot.`
-            );
+            await showConflictModal(`"${c.subject_name}" is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
             return;
         }
     }
@@ -1554,9 +1572,9 @@ async function confirmAndPlace() {
                         continue;
                     }
                     await showConflictModal(
-                        `Faculty Conflict: ${facName} is already assigned to "${s.subjectname}" ` +
-                        `on ${dayVal} from ${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
-                        `Please select a different time slot or faculty member.`
+                        `This faculty already has "${s.subjectname}" on ${dayVal} — ` +
+                        `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
+                        `Faculty cannot have overlapping schedules.`
                     );
                     return;
                 }
@@ -1571,17 +1589,14 @@ async function confirmAndPlace() {
         const cStart = getTimeSlotIndex(c.start_time);
         const cEnd   = getTimeSlotIndex(c.end_time);
         if (newStartIdx < cEnd && newEndIdx > cStart) {
-            // Skip when merge policy allows this subject and it's the same course —
-            // faculty teaching the same subject to merged sections is valid.
+            // Skip when merge policy allows this subject and it's the same course.
             if (_isSubjectMergeEligible(currentSubjCode) &&
                 (c.subject_code || '').toUpperCase() === currentSubjCode) {
                 continue;
             }
-            const _fSection = (c.course && c.year_level) ? `${c.course}-${c.year_level}` : 'another section';
             await showConflictModal(
-                `Faculty Conflict: ${facName} is already assigned to "${c.subject_name}" (${_fSection}) ` +
-                `on ${dayVal} from ${c.start_time} to ${c.end_time}. ` +
-                `Please select a different time slot or faculty member.`
+                `This faculty is already placed in "${c.subject_name}" on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
+                `Faculty cannot have overlapping schedules.`
             );
             return;
         }
@@ -1602,9 +1617,10 @@ async function confirmAndPlace() {
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
                     await showConflictModal(
-                        `Section Conflict: ${prog}-${yl} already has "${s.subjectname || s.subjectcode}" scheduled ` +
-                        `on ${dayVal} from ${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
-                        `Please select a different time slot.`
+                        `Section conflict: "${s.subjectname || s.subjectcode}" is already scheduled ` +
+                        `for ${prog} Year ${yl} on ${dayVal} — ` +
+                        `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
+                        `A section cannot have two classes at the same time.`
                     );
                     return;
                 }
@@ -1620,9 +1636,9 @@ async function confirmAndPlace() {
             const cEnd   = getTimeSlotIndex(c.end_time);
             if (newStartIdx < cEnd && newEndIdx > cStart) {
                 await showConflictModal(
-                    `Section Conflict: ${prog}-${yl} already has "${c.subject_name}" scheduled ` +
-                    `on ${dayVal} from ${c.start_time} to ${c.end_time}. ` +
-                    `Please select a different time slot.`
+                    `Section conflict: "${c.subject_name}" is already placed for ` +
+                    `${prog} Year ${yl} on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
+                    `A section cannot have two classes at the same time.`
                 );
                 return;
             }
@@ -1698,6 +1714,24 @@ window._dropSession = async function(sessDataEncoded, event) {
     let sd;
     try { sd = JSON.parse(decodeURIComponent(sessDataEncoded)); } catch(e) { return; }
 
+    // For merged pills: if the delete target has no context match and there are multiple
+    // versionids, ask whether to remove just this section or the entire merged group.
+    const _allVids = (sd._allVersionIds || []).filter(Boolean);
+    const _isMergedPill = _allVids.length > 1;
+    let _deleteAllVids = false;
+
+    if (_isMergedPill && !sd.versionid) {
+        // No specific context match found — ask user what to do
+        const _doAll = await (typeof showConfirmModal === 'function'
+            ? showConfirmModal(
+                `This is a merged class with ${_allVids.length} sections.\n\nDelete ALL merged sections, or cancel and delete from each section's workspace individually?`,
+                'Merged Class Delete'
+              )
+            : Promise.resolve(window.confirm('Delete all merged sections?')));
+        if (!_doAll) return;
+        _deleteAllVids = true;
+    }
+
     // Step 1
     const ok1 = await (typeof showConfirmModal === 'function'
         ? showConfirmModal(`You are about to delete this schedule:\n\n${sd.label}`, 'Delete Schedule')
@@ -1710,25 +1744,30 @@ window._dropSession = async function(sessDataEncoded, event) {
         : Promise.resolve(window.confirm('Are you sure? This action cannot be undone.')));
     if (!ok2) return;
 
-    // Call DELETE API when a saved version_id is present
-    if (sd.versionid) {
-        try {
-            const resp = await fetch('/api/schedule/delete_session', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ version_id: sd.versionid })
-            });
-            const data = await resp.json();
-            if (!data.success) {
-                if (typeof showValidationModal === 'function')
-                    await showValidationModal('Delete Failed', data.error || 'Could not delete session.');
-                return;
-            }
-            // Track deleted version so it won't be reloaded into slices this session
-            if (window._deletedVersionIds) window._deletedVersionIds.add(String(sd.versionid));
+    // Determine which versionids to delete
+    const _vidsToDelete = _deleteAllVids ? _allVids : (sd.versionid ? [sd.versionid] : []);
 
-            // Immediately clear the subject's saved-status badge and dbScheduled so the
-            // curriculum guide updates before the async _updateSubjectList fetch returns.
+    // Call DELETE API for each versionid
+    if (_vidsToDelete.length > 0) {
+        try {
+            for (const vid of _vidsToDelete) {
+                const resp = await fetch('/api/schedule/delete_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ version_id: vid })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    if (typeof showValidationModal === 'function')
+                        await showValidationModal('Delete Failed', data.error || 'Could not delete session.');
+                    return;
+                }
+                // Track each deleted version so it won't be reloaded into slices this session
+                if (window._deletedVersionIds) window._deletedVersionIds.add(String(vid));
+                // Hide each deleted version from the grid immediately
+                hiddenDbSchedules.add(`v:${vid}`);
+            }
+            // After all deletions, clear the curriculum guide badge for this subject
             const _deletedCode = sd.subjectcode || (sd.dbKey || '').split('_')[0] || null;
             if (_deletedCode) {
                 const _opt = Array.from(document.getElementById('sel_subj')?.options || [])
@@ -1758,18 +1797,18 @@ window._dropSession = async function(sessDataEncoded, event) {
     }
 
     // Mask only this section's DB row — scope by versionid to keep merged sections visible
-    if (sd.versionid) {
-        hiddenDbSchedules.add(`v:${sd.versionid}`);
-    } else if (sd.dbKey) {
+    // For local-only (no versionid) drops, still hide by dbKey
+    if (_vidsToDelete.length === 0 && sd.dbKey) {
         hiddenDbSchedules.add(sd.dbKey);
     }
 
-    // Remove the matching time-slice row from the UI
+    // Remove matching time-slice rows (covers all deleted versionids + temp_id)
+    const _deletedVidSet = new Set(_vidsToDelete.map(String));
     document.querySelectorAll('.ts-row').forEach(row => {
         try {
             const parsed = JSON.parse(row.dataset.existingJson || '{}');
             if ((parsed._localTempId && parsed._localTempId === sd.temp_id) ||
-                (parsed.versionid    && parsed.versionid    === sd.versionid)) {
+                (parsed.versionid && _deletedVidSet.has(String(parsed.versionid)))) {
                 row.remove();
             }
         } catch(e) {}
@@ -1833,6 +1872,9 @@ function resetFormState() {
     updateHoursProgressNote();
     unlockFormFields();
     hiddenDbSchedules.clear();
+    if (typeof pendingManualSchedule !== 'undefined') {
+        pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting);
+    }
     updateSummary();
     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
     if (typeof _updateWorkflowBar === 'function') _updateWorkflowBar();
@@ -2093,6 +2135,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             slotMap.get(key).push(s);
         });
         // Build representative list: one entry per slot, carrying all merged sections
+        const _ctxProg = (document.getElementById('sel_prog')?.value || '').toUpperCase();
+        const _ctxYl   = String(document.getElementById('sel_year')?.value || '');
         const uniq = Array.from(slotMap.values()).map(group => {
             const rep = { ...group[0] };
             rep._mergedSections = group.map(s => ({
@@ -2100,7 +2144,16 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 programcode: s.programcode || '',
                 year_level:  s.year_level  || '',
                 status:      s.status      || 'Draft',
+                versionid:   s.versionid   || null,
+                temp_id:     s.temp_id     || null,
             }));
+            // The delete action should target the CURRENT section's entry, not the representative.
+            // If the user is editing a specific program/year level, find that entry in the group.
+            const _ctxMatch = group.find(s =>
+                (s.programcode || '').toUpperCase() === _ctxProg &&
+                String(s.year_level || '') === _ctxYl
+            );
+            rep._deleteTarget = _ctxMatch || group[0]; // fallback to first if no ctx match
             return rep;
         });
 
@@ -2181,18 +2234,33 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 }).join('\n');
                 pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${instrLast}${isMerged ? `\n\n⟨MERGED · ${_mergedSects.length} sections⟩` : ''}${_sectLines ? '\n' + _sectLines : ''}`;
 
-                const _dbKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
-                const _label = `${sess.subjectcode} — ${sess.daydesc} ${sess.start_fmt || ''} – ${sess.end_fmt || ''} in ${sess.roomname || 'TBA'}`;
-                const _sd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _dbKey, label: _label, subjectcode: sess.subjectcode || null }));
+                const _dbKey  = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
+                const _label  = `${sess.subjectcode} — ${sess.daydesc} ${sess.start_fmt || ''} – ${sess.end_fmt || ''} in ${sess.roomname || 'TBA'}`;
+                // Use the section matching the current editing context, not always group[0],
+                // so clicking × deletes the right section's version from a merged pill.
+                const _delTgt = sess._deleteTarget || sess;
+                const _sd     = encodeURIComponent(JSON.stringify({
+                    temp_id:    _delTgt.temp_id   || null,
+                    versionid:  _delTgt.versionid || null,
+                    dbKey:      _dbKey,
+                    label:      _label,
+                    subjectcode: sess.subjectcode || null,
+                    // Pass all merged versionids so delete-all can be triggered if needed
+                    _allVersionIds: _mergedSects.map(ms => ms.versionid).filter(Boolean)
+                }));
                 const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_sd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
 
-                // Section badge(s) — same colored style for both single and merged sections
+                // Section badge(s) — same colored style for both single and merged sections.
+                // Status suffix (· DRAFT / · PUB) only shown when the session has a real
+                // versionid, meaning it is already saved in the DB.
                 const _sectHtml = _mergedSects.map(ms => {
                     const lbl = ms.sectionname || (ms.programcode ? `${ms.programcode}-${ms.year_level}` : '');
                     if (!lbl) return '';
-                    const isPub = (ms.status || '').toLowerCase() === 'published';
-                    const clr  = isPub ? '#a5d6a7' : '#ffe082';
-                    return `<div style="font-size:0.52rem;background:${clr};color:#222;border-radius:2px;padding:1px 3px;margin-top:2px;font-weight:700;">${lbl} · ${isPub ? 'PUB' : 'DRAFT'}</div>`;
+                    const isSaved = !!ms.versionid;
+                    const isPub   = isSaved && (ms.status || '').toLowerCase() === 'published';
+                    const clr     = isSaved ? (isPub ? '#a5d6a7' : '#ffe082') : '#ddd';
+                    const suffix  = isSaved ? ` · ${isPub ? 'PUB' : 'DRAFT'}` : '';
+                    return `<div style="font-size:0.52rem;background:${clr};color:#222;border-radius:2px;padding:1px 3px;margin-top:2px;font-weight:700;">${lbl}${suffix}</div>`;
                 }).join('');
 
                 const mergeBadge = isMerged
@@ -2407,42 +2475,17 @@ async function selectRoom(roomId, roomName) {
     // Re-evaluate lab warning now that a room is selected
     const labWarnEl = document.getElementById('room_dss_warning');
     const isLabSubj = _subjInfo && _subjInfo.laboratoryhours > 0;
-    if (labWarnEl && isLabSubj && LAB_CONSTRAINT_ENABLED) {
+    if (labWarnEl && isLabSubj) {
         const roomType = (room && room.type) ? room.type.toLowerCase() : '';
         const isLabRoom = roomType === 'laboratory';
-        const textEl = document.getElementById('room_dss_warning_text');
-        if (!isLabRoom) {
-            // Count how many lab hours are already covered by pending sessions in lab rooms
-            const ay  = document.getElementById('sel_ay').value;
-            const sem = document.getElementById('sel_sem').value;
-            const subjCode = document.getElementById('sel_subj').value;
-            let coveredLabHrs = 0;
-            for (const c of pendingManualSchedule) {
-                if ((c.subject_code || c.subjectcode) !== subjCode) continue;
-                if (c.ay !== ay || c.sem !== sem) continue;
-                if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
-                const cRoom = allRooms.find(r => String(r.id) === String(c.room_id));
-                if (cRoom && (cRoom.type || '').toLowerCase() === 'laboratory') {
-                    const si = timeSlots.indexOf(c.start_time), ei = timeSlots.indexOf(c.end_time);
-                    if (si >= 0 && ei > si) coveredLabHrs += (ei - si) * 0.5;
-                }
-            }
-            const needed = _subjInfo.laboratoryhours - coveredLabHrs;
+        if (LAB_CONSTRAINT_ENABLED && !isLabRoom) {
             labWarnEl.style.color = '#c0392b';
             labWarnEl.style.display = 'block';
-            if (textEl) {
-                if (needed > 0) {
-                    textEl.textContent = `"${roomName}" is not a Laboratory room. ${needed}h of lab hours still need a Laboratory room.`;
-                } else {
-                    textEl.textContent = `"${roomName}" is not a Laboratory room. Lab hours are already covered by another session.`;
-                    labWarnEl.style.color = '#c8860a';
-                }
-            }
+            const textEl = document.getElementById('room_dss_warning_text');
+            if (textEl) textEl.textContent = `"${roomName}" is not a Laboratory room. Lab hours require a Laboratory room.`;
         } else {
             _updateLabWarning(labWarnEl, isLabSubj, LAB_CONSTRAINT_ENABLED);
         }
-    } else if (labWarnEl) {
-        _updateLabWarning(labWarnEl, isLabSubj, LAB_CONSTRAINT_ENABLED);
     }
 
     document.querySelectorAll('.room-pill').forEach(el => {
@@ -2453,35 +2496,48 @@ async function selectRoom(roomId, roomName) {
     await renderGrid(roomId, formAyFilter(), formSemFilter());
 }
 
-// Official scheduler: vivid saturated palette (white text, clearly brighter than local pastels)
-const colorPalette = [
-    '#1976D2',  // vivid blue
-    '#388E3C',  // vivid green
-    '#7B1FA2',  // vivid purple
-    '#C62828',  // vivid red
-    '#E65100',  // vivid deep orange
-    '#F9A825',  // vivid amber
-    '#00838F',  // vivid teal
-    '#AD1457',  // vivid pink
-];
+// Official scheduler: original saturated palette (unchanged)
+const colorPalette = ['#16a085', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#f39c12', '#d35400', '#c0392b'];
 
-// Local scheduler: pastel palette matching the Room Schedule view
+// Local scheduler: 16 distinct colors cycled sequentially (not hash-based)
+// so education subjects with similar prefixes never share a color
 const localColorPalette = [
-    '#A9C2F0',  // light blue
-    '#FDE08B',  // light yellow
-    '#F9A17A',  // light peach
-    '#F07C7C',  // light coral
-    '#B5E5CF',  // light mint
-    '#D2A6E8',  // light lavender
+    '#5b9fd4',  // calm blue
+    '#68b07e',  // sage green
+    '#e07a50',  // terracotta
+    '#4ba9a9',  // teal
+    '#d4a84b',  // warm amber
+    '#9b72bf',  // soft violet
+    '#c96b6b',  // muted rose
+    '#5aab8f',  // sea green
+    '#7b8ecf',  // periwinkle
+    '#c47d3e',  // warm bronze
+    '#5d9e6a',  // forest green
+    '#be6f9e',  // dusty mauve
+    '#4e9ec4',  // steel blue
+    '#e8864a',  // soft orange
+    '#7fb07a',  // leaf green
+    '#d47fa0',  // pastel pink
 ];
+// Sequential color map for local scheduler — each unique subject code gets its own
+// palette slot in the order it first appears, guaranteeing maximum variety
+const _localSubjectColorMap = new Map();
+let _localColorIdx = 0;
 function getSubjectColor(code) {
     const str = (code || '').toUpperCase();
-    let h = 0;
-    for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
-    // Local scheduler: hash into FRS pastel palette (same logic as Room Schedule view)
-    if (_IS_LOCAL_MODE) return localColorPalette[Math.abs(h) % localColorPalette.length];
-    // Official scheduler: hash into saturated palette
-    return colorPalette[Math.abs(h) % colorPalette.length];
+    // Local scheduler: sequential assignment — every unique subject gets a distinct
+    // palette color regardless of its code prefix, preventing clustering
+    if (_IS_LOCAL_MODE) {
+        if (!_localSubjectColorMap.has(str)) {
+            _localSubjectColorMap.set(str, localColorPalette[_localColorIdx % localColorPalette.length]);
+            _localColorIdx++;
+        }
+        return _localSubjectColorMap.get(str);
+    }
+    // Official scheduler: hash-based (preserves original color-per-subject behavior)
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    return colorPalette[Math.abs(hash) % colorPalette.length];
 }
 
 function updateSummary() {

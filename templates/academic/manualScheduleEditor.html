@@ -27,14 +27,16 @@
     .dss-search-input::placeholder { color: #bbb; font-style: italic; }
     .dss-section-header { padding: 6px 12px; font-size: 0.62rem; font-weight: 900;
         letter-spacing: 1.2px; text-transform: uppercase; position: sticky; top: 0; }
-    .dss-section-header.recommended { background: #e65100; color: white; border-bottom: 2px solid #bf360c; }
+    .dss-section-header.recommended { background: #c2185b; color: white; border-bottom: 2px solid #880e4f; }
     .dss-section-header.others { background: #37474f; color: white; border-top: 2px solid #263238; border-bottom: 2px solid #263238; }
-    .dss-section-header.optional { background: #2e7d32; color: white; border-top: 2px solid #1b5e20; border-bottom: 2px solid #1b5e20; }
+    .dss-section-header.optional { background: #e65100; color: white; border-top: 2px solid #bf360c; border-bottom: 2px solid #bf360c; }
     .dss-option { padding: 7px 12px 7px 18px; font-size: 0.8rem; color: #333; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
     .dss-option:last-child { border-bottom: none; }
     .dss-option:hover { background: #fff3e0; color: #630100; font-weight: 700; }
-    .dss-option.recommended-item { background: #fff8e1; }
-    .dss-option.recommended-item:hover { background: #ffe0b2; color: #e65100; font-weight: 700; }
+    .dss-option.recommended-item { background: #fce4ec; }
+    .dss-option.recommended-item:hover { background: #f8bbd0; color: #880e4f; font-weight: 700; }
+    .dss-option.optional-item { background: #fff3e0; }
+    .dss-option.optional-item:hover { background: #ffe0b2; color: #bf360c; font-weight: 700; }
 
     /* ── Room option with type badge ── */
     .dss-option.room-dss-opt { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
@@ -43,6 +45,21 @@
         text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; flex-shrink: 0; }
     .room-type-tag.lab { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
     .room-type-tag.lec { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+
+    /* ── Merged-class pill distinction ── */
+    .schedule-pill.pill-merged {
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.55), inset 0 0 0 2px rgba(255,255,255,0.18);
+        border-style: solid !important;
+        border-color: rgba(255,255,255,0.7) !important;
+    }
+    /* Badge shown inside a merged pill */
+    .pill-merge-badge {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 0.48rem; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;
+        background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.5);
+        border-radius: 3px; padding: 1px 4px; margin-top: 3px;
+        color: #fff; white-space: nowrap;
+    }
 
     /* ── Pill editing highlight ── */
     .schedule-pill.pill-editing {
@@ -61,6 +78,11 @@
         box-shadow: 0 0 0 4px rgba(255,255,255,0.28), 2px 2px 8px rgba(0,0,0,0.3) !important;
         filter: brightness(1.15);
         transform: scale(1.03);
+    }
+    /* Local mode: dark outline so focus is visible on light pastel pill backgrounds */
+    .local-mode .schedule-pill.pill-subject-focus {
+        outline: 2.5px solid rgba(0,0,0,0.7) !important;
+        box-shadow: 0 0 0 4px rgba(0,0,0,0.15), 2px 2px 8px rgba(0,0,0,0.3) !important;
     }
 
     /* ── Constraint notes ── */
@@ -408,27 +430,26 @@
         border-color: #e8d0d0 !important;
     }
 
-    /* 4. LIGHT PURPLE 2: #e4d6ff (Unselected CALENDAR PILLS) */
+    /* 4. CALENDAR PILLS — pastel colors set by JS; override only text color */
     .local-mode .schedule-pill {
-        background-color: #e4d6ff !important;
-        border: 1px solid #c8acff !important;
+        border: 1px solid rgba(0,0,0,0.12) !important;
+        color: #333 !important;
     }
     .local-mode .schedule-pill .pill-subject,
     .local-mode .schedule-pill .pill-instructor,
     .local-mode .schedule-pill .pill-room {
-        color: #3b2273 !important; 
+        color: #222 !important;
     }
 
-    /* 5. LIGHT PURPLE 1: #c8acff (Selected CALENDAR PILLS) */
+    /* 5. Selected pill — keep outline, let JS control background */
     .local-mode .schedule-pill.pill-slice-active {
-        background-color: #c8acff !important;
         outline: 2.5px solid #8c52ff !important;
         box-shadow: 0 0 0 4px rgba(140, 82, 255, 0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
     }
     .local-mode .schedule-pill.pill-slice-active .pill-subject,
     .local-mode .schedule-pill.pill-slice-active .pill-instructor,
     .local-mode .schedule-pill.pill-slice-active .pill-room {
-        color: #271452 !important; 
+        color: #111 !important;
     }
 
     /* 6. ADD SCHEDULE HEADER (Transparent background, purple +, maroon text) */
@@ -867,14 +888,10 @@
             </div>
             {% endif %}
 
-        </div><!-- /editor-left-panel -->
+        </div> 
 
-        <!-- ═══════════════════════════════════════════════════ -->
-        <!--  CENTER + RIGHT COLUMN  (nav bar sits at top-right) -->
-        <!-- ═══════════════════════════════════════════════════ -->
         <div class="center-right-col">
 
-            <!-- ── TOP NAV BAR (right-top of layout) ── -->
             <div class="manual-nav-bar">
                 <div class="mnav-left-tools">
                     <i class="fas fa-undo mnav-icon" title="Undo"></i>
@@ -947,35 +964,33 @@
                 <div class="fl-content">
                     <h2 class="fl-main-title">TEACHING ASSIGNMENTS</h2>
 
-                    <h3 class="fl-section-sub">REGULAR LOAD</h3>
+                    <h3 class="fl-section-sub" id="fl-reg-label">REGULAR LOAD</h3>
                     <div class="fl-table-wrap">
                         <table class="fl-table">
                             <thead><tr>
                                 <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                                <th>YEAR &amp; SECTION</th><th>SUBJ REF</th><th>TIME</th>
-                                <th>TIME CODE</th><th>DAY/S</th><th>ROOM</th><th>EFFECTIVITY</th>
+                                <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                             </tr></thead>
                             <tbody id="fl-regular-body">
-                                <tr><td colspan="10" class="fl-no-data">Select a faculty member above</td></tr>
+                                <tr><td colspan="7" class="fl-no-data">Select a faculty member above</td></tr>
                             </tbody>
                         </table>
                     </div>
-                    <div class="fl-total-line">TOTAL REGULAR LOAD: <span id="fl-total-regular">—</span></div>
+                    <div class="fl-total-line" id="fl-reg-total-label">TOTAL REGULAR LOAD: <span id="fl-total-regular">—</span></div>
 
-                    <h3 class="fl-section-sub" style="margin-top:16px;">PART TIME LOAD</h3>
+                    <h3 class="fl-section-sub" style="margin-top:16px;" id="fl-pt-label">PART TIME LOAD</h3>
                     <div class="fl-table-wrap">
                         <table class="fl-table">
                             <thead><tr>
                                 <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                                <th>YEAR &amp; SECTION</th><th>SUBJ REF</th><th>TIME</th>
-                                <th>TIME CODE</th><th>DAY/S</th><th>ROOM</th><th>EFFECTIVITY</th>
+                                <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                             </tr></thead>
                             <tbody id="fl-parttime-body">
-                                <tr><td colspan="10" class="fl-no-data">—</td></tr>
+                                <tr><td colspan="7" class="fl-no-data">—</td></tr>
                             </tbody>
                         </table>
                     </div>
-                    <div class="fl-total-line">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
+                    <div class="fl-total-line" id="fl-pt-total-label">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
                 </div>
 
             </div><!-- /facultyLoadPanel -->
@@ -1006,9 +1021,8 @@
                         </div>
                     </div>
                 </div>
-            </div><!-- /draftListPanel -->
+            </div>
 
-            <!-- ── Version History Panel ── -->
             <div id="versionHistoryPanel" class="version-history-panel" style="display:none;">
                 <div class="vhp-header">
                     <div>
@@ -1019,9 +1033,8 @@
                 <div class="vhp-cards" id="vhpCards">
                     <div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading versions&hellip;</div>
                 </div>
-            </div><!-- /versionHistoryPanel -->
+            </div>
 
-            <!-- Program View Header (visible only in Program View tab) -->
             <div id="pvTimetableHeader" style="display:none;align-items:center;justify-content:space-between;padding:8px 16px;background:#fff;border-bottom:1px solid #e0e0e0;min-height:44px;">
                 <div id="pvTimetableLabel" style="font-size:0.8rem;font-weight:900;color:#800000;letter-spacing:0.5px;text-transform:uppercase;">
                     — Select Program, Year Level &amp; Semester —
@@ -1099,11 +1112,8 @@
                 </div>
             </div>
 
-        </div><!-- /editor-center-panel -->
+        </div>
 
-        <!-- ═══════════════════════════════ -->
-        <!--  RIGHT PANEL: Add Schedule      -->
-        <!-- ═══════════════════════════════ -->
         <div class="editor-right-panel-new">
 
             <!-- Add Schedule header -->
@@ -1228,19 +1238,19 @@
 
             <!-- Hidden legacy inputs for JS compatibility -->
             <div style="display:none;" aria-hidden="true">
-                <select id="sel_subj" onchange="onLegacySubjChange()">
+                <select id="sel_subj" onchange="onLegacySubjChange()" autocomplete="off">
                     <option value="">-Select Subject-</option>
                 </select>
-                <select id="sel_day" onchange="onDayChange()">
+                <select id="sel_day" onchange="onDayChange()" autocomplete="off">
                     <option value="">— Day —</option>
                     <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
                     <option>Thursday</option><option>Friday</option><option>Saturday</option>
                     <option>Sunday</option>
                 </select>
-                <select id="sel_start_time" onchange="onStartTimeChange()">
+                <select id="sel_start_time" onchange="onStartTimeChange()" autocomplete="off">
                     <option value="">— Start —</option>
                 </select>
-                <select id="sel_end_time" onchange="onEndTimeChange()">
+                <select id="sel_end_time" onchange="onEndTimeChange()" autocomplete="off">
                     <option value="">— End —</option>
                 </select>
                 <div id="hours_progress_note" class="constraint-note"></div>
@@ -1372,6 +1382,7 @@
      data-init-yl="{{ init_yl }}"
      data-init-ay="{{ init_ay }}"
      data-init-sem="{{ init_sem }}"
+     data-init-sect="{{ init_sect }}"
      data-available-sems="{{ available_sems_json | e }}"
      data-scheduler-mode="{{ scheduler_mode }}"
      data-is-acad-head="{{ 'true' if is_acad_head else 'false' }}"
@@ -1380,9 +1391,11 @@
      data-weekend-day="{{ weekend_day }}"
      data-weekend-subject="{{ weekend_subject }}"
      data-spec-enabled="{{ 'true' if spec_constraint_enabled else 'false' }}"
+     data-merge-enabled="{{ 'true' if merge_enabled else 'false' }}"
+     data-merge-scope="{{ merge_scope }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260527"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}"></script>
 
 <script>
 /* ── Scheduler mode config ─────────────────────────────────────
@@ -1905,10 +1918,14 @@ window.onFacultySelect = async function(empNum) {
 
 /* ── Pill click: sync right panel time slots + subject display ── */
 const _origHandlePillClick = window.handlePillClick;
+let _pillClickLock = false;  // prevents concurrent pill clicks (race condition)
 /* =========================================================================
    FIX 1: SAFER PILL CLICK (Prevents sibling slices from disappearing)
    ========================================================================= */
 window.handlePillClick = async function(sessJson) {
+    if (_pillClickLock) return;  // drop concurrent click; lock released in finally
+    _pillClickLock = true;
+    try {
     const sess = JSON.parse(decodeURIComponent(sessJson));
     const code = sess.subjectcode || sess.subject_code;
 
@@ -1961,11 +1978,20 @@ window.handlePillClick = async function(sessJson) {
         const bcSect = document.getElementById('bc-sect-text');
         if (bcSect) bcSect.textContent = '-Select Section-';
         document.getElementById('sel_section').value = '';
+        _resetRightPanel();
     }
 
-    if (_currentSubjectCode !== code) {
-        const meta = _subjectMeta[code] || {};
-        await _onSubjectClick(code, sess.subjectname || code, meta.units || 0, meta.total_hours || 0);
+    // Always call _onSubjectClick so re-clicking the same or different block reloads the panel.
+    // The concurrent-click lock above prevents the race condition that caused sibling slices to disappear.
+    const meta = _subjectMeta[code] || {};
+    await _onSubjectClick(code, sess.subjectname || code, meta.units || 0, meta.total_hours || 0);
+
+    // After loading the clicked subject's sessions, refresh ALL subject progress bars
+    // so other subjects' bars are not stuck at 0. Uses section_id='' for a program-wide
+    // aggregate — good enough without a section selected; selectBcSect will refine with
+    // the per-section value if the user later picks a section.
+    if (typeof _refreshSubjectScheduledHours === 'function') {
+        _refreshSubjectScheduledHours().catch(() => {});
     }
 
     // Scroll left panel to the active subject card and ensure it's highlighted
@@ -1995,6 +2021,9 @@ window.handlePillClick = async function(sessJson) {
         });
         if (!matched) document.querySelectorAll('.schedule-pill').forEach(p => p.classList.remove('pill-slice-active'));
     }, 500);
+    } finally {
+        _pillClickLock = false;
+    }
 };
 
 /* =========================================================================
@@ -2116,6 +2145,22 @@ window.confirmAndPlace = async function() {
 
     // --- CONFLICT CHECKS (in-memory + DB) ---
 
+    const _curSubjCode = (subjSel.value || '').toUpperCase();
+    let _mergeConfirmed = false; // set to true if user confirms a merge
+
+    // Determine merge mode for the current subject per admin policy:
+    // 'flexible' = NSTP/OU (different faculty OK), 'strict' = same faculty required, 'none' = no merge
+    const _inlineMergeMode = (() => {
+        const enabled = typeof MERGE_ENABLED !== 'undefined' ? MERGE_ENABLED : true;
+        if (!enabled) return 'none';
+        const scope   = typeof MERGE_SCOPE !== 'undefined' ? MERGE_SCOPE : 'nstp_only';
+        const isNstp  = _curSubjCode.startsWith('NSTP') || _curSubjCode.startsWith('OU');
+        if (scope === 'nstp_only')    return isNstp  ? 'flexible' : 'none';
+        if (scope === 'non_nstp')     return !isNstp ? 'strict'   : 'none';
+        if (scope === 'all_subjects') return isNstp  ? 'flexible' : 'strict';
+        return 'none';
+    })();
+
     // Room conflict — DB sessions
     if (roomVal) {
         try {
@@ -2128,6 +2173,28 @@ window.confirmAndPlace = async function() {
                     s.daydesc     === window.currentEditSession.daydesc &&
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    const _sameSubj = (s.subjectcode || '').toUpperCase() === _curSubjCode;
+                    const _sameFac  = String(s.employee_number) === String(facVal);
+                    // Merge candidate: flexible (NSTP) = same subject only; strict = same subject + same faculty
+                    if (_sameSubj && _inlineMergeMode !== 'none' &&
+                        (_inlineMergeMode === 'flexible' || _sameFac)) {
+                        const mergeSection = (s.programcode && s.year_level)
+                            ? `${s.programcode} Year ${s.year_level}` : 'another section';
+                        const _facNote = _inlineMergeMode === 'flexible' && !_sameFac
+                            ? `\nExisting Faculty: ${s.instructor || 'TBA'}\nNew Faculty: ${facName}`
+                            : `\nFaculty: ${facName}`;
+                        const proceed = await showConfirmModal(
+                            `Merge Class Detected\n\n` +
+                            `"${s.subjectname}" is already scheduled in ${roomName} on ${dayVal} ` +
+                            `(${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : ''} – ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : ''}) ` +
+                            `for ${mergeSection}.${_facNote}\nRoom: ${roomName}\n\n` +
+                            `Merging will allow multiple sections to share this class slot. Do you want to proceed?`,
+                            'Merge Class'
+                        );
+                        if (!proceed) return;
+                        _mergeConfirmed = true;
+                        break;
+                    }
                     await showConflictModal(
                         `Room conflict: "${s.subjectname}" (${s.instructor || 'TBA'}) is already scheduled in ${roomName} on ${dayVal} — ` +
                         `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}.`
@@ -2139,14 +2206,33 @@ window.confirmAndPlace = async function() {
     }
 
     // Room conflict — in-memory pending
-    for (const c of pendingManualSchedule) {
-        if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
-        if (String(c.room_id) === String(roomVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
-            const cStart = getTimeSlotIndex(c.start_time);
-            const cEnd   = getTimeSlotIndex(c.end_time);
-            if (newStartIdx < cEnd && newEndIdx > cStart) {
-                await showConflictModal(`Room conflict: "${c.subject_name}" is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
-                return;
+    if (!_mergeConfirmed) {
+        for (const c of pendingManualSchedule) {
+            if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
+            if (String(c.room_id) === String(roomVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
+                const cStart = getTimeSlotIndex(c.start_time);
+                const cEnd   = getTimeSlotIndex(c.end_time);
+                if (newStartIdx < cEnd && newEndIdx > cStart) {
+                    const _sameSubj = (c.subject_code || '').toUpperCase() === _curSubjCode;
+                    const _sameFac  = String(c.faculty_id) === String(facVal);
+                    if (_sameSubj && _inlineMergeMode !== 'none' &&
+                        (_inlineMergeMode === 'flexible' || _sameFac)) {
+                        const _facNote = _inlineMergeMode === 'flexible' && !_sameFac
+                            ? `\nExisting Faculty: ${c.instructor || 'TBA'}\nNew Faculty: ${facName}`
+                            : `\nFaculty: ${facName}`;
+                        const proceed = await showConfirmModal(
+                            `Merge Class Detected\n\n` +
+                            `"${c.subject_name}" is already queued for ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.${_facNote}\nRoom: ${roomName}\n\n` +
+                            `Merging will allow multiple sections to share this class slot. Do you want to proceed?`,
+                            'Merge Class'
+                        );
+                        if (!proceed) return;
+                        _mergeConfirmed = true;
+                        break;
+                    }
+                    await showConflictModal(`Room conflict: "${c.subject_name}" is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                    return;
+                }
             }
         }
     }
@@ -2163,6 +2249,10 @@ window.confirmAndPlace = async function() {
                     s.daydesc     === window.currentEditSession.daydesc &&
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    // Skip faculty conflict when merge allows this subject (merged sessions share a slot)
+                    if (_inlineMergeMode !== 'none' && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
+                    // Also skip if this is an already-confirmed merge class
+                    if (_mergeConfirmed && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
                     await showConflictModal(
                         `Faculty conflict: ${facName} already has "${s.subjectname}" on ${dayVal} — ` +
                         `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
@@ -2181,6 +2271,9 @@ window.confirmAndPlace = async function() {
             const cStart = getTimeSlotIndex(c.start_time);
             const cEnd   = getTimeSlotIndex(c.end_time);
             if (newStartIdx < cEnd && newEndIdx > cStart) {
+                // Skip when this faculty is teaching the same subject under a valid merge
+                if (_inlineMergeMode !== 'none' && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
+                if (_mergeConfirmed && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
                 await showConflictModal(`Faculty conflict: This faculty is already teaching "${c.subject_name}" on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
                 return;
             }
@@ -2321,6 +2414,25 @@ async function _updateSubjectList() {
         return;
     }
 
+    const sectionId = document.getElementById('sel_section')?.value || '';
+    if (!sectionId) {
+        container.innerHTML = '<div class="subj-placeholder">Select a Section to view the curriculum guide</div>';
+        // Do NOT clear _subjectMeta here — handlePillClick reads it immediately after
+        // _updateSubjectList fires (fire-and-forget), so clearing it would zero out the
+        // hours/units used by the next _onSubjectClick call.
+        const opw = document.getElementById('overall-progress-wrap');
+        if (opw) opw.style.display = 'none';
+        const cgProg  = document.getElementById('cg-progress-section');
+        const cgStep5 = document.getElementById('cg-step5-row');
+        const cgBadge = document.getElementById('cg-count-badge');
+        if (cgProg)  cgProg.style.display  = 'none';
+        if (cgStep5) cgStep5.classList.remove('visible');
+        if (cgBadge) cgBadge.style.display = 'none';
+        _collapseSection('curr-guide-body', 'caret-cg');
+        _updateWorkflowBar();
+        return;
+    }
+
     _subjectMeta = {};
     container.innerHTML = '';
 
@@ -2420,6 +2532,41 @@ async function _updateSubjectList() {
     }
 }
 
+/* ── Sync visible subject card mini-bars from option data (call after _refreshSubjectScheduledHours) ── */
+function _syncSubjectCardBars() {
+    const subjSel = document.getElementById('sel_subj');
+    if (!subjSel) return;
+    Array.from(subjSel.options).forEach(opt => {
+        if (!opt.value) return;
+        const code    = opt.value;
+        const hours   = parseFloat(opt.dataset.hours      || 0);
+        const sched   = parseFloat(opt.dataset.dbScheduled || 0);
+        const savedSt = opt.dataset.savedStatus || '';
+        const card    = document.querySelector(`.subj-item[data-code="${code}"]`);
+        if (!card) return;
+        const pct    = hours > 0 ? Math.min(100, Math.round((sched / hours) * 100)) : 0;
+        const isDone = hours > 0 && sched >= hours;
+        const fillEl = card.querySelector('.subj-hrs-fill');
+        const textEl = card.querySelector('.subj-hrs-text');
+        if (fillEl) { fillEl.style.width = pct + '%'; fillEl.className = isDone ? 'subj-hrs-fill' : 'subj-hrs-fill incomplete'; }
+        if (textEl) textEl.textContent = `${sched}/${hours}h`;
+        // Sync badge (do not overwrite if subject is currently active — right panel manages it)
+        const activeCode = document.getElementById('sel_subj')?.value;
+        if (code !== activeCode) {
+            const badgeEl = card.querySelector('.subj-badge');
+            if (badgeEl) {
+                let bt = '', bc = 'subj-badge';
+                if (savedSt === 'Published')       { bt = 'PUBLISHED'; bc += ' badge-published'; }
+                else if (savedSt === 'Draft')      { bt = 'DRAFT';     bc += ' badge-draft'; }
+                else if (savedSt === 'Published/Draft') { bt = 'PUB/DRAFT'; bc += ' badge-pub-draft'; }
+                badgeEl.textContent = bt;
+                badgeEl.className   = bc;
+            }
+        }
+    });
+    _updateOverallProgress();
+}
+
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
 async function _refreshSubjectScheduledHours() {
     const ay       = document.getElementById('sel_ay').value;
@@ -2460,6 +2607,7 @@ async function _refreshSubjectScheduledHours() {
                 }
             });
         }
+        _syncSubjectCardBars();
     } catch(e) {}
 }
 
@@ -2574,7 +2722,8 @@ function _updateWorkflowBar() {
 }
 
 function _getScheduledHoursForCode(code, ay, sem) {
-    const yl = document.getElementById('sel_year')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const prog = document.getElementById('sel_prog')?.value || '';
     // Count unsaved pending hours first
     let pendingHours = 0;
     if (typeof pendingManualSchedule !== 'undefined') {
@@ -2583,6 +2732,9 @@ function _getScheduledHoursForCode(code, ay, sem) {
             // Scope to the currently selected year level so the same subject code
             // in a different year level doesn't inflate the count.
             if (yl && c.year_level && String(c.year_level) !== String(yl)) continue;
+            // Scope to the currently selected program so another section's pending
+            // entries don't show up in this section's progress bar.
+            if (prog && c.course && c.course !== prog) continue;
             const si = _TS_TIMES.indexOf(c.start_time);
             const ei = _TS_TIMES.indexOf(c.end_time);
             if (si >= 0 && ei > si) pendingHours += (ei - si) * 0.5;
@@ -2694,23 +2846,39 @@ async function _onSubjectClick(code, name, units, hours) {
             c.sem === document.getElementById('sel_sem').value &&
             !c.fromExisting
         );
-        const nonExistingRows = document.querySelectorAll('.ts-row:not(.ts-existing)');
-        // Only count non-existing rows that actually have content — empty auto-placeholder rows
-        // (added when clicking a subject with no sessions) must NOT trigger the warning.
-        const _hasFilledRows = Array.from(nonExistingRows).some(row => {
+        // Only flag rows that are genuinely modified/new with content.
+        // Rows with existingJson are existing sessions — check _dirtySliceIds instead of
+        // the .ts-existing class (which _markSliceModified may have removed on room/day change).
+        const _hasFilledRows = Array.from(document.querySelectorAll('.ts-row')).some(row => {
             const dayVal   = row.querySelector('.ts-day-sel')?.value;
             const startVal = row.querySelector('.ts-start-hidden')?.value;
-            return !!(dayVal || startVal);
+            if (!dayVal && !startVal) return false; // blank placeholder row
+            if (row.dataset.existingJson) {
+                // Modified existing row — only counts if actually dirtied by user action
+                const rowId = parseInt(row.id.replace('ts-row-', ''));
+                return _dirtySliceIds.has(rowId);
+            }
+            return true; // new row with content is always unsaved
         });
         const _hasPendingSlices  = pendingForCurrent.length > 0 || _hasFilledRows;
         const _hasPendingFaculty = !!window._pendingFacultyAssignment;
         if ((_hasPendingSlices || _hasPendingFaculty) &&
             !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
 
-        // Un-hide DB sessions that were masked for the old subject so the room calendar shows them
+        // Un-hide DB sessions that were masked for the old subject so the room calendar shows them.
+        // _loadExistingSessionsIntoSlices hides by BOTH slot-key ("CODE_Day_TimeId") AND
+        // versionid-key ("v:NNN"). The slot-key filter alone leaves v: entries in the set,
+        // causing renderGrid to keep hiding those rows after switching subjects.
         const _oldCode = _currentSubjectCode;
+        const _oldVersionIds = new Set(
+            pendingManualSchedule
+                .filter(c => c.subject_code === _oldCode && c.versionid)
+                .map(c => `v:${c.versionid}`)
+        );
         hiddenDbSchedules = new Set(
-            Array.from(hiddenDbSchedules).filter(k => !k.startsWith(_oldCode + '_'))
+            Array.from(hiddenDbSchedules).filter(
+                k => !k.startsWith(_oldCode + '_') && !_oldVersionIds.has(k)
+            )
         );
 
         // Clear pending for old subject (scoped to current ay/sem/year_level) and reset slices
@@ -2774,6 +2942,8 @@ async function _onSubjectClick(code, name, units, hours) {
         const key = p.dataset.pillKey || '';
         p.classList.toggle('pill-subject-focus', key.startsWith(code + '_'));
     });
+    const _earlyFocused = document.querySelector('.schedule-pill.pill-subject-focus');
+    if (_earlyFocused) _earlyFocused.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     _updateWorkflowBar();
 
@@ -2789,6 +2959,16 @@ async function _onSubjectClick(code, name, units, hours) {
 
     // Trigger DSS logic (loads faculty + room recommendations, auto-loads existing sessions)
     if (typeof triggerDSSLogic === 'function') await triggerDSSLogic();
+
+    // After triggerDSSLogic, _subjInfo is now correctly set. Rebuild day dropdowns on any
+    // existing slices (stale from a same-subject re-click after section switch) so they
+    // reflect the current subject's Sunday/weekend restrictions.
+    if (typeof _buildDayOpts === 'function') {
+        document.querySelectorAll('.ts-day-sel').forEach(sel => {
+            const cur = sel.value;
+            sel.innerHTML = _buildDayOpts(cur);
+        });
+    }
 
     // Local Scheduler: manage panel state based on whether sessions were found.
     // _hasExistingSchedule = true  → Local Arrangement OR Official Published returned sessions
@@ -2923,14 +3103,12 @@ function _updateUnitProgress(code, ay, sem, units, hours) {
     const uiCheck = document.getElementById('unit-instr-check');
     if (uiCheck) uiCheck.style.display = isComplete ? 'inline' : 'none';
 
-    // Persist the live scheduled count back onto the option so _updateOverallProgress
-    // can read it after fromExisting sessions are purged on a subject switch.
-    if (scheduled > 0) {
-        const _subjSel = document.getElementById('sel_subj');
-        if (_subjSel) {
-            const _opt = Array.from(_subjSel.options).find(o => o.value === code);
-            if (_opt) _opt.dataset.dbScheduled = scheduled;
-        }
+    // Always persist the live scheduled count (including 0) so drops also clear the option
+    // and _updateOverallProgress reads the correct value after all sessions are removed.
+    const _subjSel = document.getElementById('sel_subj');
+    if (_subjSel) {
+        const _opt = Array.from(_subjSel.options).find(o => o.value === code);
+        if (_opt) _opt.dataset.dbScheduled = scheduled;
     }
 
     // Refresh left-panel card mini-bar for this subject (hours text uses live pending count)
@@ -3019,6 +3197,36 @@ function _clearFacultyLock() {
     if (trigger) { trigger.style.pointerEvents = ''; trigger.style.opacity = ''; }
     window._pendingFacultyAssignment = false;
     _updateAssignFacultyBtn();
+}
+
+/* ── Reset right panel to empty / no-subject state ─────────── */
+function _resetRightPanel() {
+    _currentSubjectCode = null;
+    window.currentEditSession = null;
+    document.getElementById('right-subj-code').textContent = '--';
+    document.getElementById('right-subj-name').textContent = 'Select a subject from the curriculum guide';
+    const badge = document.getElementById('right-subj-badge');
+    if (badge) badge.textContent = '-';
+    const unitVal = document.getElementById('unit-progress-val');
+    if (unitVal) unitVal.textContent = '-';
+    document.getElementById('time-slots-container').innerHTML = '';
+    _activeSliceId = null;
+    _dirtySliceIds.clear();
+    _clearFacultyLock();
+    document.getElementById('sel_faculty').value      = '';
+    document.getElementById('fac_display_name').value = '';
+    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+    document.getElementById('sel_subj').value = '';
+    if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
+    if (typeof _updateAssignFacultyBtn   === 'function') _updateAssignFacultyBtn();
+    // Clear stale hidden-DB entries so sessions from the previous section
+    // are no longer suppressed when viewing a different section's room view.
+    if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
+    // Drop fromExisting pending entries — they are DB-backed and will re-appear
+    // from the DB once the new section's subject is selected.
+    if (typeof pendingManualSchedule !== 'undefined') {
+        pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting);
+    }
 }
 
 /* ── Assign Faculty helpers ─────────────────────────────────── */
@@ -3193,8 +3401,7 @@ async function _loadFacultyAssignments() {
         if (data.success && Array.isArray(data.assignments)) {
             data.assignments.forEach(a => {
                 const code = (a.subjectcode || '').toUpperCase();
-                // Only populate if no in-memory entry already exists (prefer fresh state)
-                if (code && !_subjectFacultyAssignments[code]) {
+                if (code) {
                     _subjectFacultyAssignments[code] = {
                         id:   a.employeenumber,
                         name: a.facultyname || ''
@@ -3351,13 +3558,14 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (String(c.faculty_id) !== String(empNum)) continue;
                     if (c.ay !== _facAy || c.sem !== _facSem) continue;
                     if (c.fromExisting) continue;
-                    if (_pendingSubjsSeen.has(c.subject_code)) continue;
-                    _pendingSubjsSeen.add(c.subject_code);
+                    // Deduplicate per subject+section so merged classes each count separately
+                    const _pendKey = `${c.subject_code}||${c.sectionname || c.course || ''}`;
+                    if (_pendingSubjsSeen.has(_pendKey)) continue;
+                    _pendingSubjsSeen.add(_pendKey);
                     const uMeta = _subjectMeta[c.subject_code];
-                    // FIX: Gamitin ang total_hours bilang "uVal" para tama ang dagdag sa progress bar
                     const uVal  = uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
                     _pendingExtraUnits += uVal;
-                    _pendingSubjsList.push({ subjectname: c.subject_code, creditunits: uVal, pending: true });
+                    _pendingSubjsList.push({ subjectname: c.subject_code, sectionname: c.sectionname || '', creditunits: uVal, pending: true });
                 }
             }
 
@@ -3414,9 +3622,13 @@ async function _updateFacultyUnitDisplay(empNum) {
                         const badge = s.pending
                             ? ' <span style="font-size:0.6rem;color:#e65100;font-weight:900;">(pending)</span>'
                             : s.assigned
-                                ? ' <span style="font-size:0.6rem;color:#2980b9;font-weight:900;"</span>'
+                                ? ' <span style="font-size:0.6rem;color:#2980b9;font-weight:900;"></span>'
                                 : '';
-                        row.innerHTML = `<span class="fac-assigned-code">${s.subjectname}${badge}</span><span class="fac-assigned-units">${s.creditunits}u</span>`;
+                        // Show section name so merged classes appear as separate entries
+                        const dispName = s.sectionname
+                            ? `${s.subjectname} <span style="font-size:0.58rem;opacity:0.75;">(${s.sectionname})</span>`
+                            : s.subjectname;
+                        row.innerHTML = `<span class="fac-assigned-code">${dispName}${badge}</span><span class="fac-assigned-units">${s.creditunits}u</span>`;
                         listEl.appendChild(row);
                     });
                 }
@@ -3434,9 +3646,11 @@ async function _updateFacultyUnitDisplay(empNum) {
         } else {
             _facLoadData = null;
             if (alertEl) alertEl.style.display = 'none';
+            console.error('[faculty_load] API returned success:false for emp_num=' + empNum, data);
         }
     } catch(e) {
         _facLoadData = null;
+        console.error('[faculty_load] fetch/parse error for emp_num=' + empNum, e);
     }
 }
 
@@ -3444,7 +3658,25 @@ async function _updateFacultyUnitDisplay(empNum) {
 function onRoomHdrChange() {
     const sel  = document.getElementById('room-hdr-sel');
     const room = allRooms.find(r => String(r.id) === String(sel.value));
-    if (room) selectRoom(room.id, room.name);
+    if (!room) return;
+    // Header selection syncs ALL slices (user explicitly chose a room for the whole session)
+    _syncAllSlicesToRoom(String(room.id), room.name);
+    selectRoom(room.id, room.name);
+}
+
+function _syncAllSlicesToRoom(roomId, roomName) {
+    document.querySelectorAll('.ts-row').forEach(row => {
+        const hidEl = row.querySelector('.ts-room-hidden');
+        const txtEl = row.querySelector('.ts-room-field .ts-ss-input');
+        if (!hidEl) return;
+        hidEl.value = roomId;
+        if (txtEl) txtEl.value = roomName;
+        const rowId  = row.id.replace('ts-row-', '');
+        const listEl = document.getElementById(`tsr-list-${rowId}`);
+        if (listEl) listEl.querySelectorAll('.ts-ss-item').forEach(i =>
+            i.classList.toggle('active', i.dataset.val === String(roomId)));
+        _dirtySliceIds.add(parseInt(rowId));
+    });
 }
 
 function _rebuildRoomHdrDropdown(bldgId) {
@@ -3487,11 +3719,11 @@ window.selectRoom = async function(roomId, roomName) {
     }
     if (sel) sel.value = roomId;
 
-    // Sync per-slice room selectors that have no room assigned yet
+    // Only fill slice room selectors that have no room yet (don't override existing choices)
     document.querySelectorAll('.ts-row').forEach(row => {
         const hidEl = row.querySelector('.ts-room-hidden');
         const txtEl = row.querySelector('.ts-room-field .ts-ss-input');
-        if (!hidEl || hidEl.value) return; // skip if already has a room
+        if (!hidEl || hidEl.value) return; // skip slices that already have a room
         hidEl.value = roomId;
         if (txtEl) txtEl.value = roomName;
         const rowId  = row.id.replace('ts-row-', '');
@@ -3535,7 +3767,9 @@ function _buildSliceRoomItems(rowId, selRoomId) {
     sections.forEach(sec => {
         if (!sec.items.length) return;
         const isRec = sec.cls === 'recommended';
-        html += `<div class="ts-ss-sect-hdr${isRec?' ts-ss-sect-rec':''}">${sec.label}</div>`;
+        const isOpt = sec.cls === 'optional';
+        const sectionCls = isRec ? ' ts-ss-sect-rec' : isOpt ? ' ts-ss-sect-opt' : '';
+        html += `<div class="ts-ss-sect-hdr${sectionCls}">${sec.label}</div>`;
         sec.items.forEach(item => {
             const rn = (item.text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
             html += `<div class="ts-ss-item${String(item.value)===String(selRoomId)?' active':''}" data-val="${item.value}" onmousedown="tsSel('tsr',${rowId},'${item.value}')">${rn}</div>`;
@@ -3558,7 +3792,31 @@ function _refreshAllSliceRoomLists() {
    SEARCH-SELECT HELPERS (reports-style — used for room & time)
    ══════════════════════════════════════════════════════════════ */
 function tsOpen(p, id) {
-    document.getElementById(`${p}-list-${id}`)?.classList.add('open');
+    const list = document.getElementById(`${p}-list-${id}`);
+    if (!list) return;
+    // Reset any previous fixed positioning
+    list.style.position = '';
+    list.style.top      = '';
+    list.style.bottom   = '';
+    list.style.left     = '';
+    list.style.width    = '';
+    list.classList.remove('drop-up');
+    list.classList.add('open');
+    // After the browser renders the dropdown, check if it clips the viewport and reposition
+    requestAnimationFrame(() => {
+        const input = list.closest('.ts-ss-wrap')?.querySelector('.ts-ss-input');
+        const rect  = list.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight - 8 && input) {
+            // Switch to fixed positioning so the overflow-y:auto panel doesn't clip the list
+            const inputRect = input.getBoundingClientRect();
+            list.style.position = 'fixed';
+            list.style.left     = inputRect.left + 'px';
+            list.style.width    = inputRect.width + 'px';
+            list.style.top      = '';
+            list.style.bottom   = (window.innerHeight - inputRect.top + 3) + 'px';
+            list.classList.add('drop-up');
+        }
+    });
 }
 function _inferEndTime(typed, startVal) {
     if (!typed) return null;
@@ -3592,7 +3850,16 @@ function _inferEndTime(typed, startVal) {
 
 function tsClose(p, id) {
     setTimeout(() => {
-        document.getElementById(`${p}-list-${id}`)?.classList.remove('open');
+        const _cl = document.getElementById(`${p}-list-${id}`);
+        if (_cl) {
+            _cl.classList.remove('open');
+            // Reset any fixed positioning applied during drop-up
+            _cl.style.position = '';
+            _cl.style.top      = '';
+            _cl.style.bottom   = '';
+            _cl.style.left     = '';
+            _cl.style.width    = '';
+        }
         if (p === 'tsst' || p === 'tset') {
             const txtEl = document.getElementById(`${p}-txt-${id}`);
             const hidEl = document.getElementById(`${p}-hid-${id}`);
@@ -3617,15 +3884,32 @@ function tsClose(p, id) {
     }, 150);
 }
 function tsFilter(p, id) {
-    const q = (document.getElementById(`${p}-txt-${id}`)?.value || '').toLowerCase();
-    document.querySelectorAll(`#${p}-list-${id} .ts-ss-item`).forEach(item => {
-        const matchesQuery = q === '' || item.textContent.toLowerCase().includes(q);
+    const q = (document.getElementById(`${p}-txt-${id}`)?.value || '').toLowerCase().trim();
+    const listEl = document.getElementById(`${p}-list-${id}`);
+    if (!listEl) { tsOpen(p, id); return; }
+
+    // Use inline style.display so the search always wins over CSS class rules
+    listEl.querySelectorAll('.ts-ss-item').forEach(item => {
+        const matchesQuery = !q || item.textContent.toLowerCase().includes(q);
         if (!matchesQuery) {
-            item.classList.add('dim');
-        } else if (!item.classList.contains('occ-dim') && !item.classList.contains('before-start')) {
-            item.classList.remove('dim');
+            item.style.display = 'none';
+        } else {
+            // Restore class-based visibility for occupied/before-start items
+            item.style.display = (item.classList.contains('occ-dim') || item.classList.contains('before-start')) ? 'none' : '';
         }
     });
+
+    // Hide section headers that have no visible items below them
+    listEl.querySelectorAll('.ts-ss-sect-hdr').forEach(hdr => {
+        let sib = hdr.nextElementSibling;
+        let hasVisible = false;
+        while (sib && !sib.classList.contains('ts-ss-sect-hdr')) {
+            if (sib.style.display !== 'none') { hasVisible = true; break; }
+            sib = sib.nextElementSibling;
+        }
+        hdr.style.display = hasVisible ? '' : 'none';
+    });
+
     tsOpen(p, id);
 }
 function tsSel(p, id, val) {
@@ -3775,8 +4059,8 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                 <div class="ts-label">ROOM</div>
                 <div class="ts-ss-wrap">
                     <input type="text" id="tsr-txt-${id}" class="ts-ss-input"
-                        placeholder="Search room…" autocomplete="off" value="${roomNameSafe}"
-                        oninput="tsFilter('tsr',${id})" onfocus="tsOpen('tsr',${id})" onblur="tsClose('tsr',${id})">
+                        placeholder="Search room…" autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly value="${roomNameSafe}"
+                        oninput="tsFilter('tsr',${id})" onkeyup="tsFilter('tsr',${id})" onfocus="this.removeAttribute('readonly'); tsOpen('tsr',${id})" onblur="tsClose('tsr',${id})">
                     <input type="hidden" id="tsr-hid-${id}" class="ts-room-hidden" value="${roomId}">
                     <div class="ts-ss-list" id="tsr-list-${id}">${roomItems}</div>
                 </div>
@@ -3788,8 +4072,8 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                 <div class="ts-label">START</div>
                 <div class="ts-ss-wrap">
                     <input type="text" id="tsst-txt-${id}" class="ts-ss-input"
-                        placeholder="Start time…" autocomplete="off" value="${startVal}"
-                        oninput="tsFilter('tsst',${id})" onfocus="tsOpen('tsst',${id})" onblur="tsClose('tsst',${id})">
+                        placeholder="Start time…" autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly value="${startVal}"
+                        oninput="tsFilter('tsst',${id})" onkeyup="tsFilter('tsst',${id})" onfocus="this.removeAttribute('readonly'); tsOpen('tsst',${id})" onblur="tsClose('tsst',${id})">
                     <input type="hidden" id="tsst-hid-${id}" class="ts-start-hidden" value="${startVal}">
                     <div class="ts-ss-list" id="tsst-list-${id}">${mkTimeItems('tsst',startVal)}</div>
                 </div>
@@ -3798,8 +4082,8 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                 <div class="ts-label">END</div>
                 <div class="ts-ss-wrap">
                     <input type="text" id="tset-txt-${id}" class="ts-ss-input"
-                        placeholder="End time…" autocomplete="off" value="${endVal}"
-                        oninput="tsFilter('tset',${id})" onfocus="tsOpen('tset',${id})" onblur="tsClose('tset',${id})">
+                        placeholder="End time…" autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly value="${endVal}"
+                        oninput="tsFilter('tset',${id})" onkeyup="tsFilter('tset',${id})" onfocus="this.removeAttribute('readonly'); tsOpen('tset',${id})" onblur="tsClose('tset',${id})">
                     <input type="hidden" id="tset-hid-${id}" class="ts-end-hidden" value="${endVal}">
                     <div class="ts-ss-list" id="tset-list-${id}">${mkTimeItems('tset',endVal)}</div>
                 </div>
@@ -4159,11 +4443,13 @@ function _syncSliceToPending(id) {
             renderGrid(newRoomId || document.getElementById('sel_room').value, ay, sem);
         }
 
-        // Update real-time progress for current subject
+        // Update real-time progress for current subject and sync all other cards
         if (code && ay && sem) {
             const meta   = (typeof _subjectMeta !== 'undefined' && _subjectMeta[code]) || {};
             _updateUnitProgress(code, ay, sem, meta.units || 0, meta.total_hours || 0);
         }
+        // Refresh all subject cards from API so badges/hours stay in sync after save
+        _refreshSubjectScheduledHours().catch(() => {});
     }
     _updateWorkflowBar();
 }
@@ -4250,10 +4536,15 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         const room = allRooms.find(r => r.name === roomName);
         const roomId = room ? String(room.id) : '';
 
-        // Add to pendingManualSchedule and hide original DB pill
+        // Add to pendingManualSchedule and hide original DB pill.
+        // Use versionid-scoped key so only this section's row is hidden;
+        // other merged sections sharing the same slot stay visible.
         const localTempId = 'DRAFT_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-        const dbKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
-        hiddenDbSchedules.add(dbKey);
+        if (sess.versionid) {
+            hiddenDbSchedules.add(`v:${sess.versionid}`);
+        } else {
+            hiddenDbSchedules.add(`${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`);
+        }
 
         const newClass = {
             temp_id:      localTempId,
@@ -4274,7 +4565,8 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
             time:         `${st} - ${et}`,
             course:       document.getElementById('sel_prog').value,
             year_level:   document.getElementById('sel_year').value,
-            units:        typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 0,
+            units:             typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 0,
+            total_subject_hrs: typeof _subjInfo !== 'undefined' && _subjInfo ? parseFloat(_subjInfo.total_hours || 0) : 0,
             isLocal:      true,
             fromExisting: true,
             status:       sess.status || 'Draft'
@@ -4284,6 +4576,15 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         // Add the session ref into the row for delete tracking
         const sessWithTempId = { ...sess, _localTempId: localTempId };
         addNewTimeSlot(sess.daydesc, st, et, roomId, JSON.stringify(sessWithTempId));
+    }
+
+    // Rebuild day dropdowns so they reflect _subjInfo's Sunday restrictions
+    // (_subjInfo is correctly set at this point from triggerDSSLogic)
+    if (typeof _buildDayOpts === 'function') {
+        document.querySelectorAll('.ts-day-sel').forEach(sel => {
+            const cur = sel.value;
+            sel.innerHTML = _buildDayOpts(cur);
+        });
     }
 
     // Deferred re-stamp: 700 ms outlasts all chained async work (DSS fetch, faculty_load fetch,
@@ -4324,7 +4625,9 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         // the header room dropdown starts blank until the user picks one manually, so
         // we seed it from the session data so renderGrid gets a valid room ID.
         let gridRoom = document.getElementById('sel_room').value;
-        if (!gridRoom && uniqueSessions.length > 0) {
+        // Always navigate to the subject's room when sessions exist (not just when no room is selected).
+        // Skip during a pill-click edit so the user doesn't get redirected mid-edit.
+        if (uniqueSessions.length > 0 && !window.currentEditSession) {
             const firstRoomName = uniqueSessions[0].roomname || '';
             const firstRoom = allRooms.find(r => r.name === firstRoomName);
             if (firstRoom) {
@@ -4342,7 +4645,21 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
                 }
             }
         }
-        if (gridRoom) renderGrid(gridRoom, ay, sem);
+        if (gridRoom) {
+            await renderGrid(gridRoom, ay, sem);
+            // Re-apply subject focus after the grid finishes rendering new pills
+            if (_currentSubjectCode) {
+                document.querySelectorAll('.schedule-pill').forEach(p => {
+                    const key = p.dataset.pillKey || '';
+                    p.classList.toggle('pill-subject-focus', key.startsWith(_currentSubjectCode + '_'));
+                });
+                // Scroll the calendar to the first focused pill so it's always visible
+                const _firstFocused = document.querySelector('.schedule-pill.pill-subject-focus');
+                if (_firstFocused) {
+                    _firstFocused.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        }
     }
 
     // Refresh unit progress
@@ -4388,6 +4705,9 @@ function selectBcProg(code) {
     const el = document.getElementById('bc-prog-text');
     if (el) el.textContent = code;
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+    // Clear faculty assignments so NSTP/shared-subject faculty from the old program
+    // doesn't auto-carry into the new program's sections.
+    if (typeof _subjectFacultyAssignments !== 'undefined') _subjectFacultyAssignments = {};
     if (typeof selectProg === 'function') selectProg(code); // also calls triggerCascade
     _updateBcSummary();
     _loadSectionOptions();
@@ -4406,8 +4726,38 @@ function selectBcYear(val, label) {
 function selectBcSect(id, name) {
     const textEl = document.getElementById('bc-sect-text');
     if (textEl) textEl.textContent = name;
+    const _prevSectId = document.getElementById('sel_section').value;
     document.getElementById('sel_section').value = id;
+    if (_prevSectId && _prevSectId !== id) {
+        // Clear stale hidden-DB entries so another section's sessions aren't suppressed
+        // in the room calendar view.
+        if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
+        // Drop fromExisting pending entries — they belong to the previous section.
+        if (typeof pendingManualSchedule !== 'undefined') {
+            pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting);
+        }
+    }
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+
+    // Clear faculty assignments so the previous section's faculty doesn't auto-populate
+    // in the new section (especially for shared subjects like NSTP where merge is intentional
+    // but faculty choice for each section should be independent).
+    if (typeof _subjectFacultyAssignments !== 'undefined') _subjectFacultyAssignments = {};
+
+    // Reset progress bar immediately so stale data from the previous section
+    // doesn't show while _refreshSubjectScheduledHours fetches new data.
+    const _fillEl  = document.getElementById('overall-progress-fill');
+    const _pctEl   = document.getElementById('overall-progress-pct');
+    const _cgFill  = document.getElementById('cg-prog-fill');
+    const _cgDone  = document.getElementById('cg-prog-done');
+    const _cgSched = document.getElementById('cg-hrs-sched');
+    const _cgReq   = document.getElementById('cg-hrs-req');
+    if (_fillEl)  _fillEl.style.width  = '0%';
+    if (_cgFill)  _cgFill.style.width  = '0%';
+    if (_pctEl)   _pctEl.textContent   = '…';
+    if (_cgDone)  _cgDone.textContent  = '…';
+    if (_cgSched) _cgSched.textContent = '…';
+    if (_cgReq)   _cgReq.textContent   = '…';
 
     // Refresh subject statuses (badges/hours) and visible panels for the selected section
     _updateSubjectList().catch(() => {});
@@ -4434,9 +4784,11 @@ async function _loadSectionOptions() {
     const textEl = document.getElementById('bc-sect-text');
     if (!menu) return;
 
-    // Reset selection
+    // Reset selection and clear the right panel whenever section is invalidated
+    const _prevSectId = document.getElementById('sel_section').value;
     document.getElementById('sel_section').value = '';
     if (textEl) textEl.textContent = '-Select Section-';
+    if (_prevSectId && typeof _resetRightPanel === 'function') _resetRightPanel();
 
     if (!prog || !yl) {
         menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Select Program &amp; Year Level first</div>';
@@ -4572,6 +4924,40 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             }
         } catch(e) {
             // validation endpoint unreachable — allow save to proceed (server will re-validate)
+        }
+    }
+
+    // ── Lab room aggregate validation ──
+    // When the setting is enabled, verify each subject's lab hours are fully
+    // covered by sessions placed in Laboratory rooms before allowing the save.
+    if (LAB_CONSTRAINT_ENABLED) {
+        const subjectCodes = [...new Set(contextDrafts.map(c => c.subject_code || c.subjectcode).filter(Boolean))];
+        for (const code of subjectCodes) {
+            const meta = _subjectMeta[code];
+            if (!meta || !(meta.labhours > 0)) continue;
+            const required = meta.labhours;
+            let coveredLabHrs = 0;
+            for (const c of contextDrafts) {
+                if ((c.subject_code || c.subjectcode) !== code) continue;
+                const cRoom = (typeof allRooms !== 'undefined') && allRooms.find(r => String(r.id) === String(c.room_id));
+                if (cRoom && (cRoom.type || '').toLowerCase() === 'laboratory') {
+                    const si = (typeof timeSlots !== 'undefined') ? timeSlots.indexOf(c.start_time) : -1;
+                    const ei = (typeof timeSlots !== 'undefined') ? timeSlots.indexOf(c.end_time)   : -1;
+                    if (si >= 0 && ei > si) coveredLabHrs += (ei - si) * 0.5;
+                }
+            }
+            if (coveredLabHrs < required - 0.01) {
+                const subjectName = meta.name || code;
+                const stillNeeded = +(required - coveredLabHrs).toFixed(1);
+                await showValidationModal(
+                    'Laboratory Room Required',
+                    `"${subjectName}" requires ${required} laboratory hour${required !== 1 ? 's' : ''}. ` +
+                    `${stillNeeded}h of lab hours still need to be assigned to a designated Laboratory room. ` +
+                    `Please assign the laboratory hours to a Laboratory room before saving.`
+                );
+                if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> SAVE AS DRAFT'; btn.disabled = false; }
+                return false;
+            }
         }
     }
 
@@ -4838,6 +5224,10 @@ async function confirmAllSlots() {
         await confirmAndPlace();
         if (pendingManualSchedule.length <= prevLen && !window.currentEditSession) {
             window.currentEditSession = null;
+            // Roll back any entries added by earlier slices in this loop so a partial
+            // failure doesn't leave stale data that could be silently published later.
+            pendingManualSchedule = _pmSnapshot;
+            hiddenDbSchedules     = _hdbSnapshot;
             return;
         }
         window.currentEditSession = null;
@@ -4864,7 +5254,45 @@ async function confirmAllSlots() {
         const _rm  = document.getElementById('sel_room').value;
         if (currentMode === 'program') renderProgramTimetable();
         else renderGrid(_rm, _ay, _sem);
-        _updateOverallProgress();
+
+        // Restore the time slot panel to its DB state so the user sees the actual
+        // saved sessions, not the mid-save empty state.
+        const _failSubj   = document.getElementById('sel_subj').value;
+        const _failProg   = document.getElementById('sel_prog').value;
+        const _failYl     = document.getElementById('sel_year').value;
+        const _failSectId = document.getElementById('sel_section')?.value || '';
+        if (_failSubj && _failSectId) {
+            try {
+                const exResp = await fetch(
+                    `/api/manual/existing_sessions?subject_code=${encodeURIComponent(_failSubj)}` +
+                    `&program=${encodeURIComponent(_failProg)}&year_level=${encodeURIComponent(_failYl)}` +
+                    `&ay_id=${encodeURIComponent(_ay)}&semester=${encodeURIComponent(_sem)}` +
+                    `&section_id=${encodeURIComponent(_failSectId)}`
+                );
+                const exData = await exResp.json();
+                if (exData.success && exData.sessions && exData.sessions.length) {
+                    await _loadExistingSessionsIntoSlices(exData.sessions);
+                } else {
+                    document.getElementById('time-slots-container').innerHTML = '';
+                    if (!IS_LOCAL || _hasExistingSchedule) addNewTimeSlot('','','','','',true);
+                    if (typeof _buildDayOpts === 'function') {
+                        document.querySelectorAll('.ts-day-sel').forEach(sel => {
+                            const cur = sel.value; sel.innerHTML = _buildDayOpts(cur);
+                        });
+                    }
+                }
+            } catch(e) {
+                document.getElementById('time-slots-container').innerHTML = '';
+                if (!IS_LOCAL || _hasExistingSchedule) addNewTimeSlot('','','','','',true);
+                if (typeof _buildDayOpts === 'function') {
+                    document.querySelectorAll('.ts-day-sel').forEach(sel => {
+                        const cur = sel.value; sel.innerHTML = _buildDayOpts(cur);
+                    });
+                }
+            }
+        }
+
+        await _updateSubjectList();
         return;
     }
 
@@ -5195,11 +5623,12 @@ window.triggerCascade = async function(skipGridRender) {
     // own trigger didn't fire due to a concurrent cascade race.
     // _localAutoSelectFirstSubject is idempotent — _currentSubjectCode guards double-fire.
     if (!_currentSubjectCode) {
-        const _ay   = document.getElementById('sel_ay')?.value   || '';
-        const _sem  = document.getElementById('sel_sem')?.value  || '';
-        const _prog = document.getElementById('sel_prog')?.value || '';
-        const _yl   = document.getElementById('sel_year')?.value || '';
-        if (_ay && _sem && _prog && _yl) {
+        const _ay   = document.getElementById('sel_ay')?.value    || '';
+        const _sem  = document.getElementById('sel_sem')?.value   || '';
+        const _prog = document.getElementById('sel_prog')?.value  || '';
+        const _yl   = document.getElementById('sel_year')?.value  || '';
+        const _sect = document.getElementById('sel_section')?.value || '';
+        if (_ay && _sem && _prog && _yl && _sect) {
             await _localAutoSelectFirstSubject();
         }
     }
@@ -5213,6 +5642,9 @@ window.triggerCascade = async function(skipGridRender) {
 async function _localAutoSelectFirstSubject() {
     const subjSel = document.getElementById('sel_subj');
     if (!subjSel) return;
+
+    // Never auto-select without a section — the right panel can't know whose schedule to load.
+    if (!(document.getElementById('sel_section')?.value || '')) return;
 
     // Use _currentSubjectCode as the authoritative guard — subjSel.value can be stale
     // during async rebuilds, but _currentSubjectCode is only set inside _onSubjectClick.
@@ -5431,9 +5863,16 @@ _filterEndTimeItems = function(id, startVal) {
 const _origTsOpen = tsOpen;
 tsOpen = function(p, id) {
     _origTsOpen.call(this, p, id);
-    if (p === 'tset') {
-        const startVal = document.getElementById(`tsst-hid-${id}`)?.value || '';
-        if (startVal) _filterEndTimeItems(id, startVal);
+    if (p === 'tsr') {
+        // Clear any stale search-filter dim from a previous open so all rooms are visible again
+        document.getElementById(`tsr-list-${id}`)
+            ?.querySelectorAll('.ts-ss-item.dim:not(.occ-dim)').forEach(i => i.classList.remove('dim'));
+    } else if (p === 'tset') {
+        const q = (document.getElementById(`tset-txt-${id}`)?.value || '').trim();
+        if (!q) {
+            const startVal = document.getElementById(`tsst-hid-${id}`)?.value || '';
+            if (startVal) _filterEndTimeItems(id, startVal);
+        }
     }
 };
 
@@ -5455,11 +5894,18 @@ async function _prefetchRoomOccupancy(roomId, ay, sem) {
         const sessions = await resp.json();
         const _hdb = (typeof hiddenDbSchedules !== 'undefined') ? hiddenDbSchedules : new Set();
         window._roomDbCache[key] = sessions
-            .filter(s => !_hdb.has(`${s.subjectcode}_${s.daydesc}_${s.starttimeid}`))
+            .filter(s => {
+                // Match both the new versionid-scoped key and the legacy fallback key
+                if (s.versionid && _hdb.has(`v:${s.versionid}`)) return false;
+                if (_hdb.has(`${s.subjectcode}_${s.daydesc}_${s.starttimeid}`)) return false;
+                return true;
+            })
             .map(s => ({
-                daydesc:  s.daydesc,
-                startIdx: (s.starttimeid || 1) - 1,
-                endIdx:   (s.endtimeid   || 1) - 1,
+                daydesc:         s.daydesc,
+                startIdx:        (s.starttimeid || 1) - 1,
+                endIdx:          (s.endtimeid   || 1) - 1,
+                subjectcode:     (s.subjectcode || '').toUpperCase(),
+                employee_number: String(s.employee_number || ''),
             }));
     } catch(e) {
         window._roomDbCache[key] = [];
@@ -5475,20 +5921,36 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId) {
     const ranges = [];
     if (!roomId || !day) return ranges;
 
-    // From DB cache
+    // Current subject + faculty for merge-class exemption
+    const curSubj    = (document.getElementById('sel_subj')?.value || '').toUpperCase();
+    const curFac     = String(document.getElementById('sel_faculty')?.value || '');
+    // Use merge mode if available (defined in manualEditor.acad2.js)
+    const _mergeMode = (typeof _getMergeMode === 'function') ? _getMergeMode(curSubj) : 'none';
+
+    // From DB cache — skip slots eligible for merge
+    // flexible (NSTP): same subject is enough; strict: same subject + same faculty required
     const dbItems = (window._roomDbCache[`${roomId}|${ay}|${sem}`] || []);
     dbItems.forEach(s => {
-        if (s.daydesc === day && s.startIdx >= 0 && s.endIdx > s.startIdx)
-            ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx });
+        if (s.daydesc !== day || s.startIdx < 0 || s.endIdx <= s.startIdx) return;
+        if (curSubj && s.subjectcode === curSubj && _mergeMode !== 'none') {
+            if (_mergeMode === 'flexible') return; // NSTP: different faculty OK
+            if (curFac && s.employee_number === curFac) return; // strict: must match faculty
+        }
+        ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx });
     });
 
-    // From local pending schedule (other slices / other subjects in this room+day)
+    // From local pending schedule — skip merge-eligible entries too
     const pending = (typeof pendingManualSchedule !== 'undefined') ? pendingManualSchedule : [];
     pending.forEach(c => {
         if (String(c.room_id) !== String(roomId)) return;
         if (c.day !== day || c.ay !== ay || c.sem !== sem) return;
         if (c.temp_id === excludeTempId) return;
         if (c.isPreview) return;
+        const cSubj = (c.subject_code || '').toUpperCase();
+        if (curSubj && cSubj === curSubj && _mergeMode !== 'none') {
+            if (_mergeMode === 'flexible') return;
+            if (curFac && String(c.faculty_id) === curFac) return;
+        }
         const si = _TS_TIMES.indexOf(c.start_time);
         const ei = _TS_TIMES.indexOf(c.end_time);
         if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei });
@@ -5539,8 +6001,37 @@ function _applyRoomOccupancyFilter(sliceId) {
     renderGrid = async function(roomId, ayFilter, semFilter) {
         delete window._roomDbCache[`${roomId}|${ayFilter}|${semFilter}`];
         await _ogRG.call(this, roomId, ayFilter, semFilter);
-        await _prefetchRoomOccupancy(roomId, ayFilter, semFilter);
+        // Run in background — don't block the grid render
+        _prefetchRoomOccupancy(roomId, ayFilter, semFilter).catch(() => {});
     };
+})();
+
+/* Re-apply occupancy filter on subject/faculty change — merge eligibility depends on both */
+(function _patchSubjFacOccupancyRefresh() {
+    const _reapply = () => {
+        document.querySelectorAll('.ts-row').forEach(row => {
+            const rowId = parseInt(row.id.replace('ts-row-', ''));
+            if (!isNaN(rowId)) _applyRoomOccupancyFilter(rowId);
+        });
+    };
+    const subjSel = document.getElementById('sel_subj');
+    const facSel  = document.getElementById('sel_faculty');
+    if (subjSel) subjSel.addEventListener('change', _reapply);
+    if (facSel)  facSel.addEventListener('change', _reapply);
+
+    // Close any fixed-position ts-ss-list dropdowns if the right panel scrolls,
+    // otherwise they float away from their anchoring input.
+    const _rpanel = document.querySelector('.editor-right-panel-new');
+    if (_rpanel) {
+        _rpanel.addEventListener('scroll', () => {
+            document.querySelectorAll('.ts-ss-list.open').forEach(list => {
+                list.classList.remove('open');
+                list.style.position = '';
+                list.style.top = ''; list.style.bottom = '';
+                list.style.left = ''; list.style.width = '';
+            });
+        }, { passive: true });
+    }
 })();
 
 /* ══════════════════════════════════════════════════════════════
@@ -5966,33 +6457,20 @@ async function approveSchedule() {
 async function _initFlFacultyMenu() {
     const menu  = document.getElementById('flFacMenu');
     if (!menu) return;
-    const ayId = document.getElementById('sel_ay')?.value   || '';
-    const sem  = document.getElementById('sel_sem')?.value  || '';
-    const prog = document.getElementById('sel_prog')?.value || '';
-    const yl   = document.getElementById('sel_year')?.value || '';
 
-    menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;font-style:italic;">Loading…</div>';
+    // Use the globally loaded allFaculty list (all active faculty, not just those with assignments)
+    const src = (typeof allFaculty !== 'undefined' && allFaculty.length)
+        ? [...allFaculty].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        : [];
 
-    let facultyList = [];
-    if (ayId && sem) {
-        try {
-            let url = `/api/faculty/assigned_list?ay_id=${encodeURIComponent(ayId)}&sem=${encodeURIComponent(sem)}`;
-            if (prog) url += `&prog=${encodeURIComponent(prog)}`;
-            if (yl)   url += `&year_level=${encodeURIComponent(yl)}`;
-            const res  = await fetch(url);
-            const data = await res.json();
-            if (data.success) facultyList = data.faculty;
-        } catch(e) {}
-    }
-
-    if (!facultyList.length) {
-        menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty with assignments for this period</div>';
+    if (!src.length) {
+        menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty available</div>';
         return;
     }
 
-    menu.innerHTML = facultyList.map(f =>
-        `<div class="fl-fac-opt" onclick="selectFlFaculty('${(f.emp_num||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
-            ${f.name || f.emp_num || '—'}
+    menu.innerHTML = src.map(f =>
+        `<div class="fl-fac-opt" onclick="selectFlFaculty('${(f.id||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
+            ${f.name || f.id || '—'}
         </div>`
     ).join('');
 }
@@ -6039,57 +6517,96 @@ async function selectFlFaculty(empNum, name) {
         const data = await res.json();
         if (!data.success) { _flShowMsg('Error: ' + (data.error || 'Unknown')); return; }
 
+        const empType = (data.faculty.employee_type || '').toLowerCase();
+        const isPartTime = empType.includes('part') && !empType.includes('design');
+
         document.getElementById('fl-emp-type').textContent    = data.faculty.employee_type || '—';
         document.getElementById('fl-total-units').textContent = data.max_units || '0';
         document.getElementById('fl-avail-units').textContent = data.available_units ?? '—';
+
+        // Relabel sections based on employee type:
+        // Part-time faculty have no regular load — their daytime sessions are TS (Teaching Substitution).
+        const regLabel      = document.getElementById('fl-reg-label');
+        const regTotalLabel = document.getElementById('fl-reg-total-label');
+        const ptLabel       = document.getElementById('fl-pt-label');
+        const ptTotalLabel  = document.getElementById('fl-pt-total-label');
+        const flTotalReg    = document.getElementById('fl-total-regular');
+        const flTotalPt     = document.getElementById('fl-total-parttime');
+
+        const tsMax  = parseInt(data.faculty.teach_sub || 0);
+        const ptMax  = parseInt(data.faculty.pt_load  || 0);
+        const regMax = parseInt(data.faculty.reg_load || data.faculty.desig_reg_load || 0);
+
+        if (isPartTime) {
+            if (regLabel)      regLabel.textContent  = 'TEACHING SUBSTITUTION (TS)';
+            if (regTotalLabel) regTotalLabel.dataset.prefix = `TOTAL TS LOAD (max ${tsMax}): `;
+            if (ptLabel)       ptLabel.textContent   = 'PART TIME LOAD';
+            if (ptTotalLabel)  ptTotalLabel.dataset.prefix  = `TOTAL PART-TIME LOAD (max ${ptMax}): `;
+        } else {
+            if (regLabel)      regLabel.textContent  = 'REGULAR LOAD';
+            if (regTotalLabel) regTotalLabel.dataset.prefix = `TOTAL REGULAR LOAD (max ${regMax}): `;
+            if (ptLabel)       ptLabel.textContent   = 'PART TIME LOAD';
+            if (ptTotalLabel)  ptTotalLabel.dataset.prefix  = `TOTAL PART-TIME LOAD (max ${ptMax}): `;
+        }
 
         const cols = s => `
             <td>${s.subjectcode||'—'}</td>
             <td>${s.subjectname||'—'}</td>
             <td>${s.units||'—'}</td>
             <td>${s.year_section||'—'}</td>
-            <td>${s.subj_ref||'—'}</td>
             <td>${s.time_range||'—'}</td>
-            <td>${s.time_code||'—'}</td>
             <td>${s.days||'—'}</td>
-            <td>${s.room||'—'}</td>
-            <td>${s.effectivity||'—'}</td>`;
+            <td>${s.room||'—'}</td>`;
 
         const reg = document.getElementById('fl-regular-body');
         const pt  = document.getElementById('fl-parttime-body');
 
-        // Classify sessions by employee type.
-        // Part-Time and Designee: all sessions → Part-Time Load.
-        // Regular: weekday sessions ending by 17:xx → Regular Load; rest → Part-Time Load.
-        const _empType = (data.faculty.employee_type || '').toLowerCase();
-        const _isNonReg = _empType.includes('part') || _empType.includes('design');
-        const _WKDAYS   = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+        // Time-based session classification (applies to all employee types):
+        // Weekday sessions ending by 4 PM (end hour ≤ 16) → Regular Load (or TS for Part-time).
+        // Evening (end hour > 16) or weekend sessions → Part-Time Load.
+        const _WKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+        const _endHr = s => parseInt((s.time_code || '').slice(2)) || 0;
 
-        let regSessions, ptSessions;
-        if (_isNonReg) {
-            regSessions = [];
-            ptSessions  = data.sessions;
-        } else {
-            regSessions = data.sessions.filter(s => {
-                const endHr = parseInt((s.time_code || '').slice(2)) || 0;
-                return _WKDAYS.has(s.days || '') && endHr <= 17;
+        const regSessions = data.sessions.filter(s =>
+            _WKDAYS.has(s.days || '') && _endHr(s) <= 16
+        );
+        const ptSessions = data.sessions.filter(s =>
+            !_WKDAYS.has(s.days || '') || _endHr(s) > 16
+        );
+
+        // Merge multi-day sessions for the same subject into one row
+        const _groupSessions = arr => {
+            const map = new Map();
+            arr.forEach(s => {
+                if (!map.has(s.subjectcode)) {
+                    map.set(s.subjectcode, { ...s, _days: [s.days] });
+                } else {
+                    const ex = map.get(s.subjectcode);
+                    if (s.days && !ex._days.includes(s.days)) ex._days.push(s.days);
+                }
             });
-            ptSessions = data.sessions.filter(s => {
-                const endHr = parseInt((s.time_code || '').slice(2)) || 0;
-                return !_WKDAYS.has(s.days || '') || endHr > 17;
-            });
-        }
+            return Array.from(map.values()).map(s => ({ ...s, days: s._days.join(', ') }));
+        };
 
         const _sumUnits = arr => arr.reduce((t, s) => t + (parseFloat(s.units) || 0), 0);
 
-        reg.innerHTML = regSessions.length
-            ? regSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
-            : '<tr><td colspan="10" class="fl-no-data">No sessions found</td></tr>';
-        pt.innerHTML  = ptSessions.length
-            ? ptSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
-            : '<tr><td colspan="10" class="fl-no-data">—</td></tr>';
-        document.getElementById('fl-total-regular').textContent  = _sumUnits(regSessions) + ' units';
-        document.getElementById('fl-total-parttime').textContent = _sumUnits(ptSessions)  + ' units';
+        const groupedReg = _groupSessions(regSessions);
+        const groupedPt  = _groupSessions(ptSessions);
+
+        const noRegMsg = isPartTime ? 'No TS sessions' : 'No sessions found';
+
+        reg.innerHTML = groupedReg.length
+            ? groupedReg.map(s=>`<tr>${cols(s)}</tr>`).join('')
+            : `<tr><td colspan="7" class="fl-no-data">${noRegMsg}</td></tr>`;
+        pt.innerHTML  = groupedPt.length
+            ? groupedPt.map(s=>`<tr>${cols(s)}</tr>`).join('')
+            : '<tr><td colspan="7" class="fl-no-data">—</td></tr>';
+        const regUsed = _sumUnits(groupedReg);
+        const ptUsed  = _sumUnits(groupedPt);
+        const regPfx  = (document.getElementById('fl-reg-total-label')?.dataset.prefix) || 'TOTAL REGULAR LOAD: ';
+        const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
+        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} units</strong>`;
+        document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} units</strong>`;
     } catch(e) {
         _flShowMsg('Failed to load: ' + e.message);
     }
@@ -6098,8 +6615,8 @@ async function selectFlFaculty(empNum, name) {
 function _flShowMsg(msg) {
     const reg = document.getElementById('fl-regular-body');
     const pt  = document.getElementById('fl-parttime-body');
-    if (reg) reg.innerHTML = `<tr><td colspan="10" class="fl-no-data">${msg}</td></tr>`;
-    if (pt)  pt.innerHTML  = `<tr><td colspan="10" class="fl-no-data">—</td></tr>`;
+    if (reg) reg.innerHTML = `<tr><td colspan="7" class="fl-no-data">${msg}</td></tr>`;
+    if (pt)  pt.innerHTML  = `<tr><td colspan="7" class="fl-no-data">—</td></tr>`;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -6407,6 +6924,7 @@ async function _loadVersionHistoryPanel() {
                         </div>
                         <div class="vhp-snap-body">
                             <div class="vhp-snap-prog">${letters} &ndash; ${a.yearlevel || '—'}</div>
+                            ${a.sectionname ? `<div style="font-size:0.65rem;font-weight:700;color:#555;margin-top:2px;"><i class="fas fa-users" style="font-size:0.55rem;margin-right:3px;opacity:0.7;"></i>${a.sectionname}</div>` : ''}
                             <div class="vhp-snap-meta">
                                 <span><i class="fas fa-calendar-alt"></i> A.Y ${ayDisp}</span>
                                 <span><i class="fas fa-book-open"></i> ${semLbl}</span>
@@ -6467,6 +6985,9 @@ async function _loadVersionHistoryPanel() {
         if (ay)   filtered = filtered.filter(v => String(v.acadyear||'') === String(ay));
         if (sem)  filtered = filtered.filter(v => (v.term||'') === sem);
         if (yl)   filtered = filtered.filter(v => String(v.yearlevel||'') === String(yl));
+        // Filter to the selected section if one is chosen
+        const _sect = document.getElementById('sel_section')?.value || '';
+        if (_sect) filtered = filtered.filter(v => !v.sectionid || String(v.sectionid) === String(_sect));
 
         _vhpAllVersions = filtered;  // cache for diff lookups
 
@@ -6523,6 +7044,7 @@ async function _loadVersionHistoryPanel() {
                     </div>
                     <div class="vhp-snap-body">
                         <div class="vhp-snap-prog">${letters} &ndash; ${v.yearlevel||'—'}</div>
+                        ${v.sectionname ? `<div style="font-size:0.65rem;font-weight:700;color:#555;margin-top:2px;"><i class="fas fa-users" style="font-size:0.55rem;margin-right:3px;opacity:0.7;"></i>${v.sectionname}</div>` : ''}
                         <div class="vhp-snap-meta">
                             <span><i class="fas fa-calendar-alt"></i> A.Y ${ayDisp}</span>
                             <span><i class="fas fa-book-open"></i> ${semLbl}</span>

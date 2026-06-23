@@ -1,9 +1,8 @@
-/* room_schedule.faculty.js — Room Schedule page for Faculty */
+/* room_schedule.acad.js — Room Schedule page for Academic Head */
 
-/* ── Grid config ── */
-const FRS_GRID_START = 7 * 60 + 30;  // 7:30 AM  (450 min)
-const FRS_GRID_END   = 21 * 60;      // 9:00 PM  (1260 min)
-const FRS_SLOT_H     = 30;           // px per 30-min cell row
+const FRS_GRID_START = 7 * 60 + 30;  // 7:30 AM
+const FRS_GRID_END   = 21 * 60;      // 9:00 PM
+const FRS_SLOT_H     = 30;
 const FRS_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
 const FRS_COLORS = [
@@ -18,14 +17,12 @@ const FRS_DAY_MAP = {
     FRI:'Friday', SAT:'Saturday', SUN:'Sunday'
 };
 
-/* ── State ── */
 let _buildings  = [];
 let _rooms      = [];
 let _activeBldg = null;
 let _activeRoom = null;
 let _floorFilter = '';
 
-/* ── Init ── */
 const _initEl = document.getElementById('frs-init-data');
 _buildings    = JSON.parse(_initEl.dataset.buildings || '[]');
 _rooms        = JSON.parse(_initEl.dataset.rooms     || '[]');
@@ -75,32 +72,28 @@ function frsSelectBuilding(bid) {
     document.querySelectorAll('.frs-bldg-tab').forEach(t =>
         t.classList.toggle('active', String(t.dataset.bid) === String(bid))
     );
-    _buildFloorDropdown();   // dynamically populate floors for this building
+    _buildFloorDropdown();
     _floorFilter = '';
     _renderRoomList();
     _clearGrid();
 }
 
 /* ═══════════════════════════════════════════
-   FLOOR DROPDOWN — dynamically built
+   FLOOR DROPDOWN
 ═══════════════════════════════════════════ */
 const _FLOOR_LABELS = { '1': '1ST FLOOR', '2': '2ND FLOOR', '3': '3RD FLOOR', 'other': 'OTHER' };
 
 function _buildFloorDropdown() {
     const sel = document.getElementById('frsFloorSel');
     sel.innerHTML = '<option value="">ALL FLOORS</option>';
-
     const bldgRooms = _rooms.filter(r => String(r.bid) === String(_activeBldg));
     const floors    = [...new Set(bldgRooms.map(r => r.floor || 'other'))].sort();
-
     floors.forEach(f => {
         const opt = document.createElement('option');
         opt.value = f;
         opt.textContent = _FLOOR_LABELS[f] || f.toUpperCase();
         sel.appendChild(opt);
     });
-
-    // Auto-select the only floor if there's just one
     if (floors.length === 1) {
         sel.value = floors[0];
         _floorFilter = floors[0];
@@ -115,27 +108,23 @@ function frsFilterFloor() {
 }
 
 /* ═══════════════════════════════════════════
-   ROOM LIST (left sidebar)
+   ROOM LIST
 ═══════════════════════════════════════════ */
 function _renderRoomList() {
     const list = document.getElementById('frsRoomList');
     list.innerHTML = '';
-
     if (_activeBldg === null) {
         list.innerHTML = '<div class="frs-room-empty">Select a building</div>';
         return;
     }
-
     let filtered = _rooms.filter(r => String(r.bid) === String(_activeBldg));
     if (_floorFilter) {
         filtered = filtered.filter(r => (r.floor || 'other') === _floorFilter);
     }
-
     if (!filtered.length) {
         list.innerHTML = '<div class="frs-room-empty">No rooms found.</div>';
         return;
     }
-
     filtered.forEach((r, idx) => {
         const item = document.createElement('div');
         item.className   = 'frs-room-item';
@@ -143,7 +132,7 @@ function _renderRoomList() {
         item.dataset.rid = r.id;
         item.onclick     = () => frsSelectRoom(r.id, r.name, r.bid);
         list.appendChild(item);
-        if (idx === 0) frsSelectRoom(r.id, r.name, r.bid); // auto-select first
+        if (idx === 0) frsSelectRoom(r.id, r.name, r.bid);
     });
 }
 
@@ -164,37 +153,32 @@ async function frsSelectRoom(rid, rname, bid) {
         const data = await res.json();
         _renderRoomCalendar(Array.isArray(data) ? data : []);
     } catch (e) {
-        console.error('[frs] room schedule error:', e);
+        console.error('[ars] room schedule error:', e);
     }
 }
 
 /* ═══════════════════════════════════════════
-   GRID BUILD + RENDER (30-min rows, 7:30 AM – 9:00 PM)
+   GRID BUILD + RENDER
 ═══════════════════════════════════════════ */
 function _buildGrid() {
     const grid = document.getElementById('frsGrid');
     grid.innerHTML = '';
-
-    // Header row
     ['TIME', 'MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'].forEach(d => {
         const h = document.createElement('div');
         h.className   = 'frs-grid-header-cell';
         h.textContent = d;
         grid.appendChild(h);
     });
-
-    // 30-min slot rows from 7:30 AM to 9:00 PM
     for (let m = FRS_GRID_START; m <= FRS_GRID_END; m += 30) {
         const lbl = document.createElement('div');
         lbl.className   = 'frs-time-cell';
         lbl.textContent = _minsToLabel(m);
         grid.appendChild(lbl);
-
         FRS_DAYS.forEach(day => {
             const cell = document.createElement('div');
             cell.className    = 'frs-day-col-cell';
             cell.dataset.day  = day;
-            cell.dataset.slot = m;   // absolute minutes value of this slot
+            cell.dataset.slot = m;
             grid.appendChild(cell);
         });
     }
@@ -207,24 +191,20 @@ function _clearGrid() {
 function _renderRoomCalendar(sessions) {
     _clearGrid();
     sessions.forEach(s => {
-        const day    = _normalizeDay(s.daydesc);
+        const day = _normalizeDay(s.daydesc);
         if (!day) return;
-
         const startM = _timeidToMins(s.starttimeid);
         const endM   = _timeidToMins(s.endtimeid);
         if (!startM || !endM || endM <= startM) return;
         if (endM <= FRS_GRID_START || startM >= FRS_GRID_END) return;
-
         const visStart   = Math.max(startM, FRS_GRID_START);
         const visEnd     = Math.min(endM, FRS_GRID_END);
         const anchorSlot = Math.floor((visStart - FRS_GRID_START) / 30) * 30 + FRS_GRID_START;
         const cell = document.querySelector(`.frs-day-col-cell[data-day="${day}"][data-slot="${anchorSlot}"]`);
         if (!cell) return;
-
         const offsetPx = (visStart - anchorSlot) * (FRS_SLOT_H / 30);
         const heightPx = Math.max((visEnd - visStart) * (FRS_SLOT_H / 30), 20);
         if (heightPx <= 0) return;
-
         const isLocal = (s.status || '').toLowerCase() === 'local';
         const pill = document.createElement('div');
         pill.className        = 'frs-pill' + (isLocal ? ' frs-pill-local' : '');
@@ -233,9 +213,7 @@ function _renderRoomCalendar(sessions) {
         pill.style.background = _subjectColor(s.subjectcode || '');
         pill.style.cursor     = 'pointer';
         pill.title            = isLocal ? 'Local Arrangement — Click to view details' : 'Click to view details';
-        pill.dataset.sess     = JSON.stringify(s);
         pill.addEventListener('click', () => frsShowDetail(s));
-
         const instrName = (s.instructor || 'TBA').split(',')[0].trim();
         pill.innerHTML =
             (isLocal ? `<span class="frs-pill-la-badge">LA</span>` : '') +
@@ -259,20 +237,18 @@ function frsShowDetail(s) {
     const statusTxt  = _st === 'local' ? 'Local Arrangement' : (s.status || 'Draft');
     const yrLabel    = s.year_level ? `${s.year_level}${_ordSuffix(s.year_level)} Year` : '—';
 
-    document.getElementById('frsDetailSubjCode').textContent  = s.subjectcode  || '—';
-    document.getElementById('frsDetailSubjName').textContent  = s.subjectname  || '—';
-    document.getElementById('frsDetailInstr').textContent     = s.instructor   || 'TBA';
-    document.getElementById('frsDetailDay').textContent       = s.daydesc      || '—';
-    document.getElementById('frsDetailTime').textContent      = timeRange;
-    document.getElementById('frsDetailRoom').textContent      = s.roomname     || '—';
-    document.getElementById('frsDetailProg').textContent      = s.programcode  || '—';
-    document.getElementById('frsDetailYr').textContent        = yrLabel;
+    document.getElementById('frsDetailSubjCode').textContent = s.subjectcode  || '—';
+    document.getElementById('frsDetailSubjName').textContent = s.subjectname  || '—';
+    document.getElementById('frsDetailInstr').textContent    = s.instructor   || 'TBA';
+    document.getElementById('frsDetailDay').textContent      = s.daydesc      || '—';
+    document.getElementById('frsDetailTime').textContent     = timeRange;
+    document.getElementById('frsDetailRoom').textContent     = s.roomname     || '—';
+    document.getElementById('frsDetailProg').textContent     = s.programcode  || '—';
+    document.getElementById('frsDetailYr').textContent       = yrLabel;
     const badgeEl = document.getElementById('frsDetailStatus');
-    badgeEl.textContent  = statusTxt;
-    badgeEl.className    = 'frs-detail-badge ' + statusCls;
-    // Accent strip color matches pill
+    badgeEl.textContent = statusTxt;
+    badgeEl.className   = 'frs-detail-badge ' + statusCls;
     document.getElementById('frsDetailAccent').style.background = _subjectColor(s.subjectcode || '');
-
     document.getElementById('frsDetailOverlay').classList.add('open');
 }
 
@@ -288,7 +264,6 @@ function _ordSuffix(n) {
     return 'th';
 }
 
-// timeid 1 = 7:30 AM = 450 min; each step = 30 min
 function _timeidToMins(timeid) {
     if (!timeid) return null;
     const idx = parseInt(timeid, 10);
@@ -307,8 +282,6 @@ function _buildAvailBuildingFilter() {
         opt.textContent = b.name;
         bSel.appendChild(opt);
     });
-
-    // Room-number filter: populated from all rooms
     const rSel = document.getElementById('frsAvailRoomNum');
     _rooms.forEach(r => {
         const opt = document.createElement('option');
@@ -318,7 +291,6 @@ function _buildAvailBuildingFilter() {
     });
 }
 
-/* Auto-fill day-of-week when a date is selected */
 function frsDateChanged() {
     const dateEl = document.getElementById('frsAvailDate');
     const dayEl  = document.getElementById('frsAvailDay');
@@ -337,9 +309,7 @@ async function frsFindAvailable() {
     const type  = document.getElementById('frsAvailType').value;
     const bid   = document.getElementById('frsAvailBuilding').value;
     const rnum  = document.getElementById('frsAvailRoomNum').value;
-    const selDate = document.getElementById('frsAvailDate') ? document.getElementById('frsAvailDate').value : '';
-
-    // Availability is only computed when all three time criteria are provided
+    const selDate = document.getElementById('frsAvailDate')?.value || '';
     const hasTimeFilter = !!(day && start && end);
 
     const content = document.getElementById('frsAvailContent');
@@ -357,34 +327,24 @@ async function frsFindAvailable() {
     if (end)     params.set('end_time',    end);
     if (type)    params.set('room_type',   type);
     if (bid)     params.set('building_id', bid);
-    if (selDate) params.set('date',        selDate);  // pass specific date for makeup checks
+    if (selDate) params.set('date',        selDate);
 
     try {
-        const [roomRes, conflictRes] = await Promise.all([
-            fetch('/api/faculty/available_rooms?' + params.toString()),
-            hasTimeFilter
-                ? fetch('/api/faculty/check_request_conflicts?' + params.toString())
-                : Promise.resolve(null)
-        ]);
-        const data = await roomRes.json();
+        const res  = await fetch('/api/faculty/available_rooms?' + params.toString());
+        const data = await res.json();
         if (!data.success) {
             content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-exclamation-circle"></i> Error fetching rooms.</div>`;
             return;
         }
         let rooms = data.rooms || [];
         if (rnum) rooms = rooms.filter(r => (r.roomname || '').toLowerCase().includes(rnum.toLowerCase()));
-
-        let conflicts = null;
-        if (conflictRes) {
-            try { const cd = await conflictRes.json(); if (cd.success) conflicts = cd; } catch(e) {}
-        }
-        _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts);
+        _renderAvailRooms(rooms, start, end, hasTimeFilter);
     } catch (e) {
         content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-exclamation-circle"></i> Network error.</div>`;
     }
 }
 
-function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
+function _renderAvailRooms(rooms, start, end, hasTimeFilter) {
     const content = document.getElementById('frsAvailContent');
     if (!rooms.length) {
         const msg = hasTimeFilter
@@ -393,33 +353,14 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
         content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-door-closed"></i> ${msg}</div>`;
         return;
     }
-
-    // Group by building name
     const byBldg = {};
     rooms.forEach(r => {
         const key = r.buildingname || 'Other';
         if (!byBldg[key]) byBldg[key] = [];
         byBldg[key].push(r);
     });
-
     const timeLabel = hasTimeFilter ? `${_fmt12h(start)} – ${_fmt12h(end)}` : '';
-
-    // Show conflict warning banner above rooms if faculty/section already has a class at this time
-    let conflictBanner = '';
-    if (conflicts && hasTimeFilter) {
-        const warnings = [];
-        if (conflicts.faculty_conflict) warnings.push(`<b>Faculty Conflict:</b> ${conflicts.faculty_detail}`);
-        if (conflicts.section_conflict) warnings.push(`<b>Section Conflict:</b> ${conflicts.section_detail}`);
-        if (warnings.length) {
-            conflictBanner = `<div style="background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;margin-bottom:14px;font-size:0.78rem;color:#7a5200;">
-                <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT AT THIS TIME</div>
-                ${warnings.join('<br>')}
-                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">Rooms below are physically available, but you already have a commitment at this time.</div>
-            </div>`;
-        }
-    }
-
-    let html = conflictBanner;
+    let html = '';
     Object.entries(byBldg).forEach(([bname, bRooms]) => {
         html += `<div class="frs-avail-building-title">${_esc(bname)}</div>`;
         html += `<div class="frs-avail-cards">`;
@@ -428,37 +369,22 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
             const badge = isLab
                 ? '<span class="frs-avail-badge frs-badge-lab">LAB</span>'
                 : '<span class="frs-avail-badge frs-badge-lec">LECTURE</span>';
-            const cap  = r.roomcapacity
-                ? `<div class="frs-avail-detail"><i class="fas fa-users"></i> Capacity: ${_esc(String(r.roomcapacity))}</div>`
-                : '';
-            const timeLbl    = timeLabel ? `<div class="frs-avail-time">${_esc(timeLabel)}</div>` : '';
-            const statusChip = hasTimeFilter
-                ? `<div class="frs-avail-status-chip">&#10003; Available</div>`
-                : '';
-            const roomData = JSON.stringify({
-                id: r.roomid, name: r.roomname || '', building: r.buildingname || ''
-            }).replace(/"/g, '&quot;');
+            const cap     = r.roomcapacity ? `<div class="frs-avail-detail"><i class="fas fa-users"></i> Capacity: ${_esc(String(r.roomcapacity))}</div>` : '';
+            const timeLbl = timeLabel ? `<div class="frs-avail-time">${_esc(timeLabel)}</div>` : '';
+            const statusChip = hasTimeFilter ? `<div class="frs-avail-status-chip">&#10003; Available</div>` : '';
             html += `
-            <div class="frs-avail-card frs-avail-card-clickable" title="Request this room"
-                 onclick="frsRoomCardClick(${r.roomid}, '${_esc(r.roomname || '')}', '${_esc(r.buildingname || '')}')">
+            <div class="frs-avail-card">
                 ${hasTimeFilter ? '<div class="frs-avail-dot"></div>' : ''}
                 <div class="frs-avail-room-name">ROOM ${_esc(r.roomname || '')}</div>
                 ${badge}
                 ${timeLbl}
                 ${cap}
                 ${statusChip}
-                <div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>
             </div>`;
         });
         html += `</div>`;
     });
     content.innerHTML = html;
-}
-
-function frsRoomCardClick(roomId, roomName, buildingName) {
-    if (typeof frsOpenRequestFromRoom === 'function') {
-        frsOpenRequestFromRoom(roomId, roomName, buildingName);
-    }
 }
 
 /* ═══════════════════════════════════════════
@@ -479,8 +405,6 @@ function _minsToLabel(m) {
 
 function _fmt12h(timeStr) {
     if (!timeStr) return '';
-    // Already in "HH:MM AM/PM" format — return as-is
-    if (/AM|PM/i.test(timeStr)) return timeStr.toUpperCase();
     const parts = timeStr.split(':');
     const h = parseInt(parts[0], 10);
     const m = parseInt(parts[1] || '0', 10);

@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,35 +7,60 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 
         body {
             height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)),
-            url("{{ url_for('static', filename='img/LogInUI.png') }}");
+            background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
+                url("{{ url_for('static', filename='img/LogInUI.png') }}");
             background-size: cover;
             background-position: center;
         }
 
+        /* ── Admin corner button ── */
+        .admin-corner {
+            position: fixed;
+            top: 20px;
+            right: 28px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            padding: 8px 16px;
+            border-radius: 30px;
+            background: rgba(255,255,255,0.15);
+            border: 1.5px solid rgba(255,255,255,0.35);
+            backdrop-filter: blur(6px);
+            transition: background 0.2s, border-color 0.2s;
+            z-index: 100;
+            text-decoration: none;
+        }
+        .admin-corner:hover {
+            background: rgba(255,255,255,0.25);
+            border-color: rgba(255,255,255,0.6);
+        }
+        .admin-corner i { font-size: 0.9rem; }
+
+        /* ── Login card ── */
         .login-card {
             display: flex;
             width: 950px;
-            height: 580px;
+            height: 560px;
             background: #fdfdfd;
             border-radius: 40px;
             overflow: hidden;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
         }
 
-        /* LEFT SIDE - LOGO AREA */
+        /* LEFT */
         .card-left {
             flex: 1;
             display: flex;
@@ -46,80 +70,53 @@
             padding: 40px;
             text-align: center;
         }
+        .card-left img { width: 240px; margin-bottom: 22px; }
+        .card-left h1 { color: #4b0a0a; font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin-bottom: 5px; }
+        .card-left p  { color: #4b0a0a; font-weight: 700; font-size: 1.1rem; letter-spacing: 0.5px; }
 
-        .card-left img {
-            width: 260px;
-            margin-bottom: 25px;
-        }
-
-        .card-left h1 {
-            color: #4b0a0a;
-            font-size: 2.8rem;
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 5px;
-        }
-
-        .card-left p {
-            color: #4b0a0a;
-            font-weight: 700;
-            font-size: 1.2rem;
-            letter-spacing: 0.5px;
-        }
-
-        /* RIGHT SIDE - EXACT DESIGN */
+        /* RIGHT */
         .card-right {
             flex: 1.1;
-            /* Deep Maroon Gradient */
             background: linear-gradient(145deg, #4b0a0a 0%, #800000 60%, #b22222 100%);
-            padding: 60px 45px;
-            color: white;
+            padding: 50px 45px 40px;
+            color: #fff;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            /* Rounding the panel itself */
             border-radius: 40px;
-            box-shadow: -5px 0 25px rgba(0, 0, 0, 0.2);
+            box-shadow: -5px 0 25px rgba(0,0,0,0.2);
         }
+        .card-right h2 { font-size: 3rem; margin-bottom: 28px; font-weight: 700; letter-spacing: -1px; }
 
-        .card-right h2 {
-            font-size: 3.5rem;
-            margin-bottom: 35px;
-            font-weight: 700;
-            letter-spacing: -1px;
-        }
-
-        /* ROLE SELECTOR */
+        /* ROLE SELECTOR — 2 options */
         .role-container {
             position: relative;
             display: flex;
-            background: rgba(235, 235, 235, 0.95);
+            background: rgba(235,235,235,0.95);
             padding: 6px;
             border-radius: 12px;
-            margin-bottom: 30px;
+            margin-bottom: 26px;
             width: 100%;
-            height: 50px;
+            height: 48px;
             z-index: 1;
         }
-
         .sliding-pill {
             position: absolute;
             top: 6px;
             left: 6px;
-            width: calc(33.33% - 8px);
+            width: calc(50% - 8px);
             height: calc(100% - 12px);
             background: #630000;
             border-radius: 10px;
-            transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            transition: all 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55);
             z-index: -1;
         }
-
         .role-option {
             flex: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 10px;
+            gap: 8px;
             font-size: 0.85rem;
             font-weight: 700;
             color: #555;
@@ -127,71 +124,224 @@
             transition: color 0.3s;
             user-select: none;
         }
+        .role-option.active { color: #fff; }
 
-        .role-option.active {
-            color: white;
-        }
-
-        /* FORM INPUTS */
-        .form-group {
-            margin-bottom: 25px;
-        }
-
-        label {
-            display: block;
-            font-size: 0.8rem;
-            font-weight: 800;
-            margin-bottom: 10px;
-            letter-spacing: 1px;
-            opacity: 0.9;
-        }
-
-        input {
+        /* FORM */
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-size: 0.75rem; font-weight: 800; margin-bottom: 8px; letter-spacing: 1px; opacity: 0.9; }
+        input[type="text"], input[type="password"] {
             width: 100%;
-            padding: 15px 20px;
+            padding: 13px 18px;
             border: none;
             border-radius: 8px;
             background: #d9cccc;
-            font-size: 1.1rem;
+            font-size: 1rem;
             color: #333;
             outline: none;
         }
 
+        .pw-wrapper {
+            position: relative;
+        }
+        .pw-wrapper input {
+            padding-right: 46px;
+        }
+        .pw-toggle {
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #888;
+            font-size: 1rem;
+            padding: 0;
+            line-height: 1;
+        }
+        .pw-toggle:hover { color: #555; }
+
+        .admin-field .pw-wrapper input {
+            padding-right: 40px;
+        }
+        .admin-field .pw-toggle { color: #aaa; }
+        .admin-field .pw-toggle:hover { color: #800000; }
+
+        /* Forgot password link */
+        .forgot-link {
+            display: block;
+            text-align: right;
+            margin-top: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: rgba(255,255,255,0.75);
+            cursor: pointer;
+            text-decoration: none;
+            font-style: italic;
+            transition: color 0.2s;
+        }
+        .forgot-link:hover { color: #fff; }
+
         /* LOGIN BUTTON */
         .login-btn {
             width: 100%;
-            max-width: 260px;
-            padding: 12px;
-            margin: 20px auto 0;
+            max-width: 240px;
+            padding: 11px;
+            margin: 18px auto 0;
             background: #fffdf9;
             color: #4b0a0a;
             border: none;
             border-radius: 50px;
             font-weight: 800;
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             cursor: pointer;
             transition: 0.3s;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
         }
+        .login-btn:hover { background: #fff; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 
-        .login-btn:hover {
-            background: #ffffff;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        .error-msg { color: #ffeb3b; font-size: 0.85rem; margin-top: 12px; text-align: center; font-weight: 600; }
+
+        /* ══════════════════════════════════
+           ADMIN LOGIN OVERLAY
+        ══════════════════════════════════ */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 9000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(3px);
         }
+        .modal-overlay.open { display: flex; }
 
-        .error-msg {
-            color: #ffeb3b;
-            font-size: 0.9rem;
-            margin-top: 15px;
+        /* Admin login card */
+        .admin-modal-card {
+            background: #fff;
+            border-radius: 20px;
+            width: 380px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+            animation: modalIn 0.25s ease;
+        }
+        @keyframes modalIn { from { opacity:0; transform:translateY(-16px) scale(0.97); } to { opacity:1; transform:none; } }
+
+        .admin-modal-hdr {
+            background: linear-gradient(135deg, #4b0a0a, #800000);
+            padding: 22px 28px 18px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .admin-modal-hdr-icon {
+            width: 42px; height: 42px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.15);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.1rem;
+        }
+        .admin-modal-hdr-title { font-size: 1.1rem; font-weight: 800; letter-spacing: .5px; }
+        .admin-modal-hdr-sub   { font-size: 0.7rem; opacity: .75; margin-top: 2px; }
+        .admin-modal-close {
+            margin-left: auto;
+            background: none; border: none;
+            color: rgba(255,255,255,0.7); font-size: 1.1rem;
+            cursor: pointer; line-height: 1;
+        }
+        .admin-modal-close:hover { color: #fff; }
+
+        .admin-modal-body { padding: 24px 28px; }
+        .admin-field { margin-bottom: 16px; }
+        .admin-field label {
+            display: block; font-size: 0.65rem; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 1px;
+            color: #800000; margin-bottom: 6px;
+        }
+        .admin-field input {
+            width: 100%; padding: 11px 14px;
+            border: 1.5px solid #ddd; border-radius: 8px;
+            font-size: 0.9rem; color: #333; outline: none;
+            transition: border-color 0.2s;
+        }
+        .admin-field input:focus { border-color: #800000; }
+        .admin-error { color: #c0392b; font-size: 0.75rem; margin-top: 10px; font-weight: 600; display: none; }
+
+        .admin-modal-ftr { padding: 0 28px 24px; display: flex; gap: 10px; }
+        .btn-admin-cancel {
+            flex: 1; padding: 10px; border-radius: 8px;
+            border: 1.5px solid #ddd; background: #fff;
+            color: #666; font-weight: 700; font-size: 0.8rem;
+            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
+        }
+        .btn-admin-cancel:hover { border-color: #800000; color: #800000; }
+        .btn-admin-login {
+            flex: 2; padding: 10px; border-radius: 8px;
+            border: none; background: #800000;
+            color: #fff; font-weight: 800; font-size: 0.8rem;
+            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
+            transition: background 0.15s;
+        }
+        .btn-admin-login:hover { background: #5c0000; }
+
+        /* ══════════════════════════════════
+           FORGOT PASSWORD MODAL
+        ══════════════════════════════════ */
+        .forgot-modal-card {
+            background: #fff;
+            border-radius: 20px;
+            width: 360px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+            animation: modalIn 0.25s ease;
             text-align: center;
-            font-weight: 600;
         }
+        .forgot-modal-hdr {
+            background: linear-gradient(135deg, #4b0a0a, #800000);
+            padding: 30px 28px 22px;
+        }
+        .forgot-modal-icon {
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.15);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem; color: #fff;
+            margin: 0 auto 12px;
+        }
+        .forgot-modal-hdr h3 { color: #fff; font-size: 1.1rem; font-weight: 800; margin: 0; }
+        .forgot-modal-body { padding: 24px 28px 20px; }
+        .forgot-modal-body p { font-size: 0.85rem; color: #555; line-height: 1.6; margin-bottom: 12px; }
+        .forgot-modal-body .contact-box {
+            background: #fef9f9;
+            border: 1px solid #e8c8c8;
+            border-radius: 10px;
+            padding: 14px 18px;
+            font-size: 0.8rem;
+            color: #4b0a0a;
+            font-weight: 700;
+        }
+        .forgot-modal-body .contact-box i { margin-right: 6px; color: #800000; }
+        .forgot-modal-ftr { padding: 0 28px 24px; }
+        .btn-forgot-ok {
+            width: 100%; padding: 11px; border-radius: 8px;
+            border: none; background: #800000;
+            color: #fff; font-weight: 800; font-size: 0.82rem;
+            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
+            transition: background 0.15s;
+        }
+        .btn-forgot-ok:hover { background: #5c0000; }
     </style>
 </head>
-
 <body>
 
+    <!-- Admin corner button -->
+    <a class="admin-corner" onclick="openAdminLogin()">
+        <i class="fas fa-user-shield"></i> ADMIN
+    </a>
+
+    <!-- Main login card -->
     <div class="login-card">
         <div class="card-left">
             <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
@@ -202,18 +352,15 @@
         <div class="card-right">
             <h2>Login</h2>
 
-            <form action="/login" method="POST" style="display: flex; flex-direction: column;">
-                <input type="hidden" name="role" id="selectedRole" value="Admin">
+            <form action="/login" method="POST" style="display:flex;flex-direction:column;">
+                <input type="hidden" name="role" id="selectedRole" value="Academic Head">
 
                 <div class="role-container">
                     <div class="sliding-pill" id="pill"></div>
-                    <div class="role-option active" onclick="updateRole('Admin', 0, this)">
-                        <i class="fas fa-shield-alt"></i> Admin
+                    <div class="role-option active" onclick="updateRole('Academic Head', 0, this)">
+                        <i class="fas fa-user-tie"></i> Academic Head
                     </div>
-                    <div class="role-option" onclick="updateRole('Academic Head', 1, this)">
-                        <i class="fas fa-user-tie"></i> Acad Head
-                    </div>
-                    <div class="role-option" onclick="updateRole('Faculty', 2, this)">
+                    <div class="role-option" onclick="updateRole('Faculty', 1, this)">
                         <i class="fas fa-user"></i> Faculty
                     </div>
                 </div>
@@ -225,7 +372,13 @@
 
                 <div class="form-group">
                     <label>PASSWORD</label>
-                    <input type="password" name="password" required>
+                    <div class="pw-wrapper">
+                        <input type="password" name="password" id="mainPassword" required>
+                        <button type="button" class="pw-toggle" onclick="togglePw('mainPassword', this)" tabindex="-1">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    <a class="forgot-link" onclick="openForgotPassword()">Forgot Password?</a>
                 </div>
 
                 <button type="submit" class="login-btn">LOGIN</button>
@@ -233,19 +386,118 @@
 
             {% with messages = get_flashed_messages() %}
             {% if messages %}
-            {% for message in messages %}
-            <p class="error-msg">{{ message }}</p>
-            {% endfor %}
+                {% for message in messages %}
+                <p class="error-msg">{{ message }}</p>
+                {% endfor %}
             {% endif %}
             {% endwith %}
         </div>
     </div>
 
+    <!-- ══ ADMIN LOGIN MODAL ══ -->
+    <div class="modal-overlay" id="adminModalOverlay" onclick="if(event.target===this)closeAdminLogin()">
+        <div class="admin-modal-card">
+            <div class="admin-modal-hdr">
+                <div class="admin-modal-hdr-icon"><i class="fas fa-user-shield"></i></div>
+                <div>
+                    <div class="admin-modal-hdr-title">Administrator Login</div>
+                    <div class="admin-modal-hdr-sub">System administration access</div>
+                </div>
+                <button class="admin-modal-close" onclick="closeAdminLogin()">&#10005;</button>
+            </div>
+            <form action="/login" method="POST">
+                <input type="hidden" name="role" value="Admin">
+                <div class="admin-modal-body">
+                    <div class="admin-field">
+                        <label>Username</label>
+                        <input type="text" name="username" placeholder="Enter admin username" required autocomplete="off">
+                    </div>
+                    <div class="admin-field">
+                        <label>Password</label>
+                        <div class="pw-wrapper">
+                            <input type="password" name="password" id="adminPassword" placeholder="Enter password" required>
+                            <button type="button" class="pw-toggle" onclick="togglePw('adminPassword', this)" tabindex="-1">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                        {% for message in messages %}
+                        <div class="admin-error" style="display:block;">{{ message }}</div>
+                        {% endfor %}
+                    {% endif %}
+                    {% endwith %}
+                </div>
+                <div class="admin-modal-ftr">
+                    <button type="button" class="btn-admin-cancel" onclick="closeAdminLogin()">Cancel</button>
+                    <button type="submit" class="btn-admin-login"><i class="fas fa-sign-in-alt"></i> Login as Admin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ══ FORGOT PASSWORD MODAL ══ -->
+    <div class="modal-overlay" id="forgotModalOverlay" onclick="if(event.target===this)closeForgotPassword()">
+        <div class="forgot-modal-card">
+            <div class="forgot-modal-hdr">
+                <div class="forgot-modal-icon"><i class="fas fa-lock"></i></div>
+                <h3>Forgot Password?</h3>
+            </div>
+            <div class="forgot-modal-body">
+                <p>If you have forgotten your password, please contact your system administrator to have it reset.</p>
+                <div class="contact-box">
+                    <i class="fas fa-user-shield"></i> Contact your Admin
+                </div>
+            </div>
+            <div class="forgot-modal-ftr">
+                <button class="btn-forgot-ok" onclick="closeForgotPassword()">Got it</button>
+            </div>
+        </div>
+    </div>
+
 <script>
-    const ACTIVE_ROLE = '{{ active_role|default("Admin") }}';
+    const ACTIVE_ROLE = '{{ active_role|default("Academic Head") }}';
+
+    function updateRole(roleName, index, element) {
+        document.getElementById('selectedRole').value = roleName;
+        const pill   = document.getElementById('pill');
+        const offset = index * 50;
+        pill.style.left = `calc(${offset}% + 6px)`;
+        document.querySelectorAll('.role-option').forEach(opt => opt.classList.remove('active'));
+        element.classList.add('active');
+    }
+
+    function togglePw(inputId, btn) {
+        const input = document.getElementById(inputId);
+        const icon  = btn.querySelector('i');
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.classList.replace('fa-eye', 'fa-eye-slash');
+        } else {
+            input.type = 'password';
+            icon.classList.replace('fa-eye-slash', 'fa-eye');
+        }
+    }
+
+    function openAdminLogin()    { document.getElementById('adminModalOverlay').classList.add('open'); }
+    function closeAdminLogin()   { document.getElementById('adminModalOverlay').classList.remove('open'); }
+    function openForgotPassword()  { document.getElementById('forgotModalOverlay').classList.add('open'); }
+    function closeForgotPassword() { document.getElementById('forgotModalOverlay').classList.remove('open'); }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const roleOptions = document.querySelectorAll('.role-option');
+        if (ACTIVE_ROLE === 'Faculty') {
+            updateRole('Faculty', 1, roleOptions[1]);
+        } else {
+            updateRole('Academic Head', 0, roleOptions[0]);
+        }
+
+        // If flashed message came from an admin login attempt, re-open admin modal
+        {% if active_role == 'Admin' %}
+            openAdminLogin();
+        {% endif %}
+    });
 </script>
-<script src="{{ url_for('static', filename='js/login.js') }}"></script>
-
 </body>
-
 </html>

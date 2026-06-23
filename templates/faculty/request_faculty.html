@@ -173,6 +173,25 @@
     </div>
 </div>
 
+<!-- ══════════════════════════════════════════
+     VIEW MODAL (double-click)
+══════════════════════════════════════════ -->
+<div class="rfeq-overlay" id="viewReqOverlay">
+    <div class="rfeq-modal">
+        <div class="rfeq-hdr" id="viewReqHdr">
+            <span id="viewReqTitle">Request Details</span>
+            <button onclick="rfCloseView()" class="rfeq-close">✕</button>
+        </div>
+        <div class="rfeq-body" id="viewReqBody"></div>
+        <div class="rfeq-ftr" id="viewReqFtr">
+            <button class="rfeq-btn-cancel" onclick="rfCloseView()">CLOSE</button>
+            <button class="rfeq-btn-submit" id="viewReqEditBtn" style="display:none;" onclick="rfOpenEditFromView()">
+                <i class="fas fa-edit"></i> EDIT
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Cancel Confirm Modal -->
 <div class="rfeq-overlay" id="cancelConfirmOverlay">
     <div class="rfeq-confirm">
@@ -307,7 +326,8 @@ async function rfLoadRequests() {
                 onclick="rfOpenEdit(${JSON.stringify(r).replace(/"/g,'&quot;')})"><i class="fas fa-edit"></i></button>`;
             const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
                 onclick="rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-times"></i></button>`;
-            return `<tr>
+            const rJson = JSON.stringify(r).replace(/"/g,'&quot;');
+            return `<tr style="cursor:pointer;" ondblclick="rfOpenView(JSON.parse(this.dataset.req))" data-req="${rJson}">
                 <td class="prog-cell">${_rfEsc(prog)}</td>
                 <td>${statusBadge}</td>
                 <td>${_rfEsc(r.subjectcode)}${r.subjectname ? ' — ' + _rfEsc(r.subjectname) : ''}</td>
@@ -525,8 +545,89 @@ function _rfEsc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+/* ═══════════════════════════════════════════
+   VIEW MODAL (double-click)
+═══════════════════════════════════════════ */
+let _rfViewReq = null;
+
+function rfOpenView(req) {
+    _rfViewReq = req;
+    const isMakeup  = req.req_type === 'makeup';
+    const isLocked  = req.status === 'Rejected' || req.status === 'Approved' || req.status === 'Cancelled';
+
+    /* Header colour */
+    const hdr = document.getElementById('viewReqHdr');
+    hdr.className = 'rfeq-hdr ' + (isMakeup ? 'makeup' : 'adjustment');
+    document.getElementById('viewReqTitle').textContent =
+        (isMakeup ? 'Make-up Class' : 'Schedule Adjustment') + ' — ' + (req.status || 'Pending');
+
+    /* Edit button */
+    const editBtn = document.getElementById('viewReqEditBtn');
+    editBtn.style.display = isLocked ? 'none' : 'inline-flex';
+
+    /* Build body */
+    const statusColors = { Pending:'#856404', Approved:'#155724', Rejected:'#721c24', Cancelled:'#6c757d' };
+    const statusBg     = { Pending:'#fff3cd', Approved:'#d4edda', Rejected:'#f8d7da', Cancelled:'#e9ecef' };
+    const sc = statusColors[req.status] || '#333';
+    const sb = statusBg[req.status]     || '#f8f9fa';
+
+    let rows = `
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
+            <span style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;">Status</span>
+            <span style="background:${sb};color:${sc};border:1.5px solid ${sc};padding:4px 16px;border-radius:20px;font-size:.78rem;font-weight:800;letter-spacing:.5px;">${req.status || 'Pending'}</span>
+        </div>`;
+
+    if (req.remarks && (req.status === 'Rejected' || req.status === 'Approved')) {
+        rows += `<div style="background:#fff8f8;border-left:3px solid #800000;border-radius:4px;padding:10px 14px;margin:4px 0;">
+            <div style="font-size:.68rem;font-weight:700;color:#800000;margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;">Remarks</div>
+            <div style="font-size:.82rem;color:#333;">${_rfEsc(req.remarks)}</div>
+        </div>`;
+    }
+
+    rows += `<hr style="border:none;border-top:1px solid #eee;margin:4px 0;">`;
+
+    const field = (label, val) => `
+        <div class="rfeq-row">
+            <div class="rfeq-group full">
+                <label>${label}</label>
+                <input type="text" class="up-input" value="${_rfEsc(val || '—')}" readonly
+                    style="background:#f9f9f9;border-color:#e0e0e0;color:#444;cursor:default;">
+            </div>
+        </div>`;
+
+    const prog = `${req.programcode||''}${req.yearlevel?' - '+req.yearlevel:''}${req.sectionname?' ('+req.sectionname+')':''}`;
+    rows += field('Program / Year Level', prog);
+    rows += field('Subject', `${req.subjectcode||''}${req.subjectname?' — '+req.subjectname:''}`);
+    rows += field('Room', req.roomname ? 'ROOM ' + req.roomname : '—');
+
+    if (isMakeup) {
+        rows += field('Date', req.requested_date || '—');
+        rows += field('Time', `${req.start_time || ''} — ${req.end_time || ''}`);
+    } else {
+        rows += field('New Day', req.new_daydesc || '—');
+        rows += field('Time', `${req.start_time || ''} — ${req.end_time || ''}`);
+        rows += field('Effective From', req.effective_from || '—');
+        if (req.end_date) rows += field('End Date', req.end_date);
+    }
+
+    if (req.reason) rows += field('Reason', req.reason);
+    rows += field('Date Submitted', req.date_submitted || '—');
+
+    document.getElementById('viewReqBody').innerHTML = rows;
+    document.getElementById('viewReqOverlay').classList.add('open');
+}
+
+function rfCloseView() {
+    document.getElementById('viewReqOverlay').classList.remove('open');
+}
+
+function rfOpenEditFromView() {
+    rfCloseView();
+    if (_rfViewReq) rfOpenEdit(_rfViewReq);
+}
+
 /* Close overlays on backdrop click */
-['editMakeupOverlay','editAdjOverlay','cancelConfirmOverlay'].forEach(id => {
+['editMakeupOverlay','editAdjOverlay','cancelConfirmOverlay','viewReqOverlay'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); });
 });

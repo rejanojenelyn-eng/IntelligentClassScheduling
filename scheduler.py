@@ -295,7 +295,10 @@ class CSPValidator:
             is_weekend  = day in WEEKEND
 
             regular_start = et.get('regular_start') or time(7, 30)
-            regular_end   = et.get('regular_end')   or time(16, 30)
+            _raw_re       = et.get('regular_end')
+            # If regular_end equals regular_start (no effective band, e.g. Part-time type),
+            # fall back to the default so daytime slots aren't misclassified as evening.
+            regular_end   = _raw_re if (_raw_re and _raw_re != regular_start) else time(16, 30)
 
             is_regular_slot = (
                 day in WEEKDAYS and
@@ -327,16 +330,20 @@ class CSPValidator:
                 else:
                     if not is_weekend:
                         if night_svc and night_svc > 0:
-                            if start < time(16, 30) or end > time(18, 0):
-                                violations.append({
-                                    'rule': 'HC3',
-                                    'subject': subj_code,
-                                    'detail': (
-                                        f'This designee has approved evening teaching service (4:30–6:00 PM). '
-                                        f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
-                                        f'falls outside this permitted evening window.'
-                                    )
-                                })
+                            if et.get('restrict_pt_hours', True):
+                                pt_start = et.get('parttime_start') or time(16, 30)
+                                pt_end   = et.get('parttime_end')   or time(18, 0)
+                                if start < pt_start or end > pt_end:
+                                    violations.append({
+                                        'rule': 'HC3',
+                                        'subject': subj_code,
+                                        'detail': (
+                                            f'This designee has approved evening teaching service '
+                                            f'({format_time_12h(pt_start)}–{format_time_12h(pt_end)}). '
+                                            f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
+                                            f'falls outside this permitted evening window.'
+                                        )
+                                    })
                         else:
                             violations.append({
                                 'rule': 'HC3',
@@ -349,21 +356,27 @@ class CSPValidator:
                             })
 
             elif emp_status == 'Part-Time':
+                ts_hours = int(et.get('teachingsubstitution', 0) or 0)
                 if not is_weekend and et.get('restrict_pt_hours', True):
-                    pt_start = et.get('parttime_start') or time(16, 30)
-                    pt_end   = et.get('parttime_end')   or time(21, 0)
-                    if start < pt_start or end > pt_end:
-                        violations.append({
-                            'rule': 'HC3',
-                            'subject': subj_code,
-                            'detail': (
-                                f'Part-time faculty may only be scheduled between '
-                                f'{format_time_12h(pt_start)} and {format_time_12h(pt_end)} on weekdays '
-                                f'based on the configured faculty hours settings. '
-                                f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
-                                f'falls outside this allowed window.'
-                            )
-                        })
+                    # Part-time faculty with TS hours may teach during regular daytime hours
+                    # (daytime sessions are counted as TS load, not PT load).
+                    if is_regular_slot and ts_hours > 0:
+                        pass  # Allowed via Teaching Substitution
+                    else:
+                        pt_start = et.get('parttime_start') or time(16, 30)
+                        pt_end   = et.get('parttime_end')   or time(21, 0)
+                        if start < pt_start or end > pt_end:
+                            violations.append({
+                                'rule': 'HC3',
+                                'subject': subj_code,
+                                'detail': (
+                                    f'Part-time faculty may only be scheduled between '
+                                    f'{format_time_12h(pt_start)} and {format_time_12h(pt_end)} on weekdays '
+                                    f'based on the configured faculty hours settings. '
+                                    f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
+                                    f'falls outside this allowed window.'
+                                )
+                            })
 
             elif emp_status in ('Permanent', 'Temporary'):
                 if is_regular_slot:
@@ -378,16 +391,21 @@ class CSPValidator:
                             )
                         })
                 else:
-                    if not is_weekend and (start < time(16, 30) or end > time(21, 0)):
-                        violations.append({
-                            'rule': 'HC3',
-                            'subject': subj_code,
-                            'detail': (
-                                f'Full-time faculty evening classes must be within 4:30 PM–9:00 PM. '
-                                f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
-                                f'is outside the allowed evening teaching window based on the faculty hours settings.'
-                            )
-                        })
+                    # Only enforce evening window if the slot actually extends past regular hours
+                    if not is_weekend and end > regular_end:
+                        ft_pt_start = et.get('parttime_start') or time(16, 30)
+                        ft_pt_end   = et.get('parttime_end')   or time(21, 0)
+                        if start < ft_pt_start or end > ft_pt_end:
+                            violations.append({
+                                'rule': 'HC3',
+                                'subject': subj_code,
+                                'detail': (
+                                    f'Full-time faculty evening classes must be within '
+                                    f'{format_time_12h(ft_pt_start)}–{format_time_12h(ft_pt_end)}. '
+                                    f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
+                                    f'is outside the allowed evening teaching window based on the faculty hours settings.'
+                                )
+                            })
 
         return violations
 
@@ -441,79 +459,64 @@ class CSPValidator:
         return violations
 
     # ── HC6 Day pairing ─────────────────────────────────────────
-    # Pairing is required only when:
-    #   • The session block is 1.5 hours AND
-    #   • The subject needs ≥ 3 total hours/week (so meeting on two paired days = full load)
+    # Pairing is required whenever a subject has sessions on more than one weekday
+    # AND needs ≥ 3 total contact hours/week. Applies to all session durations
+    # (1.5h, 2h, etc.) so that Monday+Friday or other invalid combos are always caught.
 
     def _check_day_pairing(self, schedule):
-        # Group single-day 1.5h entries by subject so paired days can be evaluated together.
-        # The manual editor sends one entry per day; the auto-scheduler sends combined entries.
-        subj_days: dict = defaultdict(list)   # subject_code → list of day strings
+        # Collect all weekday session days per subject regardless of duration.
+        # The manual editor sends one entry per day; the auto-scheduler may send combined entries.
+        subj_days: dict = defaultdict(list)   # subject_code → list of unique day strings
         subj_hrs:  dict = {}                  # subject_code → total_subject_hrs
 
+        WEEKDAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'}
+
         for cls in schedule:
-            dur = duration_hours(cls['start_time'], cls['end_time'])
-            if not (abs(dur - 1.5) < 0.1):
-                continue
             code = cls.get('subject_code') or cls.get('subjectcode', '')
+            if not code:
+                continue
             hrs  = float(cls.get('total_subject_hrs') or cls.get('total_hours') or 0)
             days_list = cls.get('days_list', [cls.get('day', '')])
 
             if len(days_list) > 1:
-                # Auto-scheduler combined format — validate directly
-                subj_days[code] = days_list
+                # Auto-scheduler combined format — use directly (weekdays only)
+                for d in days_list:
+                    if d in WEEKDAYS and d not in subj_days[code]:
+                        subj_days[code].append(d)
             else:
                 # Manual format — accumulate single days
                 day = days_list[0] if days_list else ''
-                if day and day not in subj_days[code]:
+                if day in WEEKDAYS and day not in subj_days[code]:
                     subj_days[code].append(day)
             if hrs > 0:
                 subj_hrs[code] = hrs
 
         violations = []
+        checked = set()   # avoid duplicate violations per subject
         for cls in schedule:
-            dur = duration_hours(cls['start_time'], cls['end_time'])
-            code = cls.get('subject_code', '?')
+            code = cls.get('subject_code') or cls.get('subjectcode', '?')
+            if code in checked:
+                continue
             total_subj_hrs = (cls.get('total_subject_hrs') or cls.get('total_hours')
                               or subj_hrs.get(code, 0))
-            # Only enforce pairing when session is 1.5hr AND subject needs >= 3hrs/week
-            if abs(dur - 1.5) < 0.1 and total_subj_hrs >= 3:
-                days_list = cls.get('days_list', [cls.get('day')])
-                # Use the accumulated grouped days for manual-editor single-day entries
-                grouped = subj_days.get(code, days_list)
-                if len(grouped) < 2:
+            grouped = subj_days.get(code, [])
+            # Only enforce pairing when subject needs >= 3hrs/week AND is scheduled on weekdays
+            if float(total_subj_hrs or 0) >= 3 and len(grouped) >= 2:
+                checked.add(code)
+                sorted_grouped = sorted(grouped[:2])
+                valid = any(pair == sorted_grouped for pair in self._day_pairs)
+                if not valid:
+                    pair_strs = ' / '.join('-'.join(p) for p in self._day_pairs)
                     violations.append({
                         'rule': 'HC6',
                         'subject': code,
                         'detail': (
-                            f'"{code}": A 1.5-hour session for a subject requiring '
-                            f'3+ hours/week must be split across two paired days (e.g. Mon-Thu, Tue-Fri, or Wed-Sat). '
-                            f'Currently only one day is assigned.'
+                            f'"{code}": The day combination {grouped[:2]} is not a valid pairing. '
+                            f'Allowed pairings are: {pair_strs}. '
+                            f'Please adjust the schedule days to match one of the configured pairs.'
                         )
                     })
-                else:
-                    sorted_grouped = sorted(grouped[:2])
-                    valid = any(pair == sorted_grouped for pair in self._day_pairs)
-                    if not valid:
-                        pair_strs = ' / '.join('-'.join(p) for p in self._day_pairs)
-                        violations.append({
-                            'rule': 'HC6',
-                            'subject': code,
-                            'detail': (
-                                f'"{code}": The day combination {grouped[:2]} is not a valid pairing. '
-                                f'Allowed pairings are: {pair_strs}. '
-                                f'Please adjust the schedule days to match one of the configured pairs.'
-                            )
-                        })
-        # Deduplicate — each subject should only appear once
-        seen = set()
-        unique = []
-        for v in violations:
-            key = (v['rule'], v['subject'])
-            if key not in seen:
-                seen.add(key)
-                unique.append(v)
-        return unique
+        return violations
 
     # ── HC7 Night PT cap ────────────────────────────────────────
 
@@ -577,18 +580,31 @@ class CSPValidator:
                     pt_units[fnum] += units
 
         for fnum, units in regular_units.items():
-            et      = faculty_map[fnum].get('employeetype', {})
-            max_reg = et.get('regularload') or 99
+            et         = faculty_map[fnum].get('employeetype', {})
+            emp_status = faculty_map[fnum].get('employeestatus', '')
+            ts_hours   = int(et.get('teachingsubstitution', 0) or 0)
+            is_pt_fac  = 'part' in emp_status.lower()
+            if is_pt_fac:
+                # Part-time faculty have no regular load; daytime sessions are TS sessions.
+                max_reg = ts_hours if ts_hours else 0
+            else:
+                max_reg = et.get('regularload') or 99
             if units > max_reg:
-                ts_hours = et.get('teachingsubstitution', 0) or 0
-                excess   = units - max_reg
-                if excess > ts_hours:
+                excess = units - max_reg
+                if is_pt_fac:
                     violations.append({
                         'rule': 'HC8',
                         'subject': 'multiple',
-                        'detail': f'Faculty {fnum} regular load {units} exceeds limit {max_reg}'
-                                  + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                        'detail': f'Faculty {fnum} Teaching Substitution load {units} units exceeds TS limit of {max_reg} units.'
                     })
+                else:
+                    if excess > ts_hours:
+                        violations.append({
+                            'rule': 'HC8',
+                            'subject': 'multiple',
+                            'detail': f'Faculty {fnum} regular load {units} exceeds limit {max_reg}'
+                                      + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                        })
 
         for fnum, units in pt_units.items():
             et     = faculty_map[fnum].get('employeetype', {})
@@ -610,10 +626,28 @@ class CSPValidator:
 
     def _check_room_overlaps(self, schedule):
         violations = []
+        merge_enabled = bool(self._cfg.get('hc_merge_enabled', 1))
+        merge_scope   = str(self._cfg.get('hc_merge_scope', 'nstp_only'))
         for i, a in enumerate(schedule):
             for b in schedule[i+1:]:
                 if a.get('room_id') != b.get('room_id'):
                     continue
+                a_code = (a.get('subject_code') or a.get('subjectcode') or '').upper()
+                b_code = (b.get('subject_code') or b.get('subjectcode') or '').upper()
+                # Merge class: same subject + policy-aware faculty check
+                if a_code == b_code and merge_enabled:
+                    is_nstp = a_code.startswith(('NSTP', 'OU'))
+                    in_scope = (
+                        (merge_scope == 'nstp_only'    and is_nstp) or
+                        (merge_scope == 'non_nstp'     and not is_nstp) or
+                        (merge_scope == 'all_subjects')
+                    )
+                    if in_scope:
+                        # NSTP/OU: flexible — different faculty may teach merged sections
+                        # Non-NSTP: strict — only same faculty may share a slot
+                        same_fac = a.get('faculty_id') == b.get('faculty_id')
+                        if is_nstp or same_fac:
+                            continue  # valid merge — skip room conflict
                 for day_a in a.get('days_list', [a.get('day')]):
                     for day_b in b.get('days_list', [b.get('day')]):
                         if day_a != day_b:
@@ -622,7 +656,7 @@ class CSPValidator:
                                                b['start_time'], b['end_time']):
                             violations.append({
                                 'rule': 'HC9',
-                                'subject': f"{a.get('subject_code')} / {b.get('subject_code')}",
+                                'subject': f"{a_code} / {b_code}",
                                 'detail': (
                                     f"Room {a.get('room')} double-booked on {day_a} "
                                     f"{format_time_12h(a['start_time'])}–{format_time_12h(a['end_time'])}"

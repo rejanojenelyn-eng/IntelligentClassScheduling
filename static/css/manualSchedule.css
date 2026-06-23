@@ -1390,6 +1390,7 @@
 }
 .local-mode .btn-save-outlined:hover { background: #1c60d5; color: white; }
 
+
 /* ── Rooms sidebar (hidden, kept for JS compat) ── */
 .rooms-sidebar-header { background:#630100; color:white; font-size:0.7rem; font-weight:900; letter-spacing:1px; padding:7px 10px; text-transform:uppercase; }
 .rooms-filter { padding:8px; background:#f0e8e8; border-bottom:1px solid #ddd; }
@@ -1456,6 +1457,7 @@
     box-shadow: 0 4px 12px rgba(0,0,0,.12);
 }
 .ts-ss-list.open { display: block; }
+.ts-ss-list.drop-up { top: auto; bottom: calc(100% + 3px); }
 .ts-ss-item {
     padding: 6px 10px; font-size: 0.72rem; cursor: pointer;
     color: #374151; border-bottom: 1px solid #f5f5f5;
@@ -1472,7 +1474,8 @@
     background: #37474f; color: white; cursor: default;
     border-bottom: 1px solid #263238; position: sticky; top: 0;
 }
-.ts-ss-sect-hdr.ts-ss-sect-rec { background: #e65100; border-bottom-color: #bf360c; }
+.ts-ss-sect-hdr.ts-ss-sect-rec { background: #c2185b; border-bottom-color: #880e4f; }
+.ts-ss-sect-hdr.ts-ss-sect-opt { background: #e65100; border-bottom-color: #bf360c; }
 
 /* Duplicate button — full-width at bottom of slice */
 /* ── Top-right Slice Actions (Duplicate & Remove) ── */

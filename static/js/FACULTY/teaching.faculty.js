@@ -118,17 +118,16 @@ function renderTables() {
             <td>${row.time_range || ''}</td>
             <td>${row.daydesc}</td>
             <td>${row.roomname || 'TBA'}</td>
-            <td><span class="badge-pub">Published</span></td>
         </tr>`;
     };
 
     document.getElementById('tbl-regular').innerHTML = regular.length
         ? regular.map(makeRow).join('')
-        : '<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">No regular load assigned.</td></tr>';
+        : '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">No regular load assigned.</td></tr>';
 
     document.getElementById('tbl-pt').innerHTML = pt.length
         ? pt.map(makeRow).join('')
-        : '<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">No part-time load assigned.</td></tr>';
+        : '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">No part-time load assigned.</td></tr>';
 }
 
 function openDetail(sess) {

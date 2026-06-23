@@ -92,36 +92,38 @@
                 
                 <div class="req-list-wrapper">
                     {% for req in recent_requests %}
-                    <div class="req-card">
-                        <h3 class="req-name">{{ req.faculty_name }}</h3>
-                        <p class="req-subtitle">{{ req.subjectcode }} - ROOM {{ req.roomname or 'TBA' }}</p>
-                        
+                    {% set st = req.status|lower %}
+                    <div class="req-card req-card-clickable"
+                         onclick="openReqDetail(this)"
+                         data-type="{{ req.req_type }}"
+                         data-faculty="{{ req.faculty_name }}"
+                         data-subject="{{ req.subjectcode }} — {{ req.subjectname }}"
+                         data-room="{{ req.roomname or 'TBA' }}"
+                         data-status="{{ req.status }}"
+                         data-date="{{ req.date_sub|upper }}"
+                         data-reqdate="{{ req.requested_date or '—' }}"
+                         data-start="{{ req.start_time or '—' }}"
+                         data-end="{{ req.end_time or '—' }}"
+                         data-program="{{ req.programcode }}{% if req.yearlevel %} - {{ req.yearlevel }}{% endif %}{% if req.sectionname %} ({{ req.sectionname }}){% endif %}"
+                         data-reason="{{ req.reason or '' }}"
+                         data-remarks="{{ req.remarks or '' }}">
+                        <div class="req-card-top">
+                            <h3 class="req-name">{{ req.faculty_name }}</h3>
+                            <div class="req-status-pill req-status-{{ st }}">{{ req.status|upper }}</div>
+                        </div>
+                        <p class="req-subtitle">{{ req.subjectcode }}{% if req.roomname %} · ROOM {{ req.roomname }}{% endif %}</p>
                         {% if req.req_type == 'MAKE-UP CLASS' %}
                             <span class="req-pill makeup">{{ req.req_type }}</span>
                         {% else %}
                             <span class="req-pill adjust">{{ req.req_type }}</span>
                         {% endif %}
-                        
-                        <div class="req-status-pill">PENDING</div>
+                        {% if req.remarks and st in ['rejected', 'approved'] %}
+                        <p class="req-remark-preview">{{ req.remarks[:60] }}{% if req.remarks|length > 60 %}…{% endif %}</p>
+                        {% endif %}
                         <div class="req-date">DATE SUBMITTED:<br><b>{{ req.date_sub|upper }}</b></div>
                     </div>
                     {% else %}
-                    <!-- Static Fallback Mock Data as depicted in reference -->
-                    <div class="req-card">
-                        <h3 class="req-name">DAVE MARCAIDA</h3>
-                        <p class="req-subtitle">COMP003 - ROOM 203</p>
-                        <span class="req-pill makeup">MAKE-UP CLASS</span>
-                        <div class="req-status-pill">PENDING</div>
-                        <div class="req-date">DATE SUBMITTED:<br><b>MAY 23, 2026</b></div>
-                    </div>
-                    
-                    <div class="req-card">
-                        <h3 class="req-name">GRACE SILAYA</h3>
-                        <p class="req-subtitle">COMP003 - ROOM 203</p>
-                        <span class="req-pill adjust">SCHEDULE ADJUSTMENT</span>
-                        <div class="req-status-pill">PENDING</div>
-                        <div class="req-date">DATE SUBMITTED:<br><b>MAY 23, 2026</b></div>
-                    </div>
+                    <div style="padding:30px;text-align:center;color:#aaa;font-size:0.85rem;">No recent requests.</div>
                     {% endfor %}
                 </div>
             </div>
@@ -192,6 +194,63 @@
     </div>
 </div>
 
+<!-- Request Detail Modal -->
+<div id="reqDetailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9600;align-items:center;justify-content:center;display:none;">
+    <div style="background:#fff;border-radius:12px;width:min(520px,94vw);max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.25);font-family:'Inter',sans-serif;">
+        <div id="rdm-hdr" style="padding:18px 24px;border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <div id="rdm-type" style="font-size:0.65rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;opacity:.8;margin-bottom:4px;"></div>
+                <div id="rdm-status-badge" style="display:inline-block;padding:4px 14px;border-radius:20px;font-size:0.72rem;font-weight:800;text-transform:uppercase;"></div>
+            </div>
+            <button onclick="closeReqDetail()" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer;line-height:1;opacity:.85;">&times;</button>
+        </div>
+        <div style="padding:22px 24px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="rdm-field"><div class="rdm-lbl">Faculty</div><div class="rdm-val" id="rdm-faculty"></div></div>
+                <div class="rdm-field"><div class="rdm-lbl">Subject</div><div class="rdm-val" id="rdm-subject"></div></div>
+                <div class="rdm-field"><div class="rdm-lbl">Program / Section</div><div class="rdm-val" id="rdm-program"></div></div>
+                <div class="rdm-field"><div class="rdm-lbl">Room</div><div class="rdm-val" id="rdm-room"></div></div>
+                <div class="rdm-field"><div class="rdm-lbl">Requested Date</div><div class="rdm-val" id="rdm-reqdate"></div></div>
+                <div class="rdm-field"><div class="rdm-lbl">Time</div><div class="rdm-val" id="rdm-time"></div></div>
+                <div class="rdm-field" style="grid-column:1/-1;"><div class="rdm-lbl">Date Submitted</div><div class="rdm-val" id="rdm-datesub"></div></div>
+            </div>
+            <div id="rdm-reason-wrap" class="rdm-field">
+                <div class="rdm-lbl">Reason for Request</div>
+                <div class="rdm-val rdm-reason-box" id="rdm-reason"></div>
+            </div>
+            <div id="rdm-remarks-wrap" class="rdm-field" style="display:none;">
+                <div class="rdm-lbl" id="rdm-remarks-lbl">Admin Remarks</div>
+                <div class="rdm-val rdm-remarks-box" id="rdm-remarks"></div>
+            </div>
+        </div>
+        <div style="padding:14px 24px;border-top:1px solid #eee;text-align:right;">
+            <a href="{{ url_for('requests_view') }}" style="font-size:0.78rem;font-weight:700;color:#800000;text-decoration:none;margin-right:14px;">GO TO REQUESTS HUB →</a>
+            <button onclick="closeReqDetail()" style="padding:8px 20px;border-radius:6px;border:1.5px solid #800000;background:#fff;color:#800000;font-weight:700;font-size:0.78rem;cursor:pointer;">CLOSE</button>
+        </div>
+    </div>
+</div>
+<style>
+.req-card-clickable { cursor:pointer; transition: box-shadow .15s, transform .1s; }
+.req-card-clickable:hover { box-shadow:0 4px 16px rgba(128,0,0,.15); transform:translateY(-1px); }
+.req-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:4px; }
+.req-status-pill { display:inline-block; padding:3px 10px; border-radius:14px; font-size:0.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; }
+.req-status-pending  { background:#f0f0f0; color:#555; }
+.req-status-approved { background:#d4edda; color:#155724; }
+.req-status-rejected { background:#f8d7da; color:#721c24; }
+.req-status-cancelled{ background:#e2e3e5; color:#383d41; }
+.req-remark-preview { font-size:0.68rem; color:#888; font-style:italic; margin:4px 0 0; }
+/* RDM (Request Detail Modal) fields */
+.rdm-field { display:flex; flex-direction:column; gap:3px; }
+.rdm-lbl { font-size:0.65rem; font-weight:800; color:#888; text-transform:uppercase; letter-spacing:.5px; }
+.rdm-val { font-size:0.85rem; font-weight:600; color:#333; }
+.rdm-reason-box, .rdm-remarks-box {
+    background:#f8f9fa; border-radius:6px; padding:10px 12px;
+    font-size:0.8rem; font-weight:400; color:#444; line-height:1.5;
+    border:1px solid #e9ecef; min-height:40px;
+}
+.rdm-remarks-box { background:#fff8e1; border-color:#ffd54f; }
+</style>
+
 <!-- Modal for Clickable KPI Cards -->
 <div id="kpiModal" class="dashboard-modal">
     <div class="modal-content">
@@ -210,6 +269,61 @@
 </div>
 
 <script>
+/* ── Request Detail Modal ── */
+function openReqDetail(card) {
+    const d = card.dataset;
+    const status = (d.status || 'Pending');
+    const statusLow = status.toLowerCase();
+
+    // Header color by status
+    const hdrColors = { pending:'#5a6268', approved:'#1a6b3c', rejected:'#800000', cancelled:'#888' };
+    const hdr = document.getElementById('rdm-hdr');
+    hdr.style.background = hdrColors[statusLow] || '#5a6268';
+    hdr.style.color = '#fff';
+
+    document.getElementById('rdm-type').textContent = d.type || '';
+
+    const badge = document.getElementById('rdm-status-badge');
+    const badgeColors = { pending:'rgba(255,255,255,.2)', approved:'#28a745', rejected:'#dc3545', cancelled:'#aaa' };
+    badge.style.background = badgeColors[statusLow] || 'rgba(255,255,255,.2)';
+    badge.style.color = '#fff';
+    badge.textContent = status.toUpperCase();
+
+    document.getElementById('rdm-faculty').textContent  = d.faculty || '—';
+    document.getElementById('rdm-subject').textContent  = d.subject || '—';
+    document.getElementById('rdm-program').textContent  = d.program || '—';
+    document.getElementById('rdm-room').textContent     = d.room ? `ROOM ${d.room}` : '—';
+    document.getElementById('rdm-reqdate').textContent  = d.reqdate || '—';
+    document.getElementById('rdm-time').textContent     = (d.start && d.end && d.start !== '—') ? `${d.start} – ${d.end}` : '—';
+    document.getElementById('rdm-datesub').textContent  = d.date || '—';
+
+    const reasonWrap = document.getElementById('rdm-reason-wrap');
+    const reasonEl   = document.getElementById('rdm-reason');
+    if (d.reason) {
+        reasonEl.textContent = d.reason;
+        reasonWrap.style.display = '';
+    } else {
+        reasonWrap.style.display = 'none';
+    }
+
+    const remarksWrap = document.getElementById('rdm-remarks-wrap');
+    const remarksEl   = document.getElementById('rdm-remarks');
+    const remarksLbl  = document.getElementById('rdm-remarks-lbl');
+    if (d.remarks) {
+        remarksEl.textContent = d.remarks;
+        remarksLbl.textContent = statusLow === 'rejected' ? 'Rejection Reason' : 'Admin Remarks';
+        remarksWrap.style.display = '';
+    } else {
+        remarksWrap.style.display = 'none';
+    }
+
+    const modal = document.getElementById('reqDetailModal');
+    modal.style.display = 'flex';
+}
+function closeReqDetail() {
+    document.getElementById('reqDetailModal').style.display = 'none';
+}
+
 function openKpiModal(type) {
     const modal = document.getElementById('kpiModal');
     const title = document.getElementById('modalTitle');
@@ -275,12 +389,12 @@ function closeKpiModal() {
     document.getElementById('kpiModal').style.display = "none";
 }
 
-// Close modal if user clicks outside of the modal content
+// Close modals on backdrop click
 window.onclick = function(event) {
-    const modal = document.getElementById('kpiModal');
-    if (event.target == modal) {
-        modal.style.display = "none";
-    }
+    const kpi = document.getElementById('kpiModal');
+    if (event.target == kpi) kpi.style.display = "none";
+    const rdm = document.getElementById('reqDetailModal');
+    if (event.target == rdm) rdm.style.display = "none";
 }
 </script>
 {% endblock %}

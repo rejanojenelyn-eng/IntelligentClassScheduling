@@ -569,6 +569,21 @@
     </div>
 </div>
 
+<!-- APPROVE CONFIRMATION MODAL -->
+<div class="rhub-modal-overlay" id="approveModal">
+    <div class="rhub-modal-box">
+        <div class="rhub-modal-title" style="color:#1a6b3c;"><i class="fas fa-check-circle"></i> Approve Request</div>
+        <p id="approveModalBody" style="font-size:0.88rem;color:#333;margin:12px 0 10px;line-height:1.5;"></p>
+        <p style="font-size:0.78rem;color:#1a6b3c;background:#eafaf1;border:1px solid #a9dfbf;border-radius:6px;padding:8px 12px;margin:0 0 20px;">
+            <i class="fas fa-info-circle" style="margin-right:5px;"></i>This will be saved as a local arrangement for the remainder of the semester.
+        </p>
+        <div class="rhub-modal-actions">
+            <button class="btn-modal-cancel" onclick="rhubCloseApprove()">CANCEL</button>
+            <button class="btn-modal-confirm" style="background:#1a6b3c;" onclick="rhubConfirmApprove()"><i class="fas fa-check"></i> CONFIRM APPROVE</button>
+        </div>
+    </div>
+</div>
+
 <!-- REJECT MODAL -->
 <div class="rhub-modal-overlay" id="rejectModal">
     <div class="rhub-modal-box">
@@ -761,6 +776,12 @@ function rhubRenderDetail(req, v) {
             <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${req.reason}</div>
         </div>` : ''}
 
+        ${req.notes ? `
+        <div class="rhub-reason-box" style="border-left-color:#1a4a7a;background:#f0f5ff;">
+            <div class="rhub-dbox-lbl" style="color:#1a4a7a;">NOTE</div>
+            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${req.notes}</div>
+        </div>` : ''}
+
         <div class="rhub-analytics">
             <div class="rhub-analytics-lbl">ANALYTICS</div>
             ${analyticsHtml}
@@ -798,10 +819,20 @@ function rhubToggleSort() {
 }
 
 /* ════ APPROVE ════ */
-async function rhubApprove() {
+function rhubApprove() {
     const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
     if (!req) return;
-    if (!confirm(`Approve ${req.req_type_label} request from ${req.faculty_name}?`)) return;
+    document.getElementById('approveModalBody').textContent =
+        `Approve ${req.req_type_label} request from ${req.faculty_name}?`;
+    document.getElementById('approveModal').classList.add('open');
+}
+function rhubCloseApprove() {
+    document.getElementById('approveModal').classList.remove('open');
+}
+async function rhubConfirmApprove() {
+    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
+    if (!req) return;
+    rhubCloseApprove();
     try {
         const res  = await fetch('/api/requests/decide', {
             method: 'POST',
@@ -851,7 +882,10 @@ async function rhubConfirmReject() {
     } catch(e) { alert('Network error.'); }
 }
 
-/* Close reject modal on backdrop click */
+/* Close modals on backdrop click */
+document.getElementById('approveModal').addEventListener('click', function(e) {
+    if (e.target === this) rhubCloseApprove();
+});
 document.getElementById('rejectModal').addEventListener('click', function(e) {
     if (e.target === this) rhubCloseReject();
 });

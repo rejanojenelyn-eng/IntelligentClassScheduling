@@ -53,7 +53,9 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'hc_program_restrict_enabled': 1,
     'hc_publish_gate_enabled':     1,
     'hc_faculty_spec_enabled':     1,
+    'hc_merge_enabled':            1,   # Class Merging Policy toggle
     # ── HC configurable params (stored as JSON strings) ─────
+    'hc_merge_scope':              'nstp_only',  # nstp_only | non_nstp | all_subjects
     'hc_day_pairs':
         '[["Monday","Thursday"],["Tuesday","Friday"],["Wednesday","Saturday"]]',
     'hc_time_slots':
@@ -67,7 +69,7 @@ _SCHEDULER_CONFIG_DEFAULTS = {
 }
 
 # Keys whose DB values should stay as strings (not converted to float)
-_STRING_KEYS = {'hc_day_pairs', 'hc_time_slots', 'hc_weekend_subject', 'hc_weekend_day'}
+_STRING_KEYS = {'hc_day_pairs', 'hc_time_slots', 'hc_weekend_subject', 'hc_weekend_day', 'hc_merge_scope'}
 
 def load_scheduler_config() -> dict:
     """Return scheduler config from DB, merged with defaults.

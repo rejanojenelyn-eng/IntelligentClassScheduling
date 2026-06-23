@@ -23,11 +23,25 @@ function _buildDraftCard(d) {
 
     const ayRaw     = String(d.acadyear || '');
     const ayDisplay = ayRaw.startsWith('AY') ? ayRaw.slice(2).trim() : ayRaw;
-    const prog      = d.programcode || '—';
-    const yr        = d.yearlevel   || '—';
-    const label     = `${prog} – Year ${yr}`;
+    const prog      = d.programcode  || '—';
+    const yr        = d.yearlevel    || '—';
+    const sect      = d.sectionname  || '';
+    const sectId    = d.sectionid    || '';
+    const label     = sect ? `${prog} ${sect}` : `${prog} – Year ${yr}`;
     const source    = d.source || 'official';
     const isLocal   = source === 'local';
+
+    const sectBadge = sect
+        ? `<span class="dc-badge" style="background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;"><i class="fas fa-users"></i> ${sect}</span>`
+        : '';
+
+    const editorUrl = `${MANUAL_EDITOR_URL}?mode=program`
+        + `&prog=${encodeURIComponent(d.programcode||'')}`
+        + `&yl=${encodeURIComponent(d.yearlevel||'')}`
+        + `&ay=${encodeURIComponent(d.acadyear||'')}`
+        + `&sem=${encodeURIComponent(d.term||'')}`
+        + `&scheduler=${source}`
+        + (sectId ? `&sect=${encodeURIComponent(sectId)}` : '');
 
     return `
     <div class="draft-card" data-vid="${d.versionid}" data-source="${source}">
@@ -35,14 +49,15 @@ function _buildDraftCard(d) {
             <i class="fas ${isLocal ? 'fa-tools' : 'fa-calendar-alt'}"></i>
         </div>
         <div class="draft-card-info">
-            <div class="draft-card-eyebrow">${prog} &bull; Year ${yr}
+            <div class="draft-card-eyebrow">${prog} &bull; Year ${yr}${sect ? ` &bull; ${sect}` : ''}
                 ${isLocal ? '<span style="margin-left:6px;font-size:0.55rem;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:10px;padding:1px 7px;font-weight:900;letter-spacing:0.8px;">LOCAL</span>' : ''}
             </div>
-            <div class="draft-card-title">${prog} &mdash; Year ${yr}</div>
+            <div class="draft-card-title">${label}</div>
             <div class="draft-card-badges">
                 <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft</span>
                 <span class="dc-badge dc-badge-ay"><i class="fas fa-graduation-cap"></i> AY ${ayDisplay}</span>
                 <span class="dc-badge dc-badge-sem"><i class="fas fa-book-open"></i> ${semLabel}</span>
+                ${sectBadge}
             </div>
             <div class="draft-card-date"><i class="fas fa-clock" style="margin-right:4px;"></i>Saved ${dateStr}</div>
         </div>
@@ -50,7 +65,7 @@ function _buildDraftCard(d) {
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
                 <i class="fas fa-eye"></i> View
             </a>
-            <a href="${MANUAL_EDITOR_URL}?mode=program&prog=${encodeURIComponent(d.programcode||'')}&yl=${encodeURIComponent(d.yearlevel||'')}&ay=${encodeURIComponent(d.acadyear||'')}&sem=${encodeURIComponent(d.term||'')}&scheduler=${source}" class="btn-dc btn-dc-edit-editor">
+            <a href="${editorUrl}" class="btn-dc btn-dc-edit-editor">
                 <i class="fas fa-edit"></i> Edit to Manual Editor
             </a>
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">
@@ -74,10 +89,10 @@ function _renderDrafts(rawData) {
     // This ensures old drafts (null/undefined source) always appear under Official Scheduler.
     const filtered = rawData.filter(d => (d.source === 'local' ? 'local' : 'official') === _currentDraftFilter);
 
-    // Deduplicate within the filtered set: keep most recent per program+year
+    // Deduplicate within the filtered set: keep most recent per program+year+section
     const groups = {};
     filtered.forEach(d => {
-        const key = `${d.programcode || ''}-${d.yearlevel || ''}`;
+        const key = `${d.programcode || ''}-${d.yearlevel || ''}-${d.sectionid || ''}`;
         if (!groups[key] || (d.datecreated || '') > (groups[key].datecreated || '')) groups[key] = d;
     });
 
