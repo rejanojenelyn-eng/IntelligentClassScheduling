@@ -1,5 +1,18 @@
 // VERSION_ID, SCHEDULE_GEN_URL, MANUAL_EDITOR_URL are defined inline in the HTML template above this script
 
+const _DAY_SORT_ORDER = {
+    'MON':0,'TUE':1,'WED':2,'THU':3,'FRI':4,'SAT':5,'SUN':6,
+    'Monday':0,'Tuesday':1,'Wednesday':2,'Thursday':3,'Friday':4,'Saturday':5,'Sunday':6
+};
+function _sortDays(arr) {
+    return [...arr].sort((a, b) => (_DAY_SORT_ORDER[a.trim()] ?? 99) - (_DAY_SORT_ORDER[b.trim()] ?? 99));
+}
+function _sortDaysStr(daysStr) {
+    if (!daysStr) return daysStr;
+    const parts = daysStr.split(/[\/,]+/).filter(Boolean);
+    return _sortDays(parts).join('/');
+}
+
 (async function() {
     let scheduleData = [];
     let draftContext = {};
@@ -146,7 +159,7 @@
                 <td>${r.lab_hours || 0}</td>
                 <td>${r.units || r.credit_units || 0}</td>
                 <td>${r.time || '—'}</td>
-                <td>${r.days || r.day || '—'}</td>
+                <td>${_sortDaysStr(r.days || r.day) || '—'}</td>
                 <td>${r.room || 'TBA'}</td>
             </tr>`).join('');
     }

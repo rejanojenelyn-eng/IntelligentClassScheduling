@@ -2,202 +2,244 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scheduleGeneration.css') }}">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 {% endblock %}
 
 {% block content %}
+<script>const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";</script>
+
 <div class="schedule-container">
 
-<<<<<<< HEAD
-    <!-- Top Action Links -->
-    <div class="top-action-links">
-        <button class="outline-btn" onclick="openDraftsModal()"><i class="fas fa-edit"></i> View Drafts</button>
-        <button class="outline-btn" onclick="openVersionHistoryModal()"><i class="fas fa-history"></i> Version History</button>
-=======
-    <!-- Page Title Bar -->
+    <!-- Full-width title bar -->
     <div class="page-title-bar">
         <div class="page-title-left">
-            <h2><i class="fas fa-calendar-alt"></i> GENERATE SCHEDULE</h2>
+            <h2>GENERATE SCHEDULE</h2>
         </div>
         <div class="page-title-right">
-            <button id="btnManualEditor" class="outline-btn" disabled>
+            <button id="btnManualEditor" class="btn-white-maroon" disabled>
                 <i class="fas fa-pen"></i> Go to Manual Editor
             </button>
         </div>
->>>>>>> 4323b880aa5b6d26a4684517beaa0afa2c16a224
     </div>
 
-    <!-- Filter and Generate Section -->
-    <div class="schedule-header-split">
-        <div class="filter-box">
-            <div class="filter-section-label">
-                <i class="fas fa-sliders-h"></i> FILTER CONTROLS
+    <!-- Two-column body -->
+    <div class="gen-body-split">
+
+        <!-- LEFT: main content -->
+        <div class="gen-main">
+
+            <!-- Filter bar -->
+            <div class="filter-box">
+                <div class="filter-section-label">
+                    <i class="fas fa-sliders-h"></i> FILTER CONTROLS
+                </div>
+                <form id="generateScheduleForm">
+                    <div class="form-group">
+                        <label>ACAD YEAR</label>
+                        <select id="acadYear" name="acadYear" required>
+                            <option value="">SELECT</option>
+                            {% for year in acad_years %}
+                                <option value="{{ year }}">{{ year }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>SEMESTER</label>
+                        <select id="term" name="term" required>
+                            <option value="">SELECT</option>
+                            {% for t in terms %}
+                                <option value="{{ t.id }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>PROGRAM</label>
+                        <!-- #3: Searchable program dropdown — text input filters the select below -->
+                        <input type="text" id="programSearch"
+                               placeholder="Type code or name to search..."
+                               autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:4px;">
+                        <select id="program" name="program" required>
+                            <option value="">SELECT</option>
+                            {% for prog in programs %}
+                                <option value="{{ prog.code }}" data-name="{{ prog.name }}">{{ prog.code }} – {{ prog.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>YEAR LEVEL</label>
+                        <select id="yearLevel" name="yearLevel" required>
+                            <option value="">SELECT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>SECTIONS</label>
+                        <select id="sectionFilter" name="sectionFilter" required>
+                            <option value="">SELECT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>CURRICULUM</label>
+                        <div id="curriculumDisplay" class="curriculum-display">
+                            <input type="hidden" id="curriculum" name="curriculum" value="">
+                            <span id="curriculumText">Select Program first</span>
+                        </div>
+                    </div>
+                </form>
             </div>
-            <form id="generateScheduleForm">
-                <div class="form-group">
-                    <label>ACAD YEAR</label>
-                    <select id="acadYear" name="acadYear" required>
-                        <option value="">SELECT</option>
-                        {% for year in acad_years %}
-                            <option value="{{ year }}">{{ year }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>SEMESTER</label>
-                    <select id="term" name="term" required>
-                        <option value="">SELECT</option>
-                        {% for term in terms %}
-                            <option value="{{ term.id }}">{{ term.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>PROGRAM</label>
-                    <select id="program" name="program" required>
-                        <option value="">SELECT</option>
-                        {% for prog in programs %}
-                            <option value="{{ prog.code }}">{{ prog.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>YEAR LEVEL</label>
-                    <select id="yearLevel" name="yearLevel" required>
-                        <option value="">SELECT</option>
-                        {% for level in year_levels %}
-                            <option value="{{ level }}">Year {{ level }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>SECTIONS</label>
-                    <select id="sectionFilter" name="sectionFilter" required>
-                        <option value="">SELECT</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>CURRICULUM</label>
-                    <div id="curriculumDisplay" class="curriculum-display">
-                        <input type="hidden" id="curriculum" name="curriculum" value="">
-                        <span id="curriculumText">Select Program first</span>
+
+            <!-- Content area -->
+            <div id="generatedContent">
+
+                <!-- View toggle + sort + export -->
+                <div class="view-control-row">
+                    <div class="view-toggles">
+                        <button class="toggle-btn" id="btnCalendarView">
+                            <i class="far fa-calendar-alt"></i> CALENDAR VIEW
+                        </button>
+                        <button class="toggle-btn active" id="btnTableView">
+                            <i class="fas fa-table"></i> TABLE VIEW
+                        </button>
+                    </div>
+                    <div class="right-controls-row">
+                        <div class="sort-control">
+                            <i class="fas fa-sort-amount-down-alt"></i>
+                            <select id="sortSelect">
+                                <option value="default">SORT: Default</option>
+                                <option value="az">SORT: A-Z</option>
+                                <option value="za">SORT: Z-A</option>
+                                <option value="time">SORT: By Time</option>
+                            </select>
+                        </div>
+                        <button class="btn-export-outline-dark" id="btnExport" disabled>
+                            <i class="fas fa-file-export"></i> EXPORT SCHEDULE
+                        </button>
                     </div>
                 </div>
-            </form>
-        </div>
 
-        <div class="generate-box">
+                <!-- Criteria header / table title -->
+                <div class="criteria-header" id="tableTitle">WAITING FOR SELECTION...</div>
+
+                <!-- Table View -->
+                <div id="tableViewContainer">
+                    <table class="offerings-list-table">
+                        <thead>
+                            <tr>
+                                <th class="col-instructor">INSTRUCTOR</th>
+                                <th class="col-code">SUBJECT<br>CODE</th>
+                                <th class="col-desc">SUBJECT DESCRIPTION</th>
+                                <th class="col-num">LEC<br>HRS</th>
+                                <th class="col-num">LAB<br>HRS</th>
+                                <th class="col-num">CREDIT<br>UNITS</th>
+                                <th class="col-course">COURSE</th>
+                                <th class="col-time">TIME</th>
+                                <th class="col-num">HOURS</th>
+                                <th class="col-days">DAYS</th>
+                                <th class="col-room">ROOM</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduleTableBody">
+                            <tr class="table-empty-row">
+                                <td colspan="11">
+                                    <i class="fas fa-calendar-plus"></i>
+                                    Select filters above and click Generate Schedule to begin
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div id="successToast" class="toast hidden">
+                        <i class="fas fa-check-circle"></i> Schedule Generated Successfully!
+                    </div>
+                </div>
+
+                <!-- Calendar View (hidden by default) -->
+                <div class="schedule-grid-card hidden" id="calendarViewContainer">
+                    <div class="grid-card-header" id="calendarTitle">SCHEDULE TIMETABLE</div>
+                    <div class="timetable-wrapper" id="genGridWrapper" style="position:relative;">
+                        <table class="timetable-grid" id="genMainTimetable">
+                            <thead>
+                                <tr>
+                                    <th class="time-header">TIME</th>
+                                    <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                                    <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
+                                                '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
+                                                '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
+                                {% for t in times %}
+                                <tr>
+                                    <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
+                                    <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Conflict Warning Banner -->
+                <div id="conflictBanner" class="conflict-banner hidden">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
+                    <button onclick="document.getElementById('conflictBanner').classList.add('hidden')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="actionButtons">
+                    <div class="left-actions">
+                        <a href="{{ url_for('schedule_drafts_list') }}" class="btn-white-maroon">
+                            <i class="fas fa-layer-group"></i> View Draft List
+                        </a>
+                        <button id="btnSaveDraft" class="btn-white-maroon" disabled>
+                            <i class="fas fa-save"></i> Save as Draft
+                        </button>
+                    </div>
+                    <div class="right-actions">
+                        <button id="btnRegenerate" class="btn-white-maroon" disabled>
+                            <i class="fas fa-sync-alt"></i> Re-generate
+                        </button>
+                        <button id="btnApprove" class="btn-maroon-solid" disabled>
+                            <i class="fas fa-check-circle"></i> Approve Schedule
+                        </button>
+                    </div>
+                </div>
+
+            </div><!-- /#generatedContent -->
+        </div><!-- /.gen-main -->
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="gen-sidebar">
             <button type="button" id="btnGenerate" disabled>
                 <i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE
             </button>
             <div class="checkbox-wrapper">
                 <input type="checkbox" id="useHistorical" name="useHistorical">
-                <label for="useHistorical"><i class="fas fa-clock-rotate-left"></i> Retrieve previous schedule</label>
+                <label for="useHistorical">Retrieve previous schedule</label>
             </div>
-        </div>
-    </div>
 
-    <div id="generatedContent">
-        <div class="criteria-header" id="tableTitle">
-            <i class="fas fa-calendar-alt"></i> WAITING FOR SELECTION...
-        </div>
-
-        <div class="table-toolbar">
-            <div class="view-toggles">
-                <button class="outline-btn" id="btnCalendarView"><i class="far fa-calendar-alt"></i> Calendar View</button>
-                <button class="active-btn" id="btnTableView"><i class="fas fa-table"></i> Table View</button>
-            </div>
-            <div class="toolbar-right">
-                <div class="sort-control">
-                    <i class="fas fa-sort-amount-down-alt"></i>
-                    <select id="sortSelect">
-                        <option value="default">SORT: Default</option>
-                        <option value="az">SORT: A-Z</option>
-                        <option value="za">SORT: Z-A</option>
-                        <option value="time">SORT: By Time</option>
-                    </select>
+            <!-- Accuracy Widget -->
+            <div class="accuracy-widget">
+                <div class="accuracy-row" id="accuracyRow">
+                    <div class="accuracy-icon" id="accuracyCircle">
+                        <i class="fas fa-chart-bar" id="accuracyIcon"></i>
+                    </div>
+                    <div class="accuracy-pct" id="accuracyPct">—</div>
                 </div>
-                <button class="outline-btn" id="btnExport" disabled><i class="fas fa-file-export"></i> Export Schedule</button>
+                <div class="accuracy-label" id="accuracyLabelEl">ACCURACY RATE</div>
+                <p class="accuracy-desc" id="accuracyDesc">Generate a schedule to see how well it satisfies all scheduling rules and constraints.</p>
+                <!-- Breakdown panel — populated by JS after generation -->
+                <div class="accuracy-breakdown" id="accuracyBreakdown"></div>
             </div>
-        </div>
+        </div><!-- /.gen-sidebar -->
 
-        <!-- Table View -->
-        <div class="table-wrapper" id="tableViewContainer">
-            <table class="schedule-table">
-                <thead>
-                    <tr>
-                        <th>INSTRUCTOR</th>
-                        <th>SUBJECT CODE</th>
-                        <th>SUBJECT DESCRIPTION</th>
-                        <th>LEC HRS</th>
-                        <th>LAB HRS</th>
-                        <th>CREDIT UNITS</th>
-                        <th>COURSE</th>
-                        <th>TIME</th>
-                        <th>HRS</th>
-                        <th>DAYS</th>
-                        <th>ROOM</th>
-                    </tr>
-                </thead>
-                <tbody id="scheduleTableBody">
-                    <tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> Select filters above and click Generate Schedule to begin</span></td></tr>
-                </tbody>
-            </table>
+    </div><!-- /.gen-body-split -->
+</div><!-- /.schedule-container -->
 
-            <div id="successToast" class="toast hidden">
-                <i class="fas fa-check-circle"></i> Schedule Generated Successfully!
-            </div>
-        </div>
-
-        <!-- Calendar View (hidden by default) -->
-        <div class="calendar-wrapper hidden" id="calendarViewContainer">
-            <div class="timetable-wrapper" id="genGridWrapper" style="position: relative;">
-                <table class="timetable-grid" id="genMainTimetable">
-                    <thead>
-                        <tr>
-                            <th class="time-header">TIME</th>
-                            <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
-                            <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
-                                        '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
-                                        '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
-                        {% for t in times %}
-                        <tr>
-                            <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
-                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Conflict Warning Banner -->
-        <div id="conflictBanner" class="conflict-banner hidden">
-            <i class="fas fa-exclamation-triangle"></i>
-            <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
-            <button onclick="document.getElementById('conflictBanner').classList.add('hidden')"><i class="fas fa-times"></i></button>
-        </div>
-
-        <div id="actionButtons">
-            <div class="left-actions">
-                <a href="{{ url_for('schedule_drafts_list') }}" class="outline-btn"><i class="fas fa-layer-group"></i> View Draft List</a>
-                <button id="btnSaveDraft" disabled><i class="fas fa-save"></i> Save as Draft</button>
-            </div>
-            <div class="right-actions">
-                <button id="btnRegenerate" disabled><i class="fas fa-sync-alt"></i> Re-generate</button>
-                <button id="btnApprove" disabled><i class="fas fa-check-circle"></i> Approve Schedule</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      LOADING MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="loadingModal" class="modal-overlay hidden">
     <div class="modal-content loading-modal-content">
         <div class="loading-icon-wrap">
@@ -219,9 +261,9 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      INFO MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="infoModal" class="modal-overlay hidden">
     <div class="modal-content info-modal-content">
         <div class="info-modal-icon" id="infoModalIcon">
@@ -236,16 +278,20 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      VIEW DRAFTS MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="draftsModal" class="modal-overlay hidden">
     <div class="modal-content">
         <div class="modal-header">
-            <h3><i class="fas fa-edit"></i> Saved Drafts</h3>
+            <h3><i class="fas fa-layer-group"></i> Saved Drafts</h3>
             <div style="display:flex;gap:8px;align-items:center;">
-                <a href="/schedule/drafts" class="btn-view-all-drafts"><i class="fas fa-layer-group"></i> View All</a>
-                <button onclick="document.getElementById('draftsModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+                <a href="{{ url_for('schedule_drafts_list') }}" class="btn-view-all-drafts">
+                    <i class="fas fa-external-link-alt"></i> View All
+                </a>
+                <button onclick="document.getElementById('draftsModal').classList.add('hidden')">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
         </div>
         <div class="modal-body" id="draftsModalBody">
@@ -254,14 +300,16 @@
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
+<!-- ═══════════════════════════════════
      VERSION HISTORY MODAL
-═══════════════════════════════════════════════ -->
+═══════════════════════════════════ -->
 <div id="versionModal" class="modal-overlay hidden">
     <div class="modal-content">
         <div class="modal-header">
             <h3><i class="fas fa-history"></i> Version History</h3>
-            <button onclick="document.getElementById('versionModal').classList.add('hidden')"><i class="fas fa-times"></i></button>
+            <button onclick="document.getElementById('versionModal').classList.add('hidden')">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
         <div class="modal-body" id="versionModalBody">
             <p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading...</p>
@@ -269,799 +317,72 @@
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    // ══════════════════════════════════════════════════════════════════
-    //  STATE MANAGEMENT
-    // ══════════════════════════════════════════════════════════════════
-    let currentScheduleData = [];
-    let currentBatchId      = null;
-    let canPublish          = false;
+<!-- ═══════════════════════════════════
+     EXPORT FORMAT MODAL
+═══════════════════════════════════ -->
+<div id="exportModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width:480px;">
+        <div class="modal-header">
+            <h3><i class="fas fa-file-export"></i> Export Schedule</h3>
+            <button onclick="document.getElementById('exportModal').classList.add('hidden')">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="modal-body" style="padding:20px 24px;">
+            <p style="margin:0 0 16px;color:#555;font-size:13px;">
+                Choose a format to download the currently displayed schedule.
+            </p>
+
+            <!-- Format cards -->
+            <div id="exportFormatCards" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;">
+                <label class="export-fmt-card" data-fmt="pdf">
+                    <input type="radio" name="exportFmt" value="pdf" style="display:none;">
+                    <i class="fas fa-file-pdf" style="color:#c0392b;font-size:22px;"></i>
+                    <span>PDF (.pdf)</span>
+                </label>
+                <label class="export-fmt-card" data-fmt="docx">
+                    <input type="radio" name="exportFmt" value="docx" style="display:none;">
+                    <i class="fas fa-file-word" style="color:#2980b9;font-size:22px;"></i>
+                    <span>Word (.docx)</span>
+                </label>
+                <label class="export-fmt-card" data-fmt="xlsx">
+                    <input type="radio" name="exportFmt" value="xlsx" style="display:none;">
+                    <i class="fas fa-file-excel" style="color:#27ae60;font-size:22px;"></i>
+                    <span>Excel (.xlsx)</span>
+                </label>
+                <label class="export-fmt-card selected" data-fmt="csv">
+                    <input type="radio" name="exportFmt" value="csv" checked style="display:none;">
+                    <i class="fas fa-file-csv" style="color:#8e44ad;font-size:22px;"></i>
+                    <span>CSV (.csv)</span>
+                </label>
+            </div>
+
+            <!-- Filename -->
+            <label style="font-size:12px;font-weight:600;color:#444;display:block;margin-bottom:4px;">FILE NAME</label>
+            <input type="text" id="exportFilename"
+                   style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:12px 24px;border-top:1px solid #eee;">
+            <button class="btn-white-maroon"
+                    onclick="document.getElementById('exportModal').classList.add('hidden')">
+                Cancel
+            </button>
+            <button id="btnDoExport" class="btn-maroon-solid">
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.export-fmt-card {
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:6px;padding:14px 8px;border:2px solid #ddd;border-radius:8px;
+    cursor:pointer;transition:all .15s;font-size:13px;text-align:center;
+}
+.export-fmt-card:hover { border-color:#8B0000; background:#fff5f5; }
+.export-fmt-card.selected { border-color:#8B0000; background:#fff0f0; font-weight:600; }
+</style>
 
-    // Form elements
-    const acadYear    = document.getElementById('acadYear');
-    const term        = document.getElementById('term');
-    const program     = document.getElementById('program');
-    const yearLevel   = document.getElementById('yearLevel');
-    const curriculum  = document.getElementById('curriculum');
-    const curriculumText = document.getElementById('curriculumText');
-    const useHistorical = document.getElementById('useHistorical');
-
-    // Buttons
-    const btnGenerate      = document.getElementById('btnGenerate');
-    const btnRegenerate    = document.getElementById('btnRegenerate');
-    const btnSaveDraft     = document.getElementById('btnSaveDraft');
-    const btnApprove       = document.getElementById('btnApprove');
-    const btnManualEditor  = document.getElementById('btnManualEditor');
-    const btnExport        = document.getElementById('btnExport');
-    const btnCalendarView  = document.getElementById('btnCalendarView');
-    const btnTableView     = document.getElementById('btnTableView');
-
-    // ══════════════════════════════════════════════════════════════════
-    //  AUTO-FETCH CURRICULUM WHEN PROGRAM CHANGES
-    // ══════════════════════════════════════════════════════════════════
-    program.addEventListener('change', async function() {
-        const programValue = this.value;
-        if (!programValue) {
-            curriculumText.textContent = "Select Program first";
-            curriculum.value = "";
-            checkFormValidity();
-            return;
-        }
-
-        // Show loading state
-        curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-        
-        try {
-            // Fetch the LATEST curriculum for this program
-            const res = await fetch(`/api/curriculum-by-year?program=${encodeURIComponent(programValue)}`);
-            const data = await res.json();
-
-            if (data.curriculum) {
-                curriculum.value = data.curriculum;
-                curriculumText.textContent = `CY ${data.curriculum}`;
-            } else {
-                curriculumText.textContent = "No curriculum found";
-                curriculum.value = "";
-            }
-        } catch (e) {
-            console.error('Error fetching curriculum:', e);
-            curriculumText.textContent = "Error loading curriculum";
-            curriculum.value = "";
-        }
-        
-        // Recheck form validity after curriculum is loaded
-        checkFormValidity();
-    });
-
-    // ══════════════════════════════════════════════════════════════════
-    //  ENABLE/DISABLE GENERATE BUTTON BASED ON FORM VALIDITY
-    // ══════════════════════════════════════════════════════════════════
-    function checkFormValidity() {
-        const allFilled = acadYear.value && term.value && program.value && yearLevel.value && curriculum.value;
-        btnGenerate.disabled = !allFilled;
-    }
-
-    // Listen to all form changes (except program which has its own handler above)
-    [acadYear, term, yearLevel, useHistorical].forEach(el => {
-        el.addEventListener('change', checkFormValidity);
-    });
-
-    // Initial check
-    checkFormValidity();
-
-    // ══════════════════════════════════════════════════════════════════
-    //  VIEW TOGGLE (CALENDAR / TABLE)
-    // ══════════════════════════════════════════════════════════════════
-    btnCalendarView.addEventListener('click', () => {
-        document.getElementById('tableViewContainer').classList.add('hidden');
-        document.getElementById('calendarViewContainer').classList.remove('hidden');
-        btnCalendarView.classList.add('active-btn');
-        btnCalendarView.classList.remove('outline-btn');
-        btnTableView.classList.add('outline-btn');
-        btnTableView.classList.remove('active-btn');
-        
-        // Render calendar if we have data
-        if (currentScheduleData.length > 0) {
-            renderCalendarView(currentScheduleData);
-        }
-    });
-
-    btnTableView.addEventListener('click', () => {
-        document.getElementById('calendarViewContainer').classList.add('hidden');
-        document.getElementById('tableViewContainer').classList.remove('hidden');
-        btnTableView.classList.add('active-btn');
-        btnTableView.classList.remove('outline-btn');
-        btnCalendarView.classList.add('outline-btn');
-        btnCalendarView.classList.remove('active-btn');
-    });
-
-    // ══════════════════════════════════════════════════════════════════
-    //  HELPER: GET CURRENT CONTEXT
-    // ══════════════════════════════════════════════════════════════════
-    function getContext() {
-        return {
-            program:    program.value,
-            yearLevel:  parseInt(yearLevel.value),
-            term:       term.value,
-            acadYear:   acadYear.value,
-        };
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  HELPER: CUSTOM INFO/CONFIRM MODAL
-    // ══════════════════════════════════════════════════════════════════
-    function showInfo(title, message, type = 'info') {
-        return new Promise(resolve => {
-            const modal    = document.getElementById('infoModal');
-            const icon     = document.getElementById('infoModalIcon');
-            const titleEl  = document.getElementById('infoModalTitle');
-            const msgEl    = document.getElementById('infoModalMessage');
-            const confirmBtn = document.getElementById('infoModalConfirmBtn');
-            const cancelBtn  = document.getElementById('infoModalCancelBtn');
-
-            titleEl.textContent = title;
-            msgEl.innerHTML     = message;
-
-            // Set icon color
-            icon.className = 'info-modal-icon';
-            if (type === 'success') {
-                icon.innerHTML = '<i class="fas fa-check-circle"></i>';
-                icon.classList.add('success');
-            } else if (type === 'error') {
-                icon.innerHTML = '<i class="fas fa-times-circle"></i>';
-                icon.classList.add('error');
-            } else if (type === 'confirm') {
-                icon.innerHTML = '<i class="fas fa-question-circle"></i>';
-                icon.classList.add('warning');
-            } else {
-                icon.innerHTML = '<i class="fas fa-info-circle"></i>';
-            }
-
-            modal.classList.remove('hidden');
-
-            // Show/hide cancel button for confirm dialogs
-            if (type === 'confirm') {
-                cancelBtn.classList.remove('hidden');
-                confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
-                cancelBtn.onclick  = () => { modal.classList.add('hidden'); resolve(false); };
-            } else {
-                cancelBtn.classList.add('hidden');
-                confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
-            }
-        });
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  LOADING MODAL CONTROL
-    // ══════════════════════════════════════════════════════════════════
-    function showLoading() {
-        document.getElementById('loadingModal').classList.remove('hidden');
-        document.getElementById('progressBarFill').style.width = '0%';
-        document.getElementById('progressLabel').textContent = '0%';
-        simulateProgress();
-    }
-    function hideLoading() {
-        document.getElementById('loadingModal').classList.add('hidden');
-    }
-
-    function simulateProgress() {
-        let progress = 0;
-        const steps = [
-            'Initializing genetic algorithm...',
-            'Analyzing constraints and faculty availability...',
-            'Generating schedule population...',
-            'Evaluating fitness scores...',
-            'Performing crossover and mutation...',
-            'Optimizing conflicts...',
-            'Finalizing schedule...',
-        ];
-        let stepIndex = 0;
-
-        const interval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 95) progress = 95;
-
-            document.getElementById('progressBarFill').style.width = progress + '%';
-            document.getElementById('progressLabel').textContent = Math.floor(progress) + '%';
-
-            if (stepIndex < steps.length && progress > (stepIndex + 1) * (95 / steps.length)) {
-                document.getElementById('loadingStep').textContent = steps[stepIndex];
-                stepIndex++;
-            }
-        }, 400);
-
-        // Store interval ID so we can clear it when generation completes
-        btnGenerate._progressInterval = interval;
-    }
-
-    function completeProgress() {
-        if (btnGenerate._progressInterval) {
-            clearInterval(btnGenerate._progressInterval);
-        }
-        document.getElementById('progressBarFill').style.width = '100%';
-        document.getElementById('progressLabel').textContent = '100%';
-        document.getElementById('loadingStep').textContent = 'Complete!';
-        setTimeout(hideLoading, 500);
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  RENDER TABLE VIEW
-    // ══════════════════════════════════════════════════════════════════
-    function renderTable(scheduleArray) {
-        const tbody = document.getElementById('scheduleTableBody');
-        if (!scheduleArray.length) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> No classes scheduled yet</span></td></tr>';
-            return;
-        }
-
-        // Merge Lecture + Lab rows for the same subject into one row.
-        // Key: subject_code + instructor so different faculty teaching same subject stay separate.
-        const groups = {};
-        scheduleArray.forEach(cls => {
-            const key = (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
-            if (!groups[key]) {
-                groups[key] = {
-                    instructor:   cls.instructor || '-',
-                    subject_code: cls.subject_code || '-',
-                    description:  cls.subject_name || cls.description || cls.subjectname || '-',
-                    lec_hours:    0,
-                    lab_hours:    0,
-                    credit_units: cls.credit_units || cls.creditunits || 0,
-                    course:       cls.course || '-',
-                    times:        [],
-                    days_set:     [],
-                    rooms:        [],
-                };
-            }
-            const g = groups[key];
-            g.lec_hours += (cls.lec_hours || cls.lecturehours || 0);
-            g.lab_hours += (cls.lab_hours || cls.laboratoryhours || 0);
-
-            // Collect distinct time strings
-            const t = cls.time || '';
-            if (t && !g.times.includes(t)) g.times.push(t);
-
-            // Collect distinct day abbreviations
-            (cls.days || '').split('/').filter(Boolean).forEach(d => {
-                if (!g.days_set.includes(d)) g.days_set.push(d);
-            });
-
-            // Collect distinct rooms
-            const room = cls.room || 'TBA';
-            if (!g.rooms.includes(room)) g.rooms.push(room);
-        });
-
-        tbody.innerHTML = Object.values(groups).map(g => `
-            <tr>
-                <td>${g.instructor}</td>
-                <td>${g.subject_code}</td>
-                <td>${g.description}</td>
-                <td>${g.lec_hours}</td>
-                <td>${g.lab_hours}</td>
-                <td>${g.credit_units}</td>
-                <td>${g.course}</td>
-                <td>${g.times.join(' / ')}</td>
-                <td>${g.lec_hours + g.lab_hours}</td>
-                <td>${g.days_set.join('/')}</td>
-                <td>${g.rooms.join(' / ')}</td>
-            </tr>
-        `).join('');
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  RENDER CALENDAR VIEW  (timetable-grid + pill overlay)
-    // ══════════════════════════════════════════════════════════════════
-    const CAL_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-    const CAL_DAY_MAP = {
-        'MONDAY':'Monday','TUESDAY':'Tuesday','WEDNESDAY':'Wednesday',
-        'THURSDAY':'Thursday','FRIDAY':'Friday','SATURDAY':'Saturday','SUNDAY':'Sunday',
-        'MON':'Monday','TUE':'Tuesday','WED':'Wednesday','THU':'Thursday',
-        'FRI':'Friday','SAT':'Saturday','SUN':'Sunday',
-        'M':'Monday','W':'Wednesday','F':'Friday','S':'Saturday',
-        'T':'Tuesday','TH':'Thursday','SU':'Sunday'
-    };
-    const GRID_ORIGIN_MINS = 7 * 60 + 30; // 7:30 AM
-
-    function calParseTimeMins(t) {
-        if (!t) return null;
-        t = t.trim();
-        let m = t.match(/^(\d{1,2}):(\d{2})$/);
-        if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
-        m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-        if (m) {
-            let h = parseInt(m[1]), mn = parseInt(m[2]);
-            if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
-            if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-            return h * 60 + mn;
-        }
-        return null;
-    }
-
-    function calParseTimeRange(timeStr) {
-        if (!timeStr) return { start: null, end: null };
-        const parts = timeStr.split(/\s*[-–]\s*/);
-        if (parts.length >= 2) return { start: calParseTimeMins(parts[0]), end: calParseTimeMins(parts[parts.length - 1]) };
-        return { start: null, end: null };
-    }
-
-    function calParseDays(daysStr) {
-        if (!daysStr) return [];
-        const result = [];
-        const push = (d) => { if (!result.includes(d)) result.push(d); };
-        const parts = daysStr.split(/[\/,\s]+/).filter(p => p);
-        for (const part of parts) {
-            const up = part.toUpperCase();
-            if (CAL_DAY_MAP[up]) { push(CAL_DAY_MAP[up]); continue; }
-            if (up === 'TTH') { push('Tuesday'); push('Thursday'); }
-            else if (up === 'MWF') { push('Monday'); push('Wednesday'); push('Friday'); }
-            else if (up === 'MW')  { push('Monday'); push('Wednesday'); }
-            else if (up === 'TF')  { push('Tuesday'); push('Friday'); }
-            else if (up === 'MTH') { push('Monday'); push('Thursday'); }   // Mon–Thu pair (not Tue)
-        }
-        return result;
-    }
-
-    function calSubjectColor(code) {
-        const colors = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
-        let h = 0;
-        for (let i = 0; i < (code || '').length; i++) h = (code || '').charCodeAt(i) + ((h << 5) - h);
-        return colors[Math.abs(h) % colors.length];
-    }
-
-    function calFmtMins(mins) {
-        if (mins === null || mins === undefined) return '—';
-        const h = Math.floor(mins / 60), m = mins % 60;
-        const suffix = h >= 12 ? 'PM' : 'AM';
-        const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-        return h12 + ':' + String(m).padStart(2, '0') + ' ' + suffix;
-    }
-
-    function renderCalendarView(scheduleArray) {
-        const wrapper = document.getElementById('genGridWrapper');
-        const table   = document.getElementById('genMainTimetable');
-        wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
-
-        if (!scheduleArray.length) return;
-
-        // Expand each schedule entry into per-day sessions
-        const sessions = [];
-        scheduleArray.forEach(cls => {
-            const { start, end } = calParseTimeRange(cls.time);
-            const parsedDays = calParseDays(cls.days);
-            parsedDays.forEach(day => {
-                sessions.push({
-                    daydesc:    day,
-                    startMins:  start,
-                    endMins:    end,
-                    subjectcode: cls.subject_code || '',
-                    subjectname: cls.subject_name || cls.description || cls.subjectname || '',
-                    instructor:  cls.instructor || 'TBA',
-                    roomname:    cls.room || 'TBA',
-                });
-            });
-        });
-
-        const firstCell = table.querySelector('tbody td:nth-child(2)');
-        const timeCol   = table.querySelector('.time-cell');
-        const thead     = table.querySelector('thead');
-        if (!firstCell || firstCell.offsetWidth === 0) {
-            requestAnimationFrame(() => renderCalendarView(scheduleArray));
-            return;
-        }
-
-        const colWidth = firstCell.offsetWidth;
-        const pxPerMin = firstCell.offsetHeight / 30;
-
-        const dayGroups = {};
-        sessions.forEach(s => {
-            if (!dayGroups[s.daydesc]) dayGroups[s.daydesc] = [];
-            dayGroups[s.daydesc].push(s);
-        });
-
-        Object.keys(dayGroups).forEach(dayName => {
-            const dayIdx = CAL_DAYS.indexOf(dayName);
-            if (dayIdx < 0) return;
-            const daySessions = dayGroups[dayName];
-            daySessions.sort((a, b) => a.startMins - b.startMins);
-
-            daySessions.forEach((sess, idx) => {
-                let start = sess.startMins, end = sess.endMins;
-                if (start === null) return;
-                if (start < GRID_ORIGIN_MINS) start += 12 * 60;
-                if (end <= start) end += 12 * 60;
-
-                let overlapCount = 0, overlapIndex = 0;
-                daySessions.forEach((other, oIdx) => {
-                    let oS = other.startMins, oE = other.endMins;
-                    if (oS < GRID_ORIGIN_MINS) oS += 12 * 60;
-                    if (oE <= oS) oE += 12 * 60;
-                    if (start < oE && end > oS) { overlapCount++; if (idx > oIdx) overlapIndex++; }
-                });
-
-                const pill  = document.createElement('div');
-                pill.className = 'schedule-pill';
-                pill.style.backgroundColor = calSubjectColor(sess.subjectcode);
-
-                const w     = (colWidth - 6) / (overlapCount || 1);
-                const pillH = (end - start) * pxPerMin - 2;
-
-                pill.style.width  = (w - 2) + 'px';
-                pill.style.height = pillH + 'px';
-                pill.style.left   = (timeCol.offsetWidth + dayIdx * colWidth + overlapIndex * w + 4) + 'px';
-                pill.style.top    = (thead.offsetHeight + (start - GRID_ORIGIN_MINS) * pxPerMin + 1) + 'px';
-
-                pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${calFmtMins(start)} – ${calFmtMins(end)}\n${sess.roomname}`;
-                pill.innerHTML = `
-                    <div class="pill-subject">${sess.subjectname}</div>
-                    <div class="pill-instructor">${sess.instructor}</div>
-                    <div class="pill-room">${sess.roomname}</div>`;
-
-                wrapper.appendChild(pill);
-            });
-        });
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  UPDATE TITLE BAR
-    // ══════════════════════════════════════════════════════════════════
-    function updateTitleBar() {
-        const ctx = getContext();
-        const termName = term.options[term.selectedIndex]?.text || ctx.term;
-        document.getElementById('tableTitle').innerHTML =
-            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} - Year ${ctx.yearLevel || '?'} | ${termName} | ${ctx.acadYear || 'AY'}`;
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  SHARED: APPLY SCHEDULE DATA TO UI
-    // ══════════════════════════════════════════════════════════════════
-    function applyScheduleResult(data, isRetrieve) {
-        currentScheduleData = data.schedule_data || [];
-        currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
-        canPublish          = (data.conflict_count || 0) === 0;
-
-        renderTable(currentScheduleData);
-        updateTitleBar();
-
-        btnRegenerate.disabled   = false;
-        btnSaveDraft.disabled    = false;
-        btnManualEditor.disabled = false;
-        btnExport.disabled       = false;
-        btnApprove.disabled      = !canPublish;
-
-        if ((data.conflict_count || 0) > 0) {
-            document.getElementById('conflictText').textContent =
-                `Schedule has ${data.conflict_count} unresolved conflict(s). Approve is blocked until resolved.`;
-            document.getElementById('conflictBanner').classList.remove('hidden');
-        } else {
-            document.getElementById('conflictBanner').classList.add('hidden');
-        }
-
-        // Toast label differs for retrieve vs generate
-        const toast = document.getElementById('successToast');
-        if (isRetrieve && data.retrieved_from) {
-            const rf = data.retrieved_from;
-            toast.innerHTML =
-                `<i class="fas fa-check-circle"></i> Previous schedule loaded`
-                + ` — ${rf.status} V${rf.version} (${rf.ay_label} ${rf.term})`;
-        } else {
-            toast.innerHTML = '<i class="fas fa-check-circle"></i> Schedule Generated Successfully!';
-        }
-        toast.classList.remove('hidden');
-        setTimeout(() => toast.classList.add('hidden'), 4000);
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  GENERATE SCHEDULE
-    // ══════════════════════════════════════════════════════════════════
-    btnGenerate.addEventListener('click', async () => {
-        const ctx = getContext();
-
-        if (!ctx.acadYear || !ctx.term || !ctx.program || !ctx.yearLevel) {
-            await showInfo('Missing Fields', 'Please select all required fields before generating.', 'error');
-            return;
-        }
-
-        const isRetrieve = useHistorical.checked;
-
-        btnGenerate.disabled = true;
-        btnGenerate.innerHTML = isRetrieve
-            ? '<i class="fas fa-spinner fa-spin"></i> Retrieving...'
-            : '<i class="fas fa-spinner fa-spin"></i> Generating...';
-
-        // Update loading modal text based on mode
-        document.querySelector('#loadingModal h2').textContent =
-            isRetrieve ? 'RETRIEVING PREVIOUS SCHEDULE' : 'GENERATING SCHEDULE';
-        document.querySelector('#loadingModal .loading-subtitle').textContent =
-            isRetrieve
-                ? 'Loading saved schedule from database...'
-                : 'Detecting conflicts & applying constraints...';
-
-        showLoading();
-
-        try {
-            if (isRetrieve) {
-                // ── RETRIEVE PREVIOUS SCHEDULE ──────────────────────────────
-                const res = await fetch('/api/schedule/retrieve-previous', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({
-                        program:   ctx.program,
-                        yearLevel: ctx.yearLevel,
-                        term:      ctx.term,
-                    }),
-                });
-                const data = await res.json();
-                completeProgress();
-
-                if (data.success) {
-                    applyScheduleResult(data, true);
-                } else {
-                    // No previous schedule found — ask user if they want to generate instead
-                    const proceed = await showInfo(
-                        'No Previous Schedule Found',
-                        (data.error || 'No saved schedule found for this selection.')
-                        + '<br><br>Would you like to <strong>generate a new schedule</strong> instead?',
-                        'confirm'
-                    );
-                    if (proceed) {
-                        // Uncheck the checkbox and trigger normal generation
-                        useHistorical.checked = false;
-                        btnGenerate.click();
-                    }
-                }
-            } else {
-                // ── GENERATE NEW SCHEDULE ───────────────────────────────────
-                const res = await fetch('/api/schedule/generate', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({
-                        program:    ctx.program,
-                        yearLevel:  ctx.yearLevel,
-                        term:       ctx.term,
-                        curriculum: curriculum.value,
-                    }),
-                });
-                const data = await res.json();
-                completeProgress();
-
-                if (data.success) {
-                    applyScheduleResult(data, false);
-                } else {
-                    await showInfo('Generation Failed', data.error || 'Could not generate schedule.', 'error');
-                }
-            }
-        } catch (e) {
-            completeProgress();
-            await showInfo('Error', 'Connection error. Please try again.', 'error');
-        } finally {
-            btnGenerate.disabled = false;
-            btnGenerate.innerHTML = '<i class="fas fa-magic"></i> GENERATE SCHEDULE';
-            // Restore loading modal text defaults
-            document.querySelector('#loadingModal h2').textContent = 'GENERATING SCHEDULE';
-            document.querySelector('#loadingModal .loading-subtitle').textContent =
-                'Detecting conflicts & applying constraints...';
-        }
-    });
-
-    btnRegenerate.addEventListener('click', () => {
-        btnGenerate.click();
-    });
-
-
-    btnSaveDraft.addEventListener('click', async () => {
-        if (!currentScheduleData.length) return;
-
-        btnSaveDraft.disabled = true;
-        btnSaveDraft.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-
-        const ctx = getContext();
-        try {
-            const res  = await fetch('/api/schedule/save-draft', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    batch_id:      currentBatchId,
-                    schedule_data: currentScheduleData,
-                    context:       ctx,
-                }),
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                await showInfo(
-                    'Draft Saved!',
-                    `Schedule saved as <strong>Draft V${data.draft_version}</strong>.<br>You can edit it later from <em>View Drafts</em>.`,
-                    'success'
-                );
-            } else {
-                await showInfo('Save Failed', data.error || 'Could not save draft.', 'error');
-            }
-        } catch (e) {
-            await showInfo('Error', 'Connection error. Please try again.', 'error');
-        } finally {
-            btnSaveDraft.disabled = false;
-            btnSaveDraft.innerHTML = '<i class="fas fa-save"></i> Save as Draft';
-        }
-    });
-
-    btnManualEditor.addEventListener('click', () => {
-        window.location.href = "{{ url_for('manual_schedule_editor') }}";
-    });
-
-    btnApprove.addEventListener('click', async () => {
-        if (!currentScheduleData.length) return;
-
-        const confirmed = await showInfo(
-            'Approve & Publish Schedule?',
-            'This will <strong>publish</strong> this schedule as the active version.<br>The previous published version will be archived.',
-            'confirm'
-        );
-        if (!confirmed) return;
-
-        btnApprove.disabled = true;
-        btnApprove.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
-
-        const ctx = getContext();
-        try {
-            const res  = await fetch('/api/schedule/approve', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    batch_id:      currentBatchId,
-                    schedule_data: currentScheduleData,
-                    context:       ctx,
-                }),
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                await showInfo(
-                    'Published!',
-                    `Schedule published as <strong>V${data.published_version}</strong>.<br>A new draft <strong>V${data.draft_version}</strong> has been created automatically.`,
-                    'success'
-                );
-                btnApprove.disabled = true;
-                btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
-            } else {
-                await showInfo('Publish Failed', data.error || 'Could not publish schedule.', 'error');
-                btnApprove.disabled = false;
-                btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
-            }
-        } catch (e) {
-            await showInfo('Error', 'Connection error. Please try again.', 'error');
-            btnApprove.disabled = false;
-            btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
-        }
-    });
-
-    // ══════════════════════════════════════════════════════════════════
-    //  LOAD DRAFT FUNCTION (called from View Drafts modal)
-    // ══════════════════════════════════════════════════════════════════
-    window.loadDraft = async function(versionId) {
-        try {
-            const res = await fetch(`/api/schedule/load-draft/${versionId}`);
-            const data = await res.json();
-            
-            if (data.success) {
-                document.getElementById('draftsModal').classList.add('hidden');
-                
-                currentScheduleData = data.schedule_data || [];
-                currentBatchId = `DRAFT-${versionId}`;
-                
-                if (data.context) {
-                    acadYear.value = data.context.acadYear || '';
-                    term.value = data.context.term || '';
-                    program.value = data.context.program || '';
-                    yearLevel.value = data.context.yearLevel || '';
-                }
-                
-                renderTable(currentScheduleData);
-                updateTitleBar();
-                
-                btnRegenerate.disabled = false;
-                btnSaveDraft.disabled = false;
-                btnManualEditor.disabled = false;
-                btnExport.disabled = false;
-                btnApprove.disabled = true; 
-                
-                await showInfo('Draft Loaded', `Draft V${data.version} has been loaded successfully.`, 'success');
-            } else {
-                await showInfo('Load Failed', data.error || 'Could not load draft.', 'error');
-            }
-        } catch (e) {
-            await showInfo('Error', 'Failed to load draft. Please try again.', 'error');
-        }
-    };
-
-    // ── VIEW DRAFTS ───────────────────────────────────────────────────
-    window.openDraftsModal = async function() {
-        const modal = document.getElementById('draftsModal');
-        const body  = document.getElementById('draftsModalBody');
-        modal.classList.remove('hidden');
-        body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading drafts...</p>';
-
-        try {
-            const res  = await fetch('/api/schedule/drafts');
-            const data = await res.json();
-
-            if (!Array.isArray(data) || !data.length) {
-                body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-folder-open"></i> No drafts saved yet.</p>';
-                return;
-            }
-
-            body.innerHTML = `
-                <table class="modal-table">
-                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>A.Y.</th><th>Version</th><th>Saved</th><th>Action</th></tr></thead>
-                    <tbody>
-                        ${data.map(d => `
-                            <tr>
-                                <td>${d.programcode || '-'}</td>
-                                <td>Year ${d.yearlevel || '-'}</td>
-                                <td>${d.term || '-'}</td>
-                                <td>${d.acadyear || '-'}</td>
-                                <td><span class="badge draft">Draft V${d.version_number}</span></td>
-                                <td>${d.datecreated ? new Date(d.datecreated).toLocaleDateString() : '-'}</td>
-                                <td><button class="btn-load-draft" onclick="loadDraft(${d.versionid})"><i class="fas fa-folder-open"></i> Load</button></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        } catch (e) {
-            body.innerHTML = '<p class="empty-modal-msg error-msg"><i class="fas fa-times-circle"></i> Failed to load drafts.</p>';
-        }
-    };
-
-    // ── VERSION HISTORY ───────────────────────────────────────────────
-    window.openVersionHistoryModal = async function() {
-        const modal = document.getElementById('versionModal');
-        const body  = document.getElementById('versionModalBody');
-        modal.classList.remove('hidden');
-        body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-spinner fa-spin"></i> Loading history...</p>';
-
-        try {
-            const res  = await fetch('/api/schedule/versions');
-            const data = await res.json();
-
-            if (!Array.isArray(data) || !data.length) {
-                body.innerHTML = '<p class="empty-modal-msg"><i class="fas fa-history"></i> No version history yet.</p>';
-                return;
-            }
-
-            const statusClass = { Published: 'published', Draft: 'draft', Archive: 'archive' };
-
-            body.innerHTML = `
-                <table class="modal-table">
-                    <thead><tr><th>Program</th><th>Year</th><th>Term</th><th>A.Y.</th><th>Version</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
-                    <tbody>
-                        ${data.map(d => `
-                            <tr>
-                                <td>${d.programcode || '-'}</td>
-                                <td>Year ${d.yearlevel || '-'}</td>
-                                <td>${d.term || '-'}</td>
-                                <td>${d.acadyear || '-'}</td>
-                                <td>V${d.version_number}</td>
-                                <td><span class="badge ${statusClass[d.status] || ''}">${d.status}</span></td>
-                                <td>${d.datecreated ? new Date(d.datecreated).toLocaleDateString() : '-'}</td>
-                                <td>${d.status === 'Draft' ? `<button class="btn-load-draft" onclick="loadDraft(${d.versionid})"><i class="fas fa-folder-open"></i> Load</button>` : '-'}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        } catch (e) {
-            body.innerHTML = '<p class="empty-modal-msg error-msg"><i class="fas fa-times-circle"></i> Failed to load version history.</p>';
-        }
-    };
-
-    // Close modals on overlay click
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', e => {
-            if (e.target === overlay) overlay.classList.add('hidden');
-        });
-    });
-});
-</script>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/scheduleGeneration.acad.js') }}"></script>
 {% endblock %}

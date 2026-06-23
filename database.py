@@ -19,6 +19,12 @@ def get_db_connection():
 def query_db(query, args=(), one=False):
     """Function to run queries and return results as dictionaries"""
     conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError(
+            f"Could not connect to database '{Config.DB_NAME}' at "
+            f"{Config.DB_HOST}:{Config.DB_PORT}. "
+            "Check that PostgreSQL is running and the database exists."
+        )
     # Using RealDictCursor allows you to access columns by name: result['EmployeeNumber']
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(query, args)

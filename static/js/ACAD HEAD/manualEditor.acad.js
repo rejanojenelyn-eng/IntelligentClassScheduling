@@ -49,11 +49,26 @@ let _skipExistingCheck    = false;
 let _hasExistingSchedule  = false;
 let _pendingExistingSessions = [];
 
-const DAY_PAIR_MAP = {
-    Monday: 'Thursday', Thursday: 'Monday',
-    Tuesday: 'Friday',  Friday: 'Tuesday',
-    Wednesday: 'Saturday', Saturday: 'Wednesday'
-};
+// Day pairing alignment settings — loaded from DB-configured HC settings
+const DAY_PAIRING_ENABLED = _initData.dataset.dayPairingEnabled !== 'false';
+const VALID_DAY_PAIRS = (() => {
+    try {
+        return JSON.parse(_initData.dataset.dayPairs || '[]');
+    } catch(e) {
+        return [['Monday','Thursday'],['Tuesday','Friday'],['Wednesday','Saturday']];
+    }
+})();
+// Fast lookup: for any day, what is its valid partner in the configured pairs?
+const DAY_PAIR_MAP = (() => {
+    const map = {};
+    for (const pair of VALID_DAY_PAIRS) {
+        if (pair.length === 2) {
+            map[pair[0]] = pair[1];
+            map[pair[1]] = pair[0];
+        }
+    }
+    return map;
+})();
 const MAN_WEEKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
 
 function showSplitChoiceModal(totalHours) {
@@ -1355,9 +1370,85 @@ async function confirmAndPlace() {
         }
     }
 
-    // Lab room constraint note: checked in aggregate at save time, not per-session.
-    // A subject may have both lecture and lab sessions — only lab hours need a lab room.
-    // The save guard in _triggerSaveDraft enforces that lab hours are covered.
+    // ── HC6: Day Pairing Alignment ─────────────────────────────────────────────
+    // When day pairing is enabled, a subject may only span valid day pairs
+    // (e.g. Mon-Thu, Tue-Fri, Wed-Sat). Collect all days already assigned to
+    // this subject (DB-saved and pending) and block invalid combinations.
+    if (DAY_PAIRING_ENABLED) {
+        const subj      = subjSel.value;
+        const otherDays = new Set();
+
+        // Exclude the original day when editing an existing session
+        const editOrigDay = window.currentEditSession
+            ? (window.currentEditSession.daydesc || window.currentEditSession.day || null)
+            : null;
+
+        // Days from already-saved DB sessions for this subject
+        for (const d of _existingDays) {
+            if (d === dayVal)      continue;   // same as selected — fine
+            if (d === editOrigDay) continue;   // original day being replaced
+            otherDays.add(d);
+        }
+
+        // Days from in-memory pending sessions for the same subject/AY/sem
+        for (const c of pendingManualSchedule) {
+            if ((c.subject_code || '') !== subj) continue;
+            if (c.ay !== ay || c.sem !== sem)   continue;
+            if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
+            if (c.day === dayVal) continue;
+            otherDays.add(c.day);
+        }
+
+        if (otherDays.size > 0) {
+            const allDays    = [dayVal, ...otherDays];
+            const sortedDays = [...allDays].sort();
+            let pairingValid = false;
+
+            if (allDays.length === 2) {
+                // Exactly 2 days — check if they form a configured valid pair
+                pairingValid = VALID_DAY_PAIRS.some(pair =>
+                    [...pair].sort().join(',') === sortedDays.join(',')
+                );
+            }
+            // 3+ days always invalid under day pairing
+
+            if (!pairingValid) {
+                const partner  = DAY_PAIR_MAP[dayVal] || 'its configured partner';
+                const pairStr  = VALID_DAY_PAIRS.map(p => p.join(' & ')).join(', ');
+                const existing = [...otherDays].join(', ');
+                if (_sm() === 'local') {
+                    const proceed = await showConfirmModal(
+                        `[Local Override] "${subj}" is already on ${existing}. ` +
+                        `"${dayVal}" should be paired with "${partner}" per Day Pairing Alignment. ` +
+                        `Valid pairs: ${pairStr}.\n\nLocal Scheduler allows this override. Proceed?`,
+                        'HC Override — Day Pairing Alignment'
+                    );
+                    if (!proceed) return;
+                } else {
+                    await showValidationModal(
+                        'Day Pairing Alignment Violation',
+                        `"${subj}" is already scheduled on ${existing}.\n\n` +
+                        `With Day Pairing Alignment enabled, "${dayVal}" must be paired with "${partner}".\n\n` +
+                        `Valid pairings are: ${pairStr}.\n\n` +
+                        `Please select a day that forms a valid pair, or disable Day Pairing Alignment in Settings.`
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    // Lab room constraint: subjects with lab hours must use a Laboratory room
+    if (LAB_CONSTRAINT_ENABLED && _subjInfo && _subjInfo.laboratoryhours > 0 && roomVal) {
+        const chosenRoom = allRooms.find(r => String(r.id) === String(roomVal));
+        if (chosenRoom && (chosenRoom.type || '').toLowerCase() !== 'laboratory') {
+            await showValidationModal('Laboratory Room Required',
+                `"${subjSel.value}" has ${_subjInfo.laboratoryhours} lab hour(s) and must be assigned to a Laboratory room. ` +
+                `"${roomName}" is a ${chosenRoom.type || 'non-laboratory'} room.\n\n` +
+                `Please select a Laboratory room, or disable the Laboratory Session Constraint in Settings.`);
+            return;
+        }
+    }
 
     if (_facInfo && dayVal) {
         const isWkd    = MAN_WEEKDAYS.has(dayVal);
