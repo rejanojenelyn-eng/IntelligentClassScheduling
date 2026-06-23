@@ -1169,10 +1169,11 @@ async function analyzeDocx() {
 function _showDocxError(msg) { _showAnalyzeError('docxAnalyzeError', msg); }
 
 function _renderPdfReviewModal(data) {
-    const confidence = data.confidence || 0;
-    const warnings   = data.warnings   || [];
-    const rawText    = data.raw_text   || '';
-    const banner     = document.getElementById('pdfReviewBanner');
+    const confidence   = data.confidence    || 0;
+    const warnings     = data.warnings      || [];
+    const rawText      = data.raw_text      || '';
+    const skippedRows  = data.skipped_rows  || [];
+    const banner       = document.getElementById('pdfReviewBanner');
 
     // Populate header meta bar (program / year / source)
     const meta = document.getElementById('pdfReviewMeta');
@@ -1215,7 +1216,31 @@ function _renderPdfReviewModal(data) {
         ? '<div class="conf-note" style="margin-bottom:6px;"><i class="fas fa-exclamation-circle" style="margin-right:5px;"></i>Please review and correct the extracted data below before importing.</div>'
         : '';
 
-    banner.innerHTML = `${reviewNote}${warnHtml}${rawHtml}`;
+    // Skipped-rows panel: show rows the parser rejected so admin can spot missing subjects
+    let skippedHtml = '';
+    if (skippedRows.length) {
+        const rows = skippedRows.map(sk => {
+            const cells = (sk.cells || []).map(c => _esc(c)).join(' | ');
+            return `<tr><td style="font-family:monospace;font-size:12px;">${cells}</td>`
+                 + `<td style="font-size:12px;color:#888;">${_esc(sk.reason)}</td></tr>`;
+        }).join('');
+        skippedHtml = `
+        <details class="pdf-skipped-details" style="margin-top:8px;">
+            <summary style="cursor:pointer;font-weight:600;color:#b45309;">
+                <i class="fas fa-exclamation-triangle" style="margin-right:5px;"></i>
+                ${skippedRows.length} row(s) were detected but not imported — click to review
+            </summary>
+            <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:12px;">
+                <thead><tr>
+                    <th style="text-align:left;padding:4px 6px;background:#fef3c7;">Row content</th>
+                    <th style="text-align:left;padding:4px 6px;background:#fef3c7;">Reason skipped</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </details>`;
+    }
+
+    banner.innerHTML = `${reviewNote}${warnHtml}${skippedHtml}${rawHtml}`;
 
     _rebuildReviewTable();
 

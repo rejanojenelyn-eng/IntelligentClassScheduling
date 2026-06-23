@@ -2079,6 +2079,12 @@ def get_offerings_schedule():
                   WHERE semestertype = %s AND academicyearid = %s LIMIT 1
               )
               {section_clause}
+              AND sv.version_number = (
+                  SELECT MAX(sv2.version_number)
+                  FROM schedule_version sv2
+                  WHERE sv2.scheduleid = sv.scheduleid
+                    AND sv2.status = sv.status
+              )
             ORDER BY
                 CASE WHEN sv.status = 'Published' THEN 0 ELSE 1 END,
                 ts_s.timevalue NULLS LAST
@@ -2561,6 +2567,12 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
         LEFT JOIN timeslot ts_s     ON ss.starttimeid=ts_s.timeid
         LEFT JOIN timeslot ts_e     ON ss.endtimeid=ts_e.timeid
         WHERE """ + " AND ".join(nf) + """
+          AND sv.version_number = (
+              SELECT MAX(sv2.version_number)
+              FROM schedule_version sv2
+              WHERE sv2.scheduleid = sv.scheduleid
+                AND sv2.status = sv.status
+          )
         ORDER BY pyl.programcode, pyl.yearlevel, cs.subjectcode, ss.daydesc NULLS LAST
     """
     cur.execute(norm_q, np_)
@@ -2706,6 +2718,74 @@ def schedule_export_multi():
         return jsonify({'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
+
+
+@app.route('/api/schedule/export-generated', methods=['POST'])
+def api_export_generated_schedule():
+    """
+    Export the in-memory generated schedule (not yet saved to DB) in the requested format.
+    Accepts: {schedule_data: [...], format: 'pdf'|'docx'|'xlsx'|'csv', context: {...}, filename: '...'}
+    """
+    try:
+        data          = request.get_json() or {}
+        fmt           = (data.get('format') or 'csv').lower()
+        raw_sched     = data.get('schedule_data') or []
+        ctx           = data.get('context') or {}
+        filename_base = (data.get('filename') or 'schedule_export').strip()
+        for ext in ('.pdf', '.docx', '.xlsx', '.csv'):
+            if filename_base.lower().endswith(ext):
+                filename_base = filename_base[:-len(ext)]
+
+        program    = ctx.get('program', '')
+        year_level = ctx.get('yearLevel', '')
+        acad_year  = ctx.get('acadYear', '')
+        term       = ctx.get('term', '')
+        section    = ctx.get('section', '')
+        sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+        sem_label  = sem_map.get(term, term)
+
+        # Normalize the JS schedule_data format → the column keys expected by _sch_gen_*
+        rows = []
+        for cls in raw_sched:
+            rows.append({
+                'Instructor':      cls.get('instructor') or 'TBA',
+                'SubjectCode':     cls.get('subject_code') or cls.get('subjectcode') or '',
+                'SubjectName':     cls.get('description') or cls.get('subjectname') or '',
+                'LectureHours':    cls.get('lec_hours') or cls.get('lecturehours') or 0,
+                'LaboratoryHours': cls.get('lab_hours') or cls.get('laboratoryhours') or 0,
+                'CreditUnits':     cls.get('credit_units') or cls.get('creditunits') or cls.get('units') or 0,
+                'Program':         cls.get('course') or program,
+                'YearLevel':       year_level,
+                'Section':         section,
+                'Hours':           cls.get('hours') or '',
+                'Day/s':           cls.get('days') or '',
+                'Time':            (cls.get('time') or '').replace('–', '-'),
+                'Room':            cls.get('room') or 'TBA',
+                'AcademicYear':    acad_year,
+                'SemesterType':    sem_label,
+            })
+
+        groups = _sch_exp_groups(rows)
+
+        if fmt == 'csv':
+            out, mime, ext = _sch_gen_csv(rows), 'text/csv', '.csv'
+        elif fmt == 'xlsx':
+            out, mime, ext = _sch_gen_xlsx(rows, groups), \
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'
+        elif fmt == 'docx':
+            out, mime, ext = _sch_gen_docx(rows, groups, f'{program} Year {year_level} — {sem_label} {acad_year}'), \
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'
+        elif fmt == 'pdf':
+            out, mime, ext = _sch_gen_pdf(rows, groups, f'{program} Year {year_level} — {sem_label} {acad_year}'), \
+                'application/pdf', '.pdf'
+        else:
+            return jsonify({'error': f'Unsupported format: {fmt}'}), 400
+
+        return Response(out, mimetype=mime,
+                        headers={'Content-Disposition': f'attachment; filename="{filename_base}{ext}"'})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 def _sch_gen_csv(rows):
@@ -3491,7 +3571,9 @@ def _parse_sis_excel(file_obj):
             return False
 
     def _cv(v):
-        return str(v).strip() if v is not None else ''
+        if v is None: return ''
+        if isinstance(v, float) and v == int(v): return str(int(v))
+        return str(v).strip()
 
     def _is_person_name(txt):
         """True when txt looks like  LASTNAME, FIRSTNAME [M.I.]"""
@@ -3862,7 +3944,8 @@ def sis_import_preview():
     def _si(val):
         if not val: return 0
         try:
-            num = ''.join(filter(str.isdigit, str(val))); return int(num) if num else 0
+            f = float(str(val).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _nr(raw):
@@ -4064,7 +4147,8 @@ def sis_import_confirm():
     def _si(val):
         if not val or str(val).strip() == '': return 0
         try:
-            num = ''.join(filter(str.isdigit, str(val))); return int(num) if num else 0
+            f = float(str(val).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _pd(days_raw):
@@ -4115,7 +4199,11 @@ def sis_import_confirm():
     except Exception:
         pass
 
-    saved_c = 0; saved_h = 0
+    # Build a map from uppercase programcode -> exact DB programcode for normalization
+    cur.execute("SELECT programcode FROM programs")
+    _prog_norm_map = {r['programcode'].strip().upper(): r['programcode'].strip() for r in cur.fetchall()}
+
+    saved_c = 0; saved_h = 0; created_subj = 0; created_sec = 0; saved_skip = 0
     # Initialised before loop so the except block can always report context.
     prog = ''; yl = 1; s_code = ''
 
@@ -4138,35 +4226,8 @@ def sis_import_confirm():
         ay_yearstart = int(_ayr2['yearstart']) if _ayr2 else None
         from datetime import date as _date2
         _today2 = _date2.today()
-        # Current = today is within [semstartdate, semenddate] (or no end date configured)
-        is_cur = (
-            (s_dt is None or s_dt <= _today2) and
-            (e_dt is None or _today2 <= e_dt)
-        )
-
-        # If this is a current active semester, purge any stale historical_data
-        # rows for it — they belong in the schedule tables, not in historical.
-        if is_cur:
-            cur.execute("DELETE FROM historical_data WHERE semesterid = %s", (sem_id,))
-            print(f"[SIS Confirm] Purged historical_data rows for current semesterid={sem_id}")
-
-        saved_skip = 0; created_subj = 0; created_sec = 0
-        skipped_details = []
-
-        # Build a normalization map so "BSBIO AT" (space) → "BSBIO-AT" (hyphen),
-        # "BSBIO-AT" → "BSBIO-AT", etc. — handles all format variants the SIS
-        # file produces vs. how programs are actually stored in the DB.
-        _db_progs_conf = query_db("SELECT programcode FROM programs WHERE isactive=TRUE") or []
-        _prog_norm_map = {}
-        for _p in _db_progs_conf:
-            _c = _p['programcode'].upper()
-            for _variant in [
-                _c,
-                re.sub(r'\s+', '-', _c),        # spaces → hyphen
-                re.sub(r'-', ' ', _c),            # hyphens → space
-                re.sub(r'[-\s]', '', _c),         # no separator
-            ]:
-                _prog_norm_map.setdefault(_variant, _c)
+        # Current = semester has not ended yet (or no end date configured)
+        is_cur = not (e_dt and e_dt < _today2)
 
         for row in rows:
             inst          = row.get('instructor', '')
@@ -4750,7 +4811,8 @@ def _parse_schedule_csv(file_bytes):
     def _si(v):
         if not v: return 0
         try:
-            n = ''.join(filter(str.isdigit, str(v))); return int(n) if n else 0
+            f = float(str(v).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     rows_out = []
@@ -5109,7 +5171,8 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
     def _si(v):
         if not v: return 0
         try:
-            n = ''.join(filter(str.isdigit, str(v))); return int(n) if n else 0
+            f = float(str(v).strip())
+            return int(f) if f == int(f) else f
         except: return 0
 
     def _nr(raw):
@@ -5644,6 +5707,16 @@ def manual_schedule_editor():
         weekend_day             = _sched_cfg.get('hc_weekend_day', 'sunday_only')
         weekend_subject         = _sched_cfg.get('hc_weekend_subject', 'nstp_only')
         spec_constraint_enabled = bool(_sched_cfg.get('hc_faculty_spec_enabled', 1))
+        day_pairing_enabled     = bool(_sched_cfg.get('hc_day_pairing_enabled', 1))
+        _raw_pairs = _sched_cfg.get('hc_day_pairs', '')
+        if _raw_pairs:
+            try:
+                _parsed = json.loads(_raw_pairs) if isinstance(_raw_pairs, str) else _raw_pairs
+                day_pairs_json = json.dumps([list(p) for p in _parsed if len(p) == 2])
+            except Exception:
+                day_pairs_json = json.dumps([["Monday","Thursday"],["Tuesday","Friday"],["Wednesday","Saturday"]])
+        else:
+            day_pairs_json = json.dumps([["Monday","Thursday"],["Tuesday","Friday"],["Wednesday","Saturday"]])
 
         return render_template('academic/manualScheduleEditor.html',
                                scheduler_mode=scheduler_mode,
@@ -5658,7 +5731,9 @@ def manual_schedule_editor():
                                weekend_enabled=weekend_enabled,
                                weekend_day=weekend_day,
                                weekend_subject=weekend_subject,
-                               spec_constraint_enabled=spec_constraint_enabled)
+                               spec_constraint_enabled=spec_constraint_enabled,
+                               day_pairing_enabled=day_pairing_enabled,
+                               day_pairs_json=day_pairs_json)
     finally:
         cur.close()
         conn.close()
@@ -10580,6 +10655,55 @@ def admin_schedule():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     return render_template('admin/schedule_admin.html')
 
+@app.route('/admin/schedule/sis')
+def admin_class_schedule_sis():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    from datetime import date as _date
+    programs   = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+    today = _date.today()
+    active_sem_res = query_db("""
+        SELECT s.semestertype, ay.academicyearid
+        FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE %s BETWEEN s.semstartdate AND s.semenddate LIMIT 1
+    """, [today])
+    if active_sem_res:
+        active_sem_type = active_sem_res[0]['semestertype']
+        active_ay       = active_sem_res[0]['academicyearid']
+    else:
+        most_recent = query_db("""
+            SELECT sem.semestertype, sem.academicyearid
+            FROM historical_data hd JOIN semester sem ON hd.semesterid = sem.semesterid
+            GROUP BY sem.semestertype, sem.academicyearid
+            ORDER BY MAX(hd.semesterid) DESC LIMIT 1
+        """)
+        if most_recent:
+            active_sem_type = most_recent[0]['semestertype']
+            active_ay       = most_recent[0]['academicyearid']
+        else:
+            active_sem_type = 'B'
+            active_ay       = acad_years[0]['academicyearid'] if acad_years else ''
+    sem_data = query_db("""
+        SELECT academicyearid, semestertype, semenddate FROM semester
+        WHERE academicyearid IN (SELECT academicyearid FROM academicyear WHERE yearend >= %s)
+        ORDER BY academicyearid, semestertype
+    """, [today.year])
+    import json as _json
+    sem_json = _json.dumps([
+        {'ay': r['academicyearid'], 'type': r['semestertype'],
+         'end': r['semenddate'].isoformat() if r['semenddate'] else None}
+        for r in (sem_data or [])
+    ])
+    return render_template('admin/class_schedule_sis_admin.html',
+                           programs=programs, acad_years=acad_years,
+                           active_sem_type=active_sem_type, active_ay=active_ay,
+                           today=today.isoformat(), sem_json=sem_json)
+
+@app.route('/admin/schedule/room-schedule')
+def admin_room_schedule():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    return render_template('admin/room_schedule_admin.html')
+
 def format_time(t):
     if not t: return "-"
     if isinstance(t, time): return t.strftime("%I:%M %p")
@@ -12621,6 +12745,57 @@ def reports_data():
                     })
             return jsonify({'grouped': True, 'sections': sections})
 
+        # ── Room Schedule — classes grouped by room/building ────────
+        elif rtype == 'room_schedule':
+            where, p = ["sv.status IN ('Published','Archive','Draft')"], []
+            if ay:
+                where.append("sem.academicyearid = %s"); p.append(ay)
+            if sem and sem != 'All':
+                where.append("sem.semestertype = %s"); p.append(sem)
+            if bldg and bldg != 'All':
+                where.append("b.buildingid = %s"); p.append(int(bldg))
+            if room_type and room_type != 'All':
+                where.append("r.roomtype = %s"); p.append(room_type)
+            cur.execute(f"""
+                SELECT
+                    b.buildingname AS "Building",
+                    r.roomname AS "Room",
+                    sub.subjectcode AS "Subject Code",
+                    sub.subjectname AS "Subject",
+                    f.lastname || ', ' || f.firstname AS "Instructor",
+                    ao.offeringcode || ' ' || pyl.yearlevel AS "Course",
+                    string_agg(DISTINCT
+                        CASE ss.daydesc
+                            WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
+                            WHEN 'Wednesday' THEN 'WED' WHEN 'Thursday' THEN 'THU'
+                            WHEN 'Friday' THEN 'FRI' WHEN 'Saturday' THEN 'SAT'
+                            WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END, '/') AS "Days",
+                    string_agg(
+                        to_char(ts_s.timevalue::interval,'HH12:MI AM') || ' – ' ||
+                        to_char(ts_e.timevalue::interval,'HH12:MI AM'),
+                        '/' ORDER BY ts_s.timevalue) AS "Time"
+                FROM schedule_sessions ss
+                JOIN schedule_version sv ON ss.versionid           = sv.versionid
+                JOIN schedule sg         ON sv.scheduleid          = sg.scheduleid
+                JOIN semester sem        ON sg.semesterid          = sem.semesterid
+                JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN subject sub         ON cs.subjectcode         = sub.subjectcode
+                JOIN sections sec        ON sg.sectionid           = sec.sectionid
+                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
+                JOIN faculty f           ON sg.employeenumber      = f.employeenumber
+                JOIN room r              ON ss.roomid              = r.roomid
+                JOIN building b          ON r.buildingid           = b.buildingid
+                LEFT JOIN timeslot ts_s  ON ss.starttimeid         = ts_s.timeid
+                LEFT JOIN timeslot ts_e  ON ss.endtimeid           = ts_e.timeid
+                WHERE {' AND '.join(where)}
+                GROUP BY b.buildingname, r.roomname, sub.subjectcode, sub.subjectname,
+                         f.lastname, f.firstname, ao.offeringcode, pyl.yearlevel
+                ORDER BY b.buildingname, r.roomname, sub.subjectcode
+            """, p)
+            payload = rows_to_payload(cur.fetchall())
+            return jsonify(payload or {'columns': [], 'rows': []})
+
         else:
             return jsonify({'error': 'Unknown report type'}), 400
 
@@ -13145,6 +13320,83 @@ def _load_faculty_map():
         }
     return faculty_map
 
+
+def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
+                                       exclude_program=None, exclude_year_level=None):
+    """
+    #11: Returns overload dicts for faculty who exceed their load limit when the
+    submitted schedule is combined with existing Published/Draft schedules for
+    OTHER programs/year-levels in the same semester.
+    """
+    if not schedule_list or not sem_id:
+        return []
+
+    from collections import defaultdict as _dd
+    submitted_units: dict = _dd(int)
+    for cls in schedule_list:
+        fid   = cls.get('faculty_id') or cls.get('employeenumber')
+        units = int(cls.get('units', 0) or cls.get('credit_units', 0)
+                    or cls.get('creditunits', 0) or 0)
+        if fid and units > 0:
+            submitted_units[fid] += units
+
+    if not submitted_units:
+        return []
+
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return []
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        excl_prog = (exclude_program or '').upper()
+        excl_yl   = int(exclude_year_level or 0)
+        # Sum units already committed in OTHER sections (exclude the one being saved)
+        cur.execute("""
+            SELECT sc.employeenumber AS faculty_id,
+                   COALESCE(SUM(COALESCE(cs.creditunits, 0)), 0) AS committed_units
+            FROM schedule_version sv
+            JOIN schedule sc          ON sv.scheduleid         = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            WHERE sc.semesterid = %s
+              AND sv.status IN ('Published', 'Draft')
+              AND sc.employeenumber = ANY(%s)
+              AND cs.creditunits > 0
+              AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)
+            GROUP BY sc.employeenumber
+        """, (sem_id, list(submitted_units.keys()), excl_prog, excl_yl))
+        existing_loads = {r['faculty_id']: int(r['committed_units'] or 0)
+                          for r in (cur.fetchall() or [])}
+        cur.close(); conn.close()
+    except Exception:
+        return []
+
+    violations = []
+    for fid, new_units in submitted_units.items():
+        fac = faculty_map.get(fid, {})
+        if not fac:
+            continue
+        et        = fac.get('employeetype', {})
+        max_total = ((et.get('regularload') or 0)
+                     + (et.get('parttimeload') or 0)
+                     + (et.get('teachingsubstitution') or 0))
+        if max_total <= 0:
+            max_total = 99  # no configured limit → no cap
+        existing  = existing_loads.get(fid, 0)
+        total     = existing + new_units
+        if total > max_total:
+            violations.append({
+                'faculty_id':   fid,
+                'faculty_name': fac.get('fullname') or fid,
+                'current_load': existing,
+                'new_units':    new_units,
+                'total_load':   total,
+                'max_load':     max_total,
+                'overload_by':  total - max_total,
+            })
+    return violations
+
+
 def _parse_days(days_str: str) -> list:
     abbr_map = {'MON': 'Monday', 'TUE': 'Tuesday', 'WED': 'Wednesday', 'THU': 'Thursday', 'FRI': 'Friday', 'SAT': 'Saturday', 'SUN': 'Sunday'}
     if not days_str: return []
@@ -13204,8 +13456,12 @@ def _get_semester_id(cur, acad_year, term):
 # ── DATABASE BATCH VERSIONING LOGIC ───────────────────────────────────
 
 def _archive_status(cur, program, year_level, term, semester_id, status_to_archive, source=None):
+    # 'term' kept for signature compatibility; 's.semesterid = %s' already identifies the semester.
+    # The old 'cs.semester = %s' filter was incorrectly restricting archiving to subjects whose
+    # curriculum semester designation matched the current term, leaving other subjects un-archived
+    # and causing duplicate Published records in SIS queries.
     extra = "AND sv.source = %s" if source else ""
-    params = [program, year_level, term, semester_id, status_to_archive]
+    params = [program, year_level, semester_id, status_to_archive]
     if source:
         params.append(source)
     cur.execute(f"""
@@ -13215,7 +13471,7 @@ def _archive_status(cur, program, year_level, term, semester_id, status_to_archi
         WHERE sv.scheduleid = s.scheduleid AND s.curriculumsubjectid = cs.curriculumsubjectid
           AND cs.curriculumid = c.curriculumid
           AND c.programcode = %s
-          AND cs.yearlevel = %s AND cs.semester = %s AND s.semesterid = %s AND sv.status = %s
+          AND cs.yearlevel = %s AND s.semesterid = %s AND sv.status = %s
           {extra}
     """, params)
 
@@ -13224,6 +13480,7 @@ def _archive_status_for_subjects(cur, program, year_level, term, semester_id, st
     if not subject_codes: return
     upper_codes = [s.upper() for s in subject_codes]
     placeholders = ','.join(['%s'] * len(upper_codes))
+    # 'term' kept for signature compatibility; removed cs.semester = %s (same fix as _archive_status)
     cur.execute(f"""
         UPDATE public.schedule_version sv
         SET status = 'Archive'
@@ -13231,9 +13488,37 @@ def _archive_status_for_subjects(cur, program, year_level, term, semester_id, st
         WHERE sv.scheduleid = s.scheduleid AND s.curriculumsubjectid = cs.curriculumsubjectid
           AND cs.curriculumid = c.curriculumid
           AND c.programcode = %s
-          AND cs.yearlevel = %s AND cs.semester = %s AND s.semesterid = %s AND sv.status = %s
+          AND cs.yearlevel = %s AND s.semesterid = %s AND sv.status = %s
           AND UPPER(cs.subjectcode) IN ({placeholders})
-    """, [program, year_level, term, semester_id, status_to_archive] + upper_codes)
+    """, [program, year_level, semester_id, status_to_archive] + upper_codes)
+
+def _group_carry_forward_sessions(sessions):
+    """Group per-day rows from _fetch_section_sessions into multi-day items.
+
+    _fetch_section_sessions returns one row per schedule_sessions entry (one per day).
+    A paired-day subject yields two rows (e.g. Tuesday + Friday). Grouping them ensures
+    _insert_batch creates a single schedule+version record with multiple sessions rows
+    instead of two separate schedule+version records.
+    """
+    groups = {}
+    order  = []
+    for row in sessions:
+        key = (
+            (row.get('subjectcode') or '').upper(),
+            str(row.get('employeenumber') or ''),
+            str(row.get('start_time', '')),
+            str(row.get('end_time', '')),
+        )
+        if key not in groups:
+            item = dict(row)
+            item['days_list'] = [row['daydesc']] if row.get('daydesc') else []
+            groups[key] = item
+            order.append(key)
+        else:
+            if row.get('daydesc') and row['daydesc'] not in groups[key]['days_list']:
+                groups[key]['days_list'].append(row['daydesc'])
+    return [groups[k] for k in order]
+
 
 def _insert_batch(cur, schedule_data, semester_id, target_status, version_number, program, year_level, source='manual_editor'):
     _ensure_source_col(cur)
@@ -13253,10 +13538,16 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         s_code = cls.get('subjectcode') or cls.get('subject_code')
         f_num  = cls.get('employeenumber') or cls.get('faculty_id')
         r_id   = cls.get('roomid') or cls.get('room_id')
-        day    = cls.get('daydesc') or cls.get('day')
         start_t, end_t = cls.get('start_time'), cls.get('end_time')
 
-        if not all([s_code, f_num, start_t, end_t]): continue
+        # Collect all days — GA items have days_list with both days; per-day items use daydesc/day
+        days_to_insert = list(cls.get('days_list') or [])
+        if not days_to_insert:
+            single = cls.get('daydesc') or cls.get('day')
+            if single:
+                days_to_insert = [single]
+
+        if not all([s_code, f_num, start_t, end_t]) or not days_to_insert: continue
 
         cur.execute("""
             SELECT cs.curriculumsubjectid FROM public.curriculumsubject cs
@@ -13283,7 +13574,7 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         except: continue
 
         cur.execute("""
-            INSERT INTO public.schedule (curriculumsubjectid, sectionid, employeenumber, semesterid, datecreated) 
+            INSERT INTO public.schedule (curriculumsubjectid, sectionid, employeenumber, semesterid, datecreated)
             VALUES (%s, %s, %s, %s, NOW()) RETURNING scheduleid
         """, (cs_id, section_id, f_num, semester_id))
         sched_id = cur.fetchone()['scheduleid']
@@ -13294,8 +13585,10 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         """, (sched_id, version_number, target_status, source, target_status))
         ver_id = cur.fetchone()['versionid']
 
-        cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
-                    (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
+        # Insert ONE schedule_sessions row per day (paired subjects get two rows under the same version)
+        for day in days_to_insert:
+            cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
+                        (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
 
 def _build_published_baseline(cur, program, year_level, sem_id, subject_codes, priority_sessions):
     """Return existing Published slots for subject_codes that are NOT already covered by priority_sessions.
@@ -13376,7 +13669,7 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
           AND  cs.yearlevel    = %s
           AND  sg.semesterid        = %s
           AND  sv.status IN ({status_filter})
-          AND  sv.source            = 'manual_editor'
+          AND  sv.source != 'local'
           {excl_sql}
     """, [program, year_level, sem_id] + upper_excl)
 
@@ -13430,19 +13723,26 @@ def room_schedule_view():
 @app.route('/academic/schedule-generation')
 def schedule_generation_view():
     if 'loggedin' not in session: return redirect(url_for('login'))
+    from datetime import date as _date
+    _today = _date.today()
     programs_data = query_db("SELECT programcode, programname FROM programs WHERE isactive = true ORDER BY programname;")
     programs = [{'code': p['programcode'], 'name': p['programname']} for p in (programs_data or [])]
-    acad_years = [a['academicyearid'] for a in (query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC;") or [])]
+    # #2: Only show the current academic year and future academic years.
+    acad_years = [a['academicyearid'] for a in (query_db(
+        "SELECT academicyearid FROM academicyear WHERE yearend >= %s ORDER BY yearstart ASC;",
+        [_today.year]
+    ) or [])]
     curriculums = [c['curriculumyear'] for c in (query_db("SELECT DISTINCT curriculumyear FROM curriculum ORDER BY curriculumyear DESC;") or [])]
     terms = [{'id': 'A', 'name': '1ST SEMESTER'}, {'id': 'B', 'name': '2ND SEMESTER'}, {'id': 'C', 'name': 'SUMMER'}]
-    return render_template('academic/scheduleGeneration.html', programs=programs, acad_years=acad_years, curriculums=curriculums, terms=terms, year_levels=[1,2,3,4,5])
+    return render_template('academic/scheduleGeneration.html', programs=programs, acad_years=acad_years, curriculums=curriculums, terms=terms)
 
 @app.route('/api/schedule/generate', methods=['POST'])
 def api_generate_schedule():
     data = request.json or {}
     res = scheduler_engine.generate_draft(
         data.get('program'), int(data.get('yearLevel', 1)),
-        data.get('term'), data.get('curriculum'), False   # never use historical path here
+        data.get('term'), data.get('curriculum'), False,  # never use historical path here
+        acad_year_id=data.get('acadYear', '')             # #9: pass AY for load checks
     )
     if not res['success']: return jsonify({'success': False, 'error': res['error']}), 400
     return jsonify({
@@ -13454,96 +13754,767 @@ def api_generate_schedule():
     })
 
 
+@app.route('/api/schedule/accuracy', methods=['POST'])
+def api_schedule_accuracy():
+    """
+    Multi-criteria weighted accuracy rate for a generated schedule.
+
+    Weights:
+      Faculty Conflict-Free   20%  No two sessions share a faculty at the same time
+      Room Conflict-Free      20%  No two sessions share a room at the same time
+      Section Conflict-Free   20%  No two sessions overlap in the same section
+      Faculty Qual Match      10%  Faculty specialization fits the subject
+      Laboratory Compliance    5%  Lab subjects assigned to laboratory rooms
+      Weekend Restriction      5%  Non-NSTP/OU subjects not on restricted days
+      Day Pairing Alignment    5%  1.5-hr sessions use valid day-pair combinations
+      Faculty Load Compliance  5%  Faculty loads within configured limits
+      Historical Faculty Match 5%  Instructor matches historical SIS records
+      Historical Room Match    3%  Room matches historical SIS records
+      Historical Time Match    2%  Day pattern matches historical SIS records
+    """
+    from collections import defaultdict as _dd
+
+    try:
+        body          = request.json or {}
+        schedule_data = body.get('schedule_data', [])
+        program       = (body.get('program') or '').strip().upper()
+        year_level    = int(body.get('year_level') or 0)
+        term          = (body.get('term') or '').strip().upper()
+
+        if not schedule_data or not program or not year_level or not term:
+            return jsonify({'success': False, 'error': 'Missing required fields.'}), 400
+
+        n = len(schedule_data)
+
+        try:
+            from scheduler import _spec_matches_subject
+        except Exception:
+            _spec_matches_subject = lambda spec, code: True  # noqa: E731
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        # ── Utilities ────────────────────────────────────────────────────────
+        def parse_t(t):
+            """Time value (HH:MM[:SS] string or time object) → minutes since midnight."""
+            if t is None:
+                return 0
+            if isinstance(t, str):
+                p = t.split(':')
+                return int(p[0]) * 60 + int(p[1]) if len(p) >= 2 else 0
+            if hasattr(t, 'hour'):
+                return t.hour * 60 + t.minute
+            return 0
+
+        def _parse_t_12h(t_str):
+            """Parse '01:30 PM' / '09:00 AM' / '07:30:00' → minutes since midnight."""
+            try:
+                s = t_str.strip().upper()
+                if 'AM' in s or 'PM' in s:
+                    parts = s.split()
+                    hm    = parts[0].split(':')
+                    h, m  = int(hm[0]), int(hm[1])
+                    mer   = parts[-1] if len(parts) > 1 else ''
+                    if mer == 'PM' and h != 12:
+                        h += 12
+                    elif mer == 'AM' and h == 12:
+                        h = 0
+                    return h * 60 + m
+                else:
+                    hm = s.split(':')
+                    return int(hm[0]) * 60 + int(hm[1])
+            except Exception:
+                return 0
+
+        def get_session_times(s):
+            """Return (start_min, end_min) for a schedule entry.
+            Tries start_time/end_time fields first; falls back to parsing the
+            formatted 'time' string (e.g. '01:30 PM – 04:30 PM').
+            """
+            st = parse_t(s.get('start_time'))
+            et = parse_t(s.get('end_time'))
+            if st or et:
+                return st, et
+            # 'time' field uses em-dash or regular dash as separator
+            time_str = (s.get('time') or '').replace('–', '-').replace('—', '-')
+            if '-' in time_str:
+                halves = time_str.split('-', 1)
+                if len(halves) == 2:
+                    return _parse_t_12h(halves[0]), _parse_t_12h(halves[1])
+            return 0, 0
+
+        def session_days(s):
+            dl = s.get('days_list')
+            if isinstance(dl, list) and dl:
+                return [d for d in dl if d]
+            d = s.get('day', '')
+            return [d] if d else []
+
+        def sessions_overlap(a, b):
+            """True when sessions share ≥1 day and their times intersect."""
+            sa, ea = parse_t(a.get('start_time')), parse_t(a.get('end_time'))
+            sb, eb = parse_t(b.get('start_time')), parse_t(b.get('end_time'))
+            if sa >= ea or sb >= eb:
+                return False
+            return bool(set(session_days(a)) & set(session_days(b))) and sa < eb and ea > sb
+
+        NSTP_PFXS    = ('NSTP', 'OU')
+        WEEKDAYS_SET = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'}
+        RESTRICTED   = {'Sunday'}
+
+        # ════════════════════════════════════════════════════════════════════
+        # C1 – FACULTY CONFLICT-FREE  (20%)
+        # ════════════════════════════════════════════════════════════════════
+        fac_conflict_set = set()
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = schedule_data[i], schedule_data[j]
+                fa, fb = a.get('faculty_id'), b.get('faculty_id')
+                if not (fa and fb and fa == fb):
+                    continue
+                a_nstp = any((a.get('subject_code') or '').upper().startswith(p) for p in NSTP_PFXS)
+                b_nstp = any((b.get('subject_code') or '').upper().startswith(p) for p in NSTP_PFXS)
+                if a_nstp and b_nstp:
+                    continue
+                if sessions_overlap(a, b):
+                    fac_conflict_set |= {i, j}
+        c1 = max(0.0, 1.0 - len(fac_conflict_set) / n) if n else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C2 – ROOM CONFLICT-FREE  (20%)
+        # ════════════════════════════════════════════════════════════════════
+        room_conflict_set = set()
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = schedule_data[i], schedule_data[j]
+                ra, rb = a.get('room_id'), b.get('room_id')
+                if ra and rb and ra == rb and sessions_overlap(a, b):
+                    room_conflict_set |= {i, j}
+        c2 = max(0.0, 1.0 - len(room_conflict_set) / n) if n else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C3 – SECTION CONFLICT-FREE  (20%)
+        # ════════════════════════════════════════════════════════════════════
+        sec_conflict_set = set()
+        for i in range(n):
+            for j in range(i + 1, n):
+                if sessions_overlap(schedule_data[i], schedule_data[j]):
+                    sec_conflict_set |= {i, j}
+        c3 = max(0.0, 1.0 - len(sec_conflict_set) / n) if n else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C4 – FACULTY QUALIFICATION MATCH  (10%)
+        # ════════════════════════════════════════════════════════════════════
+        faculty_ids  = list({s.get('faculty_id') for s in schedule_data if s.get('faculty_id')})
+        fac_spec_map = {}
+        if faculty_ids:
+            cur.execute("""
+                SELECT f.employeenumber, sp.specializationname
+                FROM   faculty f
+                LEFT JOIN specialization sp ON f.specializationid = sp.specializationid
+                WHERE  f.employeenumber = ANY(%s)
+            """, (faculty_ids,))
+            for row in cur.fetchall():
+                fac_spec_map[row['employeenumber']] = (row['specializationname'] or '').strip()
+
+        qual_pass = qual_total = 0
+        for s in schedule_data:
+            fid = s.get('faculty_id')
+            if not fid:
+                continue
+            qual_total += 1
+            spec = fac_spec_map.get(fid, '')
+            if not spec:
+                qual_pass += 1  # no specialization restriction → pass
+                continue
+            code = (s.get('subject_code') or s.get('subjectcode') or '').strip()
+            if _spec_matches_subject(spec, code):
+                qual_pass += 1
+        c4 = qual_pass / qual_total if qual_total else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C5 – LABORATORY COMPLIANCE  (5%)
+        # ════════════════════════════════════════════════════════════════════
+        lab_subj = _dd(list)
+        for s in schedule_data:
+            if s.get('lab_hours') or s.get('laboratoryhours'):
+                lab_subj[(s.get('subject_code') or s.get('subjectcode') or '?')].append(s)
+
+        lab_ok = lab_ttl = 0
+        for code, sessions in lab_subj.items():
+            lab_ttl += 1
+            if any(
+                (ss.get('room_type') or ss.get('roomtype') or '').strip().lower() == 'laboratory'
+                for ss in sessions
+            ):
+                lab_ok += 1
+        c5 = lab_ok / lab_ttl if lab_ttl else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C6 – WEEKEND RESTRICTION  (5%)
+        # ════════════════════════════════════════════════════════════════════
+        weekend_viol = 0
+        for s in schedule_data:
+            code = (s.get('subject_code') or '').upper()
+            if any(code.startswith(p) for p in NSTP_PFXS):
+                continue
+            if RESTRICTED & set(session_days(s)):
+                weekend_viol += 1
+        c6 = max(0.0, 1.0 - weekend_viol / n) if n else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C7 – DAY PAIRING ALIGNMENT  (5%)
+        # ════════════════════════════════════════════════════════════════════
+        VALID_PAIRS = [
+            sorted(['Monday', 'Thursday']),
+            sorted(['Tuesday', 'Friday']),
+            sorted(['Wednesday', 'Saturday']),
+        ]
+
+        def dur_h(s):
+            return (parse_t(s.get('end_time')) - parse_t(s.get('start_time'))) / 60.0
+
+        subj_days_acc  = _dd(list)
+        subj_hrs_cache = {}
+        for s in schedule_data:
+            if abs(dur_h(s) - 1.5) > 0.1:
+                continue
+            code = s.get('subject_code') or s.get('subjectcode') or ''
+            hrs  = float(s.get('total_subject_hrs') or s.get('total_hours') or 0)
+            dl   = session_days(s)
+            if len(dl) > 1:
+                subj_days_acc[code] = dl
+            else:
+                for d in dl:
+                    if d and d not in subj_days_acc[code]:
+                        subj_days_acc[code].append(d)
+            if hrs > 0:
+                subj_hrs_cache[code] = hrs
+
+        pair_ok = pair_ttl = 0
+        seen_pair = set()
+        for s in schedule_data:
+            if abs(dur_h(s) - 1.5) > 0.1:
+                continue
+            code = s.get('subject_code') or s.get('subjectcode') or ''
+            hrs  = float(s.get('total_subject_hrs') or s.get('total_hours') or subj_hrs_cache.get(code, 0))
+            if hrs < 3 or code in seen_pair:
+                continue
+            seen_pair.add(code)
+            pair_ttl += 1
+            grouped = subj_days_acc.get(code, session_days(s))
+            if len(grouped) >= 2 and sorted(grouped[:2]) in VALID_PAIRS:
+                pair_ok += 1
+        c7 = pair_ok / pair_ttl if pair_ttl else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C8 – FACULTY LOAD COMPLIANCE  (5%)
+        # ════════════════════════════════════════════════════════════════════
+        fac_limits = {}
+        if faculty_ids:
+            cur.execute("""
+                SELECT f.employeenumber,
+                       COALESCE(d.regularloadunit, et.regularload, 99)      AS max_regular,
+                       COALESCE(d.nightteachingservice, et.parttimeload, 99) AS max_pt,
+                       COALESCE(et.teachingsubstitution, 0)                  AS ts_hrs,
+                       et.regular_end
+                FROM   faculty f
+                JOIN   employeetype et ON f.employeetypeid = et.employeetypeid
+                LEFT JOIN designation d ON f.designationid = d.designationid
+                WHERE  f.employeenumber = ANY(%s)
+            """, (faculty_ids,))
+            for row in cur.fetchall():
+                fac_limits[row['employeenumber']] = row
+
+        fac_reg_u = _dd(int)
+        fac_pt_u  = _dd(int)
+        seen_reg  = set()
+        seen_pt   = set()
+        for s in schedule_data:
+            fid   = s.get('faculty_id')
+            units = int(s.get('units', 0) or 0)
+            if not fid or not units:
+                continue
+            code = (s.get('subject_code') or '').upper()
+            lim  = fac_limits.get(fid, {})
+            reg_raw     = lim.get('regular_end')
+            reg_end_min = parse_t(reg_raw) if reg_raw else (16 * 60 + 30)
+            end_min     = parse_t(s.get('end_time'))
+            sday        = (session_days(s) or [''])[0]
+            is_reg      = sday in WEEKDAYS_SET and end_min <= reg_end_min
+            if is_reg:
+                key = (fid, code)
+                if key not in seen_reg:
+                    seen_reg.add(key)
+                    fac_reg_u[fid] += units
+            else:
+                key = (fid, code)
+                if key not in seen_pt:
+                    seen_pt.add(key)
+                    fac_pt_u[fid] += units
+
+        load_viol = 0
+        all_fids  = set(fac_reg_u) | set(fac_pt_u)
+        for fid in all_fids:
+            lim     = fac_limits.get(fid, {})
+            max_reg = int(lim.get('max_regular') or 99)
+            max_pt  = int(lim.get('max_pt') or 99)
+            ts_hrs  = int(lim.get('ts_hrs') or 0)
+            if (fac_reg_u[fid] > max_reg and fac_reg_u[fid] - max_reg > ts_hrs) or \
+               (fac_pt_u[fid]  > max_pt  and fac_pt_u[fid]  - max_pt  > ts_hrs):
+                load_viol += 1
+        fac_ttl = len(all_fids) if all_fids else 1
+        c8 = max(0.0, 1.0 - load_viol / fac_ttl)
+
+        # ════════════════════════════════════════════════════════════════════
+        # C9 / C10 – HISTORICAL FACULTY & ROOM MATCH  (5% + 3%)
+        # Compare instructor name and room against historical_data SIS records.
+        # ════════════════════════════════════════════════════════════════════
+        cur.execute("""
+            SELECT hd."Subject Code" AS subjectcode,
+                   hd."Instructor"   AS instructor,
+                   hd."Room"         AS room,
+                   hd."Day/s"        AS days
+            FROM   historical_data hd
+            JOIN   semester sem ON hd.semesterid = sem.semesterid
+            WHERE  UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = %s
+              AND  CAST(hd."Year Level" AS TEXT) = %s
+              AND  UPPER(sem.semestertype) = %s
+              AND  hd."Subject Code" IS NOT NULL
+              AND  TRIM(hd."Subject Code") != ''
+        """, (program, str(year_level), term))
+
+        _DAY_NORM = {
+            'MONDAY': 'MON', 'TUESDAY': 'TUE', 'WEDNESDAY': 'WED',
+            'THURSDAY': 'THU', 'FRIDAY': 'FRI', 'SATURDAY': 'SAT', 'SUNDAY': 'SUN',
+        }
+
+        def norm_days(day_list):
+            result = set()
+            for d in day_list:
+                u = d.upper()
+                result.add(_DAY_NORM.get(u, u[:3]))
+            return result
+
+        import re as _re_c9
+        hist_map = _dd(lambda: {'instructors': set(), 'rooms': set(), 'days': set()})
+        for r in cur.fetchall():
+            code = (r['subjectcode'] or '').strip().upper()
+            if not code:
+                continue
+            if r['instructor']:
+                full = r['instructor'].strip().upper()
+                hist_map[code]['instructors'].add(full)
+                # Add a version with trailing middle initial stripped (e.g. "JOCELYN C." -> "JOCELYN")
+                # Generated names come from CONCAT(lastname, ', ', firstname) which has no middle initial
+                _norm = _re_c9.sub(r'\s+[A-Z]\.?\s*$', '', full).strip()
+                if _norm and _norm != full:
+                    hist_map[code]['instructors'].add(_norm)
+            if r['room']:
+                hist_map[code]['rooms'].add(r['room'].strip().upper())
+            if r['days']:
+                hist_map[code]['days'].add(r['days'].strip().upper())
+
+        seen_sc = set()
+        hist_total = matched_fac = matched_room = 0
+        for s in schedule_data:
+            code = (s.get('subject_code') or '').strip().upper()
+            if not code or code in seen_sc:
+                continue
+            seen_sc.add(code)
+            hentry = hist_map.get(code)
+            if not hentry:
+                continue
+            hist_total += 1
+            gen_instr = (s.get('instructor') or '').strip().upper()
+            gen_room  = (s.get('room') or '').strip().upper()
+            if gen_instr and gen_instr in hentry['instructors']:
+                matched_fac += 1
+            if gen_room and gen_room in hentry['rooms']:
+                matched_room += 1
+
+        c9  = matched_fac  / hist_total if hist_total else 1.0
+        c10 = matched_room / hist_total if hist_total else 1.0
+
+        # ════════════════════════════════════════════════════════════════════
+        # C11 – HISTORICAL TIME MATCH  (2%)
+        # Primary: compare start/end times against the most recent Published
+        # schedule from schedule_sessions for the same program/year/term.
+        # This ensures that when "Retrieve Previous Schedule" is used and the
+        # same time blocks are reused, the score correctly reflects 100%.
+        # Fallback: day-pattern comparison from historical_data (used only when
+        # no published schedule exists).  The fallback also handles '/' separators
+        # in the stored day strings (e.g. "MON/THU").
+        # ════════════════════════════════════════════════════════════════════
+        cur.execute("""
+            SELECT DISTINCT ON (cs.subjectcode)
+                cs.subjectcode,
+                ts_s.timevalue AS start_time,
+                ts_e.timevalue AS end_time
+            FROM   schedule_sessions ss
+            JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+            JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+            JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN   semester sem         ON sc.semesterid          = sem.semesterid
+            LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+            WHERE  UPPER(c.programcode)    = %s
+              AND  cs.yearlevel            = %s
+              AND  UPPER(sem.semestertype) = %s
+              AND  sv.status               = 'Published'
+            ORDER BY cs.subjectcode, sv.datecreated DESC
+        """, (program, year_level, term))
+
+        prev_time_map = {}
+        for _row in cur.fetchall():
+            _code = (_row['subjectcode'] or '').strip().upper()
+            if _code and _code not in prev_time_map:
+                _st = parse_t(_row['start_time'])
+                _et = parse_t(_row['end_time'])
+                if _st or _et:
+                    prev_time_map[_code] = (_st, _et)
+
+        time_total = matched_time = 0
+        seen_c11   = set()
+        _use_published = bool(prev_time_map)
+
+        for s in schedule_data:
+            code = (s.get('subject_code') or '').strip().upper()
+            if not code or code in seen_c11:
+                continue
+            seen_c11.add(code)
+            # Use get_session_times so that the formatted 'time' string
+            # ("01:30 PM – 04:30 PM") is parsed when explicit start/end fields
+            # are absent (which is always the case for the frontend schedule JSON,
+            # because _serialize_class drops Python time objects).
+            gen_s, gen_e = get_session_times(s)
+
+            if _use_published:
+                if code not in prev_time_map:
+                    continue
+                time_total += 1
+                prev_s, prev_e = prev_time_map[code]
+                if gen_s == prev_s and gen_e == prev_e:
+                    matched_time += 1
+            else:
+                # Fallback: day-pattern match from historical_data
+                hentry = hist_map.get(code)
+                if not hentry or not hentry['days']:
+                    continue
+                time_total += 1
+                gen_dnorm = norm_days(session_days(s))
+                if gen_dnorm:
+                    for hdays_str in hentry['days']:
+                        # Handle '/', '-', and ',' separators in stored day strings
+                        hist_dnorm = set()
+                        for token in hdays_str.replace('/', ' ').replace(',', ' ').replace('-', ' ').split():
+                            if len(token) >= 2:
+                                hist_dnorm.add(token.upper()[:3])
+                        if gen_dnorm & hist_dnorm:
+                            matched_time += 1
+                            break
+
+        c11 = matched_time / time_total if time_total else 1.0
+
+        cur.close()
+        conn.close()
+
+        # ════════════════════════════════════════════════════════════════════
+        # WEIGHTED TOTAL
+        # ════════════════════════════════════════════════════════════════════
+        criteria = [
+            ('faculty_conflict', 'Faculty Conflict-Free',      0.20, c1),
+            ('room_conflict',    'Room Conflict-Free',          0.20, c2),
+            ('section_conflict', 'Section Conflict-Free',       0.20, c3),
+            ('faculty_qual',     'Faculty Qualification Match', 0.10, c4),
+            ('lab_compliance',   'Laboratory Compliance',       0.05, c5),
+            ('weekend',          'Weekend Restriction',         0.05, c6),
+            ('day_pairing',      'Day Pairing Alignment',       0.05, c7),
+            ('load_compliance',  'Faculty Load Compliance',     0.05, c8),
+            ('hist_faculty',     'Historical Faculty Match',    0.05, c9),
+            ('hist_room',        'Historical Room Match',       0.03, c10),
+            ('hist_time',        'Historical Time Match',       0.02, c11),
+        ]
+
+        accuracy = round(sum(w * sc for _, _, w, sc in criteria) * 100)
+
+        breakdown = [
+            {
+                'key':          key,
+                'label':        label,
+                'weight':       round(w * 100),
+                'score':        round(sc * 100),
+                'contribution': round(w * sc * 100, 1),
+            }
+            for key, label, w, sc in criteria
+        ]
+
+        return jsonify({
+            'success':         True,
+            'accuracy':        accuracy,
+            'breakdown':       breakdown,
+            'hist_total':      hist_total,
+            'matched_faculty': matched_fac,
+            'matched_room':    matched_room,
+            'matched_time':    matched_time,
+            'total':           len(seen_sc),
+        })
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/schedule/retrieve-previous', methods=['POST'])
 def api_retrieve_previous_schedule():
     """
-    Load the most recent Published (then Draft) schedule for the selected
-    program / year level / semester — regardless of academic year.
-    Bypasses the GA engine entirely: pure DB lookup.
+    Retrieve the previous OFFICIAL (Published) schedule for the same program/year/semester.
+    Priority: Published records from schedule/schedule_version/schedule_sessions first,
+              then historical_data as fallback.
+    Never retrieves Draft versions.
     """
     try:
         data       = request.json or {}
         program    = data.get('program', '')
         year_level = int(data.get('yearLevel', 1))
-        term       = data.get('term', '')
+        term       = data.get('term', '')       # 'A', 'B', or 'C'
+        acad_year  = data.get('acadYear', '')   # e.g. "AY2627"
 
         conn = get_db_connection()
         cur  = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Find the most recent Published version first, then Draft
-        cur.execute("""
-            SELECT DISTINCT ON (sv.versionid)
-                   sv.versionid, sv.version_number, sv.status, sv.datecreated,
-                   c.programcode AS programcode, cs.yearlevel, sem.semestertype AS term,
-                   ay.academicyearid AS acadyear, sc.semesterid,
-                   ay.yearstart, ay.yearend
-            FROM   public.schedule_version sv
-            JOIN   public.schedule sc         ON sv.scheduleid           = sc.scheduleid
-            JOIN   public.curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN   public.curriculum c         ON cs.curriculumid        = c.curriculumid
-            JOIN   public.semester sem         ON sc.semesterid          = sem.semesterid
-            JOIN   public.academicyear ay      ON sem.academicyearid     = ay.academicyearid
-            WHERE  UPPER(c.programcode) = UPPER(%s)
-              AND  cs.yearlevel           = %s
-              AND  sem.semestertype       = %s
-              AND  sv.status IN ('Published', 'Draft')
-            ORDER BY sv.versionid,
-                     CASE sv.status WHEN 'Published' THEN 1 WHEN 'Draft' THEN 2 ELSE 3 END,
-                     sv.datecreated DESC
-            LIMIT 1
-        """, (program, year_level, term))
-        ver = cur.fetchone()
+        term_label = '1st Semester' if term == 'A' else '2nd Semester' if term == 'B' else 'Summer'
 
-        if not ver:
+        # ── Step 1: resolve the immediate previous academic year ─────────────
+        prev_ay_id    = None
+        prev_ay_label = None
+        if acad_year:
+            cur.execute("""
+                SELECT ay_prev.academicyearid AS prev_id,
+                       ay_prev.yearstart,
+                       ay_prev.yearend
+                FROM   academicyear ay_curr
+                JOIN   academicyear ay_prev
+                       ON ay_prev.yearend = ay_curr.yearstart
+                WHERE  ay_curr.academicyearid = %s
+                LIMIT 1
+            """, (acad_year,))
+            prev_row = cur.fetchone()
+            if prev_row:
+                prev_ay_id    = prev_row['prev_id']
+                prev_ay_label = f"AY{prev_row['yearstart']}{str(prev_row['yearend'])[-2:]}"
+
+        if not prev_ay_id:
             cur.close(); conn.close()
             return jsonify({
                 'success': False,
-                'error':   (
-                    f'No previous schedule found for {program} — Year {year_level} — '
-                    f'{"1st Semester" if term == "A" else "2nd Semester" if term == "B" else "Summer"}. '
-                    'Generate a new schedule instead.'
+                'error': (
+                    f'No previous academic year found before {acad_year}. '
+                    f'Cannot retrieve a prior {term_label} schedule for {program} Year {year_level}.'
                 ),
             }), 404
 
-        vid = ver['versionid']
-
-        # Load every session row for this version
+        # ── Step 2: resolve semester ID for the previous AY ─────────────────
         cur.execute("""
-            SELECT cs.subjectcode         AS subject_code,
-                   cs.subjectname         AS description,
-                   cs.lecturehours        AS lec_hours,
-                   cs.laboratoryhours     AS lab_hours,
-                   cs.creditunits         AS credit_units,
-                   c.programcode        AS course,
-                   sc.employeenumber      AS faculty_id,
-                   CONCAT(f.lastname, ', ', f.firstname) AS instructor,
-                   ss.daydesc             AS day,
-                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_str,
-                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_str,
-                   r.roomname             AS room,
-                   r.roomid               AS room_id
-            FROM   public.schedule_sessions ss
-            JOIN   public.schedule_version sv  ON ss.versionid           = sv.versionid
-            JOIN   public.schedule sc           ON sv.scheduleid          = sc.scheduleid
-            JOIN   public.curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN   public.curriculum c          ON cs.curriculumid        = c.curriculumid
-            LEFT JOIN public.faculty f          ON sc.employeenumber      = f.employeenumber
-            LEFT JOIN public.room r             ON ss.roomid              = r.roomid
-            LEFT JOIN public.timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
-            LEFT JOIN public.timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
-            WHERE  ss.versionid = %s
-            ORDER BY cs.subjectcode, ts_s.timevalue
-        """, (vid,))
-        rows = cur.fetchall()
-        cur.close(); conn.close()
-
-        if not rows:
+            SELECT semesterid FROM semester
+            WHERE  academicyearid = %s AND semestertype = %s
+            LIMIT  1
+        """, (prev_ay_id, term))
+        sem_row = cur.fetchone()
+        if not sem_row:
+            cur.close(); conn.close()
             return jsonify({
                 'success': False,
-                'error':   'Previous schedule version exists but has no sessions saved.',
+                'error':   f'No {term_label} semester record found for {prev_ay_id}.',
             }), 404
+        prev_sem_id = sem_row['semesterid']
 
-        # Group rows by (subject_code, faculty_id, start, end) — accumulate days
+        # ── Step 3: find the highest Published version_number ────────────────
+        # Each subject in a snapshot gets its own schedule_version row but they all
+        # share the same version_number.  We want the most recent Published snapshot,
+        # so we find MAX(version_number) where status='Published' then load every
+        # subject at that version — giving us the full schedule, not just one row.
+        cur.execute("""
+            SELECT COALESCE(MAX(sv.version_number), 0) AS max_pub_v
+            FROM   schedule_version sv
+            JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
+            JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+            WHERE  UPPER(c.programcode) = UPPER(%s)
+              AND  cs.yearlevel         = %s
+              AND  sc.semesterid        = %s
+              AND  sv.status            = 'Published'
+        """, (program, year_level, prev_sem_id))
+        pub_v_row = cur.fetchone()
+        max_pub_v = pub_v_row['max_pub_v'] if pub_v_row else 0
+
+        rows = []
+        if max_pub_v:
+            # ── Step 4: load ALL sessions for ALL subjects in that Published snapshot
+            cur.execute("""
+                SELECT cs.subjectcode                                 AS subject_code,
+                       cs.subjectname                                 AS description,
+                       cs.lecturehours                                AS lec_hours,
+                       cs.laboratoryhours                             AS lab_hours,
+                       cs.creditunits                                 AS credit_units,
+                       c.programcode                                  AS course,
+                       sc.employeenumber                              AS faculty_id,
+                       CONCAT(f.lastname, ', ', f.firstname)          AS instructor,
+                       ss.daydesc                                     AS day,
+                       TO_CHAR(ts_s.timevalue, 'HH12:MI AM')         AS start_str,
+                       TO_CHAR(ts_e.timevalue, 'HH12:MI AM')         AS end_str,
+                       r.roomname                                     AS room,
+                       r.roomid                                       AS room_id
+                FROM   schedule_sessions ss
+                JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+                JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+                JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
+                LEFT JOIN faculty f          ON sc.employeenumber      = f.employeenumber
+                LEFT JOIN room r             ON ss.roomid              = r.roomid
+                LEFT JOIN timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
+                LEFT JOIN timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
+                WHERE  UPPER(c.programcode) = UPPER(%s)
+                  AND  cs.yearlevel         = %s
+                  AND  sc.semesterid        = %s
+                  AND  sv.status            = 'Published'
+                  AND  sv.version_number    = %s
+                ORDER BY cs.subjectcode, ts_s.timevalue
+            """, (program, year_level, prev_sem_id, max_pub_v))
+            rows = cur.fetchall()
+
+        # ── Step 5: historical_data fallback ────────────────────────────────
+        if not rows:
+            cur.execute("""
+                SELECT
+                    hd."Subject Code"      AS subject_code,
+                    hd."Subject Name"      AS description,
+                    hd."Instructor"        AS instructor,
+                    hd."Room"              AS room,
+                    hd."Day/s"             AS raw_days,
+                    hd."Time"              AS raw_time,
+                    hd."Lecture Hours"     AS lec_hours,
+                    hd."Laboratory Hours"  AS lab_hours,
+                    hd."Credit Units"      AS credit_units,
+                    hd."Hours"             AS hours
+                FROM historical_data hd
+                WHERE REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') ILIKE %s
+                  AND CAST(hd."Year Level" AS TEXT) = %s
+                  AND hd.academicyearid = %s
+                  AND (hd.semesterid = %s OR hd.semesterid IS NULL)
+                ORDER BY hd."Subject Code"
+            """, (program, str(year_level), prev_ay_id, prev_sem_id))
+            hist_rows = cur.fetchall()
+            cur.close(); conn.close()
+
+            if not hist_rows:
+                return jsonify({
+                    'success': False,
+                    'error': (
+                        f'No schedule found for {program} — Year {year_level} — {term_label} '
+                        f'in {prev_ay_id}. Generate a new schedule instead.'
+                    ),
+                }), 404
+
+            schedule_data = []
+            for row in hist_rows:
+                lh  = int(row['lec_hours']  or 0)
+                lbh = int(row['lab_hours']  or 0)
+                cu  = int(row['credit_units'] or 0)
+                schedule_data.append({
+                    'subject_code':  row['subject_code'] or '',
+                    'description':   row['description']  or '',
+                    'lec_hours':     lh,
+                    'lab_hours':     lbh,
+                    'credit_units':  cu,
+                    'units':         cu,
+                    'course':        program,
+                    'faculty_id':    None,
+                    'instructor':    row['instructor'] or 'TBA',
+                    'room':          row['room']       or 'TBA',
+                    'room_id':       None,
+                    'time':          row['raw_time']   or '',
+                    'hours':         str(row['hours']  or (lh + lbh)),
+                    'days':          row['raw_days']   or '',
+                    'day':           '',
+                    'is_historical': True,
+                })
+
+            return jsonify({
+                'success':        True,
+                'schedule_data':  schedule_data,
+                'conflict_count': 0,
+                'violations':     [],
+                'retrieved_from': {
+                    'source':   'historical',
+                    'version':  None,
+                    'status':   'Historical',
+                    'acadYear': prev_ay_id,
+                    'ay_label': prev_ay_label or prev_ay_id,
+                    'term':     term_label,
+                },
+            })
+
+        # ── #10: Check if retrieved faculty are already overloaded in the CURRENT term ──
+        # Resolve current AY's semester (the one being scheduled, not the previous one)
+        cur_sem_id = None
+        if acad_year and term:
+            cur.execute("""
+                SELECT semesterid FROM semester
+                WHERE  academicyearid = %s AND semestertype = %s
+                LIMIT  1
+            """, (acad_year, term))
+            csem = cur.fetchone()
+            if csem:
+                cur_sem_id = csem['semesterid']
+
+        # Tally units each retrieved faculty would bring
+        from collections import defaultdict as _dd2
+        fac_units_retrieved: dict = _dd2(int)
+        for row in rows:
+            fid = row.get('faculty_id')
+            cu  = int(row.get('credit_units') or 0)
+            if fid and cu > 0:
+                fac_units_retrieved[fid] += cu
+
+        # Query what those faculty are already committed to in the current term
+        current_committed: dict = {}
+        if cur_sem_id and fac_units_retrieved:
+            cur.execute("""
+                SELECT sc.employeenumber AS fid,
+                       COALESCE(SUM(COALESCE(cs.creditunits, 0)), 0) AS committed
+                FROM   schedule_version sv
+                JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
+                JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE  sc.semesterid = %s
+                  AND  sv.status IN ('Published', 'Draft')
+                  AND  sc.employeenumber = ANY(%s)
+                  AND  cs.creditunits > 0
+                GROUP  BY sc.employeenumber
+            """, (cur_sem_id, list(fac_units_retrieved.keys())))
+            current_committed = {r['fid']: int(r['committed'] or 0)
+                                 for r in (cur.fetchall() or [])}
+
+        cur.close(); conn.close()
+
+        # Build faculty map to look up load limits
+        _fmap_retrieve = _load_faculty_map()
+
+        # Determine which faculty are AT or OVER their limit already
+        _overloaded_fids: set = set()
+        for fid in fac_units_retrieved:
+            fac  = _fmap_retrieve.get(fid, {})
+            et   = fac.get('employeetype', {})
+            maxt = ((et.get('regularload') or 0)
+                    + (et.get('parttimeload') or 0)
+                    + (et.get('teachingsubstitution') or 0))
+            if maxt <= 0:
+                continue
+            if current_committed.get(fid, 0) >= maxt:
+                _overloaded_fids.add(fid)
+
+        # ── Step 6: group multi-day sessions (e.g. MON+WED same time) ───────
         _ABBR = {
             'Monday': 'MON', 'Tuesday': 'TUE', 'Wednesday': 'WED',
             'Thursday': 'THU', 'Friday': 'FRI', 'Saturday': 'SAT', 'Sunday': 'SUN',
@@ -13555,6 +14526,9 @@ def api_retrieve_previous_schedule():
                 lh  = row['lec_hours']  or 0
                 lbh = row['lab_hours']  or 0
                 cu  = row['credit_units'] or 0
+                fid = row['faculty_id']
+                # #10: Replace overloaded historical faculty with TBA
+                overloaded = fid in _overloaded_fids
                 groups[key] = {
                     'subject_code':  row['subject_code'],
                     'description':   row['description'],
@@ -13563,14 +14537,15 @@ def api_retrieve_previous_schedule():
                     'credit_units':  cu,
                     'units':         cu,
                     'course':        row['course'],
-                    'faculty_id':    row['faculty_id'],
-                    'instructor':    row['instructor'] or 'TBA',
-                    'room':          row['room'] or 'TBA',
+                    'faculty_id':    None if overloaded else fid,
+                    'instructor':    'TBA (overloaded)' if overloaded else (row['instructor'] or 'TBA'),
+                    'room':          row['room']       or 'TBA',
                     'room_id':       row['room_id'],
                     'time':          f"{row['start_str']} – {row['end_str']}",
                     'hours':         str(lh + lbh),
                     'days_list':     [],
                     'is_historical': True,
+                    'overloaded_faculty': overloaded,
                 }
             g = groups[key]
             if row['day'] and row['day'] not in g['days_list']:
@@ -13583,21 +14558,33 @@ def api_retrieve_previous_schedule():
             entry['day']  = dl[0] if dl else ''
             schedule_data.append(entry)
 
-        term_label = ('1st Semester' if term == 'A'
-                      else '2nd Semester' if term == 'B' else 'Summer')
-        ay_label   = f"AY{ver['yearstart']}{str(ver['yearend'])[-2:]}"
+        # Human-readable notices for overloaded faculty
+        overload_notices = []
+        for fid in _overloaded_fids:
+            fac  = _fmap_retrieve.get(fid, {})
+            name = fac.get('fullname') or fid
+            et   = fac.get('employeetype', {})
+            maxt = ((et.get('regularload') or 0)
+                    + (et.get('parttimeload') or 0)
+                    + (et.get('teachingsubstitution') or 0))
+            already = current_committed.get(fid, 0)
+            overload_notices.append(
+                f"{name} already has {already}/{maxt} units this term — replaced with TBA."
+            )
 
         return jsonify({
-            'success':        True,
-            'schedule_data':  schedule_data,
-            'conflict_count': 0,
-            'violations':     [],
+            'success':          True,
+            'schedule_data':    schedule_data,
+            'conflict_count':   0,
+            'violations':       [],
+            'overload_notices': overload_notices,
             'retrieved_from': {
-                'version':    ver['version_number'],
-                'status':     ver['status'],
-                'acadYear':   ver['acadyear'],
-                'ay_label':   ay_label,
-                'term':       term_label,
+                'source':   'official',
+                'version':  max_pub_v,
+                'status':   'Published',
+                'acadYear': prev_ay_id,
+                'ay_label': prev_ay_label or prev_ay_id,
+                'term':     term_label,
             },
         })
 
@@ -13650,11 +14637,11 @@ def api_save_draft():
 
         # ── Pre-save CSP validation — block if any hard constraint is violated ──
         _pre_rehydrated = _rehydrate_schedule(list(schedule_list))
+        _fmap_pre = _load_faculty_map()
         if _pre_rehydrated:
             from scheduler import CSPValidator as _CSP
             from database import load_scheduler_config as _lsc_pre
             _hc_cfg_pre = _lsc_pre()
-            _fmap_pre   = _load_faculty_map()
             _viols_pre  = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre)
             if _viols_pre:
                 cur.close(); conn.close()
@@ -13664,20 +14651,47 @@ def api_save_draft():
                     'violations': _viols_pre
                 }), 400
 
+        # ── #11: Cross-program faculty load check ─────────────────────────────
+        # Block saving if any faculty in THIS schedule would exceed their total
+        # teaching load limit when combined with other sections already saved.
+        _load_viols = _check_cross_program_faculty_loads(
+            schedule_list, _fmap_pre, sem_id,
+            exclude_program=program, exclude_year_level=year_level
+        )
+        if _load_viols:
+            cur.close(); conn.close()
+            _load_msg = '; '.join(
+                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} units "
+                f"(+{v['overload_by']} over limit)"
+                for v in _load_viols
+            )
+            return jsonify({
+                'success':          False,
+                'error':            f'Faculty load limit exceeded — cannot save draft: {_load_msg}',
+                'load_violations':  _load_viols,
+            }), 400
+
         # ── Server-side section conflict check ──
         rehydrated = _rehydrate_schedule(list(schedule_list))
         incoming = []
         for cls in rehydrated:
             s_code = (cls.get('subjectcode') or cls.get('subject_code') or '').upper()
-            day    = cls.get('daydesc') or cls.get('day') or ''
             st, et = cls.get('start_time'), cls.get('end_time')
-            if not (day and st and et): continue
+            if not (st and et): continue
             cur.execute("SELECT timeid FROM public.timeslot WHERE timevalue = %s::time LIMIT 1", (str(st),))
             r_st = cur.fetchone()
             cur.execute("SELECT timeid FROM public.timeslot WHERE timevalue = %s::time LIMIT 1", (str(et),))
             r_et = cur.fetchone()
-            if r_st and r_et:
-                incoming.append({'code': s_code, 'day': day, 'start': r_st['timeid'], 'end': r_et['timeid']})
+            if not (r_st and r_et): continue
+            # Check EVERY day in days_list (paired subjects have 2 days)
+            all_days = cls.get('days_list') or []
+            if not all_days:
+                single = cls.get('daydesc') or cls.get('day') or ''
+                if single:
+                    all_days = [single]
+            for day in all_days:
+                if day:
+                    incoming.append({'code': s_code, 'day': day, 'start': r_st['timeid'], 'end': r_et['timeid']})
 
         for i, a in enumerate(incoming):
             for b in incoming[i+1:]:
@@ -13716,9 +14730,13 @@ def api_save_draft():
         # This keeps the Draft snapshot pure — it only contains genuine Draft-state content.
         # Published-only subjects stay in their Published version and are NOT duplicated into Draft.
         # The UI merges Draft + Published for display via existing_sessions; the snapshot must not.
-        other_sessions = _fetch_section_sessions(cur, program, year_level, sem_id,
-                                                  exclude_codes=all_codes_to_archive,
-                                                  draft_only=True)
+        # _group_carry_forward_sessions merges per-day rows for paired subjects so _insert_batch
+        # creates a single schedule+version record with multiple sessions (not duplicate records).
+        other_sessions = _group_carry_forward_sessions(
+            _fetch_section_sessions(cur, program, year_level, sem_id,
+                                    exclude_codes=all_codes_to_archive,
+                                    draft_only=True)
+        )
 
         # Archive all Draft records for this section + source namespace before writing new snapshot.
         _archive_status(cur, program, year_level, term, sem_id, 'Draft', source=draft_source)
@@ -13886,8 +14904,28 @@ def api_approve_schedule():
                            'Resolve all conflicts in the Manual Editor before approving.',
                 'violations': violations,
             }), 400
+
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
+
+        # ── #11: Cross-program faculty load check ─────────────────────────────
+        # Block approval if any faculty would exceed their load across all sections.
+        _load_viols_approve = _check_cross_program_faculty_loads(
+            list(data.get('schedule_data', [])), faculty_map, sem_id,
+            exclude_program=program, exclude_year_level=year_level
+        )
+        if _load_viols_approve:
+            cur.close(); conn.close()
+            _load_msg_a = '; '.join(
+                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} units "
+                f"(+{v['overload_by']} over limit)"
+                for v in _load_viols_approve
+            )
+            return jsonify({
+                'success':         False,
+                'error':           f'Faculty load limit exceeded — cannot approve: {_load_msg_a}',
+                'load_violations': _load_viols_approve,
+            }), 400
 
         _ensure_source_col(cur)
         cur.execute("""
@@ -13899,7 +14937,7 @@ def api_approve_schedule():
     WHERE UPPER(c.programcode) = UPPER(%s)
       AND cs.yearlevel = %s
       AND s.semesterid = %s
-      AND sv.source = 'manual_editor'
+      AND sv.source != 'local'
 """, (program, year_level, sem_id))
         max_v = cur.fetchone()['max_v']
 
@@ -13911,18 +14949,21 @@ def api_approve_schedule():
         })
         # Carry forward only currently Published subjects (not Draft-only ones).
         # Draft-only subjects must NOT appear in a Published snapshot unless explicitly published.
-        other_sessions = _fetch_section_sessions(
-            cur, program, year_level, sem_id,
-            exclude_codes=submitted_codes,
-            published_only=True
+        other_sessions = _group_carry_forward_sessions(
+            _fetch_section_sessions(
+                cur, program, year_level, sem_id,
+                exclude_codes=submitted_codes,
+                published_only=True
+            )
         )
 
         # When publishing new Draft slices for a subject that already has Published slices,
         # the existing Published slots (e.g. Friday) must survive in the new Published snapshot
         # alongside the newly published slots (e.g. Tuesday). Without this, publishing one slice
         # replaces the entire Published schedule for that subject.
-        published_baseline = _build_published_baseline(cur, program, year_level, sem_id,
-                                                        submitted_codes, sched_data)
+        published_baseline = _group_carry_forward_sessions(
+            _build_published_baseline(cur, program, year_level, sem_id, submitted_codes, sched_data)
+        )
 
         # Archive only the existing Published revisions — Draft history must remain intact.
         # Publishing creates a new independent Published snapshot; it does not consume the Draft.
@@ -13937,34 +14978,61 @@ def api_approve_schedule():
         # Use slot-level keys (subject+day+time), NOT subject codes — a subject can have multiple
         # slices and publishing one slot (e.g. Thursday) must NOT wipe unrelated Draft slots for
         # the same subject (e.g. Monday Draft).
+        # Loop over days_list so GA items (with multiple days) mark ALL their days as published.
         published_slot_keys = set()
         for s in sched_data:
             sc  = (s.get('subjectcode') or s.get('subject_code') or '').upper()
-            day = s.get('daydesc') or s.get('day') or ''
             st  = str(s.get('start_time', '')).split('.')[0]
-            published_slot_keys.add((sc, day, st))
+            all_pub_days = list(s.get('days_list') or [])
+            if not all_pub_days:
+                single = s.get('daydesc') or s.get('day') or ''
+                if single:
+                    all_pub_days = [single]
+            for day in all_pub_days:
+                if day:
+                    published_slot_keys.add((sc, day, st))
 
         all_current_draft = _fetch_section_sessions(
             cur, program, year_level, sem_id,
             draft_only=True
         )
-        remaining_draft = [
+        remaining_draft = _group_carry_forward_sessions([
             s for s in all_current_draft
             if ((s.get('subjectcode') or '').upper(),
                 s.get('daydesc') or '',
                 str(s.get('start_time', '')).split('.')[0]) not in published_slot_keys
-        ]
+        ])
 
         # Only rebuild Draft if at least one slot was actually removed (i.e. a Draft slot was
         # published). If the published slots were already Published (not in Draft), leave Draft
         # completely untouched — no new revision, no data loss.
+        new_draft_v = None
         if len(remaining_draft) < len(all_current_draft):
             _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor')
             if remaining_draft:
-                _insert_batch(cur, remaining_draft, sem_id, 'Draft', max_v + 2, program, year_level)
+                new_draft_v = max_v + 2
+                _insert_batch(cur, remaining_draft, sem_id, 'Draft', new_draft_v, program, year_level)
+        else:
+            # No draft slots were consumed — check whether a draft already exists so we can
+            # surface its version number to the caller (used by Generate Schedule UI).
+            cur.execute("""
+                SELECT COALESCE(MAX(sv.version_number), 0) AS max_draft_v
+                FROM schedule_version sv
+                JOIN schedule s ON sv.scheduleid = s.scheduleid
+                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                WHERE UPPER(c.programcode) = UPPER(%s)
+                  AND cs.yearlevel = %s
+                  AND s.semesterid = %s
+                  AND sv.status = 'Draft'
+                  AND sv.source = 'manual_editor'
+            """, (program, year_level, sem_id))
+            dv_row = cur.fetchone()
+            if dv_row and dv_row['max_draft_v']:
+                new_draft_v = dv_row['max_draft_v']
 
         conn.commit(); cur.close(); conn.close()
-        return jsonify({'success': True, 'published_version': max_v + 1})
+        return jsonify({'success': True, 'published_version': max_v + 1, 'draft_version': new_draft_v})
     except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/schedule/drafts/<int:version_id>', methods=['DELETE'])
@@ -14527,16 +15595,63 @@ def api_load_draft(version_id):
         return jsonify({'success': True, 'schedule_data': sched, 'version': max_v, 'context': {'program': m['programcode'], 'yearLevel': m['yearlevel'], 'term': m['term'], 'acadYear': m['acadyear'], 'source': m['source']}})
     except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/year-levels-by-program')
+def api_year_levels_by_program():
+    """Return valid year levels for a program based on programs.numyearlevel."""
+    program = request.args.get('program', '').strip()
+    if not program:
+        return jsonify({'year_levels': [1, 2, 3, 4]})
+    try:
+        row = query_db(
+            "SELECT numyearlevel FROM programs WHERE programcode = %s AND isactive = true",
+            (program,)
+        )
+        if row and row[0]['numyearlevel']:
+            num = int(row[0]['numyearlevel'])
+            return jsonify({'year_levels': list(range(1, num + 1))})
+        return jsonify({'year_levels': [1, 2, 3, 4]})
+    except Exception:
+        return jsonify({'year_levels': [1, 2, 3, 4]}), 500
+
+
 @app.route('/api/curriculum-by-year')
 def api_curriculum_by_year():
-    p = request.args.get('program', '')
+    p          = request.args.get('program', '').strip()
+    acad_year  = request.args.get('acad_year', '').strip()   # e.g. "AY2526"
+    year_level = request.args.get('year_level', '').strip()  # e.g. "3"
+
     try:
+        # When we know the academic year and year level, find the curriculum that
+        # was in effect when this cohort first enrolled.
+        # Entry year = AY start year − (year_level − 1)
+        # e.g. Year 3 in AY2526 → 2025 − 2 = 2023 → use curriculum whose start ≤ 2023
+        if acad_year and year_level:
+            # Parse "AY2526" → extract digits "2526" → first 2 = "25" → 2000+25 = 2025
+            ay_digits  = ''.join(c for c in acad_year if c.isdigit())
+            ay_start   = int(ay_digits[:2]) + 2000 if len(ay_digits) >= 2 else 0
+            entry_start = ay_start - (int(year_level) - 1)
+
+            # curriculumyear is stored as "2022-2023", "2025-2026", etc.
+            # Use SUBSTRING(..., 1, 4) to extract the 4-digit start year — same
+            # pattern used throughout the rest of this app (see program_yearlevel logic).
+            row = query_db("""
+                SELECT c.curriculumyear FROM curriculum c
+                WHERE c.programcode = %s
+                  AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INTEGER) <= %s
+                ORDER BY c.curriculumyear DESC
+                LIMIT 1
+            """, (p, entry_start))
+            if row:
+                return jsonify({'curriculum': row[0]['curriculumyear']})
+
+        # Fallback: return latest curriculum for the program
         row = query_db("""
             SELECT c.curriculumyear FROM curriculum c
             WHERE c.programcode = %s ORDER BY c.curriculumyear DESC LIMIT 1
         """, (p,))
         return jsonify({'curriculum': row[0]['curriculumyear'] if row else ''})
-    except: return jsonify({'curriculum': ''}), 500
+    except:
+        return jsonify({'curriculum': ''}), 500
 
 @app.route('/api/sections-by-program')
 def api_sections_by_program():

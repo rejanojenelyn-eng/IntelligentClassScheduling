@@ -53,9 +53,10 @@ _SEM_MARKERS = [
 _CODE_RE = re.compile(r'^[A-Z]{1,8}[\s\-]?\d{1,4}[A-Z0-9]?$', re.IGNORECASE)
 # Loose check used for inferred column detection (anchored at start only)
 _CODE_LOOSE_RE = re.compile(r'^[A-Z]{2,}[\s\-]?\d+', re.IGNORECASE)
-# Compound codes: "ELEC HM-E1", "ELEC CS-E2", "ELEC IT-E3" …
-# Pattern: 2-8 letters  SPACE  1-6 alphanumeric  DASH  optional-letter  1+ digits
-_CODE_COMPOUND_RE = re.compile(r'^[A-Z]{2,8}\s[A-Z0-9]{1,6}-[A-Z]?\d+[A-Z0-9]?$', re.IGNORECASE)
+# Compound codes: "ELEC HM-E1", "ELEC IT-FE2", "ELEC CS-E2" …
+# Pattern: 2-8 letters  SPACE  1-6 alphanumeric  DASH  one or more alphanumeric
+# (suffix is unrestricted alphanumeric to handle "FE2", "E1", "FE1", etc.)
+_CODE_COMPOUND_RE = re.compile(r'^[A-Z]{2,8}\s[A-Z0-9]{1,6}-[A-Z0-9]+$', re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Words that should NEVER be treated as a subject code even if they happen
@@ -219,6 +220,11 @@ def _is_skip_row(row):
     cells = [_clean(c) for c in row if _clean(c)]
     if not cells:
         return True
+    # pdfplumber occasionally merges the last subject row with the TOTAL UNITS
+    # footer into one row.  If the first non-empty cell is a valid subject code
+    # we must keep the row even if "TOTAL UNITS" appears later in that same row.
+    if _looks_like_code(cells[0]):
+        return False
     joined = ' '.join(cells).upper()
     return any(tok in joined for tok in (
         'TOTAL UNITS', 'GRAND TOTAL', 'SUBTOTAL', 'TOTAL:', 'SUM:',
@@ -360,8 +366,9 @@ def _extract_via_tables(pdf, override_col_map=None):
     lower down).  Per-table section-text scanning gives every table exactly the
     heading that precedes it.
     """
-    subjects, warnings = [], []
+    subjects, warnings, all_skipped = [], [], []
     current_year, current_sem = 0, 'A'
+    last_col_map = None   # reused as fallback for headerless mini-tables
 
     for page in pdf.pages:
         table_objs = []
@@ -394,14 +401,18 @@ def _extract_via_tables(pdf, override_col_map=None):
             prev_bottom = tbl_obj.bbox[3]   # bottom of this table
 
             table = tbl_obj.extract()
-            if not table or len(table) < 2:
+            if not table:
                 continue
-            result = _process_table(table, current_year, current_sem, override_col_map)
+            result = _process_table(table, current_year, current_sem, override_col_map,
+                                    fallback_col_map=last_col_map)
             subjects.extend(result['subjects'])
+            all_skipped.extend(result.get('skipped', []))
+            if result.get('col_map'):
+                last_col_map = result['col_map']
             current_year = result['year']
             current_sem  = result['sem']
 
-    return subjects, warnings
+    return subjects, warnings, all_skipped
 
 # ---------------------------------------------------------------------------
 # Strategy 2 – Word-position layout reconstruction
@@ -475,8 +486,9 @@ def _extract_via_word_layout(pdf, override_col_map=None):
     scanner.  A page-level scan would find the EARLIEST year on the page (often
     "FIRST YEAR" from earlier content) and incorrectly overwrite the context.
     """
-    subjects, warnings = [], []
+    subjects, warnings, all_skipped = [], [], []
     current_year, current_sem = 0, 'A'
+    last_col_map = None   # carry column map across pages for headerless continuations
 
     for page in pdf.pages:
         word_rows = _words_to_rows(page)
@@ -487,12 +499,16 @@ def _extract_via_word_layout(pdf, override_col_map=None):
         if not table:
             continue
 
-        result = _process_table(table, current_year, current_sem, override_col_map)
+        result = _process_table(table, current_year, current_sem, override_col_map,
+                                fallback_col_map=last_col_map)
         subjects.extend(result['subjects'])
+        all_skipped.extend(result.get('skipped', []))
+        if result.get('col_map'):
+            last_col_map = result['col_map']
         current_year = result['year']
         current_sem  = result['sem']
 
-    return subjects, warnings
+    return subjects, warnings, all_skipped
 
 # ---------------------------------------------------------------------------
 # Strategy 3 – Raw line-by-line text parsing
@@ -516,13 +532,19 @@ def _extract_via_text(full_text):
         if not parts:
             continue
 
-        # Try first token alone, then first+second merged
+        # Try first token alone, then merged, then two-token compound form
         candidate = parts[0]
         if not _CODE_RE.match(candidate) and len(parts) >= 2:
             merged = parts[0] + parts[1]
             if _CODE_RE.match(merged):
                 candidate = merged
                 parts = [candidate] + parts[2:]
+            else:
+                # e.g. "ELEC IT-FE2 BSIT Free Elective 2" — first two tokens are the code
+                compound = parts[0] + ' ' + parts[1]
+                if _CODE_COMPOUND_RE.match(compound.upper()):
+                    candidate = compound
+                    parts = [candidate] + parts[2:]
 
         if not _looks_like_code(candidate):
             continue
@@ -557,7 +579,7 @@ def _extract_via_text(full_text):
 # Shared table-row processor (used by strategies 1 & 2)
 # ---------------------------------------------------------------------------
 
-def _process_table(table, init_year, init_sem, override_col_map=None):
+def _process_table(table, init_year, init_sem, override_col_map=None, fallback_col_map=None):
     current_year, current_sem = init_year, init_sem
     subjects = []
 
@@ -581,13 +603,20 @@ def _process_table(table, init_year, init_sem, override_col_map=None):
                 col_map = cm
                 data_start = i + 1
                 break
-        # ── Fallback: infer from data ─────────────────────────────────────
+        # ── Fallback 1: infer column roles from data patterns ─────────────
         if not col_map:
             col_map = _infer_col_map(table)
             data_start = 0
+        # ── Fallback 2: reuse the previous table's column map ─────────────
+        # This handles mini-tables that pdfplumber splits off at page boundaries
+        # (e.g. the very last subject row before TOTAL UNITS on the final page).
+        if not col_map and fallback_col_map:
+            col_map = fallback_col_map
+            data_start = 0
 
     if not col_map or 'sc' not in col_map:
-        return {'subjects': subjects, 'year': current_year, 'sem': current_sem}
+        return {'subjects': subjects, 'year': current_year, 'sem': current_sem,
+                'skipped': [], 'col_map': None}
 
     # ── Scan skipped header rows for year/sem context ────────────────────
     for row in table[:data_start]:
@@ -598,9 +627,16 @@ def _process_table(table, init_year, init_sem, override_col_map=None):
         if dy: current_year = dy
         if ds: current_sem  = ds
 
+    skipped_rows = []   # rows rejected during extraction, with reason
+
     # ── Extract data rows ────────────────────────────────────────────────
     for row in table[data_start:]:
-        if not row or _is_skip_row(row):
+        if not row:
+            continue
+        if _is_skip_row(row):
+            cells = [_clean(c) for c in row if _clean(c)]
+            if cells:
+                skipped_rows.append({'cells': cells[:8], 'reason': 'total/summary row'})
             continue
 
         # gcell defined first so it's available for all field reads below
@@ -682,6 +718,7 @@ def _process_table(table, init_year, init_sem, override_col_map=None):
         # Skip obvious column-header keywords that ended up in the code cell
         if sc_clean in ('SUBJECTCODE', 'COURSECODE', 'CODE', 'SUBJECT', 'COURSE',
                         'DESCRIPTIVE', 'TITLE', 'DESCRIPTION'):
+            skipped_rows.append({'cells': [sc_clean], 'reason': 'column-header keyword in code cell'})
             continue
 
         # Accept standard alphanumeric codes (e.g. CC101, DCIT23A, NSTP1)
@@ -693,6 +730,7 @@ def _process_table(table, init_year, init_sem, override_col_map=None):
                 and sc_clean not in _NON_CODE_UPPER
             )
             if not is_short_alpha:
+                skipped_rows.append({'cells': [sc_clean], 'reason': f'unrecognized subject-code format: {sc_clean!r}'})
                 continue
 
         # ── Subject name ──────────────────────────────────────────────────
@@ -720,7 +758,8 @@ def _process_table(table, init_year, init_sem, override_col_map=None):
             row_year, row_sem,          # ← use per-row values, not stale context
         ))
 
-    return {'subjects': subjects, 'year': current_year, 'sem': current_sem}
+    return {'subjects': subjects, 'year': current_year, 'sem': current_sem,
+            'skipped': skipped_rows, 'col_map': col_map}
 
 # ---------------------------------------------------------------------------
 # Subject dict factory & utilities
@@ -771,9 +810,10 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         confidence    – int 0-100
         warnings      – list of strings
         subject_count – int
+        skipped_rows  – list of {cells, reason} dicts for rows the parser rejected
         raw_text      – first 3000 chars of extracted text (for debugging)
     """
-    subjects, warnings = [], []
+    subjects, warnings, skipped_rows = [], [], []
     raw_text = ''
 
     try:
@@ -786,12 +826,12 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
             raw_text = '\n'.join(all_text)
 
             # Strategy 1: explicit table detection
-            s1, w1 = _extract_via_tables(pdf, override_col_map)
+            s1, w1, sk1 = _extract_via_tables(pdf, override_col_map)
 
             # Strategy 2: word-position layout – always run as a supplementary pass.
             # Pages where pdfplumber's table detector fails (e.g. invisible-border Word
             # tables) are still processed, filling in subjects that S1 missed.
-            s2, w2 = _extract_via_word_layout(pdf, override_col_map)
+            s2, w2, sk2 = _extract_via_word_layout(pdf, override_col_map)
 
             # Merge: S1 is authoritative; S2 adds any subject codes S1 did not find.
             # Use normalized keys so "GEED 032" and "GEED032" are treated as the same.
@@ -799,20 +839,24 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
                 s1_codes  = {_normalize_code_key(s['sc']) for s in s1}
                 s2_extra  = [s for s in s2 if _normalize_code_key(s['sc']) not in s1_codes]
                 subjects  = s1 + s2_extra
+                # Skipped rows: union from both strategies (deduplicate by cell content)
+                seen_skip = set()
+                for sk in sk1 + sk2:
+                    key = tuple(sk['cells'])
+                    if key not in seen_skip:
+                        seen_skip.add(key)
+                        skipped_rows.append(sk)
 
                 if s1 and s2_extra:
                     warnings = list(w1)
-                    warnings.insert(0, 'Extraction method: structured table parsing (+ word-position supplement).')
                     warnings.append(
                         f'Word-position layout recovered {len(s2_extra)} additional subject(s) '
                         f'from sections that the table detector missed.'
                     )
                 elif s1:
                     warnings = list(w1)
-                    warnings.insert(0, 'Extraction method: structured table parsing.')
                 else:
                     warnings = list(w2)
-                    warnings.insert(0, 'Extraction method: word-position layout analysis.')
 
             # Strategy 3: raw text lines (last resort – nothing extracted at all)
             if not subjects and raw_text.strip():
@@ -887,15 +931,25 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
             warnings.append(
                 f'{no_sem} subject(s) have no detected semester — please set in the review screen.'
             )
-        if no_th:
-            warnings.append(
-                f'{no_th} subject(s) have Tuition Hours = 0 — verify if correct.'
-            )
+
+    # Filter out pure summary/total skip entries from the skipped list so only
+    # rows that look like they *could* have been subjects are surfaced.
+    meaningful_skipped = [
+        sk for sk in skipped_rows
+        if sk.get('reason') != 'total/summary row'
+    ]
+
+    if meaningful_skipped:
+        warnings.append(
+            f'{len(meaningful_skipped)} row(s) were detected but not imported — '
+            f'see "skipped_rows" in the response for details.'
+        )
 
     return {
         'subjects':      subjects,
         'confidence':    _score(subjects),
         'warnings':      warnings,
         'subject_count': len(subjects),
+        'skipped_rows':  meaningful_skipped,
         'raw_text':      raw_text[:3000],
     }

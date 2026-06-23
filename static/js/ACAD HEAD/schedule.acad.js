@@ -1,3 +1,12 @@
+/* ---- Canonical day sort order ---- */
+const _DAY_SORT_ORDER = {
+    'MON':0,'TUE':1,'WED':2,'THU':3,'FRI':4,'SAT':5,'SUN':6,
+    'Monday':0,'Tuesday':1,'Wednesday':2,'Thursday':3,'Friday':4,'Saturday':5,'Sunday':6
+};
+function _sortDays(arr) {
+    return [...arr].sort((a, b) => (_DAY_SORT_ORDER[a.trim()] ?? 99) - (_DAY_SORT_ORDER[b.trim()] ?? 99));
+}
+
 /* ---- Overlay mode URL params (parsed before anything else) ---- */
 (function () {
     const p = new URLSearchParams(window.location.search);
@@ -356,7 +365,7 @@ function renderTable(sessions) {
         const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';
-        const daysDisplay  = sess.daysArr.length  ? sess.daysArr.join('/') : '<span style="color:#aaa;">—</span>';
+        const daysDisplay  = sess.daysArr.length  ? _sortDays(sess.daysArr).join('/') : '<span style="color:#aaa;">—</span>';
         const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
         const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
             ? sess.roomname

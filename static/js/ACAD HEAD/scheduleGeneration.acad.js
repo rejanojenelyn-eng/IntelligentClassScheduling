@@ -1,5 +1,14 @@
 // MANUAL_EDITOR_URL is defined inline in the HTML template above this script
 
+// Canonical day sort order (Mon=0 … Sun=6) — used to normalise display across all views
+const _DAY_SORT_ORDER = {
+    'MON':0,'TUE':1,'WED':2,'THU':3,'FRI':4,'SAT':5,'SUN':6,
+    'Monday':0,'Tuesday':1,'Wednesday':2,'Thursday':3,'Friday':4,'Saturday':5,'Sunday':6
+};
+function _sortDays(arr) {
+    return [...arr].sort((a, b) => (_DAY_SORT_ORDER[a.trim()] ?? 99) - (_DAY_SORT_ORDER[b.trim()] ?? 99));
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     let currentScheduleData = [];
     let currentBatchId      = null;
@@ -24,6 +33,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnTableView     = document.getElementById('btnTableView');
     const sortSelect       = document.getElementById('sortSelect');
 
+    // ── #3: Searchable program dropdown ──────────────────────────────────────
+    const programSearch = document.getElementById('programSearch');
+    // Snapshot all program options once so filtering can restore them.
+    const _allProgOpts = Array.from(program.options)
+        .filter(o => o.value)
+        .map(o => ({ value: o.value, text: o.textContent, name: o.dataset.name || '' }));
+
+    if (programSearch) {
+        programSearch.addEventListener('input', function () {
+            const q = this.value.trim().toLowerCase();
+            // Rebuild select options matching the query
+            while (program.options.length > 1) program.remove(1); // keep "SELECT"
+            const filtered = q
+                ? _allProgOpts.filter(o =>
+                    o.value.toLowerCase().includes(q) ||
+                    o.text.toLowerCase().includes(q) ||
+                    o.name.toLowerCase().includes(q))
+                : _allProgOpts;
+            filtered.forEach(o => {
+                const opt = document.createElement('option');
+                opt.value = o.value;
+                opt.textContent = o.text;
+                opt.dataset.name = o.name;
+                program.appendChild(opt);
+            });
+            program.value = '';
+            checkFormValidity();
+        });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     async function loadSections() {
         const prog = program.value;
         const yl   = yearLevel.value;
@@ -40,41 +80,60 @@ document.addEventListener('DOMContentLoaded', () => {
                 opt.textContent = sec.name;
                 sectionFilter.appendChild(opt);
             });
-            if ((data.sections || []).length === 1) {
-                sectionFilter.value = data.sections[0].id;
-            }
+            // #6: Never auto-select a section; the user must choose manually.
         } catch (e) {
             sectionFilter.innerHTML = '<option value="">SELECT</option>';
         }
         checkFormValidity();
     }
 
+    async function loadYearLevels(programValue) {
+        yearLevel.innerHTML = '<option value="">Loading...</option>';
+        yearLevel.disabled  = true;
+        sectionFilter.innerHTML = '<option value="">SELECT</option>';
+        curriculumText.textContent = "Select Year Level";
+        curriculum.value = "";
+        try {
+            const res  = await fetch(`/api/year-levels-by-program?program=${encodeURIComponent(programValue)}`);
+            const data = await res.json();
+            const levels = data.year_levels || [1, 2, 3, 4];
+            yearLevel.innerHTML = '<option value="">SELECT</option>';
+            levels.forEach(lvl => {
+                const opt = document.createElement('option');
+                opt.value       = lvl;
+                opt.textContent = String(lvl);
+                yearLevel.appendChild(opt);
+            });
+        } catch (e) {
+            yearLevel.innerHTML = '<option value="">SELECT</option>';
+            [1, 2, 3, 4].forEach(lvl => {
+                const opt = document.createElement('option');
+                opt.value = lvl; opt.textContent = String(lvl);
+                yearLevel.appendChild(opt);
+            });
+        } finally {
+            yearLevel.disabled = false;
+        }
+        checkFormValidity();
+    }
+
     program.addEventListener('change', async function() {
         const programValue = this.value;
+        // #3: Keep search input in sync with the selected option
+        if (programSearch) {
+            programSearch.value = programValue
+                ? (this.options[this.selectedIndex]?.dataset?.name || this.options[this.selectedIndex]?.textContent || '')
+                : '';
+        }
         if (!programValue) {
             curriculumText.textContent = "Select Program first";
             curriculum.value = "";
-            sectionFilter.innerHTML = '<option value="">Select</option>';
+            yearLevel.innerHTML = '<option value="">SELECT</option>';
+            sectionFilter.innerHTML = '<option value="">SELECT</option>';
             checkFormValidity();
             return;
         }
-        curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-        try {
-            const res = await fetch(`/api/curriculum-by-year?program=${encodeURIComponent(programValue)}`);
-            const data = await res.json();
-            if (data.curriculum) {
-                curriculum.value = data.curriculum;
-                curriculumText.textContent = `CY ${data.curriculum}`;
-            } else {
-                curriculumText.textContent = "No curriculum found";
-                curriculum.value = "";
-            }
-        } catch (e) {
-            console.error('Error fetching curriculum:', e);
-            curriculumText.textContent = "Error loading curriculum";
-            curriculum.value = "";
-        }
-        await loadSections();
+        await loadYearLevels(programValue);
     });
 
     function checkFormValidity() {
@@ -82,7 +141,33 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGenerate.disabled = !allFilled;
     }
 
-    yearLevel.addEventListener('change', loadSections);
+    yearLevel.addEventListener('change', async function() {
+        await loadSections();
+        // Re-fetch curriculum now that both program + year level are known
+        const prog = program.value;
+        const yl   = yearLevel.value;
+        const ay   = acadYear.value;
+        if (prog && yl) {
+            curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            try {
+                const params = new URLSearchParams({ program: prog, year_level: yl });
+                if (ay) params.set('acad_year', ay);
+                const res  = await fetch(`/api/curriculum-by-year?${params}`);
+                const data = await res.json();
+                if (data.curriculum) {
+                    curriculum.value = data.curriculum;
+                    curriculumText.textContent = `CY ${data.curriculum}`;
+                } else {
+                    curriculumText.textContent = "No curriculum found";
+                    curriculum.value = "";
+                }
+            } catch (e) {
+                curriculumText.textContent = "Error";
+                curriculum.value = "";
+            }
+        }
+        checkFormValidity();
+    });
     sectionFilter.addEventListener('change', checkFormValidity);
     [acadYear, term, useHistorical].forEach(el => {
         el.addEventListener('change', checkFormValidity);
@@ -93,20 +178,18 @@ document.addEventListener('DOMContentLoaded', () => {
     btnCalendarView.addEventListener('click', () => {
         document.getElementById('tableViewContainer').classList.add('hidden');
         document.getElementById('calendarViewContainer').classList.remove('hidden');
-        btnCalendarView.classList.add('active-btn');
-        btnCalendarView.classList.remove('outline-btn');
-        btnTableView.classList.add('outline-btn');
-        btnTableView.classList.remove('active-btn');
+        btnCalendarView.classList.add('active');
+        btnTableView.classList.remove('active');
         if (currentScheduleData.length > 0) renderCalendarView(currentScheduleData);
     });
 
     btnTableView.addEventListener('click', () => {
         document.getElementById('calendarViewContainer').classList.add('hidden');
         document.getElementById('tableViewContainer').classList.remove('hidden');
-        btnTableView.classList.add('active-btn');
-        btnTableView.classList.remove('outline-btn');
-        btnCalendarView.classList.add('outline-btn');
-        btnCalendarView.classList.remove('active-btn');
+        btnTableView.classList.add('active');
+        btnCalendarView.classList.remove('active');
+        // Re-render table to ensure it reflects the latest data (#7)
+        if (currentScheduleData.length) renderTable(currentScheduleData, sortSelect.value);
     });
 
     sortSelect.addEventListener('change', () => {
@@ -121,6 +204,122 @@ document.addEventListener('DOMContentLoaded', () => {
             acadYear:  acadYear.value,
             section:   sectionFilter.value,
         };
+    }
+
+    let _generating = false; // #13: prevent concurrent generation calls
+
+    const _LS_KEY = 'schedGen_lastResult';
+
+    // #1: Reset everything to a clean initial state after saving as Draft.
+    function _resetPageState() {
+        currentScheduleData = [];
+        currentBatchId      = null;
+        canPublish          = false;
+        try { localStorage.removeItem(_LS_KEY); } catch(e) {}
+
+        document.getElementById('scheduleTableBody').innerHTML = `
+            <tr class="table-empty-row">
+                <td colspan="11">
+                    <i class="fas fa-calendar-plus"></i>
+                    Select filters above and click Generate Schedule to begin
+                </td>
+            </tr>`;
+        document.getElementById('genGridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        document.getElementById('tableTitle').innerHTML = 'WAITING FOR SELECTION...';
+        document.getElementById('conflictBanner').classList.add('hidden');
+
+        // Reset all form controls
+        acadYear.value = '';
+        term.value     = '';
+        program.value  = '';
+        yearLevel.innerHTML   = '<option value="">SELECT</option>';
+        sectionFilter.innerHTML = '<option value="">SELECT</option>';
+        curriculum.value      = '';
+        curriculumText.textContent = 'Select Program first';
+        const progSearch = document.getElementById('programSearch');
+        if (progSearch) progSearch.value = '';
+
+        btnRegenerate.disabled   = true;
+        btnSaveDraft.disabled    = true;
+        btnManualEditor.disabled = true;
+        btnExport.disabled       = true;
+        btnApprove.disabled      = true;
+        btnGenerate.disabled     = true;
+
+        // Reset accuracy widget
+        const pctEl       = document.getElementById('accuracyPct');
+        const iconEl      = document.getElementById('accuracyIcon');
+        const circleEl    = document.getElementById('accuracyCircle');
+        const breakdownEl = document.getElementById('accuracyBreakdown');
+        const descEl      = document.getElementById('accuracyDesc');
+        if (pctEl)       pctEl.textContent = '—';
+        if (iconEl)      iconEl.className  = 'fas fa-chart-bar';
+        if (circleEl)    { circleEl.style.borderColor = ''; }
+        if (breakdownEl) { breakdownEl.innerHTML = ''; breakdownEl.classList.remove('visible'); }
+        if (descEl)      descEl.textContent = 'Generate a schedule to see how well it satisfies all scheduling rules and constraints.';
+    }
+
+    function _saveStateToStorage() {
+        if (!currentScheduleData.length) return;
+        try {
+            localStorage.setItem(_LS_KEY, JSON.stringify({
+                scheduleData: currentScheduleData,
+                batchId: currentBatchId,
+                canPublish,
+                context: getContext(),
+                formValues: {
+                    acadYear: acadYear.value,
+                    term: term.value,
+                    program: program.value,
+                    yearLevel: yearLevel.value,
+                    section: sectionFilter.value,
+                    curriculum: curriculum.value,
+                }
+            }));
+        } catch(e) {}
+    }
+
+    async function _restoreStateFromStorage() {
+        try {
+            const raw = localStorage.getItem(_LS_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            if (!saved || !saved.scheduleData || !saved.scheduleData.length) return;
+
+            const fv = saved.formValues || {};
+            // Restore form dropdowns first (program triggers year-level/section loads)
+            if (fv.program) program.value = fv.program;
+            if (fv.acadYear) acadYear.value = fv.acadYear;
+            if (fv.term) term.value = fv.term;
+
+            if (fv.program) {
+                await loadYearLevels(fv.program);
+                if (fv.yearLevel) {
+                    yearLevel.value = fv.yearLevel;
+                    await loadSections();
+                    if (fv.section) sectionFilter.value = fv.section;
+                    if (fv.curriculum) {
+                        curriculum.value = fv.curriculum;
+                        curriculumText.textContent = `CY ${fv.curriculum}`;
+                    }
+                }
+            }
+
+            currentScheduleData = saved.scheduleData;
+            currentBatchId      = saved.batchId || null;
+            canPublish          = saved.canPublish || false;
+
+            renderTable(currentScheduleData, sortSelect.value);
+            updateTitleBar();
+
+            btnRegenerate.disabled   = false;
+            btnSaveDraft.disabled    = false;
+            btnManualEditor.disabled = false;
+            btnExport.disabled       = false;
+            btnApprove.disabled      = !canPublish;
+
+            updateAccuracyWidget(currentScheduleData, getContext());
+        } catch(e) {}
     }
 
     function showInfo(title, message, type = 'info') {
@@ -240,8 +439,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = cls.time || '';
             if (t && !g.times.includes(t)) g.times.push(t);
 
-            (cls.days || '').split('/').filter(Boolean).forEach(d => {
-                if (!g.days_set.includes(d)) g.days_set.push(d);
+            // #12: split on '/', ',', or whitespace so both "MON/THU" and "MON THU" are handled
+            (cls.days || '').split(/[\/,\s]+/).filter(Boolean).forEach(d => {
+                const day = d.trim();
+                if (day && !g.days_set.includes(day)) g.days_set.push(day);
             });
 
             const room = cls.room || 'TBA';
@@ -255,17 +456,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         tbody.innerHTML = entries.map((g) => `
             <tr>
-                <td>${g.instructor}</td>
-                <td class="subject-code-cell">${g.subject_code}</td>
-                <td>${g.description}</td>
-                <td>${g.lec_hours}</td>
-                <td>${g.lab_hours}</td>
-                <td class="credit-cell">${g.credit_units}</td>
-                <td>${g.course}</td>
-                <td>${g.times.join(' / ')}</td>
-                <td>${g.lec_hours + g.lab_hours}</td>
-                <td>${g.days_set.join('/')}</td>
-                <td>${g.rooms.join(' / ')}</td>
+                <td class="td-instructor">${g.instructor}</td>
+                <td class="td-code">${g.subject_code}</td>
+                <td class="td-desc">${g.description}</td>
+                <td class="td-num">${g.lec_hours}</td>
+                <td class="td-num">${g.lab_hours}</td>
+                <td class="td-num">${g.credit_units}</td>
+                <td class="td-course">${g.course}</td>
+                <td class="td-time">${g.times.map(t => `<span class="time-line">${t}</span>`).join('')}</td>
+                <td class="td-num">${g.lec_hours + g.lab_hours}</td>
+                <td class="td-days">${_sortDays(g.days_set).join(' / ')}</td>
+                <td class="td-room">${g.rooms.join('<br>')}</td>
             </tr>
         `).join('');
     }
@@ -421,9 +622,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateTitleBar() {
         const ctx = getContext();
-        const termName = term.options[term.selectedIndex]?.text || ctx.term;
+        const termName    = term.options[term.selectedIndex]?.text || ctx.term;
+        const sectionText = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
+        const sectionPart = (sectionText && sectionText !== 'SELECT') ? ` - ${sectionText}` : '';
         document.getElementById('tableTitle').innerHTML =
-            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} - Year ${ctx.yearLevel || '?'} | ${termName} | ${ctx.acadYear || 'AY'}`;
+            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} - Year ${ctx.yearLevel || '?'}${sectionPart} | ${termName} | ${ctx.acadYear || 'AY'}`;
     }
 
     function applyScheduleResult(data, isRetrieve) {
@@ -433,6 +636,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         renderTable(currentScheduleData, sortSelect.value);
         updateTitleBar();
+
+        // #7/#8: Always refresh calendar if it is currently visible so both views stay in sync.
+        if (!document.getElementById('calendarViewContainer').classList.contains('hidden')) {
+            renderCalendarView(currentScheduleData);
+        }
 
         btnRegenerate.disabled   = false;
         btnSaveDraft.disabled    = false;
@@ -451,17 +659,128 @@ document.addEventListener('DOMContentLoaded', () => {
         const toast = document.getElementById('successToast');
         if (isRetrieve && data.retrieved_from) {
             const rf = data.retrieved_from;
-            toast.innerHTML =
-                `<i class="fas fa-check-circle"></i> Previous schedule loaded`
-                + ` — ${rf.status} V${rf.version} (${rf.ay_label} ${rf.term})`;
+            const msg = rf.source === 'historical'
+                ? `Previous schedule retrieved from historical data — ${rf.ay_label} ${rf.term}`
+                : `Previous official schedule retrieved — ${rf.ay_label} ${rf.term}`;
+            toast.innerHTML = `<i class="fas fa-check-circle"></i> ${msg}`;
         } else {
             toast.innerHTML = '<i class="fas fa-check-circle"></i> Schedule Generated Successfully!';
         }
         toast.classList.remove('hidden');
         setTimeout(() => toast.classList.add('hidden'), 4000);
+
+        _saveStateToStorage();
+        updateAccuracyWidget(currentScheduleData, getContext());
+    }
+
+    async function updateAccuracyWidget(scheduleData, ctx) {
+        const circleEl    = document.getElementById('accuracyCircle');
+        const pctEl       = document.getElementById('accuracyPct');
+        const descEl      = document.getElementById('accuracyDesc');
+        const labelEl     = document.getElementById('accuracyLabelEl');
+        const iconEl      = document.getElementById('accuracyIcon');
+        const breakdownEl = document.getElementById('accuracyBreakdown');
+        if (!pctEl) return;
+
+        // Loading state
+        pctEl.textContent          = '...';
+        iconEl.className           = 'fas fa-spinner fa-spin';
+        circleEl.style.borderColor = '#aaa';
+        pctEl.style.color          = '#aaa';
+        if (labelEl)     labelEl.style.color = '#aaa';
+        if (breakdownEl) { breakdownEl.innerHTML = ''; breakdownEl.classList.remove('visible'); }
+
+        try {
+            const res  = await fetch('/api/schedule/accuracy', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    schedule_data: scheduleData,
+                    program:       ctx.program,
+                    year_level:    ctx.yearLevel,
+                    term:          ctx.term,
+                }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const pct   = data.accuracy || 0;
+                const color = pct >= 85 ? '#16a34a' : pct >= 60 ? '#d97706' : '#dc2626';
+                const icon  = pct >= 85 ? 'fas fa-check' : pct >= 60 ? 'fas fa-chart-bar' : 'fas fa-exclamation';
+
+                pctEl.textContent          = pct + '%';
+                iconEl.className           = icon;
+                circleEl.style.borderColor = color;
+                pctEl.style.color          = color;
+                if (labelEl) labelEl.style.color = color;
+
+                // Summary description
+                const noHist = !data.hist_total;
+                if (descEl) {
+                    descEl.textContent = noHist
+                        ? 'No historical data — score reflects constraint compliance only.'
+                        : `${data.matched_faculty || 0} of ${data.hist_total || 0} subjects match historical faculty.`;
+                }
+
+                // ── Breakdown panel ───────────────────────────────────────
+                if (breakdownEl && Array.isArray(data.breakdown)) {
+                    const GROUPS = [
+                        { heading: 'Conflict Validation',     keys: ['faculty_conflict','room_conflict','section_conflict'] },
+                        { heading: 'Constraint Compliance',   keys: ['faculty_qual','lab_compliance','weekend','day_pairing','load_compliance'] },
+                        { heading: 'Recommendation Quality',  keys: ['hist_faculty','hist_room','hist_time'] },
+                    ];
+
+                    const byKey = {};
+                    data.breakdown.forEach(b => { byKey[b.key] = b; });
+
+                    function itemColor(score) {
+                        return score >= 85 ? '#16a34a' : score >= 60 ? '#d97706' : '#dc2626';
+                    }
+
+                    let html = '';
+                    GROUPS.forEach((grp, gi) => {
+                        if (gi > 0) html += '<hr class="acc-divider">';
+                        html += `<div class="acc-section-label">${grp.heading}</div>`;
+                        grp.keys.forEach(key => {
+                            const item = byKey[key];
+                            if (!item) return;
+                            const sc = item.score;
+                            const bc = itemColor(sc);
+                            html += `
+                            <div class="acc-item">
+                              <div class="acc-item-header">
+                                <span class="acc-item-label" title="${item.label}">${item.label}</span>
+                                <span class="acc-item-score" style="color:${bc}">${sc}%</span>
+                              </div>
+                              <div class="acc-bar-track">
+                                <div class="acc-bar-fill" style="width:${sc}%;background:${bc}"></div>
+                              </div>
+                            </div>`;
+                        });
+                    });
+
+                    breakdownEl.innerHTML = html;
+                    breakdownEl.classList.add('visible');
+                }
+            } else {
+                pctEl.textContent          = 'N/A';
+                iconEl.className           = 'fas fa-question';
+                circleEl.style.borderColor = '#aaa';
+                pctEl.style.color          = '#aaa';
+                if (labelEl) labelEl.style.color = '#aaa';
+                if (descEl)  descEl.textContent  = data.error || 'Could not calculate accuracy.';
+            }
+        } catch (e) {
+            pctEl.textContent          = 'N/A';
+            iconEl.className           = 'fas fa-question';
+            circleEl.style.borderColor = '#aaa';
+            pctEl.style.color          = '#aaa';
+            if (descEl) descEl.textContent = 'Accuracy calculation unavailable.';
+        }
     }
 
     btnGenerate.addEventListener('click', async () => {
+        if (_generating) return; // #13: prevent double-generation
         const ctx = getContext();
 
         if (!ctx.acadYear || !ctx.term || !ctx.program || !ctx.yearLevel) {
@@ -469,7 +788,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Clear any previous saved state — a fresh generate replaces it
+        try { localStorage.removeItem(_LS_KEY); } catch(e) {}
+
         const isRetrieve = useHistorical.checked;
+        _generating = true;
 
         btnGenerate.disabled = true;
         btnGenerate.innerHTML = isRetrieve
@@ -494,6 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         program:   ctx.program,
                         yearLevel: ctx.yearLevel,
                         term:      ctx.term,
+                        acadYear:  ctx.acadYear,
                     }),
                 });
                 const data = await res.json();
@@ -501,6 +825,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (data.success) {
                     applyScheduleResult(data, true);
+                    // #10: Show notice if any overloaded historical faculty were replaced with TBA
+                    const notices = data.overload_notices || [];
+                    if (notices.length > 0) {
+                        await showInfo(
+                            'Faculty Load Notice',
+                            'Some faculty from the previous schedule are already at their load limit '
+                            + 'for this term and have been replaced with <strong>TBA</strong>:<br><br>'
+                            + notices.map(n => `• ${n}`).join('<br>'),
+                            'info'
+                        );
+                    }
                 } else {
                     const proceed = await showInfo(
                         'No Previous Schedule Found',
@@ -523,6 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         term:       ctx.term,
                         curriculum: curriculum.value,
                         section:    ctx.section,
+                        acadYear:   ctx.acadYear,  // #9: needed for faculty load lookup
                     }),
                 });
                 const data = await res.json();
@@ -538,6 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
             completeProgress();
             await showInfo('Error', 'Connection error. Please try again.', 'error');
         } finally {
+            _generating = false; // #13: release lock
             btnGenerate.disabled = false;
             btnGenerate.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> GENERATE SCHEDULE';
             document.querySelector('#loadingModal h2').textContent = 'GENERATING SCHEDULE';
@@ -547,6 +884,72 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnRegenerate.addEventListener('click', () => { btnGenerate.click(); });
+
+    // ── Export modal wiring ──────────────────────────────────────────────
+    const exportModal    = document.getElementById('exportModal');
+    const exportFilename = document.getElementById('exportFilename');
+    const btnDoExport    = document.getElementById('btnDoExport');
+    const fmtCards       = exportModal ? exportModal.querySelectorAll('.export-fmt-card') : [];
+
+    fmtCards.forEach(card => {
+        card.addEventListener('click', () => {
+            fmtCards.forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            card.querySelector('input[type=radio]').checked = true;
+        });
+    });
+
+    btnExport.addEventListener('click', () => {
+        if (!currentScheduleData.length || !exportModal) return;
+        const ctx = getContext();
+        const semLabel = { A: '1stSem', B: '2ndSem', C: 'Summer' }[ctx.term] || ctx.term;
+        exportFilename.value = `Schedule_${ctx.program || 'Program'}_Year${ctx.yearLevel || '?'}_${ctx.acadYear || 'AY'}_${semLabel}`;
+        exportModal.classList.remove('hidden');
+    });
+
+    if (btnDoExport) {
+        btnDoExport.addEventListener('click', async () => {
+            if (!currentScheduleData.length) return;
+            const ctx    = getContext();
+            const selRad = exportModal.querySelector('input[name=exportFmt]:checked');
+            const fmt    = selRad ? selRad.value : 'csv';
+            const fname  = exportFilename.value.trim() || 'schedule_export';
+
+            btnDoExport.disabled = true;
+            btnDoExport.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+            try {
+                const res = await fetch('/api/schedule/export-generated', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        schedule_data: currentScheduleData,
+                        format:        fmt,
+                        filename:      fname,
+                        context:       ctx,
+                    }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    await showInfo('Export Failed', err.error || 'Could not generate export file.', 'error');
+                    return;
+                }
+                const blob = await res.blob();
+                const url  = URL.createObjectURL(blob);
+                const a    = document.createElement('a');
+                const extMap = { pdf:'.pdf', docx:'.docx', xlsx:'.xlsx', csv:'.csv' };
+                a.href     = url;
+                a.download = fname + (extMap[fmt] || '.csv');
+                a.click();
+                URL.revokeObjectURL(url);
+                exportModal.classList.add('hidden');
+            } catch (e) {
+                await showInfo('Error', 'Connection error during export.', 'error');
+            } finally {
+                btnDoExport.disabled = false;
+                btnDoExport.innerHTML = '<i class="fas fa-download"></i> Export';
+            }
+        });
+    }
 
     btnSaveDraft.addEventListener('click', async () => {
         if (!currentScheduleData.length) return;
@@ -573,8 +976,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     `Schedule saved as <strong>Draft V${data.draft_version}</strong>.<br>You can edit it later from <em>View Drafts</em>.`,
                     'success'
                 );
+                // #1: Reset page to clean state after a successful draft save.
+                _resetPageState();
+                return; // skip finally re-enable since _resetPageState handles it
             } else {
-                await showInfo('Save Failed', data.error || 'Could not save draft.', 'error');
+                // #11: Load violations get a dedicated message listing each faculty
+                const lvs = data.load_violations || [];
+                if (lvs.length) {
+                    const details = lvs.map(v =>
+                        `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                    ).join('<br>');
+                    await showInfo('Faculty Load Exceeded',
+                        'Cannot save draft — the following faculty exceed their load limit '
+                        + 'across all assigned sections this term:<br><br>' + details,
+                        'error');
+                } else {
+                    await showInfo('Save Failed', data.error || 'Could not save draft.', 'error');
+                }
             }
         } catch (e) {
             await showInfo('Error', 'Connection error. Please try again.', 'error');
@@ -644,15 +1062,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (data.success) {
+                const draftNote = data.draft_version
+                    ? `<br>Draft <strong>V${data.draft_version}</strong> has been preserved for further editing.`
+                    : '';
                 await showInfo(
                     'Published!',
-                    `Schedule published as <strong>V${data.published_version}</strong>.<br>A new draft <strong>V${data.draft_version}</strong> has been created automatically.`,
+                    `Schedule published as <strong>V${data.published_version}</strong>.${draftNote}`,
                     'success'
                 );
                 btnApprove.disabled = true;
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
             } else {
-                await showInfo('Publish Failed', data.error || 'Could not publish schedule.', 'error');
+                // #11: Show per-faculty load violation details when applicable
+                const lvs = data.load_violations || [];
+                if (lvs.length) {
+                    const details = lvs.map(v =>
+                        `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                    ).join('<br>');
+                    await showInfo('Faculty Load Exceeded',
+                        'Cannot approve — the following faculty exceed their load limit '
+                        + 'across all assigned sections this term:<br><br>' + details,
+                        'error');
+                } else {
+                    await showInfo('Publish Failed', data.error || 'Could not publish schedule.', 'error');
+                }
                 btnApprove.disabled = false;
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
             }
@@ -783,4 +1216,22 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target === overlay) overlay.classList.add('hidden');
         });
     });
+
+    // #14: Re-sync button states when the user returns to this browser tab.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        // Guarantee button enable/disable is consistent with current page data.
+        const hasSchedule = currentScheduleData.length > 0;
+        if (hasSchedule) {
+            btnRegenerate.disabled   = false;
+            btnSaveDraft.disabled    = false;
+            btnManualEditor.disabled = false;
+            btnExport.disabled       = false;
+        }
+        // Re-validate the generate button in case dropdown state was lost.
+        checkFormValidity();
+    });
+
+    // Restore the last generated schedule if the user came back from Manual Editor
+    _restoreStateFromStorage();
 });

@@ -56,44 +56,96 @@ SUNDAY_ALLOWED_PREFIXES = ('NSTP', 'OU')
 
 
 _SUBJ_SPEC_MAP = [
-    (['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'], 'Computer and Information Sciences'),
-    (['ARCH', 'ARCHS'],                                        'Architecture, Design and the Built Environment'),
-    (['CIEN', 'ENSC'],                                         'Engineering'),
-    (['ACCO'],                                                  'Accountancy and Finance'),
-    (['BUMA', 'HRMA'],                                         'Business Administration'),
+    (
+        ['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'],
+        {'Computer and Information Sciences', 'Information Technology',
+         'Information and Communication Technology'},
+    ),
+    (
+        ['ARCH', 'ARCHS'],
+        {'Architecture, Design and the Built Environment', 'Architecture'},
+    ),
+    (
+        ['CIEN', 'ENSC'],
+        {'Engineering', 'Computer Engineering', 'Electronics Engineering'},
+    ),
+    (
+        ['ACCO'],
+        {'Accountancy and Finance', 'Accountancy'},
+    ),
+    (
+        ['BUMA', 'HRMA'],
+        {'Business Administration', 'Business Management'},
+    ),
+    # PE / PATHFIT teachers may only teach physical education subjects,
+    # not general education academic courses.
+    (
+        ['PE', 'PHED', 'PATHFIT'],
+        {'Physical Education', 'Physical Education and Sports',
+         'Health and Physical Education', 'PE and Health',
+         'Sports Science', 'Kinesiology'},
+    ),
 ]
+
+# Flat set of every restricted specialization across all groups.
+# Faculty whose specialization is in this set are "domain-locked":
+# they may ONLY teach subjects whose prefix maps to their own group.
+_ALL_RESTRICTED_SPECS: set = {sp for _, specs in _SUBJ_SPEC_MAP for sp in specs}
 
 
 def _spec_matches_subject(spec_name: str, subject_code: str) -> bool:
     """Return True if the faculty specialization is compatible with the subject code.
-    Unrestricted subjects (GEED, NSTP, MATH, etc.) always return True."""
+
+    Rules:
+    1. If the subject prefix is in _SUBJ_SPEC_MAP, the faculty's specialization
+       must belong to that group's valid set.
+    2. If the subject is NOT in the map (GEED, MATH, NSTP, etc.) it is
+       considered a General-Education / unrestricted subject — but faculty
+       whose specialization is domain-locked (in _ALL_RESTRICTED_SPECS) may
+       NOT be assigned to it.  This prevents PE teachers from teaching GEED,
+       IT teachers from teaching humanities, etc.
+    3. Faculty with NO specialization on record are always allowed.
+    """
     upper = (subject_code or '').upper()
-    for prefixes, spec in _SUBJ_SPEC_MAP:
+
+    # Rule 1: restricted subject — must match the group's valid spec set
+    for prefixes, valid_specs in _SUBJ_SPEC_MAP:
         for pfx in prefixes:
             if upper.startswith(pfx):
-                return spec_name == spec
-    return True  # subject not in any restricted group → no specialization constraint
+                return spec_name in valid_specs
+
+    # Rule 2: unrestricted subject — block domain-locked specializations
+    if spec_name in _ALL_RESTRICTED_SPECS:
+        return False
+
+    # Rule 3: no restriction applies
+    return True
 
 
 def _required_spec_for_subject(subject_code: str) -> str:
-    """Return the specialization name required for a subject code, or '' if unrestricted."""
+    """Return the accepted specialization(s) for a subject code, or '' if unrestricted."""
     upper = (subject_code or '').upper()
-    for prefixes, spec in _SUBJ_SPEC_MAP:
+    for prefixes, valid_specs in _SUBJ_SPEC_MAP:
         for pfx in prefixes:
             if upper.startswith(pfx):
-                return spec
-    return ''
+                return ' / '.join(sorted(valid_specs))
+    return 'General Education / Humanities / Social Sciences (any non-domain-locked specialization)'
 
 
 # ── HC config helpers ──────────────────────────────────────────
 
+_DAY_SORT_IDX = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+def _sort_day_pair(pair):
+    """Sort a day pair by canonical week order (Mon→Sun), not alphabetically."""
+    return sorted(pair, key=lambda d: _DAY_SORT_IDX.index(d) if d in _DAY_SORT_IDX else 99)
+
 def _parse_day_pairs(raw) -> list:
-    """Convert JSON string or list → list of sorted day-name lists."""
+    """Convert JSON string or list → list of week-order-sorted day-name lists."""
     try:
         data = json.loads(raw) if isinstance(raw, str) else raw
-        return [sorted(p) for p in data if len(p) == 2]
+        return [_sort_day_pair(p) for p in data if len(p) == 2]
     except Exception:
-        return [sorted(p) for p in DAY_PAIRS.values()]
+        return [list(p) for p in DAY_PAIRS.values()]
 
 def _parse_time_slots(raw) -> tuple:
     """Convert JSON string → (set of start times, set of end times)."""
@@ -212,7 +264,7 @@ class CSPValidator:
         # ── Day pairs (HC6) ───────────────────────────────────
         raw_pairs = cfg.get('hc_day_pairs', '')
         self._day_pairs = _parse_day_pairs(raw_pairs) if raw_pairs else [
-            sorted(p) for p in DAY_PAIRS.values()
+            list(p) for p in DAY_PAIRS.values()
         ]
 
         # ── Valid time blocks (HC5) ────────────────────────────
@@ -265,6 +317,8 @@ class CSPValidator:
         # HC10 Faculty double-booking
         if self._enabled('hc_faculty_conflict_enabled'):
             violations += self._check_faculty_overlaps(schedule)
+        # HC11 Section time conflict — always enforced; two subjects cannot share a time slot
+        violations += self._check_section_overlaps(schedule)
         # HC_SPEC  Faculty specialization restriction
         if self._enabled('hc_faculty_spec_enabled'):
             violations += self._check_faculty_specialization(schedule, faculty_map)
@@ -430,79 +484,76 @@ class CSPValidator:
         return violations
 
     # ── HC6 Day pairing ─────────────────────────────────────────
-    # Pairing is required only when:
-    #   • The session block is 1.5 hours AND
-    #   • The subject needs ≥ 3 total hours/week (so meeting on two paired days = full load)
+    # When enabled, any subject that spans exactly 2 days must use only the
+    # configured valid pairings (default: Mon-Thu, Tue-Fri, Wed-Sat).
+    # Two complementary checks are performed:
+    #   A) Per-entry  — a single schedule entry with days_list of length 2
+    #                   is validated directly.
+    #   B) Cross-entry — multiple single-day entries for the same subject AND
+    #                    same class_type (Lecture/Lab) that together span exactly
+    #                    2 distinct days are also validated.  Grouping by class_type
+    #                    prevents false positives when a lecture is on paired days
+    #                    and the lab is placed on a third independent day.
 
     def _check_day_pairing(self, schedule):
-        # Group single-day 1.5h entries by subject so paired days can be evaluated together.
-        # The manual editor sends one entry per day; the auto-scheduler sends combined entries.
-        subj_days: dict = defaultdict(list)   # subject_code → list of day strings
-        subj_hrs:  dict = {}                  # subject_code → total_subject_hrs
-
-        for cls in schedule:
-            dur = duration_hours(cls['start_time'], cls['end_time'])
-            if not (abs(dur - 1.5) < 0.1):
-                continue
-            code = cls.get('subject_code') or cls.get('subjectcode', '')
-            hrs  = float(cls.get('total_subject_hrs') or cls.get('total_hours') or 0)
-            days_list = cls.get('days_list', [cls.get('day', '')])
-
-            if len(days_list) > 1:
-                # Auto-scheduler combined format — validate directly
-                subj_days[code] = days_list
-            else:
-                # Manual format — accumulate single days
-                day = days_list[0] if days_list else ''
-                if day and day not in subj_days[code]:
-                    subj_days[code].append(day)
-            if hrs > 0:
-                subj_hrs[code] = hrs
-
         violations = []
+        reported: set = set()   # (code, tuple(sorted_days)) already reported
+        pair_strs = ' / '.join('-'.join(p) for p in self._day_pairs)
+
+        def _flag(code, sorted_days):
+            key = (code, tuple(sorted_days))
+            if key in reported:
+                return
+            reported.add(key)
+            violations.append({
+                'rule': 'HC6',
+                'subject': code,
+                'detail': (
+                    f'"{code}": The day combination {list(sorted_days)} is not a valid pairing. '
+                    f'Allowed pairings are: {pair_strs}. '
+                    f'Please adjust the schedule days to match one of the configured pairs '
+                    f'(Mon-Thu, Tue-Fri, or Wed-Sat).'
+                )
+            })
+
+        # ── Check A: per-entry ────────────────────────────────────────────────
         for cls in schedule:
-            dur = duration_hours(cls['start_time'], cls['end_time'])
-            code = cls.get('subject_code', '?')
-            total_subj_hrs = (cls.get('total_subject_hrs') or cls.get('total_hours')
-                              or subj_hrs.get(code, 0))
-            # Only enforce pairing when session is 1.5hr AND subject needs >= 3hrs/week
-            if abs(dur - 1.5) < 0.1 and total_subj_hrs >= 3:
-                days_list = cls.get('days_list', [cls.get('day')])
-                # Use the accumulated grouped days for manual-editor single-day entries
-                grouped = subj_days.get(code, days_list)
-                if len(grouped) < 2:
-                    violations.append({
-                        'rule': 'HC6',
-                        'subject': code,
-                        'detail': (
-                            f'"{code}": A 1.5-hour session for a subject requiring '
-                            f'3+ hours/week must be split across two paired days (e.g. Mon-Thu, Tue-Fri, or Wed-Sat). '
-                            f'Currently only one day is assigned.'
-                        )
-                    })
-                else:
-                    sorted_grouped = sorted(grouped[:2])
-                    valid = any(pair == sorted_grouped for pair in self._day_pairs)
-                    if not valid:
-                        pair_strs = ' / '.join('-'.join(p) for p in self._day_pairs)
-                        violations.append({
-                            'rule': 'HC6',
-                            'subject': code,
-                            'detail': (
-                                f'"{code}": The day combination {grouped[:2]} is not a valid pairing. '
-                                f'Allowed pairings are: {pair_strs}. '
-                                f'Please adjust the schedule days to match one of the configured pairs.'
-                            )
-                        })
-        # Deduplicate — each subject should only appear once
-        seen = set()
-        unique = []
-        for v in violations:
-            key = (v['rule'], v['subject'])
-            if key not in seen:
-                seen.add(key)
-                unique.append(v)
-        return unique
+            code = (cls.get('subject_code') or cls.get('subjectcode') or '').strip()
+            if not code:
+                continue
+            entry_days = cls.get('days_list') or []
+            if not isinstance(entry_days, list):
+                entry_days = [entry_days] if entry_days else []
+            # Only check entries that explicitly carry exactly 2 days
+            if len(entry_days) != 2:
+                continue
+            sorted_days = _sort_day_pair(entry_days)
+            if not any(pair == sorted_days for pair in self._day_pairs):
+                _flag(code, sorted_days)
+
+        # ── Check B: cross-entry accumulation per (subject_code, class_type) ──
+        # Groups single-day entries (e.g. from the manual editor) so that a
+        # subject placed on Mon by one entry and Tue by another is caught.
+        # Lecture and Lab are kept separate to avoid combining their days.
+        subj_type_days: dict = defaultdict(set)
+        for cls in schedule:
+            code  = (cls.get('subject_code') or cls.get('subjectcode') or '').strip()
+            if not code:
+                continue
+            ctype = cls.get('class_type', 'Lecture')
+            days_list = cls.get('days_list') or [cls.get('day', '')]
+            for d in days_list:
+                if d:
+                    subj_type_days[(code, ctype)].add(d)
+
+        for (code, ctype), days_set in subj_type_days.items():
+            if len(days_set) != 2:
+                continue   # single-day or 3+-day groups are outside HC6 scope
+            sorted_days = _sort_day_pair(list(days_set))
+            if not any(pair == sorted_days for pair in self._day_pairs):
+                _flag(code, sorted_days)
+
+        return violations
 
     # ── HC7 Night PT cap ────────────────────────────────────────
 
@@ -709,6 +760,44 @@ class CSPValidator:
                 })
         return violations
 
+    # ── HC11 Section time conflict ──────────────────────────────
+    # Separate from HC9/HC10: even with different rooms and faculty, students
+    # in the same section cannot attend two classes simultaneously.
+
+    def _check_section_overlaps(self, schedule):
+        violations = []
+        for i, a in enumerate(schedule):
+            for b in schedule[i+1:]:
+                a_code = a.get('subject_code', '?')
+                b_code = b.get('subject_code', '?')
+                for day_a in a.get('days_list', [a.get('day', '')]):
+                    if not day_a:
+                        continue
+                    for day_b in b.get('days_list', [b.get('day', '')]):
+                        if day_a != day_b:
+                            continue
+                        if self._times_overlap(a['start_time'], a['end_time'],
+                                               b['start_time'], b['end_time']):
+                            violations.append({
+                                'rule': 'HC11',
+                                'subject': f"{a_code} / {b_code}",
+                                'detail': (
+                                    f'Section conflict on {day_a}: "{a_code}" '
+                                    f'({format_time_12h(a["start_time"])}–{format_time_12h(a["end_time"])}) '
+                                    f'and "{b_code}" '
+                                    f'({format_time_12h(b["start_time"])}–{format_time_12h(b["end_time"])}) '
+                                    f'overlap. A section cannot have two classes at the same time.'
+                                )
+                            })
+        seen = set()
+        unique = []
+        for v in violations:
+            key = (v['rule'], v['subject'])
+            if key not in seen:
+                seen.add(key)
+                unique.append(v)
+        return unique
+
     @staticmethod
     def _times_overlap(s1, e1, s2, e2):
         return s1 < e2 and e1 > s2
@@ -802,15 +891,20 @@ class CaseBasedRetriever:
             return {}
 
         # Extract (subject_code, employeenumber) from the best-matching historical case.
-        # Match instructor names stored as "Lastname, Firstname" to faculty by last name.
+        # Match instructor names stored as "Lastname, Firstname M." to faculty using
+        # both last name AND the first word of the first name to avoid ambiguity
+        # when multiple faculty share the same surname.
         rows = query_db("""
             SELECT
                 TRIM(hd."Subject Code") AS subjectcode,
                 f.employeenumber
             FROM historical_data hd
             JOIN faculty f
-              ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1)))
-               = UPPER(TRIM(f.lastname))
+              ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1))) = UPPER(TRIM(f.lastname))
+             AND (
+                 SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1) = ''
+                 OR UPPER(TRIM(f.firstname)) LIKE (UPPER(SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1)) || '%%')
+             )
             WHERE REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') ILIKE %s
               AND CAST(hd."Year Level" AS TEXT) = %s
               AND hd.semesterid      = %s
@@ -845,7 +939,7 @@ class IntelligentScheduler:
         raw_pairs = self._hc_cfg.get('hc_day_pairs', '')
         self._builder_pairs = (
             _parse_day_pairs(raw_pairs) if raw_pairs
-            else [sorted(p) for p in DAY_PAIRS.values()]
+            else [list(p) for p in DAY_PAIRS.values()]
         )
         # NSTP/Sunday enforcement for the builder
         weekend_on = bool(self._hc_cfg.get('hc_weekend_enabled', 1))
@@ -854,6 +948,8 @@ class IntelligentScheduler:
         self._weekend_day_scope  = self._hc_cfg.get('hc_weekend_day', 'sunday_only')
         # Lab room enforcement for the builder
         self._enforce_lab_rooms  = bool(self._hc_cfg.get('hc_lab_session_enabled', 1))
+        # Faculty specialization enforcement for the builder
+        self._spec_enabled       = bool(self._hc_cfg.get('hc_faculty_spec_enabled', 1))
 
     # ── Database helpers ─────────────────────────────────────────
 
@@ -963,6 +1059,299 @@ class IntelligentScheduler:
             if code not in result:
                 result[code] = row['employeenumber']
         return result
+
+    def fetch_all_preferences(self, program: str, year_level: int, term: str) -> dict:
+        """
+        Build a subject-level preference map from three sources in ascending priority
+        (lower priority stored first; higher priority overwrites):
+          3. Draft schedule_version   (manual editor assignments)
+          2. Published schedule_version
+          1. historical_data table    (imported SIS records — highest priority)
+
+        Returns {subjectcode: {faculty, room_id, room_name, source}} with one entry
+        per subject — the highest-priority source wins per subject.
+        """
+        prefs = {}
+
+        # ── Priority 3 → 2: schedule_version (Draft first, Published overwrites) ──
+        for status in ('Draft', 'Published'):
+            rows = query_db("""
+                SELECT DISTINCT ON (cs.subjectcode)
+                    cs.subjectcode,
+                    sg.employeenumber   AS faculty,
+                    r.roomid            AS room_id,
+                    r.roomname          AS room_name
+                FROM public.schedule_version sv
+                JOIN public.schedule sg          ON sv.scheduleid          = sg.scheduleid
+                JOIN public.curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN public.curriculum c         ON cs.curriculumid        = c.curriculumid
+                JOIN public.semester sem          ON sg.semesterid          = sem.semesterid
+                LEFT JOIN public.schedule_sessions ss ON ss.versionid = sv.versionid
+                LEFT JOIN public.room r               ON ss.roomid    = r.roomid
+                WHERE UPPER(c.programcode) = UPPER(%s)
+                  AND cs.yearlevel            = %s
+                  AND UPPER(sem.semestertype) = UPPER(%s)
+                  AND sv.status               = %s
+                ORDER BY cs.subjectcode, sv.datecreated DESC
+            """, (program, year_level, term, status))
+            for row in (rows or []):
+                code = (row.get('subjectcode') or '').strip()
+                if code:
+                    prefs[code] = {
+                        'faculty':   row.get('faculty'),
+                        'room_id':   row.get('room_id'),
+                        'room_name': row.get('room_name'),
+                        'source':    status.lower(),
+                    }
+
+        # ── Priority 1: historical_data (overwrites both Draft and Published above) ──
+
+        # #5: Room preference = MOST FREQUENTLY used room for this subject+program+year+term.
+        # Use a window function to rank rooms by count (desc) and pick rank 1 per subject.
+        hist_rooms = query_db("""
+            WITH room_freq AS (
+                SELECT
+                    UPPER(TRIM(hd."Subject Code"))  AS subjectcode,
+                    rm.roomid,
+                    rm.roomname,
+                    COUNT(*)                         AS cnt,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY UPPER(TRIM(hd."Subject Code"))
+                        ORDER BY COUNT(*) DESC
+                    ) AS rn
+                FROM historical_data hd
+                JOIN semester sem ON hd.semesterid = sem.semesterid
+                JOIN room rm ON UPPER(TRIM(hd."Room")) = UPPER(TRIM(rm.roomname))
+                WHERE UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = UPPER(%s)
+                  AND CAST(hd."Year Level" AS TEXT) = %s
+                  AND UPPER(sem.semestertype) = UPPER(%s)
+                  AND hd."Subject Code" IS NOT NULL
+                  AND TRIM(hd."Subject Code") != ''
+                GROUP BY UPPER(TRIM(hd."Subject Code")), rm.roomid, rm.roomname
+            )
+            SELECT subjectcode, roomid AS room_id, roomname AS room_name
+            FROM room_freq
+            WHERE rn = 1
+        """, (program, str(year_level), term))
+
+        hist_room_map: dict = {}
+        for row in (hist_rooms or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                hist_room_map[code] = {
+                    'room_id':   row.get('room_id'),
+                    'room_name': row.get('room_name'),
+                }
+
+        # Faculty = most recent historical instructor per subject.
+        hist_rows = query_db("""
+            SELECT DISTINCT ON (UPPER(TRIM(hd."Subject Code")))
+                UPPER(TRIM(hd."Subject Code")) AS subjectcode,
+                f.employeenumber               AS faculty
+            FROM historical_data hd
+            JOIN semester sem
+                ON hd.semesterid = sem.semesterid
+            LEFT JOIN faculty f
+                ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1))) = UPPER(TRIM(f.lastname))
+               AND (
+                   SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1) = ''
+                   OR UPPER(TRIM(f.firstname)) LIKE (UPPER(SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1)) || '%%')
+               )
+               AND f.employeestatus != 'Archive'
+            WHERE UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = UPPER(%s)
+              AND CAST(hd."Year Level" AS TEXT) = %s
+              AND UPPER(sem.semestertype) = UPPER(%s)
+              AND hd."Subject Code" IS NOT NULL
+              AND TRIM(hd."Subject Code") != ''
+            ORDER BY UPPER(TRIM(hd."Subject Code")), hd.academicyearid DESC
+        """, (program, str(year_level), term))
+
+        for row in (hist_rows or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                room_info = hist_room_map.get(code, {})
+                prefs[code] = {
+                    'faculty':   row.get('faculty'),
+                    'room_id':   room_info.get('room_id'),
+                    'room_name': room_info.get('room_name'),
+                    'source':    'historical',
+                }
+
+        # ── Priority 0: mergedclass (admin pre-assignment — highest priority) ──
+        # The mergedclass table stores explicit admin assignments of faculty to
+        # curriculumsubjects for a specific semester.  These override everything
+        # else because an admin intentionally chose that teacher.
+        merged_rows = query_db("""
+            SELECT DISTINCT ON (cs.subjectcode)
+                cs.subjectcode,
+                mc.employeenumber AS faculty
+            FROM mergedclass mc
+            JOIN curriculumsubject cs ON mc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN semester sem         ON mc.semesterid          = sem.semesterid
+            WHERE UPPER(c.programcode)       = UPPER(%s)
+              AND cs.yearlevel               = %s
+              AND UPPER(sem.semestertype)    = UPPER(%s)
+              AND mc.employeenumber IS NOT NULL
+              AND mc.isactive = TRUE
+            ORDER BY cs.subjectcode, mc.datecreated DESC
+        """, (program, year_level, term))
+
+        for row in (merged_rows or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                existing = prefs.get(code, {})
+                prefs[code] = {
+                    'faculty':   row.get('faculty'),
+                    'room_id':   existing.get('room_id'),
+                    'room_name': existing.get('room_name'),
+                    'source':    'mergedclass',
+                }
+
+        return prefs
+
+    def fetch_subject_wide_faculty(self, program: str, subject_codes: list) -> dict:
+        """
+        Broad, program-wide subject-history lookup.
+
+        For each subject code, find the faculty member who has MOST RECENTLY
+        taught that subject for this program — across ANY year level and ANY term.
+        This fills preference gaps for subjects like GEED/PE that are shared
+        across multiple year levels and wouldn't appear in the year-level-specific
+        fetch_all_preferences() results.
+
+        Sources (lower → higher priority so the most recent wins):
+          1. historical_data table  (imported SIS records, all years)
+          2. schedule_version table (Draft / Published, all years)
+
+        Returns {subjectcode: employeenumber}.
+        """
+        if not subject_codes:
+            return {}
+
+        result = {}
+
+        # ── Source 1: historical_data (any year level, any term for this program) ──
+        hist_rows = query_db("""
+            SELECT DISTINCT ON (UPPER(TRIM(hd."Subject Code")))
+                UPPER(TRIM(hd."Subject Code")) AS subjectcode,
+                f.employeenumber
+            FROM historical_data hd
+            JOIN faculty f
+                ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1))) = UPPER(TRIM(f.lastname))
+               AND (
+                   SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1) = ''
+                   OR UPPER(TRIM(f.firstname)) LIKE (UPPER(SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1)) || '%%')
+               )
+            WHERE UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = UPPER(%s)
+              AND hd."Subject Code" IS NOT NULL
+              AND TRIM(hd."Subject Code") != ''
+              AND f.employeestatus != 'Archive'
+            ORDER BY UPPER(TRIM(hd."Subject Code")), hd.academicyearid DESC
+        """, (program,))
+
+        for row in (hist_rows or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                result[code] = row['employeenumber']
+
+        # ── Source 2: schedule_version — overwrites historical (more recent) ──
+        sv_rows = query_db("""
+            SELECT DISTINCT ON (UPPER(cs.subjectcode))
+                UPPER(cs.subjectcode) AS subjectcode,
+                sg.employeenumber
+            FROM schedule_version sv
+            JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
+            JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            WHERE UPPER(c.programcode) = UPPER(%s)
+              AND sv.status IN ('Published', 'Draft')
+              AND sg.employeenumber IS NOT NULL
+            ORDER BY UPPER(cs.subjectcode), sv.datecreated DESC
+        """, (program,))
+
+        for row in (sv_rows or []):
+            code = (row.get('subjectcode') or '').strip()
+            if code:
+                result[code] = row['employeenumber']
+
+        # ── Extra pass: shared subjects with no match yet ──
+        # Subjects marked isshared = TRUE (e.g. GEED, PE, NSTP) are taught by
+        # the SAME teacher regardless of program.  If no program-specific history
+        # was found above, look across ALL programs so a GE/PE teacher recorded
+        # under BSA schedules is still considered for BSIT generation.
+        unmatched = [c for c in subject_codes if c.upper() not in
+                     {k.upper() for k in result}]
+        if unmatched:
+            shared_sv = query_db("""
+                SELECT DISTINCT ON (UPPER(cs.subjectcode))
+                    UPPER(cs.subjectcode) AS subjectcode,
+                    sg.employeenumber
+                FROM schedule_version sv
+                JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
+                JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE UPPER(cs.subjectcode) = ANY(%s)
+                  AND cs.isshared = TRUE
+                  AND sv.status IN ('Published', 'Draft')
+                  AND sg.employeenumber IS NOT NULL
+                ORDER BY UPPER(cs.subjectcode), sv.datecreated DESC
+            """, (unmatched,))
+
+            for row in (shared_sv or []):
+                code = (row.get('subjectcode') or '').strip()
+                if code and code.upper() not in {k.upper() for k in result}:
+                    result[code] = row['employeenumber']
+
+            # Also check historical_data for shared subjects across all programs
+            shared_hist = query_db("""
+                SELECT DISTINCT ON (UPPER(TRIM(hd."Subject Code")))
+                    UPPER(TRIM(hd."Subject Code")) AS subjectcode,
+                    f.employeenumber
+                FROM historical_data hd
+                JOIN faculty f
+                    ON UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1))) = UPPER(TRIM(f.lastname))
+                   AND (
+                       SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1) = ''
+                       OR UPPER(TRIM(f.firstname)) LIKE (UPPER(SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1)) || '%%')
+                   )
+                JOIN curriculumsubject cs
+                    ON UPPER(TRIM(hd."Subject Code")) = UPPER(cs.subjectcode)
+                   AND cs.isshared = TRUE
+                WHERE UPPER(TRIM(hd."Subject Code")) = ANY(%s)
+                  AND f.employeestatus != 'Archive'
+                ORDER BY UPPER(TRIM(hd."Subject Code")), hd.academicyearid DESC
+            """, (unmatched,))
+
+            for row in (shared_hist or []):
+                code = (row.get('subjectcode') or '').strip()
+                if code and code.upper() not in {k.upper() for k in result}:
+                    result[code] = row['employeenumber']
+
+        return result
+
+    def fetch_current_faculty_loads(self, term: str, acad_year_id: str) -> dict:
+        """
+        #9: Return {faculty_id: total_units_already_committed} for the given
+        term across ALL programs/sections that have Published or Draft schedules.
+        This allows the builder to exclude faculty who have already hit their load cap.
+        """
+        if not term or not acad_year_id:
+            return {}
+        rows = query_db("""
+            SELECT sc.employeenumber AS faculty_id,
+                   SUM(COALESCE(cs.creditunits, 0)) AS committed_units
+            FROM schedule_version sv
+            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN semester sem ON sc.semesterid = sem.semesterid
+            WHERE sem.academicyearid = %s
+              AND UPPER(sem.semestertype) = UPPER(%s)
+              AND sv.status IN ('Published', 'Draft')
+              AND sc.employeenumber IS NOT NULL
+              AND cs.creditunits > 0
+            GROUP BY sc.employeenumber
+        """, (acad_year_id, term))
+        return {r['faculty_id']: int(r['committed_units'] or 0) for r in (rows or [])}
 
     def fetch_historical_schedule(self, program: str, year_level: int, term: str,
                                   curriculum_year: str) -> list:
@@ -1100,7 +1489,8 @@ class IntelligentScheduler:
     # ── Individual builder ───────────────────────────────────────
 
     def _build_individual(self, subjects, faculty_list, faculty_map, rooms,
-                          historical_faculty: dict = None):
+                          historical_faculty: dict = None, preferences: dict = None,
+                          subject_history: dict = None, existing_load: dict = None):
         """
         Build one schedule candidate.
 
@@ -1118,10 +1508,17 @@ class IntelligentScheduler:
         """
         individual = []
         historical_faculty = historical_faculty or {}
+        preferences        = preferences        or {}
+        subject_history    = subject_history    or {}
+        # #9: pre-loaded committed units from other sections/programs for this term
+        _existing_load     = dict(existing_load or {})
+        # Track units being assigned within this individual so load compounds correctly
+        _sched_units: dict = defaultdict(int)
 
-        # Track slots during building to minimise hard overlaps in generated individuals
+        # Track slots during building to eliminate hard overlaps in generated individuals
         faculty_slots = defaultdict(list)   # fac_id  → [(day, start, end)]
         room_slots    = defaultdict(list)   # room_id → [(day, start, end)]
+        section_slots = []                   # all booked slots in this section → [(day, start, end)]
 
         def _has_overlap(fac_id, days, start, end, room_id):
             for d in days:
@@ -1131,12 +1528,17 @@ class IntelligentScheduler:
                 for (rd, rs, re) in room_slots.get(room_id, []):
                     if rd == d and start < re and end > rs:
                         return True
+                # Section-level: no two subjects may share a time slot for the same section
+                for (sd, ss, se) in section_slots:
+                    if sd == d and start < se and end > ss:
+                        return True
             return False
 
         def _register(fac_id, days, start, end, room_id):
             for d in days:
                 faculty_slots[fac_id].append((d, start, end))
                 room_slots[room_id].append((d, start, end))
+                section_slots.append((d, start, end))
 
         for sub in subjects:
             lec_hrs      = sub.get('lecturehours', 0)
@@ -1146,12 +1548,78 @@ class IntelligentScheduler:
                                for p in SUNDAY_ALLOWED_PREFIXES)
 
             # ── Faculty selection (shared by lec + lab parts) ──
+
+            # Build list of faculty qualified to teach this subject.
+            # Specialization matching always runs so the builder never proactively
+            # assigns a mis-specialised teacher (e.g. PE teacher to GEED).
+            # HC_SPEC only controls whether the CSP *validator* rejects the final
+            # schedule — it does not mean "ignore specs during assignment".
+            def _is_qualified(fac):
+                spec_name = (fac.get('specializationname') or '').strip()
+                if not spec_name:
+                    return True  # no specialization on record → no restriction
+                return _spec_matches_subject(spec_name, sub['subjectcode'])
+
+            qualified_faculty = [f for f in faculty_list if _is_qualified(f)]
+            if not qualified_faculty:
+                qualified_faculty = faculty_list  # fallback when no match found
+
+            # #9: Further filter to faculty who still have load capacity for this subject.
+            def _has_load_capacity(fac, units):
+                if not units:
+                    return True  # lab parts have 0 units — no limit check needed
+                fid = fac['employeenumber']
+                et  = fac.get('employeetype', {})
+                has_desig = fac.get('designationid') is not None
+                max_reg   = et.get('regularload') or 99
+                max_pt    = et.get('parttimeload') or 0
+                ts_sub    = et.get('teachingsubstitution') or 0
+                max_total = max_reg + max_pt + ts_sub
+                committed = _existing_load.get(fid, 0) + _sched_units.get(fid, 0)
+                return (committed + units) <= max_total
+
+            with_capacity = [f for f in qualified_faculty if _has_load_capacity(f, sub.get('creditunits', 3))]
+            if with_capacity:
+                qualified_faculty = with_capacity
+            # (if no faculty has remaining capacity, keep all qualified faculty as fallback)
+
+            pref       = preferences.get(sub['subjectcode'], {})
+            pref_fnum  = pref.get('faculty')
             hist_fnum  = historical_faculty.get(sub['subjectcode'])
+
+            # Discard preferred/historical faculty that fail the specialization check
+            if pref_fnum and pref_fnum in faculty_map and not _is_qualified(faculty_map[pref_fnum]):
+                pref_fnum = None
+            if hist_fnum and hist_fnum in faculty_map and not _is_qualified(faculty_map[hist_fnum]):
+                hist_fnum = None
+
+            # Priority 3 source: broad program-wide subject history
+            wide_fnum = subject_history.get(sub['subjectcode'].upper())
+            if wide_fnum and wide_fnum in faculty_map and not _is_qualified(faculty_map[wide_fnum]):
+                wide_fnum = None  # discard if unqualified (e.g. PE teacher for GEED)
+
             chosen_fac = None
-            if hist_fnum and hist_fnum in faculty_map and random.random() < 0.70:
+            _cu = sub.get('creditunits', 3)
+            # Priority 1: preference map (historical_data > published > draft) — strongest signal
+            if (pref_fnum and pref_fnum in faculty_map
+                    and _has_load_capacity(faculty_map[pref_fnum], _cu)
+                    and random.random() < 0.82):
+                chosen_fac = faculty_map[pref_fnum]
+            # Priority 2: merged historical/CBR faculty hint
+            elif (hist_fnum and hist_fnum in faculty_map
+                    and _has_load_capacity(faculty_map[hist_fnum], _cu)
+                    and random.random() < 0.68):
                 chosen_fac = faculty_map[hist_fnum]
+            # Priority 3: program-wide subject history (who has taught this subject before)
+            elif (wide_fnum and wide_fnum in faculty_map
+                    and _has_load_capacity(faculty_map[wide_fnum], _cu)
+                    and random.random() < 0.60):
+                chosen_fac = faculty_map[wide_fnum]
             if chosen_fac is None:
-                chosen_fac = random.choice(faculty_list)
+                chosen_fac = random.choice(qualified_faculty)
+            # #9: Track units committed within this schedule build
+            if _cu > 0:
+                _sched_units[chosen_fac['employeenumber']] += _cu
 
             # ── Determine parts (lecture only / lab only / both) ──
             # (class_type, target_hrs, is_lab_part, units_for_load)
@@ -1166,8 +1634,18 @@ class IntelligentScheduler:
 
             for (class_type, target_hrs, is_lab_part, units) in parts:
 
-                # Valid time blocks for this part
-                valid_blks = get_blocks_for_hours(target_hrs, is_lab=is_lab_part)
+                # Valid time blocks for this part.
+                # When day-pairing is on and lec_hrs >= 3, both options are offered:
+                #   • 1.5h blocks  → scheduler will choose paired days (HC6)
+                #   • full-length  → scheduler will choose a single day
+                # Splitting is not forced; the GA picks whichever fits best given
+                # faculty and room availability.
+                _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
+                if _day_pair_on and not is_lab_part and lec_hrs >= 3:
+                    valid_blks = (get_blocks_for_hours(1.5)
+                                  + get_blocks_for_hours(target_hrs, is_lab=False))
+                else:
+                    valid_blks = get_blocks_for_hours(target_hrs, is_lab=is_lab_part)
 
                 # Room type — only filter by type when lab constraint is enabled
                 if is_lab_part and self._enforce_lab_rooms:
@@ -1179,6 +1657,12 @@ class IntelligentScheduler:
                 else:
                     req_type    = 'Lecture'
                     valid_rooms = list(rooms)
+
+                # Room preference from preference map (re-checked per part type)
+                pref_room_id = pref.get('room_id')
+                pref_room    = next(
+                    (r for r in valid_rooms if r['roomid'] == pref_room_id), None
+                ) if pref_room_id else None
 
                 # Faculty-allowed blocks
                 allowed_blks = self._get_allowed_blocks_for_faculty(chosen_fac, valid_blks)
@@ -1192,9 +1676,9 @@ class IntelligentScheduler:
                     else WEEKDAYS + ['Saturday']
                 )
 
-                # Try up to 8 times to find a non-overlapping slot
+                # Try up to 20 times to find a non-overlapping slot
                 start_t = end_t = chosen_room = days_list = None
-                for _ in range(8):
+                for _ in range(20):
                     if regular_blks and random.random() < 0.75:
                         _s, _e = random.choice(regular_blks)
                     elif pt_blks:
@@ -1203,7 +1687,10 @@ class IntelligentScheduler:
                         _s, _e = random.choice(valid_blks)
 
                     _dur = duration_hours(_s, _e)
-                    _r   = random.choice(valid_rooms)
+                    if pref_room and random.random() < 0.65:
+                        _r = pref_room
+                    else:
+                        _r = random.choice(valid_rooms)
 
                     # Day selection (uses DB-configurable pairs and NSTP toggle)
                     if is_nstp_ou and self._nstp_force_sunday:
@@ -1237,7 +1724,7 @@ class IntelligentScheduler:
                         days_list = list(_pair)
                     else:
                         days_list = [random.choice(_avail_days)]
-                    chosen_room = random.choice(valid_rooms)
+                    chosen_room = pref_room or random.choice(valid_rooms)
 
                 _register(chosen_fac['employeenumber'], days_list, start_t, end_t,
                           chosen_room['roomid'])
@@ -1258,6 +1745,7 @@ class IntelligentScheduler:
                     'instructor':  chosen_fac['fullname'],
                     'room_id':     chosen_room['roomid'],
                     'room':        chosen_room['roomname'],
+                    'room_type':   chosen_room.get('roomtype', ''),
 
                     'start_time':  start_t,
                     'end_time':    end_t,
@@ -1268,7 +1756,10 @@ class IntelligentScheduler:
                     'days':  '/'.join(d[:3].upper() for d in days_list),
                     'hours': hrs_str,
 
-                    'is_historical': (chosen_fac['employeenumber'] == hist_fnum),
+                    'is_historical':       (chosen_fac['employeenumber'] == hist_fnum),
+                    'is_preferred_faculty': (chosen_fac['employeenumber'] == pref_fnum) if pref_fnum else False,
+                    'is_preferred_room':    (chosen_room['roomid'] == pref_room_id) if pref_room_id else False,
+                    'pref_source':          pref.get('source', ''),
                 })
 
         self._repair_overlaps(individual, faculty_map)
@@ -1278,47 +1769,121 @@ class IntelligentScheduler:
 
     def _repair_overlaps(self, individual: list, faculty_map: dict) -> list:
         """
-        Multi-pass repair: detect and fix faculty/room time overlaps by
-        reassigning conflicting entries to valid non-overlapping slots.
-        Runs up to 5 passes or until no overlap remains.
+        Multi-pass repair: detect and fix section, faculty, and room time conflicts
+        by reassigning conflicting entries to a valid non-overlapping time+day.
+        Runs up to 12 passes or until no overlap remains.
         """
-        for _pass in range(5):
-            fac_day  = defaultdict(list)   # (fac_id, day) → [(idx, start, end)]
-            room_day = defaultdict(list)   # (room_id, day) → [(idx, start, end)]
+        for _pass in range(12):
+            fac_day     = defaultdict(list)   # (fac_id,  day) → [(idx, start, end)]
+            room_day    = defaultdict(list)   # (room_id, day) → [(idx, start, end)]
+            section_day = defaultdict(list)   # day            → [(idx, start, end)]
 
             for i, cls in enumerate(individual):
                 fid = cls.get('faculty_id')
                 rid = cls.get('room_id')
                 for day in cls.get('days_list', [cls.get('day', '')]):
+                    if not day:
+                        continue
                     if fid:
                         fac_day[(fid, day)].append((i, cls['start_time'], cls['end_time']))
                     if rid:
                         room_day[(rid, day)].append((i, cls['start_time'], cls['end_time']))
+                    section_day[day].append((i, cls['start_time'], cls['end_time']))
 
             fixed_any = False
 
-            def _try_fix(gene_idx, current_slots):
+            def _slot_free(gene_idx, gene, new_s, new_e, new_days):
+                """Return True only if the proposed time+days conflict with nothing else."""
+                fid = gene.get('faculty_id')
+                rid = gene.get('room_id')
+                for d in new_days:
+                    for (ix, ss, se) in section_day.get(d, []):
+                        if ix != gene_idx and new_s < se and new_e > ss:
+                            return False
+                    for (ix, ss, se) in fac_day.get((fid, d), []):
+                        if ix != gene_idx and new_s < se and new_e > ss:
+                            return False
+                    for (ix, ss, se) in room_day.get((rid, d), []):
+                        if ix != gene_idx and new_s < se and new_e > ss:
+                            return False
+                return True
+
+            def _try_fix_gene(gene_idx):
                 nonlocal fixed_any
-                gene    = individual[gene_idx]
-                is_lab  = gene.get('class_type') == 'Lab'
-                lh      = gene.get('lec_hours', 0)
-                labh    = gene.get('lab_hours', 0)
-                target  = labh if is_lab else (lh or 3)
-                blks    = get_blocks_for_hours(target, is_lab=is_lab)
+                gene       = individual[gene_idx]
+                is_lab     = gene.get('class_type') == 'Lab'
+                is_nstp_ou = any(gene.get('subject_code', '').upper().startswith(p)
+                                 for p in SUNDAY_ALLOWED_PREFIXES)
+                lh         = gene.get('lec_hours', 0)
+                labh       = gene.get('lab_hours', 0)
+                target     = labh if is_lab else (lh or 3)
+
+                _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
+                if _day_pair_on and not is_lab and lh >= 3:
+                    blks = (get_blocks_for_hours(1.5)
+                            + get_blocks_for_hours(target, is_lab=False))
+                else:
+                    blks = get_blocks_for_hours(target, is_lab=is_lab)
+
                 fac     = faculty_map.get(gene.get('faculty_id'), {})
                 allowed = self._get_allowed_blocks_for_faculty(fac, blks)
                 reg     = [(s, e) for (s, e, k) in allowed if k == 'regular']
-                cands   = reg if reg else [(s, e) for (s, e, k) in allowed]
+                pt      = [(s, e) for (s, e, k) in allowed if k != 'regular']
+                cands   = list(reg) + list(pt)
+                if not cands:
+                    cands = [(s, e) for (s, e) in blks]
                 random.shuffle(cands)
-                for new_s, new_e in cands:
-                    if all(not (new_s < e_x and new_e > s_x)
-                           for (ix, s_x, e_x) in current_slots if ix != gene_idx):
+
+                avail = WEEKDAYS if (
+                    self._nstp_force_sunday and self._weekend_day_scope == 'all_weekends'
+                ) else WEEKDAYS + ['Saturday']
+                cur_days = gene.get('days_list', [gene.get('day', '')])
+
+                # Build consistent (days, start, end) triples so a 1.5h block is
+                # always paired with valid paired days and a full-length block is
+                # always paired with a single day — never cross-combined.
+                if is_nstp_ou and self._nstp_force_sunday:
+                    slot_triples = [(['Sunday'], s, e) for (s, e) in cands]
+                elif _day_pair_on and not is_lab and lh >= 3:
+                    slot_triples = []
+                    for s, e in cands:
+                        if abs(duration_hours(s, e) - 1.5) < 0.1:
+                            for pair in self._builder_pairs:
+                                slot_triples.append((list(pair), s, e))
+                        else:
+                            for d in avail:
+                                slot_triples.append(([d], s, e))
+                else:
+                    slot_triples = [([d], s, e) for d in avail for (s, e) in cands]
+
+                # Try the current days first to minimise unnecessary changes
+                cur_first  = [t for t in slot_triples if t[0] == cur_days]
+                others     = [t for t in slot_triples if t[0] != cur_days]
+                random.shuffle(others)
+                ordered = cur_first + others
+
+                for new_days, new_s, new_e in ordered:
+                    if _slot_free(gene_idx, gene, new_s, new_e, new_days):
                         gene['start_time'] = new_s
                         gene['end_time']   = new_e
                         gene['time']  = f"{format_time_12h(new_s)} – {format_time_12h(new_e)}"
                         gene['hours'] = str(lh + labh)
+                        gene['days_list'] = list(new_days)
+                        gene['day']       = new_days[0]
+                        gene['days']      = '/'.join(d[:3].upper() for d in new_days)
                         fixed_any = True
                         return
+
+            # Collect all conflicting indices across section, faculty, and room
+            conflicted = set()
+
+            for slots in section_day.values():
+                slots.sort(key=lambda x: x[1])
+                for k in range(len(slots) - 1):
+                    _, _s_a, e_a = slots[k]
+                    idx_b, s_b, _ = slots[k + 1]
+                    if s_b < e_a:
+                        conflicted.add(idx_b)
 
             for slots in fac_day.values():
                 slots.sort(key=lambda x: x[1])
@@ -1326,7 +1891,7 @@ class IntelligentScheduler:
                     _, _s_a, e_a = slots[k]
                     idx_b, s_b, _ = slots[k + 1]
                     if s_b < e_a:
-                        _try_fix(idx_b, slots)
+                        conflicted.add(idx_b)
 
             for slots in room_day.values():
                 slots.sort(key=lambda x: x[1])
@@ -1334,7 +1899,10 @@ class IntelligentScheduler:
                     _, _s_a, e_a = slots[k]
                     idx_b, s_b, _ = slots[k + 1]
                     if s_b < e_a:
-                        _try_fix(idx_b, slots)
+                        conflicted.add(idx_b)
+
+            for idx in sorted(conflicted):
+                _try_fix_gene(idx)
 
             if not fixed_any:
                 break
@@ -1345,6 +1913,13 @@ class IntelligentScheduler:
 
     def _fitness(self, individual, faculty_map):
         score = 1000
+
+        # SC8: Reward assignments that match historical / published / manual preferences
+        for cls in individual:
+            if cls.get('is_preferred_faculty'):
+                score += 12
+            if cls.get('is_preferred_room'):
+                score += 8
 
         violations   = self.csp.validate(individual, faculty_map)
         score       -= len(violations) * 200
@@ -1407,8 +1982,11 @@ class IntelligentScheduler:
     # ── Mutation ─────────────────────────────────────────────────
 
     def _mutate(self, child, subjects_by_code, faculty_list, faculty_map, rooms,
-                historical_faculty: dict = None):
+                historical_faculty: dict = None, preferences: dict = None,
+                subject_history: dict = None):
         historical_faculty = historical_faculty or {}
+        preferences        = preferences        or {}
+        subject_history    = subject_history    or {}
         if not child:
             return child
 
@@ -1427,20 +2005,62 @@ class IntelligentScheduler:
         lab_hrs    = sub.get('laboratoryhours', 0)
         target_hrs = lab_hrs if is_lab_part else (lec_hrs or 3)
 
-        valid_blks = get_blocks_for_hours(target_hrs, is_lab=is_lab_part)
+        # Mirror _build_individual: offer both split (1.5h) and single-session
+        # blocks when pairing is on so mutations also have the same flexibility.
+        _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
+        if _day_pair_on and not is_lab_part and lec_hrs >= 3:
+            valid_blks = (get_blocks_for_hours(1.5)
+                          + get_blocks_for_hours(target_hrs, is_lab=False))
+        else:
+            valid_blks = get_blocks_for_hours(target_hrs, is_lab=is_lab_part)
 
         mutation_type = random.choice(['time', 'day', 'faculty', 'room'])
 
         if mutation_type == 'faculty':
-            hist_fnum  = historical_faculty.get(sub_code)
+            # Same rule as _build_individual: always check specs so mutations
+            # never re-introduce a mis-specialised teacher.  HC_SPEC only controls
+            # whether the CSP rejects the schedule, not what the builder prefers.
+            def _mut_qualified(fac):
+                spec_name = (fac.get('specializationname') or '').strip()
+                if not spec_name:
+                    return True
+                return _spec_matches_subject(spec_name, sub_code)
+
+            qualified_faculty = [f for f in faculty_list if _mut_qualified(f)]
+            if not qualified_faculty:
+                qualified_faculty = faculty_list
+
+            pref      = preferences.get(sub_code, {})
+            pref_fnum = pref.get('faculty')
+            hist_fnum = historical_faculty.get(sub_code)
+
+            # Discard unqualified preferred/historical candidates
+            if pref_fnum and pref_fnum in faculty_map and not _mut_qualified(faculty_map[pref_fnum]):
+                pref_fnum = None
+            if hist_fnum and hist_fnum in faculty_map and not _mut_qualified(faculty_map[hist_fnum]):
+                hist_fnum = None
+
+            # Priority 3 source: broad program-wide subject history
+            wide_fnum = subject_history.get(sub_code.upper())
+            if wide_fnum and wide_fnum in faculty_map and not _mut_qualified(faculty_map[wide_fnum]):
+                wide_fnum = None
+
             chosen_fac = None
-            if hist_fnum and hist_fnum in faculty_map and random.random() < 0.70:
+            # Priority 1: preference map (historical_data > published > draft)
+            if pref_fnum and pref_fnum in faculty_map and random.random() < 0.80:
+                chosen_fac = faculty_map[pref_fnum]
+            # Priority 2: merged historical/CBR faculty hint
+            elif hist_fnum and hist_fnum in faculty_map and random.random() < 0.68:
                 chosen_fac = faculty_map[hist_fnum]
+            # Priority 3: program-wide subject history
+            elif wide_fnum and wide_fnum in faculty_map and random.random() < 0.60:
+                chosen_fac = faculty_map[wide_fnum]
             if chosen_fac is None:
-                chosen_fac = random.choice(faculty_list)
-            gene['faculty_id']    = chosen_fac['employeenumber']
-            gene['instructor']    = chosen_fac['fullname']
-            gene['is_historical'] = (chosen_fac['employeenumber'] == hist_fnum)
+                chosen_fac = random.choice(qualified_faculty)
+            gene['faculty_id']           = chosen_fac['employeenumber']
+            gene['instructor']           = chosen_fac['fullname']
+            gene['is_historical']        = (chosen_fac['employeenumber'] == hist_fnum)
+            gene['is_preferred_faculty'] = (chosen_fac['employeenumber'] == pref_fnum) if pref_fnum else False
 
         elif mutation_type == 'time':
             fnum = gene.get('faculty_id')
@@ -1458,17 +2078,42 @@ class IntelligentScheduler:
             gene['end_time']   = end_t
             gene['time']       = f"{format_time_12h(start_t)} – {format_time_12h(end_t)}"
             gene['hours'] = str(gene.get('lec_hours', 0) + gene.get('lab_hours', 0))
+            # Sync days_list with the new block's duration so paired/single stays consistent.
+            if _day_pair_on and not is_lab_part and lec_hrs >= 3:
+                _new_dur = duration_hours(start_t, end_t)
+                _mut_avail = (
+                    WEEKDAYS if (self._nstp_force_sunday and self._weekend_day_scope == 'all_weekends')
+                    else WEEKDAYS + ['Saturday']
+                )
+                if abs(_new_dur - 1.5) < 0.1:
+                    # New block is 1.5h → must be on paired days
+                    _pair = random.choice(self._builder_pairs)
+                    gene['days_list'] = list(_pair)
+                    gene['day']  = gene['days_list'][0]
+                    gene['days'] = '/'.join(d[:3].upper() for d in gene['days_list'])
+                elif len(gene.get('days_list') or []) > 1:
+                    # New block is full-length but gene still carries paired days → single day
+                    gene['days_list'] = [random.choice(_mut_avail)]
+                    gene['day']  = gene['days_list'][0]
+                    gene['days'] = gene['days_list'][0][:3].upper()
 
         elif mutation_type == 'day':
-            dur = duration_hours(gene['start_time'], gene['end_time'])
             _avail_days = (
                 WEEKDAYS
                 if (self._nstp_force_sunday and self._weekend_day_scope == 'all_weekends')
                 else WEEKDAYS + ['Saturday']
             )
+            # Use the gene's current block duration so paired/single stays consistent:
+            # a 1.5h gene stays on paired days; a full-length gene stays on a single day.
+            _gene_s = gene.get('start_time')
+            _gene_e = gene.get('end_time')
+            _cur_dur = (duration_hours(_gene_s, _gene_e)
+                        if _gene_s and _gene_e else target_hrs)
             if is_nstp_ou and self._nstp_force_sunday:
                 days_list = ['Sunday']
-            elif abs(dur - 1.5) < 0.1 and lec_hrs >= 3 and not is_lab_part:
+            elif (_day_pair_on and not is_lab_part and lec_hrs >= 3
+                  and abs(_cur_dur - 1.5) < 0.1):
+                # Gene is a 1.5h paired block — must keep paired days
                 _pair = random.choice(self._builder_pairs)
                 days_list = list(_pair)
             else:
@@ -1485,17 +2130,43 @@ class IntelligentScheduler:
                 valid_rooms = [r for r in rooms if r['roomtype'] == 'Lecture'] or list(rooms)
             else:
                 valid_rooms = list(rooms)
-            r = random.choice(valid_rooms)
-            gene['room_id'] = r['roomid']
-            gene['room']    = r['roomname']
+            pref     = preferences.get(sub_code, {})
+            pref_rid = pref.get('room_id')
+            pref_r   = next((rm for rm in valid_rooms if rm['roomid'] == pref_rid), None) if pref_rid else None
+            if pref_r and random.random() < 0.65:
+                r = pref_r
+            else:
+                r = random.choice(valid_rooms)
+            gene['room_id']          = r['roomid']
+            gene['room']             = r['roomname']
+            gene['is_preferred_room'] = (r['roomid'] == pref_rid) if pref_rid else False
 
         return child
 
     # ── Main entry point ─────────────────────────────────────────
 
     def generate_draft(self, program, year_level, term, curriculum,
-                       use_historical=False):
+                       use_historical=False, acad_year_id: str = ''):
         try:
+            # Reload constraint config on every call so admin Settings changes
+            # take effect immediately without a server restart.
+            try:
+                self._hc_cfg = load_scheduler_config()
+            except Exception:
+                pass  # keep existing config if the DB is temporarily unavailable
+            self.csp = CSPValidator(config=self._hc_cfg)
+            raw_pairs = self._hc_cfg.get('hc_day_pairs', '')
+            self._builder_pairs = (
+                _parse_day_pairs(raw_pairs) if raw_pairs
+                else [list(p) for p in DAY_PAIRS.values()]
+            )
+            weekend_on = bool(self._hc_cfg.get('hc_weekend_enabled', 1))
+            subj_restr = self._hc_cfg.get('hc_weekend_subject', 'nstp_only')
+            self._nstp_force_sunday = weekend_on and (subj_restr != 'all_allowed')
+            self._weekend_day_scope = self._hc_cfg.get('hc_weekend_day', 'sunday_only')
+            self._enforce_lab_rooms = bool(self._hc_cfg.get('hc_lab_session_enabled', 1))
+            self._spec_enabled      = bool(self._hc_cfg.get('hc_faculty_spec_enabled', 1))
+
             subjects, faculty_list, faculty_map, rooms = self.fetch_data(
                 program, year_level, term, curriculum
             )
@@ -1531,78 +2202,175 @@ class IntelligentScheduler:
             # CBR also weighs year level and academic year, giving more targeted hints.
             # Merge strategy: historical_faculty (recency-biased) overrides CBR where both exist.
             ay_rows    = query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1")
-            current_ay = ay_rows[0]['academicyearid'] if ay_rows else ''
+            current_ay = acad_year_id or (ay_rows[0]['academicyearid'] if ay_rows else '')
             cbr_faculty = CaseBasedRetriever().retrieve_best_case_faculty(
                 program, year_level, term, current_ay
             )
             merged_faculty = {**cbr_faculty, **historical_faculty}
 
-            POP_SIZE      = 40
-            GENERATIONS   = 150
-            MUTATION_RATE = 0.25
+            # Comprehensive preference map: historical_data (P1) > Published (P2) > Draft (P3)
+            # Used to seed faculty AND room assignments with proven historical patterns.
+            preferences = self.fetch_all_preferences(program, year_level, term)
+
+            # Broad program-wide subject history: who has EVER taught each subject for
+            # this program (any year level, any term).  Used as Priority 3 fallback so
+            # subjects like GEED that are shared across year levels still get assigned to
+            # the faculty member who historically teaches them, not a random qualified one.
+            all_subject_codes = [s['subjectcode'] for s in subjects]
+            subject_history   = self.fetch_subject_wide_faculty(program, all_subject_codes)
+
+            # #9: Pre-load current semester faculty loads from existing scheduled sections.
+            # This prevents assigning faculty who are already at their load limit.
+            existing_load = self.fetch_current_faculty_loads(term, current_ay)
+
+            POP_SIZE      = 60
+            GENERATIONS   = 200
+            MUTATION_RATE = 0.30
             ELITE_RATIO   = 0.35
+            MAX_ATTEMPTS  = 4   # initial run + up to 3 restarts
 
-            population = []
-            for i in range(POP_SIZE):
-                # First half: seeded with CBR-merged faculty hints
-                # Second half: purely random (maintains population diversity)
-                hist = merged_faculty if i < POP_SIZE // 2 else {}
-                population.append(
-                    self._build_individual(subjects, faculty_list, faculty_map, rooms, hist)
-                )
+            best_schedule_global    = None
+            least_violations_global = 9999
+            best_score_global       = -999999
 
-            best_schedule    = None
-            least_violations = 9999
-            best_score       = -999999
+            for attempt in range(MAX_ATTEMPTS):
+                # First attempt: seed heavily with historical preferences for accuracy.
+                # Restarts: reduce seeding ratio to escape local optima via diversity.
+                seed_cutoff = POP_SIZE // 2 if attempt == 0 else POP_SIZE // 4
 
-            for gen in range(GENERATIONS):
-                scored = []
-                for ind in population:
-                    score, n_violations = self._fitness(ind, faculty_map)
-                    scored.append((score, n_violations, ind))
-
-                    if n_violations == 0 and score > best_score:
-                        best_score       = score
-                        best_schedule    = copy.deepcopy(ind)
-                        least_violations = 0
-
-                    if n_violations < least_violations:
-                        least_violations = n_violations
-                        best_schedule    = copy.deepcopy(ind)
-                        best_score       = score
-
-                if least_violations == 0 and gen > 20:
-                    break
-
-                scored.sort(key=lambda x: (x[1], -x[0]))
-                elite_n   = max(2, int(POP_SIZE * ELITE_RATIO))
-                survivors = [x[2] for x in scored[:elite_n]]
-
-                new_pop = list(survivors)
-                while len(new_pop) < POP_SIZE:
-                    p1 = random.choice(survivors)
-                    p2 = random.choice(survivors)
-                    # Use actual individual length (may be > len(subjects) due to lec+lab split)
-                    split = random.randint(1, max(1, len(p1) - 1))
-                    child = copy.deepcopy(p1[:split]) + copy.deepcopy(p2[split:])
-
-                    if random.random() < MUTATION_RATE:
-                        child = self._mutate(
-                            child, subjects_by_code, faculty_list, faculty_map, rooms,
-                            historical_faculty
+                population = []
+                for i in range(POP_SIZE):
+                    hist       = merged_faculty if i < seed_cutoff else {}
+                    prefs_seed = preferences    if i < seed_cutoff else {}
+                    population.append(
+                        self._build_individual(
+                            subjects, faculty_list, faculty_map, rooms,
+                            hist, prefs_seed, subject_history,
+                            existing_load=existing_load  # #9
                         )
-                    self._repair_overlaps(child, faculty_map)
-                    new_pop.append(child)
+                    )
 
-                population = new_pop
+                best_schedule    = None
+                least_violations = 9999
+                best_score       = -999999
 
-            final_violations = self.csp.validate(best_schedule, faculty_map)
+                for gen in range(GENERATIONS):
+                    scored = []
+                    for ind in population:
+                        score, n_violations = self._fitness(ind, faculty_map)
+                        scored.append((score, n_violations, ind))
+
+                        if n_violations == 0 and score > best_score:
+                            best_score       = score
+                            best_schedule    = copy.deepcopy(ind)
+                            least_violations = 0
+
+                        if n_violations < least_violations:
+                            least_violations = n_violations
+                            best_schedule    = copy.deepcopy(ind)
+                            best_score       = score
+
+                    # Stop early once conflict-free and sufficiently evolved
+                    if least_violations == 0 and gen >= 10:
+                        break
+
+                    scored.sort(key=lambda x: (x[1], -x[0]))
+                    elite_n   = max(2, int(POP_SIZE * ELITE_RATIO))
+                    survivors = [x[2] for x in scored[:elite_n]]
+
+                    new_pop = list(survivors)
+                    while len(new_pop) < POP_SIZE:
+                        p1 = random.choice(survivors)
+                        p2 = random.choice(survivors)
+                        # Use actual individual length (may be > len(subjects) due to lec+lab split)
+                        split = random.randint(1, max(1, len(p1) - 1))
+                        child = copy.deepcopy(p1[:split]) + copy.deepcopy(p2[split:])
+
+                        if random.random() < MUTATION_RATE:
+                            child = self._mutate(
+                                child, subjects_by_code, faculty_list, faculty_map, rooms,
+                                historical_faculty, preferences, subject_history
+                            )
+                        self._repair_overlaps(child, faculty_map)
+                        new_pop.append(child)
+
+                    population = new_pop
+
+                # Keep the global best across all attempts
+                if least_violations < least_violations_global or (
+                    least_violations == least_violations_global
+                    and best_score > best_score_global
+                ):
+                    best_schedule_global    = best_schedule
+                    least_violations_global = least_violations
+                    best_score_global       = best_score
+
+                if least_violations_global == 0:
+                    break   # Conflict-free schedule found — no more restarts needed
+
+            # ── Final validation ──────────────────────────────────────
+            final_violations = self.csp.validate(best_schedule_global, faculty_map)
+
+            if final_violations:
+                # Could not produce a conflict-free schedule — explain why and return an error
+                # so the UI never displays a conflicted schedule to the user.
+                violation_rules = {v['rule'] for v in final_violations}
+                reasons = []
+                if 'HC11' in violation_rules:
+                    reasons.append(
+                        'not enough distinct time slots for all subjects in this section'
+                    )
+                if 'HC9' in violation_rules:
+                    reasons.append('room double-booking could not be resolved')
+                if 'HC10' in violation_rules:
+                    reasons.append('faculty assigned to overlapping classes')
+                if 'HC_SPEC' in violation_rules:
+                    reasons.append(
+                        'insufficient qualified faculty for one or more subjects '
+                        '(check specialization assignments in Employee Management)'
+                    )
+                if 'HC_LAB' in violation_rules:
+                    reasons.append(
+                        'no laboratory rooms available for subjects with lab hours '
+                        '(check room types in Rooms, or disable the Lab Room Requirement in Settings)'
+                    )
+                if any(r in violation_rules for r in ('HC1', 'HC2', 'HC3')):
+                    reasons.append(
+                        'faculty teaching-hour restrictions cannot be satisfied '
+                        '(check employee type settings)'
+                    )
+                if 'HC4' in violation_rules:
+                    reasons.append(
+                        'weekend restriction: non-NSTP subjects cannot be placed on the restricted day'
+                    )
+                if 'HC6' in violation_rules:
+                    reasons.append(
+                        'day-pairing constraints could not be satisfied '
+                        '(check day-pair settings in Settings)'
+                    )
+                if 'HC8' in violation_rules:
+                    reasons.append(
+                        'faculty load limits exceeded '
+                        '(too many subjects for available faculty load capacity)'
+                    )
+                reason_str = '; '.join(reasons) if reasons else (
+                    'scheduling constraints could not all be satisfied simultaneously'
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"Unable to generate a conflict-free schedule after {MAX_ATTEMPTS} attempts. "
+                        f"Issues detected: {reason_str}. "
+                        f"Please verify room availability, faculty qualifications, load limits, "
+                        f"and constraint settings, then try again."
+                    ),
+                }
 
             return {
                 "success":        True,
-                "schedule_data":  best_schedule,
-                "violations":     final_violations,
-                "conflict_count": len(final_violations),
+                "schedule_data":  best_schedule_global,
+                "violations":     [],
+                "conflict_count": 0,
             }
 
         except Exception as e:

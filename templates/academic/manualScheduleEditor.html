@@ -666,7 +666,7 @@
             </div>
             <button class="btn-hdr-autogen"
                     onclick="window.location.href=this.dataset.href"
-                    data-href="{{ url_for('schedule_generation') }}">
+                    data-href="{{ url_for('schedule_generation_view') }}">
                 <i class="fas fa-robot"></i> GO TO AUTO-GENERATE
             </button>
         </div>
@@ -1363,6 +1363,8 @@
      data-weekend-day="{{ weekend_day }}"
      data-weekend-subject="{{ weekend_subject }}"
      data-spec-enabled="{{ 'true' if spec_constraint_enabled else 'false' }}"
+     data-day-pairing-enabled="{{ 'true' if day_pairing_enabled else 'false' }}"
+     data-day-pairs="{{ day_pairs_json | e }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad.js') }}?v=20260527"></script>

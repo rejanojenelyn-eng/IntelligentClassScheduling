@@ -24,7 +24,7 @@ function openReportModal(cardType) {
     } 
     else if (cardType === 'room_schedule') {
         title.innerText = "ROOM SCHEDULE";
-        rptTypeInput.value = 'offerings'; 
+        rptTypeInput.value = 'room_schedule';
         ['grpAY', 'grpSem', 'sgBuilding', 'sgRoomType'].forEach(id => document.getElementById(id).classList.remove('hidden'));
     }
     else if (cardType === 'faculty') {
@@ -168,6 +168,7 @@ function exportPdf() {
     });
     
     const win = window.open('', '_blank');
+    if (!win) { alert('Popup blocked. Please allow popups for this page.'); return; }
     win.document.write(`<html><head><title>${title}</title>
     <style>
         body{font-family:Arial,sans-serif;font-size:11px;margin:20px;}

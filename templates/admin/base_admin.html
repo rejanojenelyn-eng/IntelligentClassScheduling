@@ -84,10 +84,29 @@
                             <i class="fas fa-door-open"></i><span class="nav-label">Rooms</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_schedule' }}">
-                        <a href="{{ url_for('admin_schedule') }}" class="nav-link">
-                            <i class="fas fa-history"></i><span class="nav-label">Schedule</span>
-                        </a>
+                    <li class="nav-item-dropdown {{ 'open' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}">
+                        <div class="nav-link-wrapper {{ 'active' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}"
+                             onclick="toggleDropdown(event, 'adminSchedSubMenu', 'adminSchedArrow')">
+                            <span class="nav-link-main">
+                                <i class="fas fa-calendar-alt"></i>
+                                <span class="nav-label">Schedule</span>
+                            </span>
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}" id="adminSchedArrow"></i>
+                        </div>
+                        <ul class="sub-menu {{ 'show-submenu' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}" id="adminSchedSubMenu">
+                            <li>
+                                <a href="{{ url_for('admin_class_schedule_sis') }}"
+                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_class_schedule_sis' }}">
+                                    Class Schedule (SIS)
+                                </a>
+                            </li>
+                            <li>
+                                <a href="{{ url_for('admin_room_schedule') }}"
+                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_room_schedule' }}">
+                                    Room Schedule
+                                </a>
+                            </li>
+                        </ul>
                     </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_reports' }}">
                         <a href="{{ url_for('admin_reports') }}" class="nav-link">
