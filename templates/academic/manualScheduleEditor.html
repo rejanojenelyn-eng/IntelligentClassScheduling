@@ -4946,6 +4946,18 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> SAVE AS DRAFT'; btn.disabled = false; }
             window.isLeavingIntentionally = true;
 
+            // Signal to Generate Schedule that its localStorage cache is stale for this context.
+            // When the user navigates back, it will fetch the fresh draft from the DB instead.
+            try {
+                sessionStorage.setItem('schedGen_draftUpdated', JSON.stringify({
+                    program:   context.program,
+                    yearLevel: context.yearLevel,
+                    acadYear:  context.acadYear,
+                    term:      context.term,
+                    ts:        Date.now()
+                }));
+            } catch(_e) {}
+
             const deletedCount = window._deletedSubjectCodes.size;
             window._deletedSubjectCodes.clear();
 
@@ -5456,6 +5468,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const initYl       = initData.dataset.initYl       || '';
     const initSect     = initData.dataset.initSect     || '';
     const initSectName = initData.dataset.initSectName || '';
+    const initMode     = initData.dataset.initMode     || '';
 
     if (IS_LOCAL && initAy) {
         // Local mode: set all breadcrumb + hidden select values WITHOUT firing triggerCascade
@@ -5482,10 +5495,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (initAy) {
             const aySel = document.getElementById('sel_ay');
             if (aySel.querySelector(`option[value="${initAy}"]`)) aySel.value = initAy;
+            const _ayTxt = document.getElementById('bc-ay-text');
+            if (_ayTxt) _ayTxt.textContent = `20${initAy.slice(2,4)}-20${initAy.slice(4)}`;
+            // Must rebuild semester options for this AY before setting the semester value,
+            // because sel_sem is dynamically populated and starts empty.
+            if (typeof _rebuildSemDropdown === 'function') _rebuildSemDropdown(initAy);
         }
         if (initSem) {
             const semSel = document.getElementById('sel_sem');
             if (semSel.querySelector(`option[value="${initSem}"]`)) semSel.value = initSem;
+            const _semTxt = document.getElementById('bc-sem-text');
+            const _sLbls  = {A:'1st Semester', B:'2nd Semester', C:'Summer'};
+            if (_semTxt) _semTxt.textContent = _sLbls[initSem] || initSem;
         }
     }
 
@@ -5506,6 +5527,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Auto-select the section passed via URL — triggers _updateSubjectList (curriculum guide)
                     selectBcSect(initSect, initSectName);
                     if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
+                    // When coming from Schedule Generation (mode=program), switch to Program View tab
+                    // so the saved draft timetable is immediately visible.
+                    if (initMode === 'program' && typeof switchEditorTab === 'function') {
+                        const pvTab = document.getElementById('tab-main');
+                        switchEditorTab('main', pvTab);
+                    }
                 } else {
                     if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
                     triggerCascade(true);

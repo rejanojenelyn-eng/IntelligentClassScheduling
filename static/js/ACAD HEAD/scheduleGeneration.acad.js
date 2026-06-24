@@ -295,6 +295,37 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch(e) {}
     }
 
+    // Shared helper: restore form dropdowns from saved values and update the
+    // custom program trigger text (which is a separate visible element).
+    async function _restoreFormDropdowns(fv) {
+        if (fv.program) program.value = fv.program;
+        if (fv.acadYear) acadYear.value = fv.acadYear;
+        if (fv.term) term.value = fv.term;
+
+        // Fix custom program dropdown — the hidden <select> is updated above but
+        // the visible trigger text must also be synced or it looks blank/empty.
+        if (fv.program && genProgTriggerText) {
+            const selOpt = program.querySelector(`option[value="${CSS.escape(fv.program)}"]`);
+            const progName = selOpt ? (selOpt.dataset.name || selOpt.textContent.split('–')[1]?.trim() || '') : '';
+            genProgTriggerText.textContent = progName
+                ? `${fv.program} – ${progName}`
+                : fv.program;
+        }
+
+        if (fv.program) {
+            await loadYearLevels(fv.program);
+            if (fv.yearLevel) {
+                yearLevel.value = fv.yearLevel;
+                await loadSections();
+                if (fv.section) sectionFilter.value = fv.section;
+                if (fv.curriculum) {
+                    curriculum.value = fv.curriculum;
+                    curriculumText.textContent = `CY ${fv.curriculum}`;
+                }
+            }
+        }
+    }
+
     async function _restoreStateFromStorage() {
         try {
             const raw = localStorage.getItem(_LS_KEY);
@@ -302,24 +333,40 @@ document.addEventListener('DOMContentLoaded', () => {
             const saved = JSON.parse(raw);
             if (!saved || !saved.scheduleData || !saved.scheduleData.length) return;
 
-            const fv = saved.formValues || {};
-            // Restore form dropdowns first (program triggers year-level/section loads)
-            if (fv.program) program.value = fv.program;
-            if (fv.acadYear) acadYear.value = fv.acadYear;
-            if (fv.term) term.value = fv.term;
+            const fv  = saved.formValues || {};
+            const ctx = saved.context    || {};
 
-            if (fv.program) {
-                await loadYearLevels(fv.program);
-                if (fv.yearLevel) {
-                    yearLevel.value = fv.yearLevel;
-                    await loadSections();
-                    if (fv.section) sectionFilter.value = fv.section;
-                    if (fv.curriculum) {
-                        curriculum.value = fv.curriculum;
-                        curriculumText.textContent = `CY ${fv.curriculum}`;
-                    }
-                }
+            // Check whether the Manual Editor saved a newer draft for this context.
+            // If it did, the localStorage cache is stale — fetch fresh data from the DB.
+            let draftMarker = null;
+            try {
+                const markerRaw = sessionStorage.getItem('schedGen_draftUpdated');
+                if (markerRaw) draftMarker = JSON.parse(markerRaw);
+            } catch(_e) {}
+
+            const ctxProg = ctx.program   || fv.program   || '';
+            const ctxYl   = ctx.yearLevel || fv.yearLevel || '';
+            const ctxAy   = ctx.acadYear  || fv.acadYear  || '';
+            const ctxTerm = ctx.term      || fv.term      || '';
+
+            const markerMatches = draftMarker &&
+                draftMarker.program   === ctxProg &&
+                String(draftMarker.yearLevel) === String(ctxYl) &&
+                draftMarker.acadYear  === ctxAy &&
+                draftMarker.term      === ctxTerm;
+
+            if (markerMatches) {
+                // Consume the marker so future reloads don't loop.
+                try { sessionStorage.removeItem('schedGen_draftUpdated'); } catch(_e) {}
+                try { localStorage.removeItem(_LS_KEY); } catch(_e) {}
+                // Restore form first so the dropdowns look right, then load fresh draft.
+                await _restoreFormDropdowns(fv);
+                await _loadLatestDraftFromDb(ctxProg, ctxYl, ctxAy, ctxTerm);
+                return;
             }
+
+            // Standard restore from localStorage (no newer draft detected).
+            await _restoreFormDropdowns(fv);
 
             currentScheduleData = saved.scheduleData;
             currentBatchId      = saved.batchId || null;
@@ -336,6 +383,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
             updateAccuracyWidget(currentScheduleData, getContext());
         } catch(e) {}
+    }
+
+    // Fetch the latest Draft from the DB for the given context and display it.
+    async function _loadLatestDraftFromDb(prog, yl, ay, term) {
+        try {
+            const url = `/api/schedule/latest-draft?program=${encodeURIComponent(prog)}`
+                      + `&year_level=${encodeURIComponent(yl)}`
+                      + `&ay=${encodeURIComponent(ay)}`
+                      + `&term=${encodeURIComponent(term)}`;
+            const res  = await fetch(url);
+            const data = await res.json();
+
+            if (data.success && data.schedule_data && data.schedule_data.length) {
+                currentScheduleData = data.schedule_data;
+                currentBatchId      = `DRAFT-V${data.version || 'LATEST'}`;
+                canPublish          = false; // re-validate before approving
+
+                renderTable(currentScheduleData, sortSelect.value);
+                updateTitleBar();
+
+                btnRegenerate.disabled   = false;
+                btnSaveDraft.disabled    = false;
+                btnManualEditor.disabled = false;
+                btnExport.disabled       = false;
+                btnApprove.disabled      = true;
+
+                updateAccuracyWidget(currentScheduleData, getContext());
+            }
+        } catch(_e) {}
     }
 
     function showInfo(title, message, type = 'info') {
@@ -653,7 +729,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyScheduleResult(data, isRetrieve) {
         currentScheduleData = data.schedule_data || [];
         currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
-        canPublish          = (data.conflict_count || 0) === 0;
+
+        const internalConflicts = data.conflict_count       || 0;
+        const crossConflicts    = data.cross_conflict_count || 0;
+        const totalConflicts    = internalConflicts + crossConflicts;
+        canPublish = totalConflicts === 0;
 
         renderTable(currentScheduleData, sortSelect.value);
         updateTitleBar();
@@ -669,12 +749,38 @@ document.addEventListener('DOMContentLoaded', () => {
         btnExport.disabled       = false;
         btnApprove.disabled      = !canPublish;
 
-        if ((data.conflict_count || 0) > 0) {
-            document.getElementById('conflictText').textContent =
-                `Schedule has ${data.conflict_count} unresolved conflict(s). Approve is blocked until resolved.`;
+        const conflictDetailList = document.getElementById('conflictDetailList');
+        if (totalConflicts > 0) {
+            let conflictMsg = `Schedule has ${totalConflicts} unresolved conflict(s). Approve is blocked until resolved.`;
+            if (internalConflicts > 0 && crossConflicts > 0) {
+                conflictMsg += ` (${internalConflicts} internal, ${crossConflicts} with already-approved schedules.)`;
+            } else if (crossConflicts > 0) {
+                conflictMsg += ` (${crossConflicts} conflict(s) with already-approved schedules from other programs/sections.)`;
+            }
+            document.getElementById('conflictText').textContent = conflictMsg;
+
+            // Populate the detail list with individual conflict descriptions
+            if (conflictDetailList) {
+                conflictDetailList.innerHTML = '';
+                const allViolations = [
+                    ...(data.violations          || []),
+                    ...(data.cross_violations    || []),
+                ];
+                if (allViolations.length > 0) {
+                    allViolations.forEach(v => {
+                        const li = document.createElement('li');
+                        li.textContent = v.detail || v.subject || 'Conflict detected.';
+                        conflictDetailList.appendChild(li);
+                    });
+                    conflictDetailList.style.display = 'block';
+                } else {
+                    conflictDetailList.style.display = 'none';
+                }
+            }
             document.getElementById('conflictBanner').classList.remove('hidden');
         } else {
             document.getElementById('conflictBanner').classList.add('hidden');
+            if (conflictDetailList) conflictDetailList.style.display = 'none';
         }
 
         const toast = document.getElementById('successToast');
@@ -1088,16 +1194,9 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = url;
     });
 
-    btnApprove.addEventListener('click', async () => {
-        if (!currentScheduleData.length) return;
-
-        const confirmed = await showInfo(
-            'Approve & Publish Schedule?',
-            'This will <strong>publish</strong> this schedule as the active version.<br>The previous published version will be archived.',
-            'confirm'
-        );
-        if (!confirmed) return;
-
+    // Shared helper: call /api/schedule/approve and handle all response cases.
+    // override=true skips the duplicate-schedule confirmation gate on the server.
+    async function _submitApproval(override) {
         btnApprove.disabled = true;
         btnApprove.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
 
@@ -1110,6 +1209,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     batch_id:      currentBatchId,
                     schedule_data: currentScheduleData,
                     context:       ctx,
+                    override:      override,
                 }),
             });
             const data = await res.json();
@@ -1125,6 +1225,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
                 btnApprove.disabled = true;
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
+
+            } else if (data.needs_confirmation) {
+                // An existing Published schedule was found — ask whether to override it.
+                const ei       = data.existing_info || {};
+                const dateStr  = ei.date         ? ` (published on ${ei.date})`                       : '';
+                const subjStr  = ei.subject_count ? ` with <strong>${ei.subject_count}</strong> subjects` : '';
+
+                // Temporarily relabel the confirm button to "Override"
+                const confirmBtn = document.getElementById('infoModalConfirmBtn');
+                const prevLabel  = confirmBtn.textContent;
+                confirmBtn.textContent = 'Override';
+
+                const doOverride = await showInfo(
+                    'Existing Schedule Detected',
+                    `This section already has an approved schedule${subjStr}${dateStr}.<br><br>`
+                    + 'What would you like to do?<br><br>'
+                    + '<strong>Cancel</strong> — stop the approval process.<br>'
+                    + '<strong>Override</strong> — archive the existing schedule and publish this one as the new active schedule.',
+                    'confirm'
+                );
+                confirmBtn.textContent = prevLabel;
+
+                if (doOverride) {
+                    // User chose Override — re-submit with override flag
+                    await _submitApproval(true);
+                } else {
+                    // User cancelled
+                    btnApprove.disabled = false;
+                    btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+                }
+
             } else {
                 // #11: Show per-faculty load violation details when applicable
                 const lvs = data.load_violations || [];
@@ -1147,6 +1278,19 @@ document.addEventListener('DOMContentLoaded', () => {
             btnApprove.disabled = false;
             btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
         }
+    }
+
+    btnApprove.addEventListener('click', async () => {
+        if (!currentScheduleData.length) return;
+
+        const confirmed = await showInfo(
+            'Approve & Publish Schedule?',
+            'This will <strong>publish</strong> this schedule as the active version.<br>The previous published version will be archived.',
+            'confirm'
+        );
+        if (!confirmed) return;
+
+        await _submitApproval(false);
     });
 
     window.loadDraft = async function(versionId) {

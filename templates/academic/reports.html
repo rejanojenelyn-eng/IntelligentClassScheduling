@@ -1,212 +1,273 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <!-- Link to our new separated CSS file -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/reports.css') }}">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+/* ══════════════════════════════════════════════════
+   REPORT PAGE LAYOUT & CARDS
+══════════════════════════════════════════════════ */
+.page-header { margin-bottom: 30px; }
+.page-header h1 { font-size: 32px; font-weight: 800; color: #800000; margin: 0; text-transform: uppercase; }
+
+.reports-grid { display: flex; flex-wrap: wrap; gap: 25px; justify-content: center; padding-top: 10px; }
+.report-card { background: #fff; border-radius: 12px; width: 300px; height: 180px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; border: 1px solid #f0f0f0; }
+.report-card:hover { transform: translateY(-5px); }
+
+.card-green { box-shadow: 0 10px 30px rgba(40, 167, 69, 0.12); }
+.card-orange { box-shadow: 0 10px 30px rgba(253, 126, 20, 0.12); }
+.card-blue { box-shadow: 0 10px 30px rgba(0, 123, 255, 0.12); }
+.card-yellow { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.15); }
+.card-purple { box-shadow: 0 10px 30px rgba(111, 66, 193, 0.12); }
+.card-pink { box-shadow: 0 10px 30px rgba(232, 62, 140, 0.12); }
+.card-red { box-shadow: 0 10px 30px rgba(220, 53, 69, 0.12); }
+
+.card-icon { position: absolute; top: 15px; right: 18px; font-size: 18px; }
+.card-green .card-icon { color: #28a745; }
+.card-orange .card-icon { color: #fd7e14; }
+.card-blue .card-icon { color: #007bff; }
+.card-yellow .card-icon { color: #ffc107; }
+.card-purple .card-icon { color: #6f42c1; }
+.card-pink .card-icon { color: #e83e8c; }
+.card-red .card-icon { color: #dc3545; }
+
+.report-card h2 { color: #800000; font-size: 22px; font-weight: 800; text-align: center; margin: 0 0 20px 0; letter-spacing: 0.5px; }
+
+.btn-generate { background-color: #888888; color: #ffffff; border: none; border-radius: 20px; padding: 6px 24px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; pointer-events: none; transition: all 0.3s ease; }
+.report-card:hover .btn-generate { background-color: #800000; transform: scale(1.05); box-shadow: 0 4px 10px rgba(128, 0, 0, 0.3); }
+
+/* ══════════════════════════════════════════════════
+   REPORT FILTER MODAL
+══════════════════════════════════════════════════ */
+.rpt-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.60); z-index: 1400; align-items: center; justify-content: center; padding: 16px; font-family: Arial, sans-serif; }
+.rpt-overlay.open { display: flex !important; }
+
+.rpt-dialog { background: #fff; border-radius: 14px; width: min(540px, 96vw); max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 16px 56px rgba(0,0,0,.38); animation: rpt-pop .2s ease-out; }
+@keyframes rpt-pop { from { transform: scale(.93); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.rpt-hdr { background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; }
+.rpt-hdr-left { display: flex; align-items: center; gap: 14px; }
+.rpt-hdr-icon { width: 44px; height: 44px; background: rgba(255,255,255,.15); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; }
+.rpt-hdr-title { font-size: 1rem; font-weight: 800; }
+.rpt-hdr-sub { font-size: .74rem; opacity: .75; margin-top: 2px; }
+.rpt-hdr-close { background: none; border: none; color: rgba(255,255,255,.75); font-size: 1.2rem; cursor: pointer; padding: 6px 10px; border-radius: 7px; transition: 0.2s; }
+.rpt-hdr-close:hover { background: rgba(255,255,255,.15); color: #fff; }
+
+.rpt-body { padding: 24px; overflow-y: auto; flex: 1; }
+.rpt-section-lbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; color: #630100; border-left: 3px solid #630100; padding-left: 8px; margin-bottom: 14px; }
+.rpt-field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.rpt-field { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 5px; }
+.rpt-field label { font-size: .72rem; font-weight: 700; color: #555; text-transform: uppercase; }
+.rpt-field select { padding: 9px 11px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: .86rem; background: #fafafa; color: #333; outline: none; transition: 0.2s; width: 100%; }
+.rpt-field select:focus { border-color: #630100; box-shadow: 0 0 0 3px rgba(99,1,0,.1); background: #fff; }
+
+.rpt-footer { padding: 16px 24px; border-top: 1px solid #f0e8e8; display: flex; justify-content: flex-end; gap: 10px; background: #fafafa; }
+.rpt-btn-cancel { padding: 9px 22px; border: 1.5px solid #ccc; border-radius: 8px; background: #fff; color: #555; font-size: .86rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
+.rpt-btn-cancel:hover { background: #f5f5f5; border-color: #aaa; }
+.rpt-btn-preview { padding: 9px 24px; border: none; border-radius: 8px; background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; font-size: .86rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
+.rpt-btn-preview:hover { opacity: .9; transform: translateY(-1px); }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="dashboard-wrapper">
-
-    <div class="page-header">
-        <h1>GENERATE REPORTS</h1>
-    </div>
-
-    <!-- Reports Grid mimicking the photo -->
-    <div class="reports-grid">
-        
-        <div class="report-card card-green" onclick="openReportModal('class_schedule')">
-            <i class="fas fa-chalkboard-teacher card-icon"></i>
-            <h2>CLASS<br>SCHEDULE</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-orange" onclick="openReportModal('room_schedule')">
-            <i class="fas fa-door-open card-icon"></i>
-            <h2>ROOM<br>SCHEDULE</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-blue" onclick="openReportModal('faculty')">
-            <i class="fas fa-users card-icon"></i>
-            <h2>EMPLOYEE<br>LIST</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-yellow" onclick="openReportModal('curriculum')">
-            <i class="fas fa-book card-icon"></i>
-            <h2>CURRICULUM<br>LIST</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-purple" onclick="openReportModal('rooms')">
-            <i class="fas fa-building card-icon"></i>
-            <h2>ROOM AND<br>BUILDING LIST</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-pink" onclick="openReportModal('assignments')">
-            <i class="fas fa-user-tie card-icon"></i>
-            <h2>TEACHING<br>ASSIGNMENT</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-        <div class="report-card card-red" onclick="openReportModal('offerings')">
-            <i class="fas fa-bookmark card-icon"></i>
-            <h2>ACADEMIC<br>OFFERINGS</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
-    </div>
-
+<div class="page-header">
+    <h1>GENERATE REPORTS</h1>
 </div>
 
-<!-- The Unified Report Generation Modal -->
-<div id="reportModal" class="rpt-modal">
-    <div class="rpt-modal-content">
-        <div class="rpt-modal-header">
-            <h2 id="modalTitle">GENERATE REPORT</h2>
-            <i class="fas fa-times" onclick="closeReportModal()"></i>
-        </div>
-        
-        <div class="rpt-modal-body">
-            <input type="hidden" id="rptType">
+<div class="reports-grid">
+    <div class="report-card card-green" onclick="openReportModal('class_schedule')">
+        <i class="fas fa-chalkboard-teacher card-icon"></i>
+        <h2>CLASS<br>SCHEDULE</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-            <div class="filter-grid">
-                
-                <div class="filter-group hidden" id="grpAY">
-                    <label>Academic Year</label>
-                    <select id="rptAY" class="rpt-select">
-                        {% for ay in ay_list %}
-                        <option value="{{ ay.academicyearid }}">A.Y {{ ay.yearstart }}-{{ ay.yearend }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+    <div class="report-card card-orange" onclick="openReportModal('room_schedule')">
+        <i class="fas fa-door-open card-icon"></i>
+        <h2>ROOM<br>SCHEDULE</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-                <div class="filter-group hidden" id="grpSem">
-                    <label>Semester</label>
-                    <select id="rptSem" class="rpt-select">
-                        <option value="All">All Semesters</option>
-                        <option value="A">1st Semester</option>
-                        <option value="B">2nd Semester</option>
-                        <option value="C">Summer</option>
-                    </select>
-                </div>
+    <div class="report-card card-blue" onclick="openReportModal('faculty')">
+        <i class="fas fa-users card-icon"></i>
+        <h2>EMPLOYEE<br>LIST</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-                <div class="filter-group hidden" id="sgProgram">
-                    <label>Program</label>
-                    <select id="rptProgram" class="rpt-select" onchange="onProgramChange()">
-                        <option value="All">All Programs</option>
-                        {% for p in programs %}
-                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+    <div class="report-card card-yellow" onclick="openReportModal('curriculum')">
+        <i class="fas fa-book card-icon"></i>
+        <h2>CURRICULUM<br>LIST</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-                <div class="filter-group hidden" id="sgYearLevel">
-                    <label>Year Level</label>
-                    <select id="rptYearLevel" class="rpt-select">
-                        <option value="All">All Levels</option>
-                        <option value="1">1st Year</option>
-                        <option value="2">2nd Year</option>
-                        <option value="3">3rd Year</option>
-                        <option value="4">4th Year</option>
-                        <option value="5">5th Year</option>
-                    </select>
-                </div>
+    <div class="report-card card-purple" onclick="openReportModal('rooms')">
+        <i class="fas fa-building card-icon"></i>
+        <h2>ROOM AND<br>BUILDING LIST</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-                <div class="filter-group hidden" id="sgInstructor">
-                    <label>Instructor</label>
-                    <select id="rptInstructor" class="rpt-select">
-                        <option value="All">All Instructors</option>
-                        {% for f in faculty %}
-                        <option value="{{ f.employeenumber }}">{{ f.fullname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+    <div class="report-card card-pink" onclick="openReportModal('assignments')">
+        <i class="fas fa-user-tie card-icon"></i>
+        <h2>TEACHING<br>ASSIGNMENT</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
 
-                <div class="filter-group hidden" id="sgFacultyType">
-                    <label>Faculty Type</label>
-                    <select id="rptFacultyType" class="rpt-select">
-                        <option value="All">All Types</option>
-                        {% for et in emp_types %}
-                        <option value="{{ et.employeetypeid }}">{{ et.typename }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+    <div class="report-card card-red" onclick="openReportModal('programs')">
+        <i class="fas fa-graduation-cap card-icon"></i>
+        <h2>PROGRAM<br>LIST</h2>
+        <button type="button" class="btn-generate">GENERATE</button>
+    </div>
+</div>
 
-                <div class="filter-group hidden" id="sgFacultyStatus">
-                    <label>Status</label>
-                    <select id="rptFacultyStatus" class="rpt-select">
-                        <option value="All">All Statuses</option>
-                        {% for s in statuses %}
-                        <option value="{{ s.employeestatus }}">{{ s.employeestatus }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgSpecialization">
-                    <label>Specialization</label>
-                    <select id="rptSpecialization" class="rpt-select">
-                        <option value="All">All Specializations</option>
-                        {% for sp in specializations %}
-                        <option value="{{ sp.specializationid }}">{{ sp.specializationname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgBuilding">
-                    <label>Building</label>
-                    <select id="rptBuilding" class="rpt-select">
-                        <option value="All">All Buildings</option>
-                        {% for b in buildings %}
-                        <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgRoomType">
-                    <label>Room Type</label>
-                    <select id="rptRoomType" class="rpt-select">
-                        <option value="All">All Types</option>
-                        {% for rt in room_types %}
-                        <option value="{{ rt.roomtype }}">{{ rt.roomtype }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgCurriculum">
-                    <label>Curriculum</label>
-                    <select id="rptCurriculum" class="rpt-select">
-                        <option value="All">All Curricula</option>
-                        {% for c in curricula %}
-                        <option value="{{ c.curriculumid }}" data-prog="{{ c.programcode }}">
-                            {{ c.programcode }} — {{ c.curriculumcode }} ({{ c.curriculumyear }})
-                        </option>
-                        {% endfor %}
-                    </select>
+<!-- FILTER MODAL -->
+<div id="rptFilterModal" class="rpt-overlay" onclick="if(event.target===this)closeReportModal()">
+    <div class="rpt-dialog">
+        <div class="rpt-hdr">
+            <div class="rpt-hdr-left">
+                <div class="rpt-hdr-icon" id="rptHdrIcon"><i class="fas fa-file-alt"></i></div>
+                <div>
+                    <div class="rpt-hdr-title" id="rptHdrTitle">Report Filters</div>
+                    <div class="rpt-hdr-sub" id="rptHdrSub">Set filters then click Preview</div>
                 </div>
             </div>
-
-            <!-- Preview Area -->
-            <div id="previewArea" style="display:none;"></div>
+            <button class="rpt-hdr-close" onclick="closeReportModal()">&#215;</button>
         </div>
-
-        <div class="rpt-modal-footer">
-            <button class="btn-preview" onclick="applyFilter()">Preview Data</button>
-            <div class="export-actions">
-                <button class="btn-export btn-excel" onclick="exportExcel()">
-                    <i class="fas fa-file-excel"></i> Export Excel
-                </button>
-                <button class="btn-export btn-pdf" onclick="exportPdf()">
-                    <i class="fas fa-file-pdf"></i> Print PDF
-                </button>
-            </div>
+        <div class="rpt-body" id="rptBodyContent"></div>
+        <div class="rpt-footer">
+            <button class="rpt-btn-cancel" onclick="closeReportModal()">Cancel</button>
+            <button class="rpt-btn-preview" onclick="previewReport()"><i class="fas fa-eye"></i> Preview Report</button>
         </div>
     </div>
 </div>
 
-<!-- Link to our new separated JS file -->
-<script src="{{ url_for('static', filename='js/reports.js') }}"></script>
+<script>
+// JSON DATA INJECTION (crucial for dropdowns to work)
+const RPT_DATA = {
+    ay_list: {{ ay_list | tojson | safe }},
+    programs: {{ programs | tojson | safe }},
+    curricula: {{ curricula | tojson | safe }},
+    emp_types: {{ emp_types | tojson | safe }},
+    specializations: {{ specializations | tojson | safe }},
+    statuses: {{ statuses | tojson | safe }},
+    buildings: {{ buildings | tojson | safe }},
+    room_types: {{ room_types | tojson | safe }},
+    faculty: {{ faculty | tojson | safe }}
+};
+
+const REPORT_META = {
+    class_schedule: { icon: 'fas fa-chalkboard-teacher', title: 'Class Schedule', sub: 'Filter by academic period, program, and section' },
+    room_schedule:  { icon: 'fas fa-door-open', title: 'Room Schedule', sub: 'Filter by building and room' },
+    faculty:        { icon: 'fas fa-users', title: 'Employee List', sub: 'Filter by employee type, status, or specialization' },
+    curriculum:     { icon: 'fas fa-book', title: 'Curriculum List', sub: 'Filter by program and curriculum year' },
+    rooms:          { icon: 'fas fa-building', title: 'Room and Building List', sub: 'Filter by building and room type' },
+    assignments:    { icon: 'fas fa-user-tie', title: 'Teaching Assignment', sub: 'Filter by academic year, semester, and instructor' },
+    programs:       { icon: 'fas fa-graduation-cap', title: 'Program List', sub: 'Filter by status' }
+};
+
+let _currentReportType = null;
+
+function openReportModal(reportType) {
+    _currentReportType = reportType;
+    const meta = REPORT_META[reportType] || {};
+
+    document.getElementById('rptHdrIcon').innerHTML = `<i class="${meta.icon}"></i>`;
+    document.getElementById('rptHdrTitle').textContent = meta.title;
+    document.getElementById('rptHdrSub').textContent   = meta.sub;
+    document.getElementById('rptBodyContent').innerHTML = _buildFilterHTML(reportType);
+
+    if (reportType === 'curriculum') {
+        document.getElementById('rptProg')?.addEventListener('change', _updateCurriculaOptions);
+        _updateCurriculaOptions();
+    }
+    document.getElementById('rptFilterModal').classList.add('open');
+}
+
+function closeReportModal() {
+    document.getElementById('rptFilterModal').classList.remove('open');
+    _currentReportType = null;
+}
+
+function _sel(id, label, options, defaultLabel = 'All') {
+    const opts = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+    return `<div class="rpt-field"><label>${label}</label><select id="${id}"><option value="All">${defaultLabel}</option>${opts}</select></div>`;
+}
+
+function _buildFilterHTML(type) {
+    const { ay_list, programs, curricula, emp_types, specializations, statuses, buildings, room_types, faculty } = RPT_DATA;
+
+    const ayOpts   = (ay_list || []).map(a => ({ value: a.academicyearid, label: `A.Y. ${a.yearstart}–${a.yearend}` }));
+    const progOpts = (programs || []).map(p => ({ value: p.programcode, label: p.programname }));
+    const bldgOpts = (buildings || []).map(b => ({ value: b.buildingid, label: b.buildingname }));
+    const rtOpts   = (room_types || []).map(r => ({ value: r.roomtype, label: r.roomtype }));
+    const etOpts   = (emp_types || []).map(e => ({ value: e.employeetypeid, label: e.typename }));
+    const spOpts   = (specializations || []).map(s => ({ value: s.specializationid, label: s.specializationname }));
+    const stOpts   = (statuses || []).map(s => ({ value: s.employeestatus, label: s.employeestatus }));
+    const facOpts  = (faculty || []).map(f => ({ value: f.employeenumber, label: f.fullname }));
+    const semOpts  = [{ value: 'A', label: '1st Semester' }, { value: 'B', label: '2nd Semester' }, { value: 'C', label: 'Summer' }];
+    const ylOpts   = [1,2,3,4,5].map(y => ({ value: y, label: `${y}${['st','nd','rd','th','th'][y-1]} Year` }));
+
+    let html = '<div class="rpt-section-lbl">Filter Options</div>';
+
+    if (type === 'class_schedule') {
+        html += `<div class="rpt-field-row">${_sel('rptAY', 'Academic Year', ayOpts)} ${_sel('rptSem', 'Semester', semOpts)}</div>
+                 <div class="rpt-field-row">${_sel('rptProg', 'Program', progOpts, 'All Programs')} ${_sel('rptYL', 'Year Level', ylOpts, 'All Levels')}</div>`;
+    } else if (type === 'room_schedule') {
+        html += `<div class="rpt-field-row">${_sel('rptAY', 'Academic Year', ayOpts)} ${_sel('rptSem', 'Semester', semOpts)}</div>
+                 <div class="rpt-field-row">${_sel('rptBldg', 'Building', bldgOpts, 'All Buildings')} ${_sel('rptRT', 'Room Type', rtOpts, 'All Types')}</div>`;
+    } else if (type === 'faculty') {
+        html += `<div class="rpt-field-row">${_sel('rptEmpType', 'Employee Type', etOpts, 'All Types')} ${_sel('rptStatus', 'Status', stOpts, 'All Statuses')}</div>
+                 <div class="rpt-field-row">${_sel('rptSpec', 'Specialization', spOpts, 'All Specializations')}</div>`;
+    } else if (type === 'curriculum') {
+        const currOpts = (curricula||[]).map(c => ({ value: c.curriculumid, label: c.curriculumcode }));
+        html += `<div class="rpt-field-row">${_sel('rptProg', 'Program', progOpts, 'All Programs')}</div>
+                 <div class="rpt-field-row">
+                    <div class="rpt-field"><label>Curriculum</label><select id="rptCurr"><option value="All">All Curricula</option>${currOpts.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select></div>
+                    ${_sel('rptSem', 'Semester', semOpts)}
+                 </div>`;
+    } else if (type === 'rooms') {
+        html += `<div class="rpt-field-row">${_sel('rptBldg', 'Building', bldgOpts, 'All Buildings')} ${_sel('rptRT', 'Room Type', rtOpts, 'All Types')}</div>`;
+    } else if (type === 'assignments') {
+        html += `<div class="rpt-field-row">${_sel('rptAY', 'Academic Year', ayOpts)} ${_sel('rptSem', 'Semester', semOpts)}</div>
+                 <div class="rpt-field-row">${_sel('rptInstr', 'Instructor', facOpts, 'All Instructors')}</div>`;
+    } else if (type === 'programs') {
+        html += `<div class="rpt-field-row">${_sel('rptStatus', 'Status', [{value:'Active', label:'Active'}, {value:'Inactive', label:'Inactive'}], 'All')}</div>`;
+    }
+    return html;
+}
+
+function _updateCurriculaOptions() {
+    const progVal = document.getElementById('rptProg')?.value || 'All';
+    const currSel = document.getElementById('rptCurr');
+    if (!currSel) return;
+    const filtered = progVal === 'All' ? RPT_DATA.curricula : (RPT_DATA.curricula || []).filter(c => c.programcode === progVal);
+    currSel.innerHTML = '<option value="All">All Curricula</option>' + filtered.map(c => `<option value="${c.curriculumid}">${c.curriculumcode}</option>`).join('');
+}
+
+function _gv(id) { const el = document.getElementById(id); return el ? el.value : 'All'; }
+
+function previewReport() {
+    if (!_currentReportType) return;
+    const type = _currentReportType;
+    const params = new URLSearchParams();
+
+    const map = {
+        class_schedule: ['rptAY:ay', 'rptSem:sem', 'rptProg:prog', 'rptYL:yl'],
+        room_schedule:  ['rptAY:ay', 'rptSem:sem', 'rptBldg:bldg', 'rptRT:rt'],
+        faculty:        ['rptEmpType:emp_type', 'rptStatus:status', 'rptSpec:spec'],
+        curriculum:     ['rptProg:prog', 'rptCurr:curr', 'rptSem:sem'],
+        rooms:          ['rptBldg:bldg', 'rptRT:rt'],
+        assignments:    ['rptAY:ay', 'rptSem:sem', 'rptInstr:instr'],
+        programs:       ['rptStatus:status'],
+    };
+
+    (map[type] || []).forEach(pair => {
+        const [elId, paramKey] = pair.split(':');
+        const val = _gv(elId);
+        if (val && val !== 'All') params.set(paramKey, val);
+    });
+
+    const basePath = window.location.pathname.includes('/admin') ? '/admin/reports/preview' : '/reports/preview';
+    
+    // GUARANTEES IT OPENS IN THE SAME TAB
+    window.location.href = `${basePath}/${type}?${params.toString()}`;
+}
+</script>
 {% endblock %}

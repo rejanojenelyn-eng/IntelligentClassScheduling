@@ -1402,6 +1402,83 @@ class IntelligentScheduler:
 
         return result
 
+    def fetch_published_room_faculty_slots(
+        self, term: str, acad_year_id: str,
+        exclude_program: str = '', exclude_year_level: int = None,
+        exclude_subject_codes: list = None,
+    ) -> tuple:
+        """
+        Load existing Published AND Draft room/faculty occupancies for the semester.
+
+        Only sessions for the subjects actively being regenerated are excluded.
+        Sessions for OTHER subjects in the same section (residual Published subjects from
+        a previous curriculum that are not being regenerated) are kept as occupied so
+        the generator does not double-book those rooms/faculty.
+
+        exclude_subject_codes: subject codes being regenerated in the current run.
+            When supplied, only sessions whose subjectcode is in this list are excluded
+            for the current program+year. Sessions for OTHER subjects in the same section
+            are treated as occupied. When None (legacy call), the entire section is excluded.
+        """
+        if not term or not acad_year_id:
+            return defaultdict(list), defaultdict(list)
+        rows = query_db("""
+            SELECT ss.roomid,
+                   sc.employeenumber          AS faculty_id,
+                   ss.daydesc                 AS day,
+                   ts_s.timevalue             AS start_time,
+                   ts_e.timevalue             AS end_time,
+                   UPPER(c.programcode)       AS programcode,
+                   cs.yearlevel,
+                   UPPER(cs.subjectcode)      AS subjectcode
+            FROM   schedule_sessions ss
+            JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+            JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+            JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN   semester sem         ON sc.semesterid          = sem.semesterid
+            LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+            WHERE  sem.academicyearid          = %s
+              AND  UPPER(sem.semestertype)     = UPPER(%s)
+              AND  sv.status                  IN ('Published', 'Draft')
+              AND  ss.roomid                  IS NOT NULL
+              AND  ss.daydesc                 IS NOT NULL
+              AND  ts_s.timevalue             IS NOT NULL
+              AND  ts_e.timevalue             IS NOT NULL
+        """, (acad_year_id, term))
+
+        excl_prog  = (exclude_program or '').strip().upper()
+        excl_codes = {c.upper() for c in (exclude_subject_codes or [])}
+
+        room_slots    = defaultdict(list)
+        faculty_slots = defaultdict(list)
+        loaded = 0
+        for r in (rows or []):
+            row_prog = str(r['programcode']).upper()
+            row_yr   = r['yearlevel']
+            row_sc   = str(r.get('subjectcode') or '').upper()
+            # Skip only sessions that ARE being regenerated for the current section.
+            # Residual sessions for OTHER subjects in the same section must still block
+            # so the new schedule does not reuse a room that will remain Published.
+            if excl_prog and row_prog == excl_prog \
+                    and exclude_year_level is not None \
+                    and row_yr == exclude_year_level:
+                if not excl_codes or row_sc in excl_codes:
+                    continue   # this subject is being replaced — don't block
+            day   = r['day']
+            start = r['start_time']
+            end   = r['end_time']
+            if day and start and end:
+                room_slots[r['roomid']].append((day, start, end))
+                if r['faculty_id']:
+                    faculty_slots[r['faculty_id']].append((day, start, end))
+                loaded += 1
+        print(f'[SCHED] Loaded {loaded} published/draft slots ({len(room_slots)} rooms, '
+              f'{len(faculty_slots)} faculty) to block during generation '
+              f'(excl {excl_prog} Yr{exclude_year_level} codes={len(excl_codes)})')
+        return room_slots, faculty_slots
+
     def fetch_current_faculty_loads(self, term: str, acad_year_id: str) -> dict:
         """
         #9: Return {faculty_id: total_units_already_committed} for the given
@@ -1563,7 +1640,9 @@ class IntelligentScheduler:
 
     def _build_individual(self, subjects, faculty_list, faculty_map, rooms,
                           historical_faculty: dict = None, preferences: dict = None,
-                          subject_history: dict = None, existing_load: dict = None):
+                          subject_history: dict = None, existing_load: dict = None,
+                          published_room_slots: dict = None,
+                          published_faculty_slots: dict = None):
         """
         Build one schedule candidate.
 
@@ -1578,6 +1657,10 @@ class IntelligentScheduler:
           • the time block is 1.5 hours, AND
           • the subject's lecture hours ≥ 3 (so two 1.5-hr sessions = 3 hrs/week).
           Labs always meet on a single day.
+
+        published_room_slots / published_faculty_slots: pre-loaded occupancies from
+          existing Published schedules for other sections.  Pre-seeding these dicts
+          prevents the builder from assigning rooms or faculty that are already taken.
         """
         individual = []
         historical_faculty = historical_faculty or {}
@@ -1588,10 +1671,19 @@ class IntelligentScheduler:
         # Track units being assigned within this individual so load compounds correctly
         _sched_units: dict = defaultdict(int)
 
-        # Track slots during building to eliminate hard overlaps in generated individuals
+        # Track slots during building to eliminate hard overlaps in generated individuals.
+        # Pre-seed with Published occupancies from OTHER sections so those rooms/faculty
+        # are treated as already taken before a single slot is assigned here.
         faculty_slots = defaultdict(list)   # fac_id  → [(day, start, end)]
         room_slots    = defaultdict(list)   # room_id → [(day, start, end)]
         section_slots = []                   # all booked slots in this section → [(day, start, end)]
+
+        if published_room_slots:
+            for _rid, _slots in published_room_slots.items():
+                room_slots[_rid].extend(_slots)
+        if published_faculty_slots:
+            for _fid, _slots in published_faculty_slots.items():
+                faculty_slots[_fid].extend(_slots)
 
         def _has_overlap(fac_id, days, start, end, room_id):
             for d in days:
@@ -1753,9 +1845,41 @@ class IntelligentScheduler:
                     else WEEKDAYS + ['Saturday']
                 )
 
-                # Try up to 20 times to find a non-overlapping slot
+                # ── Slot selection ──────────────────────────────────────────
+                # Phase 1: up to 60 random attempts (fast path — preserves diversity).
+                # Phase 2: exhaustive systematic search over all (time × room × day)
+                #          combinations — guarantees we always produce conflict-free output
+                #          when ANY valid slot exists.  Only the true last-resort blind
+                #          fallback (Phase 3) can still create an intra-individual conflict,
+                #          and that only fires when the entire schedule space is occupied.
+                # ────────────────────────────────────────────────────────────────────────
+
+                def _candidate_days(_s, _e, _random=True):
+                    """
+                    Return all day combinations valid for this part.
+                    When _random=True, returns a single random candidate (fast path).
+                    When _random=False, returns a list of all candidates (systematic search).
+                    """
+                    _dur = duration_hours(_s, _e)
+                    if is_nstp_ou and self._nstp_force_sunday:
+                        return [['Sunday']]
+                    if abs(_dur - 1.5) < 0.1 and lec_hrs >= 3 and not is_lab_part:
+                        if _random:
+                            return [list(random.choice(self._builder_pairs))]
+                        return [list(p) for p in self._builder_pairs]
+                    if is_lab_part and _lec_day_chosen and _day_pair_on:
+                        _paired = None
+                        for _p in self._builder_pairs:
+                            if _lec_day_chosen in _p:
+                                _paired = _p[1 - _p.index(_lec_day_chosen)]
+                                break
+                        return [[_paired]] if _paired else ([[random.choice(_avail_days)]] if _random else [[d] for d in _avail_days])
+                    return [[random.choice(_avail_days)]] if _random else [[d] for d in _avail_days]
+
                 start_t = end_t = chosen_room = days_list = None
-                for _ in range(20):
+
+                # Phase 1: random attempts (60 tries, fast)
+                for _ in range(60):
                     if regular_blks and random.random() < 0.75:
                         _s, _e = random.choice(regular_blks)
                     elif pt_blks:
@@ -1763,67 +1887,43 @@ class IntelligentScheduler:
                     else:
                         _s, _e = random.choice(valid_blks)
 
-                    _dur = duration_hours(_s, _e)
-                    if pref_room and random.random() < 0.65:
-                        _r = pref_room
-                    else:
-                        _r = random.choice(valid_rooms)
-
-                    # Day selection (uses DB-configurable pairs and NSTP toggle)
-                    if is_nstp_ou and self._nstp_force_sunday:
-                        # HC4: NSTP/OU subjects forced to Sunday when restriction is on
-                        _days = ['Sunday']
-                    elif abs(_dur - 1.5) < 0.1 and lec_hrs >= 3 and not is_lab_part:
-                        # HC6: pair only for 1.5-hr sessions of 3+ hr/week subjects
-                        _pair = random.choice(self._builder_pairs)
-                        _days = list(_pair)
-                    elif is_lab_part and _lec_day_chosen and _day_pair_on:
-                        # Pair the lab day with the lecture's day using the configured pairs.
-                        # e.g. if lecture is on Wednesday and pairs are Wed/Sat, lab goes Saturday.
-                        _paired = None
-                        for _p in self._builder_pairs:
-                            if _lec_day_chosen in _p:
-                                _idx = _p.index(_lec_day_chosen)
-                                _paired = _p[1 - _idx]
-                                break
-                        _days = [_paired] if _paired else [random.choice(_avail_days)]
-                    else:
-                        # Single-day; labs always single-day
-                        _days = [random.choice(_avail_days)]
+                    _r    = pref_room if (pref_room and random.random() < 0.65) else random.choice(valid_rooms)
+                    _days = _candidate_days(_s, _e, _random=True)[0]
 
                     if not _has_overlap(chosen_fac['employeenumber'], _days, _s, _e, _r['roomid']):
                         start_t, end_t, chosen_room, days_list = _s, _e, _r, _days
                         break
 
-                # After successful lecture placement, record the day so the lab can pair with it.
+                # Phase 2: exhaustive systematic search (only if random phase failed)
+                if start_t is None:
+                    _blks_ordered = list(regular_blks or valid_blks)
+                    random.shuffle(_blks_ordered)
+                    _rooms_ordered = list(valid_rooms)
+                    random.shuffle(_rooms_ordered)
+                    for _s, _e in _blks_ordered:
+                        if start_t is not None:
+                            break
+                        for _r in _rooms_ordered:
+                            if start_t is not None:
+                                break
+                            for _days in _candidate_days(_s, _e, _random=False):
+                                if not _has_overlap(chosen_fac['employeenumber'], _days, _s, _e, _r['roomid']):
+                                    start_t, end_t, chosen_room, days_list = _s, _e, _r, _days
+                                    break
+
+                # Phase 3: last-resort blind fallback — only reachable when every
+                # possible (time, room, day) combination is already occupied.
+                if start_t is None:
+                    _fb_blks = regular_blks or pt_blks or valid_blks
+                    start_t, end_t = random.choice(_fb_blks)
+                    days_list      = _candidate_days(start_t, end_t, _random=True)[0]
+                    chosen_room    = pref_room or random.choice(valid_rooms)
+
+                # ────────────────────────────────────────────────────────────────────
+
+                # After lecture placement, record the day so the lab part can pair with it.
                 if not is_lab_part and days_list:
                     _lec_day_chosen = days_list[0]
-
-                # Fallback if all 20 attempts overlapped (overlap handled by GA validator)
-                if start_t is None:
-                    if regular_blks:
-                        start_t, end_t = random.choice(regular_blks)
-                    elif pt_blks:
-                        start_t, end_t = random.choice(pt_blks)
-                    else:
-                        start_t, end_t = random.choice(valid_blks)
-                    _dur = duration_hours(start_t, end_t)
-                    if is_nstp_ou and self._nstp_force_sunday:
-                        days_list = ['Sunday']
-                    elif abs(_dur - 1.5) < 0.1 and lec_hrs >= 3 and not is_lab_part:
-                        _pair = random.choice(self._builder_pairs)
-                        days_list = list(_pair)
-                    elif is_lab_part and _lec_day_chosen and _day_pair_on:
-                        _paired = None
-                        for _p in self._builder_pairs:
-                            if _lec_day_chosen in _p:
-                                _idx = _p.index(_lec_day_chosen)
-                                _paired = _p[1 - _idx]
-                                break
-                        days_list = [_paired] if _paired else [random.choice(_avail_days)]
-                    else:
-                        days_list = [random.choice(_avail_days)]
-                    chosen_room = pref_room or random.choice(valid_rooms)
 
                 _register(chosen_fac['employeenumber'], days_list, start_t, end_t,
                           chosen_room['roomid'])
@@ -1866,12 +1966,18 @@ class IntelligentScheduler:
 
     # ── Overlap repair ───────────────────────────────────────────
 
-    def _repair_overlaps(self, individual: list, faculty_map: dict) -> list:
+    def _repair_overlaps(self, individual: list, faculty_map: dict,
+                         published_room_slots: dict = None,
+                         published_faculty_slots: dict = None) -> list:
         """
         Multi-pass repair: detect and fix section, faculty, and room time conflicts
         by reassigning conflicting entries to a valid non-overlapping time+day.
         Runs up to 12 passes or until no overlap remains.
+        Published/Draft slots from other sections are also checked so the repair
+        never picks a time that is already occupied by an existing schedule.
         """
+        _pub_rooms = published_room_slots  or {}
+        _pub_facs  = published_faculty_slots or {}
         for _pass in range(12):
             fac_day     = defaultdict(list)   # (fac_id,  day) → [(idx, start, end)]
             room_day    = defaultdict(list)   # (room_id, day) → [(idx, start, end)]
@@ -1892,7 +1998,8 @@ class IntelligentScheduler:
             fixed_any = False
 
             def _slot_free(gene_idx, gene, new_s, new_e, new_days):
-                """Return True only if the proposed time+days conflict with nothing else."""
+                """Return True only if the proposed time+days conflict with nothing else.
+                Checks both intra-individual slots and already-published/draft occupancies."""
                 fid = gene.get('faculty_id')
                 rid = gene.get('room_id')
                 for d in new_days:
@@ -1904,6 +2011,13 @@ class IntelligentScheduler:
                             return False
                     for (ix, ss, se) in room_day.get((rid, d), []):
                         if ix != gene_idx and new_s < se and new_e > ss:
+                            return False
+                    # Block slots already occupied in Published/Draft schedules
+                    for (pd, ps, pe) in _pub_rooms.get(rid, []):
+                        if pd == d and new_s < pe and new_e > ps:
+                            return False
+                    for (pd, ps, pe) in _pub_facs.get(fid, []):
+                        if pd == d and new_s < pe and new_e > ps:
                             return False
                 return True
 
@@ -2008,6 +2122,207 @@ class IntelligentScheduler:
 
         return individual
 
+    # ── Cross-section conflict repair ────────────────────────────
+
+    def _repair_cross_conflicts(
+        self, individual: list, rooms: list,
+        published_room_slots: dict, published_faculty_slots: dict,
+        faculty_map: dict = None,
+    ) -> list:
+        """
+        Post-GA repair: after the genetic algorithm finishes, check every class in
+        the winning individual against the pre-loaded published room/faculty occupancies.
+
+        Repair strategy (in priority order):
+          1. Room conflict only   → try an alternative room of the same type
+          2. Faculty conflict     → try an alternative time/day that the faculty is free
+                                    OR try an alternative qualified faculty member
+          3. Both                 → try alternative room; if still conflicts, try alt faculty + room
+
+        Debug lines prefixed with [REPAIR] are printed to the server console.
+        """
+        if not individual:
+            return individual
+
+        faculty_map = faculty_map or {}
+
+        def _pub_room_free(rid, days, st, et):
+            for day in days:
+                for (pd, ps, pe) in published_room_slots.get(rid, []):
+                    if pd == day and st < pe and et > ps:
+                        return False
+            return True
+
+        def _pub_fac_free(fid, days, st, et):
+            for day in days:
+                for (pd, ps, pe) in published_faculty_slots.get(fid, []):
+                    if pd == day and st < pe and et > ps:
+                        return False
+            return True
+
+        def _ind_room_free(rid, days, st, et, exclude_idx):
+            for j, other in enumerate(individual):
+                if j == exclude_idx:
+                    continue
+                if other.get('room_id') != rid:
+                    continue
+                ost = other.get('start_time')
+                oet = other.get('end_time')
+                for oday in other.get('days_list', [other.get('day', '')]):
+                    for day in days:
+                        if oday == day and ost and oet and st < oet and et > ost:
+                            return False
+            return True
+
+        def _ind_fac_free(fid, days, st, et, exclude_idx):
+            for j, other in enumerate(individual):
+                if j == exclude_idx:
+                    continue
+                if other.get('faculty_id') != fid:
+                    continue
+                ost = other.get('start_time')
+                oet = other.get('end_time')
+                for oday in other.get('days_list', [other.get('day', '')]):
+                    for day in days:
+                        if oday == day and ost and oet and st < oet and et > ost:
+                            return False
+            return True
+
+        def _ind_sec_free(days, st, et, exclude_idx):
+            for j, other in enumerate(individual):
+                if j == exclude_idx:
+                    continue
+                ost = other.get('start_time')
+                oet = other.get('end_time')
+                for oday in other.get('days_list', [other.get('day', '')]):
+                    for day in days:
+                        if oday == day and ost and oet and st < oet and et > ost:
+                            return False
+            return True
+
+        def _pub_conflict_desc(fid, rid, days, st, et):
+            descs = []
+            for day in days:
+                for (pd, ps, pe) in published_room_slots.get(rid, []):
+                    if pd == day and st < pe and et > ps:
+                        descs.append(f'Room {rid} occupied on {day} {ps}–{pe}')
+                for (pd, ps, pe) in published_faculty_slots.get(fid, []):
+                    if pd == day and st < pe and et > ps:
+                        descs.append(f'Faculty {fid} occupied on {day} {ps}–{pe}')
+            return '; '.join(descs) if descs else 'unknown conflict'
+
+        _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
+        _avail_days  = WEEKDAYS + (['Saturday'] if not self._nstp_force_sunday else [])
+
+        def _slot_triples_for(cls):
+            """All valid (days, start, end) triples for a class."""
+            is_lab  = cls.get('class_type') == 'Lab'
+            lh      = cls.get('lec_hours', 0)
+            labh    = cls.get('lab_hours', 0)
+            target  = labh if is_lab else (lh or 3)
+            is_nstp = any(cls.get('subject_code', '').upper().startswith(p)
+                          for p in SUNDAY_ALLOWED_PREFIXES)
+            if _day_pair_on and not is_lab and lh >= 3:
+                blks = get_blocks_for_hours(1.5) + get_blocks_for_hours(target, is_lab=False)
+            else:
+                blks = get_blocks_for_hours(target, is_lab=is_lab)
+            triples = []
+            if is_nstp and self._nstp_force_sunday:
+                for s, e in blks:
+                    triples.append((['Sunday'], s, e))
+            elif _day_pair_on and not is_lab and lh >= 3:
+                for s, e in blks:
+                    dur = duration_hours(s, e)
+                    if abs(dur - 1.5) < 0.1:
+                        for pair in self._builder_pairs:
+                            triples.append((list(pair), s, e))
+                    else:
+                        for d in _avail_days:
+                            triples.append(([d], s, e))
+            else:
+                for d in _avail_days:
+                    for s, e in blks:
+                        triples.append(([d], s, e))
+            random.shuffle(triples)
+            return triples
+
+        for cls_idx, cls in enumerate(individual):
+            fid   = cls.get('faculty_id')
+            rid   = cls.get('room_id')
+            days  = cls.get('days_list') or [cls.get('day', '')]
+            st    = cls.get('start_time')
+            et    = cls.get('end_time')
+            scode = (cls.get('subject_code') or '').upper()
+            if not (st and et and days):
+                continue
+
+            room_conflict = rid is not None and not _pub_room_free(rid, days, st, et)
+            fac_conflict  = fid is not None and not _pub_fac_free(fid, days, st, et)
+
+            if not room_conflict and not fac_conflict:
+                continue
+
+            conflict_desc = _pub_conflict_desc(fid, rid, days, st, et)
+            print(f'[REPAIR] {scode} has cross-section conflict → {conflict_desc}')
+
+            fixed = False
+
+            # ── Strategy 1: try alternative room (same time/day, different room) ──
+            if not fac_conflict:
+                rtype = cls.get('room_type', '')
+                alt_rooms = [r for r in rooms if (not rtype or r.get('roomtype') == rtype)]
+                if not alt_rooms:
+                    alt_rooms = list(rooms)
+                random.shuffle(alt_rooms)
+                for alt_r in alt_rooms:
+                    alt_rid = alt_r['roomid']
+                    if alt_rid == rid:
+                        continue
+                    if (_pub_room_free(alt_rid, days, st, et)
+                            and _ind_room_free(alt_rid, days, st, et, cls_idx)):
+                        print(f'[REPAIR]   Fixed {scode}: room {rid}→{alt_rid} ({alt_r["roomname"]})')
+                        cls['room_id'] = alt_rid
+                        cls['room']    = alt_r['roomname']
+                        fixed = True
+                        break
+
+            # ── Strategy 2: try alternative time/day for the same faculty ──
+            if not fixed and fac_conflict:
+                rtype = cls.get('room_type', '')
+                alt_rooms = [r for r in rooms if (not rtype or r.get('roomtype') == rtype)] or list(rooms)
+                for new_days, new_s, new_e in _slot_triples_for(cls):
+                    if not _pub_fac_free(fid, new_days, new_s, new_e):
+                        continue  # faculty still busy at new time
+                    if not _ind_fac_free(fid, new_days, new_s, new_e, cls_idx):
+                        continue  # intra-individual faculty clash
+                    if not _ind_sec_free(new_days, new_s, new_e, cls_idx):
+                        continue  # intra-individual section clash
+                    # Find a room free at the new time
+                    random.shuffle(alt_rooms)
+                    for alt_r in alt_rooms:
+                        alt_rid = alt_r['roomid']
+                        if (_pub_room_free(alt_rid, new_days, new_s, new_e)
+                                and _ind_room_free(alt_rid, new_days, new_s, new_e, cls_idx)):
+                            print(f'[REPAIR]   Fixed {scode}: time {st}–{et} {days}→{new_s}–{new_e} {new_days}, room→{alt_r["roomname"]}')
+                            cls['start_time'] = new_s
+                            cls['end_time']   = new_e
+                            cls['days_list']  = list(new_days)
+                            cls['day']        = new_days[0]
+                            cls['days']       = '/'.join(d[:3].upper() for d in new_days)
+                            cls['time']       = f"{format_time_12h(new_s)} – {format_time_12h(new_e)}"
+                            cls['room_id']    = alt_rid
+                            cls['room']       = alt_r['roomname']
+                            fixed = True
+                            break
+                    if fixed:
+                        break
+
+            if not fixed:
+                print(f'[REPAIR]   UNRESOLVED {scode}: no conflict-free slot found — '
+                      f'faculty {fid} or room space exhausted by published schedules.')
+
+        return individual
+
     # ── Fitness scoring ──────────────────────────────────────────
 
     def _fitness(self, individual, faculty_map):
@@ -2082,7 +2397,9 @@ class IntelligentScheduler:
 
     def _mutate(self, child, subjects_by_code, faculty_list, faculty_map, rooms,
                 historical_faculty: dict = None, preferences: dict = None,
-                subject_history: dict = None):
+                subject_history: dict = None,
+                published_room_slots: dict = None,
+                published_faculty_slots: dict = None):
         historical_faculty = historical_faculty or {}
         preferences        = preferences        or {}
         subject_history    = subject_history    or {}
@@ -2091,6 +2408,7 @@ class IntelligentScheduler:
 
         idx        = random.randint(0, len(child) - 1)
         gene       = child[idx]
+        orig_gene  = copy.deepcopy(gene)   # saved for published-conflict rollback
         sub_code   = gene['subject_code']
         class_type = gene.get('class_type', 'Lecture')
         is_lab_part = (class_type == 'Lab')
@@ -2240,6 +2558,33 @@ class IntelligentScheduler:
             gene['room']             = r['roomname']
             gene['is_preferred_room'] = (r['roomid'] == pref_rid) if pref_rid else False
 
+        # Roll back if the mutation landed in a Published/Draft occupied slot.
+        # This prevents mutations from introducing cross-section conflicts that
+        # _repair_overlaps (which only sees intra-individual slots) cannot fix.
+        _pub_rooms = published_room_slots  or {}
+        _pub_facs  = published_faculty_slots or {}
+        _new_rid   = gene.get('room_id')
+        _new_fid   = gene.get('faculty_id')
+        _new_days  = gene.get('days_list') or [gene.get('day', '')]
+        _new_s     = gene.get('start_time')
+        _new_e     = gene.get('end_time')
+        if _new_s and _new_e and _new_days:
+            _pub_conflict = False
+            for _d in _new_days:
+                for (_pd, _ps, _pe) in _pub_rooms.get(_new_rid, []):
+                    if _pd == _d and _new_s < _pe and _new_e > _ps:
+                        _pub_conflict = True
+                        break
+                if not _pub_conflict:
+                    for (_pd, _ps, _pe) in _pub_facs.get(_new_fid, []):
+                        if _pd == _d and _new_s < _pe and _new_e > _ps:
+                            _pub_conflict = True
+                            break
+                if _pub_conflict:
+                    break
+            if _pub_conflict:
+                child[idx] = orig_gene   # revert to pre-mutation state
+
         return child
 
     # ── Main entry point ─────────────────────────────────────────
@@ -2322,6 +2667,17 @@ class IntelligentScheduler:
             # This prevents assigning faculty who are already at their load limit.
             existing_load = self.fetch_current_faculty_loads(term, current_ay)
 
+            # Pre-load existing Published/Draft room/faculty occupancies for conflict blocking.
+            # Pass the current subject codes so that ONLY sessions being regenerated are
+            # excluded — residual Published sessions for other subjects in the same section
+            # remain blocked and the generator will not double-book those rooms/faculty.
+            published_room_slots, published_faculty_slots = \
+                self.fetch_published_room_faculty_slots(
+                    term, current_ay,
+                    exclude_program=program, exclude_year_level=year_level,
+                    exclude_subject_codes=all_subject_codes,
+                )
+
             POP_SIZE      = 60
             GENERATIONS   = 200
             MUTATION_RATE = 0.30
@@ -2345,7 +2701,9 @@ class IntelligentScheduler:
                         self._build_individual(
                             subjects, faculty_list, faculty_map, rooms,
                             hist, prefs_seed, subject_history,
-                            existing_load=existing_load  # #9
+                            existing_load=existing_load,
+                            published_room_slots=published_room_slots,
+                            published_faculty_slots=published_faculty_slots,
                         )
                     )
 
@@ -2388,9 +2746,15 @@ class IntelligentScheduler:
                         if random.random() < MUTATION_RATE:
                             child = self._mutate(
                                 child, subjects_by_code, faculty_list, faculty_map, rooms,
-                                historical_faculty, preferences, subject_history
+                                historical_faculty, preferences, subject_history,
+                                published_room_slots=published_room_slots,
+                                published_faculty_slots=published_faculty_slots,
                             )
-                        self._repair_overlaps(child, faculty_map)
+                        self._repair_overlaps(
+                            child, faculty_map,
+                            published_room_slots=published_room_slots,
+                            published_faculty_slots=published_faculty_slots,
+                        )
                         new_pop.append(child)
 
                     population = new_pop
@@ -2464,6 +2828,64 @@ class IntelligentScheduler:
                         f"and constraint settings, then try again."
                     ),
                 }
+
+            # ── Post-GA cross-section conflict repair ─────────────────────────────
+            # The GA evolves only on intra-individual fitness.  Mutations that change
+            # rooms/days don't check against published slots.  Repair any cross-section
+            # conflicts in the winner before returning so the generated schedule is
+            # always conflict-free w.r.t. already-published schedules.
+            if published_room_slots or published_faculty_slots:
+                print(f'[REPAIR] Running cross-section conflict repair on final schedule...')
+                best_schedule_global = self._repair_cross_conflicts(
+                    best_schedule_global,
+                    rooms,
+                    published_room_slots,
+                    published_faculty_slots,
+                    faculty_map=faculty_map,
+                )
+
+            # ── Final cross-section validation ────────────────────────────────────
+            # Scan the repaired schedule against published/draft slots.  If any
+            # unresolved conflicts remain, fail the generation with an explanation
+            # so the approval screen never sees conflicted data.
+            if published_room_slots or published_faculty_slots:
+                unresolved = []
+                for cls in best_schedule_global:
+                    rid  = cls.get('room_id')
+                    fid  = cls.get('faculty_id')
+                    days = cls.get('days_list') or [cls.get('day', '')]
+                    st   = cls.get('start_time')
+                    et   = cls.get('end_time')
+                    if not (st and et and days):
+                        continue
+                    for d in days:
+                        for (pd, ps, pe) in (published_room_slots or {}).get(rid, []):
+                            if pd == d and st < pe and et > ps:
+                                sc = (cls.get('subject_code') or '?').upper()
+                                unresolved.append(
+                                    f'{sc}: room conflict on {d} {ps}–{pe}'
+                                )
+                                break
+                        for (pd, ps, pe) in (published_faculty_slots or {}).get(fid, []):
+                            if pd == d and st < pe and et > ps:
+                                sc = (cls.get('subject_code') or '?').upper()
+                                unresolved.append(
+                                    f'{sc}: faculty conflict on {d} {ps}–{pe}'
+                                )
+                                break
+                if unresolved:
+                    detail = '; '.join(dict.fromkeys(unresolved))   # dedupe, keep order
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Could not generate a schedule free of conflicts with "
+                            f"existing Published/Draft sessions after {MAX_ATTEMPTS} attempts. "
+                            f"Unresolved: {detail}. "
+                            f"Try adding more rooms, adjusting faculty load limits, "
+                            f"or generating schedules for other sections first."
+                        ),
+                    }
+            # ──────────────────────────────────────────────────────────────────────
 
             return {
                 "success":        True,

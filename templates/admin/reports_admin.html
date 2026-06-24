@@ -1,207 +1,255 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/reports.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/reports.css') }}">
+<style>
+    /* Synchronization with Academic Head styles */
+    .rpt-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 9999; align-items: center; justify-content: center; padding: 16px; }
+    .rpt-overlay.open { display: flex !important; }
+    .rpt-dialog { background: #fff; border-radius: 14px; width: min(540px, 96vw); max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 16px 56px rgba(0,0,0,.5); animation: rpt-pop .2s ease-out; }
+    @keyframes rpt-pop { from { transform: scale(.93); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .rpt-hdr { background: linear-gradient(135deg, #800000, #4b0a0a); color: #fff; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .rpt-hdr-title { font-size: 1.1rem; font-weight: 800; text-transform: uppercase; }
+    .rpt-body { padding: 24px; overflow-y: auto; flex: 1; background: #fdfdfd; }
+    .rpt-section-lbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; color: #800000; border-left: 3px solid #800000; padding-left: 8px; margin-bottom: 14px; }
+    .rpt-field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+    .rpt-field { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 5px; }
+    .rpt-field label { font-size: .72rem; font-weight: 700; color: #555; text-transform: uppercase; }
+    .rpt-field select { padding: 10px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: .86rem; outline: none; transition: 0.2s; }
+    .rpt-field select:focus { border-color: #800000; box-shadow: 0 0 0 3px rgba(128,0,0,.1); }
+    .rpt-footer { padding: 16px 24px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 10px; background: #fafafa; }
+    .rpt-btn-cancel { padding: 9px 22px; border: 1.5px solid #ccc; border-radius: 8px; background: #fff; cursor: pointer; font-weight: 600; }
+    .rpt-btn-preview { padding: 9px 24px; border: none; border-radius: 8px; background: #800000; color: #fff; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+    .hidden { display: none !important; }
+</style>
 {% endblock %}
 
 {% block content %}
 <div class="dashboard-wrapper">
-
     <div class="page-header">
-        <h1>GENERATE REPORTS</h1>
+        <h1>System Reports</h1>
     </div>
 
     <div class="reports-grid">
-
-        <div class="report-card card-green" onclick="openReportModal('class_schedule')">
-            <i class="fas fa-chalkboard-teacher card-icon"></i>
-            <h2>CLASS<br>SCHEDULE</h2>
-            <button class="btn-generate">GENERATE</button>
-        </div>
-
+        <!-- Room Schedule -->
         <div class="report-card card-orange" onclick="openReportModal('room_schedule')">
             <i class="fas fa-door-open card-icon"></i>
             <h2>ROOM<br>SCHEDULE</h2>
-            <button class="btn-generate">GENERATE</button>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
+        <!-- Employee List -->
         <div class="report-card card-blue" onclick="openReportModal('faculty')">
             <i class="fas fa-users card-icon"></i>
             <h2>EMPLOYEE<br>LIST</h2>
-            <button class="btn-generate">GENERATE</button>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
+        <!-- Curriculum List -->
         <div class="report-card card-yellow" onclick="openReportModal('curriculum')">
             <i class="fas fa-book card-icon"></i>
             <h2>CURRICULUM<br>LIST</h2>
-            <button class="btn-generate">GENERATE</button>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
+        <!-- Room & Building -->
         <div class="report-card card-purple" onclick="openReportModal('rooms')">
             <i class="fas fa-building card-icon"></i>
             <h2>ROOM AND<br>BUILDING LIST</h2>
-            <button class="btn-generate">GENERATE</button>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
+        <!-- Teaching Assignment -->
         <div class="report-card card-pink" onclick="openReportModal('assignments')">
             <i class="fas fa-user-tie card-icon"></i>
             <h2>TEACHING<br>ASSIGNMENT</h2>
-            <button class="btn-generate">GENERATE</button>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
+        <!-- Subject Offerings -->
         <div class="report-card card-red" onclick="openReportModal('offerings')">
-            <i class="fas fa-bookmark card-icon"></i>
-            <h2>ACADEMIC<br>OFFERINGS</h2>
-            <button class="btn-generate">GENERATE</button>
+            <i class="fas fa-list card-icon"></i>
+            <h2>SUBJECT<br>OFFERINGS</h2>
+            <button type="button" class="btn-generate">GENERATE</button>
         </div>
-
     </div>
-
 </div>
 
-<!-- Unified Report Generation Modal -->
-<div id="reportModal" class="rpt-modal">
-    <div class="rpt-modal-content">
-        <div class="rpt-modal-header">
-            <h2 id="modalTitle">GENERATE REPORT</h2>
-            <i class="fas fa-times" onclick="closeReportModal()"></i>
+<!-- REPORT FILTER MODAL -->
+<div id="reportModal" class="rpt-overlay">
+    <div class="rpt-dialog">
+        <div class="rpt-hdr">
+            <div class="rpt-hdr-title" id="modalTitle">Report Filters</div>
+            <button class="rpt-hdr-close" onclick="closeReportModal()" style="background:none; border:none; color:white; font-size:1.5rem; cursor:pointer;">&times;</button>
         </div>
-
-        <div class="rpt-modal-body">
+        
+        <div class="rpt-body">
             <input type="hidden" id="rptType">
-
-            <div class="filter-grid">
-
-                <div class="filter-group hidden" id="grpAY">
-                    <label>Academic Year</label>
-                    <select id="rptAY" class="rpt-select">
-                        {% for ay in ay_list %}
-                        <option value="{{ ay.academicyearid }}">A.Y {{ ay.yearstart }}-{{ ay.yearend }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="grpSem">
-                    <label>Semester</label>
-                    <select id="rptSem" class="rpt-select">
-                        <option value="All">All Semesters</option>
-                        <option value="A">1st Semester</option>
-                        <option value="B">2nd Semester</option>
-                        <option value="C">Summer</option>
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgProgram">
-                    <label>Program</label>
-                    <select id="rptProgram" class="rpt-select" onchange="onProgramChange()">
-                        <option value="All">All Programs</option>
-                        {% for p in programs %}
-                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgYearLevel">
-                    <label>Year Level</label>
-                    <select id="rptYearLevel" class="rpt-select">
-                        <option value="All">All Levels</option>
-                        <option value="1">1st Year</option>
-                        <option value="2">2nd Year</option>
-                        <option value="3">3rd Year</option>
-                        <option value="4">4th Year</option>
-                        <option value="5">5th Year</option>
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgInstructor">
-                    <label>Instructor</label>
-                    <select id="rptInstructor" class="rpt-select">
-                        <option value="All">All Instructors</option>
-                        {% for f in faculty %}
-                        <option value="{{ f.employeenumber }}">{{ f.fullname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgFacultyType">
-                    <label>Faculty Type</label>
-                    <select id="rptFacultyType" class="rpt-select">
-                        <option value="All">All Types</option>
-                        {% for et in emp_types %}
-                        <option value="{{ et.employeetypeid }}">{{ et.typename }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgFacultyStatus">
-                    <label>Status</label>
-                    <select id="rptFacultyStatus" class="rpt-select">
-                        <option value="All">All Statuses</option>
-                        {% for s in statuses %}
-                        <option value="{{ s.employeestatus }}">{{ s.employeestatus }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgSpecialization">
-                    <label>Specialization</label>
-                    <select id="rptSpecialization" class="rpt-select">
-                        <option value="All">All Specializations</option>
-                        {% for sp in specializations %}
-                        <option value="{{ sp.specializationid }}">{{ sp.specializationname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgBuilding">
-                    <label>Building</label>
-                    <select id="rptBuilding" class="rpt-select">
-                        <option value="All">All Buildings</option>
-                        {% for b in buildings %}
-                        <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgRoomType">
-                    <label>Room Type</label>
-                    <select id="rptRoomType" class="rpt-select">
-                        <option value="All">All Types</option>
-                        {% for rt in room_types %}
-                        <option value="{{ rt.roomtype }}">{{ rt.roomtype }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group hidden" id="sgCurriculum">
-                    <label>Curriculum</label>
-                    <select id="rptCurriculum" class="rpt-select">
-                        <option value="All">All Curricula</option>
-                        {% for c in curricula %}
-                        <option value="{{ c.curriculumid }}" data-prog="{{ c.programcode }}">
-                            {{ c.programcode }} — {{ c.curriculumcode }} ({{ c.curriculumyear }})
-                        </option>
-                        {% endfor %}
-                    </select>
+            
+            <div id="sectionPeriod">
+                <div class="rpt-section-lbl">Academic Period</div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field" id="grpAY">
+                        <label>Academic Year</label>
+                        <select id="rptAY">
+                            {% for ay in ay_list %}
+                            <option value="{{ ay.academicyearid }}">A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="rpt-field" id="grpSem">
+                        <label>Semester</label>
+                        <select id="rptSem">
+                            <option value="All">All Semesters</option>
+                            <option value="A">1st Semester</option>
+                            <option value="B">2nd Semester</option>
+                            <option value="C">Summer</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
-            <div id="previewArea" style="display:none;"></div>
+            <div id="sectionFilters">
+                <div class="rpt-section-lbl">Data Filters</div>
+                <div class="rpt-field-row">
+                    <!-- Program Filter -->
+                    <div class="rpt-field hidden" id="sgProgram">
+                        <label>Program</label>
+                        <select id="rptProgram">
+                            <option value="All">All Programs</option>
+                            {% for p in programs %}
+                            <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <!-- Year Level -->
+                    <div class="rpt-field hidden" id="sgYearLevel">
+                        <label>Year Level</label>
+                        <select id="rptYearLevel">
+                            <option value="All">All Levels</option>
+                            <option value="1">1st Year</option>
+                            <option value="2">2nd Year</option>
+                            <option value="3">3rd Year</option>
+                            <option value="4">4th Year</option>
+                            <option value="5">5th Year</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="rpt-field-row">
+                    <!-- Building -->
+                    <div class="rpt-field hidden" id="sgBuilding">
+                        <label>Building</label>
+                        <select id="rptBuilding">
+                            <option value="All">All Buildings</option>
+                            {% for b in buildings %}
+                            <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <!-- Room Type -->
+                    <div class="rpt-field hidden" id="sgRoomType">
+                        <label>Room Type</label>
+                        <select id="rptRoomType">
+                            <option value="All">All Types</option>
+                            <option value="Lecture">Lecture</option>
+                            <option value="Laboratory">Laboratory</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="rpt-field-row">
+                    <!-- Faculty Type -->
+                    <div class="rpt-field hidden" id="sgFacultyType">
+                        <label>Faculty Type</label>
+                        <select id="rptFacultyType">
+                            <option value="All">All Types</option>
+                            {% for et in emp_types %}
+                            <option value="{{ et.employeetypeid }}">{{ et.typename }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="rpt-modal-footer">
-            <button class="btn-preview" onclick="applyFilter()">Preview Data</button>
-            <div class="export-actions">
-                <button class="btn-export btn-excel" onclick="exportExcel()">
-                    <i class="fas fa-file-excel"></i> Export Excel
-                </button>
-                <button class="btn-export btn-pdf" onclick="exportPdf()">
-                    <i class="fas fa-file-pdf"></i> Print PDF
-                </button>
-            </div>
+        <div class="rpt-footer">
+            <button class="rpt-btn-cancel" onclick="closeReportModal()">Cancel</button>
+            <button class="rpt-btn-preview" onclick="applyFilter()">
+                <i class="fas fa-file-alt"></i> PREVIEW REPORT
+            </button>
         </div>
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/reports.js') }}"></script>
+<script>
+    function openReportModal(type) {
+        const modal = document.getElementById('reportModal');
+        const rptTypeInput = document.getElementById('rptType');
+        const title = document.getElementById('modalTitle');
+        
+        rptTypeInput.value = type;
+        modal.classList.add('open');
+
+        // Reset visibility
+        document.querySelectorAll('.rpt-field').forEach(el => {
+            if (el.id !== 'grpAY' && el.id !== 'grpSem') el.classList.add('hidden');
+        });
+
+        // Mapping report types to visible filters
+        if (type === 'room_schedule') {
+            title.innerText = "Room Schedule Filters";
+            document.getElementById('sgBuilding').classList.remove('hidden');
+            document.getElementById('sgRoomType').classList.remove('hidden');
+        } else if (type === 'faculty') {
+            title.innerText = "Employee List Filters";
+            document.getElementById('sgFacultyType').classList.remove('hidden');
+            // Hide AY/Sem for generic faculty list
+            document.getElementById('sectionPeriod').classList.add('hidden');
+        } else if (type === 'curriculum') {
+            title.innerText = "Curriculum Filters";
+            document.getElementById('sgProgram').classList.remove('hidden');
+            document.getElementById('sectionPeriod').classList.add('hidden');
+        } else if (type === 'rooms') {
+            title.innerText = "Room List Filters";
+            document.getElementById('sgBuilding').classList.remove('hidden');
+            document.getElementById('sgRoomType').classList.remove('hidden');
+            document.getElementById('sectionPeriod').classList.add('hidden');
+        } else if (type === 'assignments') {
+            title.innerText = "Teaching Assignment Filters";
+            document.getElementById('sgProgram').classList.remove('hidden');
+        } else if (type === 'offerings') {
+            title.innerText = "Subject Offerings Filters";
+            document.getElementById('sgProgram').classList.remove('hidden');
+            document.getElementById('sgYearLevel').classList.remove('hidden');
+        }
+    }
+
+    function closeReportModal() {
+        document.getElementById('reportModal').classList.remove('open');
+        document.getElementById('sectionPeriod').classList.remove('hidden');
+    }
+
+    function applyFilter() {
+        const type = document.getElementById('rptType').value;
+        
+        // Use absolute paths starting with '/' to avoid "Not Found" 404 errors
+        const params = new URLSearchParams({
+            ay:       document.getElementById('rptAY').value,
+            sem:      document.getElementById('rptSem').value,
+            prog:     document.getElementById('rptProgram').value,
+            yl:       document.getElementById('rptYearLevel').value,
+            bldg:     document.getElementById('rptBuilding').value,
+            rt:       document.getElementById('rptRoomType').value,
+            emp_type: document.getElementById('rptFacultyType').value
+        });
+
+        window.location.href = `/reports/preview/${type}?${params.toString()}`;
+    }
+
+    // Close modal on escape key
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeReportModal();
+    });
+</script>
 {% endblock %}

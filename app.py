@@ -8677,13 +8677,15 @@ def api_get_subjects():
         return jsonify({"success": True, "subjects": result})
     finally:
         cur.close(); conn.close()
+
+
 @app.route('/reports')
 def reports():
     if 'loggedin' not in session: return redirect(url_for('login'))
     ay_list         = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
     programs        = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
     faculty         = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
-    curricula       = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, c.programcode FROM curriculum c ORDER BY c.programcode, c.curriculumyear DESC")
+    curricula       = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, p.programcode AS programcode FROM curriculum c JOIN programs p ON c.programcode = p.programcode ORDER BY p.programcode, c.curriculumyear DESC")
     emp_types       = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
     specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
     statuses        = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
@@ -13653,17 +13655,20 @@ def settings_delete_offering():
 
 @app.route('/admin/reports')
 def admin_reports():
-    if session.get('role') not in ('Admin', 'Academic Head'):
+    if session.get('role') != 'Admin': 
         return redirect(url_for('login'))
-    ay_list       = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
-    programs      = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
-    faculty       = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
-    curricula     = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, c.programcode FROM curriculum c ORDER BY c.programcode, c.curriculumyear DESC")
-    emp_types     = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
+    
+    # Fetch data for all dropdown filters
+    ay_list = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
+    programs = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
+    faculty = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
+    curricula = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, p.programcode FROM curriculum c JOIN programs p ON c.programcode = p.programcode ORDER BY p.programcode, c.curriculumyear DESC")
+    emp_types = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
     specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
-    statuses      = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
-    buildings     = query_db("SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
-    room_types    = query_db("SELECT DISTINCT roomtype FROM room WHERE roomtype IS NOT NULL ORDER BY roomtype")
+    statuses = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
+    buildings = query_db("SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
+    room_types = query_db("SELECT DISTINCT roomtype FROM room WHERE roomtype IS NOT NULL ORDER BY roomtype")
+    
     return render_template('admin/reports_admin.html',
                            ay_list=ay_list, programs=programs,
                            faculty=faculty, curricula=curricula,
@@ -13709,18 +13714,18 @@ def reports_data():
             where.append("sem.semestertype = %s"); p.append(sem_type)
         effective_prog = prog_val if prog_val else prog
         if effective_prog and effective_prog != 'All':
-            where.append("co.programcode = %s"); p.append(effective_prog)
+            where.append("p.programcode = %s"); p.append(effective_prog)
         if yl and yl != 'All':
-            where.append("sec.yearlevel = %s"); p.append(int(yl))
+            where.append("pyl.yearlevel = %s"); p.append(int(yl))
         cur.execute(f"""
             SELECT
                 f.lastname || ', ' || f.firstname AS "Instructor",
                 cs.subjectcode AS "Subject Code",
-                cs.subjectname AS "Subject Description",
+                ccs.subjectname AS "Subject Description",
                 cs.lecturehours AS "Lec",
                 cs.laboratoryhours AS "Lab",
                 cs.creditunits AS "Units",
-                co.programcode || ' ' || sec.yearlevel AS "Course",
+                p.programcode || ' ' || pyl.yearlevel AS "Course",
                 string_agg(DISTINCT
                     CASE ss.daydesc
                         WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
@@ -13736,7 +13741,8 @@ def reports_data():
             JOIN schedule sg               ON sv.scheduleid          = sg.scheduleid
             JOIN curriculumsubject cs       ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN sections sec              ON sg.sectionid           = sec.sectionid
-            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN programs p ON pyl.programcode = p.programcode
             JOIN faculty f                 ON sg.employeenumber      = f.employeenumber
             JOIN semester sem              ON sg.semesterid          = sem.semesterid
             LEFT JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
@@ -13744,10 +13750,10 @@ def reports_data():
             LEFT JOIN timeslot ts_e        ON ss.endtimeid           = ts_e.timeid
             LEFT JOIN room r               ON ss.roomid              = r.roomid
             WHERE {' AND '.join(where)}
-            GROUP BY f.lastname, f.firstname, cs.subjectcode, cs.subjectname,
+            GROUP BY f.lastname, f.firstname, cs.subjectcode, ccs.subjectname,
                      cs.lecturehours, cs.laboratoryhours, cs.creditunits,
-                     pyl.programcode, pyl.yearlevel
-            ORDER BY f.lastname, pyl.programcode, pyl.yearlevel, cs.subjectcode
+                     p.programcode, pyl.yearlevel
+            ORDER BY f.lastname, p.programcode, pyl.yearlevel, cs.subjectcode
         """, p)
         return cur.fetchall()
 
@@ -13764,19 +13770,20 @@ def reports_data():
             SELECT
                 f.lastname || ', ' || f.firstname AS "Faculty Name",
                 cs.subjectcode AS "Subject Code",
-                cs.subjectname AS "Subject Description",
-                pyl.programcode AS "Program",
+                ccs.subjectname AS "Subject Description",
+                p.programcode AS "Program",
                 sec.sectionname AS "Section",
                 (cs.lecturehours + cs.laboratoryhours) AS "Hours"
             FROM schedule_version sv
             JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN sections sec         ON sg.sectionid           = sec.sectionid
-            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN programs p ON pyl.programcode = p.programcode
             JOIN faculty f            ON sg.employeenumber      = f.employeenumber
             JOIN semester sem         ON sg.semesterid          = sem.semesterid
             WHERE {' AND '.join(where)}
-            ORDER BY f.lastname, pyl.programcode, cs.subjectcode
+            ORDER BY f.lastname, p.programcode, cs.subjectcode
         """, p)
         return cur.fetchall()
 
@@ -13829,7 +13836,7 @@ def reports_data():
         elif rtype == 'curriculum':
             where, p = [], []
             if prog and prog != 'All':
-                where.append("c.programcode = %s"); p.append(prog)
+                where.append("p.programcode = %s"); p.append(prog)
             if curr and curr != 'All':
                 where.append("cs.curriculumid = %s"); p.append(int(curr))
             cur.execute(f"""
@@ -13838,13 +13845,14 @@ def reports_data():
                        CASE cs.semester WHEN 'A' THEN '1st Sem' WHEN 'B' THEN '2nd Sem'
                                         WHEN 'C' THEN 'Summer' ELSE cs.semester END AS "Semester",
                        cs.subjectcode AS "Subject Code",
-                       cs.subjectname AS "Subject Description",
+                       ccs.subjectname AS "Subject Description",
                        cs.lecturehours AS "Lec Hours",
                        cs.laboratoryhours AS "Lab Hours",
                        cs.creditunits AS "Credit Units",
                        COALESCE(cs.prerequisite,'—') AS "Pre-requisite"
                 FROM curriculumsubject cs
                 JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                JOIN programs p ON c.programcode = p.programcode
                 {'WHERE ' + ' AND '.join(where) if where else ''}
                 ORDER BY c.curriculumcode, cs.yearlevel, cs.semester, cs.subjectcode
             """, p)
@@ -13869,7 +13877,7 @@ def reports_data():
             if sem and sem != 'All':
                 combo_where.append("sem.semestertype = %s"); combo_params.append(sem)
             if yl and yl != 'All':
-                combo_where.append("sec.yearlevel = %s"); combo_params.append(int(yl))
+                combo_where.append("pyl.yearlevel = %s"); combo_params.append(int(yl))
 
             cur.execute(f"""
                 SELECT DISTINCT
@@ -13880,9 +13888,10 @@ def reports_data():
                 JOIN schedule sg    ON sv.scheduleid     = sg.scheduleid
                 JOIN semester sem   ON sg.semesterid     = sem.semesterid
                 JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
-                JOIN sections sec   ON sg.sectionid         = sec.sectionid
+                JOIN sections sec   ON sg.sectionid      = sec.sectionid
                 JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-                JOIN programs p     ON pyl.programcode    = p.programcode
+                JOIN programs p ON pyl.programcode = p.programcode
+                JOIN programs p     ON p.programcode    = p.programcode
                 WHERE {' AND '.join(combo_where)}
                 ORDER BY ay.yearstart DESC, p.programcode, sem.semestertype
             """, combo_params)
@@ -13935,57 +13944,6 @@ def reports_data():
                     })
             return jsonify({'grouped': True, 'sections': sections})
 
-        # ── Room Schedule — classes grouped by room/building ────────
-        elif rtype == 'room_schedule':
-            where, p = ["sv.status IN ('Published','Archive','Draft')"], []
-            if ay:
-                where.append("sem.academicyearid = %s"); p.append(ay)
-            if sem and sem != 'All':
-                where.append("sem.semestertype = %s"); p.append(sem)
-            if bldg and bldg != 'All':
-                where.append("b.buildingid = %s"); p.append(int(bldg))
-            if room_type and room_type != 'All':
-                where.append("r.roomtype = %s"); p.append(room_type)
-            cur.execute(f"""
-                SELECT
-                    b.buildingname AS "Building",
-                    r.roomname AS "Room",
-                    sub.subjectcode AS "Subject Code",
-                    sub.subjectname AS "Subject",
-                    f.lastname || ', ' || f.firstname AS "Instructor",
-                    ao.offeringcode || ' ' || pyl.yearlevel AS "Course",
-                    string_agg(DISTINCT
-                        CASE ss.daydesc
-                            WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
-                            WHEN 'Wednesday' THEN 'WED' WHEN 'Thursday' THEN 'THU'
-                            WHEN 'Friday' THEN 'FRI' WHEN 'Saturday' THEN 'SAT'
-                            WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END, '/') AS "Days",
-                    string_agg(
-                        to_char(ts_s.timevalue::interval,'HH12:MI AM') || ' – ' ||
-                        to_char(ts_e.timevalue::interval,'HH12:MI AM'),
-                        '/' ORDER BY ts_s.timevalue) AS "Time"
-                FROM schedule_sessions ss
-                JOIN schedule_version sv ON ss.versionid           = sv.versionid
-                JOIN schedule sg         ON sv.scheduleid          = sg.scheduleid
-                JOIN semester sem        ON sg.semesterid          = sem.semesterid
-                JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN subject sub         ON cs.subjectcode         = sub.subjectcode
-                JOIN sections sec        ON sg.sectionid           = sec.sectionid
-                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-                JOIN academic_offering ao  ON pyl.academicofferingid = ao.academicofferingid
-                JOIN faculty f           ON sg.employeenumber      = f.employeenumber
-                JOIN room r              ON ss.roomid              = r.roomid
-                JOIN building b          ON r.buildingid           = b.buildingid
-                LEFT JOIN timeslot ts_s  ON ss.starttimeid         = ts_s.timeid
-                LEFT JOIN timeslot ts_e  ON ss.endtimeid           = ts_e.timeid
-                WHERE {' AND '.join(where)}
-                GROUP BY b.buildingname, r.roomname, sub.subjectcode, sub.subjectname,
-                         f.lastname, f.firstname, ao.offeringcode, pyl.yearlevel
-                ORDER BY b.buildingname, r.roomname, sub.subjectcode
-            """, p)
-            payload = rows_to_payload(cur.fetchall())
-            return jsonify(payload or {'columns': [], 'rows': []})
-
         else:
             return jsonify({'error': 'Unknown report type'}), 400
 
@@ -13994,6 +13952,753 @@ def reports_data():
     finally:
         cur.close(); conn.close()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# REPORTS — PREVIEW & EXPORT
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Helper: pretty label for active filter chips ─────────────────────────────
+def _rpt_chip(label, value, lookup=None):
+    """Return a human-readable chip string, or None if value is empty / All."""
+    if not value or value == 'All':
+        return None
+    display = lookup.get(str(value), str(value)) if lookup else str(value)
+    return f"{label}: {display}"
+
+
+# ─── Helper: generic flat-table export (CSV / XLSX / PDF / DOCX) ──────────────
+def _generic_gen_csv(columns, rows):
+    out = io.StringIO()
+    w   = csv.writer(out)
+    w.writerow(columns)
+    for row in rows:
+        w.writerow(row)
+    return out.getvalue().encode('utf-8-sig')
+
+
+def _generic_gen_xlsx(title, columns, rows):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb  = Workbook()
+    ws  = wb.active
+    ws.title = title[:31]
+
+    hdr_fill = PatternFill('solid', fgColor='440000')
+    wht_font = Font(bold=True, color='FFFFFF', size=10)
+    thin     = Side(style='thin', color='DDDDDD')
+    brd      = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Title row
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+    tc = ws.cell(1, 1, title.upper())
+    tc.font      = Font(bold=True, color='FFFFFF', size=12)
+    tc.fill      = PatternFill('solid', fgColor='2C0000')
+    tc.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 26
+
+    # Header row
+    for ci, col in enumerate(columns, 1):
+        c = ws.cell(2, ci, col)
+        c.font = wht_font; c.fill = hdr_fill; c.border = brd
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    ws.row_dimensions[2].height = 28
+
+    # Data rows
+    for ri, row in enumerate(rows):
+        bg = 'FFFFFF' if ri % 2 == 0 else 'FDF5F5'
+        for ci, val in enumerate(row, 1):
+            c = ws.cell(ri + 3, ci, val)
+            c.fill      = PatternFill('solid', fgColor=bg)
+            c.border    = brd
+            c.font      = Font(size=9)
+            c.alignment = Alignment(vertical='center')
+        ws.row_dimensions[ri + 3].height = 16
+
+    # Auto-width (capped at 40)
+    for ci in range(1, len(columns) + 1):
+        max_len = max(
+            (len(str(ws.cell(r, ci).value or '')) for r in range(1, len(rows) + 4)),
+            default=10
+        )
+        ws.column_dimensions[get_column_letter(ci)].width = min(max_len + 4, 40)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _generic_gen_pdf(title, columns, rows, filters_text=''):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    buf = io.BytesIO()
+    # Use landscape for wide tables (>5 columns)
+    page = landscape(A4) if len(columns) > 5 else A4
+    doc = SimpleDocTemplate(buf, pagesize=page,
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+
+    DARK   = colors.HexColor('#5C0000')
+    MED    = colors.HexColor('#7A0000')
+    STRIPE = colors.HexColor('#FDF5F5')
+    WHITE  = colors.white
+    LGRAY  = colors.HexColor('#DDDDDD')
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=DARK, fontSize=16,
+                         spaceAfter=4, alignment=TA_CENTER)
+    sm = ParagraphStyle('SM', parent=styles['Normal'],   textColor=MED,  fontSize=9,
+                         spaceAfter=8, alignment=TA_CENTER)
+
+    story = [Paragraph(title.upper(), h1)]
+    if filters_text:
+        story.append(Paragraph(filters_text, sm))
+    story.append(Spacer(1, 0.3*cm))
+
+    if rows:
+        # Build equal-width columns
+        avail_w = (page[0] if len(columns) > 5 else page[0]) - 3*cm
+        col_w   = [avail_w / len(columns)] * len(columns)
+
+        tbl_data = [columns] + [list(r) for r in rows]
+        tbl = Table(tbl_data, colWidths=col_w, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND',     (0,0),  (-1,0),  DARK),
+            ('TEXTCOLOR',      (0,0),  (-1,0),  WHITE),
+            ('FONTNAME',       (0,0),  (-1,0),  'Helvetica-Bold'),
+            ('FONTSIZE',       (0,0),  (-1,-1), 8),
+            ('FONTNAME',       (0,1),  (-1,-1), 'Helvetica'),
+            ('ALIGN',          (0,0),  (-1,0),  'CENTER'),
+            ('VALIGN',         (0,0),  (-1,-1), 'MIDDLE'),
+            ('GRID',           (0,0),  (-1,-1), 0.5, LGRAY),
+            ('ROWBACKGROUNDS', (0,1),  (-1,-1), [WHITE, STRIPE]),
+            ('LEFTPADDING',    (0,0),  (-1,-1), 4),
+            ('RIGHTPADDING',   (0,0),  (-1,-1), 4),
+            ('TOPPADDING',     (0,0),  (-1,-1), 4),
+            ('BOTTOMPADDING',  (0,0),  (-1,-1), 4),
+        ]))
+        story.append(tbl)
+    else:
+        story.append(Paragraph('No records found.', sm))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+def _generic_gen_docx(title, columns, rows, filters_text=''):
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width  = Inches(11.7)
+    sec.page_height = Inches(8.27)
+    sec.left_margin = sec.right_margin  = Cm(1.5)
+    sec.top_margin  = sec.bottom_margin = Cm(1.5)
+
+    DARK  = RGBColor(0x5C, 0x00, 0x00)
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+
+    def _bg(cell, hex6):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex6)
+        tcPr.append(shd)
+
+    h = doc.add_heading(title.upper(), 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in h.runs:
+        run.font.color.rgb = DARK; run.font.size = Pt(14)
+
+    if filters_text:
+        p = doc.add_paragraph(filters_text)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph()
+
+    if rows:
+        tbl = doc.add_table(rows=1 + len(rows), cols=len(columns))
+        tbl.style = 'Table Grid'
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        for ci, h_txt in enumerate(columns):
+            cell = tbl.rows[0].cells[ci]
+            cell.text = ''
+            run = cell.paragraphs[0].add_run(h_txt)
+            run.font.bold = True; run.font.color.rgb = WHITE; run.font.size = Pt(8)
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _bg(cell, '440000')
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        for ri, row in enumerate(rows):
+            bg = 'FFFFFF' if ri % 2 == 0 else 'FDF5F5'
+            for ci, val in enumerate(row):
+                cell = tbl.rows[ri + 1].cells[ci]
+                cell.text = ''
+                run = cell.paragraphs[0].add_run(str(val) if val is not None else '')
+                run.font.size = Pt(8)
+                _bg(cell, bg)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _generic_export_response(title, columns, rows, formats, filename):
+    """Build a Response (single file or zip) for any flat-table report."""
+    import zipfile as _zip
+
+    def _build(fmt):
+        if fmt == 'csv':
+            return _generic_gen_csv(columns, rows), 'text/csv', '.csv'
+        elif fmt == 'xlsx':
+            return _generic_gen_xlsx(title, columns, rows), \
+                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'
+        elif fmt == 'pdf':
+            return _generic_gen_pdf(title, columns, rows), 'application/pdf', '.pdf'
+        elif fmt == 'docx':
+            return _generic_gen_docx(title, columns, rows), \
+                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'
+        else:
+            raise ValueError(f'Unknown format: {fmt}')
+
+    if len(formats) == 1:
+        data, mime, ext = _build(formats[0])
+        return Response(data, mimetype=mime,
+                        headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+    else:
+        buf = io.BytesIO()
+        with _zip.ZipFile(buf, 'w', _zip.ZIP_DEFLATED) as zf:
+            for fmt in formats:
+                data, _m, ext = _build(fmt)
+                zf.writestr(filename + ext, data)
+        buf.seek(0)
+        return Response(buf.read(), mimetype='application/zip',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+
+
+
+
+
+# ─── Data fetchers (reuse the logic already in reports_data) ──────────────────
+
+def _fetch_report_data(report_type, params, cur):
+    """
+    Returns (columns, rows, sections) where sections is non-None for grouped reports.
+    rows is a list of lists; sections is a list of dicts with 'title','columns','rows'.
+    """
+    ay         = params.get('ay')
+    sem        = params.get('sem')
+    prog       = params.get('prog')
+    yl         = params.get('yl')
+    bldg       = params.get('bldg')
+    rt         = params.get('rt')
+    emp_type   = params.get('emp_type')
+    status     = params.get('status')
+    spec       = params.get('spec')
+    curr       = params.get('curr')
+
+    SEM_LABEL = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+
+    def _to_rows(db_rows):
+        if not db_rows:
+            return [], []
+        cols = list(db_rows[0].keys())
+        data = [[str(v) if v is not None else '—' for v in row.values()] for row in db_rows]
+        return cols, data
+
+    # ── CLASS SCHEDULE ──────────────────────────────────────────────────────
+    if report_type == 'class_schedule':
+        ay_ids      = [ay]          if ay   else []
+        sem_types   = [sem]         if sem  else []
+        programs    = [prog]        if prog else []
+        year_levels = [int(yl)]     if yl   else []
+        rows        = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+        if not rows:
+            return [], [], None
+        cols = ['Instructor','Subject Code','Subject Description',
+                'Lec','Lab','Units','Program','Year Level','Section',
+                'Hours','Day/s','Time','Room','Academic Year','Semester']
+        key_map = ['Instructor','SubjectCode','SubjectName',
+                   'LectureHours','LaboratoryHours','CreditUnits',
+                   'Program','YearLevel','Section','Hours',
+                   'Day/s','Time','Room','AcademicYear','SemesterType']
+        data = [[str(r.get(k) or '') for k in key_map] for r in rows]
+        return cols, data, None
+
+    # ── ROOM SCHEDULE ────────────────────────────────────────────────────────
+    elif report_type == 'room_schedule':
+        where, p = ["sv.status IN ('Published','Draft')"], []
+        if ay:
+            where.append("sem.academicyearid = %s"); p.append(ay)
+        if sem:
+            where.append("sem.semestertype = %s"); p.append(sem)
+        if bldg:
+            where.append("b.buildingid = %s"); p.append(int(bldg))
+        if rt:
+            where.append("r.roomtype = %s"); p.append(rt)
+        cur.execute(f"""
+            SELECT
+                r.roomname                      AS "Room",
+                b.buildingname                  AS "Building",
+                r.roomtype                      AS "Type",
+                ss.daydesc                      AS "Day",
+                TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' – ' ||
+                TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS "Time",
+                cs.subjectcode                 AS "Subject Code",
+                ccs.subjectname                 AS "Subject Name",
+                p.programcode                 AS "Program",
+                pyl.yearlevel                   AS "Year",
+                COALESCE(f.lastname||', '||f.firstname,'TBA') AS "Instructor",
+                ay.yearstart||'–'||ay.yearend   AS "A.Y.",
+                sem.semestertype                AS "Sem"
+            FROM schedule_sessions ss
+            JOIN schedule_version sv  ON ss.versionid = sv.versionid
+            JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN sections sec         ON sc.sectionid = sec.sectionid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN programs p ON pyl.programcode = p.programcode
+            JOIN semester sem         ON sc.semesterid = sem.semesterid
+            JOIN academicyear ay      ON sem.academicyearid = ay.academicyearid
+            JOIN room r               ON ss.roomid = r.roomid
+            JOIN building b           ON r.buildingid = b.buildingid
+            LEFT JOIN faculty f       ON sc.employeenumber = f.employeenumber
+            LEFT JOIN timeslot ts_s   ON ss.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e   ON ss.endtimeid = ts_e.timeid
+            WHERE {' AND '.join(where)}
+            ORDER BY b.buildingname, r.roomname, ss.daydesc, ts_s.timevalue
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    # ── EMPLOYEE LIST ────────────────────────────────────────────────────────
+    elif report_type == 'faculty':
+        where, p = [], []
+        if emp_type:
+            where.append("f.employeetypeid = %s"); p.append(int(emp_type))
+        if status:
+            where.append("f.employeestatus = %s"); p.append(status)
+        if spec:
+            where.append("f.specializationid = %s"); p.append(int(spec))
+        else:
+            where.append("f.employeestatus != 'Archive'")
+        cur.execute(f"""
+            SELECT
+                f.lastname||', '||f.firstname||' '||COALESCE(f.middlename,'') AS "Faculty Name",
+                et.typename                        AS "Employee Type",
+                COALESCE(s.specializationname,'—') AS "Specialization",
+                COALESCE(d.designationname,'—')    AS "Designation",
+                COALESCE(et.regularload::text,'—') AS "Max Load (Units)",
+                f.employeestatus                   AS "Status",
+                f.email                            AS "Email"
+            FROM faculty f
+            LEFT JOIN employeetype et  ON f.employeetypeid   = et.employeetypeid
+            LEFT JOIN designation d    ON f.designationid    = d.designationid
+            LEFT JOIN specialization s ON f.specializationid = s.specializationid
+            {'WHERE ' + ' AND '.join(where) if where else ''}
+            ORDER BY f.lastname, f.firstname
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    # ── CURRICULUM LIST ──────────────────────────────────────────────────────
+    elif report_type == 'curriculum':
+        where, p = [], []
+        if prog:
+            where.append("p.programcode = %s"); p.append(prog)
+        if curr:
+            where.append("cs.curriculumid = %s"); p.append(int(curr))
+        if sem:
+            where.append("cs.semester = %s"); p.append(sem)
+        cur.execute(f"""
+            SELECT
+                c.curriculumcode          AS "Curriculum",
+                p.programcode           AS "Program",
+                cs.yearlevel              AS "Year Level",
+                CASE cs.semester
+                    WHEN 'A' THEN '1st Sem'
+                    WHEN 'B' THEN '2nd Sem'
+                    WHEN 'C' THEN 'Summer'
+                    ELSE cs.semester END  AS "Semester",
+                cs.subjectcode           AS "Subject Code",
+                ccs.subjectname           AS "Subject Description",
+                cs.lecturehours          AS "Lec Hours",
+                cs.laboratoryhours       AS "Lab Hours",
+                cs.creditunits           AS "Credit Units",
+                COALESCE(cs.prerequisite,'—') AS "Pre-requisite"
+            FROM curriculumsubject cs
+            JOIN curriculum c ON cs.curriculumid = c.curriculumid
+            JOIN programs p ON c.programcode = p.programcode
+            {'WHERE ' + ' AND '.join(where) if where else ''}
+            ORDER BY c.curriculumcode, cs.yearlevel, cs.semester, cs.subjectcode
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    # ── ROOM AND BUILDING LIST ───────────────────────────────────────────────
+    elif report_type == 'rooms':
+        where, p = [], []
+        if bldg:
+            where.append("b.buildingid = %s"); p.append(int(bldg))
+        if rt:
+            where.append("r.roomtype = %s"); p.append(rt)
+        cur.execute(f"""
+            SELECT
+                r.roomname      AS "Room Name",
+                b.buildingname  AS "Building",
+                r.roomtype      AS "Type",
+                r.roomcapacity  AS "Capacity",
+                CASE WHEN b.isactive THEN 'Active' ELSE 'Inactive' END AS "Status"
+            FROM room r
+            JOIN building b ON r.buildingid = b.buildingid
+            {'WHERE ' + ' AND '.join(where) if where else ''}
+            ORDER BY b.buildingname, r.roomname
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    # ── TEACHING ASSIGNMENT ──────────────────────────────────────────────────
+    elif report_type == 'assignments':
+        where = ["sv.status IN ('Published','Archive','Draft')"]
+        p     = []
+        if ay:
+            where.append("sem.academicyearid = %s"); p.append(ay)
+        if sem:
+            where.append("sem.semestertype = %s"); p.append(sem)
+        if prog:
+            where.append("p.programcode = %s"); p.append(prog)
+        cur.execute(f"""
+            SELECT
+                f.lastname||', '||f.firstname  AS "Faculty Name",
+                cs.subjectcode                AS "Subject Code",
+                ccs.subjectname                AS "Subject Description",
+                p.programcode                AS "Program",
+                sec.sectionname                AS "Section",
+                pyl.yearlevel                  AS "Year Level",
+                (cs.lecturehours+cs.laboratoryhours) AS "Hours",
+                sem.semestertype               AS "Semester",
+                ay.yearstart||'–'||ay.yearend  AS "A.Y."
+            FROM schedule_version sv
+            JOIN schedule sg          ON sv.scheduleid          = sg.scheduleid
+            JOIN curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN sections sec         ON sg.sectionid           = sec.sectionid
+            JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN programs p ON pyl.programcode = p.programcode
+            JOIN faculty f            ON sg.employeenumber      = f.employeenumber
+            JOIN semester sem         ON sg.semesterid          = sem.semesterid
+            JOIN academicyear ay      ON sem.academicyearid     = ay.academicyearid
+            WHERE {' AND '.join(where)}
+            ORDER BY f.lastname, p.programcode, cs.subjectcode
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    # ── ACADEMIC OFFERINGS ───────────────────────────────────────────────────
+    elif report_type == 'offerings':
+        where = ["sv.status IN ('Published','Archive','Draft')"]
+        p     = []
+        if ay:
+            where.append("sem.academicyearid = %s"); p.append(ay)
+        if sem:
+            where.append("sem.semestertype = %s"); p.append(sem)
+        if prog:
+            where.append("p.programcode = %s"); p.append(prog)
+        if yl:
+            where.append("pyl.yearlevel = %s"); p.append(int(yl))
+        cur.execute(f"""
+            SELECT
+                f.lastname||', '||f.firstname AS "Instructor",
+                cs.subjectcode               AS "Subject Code",
+                ccs.subjectname               AS "Subject Description",
+                cs.lecturehours              AS "Lec",
+                cs.laboratoryhours           AS "Lab",
+                cs.creditunits               AS "Units",
+                p.programcode||' '||pyl.yearlevel AS "Course",
+                string_agg(DISTINCT
+                    CASE ss.daydesc
+                        WHEN 'Monday'    THEN 'MON'
+                        WHEN 'Tuesday'   THEN 'TUE'
+                        WHEN 'Wednesday' THEN 'WED'
+                        WHEN 'Thursday'  THEN 'THU'
+                        WHEN 'Friday'    THEN 'FRI'
+                        WHEN 'Saturday'  THEN 'SAT'
+                        WHEN 'Sunday'    THEN 'SUN'
+                        ELSE ss.daydesc END, '/') AS "Days",
+                string_agg(
+                    to_char(ts_s.timevalue::interval,'HH12:MI AM')||' – '||
+                    to_char(ts_e.timevalue::interval,'HH12:MI AM'),
+                    '/' ORDER BY ts_s.timevalue) AS "Time",
+                string_agg(COALESCE(r.roomname,'TBA'),'/') AS "Room",
+                sem.semestertype               AS "Semester",
+                ay.yearstart||'–'||ay.yearend  AS "A.Y."
+            FROM schedule_version sv
+            JOIN schedule sg               ON sv.scheduleid          = sg.scheduleid
+            JOIN curriculumsubject cs       ON sg.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN sections sec              ON sg.sectionid           = sec.sectionid
+            JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
+            JOIN programs p ON pyl.programcode = p.programcode
+            JOIN faculty f                 ON sg.employeenumber      = f.employeenumber
+            JOIN semester sem              ON sg.semesterid          = sem.semesterid
+            JOIN academicyear ay           ON sem.academicyearid     = ay.academicyearid
+            LEFT JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
+            LEFT JOIN timeslot ts_s        ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e        ON ss.endtimeid           = ts_e.timeid
+            LEFT JOIN room r               ON ss.roomid              = r.roomid
+            WHERE {' AND '.join(where)}
+            GROUP BY f.lastname, f.firstname, cs.subjectcode, ccs.subjectname,
+                     cs.lecturehours, cs.laboratoryhours, cs.creditunits,
+                     p.programcode, pyl.yearlevel, sem.semestertype,
+                     ay.yearstart, ay.yearend
+            ORDER BY f.lastname, p.programcode, pyl.yearlevel, cs.subjectcode
+        """, p)
+        return _to_rows(cur.fetchall()) + (None,)
+
+    return [], [], None
+
+
+# ─── Report title mapping ────────────────────────────────────────────────────
+_RPT_TITLES = {
+    'class_schedule': 'Class Schedule',
+    'room_schedule':  'Room Schedule',
+    'faculty':        'Employee List',
+    'curriculum':     'Curriculum List',
+    'rooms':          'Room and Building List',
+    'assignments':    'Teaching Assignment',
+    'offerings':      'Academic Offerings',
+}
+
+_RPT_FILENAMES = {
+    'class_schedule': 'Class_Schedule',
+    'room_schedule':  'Room_Schedule',
+    'faculty':        'Employee_List',
+    'curriculum':     'Curriculum_List',
+    'rooms':          'Room_Building_List',
+    'assignments':    'Teaching_Assignment',
+    'offerings':      'Academic_Offerings',
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROUTE: /reports/preview/<report_type>
+# Replaces the stub at the bottom of app.py (around line 14389)
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route('/reports/preview/<report_type>')
+def report_preview(report_type):
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+
+    # Collect filter params from query string
+    params = {
+        'ay':       request.args.get('ay'),
+        'sem':      request.args.get('sem'),
+        'prog':     request.args.get('prog'),
+        'yl':       request.args.get('yl'),
+        'bldg':     request.args.get('bldg'),
+        'rt':       request.args.get('rt'),
+        'emp_type': request.args.get('emp_type'),
+        'status':   request.args.get('status'),
+        'spec':     request.args.get('spec'),
+        'curr':     request.args.get('curr'),
+    }
+    # Remove None values so JS payload is clean
+    filter_params = {k: v for k, v in params.items() if v}
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        columns, rows, sections = _fetch_report_data(report_type, params, cur)
+    except Exception as e:
+        columns, rows, sections = [], [], None
+        import traceback; traceback.print_exc()
+    finally:
+        cur.close(); conn.close()
+
+    # Build filter chips for human-readable display
+    # Load lookup tables for chip labels
+    ay_lookup   = {}
+    prog_lookup = {}
+    bldg_lookup = {}
+    spec_lookup = {}
+    et_lookup   = {}
+    curr_lookup = {}
+    try:
+        ay_rows = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear")
+        ay_lookup = {str(r['academicyearid']): f"A.Y. {r['yearstart']}–{r['yearend']}" for r in (ay_rows or [])}
+
+        pr_rows = query_db("SELECT programcode, programname FROM programs")
+        prog_lookup = {r['programcode']: r['programname'] for r in (pr_rows or [])}
+
+        bl_rows = query_db("SELECT buildingid, buildingname FROM building")
+        bldg_lookup = {str(r['buildingid']): r['buildingname'] for r in (bl_rows or [])}
+
+        sp_rows = query_db("SELECT specializationid, specializationname FROM specialization")
+        spec_lookup = {str(r['specializationid']): r['specializationname'] for r in (sp_rows or [])}
+
+        et_rows = query_db("SELECT employeetypeid, typename FROM employeetype")
+        et_lookup = {str(r['employeetypeid']): r['typename'] for r in (et_rows or [])}
+
+        cu_rows = query_db("SELECT curriculumid, curriculumcode FROM curriculum")
+        curr_lookup = {str(r['curriculumid']): r['curriculumcode'] for r in (cu_rows or [])}
+    except Exception:
+        pass
+
+    SEM_LABEL = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+
+    chip_map = [
+        ('Academic Year', params.get('ay'),       ay_lookup),
+        ('Semester',      params.get('sem'),       SEM_LABEL),
+        ('Program',       params.get('prog'),      prog_lookup),
+        ('Year Level',    params.get('yl'),        None),
+        ('Building',      params.get('bldg'),      bldg_lookup),
+        ('Room Type',     params.get('rt'),        None),
+        ('Emp. Type',     params.get('emp_type'),  et_lookup),
+        ('Status',        params.get('status'),    None),
+        ('Specialization',params.get('spec'),      spec_lookup),
+        ('Curriculum',    params.get('curr'),      curr_lookup),
+    ]
+    active_filters = [
+        chip for (label, val, lkp) in chip_map
+        if (chip := _rpt_chip(label, val, lkp))
+    ]
+
+    # Row count
+    if sections:
+        row_count = sum(len(s['rows']) for s in sections)
+    else:
+        row_count = len(rows)
+
+    title           = _RPT_TITLES.get(report_type, 'Report')
+    export_filename = _RPT_FILENAMES.get(report_type, 'Report')
+
+    return render_template(
+        'academic/reports_preview.html',
+        report_type    = report_type,
+        title          = title,
+        columns        = columns,
+        rows           = rows,
+        sections       = sections,
+        row_count      = row_count,
+        active_filters = active_filters,
+        filter_params  = filter_params,
+        export_filename= export_filename,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROUTE: POST /reports/export/<report_type>
+# Called from the Export modal on the preview page
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route('/reports/export/<report_type>', methods=['POST'])
+def report_export(report_type):
+    if 'loggedin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    payload  = request.get_json() or {}
+    formats  = [f.lower() for f in payload.get('formats', ['csv'])]
+    filename = (payload.get('filename') or _RPT_FILENAMES.get(report_type, 'report')).strip()
+    for ext in ('.pdf','.docx','.xlsx','.csv','.zip'):
+        if filename.lower().endswith(ext):
+            filename = filename[:-len(ext)]
+
+    # Re-run the same query using filter params from request body
+    params = {
+        'ay':       payload.get('ay'),
+        'sem':      payload.get('sem'),
+        'prog':     payload.get('prog'),
+        'yl':       payload.get('yl'),
+        'bldg':     payload.get('bldg'),
+        'rt':       payload.get('rt'),
+        'emp_type': payload.get('emp_type'),
+        'status':   payload.get('status'),
+        'spec':     payload.get('spec'),
+        'curr':     payload.get('curr'),
+    }
+
+    # For class_schedule, reuse the fully-featured schedule export
+    if report_type == 'class_schedule':
+        ay_ids      = [params['ay']]       if params.get('ay')   else []
+        sem_types   = [params['sem']]      if params.get('sem')  else []
+        programs    = [params['prog']]     if params.get('prog') else []
+        year_levels = [int(params['yl'])]  if params.get('yl')   else []
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+            groups = _sch_exp_groups(rows)
+            SEM_MAP   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+            sem_label = ', '.join(SEM_MAP.get(s, s) for s in sorted(sem_types)) if sem_types else 'All Semesters'
+
+            if len(formats) == 1:
+                fmt = formats[0]
+                if fmt == 'csv':
+                    out, mime, ext = _sch_gen_csv(rows), 'text/csv', '.csv'
+                elif fmt == 'xlsx':
+                    out, mime, ext = _sch_gen_xlsx(rows, groups), \
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'
+                elif fmt == 'docx':
+                    out, mime, ext = _sch_gen_docx(rows, groups, sem_label), \
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'
+                elif fmt == 'pdf':
+                    out, mime, ext = _sch_gen_pdf(rows, groups, sem_label), 'application/pdf', '.pdf'
+                else:
+                    return jsonify({'error': f'Unknown format: {fmt}'}), 400
+                return Response(out, mimetype=mime,
+                                headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+            else:
+                import zipfile
+                buf = io.BytesIO()
+                fmt_map = {
+                    'csv':  (lambda: _sch_gen_csv(rows), '.csv'),
+                    'xlsx': (lambda: _sch_gen_xlsx(rows, groups), '.xlsx'),
+                    'docx': (lambda: _sch_gen_docx(rows, groups, sem_label), '.docx'),
+                    'pdf':  (lambda: _sch_gen_pdf(rows, groups, sem_label), '.pdf'),
+                }
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for fmt in formats:
+                        if fmt in fmt_map:
+                            fn, ext = fmt_map[fmt]
+                            zf.writestr(filename + ext, fn())
+                buf.seek(0)
+                return Response(buf.read(), mimetype='application/zip',
+                                headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+        finally:
+            cur.close(); conn.close()
+
+    # For all other report types — generic exporter
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        columns, rows, sections = _fetch_report_data(report_type, params, cur)
+
+        # Flatten grouped sections for export (sections → single flat list)
+        if sections:
+            flat_rows = []
+            for sec in sections:
+                flat_rows.extend(sec['rows'])
+            rows = flat_rows
+
+        title = _RPT_TITLES.get(report_type, 'Report')
+        return _generic_export_response(title, columns, rows, formats, filename)
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 # ==============================================================================
 # --- FACULTY SPECIFIC ROUTES ---
 # ==============================================================================
@@ -15877,37 +16582,18 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
                         (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
 
 def _build_published_baseline(cur, program, year_level, sem_id, subject_codes, priority_sessions):
-    """Return existing Published slots for subject_codes that are NOT already covered by priority_sessions.
+    """Return [] — all submitted subjects are fully replaced by sched_data.
 
-    Used by both save-draft and approve to carry Published baseline slots forward so that adding
-    a new slice to a multi-slice subject never replaces the existing slots.
+    The old slot-level priority_keys approach carried forward any old Published session
+    whose (subject, day, start_time) didn't match the new submission.  When the generator
+    changed a subject's time or room, the stale old session appeared in existing_for_conflict
+    at approval time and produced false 'room conflict' errors.
 
-    priority_sessions: list of sessions (rehydrated or sched_data) whose slot keys take precedence.
-    Returns a list in the same shape as _fetch_section_sessions output.
+    The correct model: approving a schedule is a complete replacement for every submitted
+    subject.  No old Published slot for a submitted subject should survive.
+    Non-submitted subjects are already handled by other_sessions in api_approve_schedule.
     """
-    if not subject_codes:
-        return []
-    upper_codes = set(c.upper() for c in subject_codes)
-
-    # Build slot keys already covered by the priority (new) sessions so we don't duplicate
-    priority_keys = set()
-    for s in priority_sessions:
-        sc  = (s.get('subjectcode') or s.get('subject_code') or '').upper()
-        day = s.get('daydesc') or s.get('day') or ''
-        st  = str(s.get('start_time', '')).split('.')[0]
-        priority_keys.add((sc, day, st))
-
-    all_published = _fetch_section_sessions(cur, program, year_level, sem_id, published_only=True)
-    baseline = []
-    for s in all_published:
-        sc  = (s.get('subjectcode') or '').upper()
-        if sc not in upper_codes:
-            continue
-        day = s.get('daydesc') or ''
-        st  = str(s.get('start_time', '')).split('.')[0]
-        if (sc, day, st) not in priority_keys:
-            baseline.append(s)
-    return baseline
+    return []
 
 
 def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None,
@@ -16291,11 +16977,13 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
         c8 = max(0.0, 1.0 - load_viol / fac_ttl)
 
         # C9/C10 – Historical faculty & room match (5% + 3%)
+        # Also fetch "Time" here so C11 can compare actual times against historical data.
         cur.execute("""
             SELECT hd."Subject Code" AS subjectcode,
                    hd."Instructor"   AS instructor,
                    hd."Room"         AS room,
-                   hd."Day/s"        AS days
+                   hd."Day/s"        AS days,
+                   hd."Time"         AS time_raw
             FROM   historical_data hd
             JOIN   semester sem ON hd.semesterid = sem.semesterid
             WHERE  UPPER(REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '')) = %s
@@ -16309,6 +16997,10 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
             'MONDAY': 'MON', 'TUESDAY': 'TUE', 'WEDNESDAY': 'WED',
             'THURSDAY': 'THU', 'FRIDAY': 'FRI', 'SATURDAY': 'SAT', 'SUNDAY': 'SUN',
         }
+        # Single-letter day codes used in historical_data (e.g. 'M', 'W', 'S').
+        _SINGLE_DAY = {'M': 'MON', 'W': 'WED', 'F': 'FRI', 'S': 'SAT',
+                       'T': 'TUE', 'H': 'THU', 'U': 'SUN'}
+
         def norm_days(day_list):
             result = set()
             for d in day_list:
@@ -16316,7 +17008,25 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
                 result.add(_DAY_NORM.get(u, u[:3]))
             return result
 
-        hist_map = _dd(lambda: {'instructors': set(), 'rooms': set(), 'days': set()})
+        def _parse_hist_time(t_str):
+            """Parse a historical_data Time string (may lack AM/PM) to minutes-from-midnight.
+            Uses the school-hours heuristic: bare times 01:00–07:29 are treated as PM."""
+            try:
+                s = str(t_str).strip().upper()
+                has_pm = 'PM' in s
+                has_am = 'AM' in s
+                s = s.replace('AM', '').replace('PM', '').strip()
+                parts = s.split(':')
+                h, m = int(parts[0]), (int(parts[1][:2]) if len(parts) > 1 else 0)
+                if has_pm and h != 12: h += 12
+                elif has_am and h == 12: h = 0
+                elif not has_pm and not has_am and 60 <= h * 60 + m < 7 * 60 + 30:
+                    h += 12   # school-hours PM assumption
+                return h * 60 + m
+            except Exception:
+                return 0
+
+        hist_map = _dd(lambda: {'instructors': set(), 'rooms': set(), 'days': set(), 'times': set()})
         for r in cur.fetchall():
             code = (r['subjectcode'] or '').strip().upper()
             if not code: continue
@@ -16327,6 +17037,16 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
                 if _norm and _norm != full: hist_map[code]['instructors'].add(_norm)
             if r['room']: hist_map[code]['rooms'].add(r['room'].strip().upper())
             if r['days']: hist_map[code]['days'].add(r['days'].strip().upper())
+            # Parse time range so C11 can do a real time comparison.
+            _tr = str(r.get('time_raw') or '').strip().replace('–', '-').replace('—', '-')
+            if _tr:
+                # Split on ' - ' (with spaces) or '-' before a digit (handles "3:00-6:00").
+                _m = _re_c9.split(r'\s+-\s+|\s*-(?=\s*\d)', _tr, maxsplit=1)
+                if len(_m) == 2:
+                    _hs = _parse_hist_time(_m[0])
+                    _he = _parse_hist_time(_m[1])
+                    if _hs or _he:
+                        hist_map[code]['times'].add((_hs, _he))
 
         def _norm_room_code(x):
             return _re_c9.sub(r'[^A-Z0-9]', '', (x or '').upper())
@@ -16381,31 +17101,48 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
 
         time_total = matched_time = 0
         seen_c11   = set()
-        _use_published = bool(prev_time_map)
+
+        def _check_day_match(gen_dnorm, hentry):
+            for hdays_str in hentry['days']:
+                hist_dnorm = set()
+                for token in hdays_str.replace('/', ' ').replace(',', ' ').replace('-', ' ').split():
+                    token = token.upper()
+                    if len(token) == 1:
+                        mapped = _SINGLE_DAY.get(token)
+                        if mapped: hist_dnorm.add(mapped)
+                    elif len(token) >= 2:
+                        hist_dnorm.add(token[:3])
+                if gen_dnorm & hist_dnorm:
+                    return True
+            return False
 
         for s in schedule_data:
             code = (s.get('subject_code') or '').strip().upper()
             if not code or code in seen_c11: continue
             seen_c11.add(code)
             gen_s, gen_e = get_session_times(s)
-            if _use_published:
-                if code not in prev_time_map: continue
+            hentry = hist_map.get(code)
+
+            # Priority 1: compare against historical_data "Time" column (same source
+            # as "Retrieve previous schedule").  This is always the best signal.
+            if hentry and hentry['times']:
+                time_total += 1
+                if (gen_s, gen_e) in hentry['times']:
+                    matched_time += 1
+
+            # Priority 2: compare against Published schedule_version times (DB).
+            # Only used when historical_data has no time column for this subject.
+            elif code in prev_time_map:
                 time_total += 1
                 prev_s, prev_e = prev_time_map[code]
                 if gen_s == prev_s and gen_e == prev_e: matched_time += 1
-            else:
-                hentry = hist_map.get(code)
-                if not hentry or not hentry['days']: continue
+
+            # Priority 3: day-as-proxy (last resort, e.g. historical_data has no Time).
+            elif hentry and hentry['days']:
                 time_total += 1
                 gen_dnorm = norm_days(session_days(s))
-                if gen_dnorm:
-                    for hdays_str in hentry['days']:
-                        hist_dnorm = set()
-                        for token in hdays_str.replace('/', ' ').replace(',', ' ').replace('-', ' ').split():
-                            if len(token) >= 2: hist_dnorm.add(token.upper()[:3])
-                        if gen_dnorm & hist_dnorm:
-                            matched_time += 1
-                            break
+                if gen_dnorm and _check_day_match(gen_dnorm, hentry):
+                    matched_time += 1
 
         c11 = matched_time / time_total if time_total else 1.0
 
@@ -16451,6 +17188,141 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
         conn.close()
 
 
+def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, acad_year_id):
+    """
+    Check a freshly-generated schedule (raw, with datetime.time objects) against
+    existing Published sessions from OTHER sections in the same semester.
+    Returns (violations_list, count) — mirrors the same logic used in api_approve_schedule.
+    Room conflict  = same room,    same day, overlapping time.
+    Faculty conflict = same faculty, same day, overlapping time (different subject).
+    """
+    if not schedule_data or not acad_year_id or not term:
+        return [], 0
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+            (acad_year_id, term)
+        )
+        sem_row = cur.fetchone()
+        if not sem_row:
+            cur.close(); conn.close(); return [], 0
+        sem_id = sem_row['semesterid']
+
+        cur.execute("""
+            SELECT ss.roomid,
+                   sc.employeenumber          AS faculty_id,
+                   ss.daydesc                 AS day,
+                   ts_s.timevalue             AS start_time,
+                   ts_e.timevalue             AS end_time,
+                   UPPER(cs.subjectcode)      AS subjectcode,
+                   UPPER(c.programcode)       AS programcode,
+                   cs.yearlevel               AS yearlevel,
+                   COALESCE(r.roomname, CAST(ss.roomid AS TEXT)) AS roomname
+            FROM   schedule_sessions ss
+            JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+            JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+            JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+            LEFT JOIN room r            ON ss.roomid              = r.roomid
+            LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+            WHERE  sc.semesterid           = %s
+              AND  sv.status               = 'Published'
+              AND  NOT (UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s)
+              AND  ss.roomid               IS NOT NULL
+              AND  ss.daydesc              IS NOT NULL
+              AND  ts_s.timevalue          IS NOT NULL
+              AND  ts_e.timevalue          IS NOT NULL
+        """, (sem_id, program, year_level))
+        published = cur.fetchall()
+        cur.close(); conn.close()
+    except Exception:
+        try: cur.close()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return [], 0
+
+    if not published:
+        return [], 0
+
+    violations = []
+    seen       = set()
+
+    for new_cls in schedule_data:
+        r_new   = new_cls.get('room_id') or new_cls.get('roomid')
+        fac_new = new_cls.get('faculty_id') or new_cls.get('employeenumber')
+        days_new = new_cls.get('days_list') or (
+            [new_cls['day']] if new_cls.get('day') else []
+        )
+        st_new  = new_cls.get('start_time')   # datetime.time from scheduler
+        et_new  = new_cls.get('end_time')
+        sc_new  = (new_cls.get('subject_code') or new_cls.get('subjectcode') or '?').upper()
+        rm_name = new_cls.get('room') or str(r_new or '')
+
+        if not st_new or not et_new:
+            continue
+
+        for day_new in days_new:
+            if not day_new:
+                continue
+            for ex in published:
+                st_ex = ex['start_time']   # datetime.time from DB
+                et_ex = ex['end_time']
+                if not (st_new < et_ex and et_new > st_ex):
+                    continue
+                if ex['day'] != day_new:
+                    continue
+
+                # Room conflict
+                if r_new is not None and str(r_new) == str(ex['roomid']):
+                    key = ('room', str(r_new), day_new, sc_new, ex['subjectcode'])
+                    if key not in seen:
+                        seen.add(key)
+                        detail = (
+                            f"Room {rm_name} is already occupied on {day_new} "
+                            f"by {ex['subjectcode']} "
+                            f"({ex['programcode']} Yr{ex['yearlevel']})."
+                        )
+                        print(f'[CONFLICT] ROOM: {sc_new} vs {ex["subjectcode"]} '
+                              f'({ex["programcode"]} Yr{ex["yearlevel"]}) — '
+                              f'{rm_name} on {day_new} {ex["start_time"]}–{ex["end_time"]}')
+                        violations.append({
+                            'rule':    'HC9',
+                            'type':    'room',
+                            'subject': f"{sc_new} / {ex['subjectcode']}",
+                            'detail':  detail,
+                        })
+
+                # Faculty conflict (different subject, same instructor, same time)
+                if fac_new and str(fac_new) == str(ex.get('faculty_id') or ''):
+                    if sc_new != ex['subjectcode']:
+                        key = ('faculty', str(fac_new), day_new, sc_new, ex['subjectcode'])
+                        if key not in seen:
+                            seen.add(key)
+                            detail = (
+                                f"Faculty {fac_new} double-booked on {day_new}: "
+                                f"teaches both {sc_new} and {ex['subjectcode']} "
+                                f"({ex['programcode']} Yr{ex['yearlevel']}) "
+                                f"at the same time."
+                            )
+                            print(f'[CONFLICT] FACULTY {fac_new}: {sc_new} vs '
+                                  f'{ex["subjectcode"]} ({ex["programcode"]} Yr{ex["yearlevel"]}) — '
+                                  f'{day_new} {ex["start_time"]}–{ex["end_time"]}')
+                            violations.append({
+                                'rule':    'HC10',
+                                'type':    'faculty',
+                                'subject': f"{sc_new} / {ex['subjectcode']}",
+                                'detail':  detail,
+                            })
+
+    if violations:
+        print(f'[CONFLICT] Total cross-section conflicts after repair: {len(violations)}')
+    return violations, len(violations)
+
+
 @app.route('/api/schedule/generate', methods=['POST'])
 def api_generate_schedule():
     data = request.json or {}
@@ -16460,6 +17332,21 @@ def api_generate_schedule():
         acad_year_id=data.get('acadYear', '')             # #9: pass AY for load checks
     )
     if not res['success']: return jsonify({'success': False, 'error': res['error']}), 400
+
+    # Cross-schedule conflict check against existing Published sessions from other sections.
+    # Must run on the RAW schedule_data (before _serialize_class drops datetime.time fields).
+    cross_violations    = []
+    cross_conflict_count = 0
+    try:
+        cross_violations, cross_conflict_count = _check_cross_schedule_conflicts(
+            res['schedule_data'],
+            (data.get('program') or '').strip().upper(),
+            int(data.get('yearLevel', 1)),
+            (data.get('term') or '').strip().upper(),
+            data.get('acadYear', ''),
+        )
+    except Exception:
+        pass  # cross-check is advisory at generate time; never block generation itself
 
     serialized = [_serialize_class(cls) for cls in res['schedule_data']]
     acc_data = None
@@ -16474,12 +17361,14 @@ def api_generate_schedule():
         pass  # accuracy is supplemental — never fail a generation because of it
 
     return jsonify({
-        'success':       True,
-        'batch_id':      'DRAFT-NEW-001',
-        'schedule_data': serialized,
-        'conflict_count': res['conflict_count'],
-        'violations':    res.get('violations', []),
-        'accuracy_data': acc_data,
+        'success':              True,
+        'batch_id':             'DRAFT-NEW-001',
+        'schedule_data':        serialized,
+        'conflict_count':       res['conflict_count'],
+        'violations':           res.get('violations', []),
+        'cross_conflict_count': cross_conflict_count,
+        'cross_violations':     cross_violations,
+        'accuracy_data':        acc_data,
     })
 
 
@@ -16837,7 +17726,7 @@ def api_save_draft():
     try:
         data, ctx = request.json or {}, (request.json or {}).get('context', {})
         program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')
-        ctx_section_id = ctx.get('section_id') or None
+        ctx_section_id = ctx.get('section_id') or ctx.get('section') or None
         if ctx_section_id:
             try: ctx_section_id = int(ctx_section_id)
             except (ValueError, TypeError): ctx_section_id = None
@@ -17251,56 +18140,73 @@ def api_approve_schedule():
             )
         )
 
-        # When publishing new Draft slices for a subject that already has Published slices,
-        # the existing Published slots (e.g. Friday) must survive in the new Published snapshot
-        # alongside the newly published slots (e.g. Tuesday). Without this, publishing one slice
-        # replaces the entire Published schedule for that subject.
+        # _build_published_baseline now always returns [] — every submitted subject is fully
+        # replaced by sched_data.  The old slot-level carry-forward caused false room conflicts
+        # when the generator changed a subject's time/room (stale old Published slot appeared
+        # in existing_for_conflict and triggered a spurious conflict against the new assignment).
         published_baseline = _group_carry_forward_sessions(
             _build_published_baseline(cur, program, year_level, sem_id, submitted_codes, sched_data)
         )
 
         # Cross-session HC9: check new sessions against already-published existing sessions
         # (the intra-payload check above only compares new sessions with each other).
+        # Generator entries carry days_list with ALL days (e.g. ['Monday','Thursday']) so we
+        # check EVERY day, not just the primary 'day' field, to catch Thursday-only conflicts.
         if publish_gate_on:
             from scheduler import format_time_12h as _fmt12h
             existing_for_conflict = other_sessions + published_baseline
             cross_violations = []
+            seen_cross_keys = set()
             for new in sched_data:
-                r_new   = str(new.get('room_id') or new.get('roomid') or '')
-                day_new = new.get('day') or new.get('daydesc') or ''
-                st_new  = new.get('start_time')
-                et_new  = new.get('end_time')
-                if not r_new or not day_new or not st_new or not et_new:
+                r_new  = str(new.get('room_id') or new.get('roomid') or '')
+                st_new = new.get('start_time')
+                et_new = new.get('end_time')
+                if not r_new or not st_new or not et_new:
                     continue
-                for ex in existing_for_conflict:
-                    r_ex   = str(ex.get('roomid') or ex.get('room_id') or '')
-                    day_ex = ex.get('daydesc') or ex.get('day') or ''
-                    st_ex  = ex.get('start_time')
-                    et_ex  = ex.get('end_time')
-                    if r_new != r_ex or day_new != day_ex:
+                # Collect all days this session occupies
+                all_new_days = list(new.get('days_list') or [])
+                if not all_new_days:
+                    primary = new.get('day') or new.get('daydesc') or ''
+                    if primary:
+                        all_new_days = [primary]
+                if not all_new_days:
+                    continue
+                for day_new in all_new_days:
+                    if not day_new:
                         continue
-                    if isinstance(st_ex, str): st_ex = _parse_time_str(st_ex)
-                    if isinstance(et_ex, str): et_ex = _parse_time_str(et_ex)
-                    if st_ex and et_ex and st_new < et_ex and et_new > st_ex:
-                        sc_new = (new.get('subject_code') or new.get('subjectcode') or '?').upper()
-                        sc_ex  = (ex.get('subjectcode') or ex.get('subject_code') or '?').upper()
-                        fac_new = str(new.get('faculty_id') or new.get('employeenumber') or '')
-                        fac_ex  = str(ex.get('employeenumber') or ex.get('faculty_id') or '')
-                        # Merge class: same subject + same faculty in same room/time is allowed
-                        if sc_new == sc_ex and fac_new and fac_new == fac_ex:
+                    for ex in existing_for_conflict:
+                        r_ex   = str(ex.get('roomid') or ex.get('room_id') or '')
+                        day_ex = ex.get('daydesc') or ex.get('day') or ''
+                        st_ex  = ex.get('start_time')
+                        et_ex  = ex.get('end_time')
+                        if r_new != r_ex or day_new != day_ex:
                             continue
-                        room_label = new.get('room') or r_new
-                        cross_violations.append({
-                            'rule':    'HC9',
-                            'subject': f'{sc_new} / {sc_ex}',
-                            'detail':  (
-                                f'Room {room_label} is already occupied on {day_new} '
-                                f'{_fmt12h(st_ex)}–{_fmt12h(et_ex)} '
-                                f'by {sc_ex}. The new session '
-                                f'({_fmt12h(st_new)}–{_fmt12h(et_new)}) '
-                                f'cannot be published into the same slot.'
-                            )
-                        })
+                        if isinstance(st_ex, str): st_ex = _parse_time_str(st_ex)
+                        if isinstance(et_ex, str): et_ex = _parse_time_str(et_ex)
+                        if st_ex and et_ex and st_new < et_ex and et_new > st_ex:
+                            sc_new = (new.get('subject_code') or new.get('subjectcode') or '?').upper()
+                            sc_ex  = (ex.get('subjectcode') or ex.get('subject_code') or '?').upper()
+                            fac_new = str(new.get('faculty_id') or new.get('employeenumber') or '')
+                            fac_ex  = str(ex.get('employeenumber') or ex.get('faculty_id') or '')
+                            # Merge class: same subject + same faculty in same room/time is allowed
+                            if sc_new == sc_ex and fac_new and fac_new == fac_ex:
+                                continue
+                            vkey = (r_new, day_new, str(st_new), sc_new, sc_ex)
+                            if vkey in seen_cross_keys:
+                                continue
+                            seen_cross_keys.add(vkey)
+                            room_label = new.get('room') or r_new
+                            cross_violations.append({
+                                'rule':    'HC9',
+                                'subject': f'{sc_new} / {sc_ex}',
+                                'detail':  (
+                                    f'Room {room_label} is already occupied on {day_new} '
+                                    f'{_fmt12h(st_ex)}–{_fmt12h(et_ex)} '
+                                    f'by {sc_ex}. The new session '
+                                    f'({_fmt12h(st_new)}–{_fmt12h(et_new)}) '
+                                    f'cannot be published into the same slot.'
+                                )
+                            })
             if cross_violations:
                 cur.close(); conn.close()
                 return jsonify({
@@ -17308,6 +18214,39 @@ def api_approve_schedule():
                     'error':   f'Cannot approve: {len(cross_violations)} room conflict(s) with already-published sessions.',
                     'violations': cross_violations,
                 }), 400
+
+        # ── Duplicate guard: block approval if an existing Published schedule exists ──
+        # Check AFTER all validation so conflicts are caught first.
+        override = bool(data.get('override'))
+        if not override:
+            cur.execute("""
+                SELECT MAX(sv.datecreated) AS latest_date,
+                       COUNT(DISTINCT cs.subjectcode) AS subject_count
+                FROM public.schedule_version sv
+                JOIN public.schedule s ON sv.scheduleid = s.scheduleid
+                JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN public.curriculum c ON cs.curriculumid = c.curriculumid
+                WHERE UPPER(c.programcode) = UPPER(%s)
+                  AND cs.yearlevel = %s
+                  AND s.semesterid = %s
+                  AND sv.status = 'Published'
+                  AND sv.source IS DISTINCT FROM 'local'
+            """, (program, year_level, sem_id))
+            _ex = cur.fetchone()
+            if _ex and _ex['subject_count'] and int(_ex['subject_count']) > 0:
+                _date_str = ''
+                if _ex['latest_date']:
+                    try:    _date_str = _ex['latest_date'].strftime('%B %d, %Y')
+                    except: _date_str = str(_ex['latest_date'])
+                cur.close(); conn.close()
+                return jsonify({
+                    'success':           False,
+                    'needs_confirmation': True,
+                    'existing_info': {
+                        'subject_count': int(_ex['subject_count']),
+                        'date':          _date_str,
+                    },
+                }), 200
 
         cur.execute("""
     SELECT COALESCE(MAX(sv.version_number), 0) AS max_v
@@ -17318,16 +18257,29 @@ def api_approve_schedule():
     WHERE UPPER(c.programcode) = UPPER(%s)
       AND cs.yearlevel = %s
       AND s.semesterid = %s
-      AND sv.source = 'manual_editor'
+      AND sv.source IS DISTINCT FROM 'local'
 """, (program, year_level, sem_id))
         max_v = cur.fetchone()['max_v']
 
-        # Archive only the existing Published revisions — Draft history must remain intact.
-        # Publishing creates a new independent Published snapshot; it does not consume the Draft.
-        _archive_status(cur, program, year_level, term, sem_id, 'Published', source='manual_editor')
+        # Archive ALL existing Published revisions (any source except local arrangements)
+        # to prevent duplicate Published schedules from accumulating in SIS.
+        # Draft history is preserved — only Published status is archived here.
+        cur.execute("""
+            UPDATE public.schedule_version sv
+            SET status = 'Archive'
+            FROM public.schedule s, public.curriculumsubject cs, public.curriculum c
+            WHERE sv.scheduleid = s.scheduleid
+              AND s.curriculumsubjectid = cs.curriculumsubjectid
+              AND cs.curriculumid = c.curriculumid
+              AND c.programcode = %s
+              AND cs.yearlevel = %s
+              AND s.semesterid = %s
+              AND sv.status = 'Published'
+              AND sv.source IS DISTINCT FROM 'local'
+        """, (program, year_level, sem_id))
 
-        # Insert Published snapshot: other subjects' Published sessions + existing Published baseline
-        # for the submitted subject + the newly published sessions.
+        # Published snapshot = residual Published subjects (not being replaced) + new sessions.
+        # published_baseline is always [] now (see _build_published_baseline).
         complete_snapshot = other_sessions + published_baseline + sched_data
         _insert_batch(cur, complete_snapshot, sem_id, 'Published', max_v + 1, program, year_level)
 
@@ -18003,6 +18955,105 @@ def api_load_draft(version_id):
         } for r in rows]
         return jsonify({'success': True, 'schedule_data': sched, 'version': max_v, 'context': {'program': m['programcode'], 'yearLevel': m['yearlevel'], 'term': m['term'], 'acadYear': m['acadyear'], 'source': m['source']}})
     except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/schedule/latest-draft')
+def api_schedule_latest_draft():
+    """Return the latest Draft sessions for a context so Generate Schedule can display
+    the most recently saved Manual Editor draft when the user navigates back."""
+    program       = request.args.get('program', '').strip().upper()
+    year_level_s  = request.args.get('year_level', '').strip()
+    ay            = request.args.get('ay', '').strip()
+    term          = request.args.get('term', '').strip()
+
+    if not (program and year_level_s and ay and term):
+        return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+    try:
+        year_level = int(year_level_s)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid year_level'}), 400
+
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        sem_id = _get_semester_id(cur, ay, term)
+        if not sem_id:
+            cur.close(); conn.close()
+            return jsonify({'success': False, 'error': 'Semester not found'})
+
+        # Fetch all Draft sessions for this context (latest version per subject wins).
+        cur.execute("""
+            SELECT cs.subjectcode AS subject_code, cs.subjectname AS description,
+                   cs.lecturehours AS lec_hours, cs.laboratoryhours AS lab_hours,
+                   cs.creditunits AS units, c.programcode AS course,
+                   sc.employeenumber AS faculty_id,
+                   COALESCE(f.lastname || ', ' || f.firstname, 'TBA') AS instructor,
+                   ss.daydesc,
+                   TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time,
+                   TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
+                   r.roomname AS room, r.roomid,
+                   sv.version_number AS row_version,
+                   sv.versionid
+            FROM schedule_version sv
+            JOIN schedule sc          ON sv.scheduleid          = sc.scheduleid
+            JOIN schedule_sessions ss ON ss.versionid           = sv.versionid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            LEFT JOIN faculty f       ON sc.employeenumber      = f.employeenumber
+            LEFT JOIN room r          ON ss.roomid              = r.roomid
+            LEFT JOIN timeslot ts_s   ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e   ON ss.endtimeid           = ts_e.timeid
+            WHERE UPPER(c.programcode) = %s
+              AND cs.yearlevel = %s
+              AND sc.semesterid = %s
+              AND sv.status = 'Draft'
+              AND sv.version_number = (
+                  SELECT MAX(sv2.version_number)
+                  FROM schedule_version sv2
+                  JOIN schedule sc2 ON sv2.scheduleid = sc2.scheduleid
+                  JOIN curriculumsubject cs2 ON sc2.curriculumsubjectid = cs2.curriculumsubjectid
+                  JOIN curriculum c2 ON cs2.curriculumid = c2.curriculumid
+                  WHERE sv2.status = 'Draft'
+                    AND sc2.semesterid = %s
+                    AND UPPER(c2.programcode) = %s
+                    AND cs2.yearlevel = %s
+              )
+            ORDER BY ts_s.timevalue NULLS LAST
+        """, (program, year_level, sem_id, sem_id, program, year_level))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        if not rows:
+            return jsonify({'success': False, 'error': 'No draft sessions found'})
+
+        _abbr = {'Monday':'MON','Tuesday':'TUE','Wednesday':'WED',
+                 'Thursday':'THU','Friday':'FRI','Saturday':'SAT','Sunday':'SUN'}
+        max_v = max(r['row_version'] for r in rows)
+        sched = [{
+            'subject_code': r['subject_code'],
+            'description':  r['description'],
+            'lec_hours':    r['lec_hours'],
+            'lab_hours':    r['lab_hours'],
+            'units':        r['units'],
+            'course':       r['course'],
+            'faculty_id':   r['faculty_id'],
+            'instructor':   r['instructor'],
+            'days': _abbr.get(r['daydesc'], (r['daydesc'] or '')[:3].upper()),
+            'day':  r['daydesc'],
+            'time': (f"{_fmt_12h(r['start_time'])} – {_fmt_12h(r['end_time'])}"
+                     if r['start_time'] else ''),
+            'start_time': r['start_time'],
+            'end_time':   r['end_time'],
+            'hours': str((r['lec_hours'] or 0) + (r['lab_hours'] or 0)),
+            'room':    r['room'],
+            'room_id': r['roomid'],
+        } for r in rows]
+
+        return jsonify({'success': True, 'schedule_data': sched, 'version': max_v})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/year-levels-by-program')
 def api_year_levels_by_program():

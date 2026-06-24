@@ -194,11 +194,16 @@
 
                 <!-- Conflict Warning Banner -->
                 <div id="conflictBanner" class="conflict-banner hidden">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
-                    <button onclick="document.getElementById('conflictBanner').classList.add('hidden')">
-                        <i class="fas fa-times"></i>
-                    </button>
+                    <div style="display:flex;align-items:flex-start;gap:8px;width:100%;">
+                        <i class="fas fa-exclamation-triangle" style="margin-top:3px;flex-shrink:0;"></i>
+                        <div style="flex:1;">
+                            <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
+                            <ul id="conflictDetailList" style="margin:6px 0 0 0;padding-left:18px;font-size:0.85em;opacity:0.92;display:none;"></ul>
+                        </div>
+                        <button onclick="document.getElementById('conflictBanner').classList.add('hidden')" style="flex-shrink:0;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Action Buttons -->
