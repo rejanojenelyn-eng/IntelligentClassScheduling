@@ -57,6 +57,19 @@ _CODE_LOOSE_RE = re.compile(r'^[A-Z]{2,}[\s\-]?\d+', re.IGNORECASE)
 # Pattern: 2-8 letters  SPACE  1-6 alphanumeric  DASH  one or more alphanumeric
 # (suffix is unrestricted alphanumeric to handle "FE2", "E1", "FE1", etc.)
 _CODE_COMPOUND_RE = re.compile(r'^[A-Z]{2,8}\s[A-Z0-9]{1,6}-[A-Z0-9]+$', re.IGNORECASE)
+# Dash-prefix codes: prefix itself contains a dash before the numeric part.
+# Handles: CS-ELEC 101, BPA-PFMM 3105, IT-PROF 301, GE-ART 3, BA-PFMM-101
+_CODE_DASHPREFIX_RE = re.compile(r'^[A-Z]{1,8}-[A-Z]{1,8}[\s\-]?\d+[A-Z0-9]?$', re.IGNORECASE)
+
+# Multi-word header / label phrases that must never be treated as subject codes.
+_HEADER_LABEL_PHRASES = {
+    'SUBJECT CODE', 'COURSE CODE', 'COURSE NO', 'SUBJECT NO', 'SUBJ CODE',
+    'FIRST SEMESTER', 'SECOND SEMESTER', 'SUMMER SEMESTER',
+    'MID-YEAR SEMESTER', 'MIDYEAR SEMESTER', 'THIRD SEMESTER',
+    'FIRST YEAR', 'SECOND YEAR', 'THIRD YEAR', 'FOURTH YEAR', 'FIFTH YEAR',
+    'YEAR LEVEL', 'YR LEVEL', 'NO SUBJECT', 'NO SUBJECTS',
+    'SUBJECT TITLE', 'COURSE TITLE', 'DESCRIPTIVE TITLE',
+}
 
 # ---------------------------------------------------------------------------
 # Words that should NEVER be treated as a subject code even if they happen
@@ -175,7 +188,7 @@ def _detect_year_sem(text):
 
 def _looks_like_code(text):
     t = _clean(text)
-    return bool(_CODE_RE.match(t) or _CODE_LOOSE_RE.match(t) or _CODE_COMPOUND_RE.match(t))
+    return bool(_CODE_RE.match(t) or _CODE_LOOSE_RE.match(t) or _CODE_COMPOUND_RE.match(t) or _CODE_DASHPREFIX_RE.match(t))
 
 def _parse_year_cell(text):
     """
@@ -689,12 +702,15 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
                 sc = first + ' ' + second[0]
                 overflow_name = second[1] if len(second) > 1 else ''
             elif rest:
-                # Try "GEED 032 Understanding…"  — first TWO tokens form the code
+                # Try "GEED 032 Understanding…"  — first TWO tokens form the code.
+                # Also handles "CS-ELEC 101 Elective Subject" with dash-prefix codes.
                 rest_parts = rest.split(None, 1)
                 if len(rest_parts) >= 2:
                     combined_nospace = (first + rest_parts[0]).upper()
-                    if _CODE_RE.match(combined_nospace) or _CODE_LOOSE_RE.match(combined_nospace):
-                        sc = first + ' ' + rest_parts[0]   # preserve "GEED 032"
+                    combined_spaced  = (first + ' ' + rest_parts[0]).upper()
+                    if (_CODE_RE.match(combined_nospace) or _CODE_LOOSE_RE.match(combined_nospace) or
+                            _CODE_DASHPREFIX_RE.match(combined_spaced)):
+                        sc = first + ' ' + rest_parts[0]   # preserve "GEED 032" / "CS-ELEC 101"
                         overflow_name = rest_parts[1]
 
         # Keep meaningful internal spacing (e.g. "GEED 032" → "GEED 032", not "GEED032")
@@ -722,6 +738,11 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
             skipped_rows.append({'cells': [sc_clean], 'reason': 'column-header keyword in code cell'})
             continue
 
+        # Skip known multi-word header / label phrases (semester names, year labels, etc.)
+        if sc_clean in _HEADER_LABEL_PHRASES:
+            skipped_rows.append({'cells': [sc_clean], 'reason': 'header or label row (not a subject code)'})
+            continue
+
         # Accept standard alphanumeric codes (e.g. CC101, DCIT23A, NSTP1)
         # or short pure-alpha codes like OJT, ITP, PRAC – as long as they're
         # not one of the common non-code header/marker words.
@@ -731,7 +752,10 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
                 and sc_clean not in _NON_CODE_UPPER
             )
             if not is_short_alpha:
-                skipped_rows.append({'cells': [sc_clean], 'reason': f'unrecognized subject-code format: {sc_clean!r}'})
+                _skip_hint = 'looks like a header or label row' if any(
+                    w in sc_clean for w in ('SEMESTER', 'YEAR', 'SUBJECT', 'COURSE', 'LEVEL')
+                ) else 'unrecognized subject-code format'
+                skipped_rows.append({'cells': [sc_clean], 'reason': f'{_skip_hint}: {sc_clean!r}'})
                 continue
 
         # ── Subject name ──────────────────────────────────────────────────
@@ -933,12 +957,18 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
                 f'{no_sem} subject(s) have no detected semester — please set in the review screen.'
             )
 
-    # Filter out pure summary/total skip entries from the skipped list so only
-    # rows that look like they *could* have been subjects are surfaced.
-    meaningful_skipped = [
-        sk for sk in skipped_rows
-        if sk.get('reason') != 'total/summary row'
-    ]
+    # Harmless skip reasons — column headers, semester/year labels, and summary rows
+    # that appear in every PDF.  These are always expected and should not trigger a warning.
+    _HARMLESS_REASONS = {
+        'total/summary row',
+        'column-header keyword in code cell',
+        'header or label row (not a subject code)',
+    }
+
+    # Rows silently auto-excluded (shown in review panel, no warning count)
+    auto_excluded = [sk for sk in skipped_rows if sk.get('reason') in _HARMLESS_REASONS]
+    # Rows that look like they could have been subjects but weren't recognised
+    meaningful_skipped = [sk for sk in skipped_rows if sk.get('reason') not in _HARMLESS_REASONS]
 
     if meaningful_skipped:
         warnings.append(
@@ -947,10 +977,11 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         )
 
     return {
-        'subjects':      subjects,
-        'confidence':    _score(subjects),
-        'warnings':      warnings,
-        'subject_count': len(subjects),
-        'skipped_rows':  meaningful_skipped,
-        'raw_text':      raw_text[:3000],
+        'subjects':       subjects,
+        'confidence':     _score(subjects),
+        'warnings':       warnings,
+        'subject_count':  len(subjects),
+        'skipped_rows':   meaningful_skipped,
+        'auto_excluded':  auto_excluded,
+        'raw_text':       raw_text[:3000],
     }

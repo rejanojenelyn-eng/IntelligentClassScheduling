@@ -4,7 +4,7 @@ class Config:
     # Database connection details
     DB_NAME = "ASDBv10"
     DB_USER = "postgres"
-    DB_PASS = "050105"
+    DB_PASS = "090705"
     DB_HOST = "localhost"
     DB_PORT = "5432"
     

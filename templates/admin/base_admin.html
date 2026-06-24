@@ -288,6 +288,17 @@
 
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ADMIN/base.admin.js') }}"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll(
+            'input:not([type="hidden"]):not([type="submit"]):not([type="button"])' +
+            ':not([type="checkbox"]):not([type="radio"]):not([type="file"]),' +
+            'textarea'
+        ).forEach(function (el) {
+            el.setAttribute('autocomplete', 'off');
+        });
+    });
+    </script>
 </body>
 
 </html>

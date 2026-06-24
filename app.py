@@ -3697,6 +3697,12 @@ def import_schedule():
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        _ensure_source_col(cur)
+        _ensure_original_status_col(cur)
+        conn.commit()
+    except Exception:
+        pass
+    try:
         cur.execute("""
             SELECT semesterid, semstartdate, semenddate
             FROM semester
@@ -4123,7 +4129,12 @@ def import_schedule():
         _yl_name = {1:'First',2:'Second',3:'Third',4:'Fourth',5:'Fifth'}.get(yl, str(yl))
         _ctx = f"Program: {prog or '(unknown)'}, {_yl_name} Year, Subject: {s_code or '(unknown)'}"
         print(f"Import Error Detail [{_ctx}]: {str(e)}")
-        flash(f"Import failed — {_ctx}: {str(e)}")
+        _emsg = str(e)
+        if 'column' in _emsg and 'does not exist' in _emsg:
+            _emsg = "Database schema is outdated — a required column is missing. Please restart the server or contact your system administrator."
+        elif 'duplicate key' in _emsg or 'unique constraint' in _emsg.lower():
+            _emsg = "A duplicate record was detected. The import may have already been completed for this entry."
+        flash(f"Import failed at {_ctx}: {_emsg}")
     finally: cur.close(); conn.close()
     return redirect(url_for('schedule'))
 
@@ -4894,6 +4905,12 @@ def sis_import_confirm():
         conn.commit()
     except Exception:
         pass
+    try:
+        _ensure_source_col(cur)
+        _ensure_original_status_col(cur)
+        conn.commit()
+    except Exception:
+        pass
 
     # Build a map from uppercase programcode -> exact DB programcode for normalization
     cur.execute("SELECT programcode FROM programs")
@@ -5331,7 +5348,14 @@ def sis_import_confirm():
         _yl_name = {1:'First',2:'Second',3:'Third',4:'Fourth',5:'Fifth'}.get(yl, str(yl))
         _ctx = f"Program: {prog or '(unknown)'}, {_yl_name} Year, Subject: {s_code or '(unknown)'}"
         print(f'SIS Import Confirm Error [{_ctx}]: {e}')
-        return jsonify({'error': f'{_ctx} — {str(e)}'}), 500
+        _emsg = str(e)
+        if 'column' in _emsg and 'does not exist' in _emsg:
+            _emsg = "Database schema is outdated — a required column is missing. Please restart the server or contact your system administrator."
+        elif 'duplicate key' in _emsg or 'unique constraint' in _emsg.lower():
+            _emsg = "A duplicate record was detected. This entry may have already been imported."
+        elif 'foreign key' in _emsg or 'violates foreign key' in _emsg:
+            _emsg = "A referenced record (subject, section, or semester) does not exist. Please check that all required data is set up."
+        return jsonify({'error': f'{_ctx} — {_emsg}'}), 500
     finally:
         cur.close(); conn.close()
 

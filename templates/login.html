@@ -352,7 +352,7 @@
         <div class="card-right">
             <h2>Login</h2>
 
-            <form action="/login" method="POST" style="display:flex;flex-direction:column;">
+            <form action="/login" method="POST" style="display:flex;flex-direction:column;" autocomplete="off">
                 <input type="hidden" name="role" id="selectedRole" value="Academic Head">
 
                 <div class="role-container">
@@ -373,7 +373,7 @@
                 <div class="form-group">
                     <label>PASSWORD</label>
                     <div class="pw-wrapper">
-                        <input type="password" name="password" id="mainPassword" required>
+                        <input type="password" name="password" id="mainPassword" required autocomplete="new-password">
                         <button type="button" class="pw-toggle" onclick="togglePw('mainPassword', this)" tabindex="-1">
                             <i class="fas fa-eye"></i>
                         </button>
@@ -405,7 +405,7 @@
                 </div>
                 <button class="admin-modal-close" onclick="closeAdminLogin()">&#10005;</button>
             </div>
-            <form action="/login" method="POST">
+            <form action="/login" method="POST" autocomplete="off">
                 <input type="hidden" name="role" value="Admin">
                 <div class="admin-modal-body">
                     <div class="admin-field">
@@ -415,7 +415,7 @@
                     <div class="admin-field">
                         <label>Password</label>
                         <div class="pw-wrapper">
-                            <input type="password" name="password" id="adminPassword" placeholder="Enter password" required>
+                            <input type="password" name="password" id="adminPassword" placeholder="Enter password" required autocomplete="new-password">
                             <button type="button" class="pw-toggle" onclick="togglePw('adminPassword', this)" tabindex="-1">
                                 <i class="fas fa-eye"></i>
                             </button>

@@ -1172,7 +1172,8 @@ function _renderPdfReviewModal(data) {
     const confidence   = data.confidence    || 0;
     const warnings     = data.warnings      || [];
     const rawText      = data.raw_text      || '';
-    const skippedRows  = data.skipped_rows  || [];
+    const skippedRows  = data.skipped_rows   || [];
+    const autoExcluded = data.auto_excluded  || [];
     const banner       = document.getElementById('pdfReviewBanner');
 
     // Populate header meta bar (program / year / source)
@@ -1216,7 +1217,7 @@ function _renderPdfReviewModal(data) {
         ? '<div class="conf-note" style="margin-bottom:6px;"><i class="fas fa-exclamation-circle" style="margin-right:5px;"></i>Please review and correct the extracted data below before importing.</div>'
         : '';
 
-    // Skipped-rows panel: show rows the parser rejected so admin can spot missing subjects
+    // Skipped-rows panel: rows that look like real subjects but couldn't be parsed (warning)
     let skippedHtml = '';
     if (skippedRows.length) {
         const rows = skippedRows.map(sk => {
@@ -1240,7 +1241,31 @@ function _renderPdfReviewModal(data) {
         </details>`;
     }
 
-    banner.innerHTML = `${reviewNote}${warnHtml}${skippedHtml}${rawHtml}`;
+    // Auto-excluded panel: header/label rows the parser correctly ignored (informational only)
+    let autoExcludedHtml = '';
+    if (autoExcluded.length) {
+        const rows = autoExcluded.map(sk => {
+            const cells = (sk.cells || []).map(c => _esc(c)).join(' | ');
+            return `<tr><td style="font-family:monospace;font-size:12px;">${cells}</td>`
+                 + `<td style="font-size:12px;color:#888;">${_esc(sk.reason)}</td></tr>`;
+        }).join('');
+        autoExcludedHtml = `
+        <details class="pdf-skipped-details" style="margin-top:6px;">
+            <summary style="cursor:pointer;font-weight:500;color:#6b7280;font-size:13px;">
+                <i class="fas fa-info-circle" style="margin-right:5px;color:#6b7280;"></i>
+                ${autoExcluded.length} row(s) were automatically excluded (column headers / semester labels) — click to view
+            </summary>
+            <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:12px;">
+                <thead><tr>
+                    <th style="text-align:left;padding:4px 6px;background:#f3f4f6;">Row content</th>
+                    <th style="text-align:left;padding:4px 6px;background:#f3f4f6;">Reason</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </details>`;
+    }
+
+    banner.innerHTML = `${reviewNote}${warnHtml}${skippedHtml}${autoExcludedHtml}${rawHtml}`;
 
     _rebuildReviewTable();
 
