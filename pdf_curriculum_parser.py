@@ -53,10 +53,14 @@ _SEM_MARKERS = [
 _CODE_RE = re.compile(r'^[A-Z]{1,8}[\s\-]?\d{1,4}[A-Z0-9]?$', re.IGNORECASE)
 # Loose check used for inferred column detection (anchored at start only)
 _CODE_LOOSE_RE = re.compile(r'^[A-Z]{2,}[\s\-]?\d+', re.IGNORECASE)
-# Compound codes: "ELEC HM-E1", "ELEC IT-FE2", "ELEC CS-E2" …
-# Pattern: 2-8 letters  SPACE  1-6 alphanumeric  DASH  one or more alphanumeric
-# (suffix is unrestricted alphanumeric to handle "FE2", "E1", "FE1", etc.)
-_CODE_COMPOUND_RE = re.compile(r'^[A-Z]{2,8}\s[A-Z0-9]{1,6}-[A-Z0-9]+$', re.IGNORECASE)
+# Compound codes: "ELEC HM-E1", "ELEC IT-FE2", "ELEC BPAFA-E1", "ELEC BPAFA- E1" …
+# Pattern: 2-8 letters  SPACE  1-8 alphanumeric  DASH  optional space  one or more alphanumeric
+# \s? after the dash handles PDFs that render "ELEC BPAFA- E1" with a trailing space.
+_CODE_COMPOUND_RE = re.compile(r'^[A-Z]{2,8}\s[A-Z0-9]{1,8}-\s?[A-Z0-9]+$', re.IGNORECASE)
+# Hyphen-suffix codes: "INTE-E1", "CS-FE2", "PHYS-LAB1", "GEC-ELEC2" …
+# Pattern: 2-8 letters  DASH  1-6 letters  1-4 digits  optional trailing alphanum
+# \d{1,4} is required to distinguish codes from hyphenated words like "MID-YEAR"
+_CODE_HYPHEN_RE  = re.compile(r'^[A-Z]{2,8}-[A-Z]{1,6}\d{1,4}[A-Z0-9]?$', re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Words that should NEVER be treated as a subject code even if they happen
@@ -175,7 +179,8 @@ def _detect_year_sem(text):
 
 def _looks_like_code(text):
     t = _clean(text)
-    return bool(_CODE_RE.match(t) or _CODE_LOOSE_RE.match(t) or _CODE_COMPOUND_RE.match(t))
+    return bool(_CODE_RE.match(t) or _CODE_LOOSE_RE.match(t) or
+                _CODE_COMPOUND_RE.match(t) or _CODE_HYPHEN_RE.match(t))
 
 def _parse_year_cell(text):
     """
@@ -587,11 +592,14 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
     # ── Find header row (or use user-specified override) ──────────────────
     if override_col_map is not None:
         col_map = override_col_map
-        # Still detect and skip any header row present in the table
+        # Still detect and skip any header row present in the table.
+        # Require 'sc' or 'sn' to avoid false positives from incidental
+        # keyword matches (e.g. 'TOTAL UNITS' matching the 'u' pattern).
         data_start = 0
         for i in range(min(4, len(table))):
             window = table[max(0, i - 1):i + 2]
-            if _detect_col_map(window):
+            cm = _detect_col_map(window)
+            if 'sc' in cm or 'sn' in cm:
                 data_start = i + 1
                 break
     else:
@@ -629,6 +637,24 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
         if ds: current_sem  = ds
 
     skipped_rows = []   # rows rejected during extraction, with reason
+
+    # ── Page-break table continuation ────────────────────────────────────
+    # When a column-header row is found at data_start > 1 and we have a fallback
+    # col_map from the previous table, the rows BEFORE the header row (indices
+    # 0 … data_start-2) are continuation rows from a table that started on the
+    # previous page (e.g. the last subject(s) before a TOTAL UNITS footer).
+    # The "Scan skipped header rows" loop above has already advanced current_year/
+    # current_sem to the NEXT section, so we use init_year/init_sem here to give
+    # these continuation rows the correct previous-section context.
+    if (override_col_map is None and data_start > 1
+            and fallback_col_map and 'sc' in fallback_col_map):
+        pre_rows = table[:data_start - 1]   # rows before the header row itself
+        if pre_rows:
+            _pre = _process_table(pre_rows, init_year, init_sem,
+                                  override_col_map=fallback_col_map,
+                                  fallback_col_map=None)
+            subjects.extend(_pre['subjects'])
+            skipped_rows.extend(_pre.get('skipped', []))
 
     # ── Extract data rows ────────────────────────────────────────────────
     for row in table[data_start:]:
@@ -699,6 +725,10 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
 
         # Keep meaningful internal spacing (e.g. "GEED 032" → "GEED 032", not "GEED032")
         sc_clean = _clean(sc).upper()
+        # Normalize whitespace around hyphens so "ELEC BPAFA- E1" → "ELEC BPAFA-E1"
+        # This handles PDFs that add a space between the hyphen and the suffix.
+        if '-' in sc_clean:
+            sc_clean = re.sub(r'\s*-\s*', '-', sc_clean)
 
         if not sc_clean:
             # Continuation row – no code; try to append description to previous subject.
@@ -716,13 +746,31 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
                     ).strip()[:200]
             continue
 
-        # Skip obvious column-header keywords that ended up in the code cell
+        # Skip obvious single-word column-header keywords that ended up in the code cell
         if sc_clean in ('SUBJECTCODE', 'COURSECODE', 'CODE', 'SUBJECT', 'COURSE',
                         'DESCRIPTIVE', 'TITLE', 'DESCRIPTION'):
             skipped_rows.append({'cells': [sc_clean], 'reason': 'column-header keyword in code cell'})
             continue
 
-        # Accept standard alphanumeric codes (e.g. CC101, DCIT23A, NSTP1)
+        # Skip multi-word column-header phrases (e.g. "SUBJECT CODE" with space)
+        if sc_clean in ('SUBJECT CODE', 'COURSE CODE', 'COURSE NUMBER', 'COURSE NO',
+                        'COURSE NUM', 'SUBJ CODE', 'SUB CODE', 'SUBJ. CODE'):
+            skipped_rows.append({'cells': [sc_clean], 'reason': 'column header row'})
+            continue
+
+        # Skip year/semester headings that landed in the code column
+        # (_detect_year_sem has already updated current_year/sem above, so context is preserved)
+        _ys_year, _ys_sem = _detect_year_sem(sc_clean)
+        if _ys_year or _ys_sem:
+            skipped_rows.append({'cells': [sc_clean], 'reason': 'year/semester heading'})
+            continue
+
+        # Skip common placeholder values that indicate no subject is assigned
+        if sc_clean in ('NO SUBJECT', 'NO CODE', 'NONE', 'TBA', 'TBD', 'N/A'):
+            skipped_rows.append({'cells': [sc_clean], 'reason': 'placeholder row (no subject assigned)'})
+            continue
+
+        # Accept standard alphanumeric codes (e.g. CC101, DCIT23A, NSTP1, INTE-E1)
         # or short pure-alpha codes like OJT, ITP, PRAC – as long as they're
         # not one of the common non-code header/marker words.
         if not _looks_like_code(sc_clean):
@@ -933,11 +981,18 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
                 f'{no_sem} subject(s) have no detected semester — please set in the review screen.'
             )
 
-    # Filter out pure summary/total skip entries from the skipped list so only
-    # rows that look like they *could* have been subjects are surfaced.
+    # Filter out expected/structural skip entries from the skipped list so only
+    # rows that are genuinely surprising (truly invalid codes) are surfaced.
+    _EXPECTED_SKIP_REASONS = frozenset([
+        'total/summary row',
+        'year/semester heading',
+        'column header row',
+        'column-header keyword in code cell',
+        'placeholder row (no subject assigned)',
+    ])
     meaningful_skipped = [
         sk for sk in skipped_rows
-        if sk.get('reason') != 'total/summary row'
+        if sk.get('reason') not in _EXPECTED_SKIP_REASONS
     ]
 
     if meaningful_skipped:

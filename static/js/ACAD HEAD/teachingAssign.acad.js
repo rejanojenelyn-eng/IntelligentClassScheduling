@@ -5,8 +5,10 @@ const PALETTE        = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c
 const WEEKDAYS_SET   = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
 const REGULAR_END_SLOT = 19;
 
-let _sessions = [];
-let _activeTab = 'weekly';
+let _sessions      = [];   // official published schedule sessions
+let _localSessions = [];   // published local-arrangement sessions for this user
+let _activeTab     = 'weekly';
+let _scheduleMode  = 'official'; // 'official' | 'local'
 
 function subjectColor(code) {
     let h = 0;
@@ -14,6 +16,7 @@ function subjectColor(code) {
     return PALETTE[Math.abs(h) % PALETTE.length];
 }
 
+// ── Tab switching ────────────────────────────────────────────────────────────
 function showTab(name, el) {
     _activeTab = name;
     document.getElementById('tab-weekly').style.display     = name === 'weekly'     ? '' : 'none';
@@ -24,28 +27,64 @@ function showTab(name, el) {
     if (name === 'assignment') renderTables();
 }
 
+// ── Schedule mode toggle (weekly view only) ──────────────────────────────────
+function onScheduleToggle(isOfficial) {
+    _scheduleMode = isOfficial ? 'official' : 'local';
+
+    const lblLocal    = document.getElementById('lbl-local');
+    const lblOfficial = document.getElementById('lbl-official');
+    if (isOfficial) {
+        lblLocal.classList.remove('active-label');
+        lblOfficial.classList.add('active-label');
+    } else {
+        lblOfficial.classList.remove('active-label');
+        lblLocal.classList.add('active-label');
+    }
+    renderCalendar();
+}
+
+// ── Data loading ─────────────────────────────────────────────────────────────
 async function loadData() {
     if (!OWN_EMP_NUM) return;
+    await Promise.all([loadOfficialData(), loadLocalData()]);
+    if (_activeTab === 'weekly')     renderCalendar();
+    if (_activeTab === 'assignment') renderTables();
+}
+
+async function loadOfficialData() {
     try {
         const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(OWN_EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}`;
         const resp = await fetch(url);
         _sessions = await resp.json();
     } catch(e) {
-        console.error('loadData error:', e);
+        console.error('loadOfficialData error:', e);
         _sessions = [];
     }
-    if (_activeTab === 'weekly')     renderCalendar();
-    if (_activeTab === 'assignment') renderTables();
 }
 
+async function loadLocalData() {
+    try {
+        const url = `/api/faculty/my_local_schedule?ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) { _localSessions = []; return; }
+        _localSessions = await resp.json();
+    } catch(e) {
+        console.error('loadLocalData error:', e);
+        _localSessions = [];
+    }
+}
+
+// ── Calendar renderer ────────────────────────────────────────────────────────
 function renderCalendar() {
+    const sessions = _scheduleMode === 'local' ? _localSessions : _sessions;
+
     const inner   = document.getElementById('calInner');
     const table   = document.getElementById('calTable');
     const emptyEl = document.getElementById('calEmptyMsg');
 
     inner.querySelectorAll('.cal-pill').forEach(p => p.remove());
 
-    if (!_sessions.length) {
+    if (!sessions.length) {
         emptyEl.style.display = 'block';
         return;
     }
@@ -66,7 +105,7 @@ function renderCalendar() {
     const topOff  = thead.offsetHeight;
 
     const byDay = {};
-    _sessions.forEach(s => {
+    sessions.forEach(s => {
         if (!s.starttimeid || !s.endtimeid) return;
         (byDay[s.daydesc] = byDay[s.daydesc] || []).push(s);
     });
@@ -87,7 +126,7 @@ function renderCalendar() {
             });
 
             const pill = document.createElement('div');
-            pill.className = 'cal-pill';
+            pill.className = 'cal-pill' + (_scheduleMode === 'local' ? ' local-pill' : '');
             pill.style.backgroundColor = subjectColor(sess.subjectcode);
 
             const w = (colW - 6) / (overlapCount || 1);
@@ -107,51 +146,53 @@ function renderCalendar() {
     });
 }
 
+// ── Teaching Assignment table renderer (official schedule only) ──────────────
 function renderTables() {
-    const COL_COUNT = 8;
-    const regular = _sessions.filter(s =>
-        WEEKDAYS_SET.has(s.daydesc) && s.endtimeid <= REGULAR_END_SLOT
-    );
-    const pt = _sessions.filter(s =>
-        !WEEKDAYS_SET.has(s.daydesc) || s.endtimeid > REGULAR_END_SLOT
-    );
-    const totalReg = regular.reduce((sum, s) => sum + (s.creditunits || 0), 0);
+    // TA always uses official (published) schedule – local arrangements are excluded
+    const regular = _sessions.filter(s => WEEKDAYS_SET.has(s.daydesc) && s.endtimeid <= REGULAR_END_SLOT);
+    const pt      = _sessions.filter(s => !WEEKDAYS_SET.has(s.daydesc) || s.endtimeid > REGULAR_END_SLOT);
 
-    document.getElementById('total-regular-units').textContent = totalReg;
+    const totalReg = regular.reduce((sum, s) => sum + (parseFloat(s.creditunits) || 0), 0);
+    const totalPT  = pt.reduce((sum, s) => sum + (parseFloat(s.creditunits) || 0), 0);
+    const totalAll = totalReg + totalPT;
+
+    document.getElementById('total-regular-units').textContent = totalReg || '—';
+    document.getElementById('total-pt-units').textContent      = totalPT  || '—';
+    document.getElementById('total-overall-units').textContent = totalAll || '—';
 
     const makeRow = row => {
         const ys = row.yearlevel ? `${row.yearlevel} - ${row.programcode || ''}` : (row.programcode || '');
-        return `
-        <tr>
+        return `<tr>
             <td style="font-weight:800;color:#630100;">${row.subjectcode}</td>
             <td>${row.subjectname}</td>
-            <td>${row.creditunits}</td>
+            <td>${row.creditunits || '—'}</td>
             <td>${ys || '—'}</td>
             <td>${row.time_range || ''}</td>
             <td>${row.daydesc}</td>
             <td>${row.roomname || 'TBA'}</td>
-            <td><span class="badge-pub">Published</span></td>
+            <td>${row.effectivity || '—'}</td>
         </tr>`;
     };
 
     document.getElementById('tbl-regular').innerHTML = regular.length
         ? regular.map(makeRow).join('')
-        : `<tr><td colspan="${COL_COUNT}" style="text-align:center;color:#999;padding:16px;">No regular load found.</td></tr>`;
+        : `<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">No regular load found.</td></tr>`;
 
     document.getElementById('tbl-pt').innerHTML = pt.length
         ? pt.map(makeRow).join('')
-        : `<tr><td colspan="${COL_COUNT}" style="text-align:center;color:#999;padding:16px;">No part-time load found.</td></tr>`;
+        : `<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">No part-time load found.</td></tr>`;
 }
 
+// ── Detail modal ─────────────────────────────────────────────────────────────
 function openDetail(sess) {
     document.getElementById('det-code').textContent    = sess.subjectcode;
     document.getElementById('det-name').textContent    = sess.subjectname;
     document.getElementById('det-day').textContent     = sess.daydesc;
-    document.getElementById('det-time').textContent       = sess.time_range;
-    document.getElementById('det-room').textContent       = sess.roomname || 'TBA';
-    document.getElementById('det-section').textContent    = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '—');
-    document.getElementById('det-units').textContent      = sess.creditunits;
-    document.getElementById('det-status').innerHTML       =
+    document.getElementById('det-time').textContent    = sess.time_range;
+    document.getElementById('det-room').textContent    = sess.roomname || 'TBA';
+    document.getElementById('det-section').textContent = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '—');
+    document.getElementById('det-units').textContent   = sess.creditunits;
+    document.getElementById('det-status').innerHTML    =
         sess.status === 'Published'
             ? '<span class="badge-pub">Published</span>'
             : '<span class="badge-draft">Draft</span>';

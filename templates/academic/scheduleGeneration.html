@@ -38,7 +38,7 @@
                         <select id="acadYear" name="acadYear" required>
                             <option value="">SELECT</option>
                             {% for year in acad_years %}
-                                <option value="{{ year }}">{{ year }}</option>
+                                <option value="{{ year }}" {% if year == active_ay_id %}selected{% endif %}>{{ year }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -47,7 +47,7 @@
                         <select id="term" name="term" required>
                             <option value="">SELECT</option>
                             {% for t in terms %}
-                                <option value="{{ t.id }}">{{ t.name }}</option>
+                                <option value="{{ t.id }}" {% if t.id == active_sem %}selected{% endif %}>{{ t.name }}</option>
                             {% endfor %}
                         </select>
                     </div>

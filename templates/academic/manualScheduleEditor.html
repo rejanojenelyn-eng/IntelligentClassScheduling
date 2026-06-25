@@ -677,7 +677,7 @@
                 <button class="btn-sched-mode {{ 'sched-mode-active' if scheduler_mode != 'local' else '' }}"
                         id="btnModeOfficial"
                         {% if scheduler_mode == 'local' %}
-                        onclick="window.location.href=this.dataset.href"
+                        onclick="document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p=>p.remove()); window.location.href=this.dataset.href"
                         data-href="{{ url_for('manual_schedule_editor', scheduler='official') }}"
                         {% endif %}>
                     OFFICIAL SCHEDULER
@@ -685,7 +685,7 @@
                 <button class="btn-sched-mode {{ 'sched-mode-active' if scheduler_mode == 'local' else '' }}"
                         id="btnModeLocal"
                         {% if scheduler_mode != 'local' %}
-                        onclick="window.location.href=this.dataset.href"
+                        onclick="document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p=>p.remove()); window.location.href=this.dataset.href"
                         data-href="{{ url_for('manual_schedule_editor', scheduler='local') }}"
                         {% endif %}>
                     LOCAL SCHEDULER
@@ -742,7 +742,7 @@
                 <!-- Row 2: Academic Offerings + Year Level + Section -->
                 <div class="lp-filters-section">
                     <div class="lp-filter-field">
-                        <div class="lp-ay-label" style="margin-bottom:4px;">Academic Offerings</div>
+                        <div class="lp-ay-label" style="margin-bottom:4px;">PROGRAM</div>
                         <div class="lp-filter-btn" onclick="toggleBcMenu('bc-prog-menu', event)">
                             <span id="bc-prog-text">-Select Program-</span>
                             <i class="fas fa-chevron-down lp-filter-caret"></i>
@@ -1381,6 +1381,7 @@
      data-merge-scope="{{ merge_scope }}"
      data-day-pairing-enabled="{{ 'true' if day_pairing_enabled else 'false' }}"
      data-day-pairs="{{ day_pairs_json | e }}"
+     data-from-generator="{{ init_from_generator }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}"></script>
@@ -2402,8 +2403,13 @@ async function _updateSubjectList() {
         const savedStatus = opt.dataset.savedStatus || '';
         _subjectMeta[code] = { name, units, total_hours: hours, labhours };
 
-        const pct        = hours > 0 ? Math.min(100, Math.round((dbSched / hours) * 100)) : 0;
-        const isComplete = hours > 0 && dbSched >= hours;
+        // Use live pending hours (includes generator-transferred entries) before falling back to DB.
+        const liveSched  = typeof _getScheduledHoursForCode === 'function'
+            ? _getScheduledHoursForCode(code, ay, sem) : 0;
+        const sched      = liveSched > 0 ? liveSched : dbSched;
+
+        const pct        = hours > 0 ? Math.min(100, Math.round((sched / hours) * 100)) : 0;
+        const isComplete = hours > 0 && sched >= hours;
         const isActive   = code === document.getElementById('sel_subj').value;
 
         // Badge: show saved status (Draft / Published / Published/Draft)
@@ -2437,7 +2443,7 @@ async function _updateSubjectList() {
                     <span class="subj-item-name">${name}</span>
                     <div class="subj-hrs-row">
                         <div class="subj-hrs-track"><div class="${fillCls}" style="width:${pct}%"></div></div>
-                        <span class="subj-hrs-text">${dbSched}/${hours}h</span>
+                        <span class="subj-hrs-text">${sched}/${hours}h</span>
                     </div>
                 </div>
                 ${badgeText ? `<span class="${badgeCls}">${badgeText}</span>` : ''}
@@ -2484,14 +2490,19 @@ async function _updateSubjectList() {
 function _syncSubjectCardBars() {
     const subjSel = document.getElementById('sel_subj');
     if (!subjSel) return;
+    const _sbAy  = document.getElementById('sel_ay')?.value  || '';
+    const _sbSem = document.getElementById('sel_sem')?.value || '';
     Array.from(subjSel.options).forEach(opt => {
         if (!opt.value) return;
         const code    = opt.value;
         const hours   = parseFloat(opt.dataset.hours      || 0);
-        const sched   = parseFloat(opt.dataset.dbScheduled || 0);
+        const dbSched = parseFloat(opt.dataset.dbScheduled || 0);
         const savedSt = opt.dataset.savedStatus || '';
         const card    = document.querySelector(`.subj-item[data-code="${code}"]`);
         if (!card) return;
+        const liveSched = typeof _getScheduledHoursForCode === 'function'
+            ? _getScheduledHoursForCode(code, _sbAy, _sbSem) : 0;
+        const sched   = liveSched > 0 ? liveSched : dbSched;
         const pct    = hours > 0 ? Math.min(100, Math.round((sched / hours) * 100)) : 0;
         const isDone = hours > 0 && sched >= hours;
         const fillEl = card.querySelector('.subj-hrs-fill');
@@ -2870,14 +2881,16 @@ async function _onSubjectClick(code, name, units, hours) {
 
     _updateWorkflowBar();
 
-    // If this subject already has fromExisting entries loaded into pendingManualSchedule,
-    // skip re-fetching existing sessions from DB — avoids accumulating duplicate entries
-    // which inflate the "hours scheduled" counter on repeated subject card clicks.
+    // Skip DB existing-sessions fetch if this subject is already covered by loaded entries.
+    // Generator entries (fromGenerator) take full priority — loading old DB sessions on top
+    // would double-count hours and mix old/new schedules. Also skip if fromExisting already loaded.
     const _yl = document.getElementById('sel_year').value;
-    const _hasLoaded = pendingManualSchedule.some(
-        c => c.subject_code === code && c.fromExisting && c.ay === ay && c.sem === sem
-             && String(c.year_level) === String(_yl)
-    );
+    const _hasLoaded = pendingManualSchedule.some(c => {
+        if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) return false;
+        if (c.fromGenerator) return true;  // generator entries block the old-session fetch
+        if (c.fromExisting && String(c.year_level) === String(_yl)) return true;
+        return false;
+    });
     if (_hasLoaded) _skipExistingCheck = true;
 
     // Trigger DSS logic (loads faculty + room recommendations, auto-loads existing sessions)
@@ -3145,10 +3158,10 @@ function _resetRightPanel() {
     // Clear stale hidden-DB entries so sessions from the previous section
     // are no longer suppressed when viewing a different section's room view.
     if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
-    // Drop fromExisting pending entries — they are DB-backed and will re-appear
-    // from the DB once the new section's subject is selected.
+    // Drop fromExisting and fromGenerator entries — they belong to the previous context
+    // and will re-appear from DB or the next generator transfer once a new section/subject is selected.
     if (typeof pendingManualSchedule !== 'undefined') {
-        pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting);
+        pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting && !c.fromGenerator);
     }
 }
 
@@ -4666,9 +4679,11 @@ function selectBcSect(id, name) {
         // Clear stale hidden-DB entries so another section's sessions aren't suppressed
         // in the room calendar view.
         if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
-        // Drop fromExisting pending entries — they belong to the previous section.
+        // Drop fromExisting AND fromGenerator entries — they belong to the previous section.
+        // Generator entries must not suppress DB sessions or skip the existing-check for
+        // a different section.
         if (typeof pendingManualSchedule !== 'undefined') {
-            pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting);
+            pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting && !c.fromGenerator);
         }
     }
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
@@ -5519,6 +5534,66 @@ document.addEventListener('DOMContentLoaded', () => {
         selectYearLevel(initYl, labels[initYl] || initYl + 'th Year');
     }
 
+    // ── Load generator-transferred schedule data from sessionStorage ────────────
+    // Runs BEFORE section selection so pendingManualSchedule is populated before
+    // renderProgramTimetable fires (which overlays the generator pills).
+    const _fromGenerator = initData.dataset.fromGenerator === '1';
+    if (_fromGenerator) {
+        try {
+            const _transferStr = sessionStorage.getItem('_sched_gen_transfer');
+            if (_transferStr) {
+                sessionStorage.removeItem('_sched_gen_transfer');
+                const _transfer  = JSON.parse(_transferStr);
+                const _genData   = _transfer.schedule_data || [];
+                const _genCtx    = _transfer.context || {};
+                let   _genIdx    = 0;
+                for (const _entry of _genData) {
+                    // A generator entry may span multiple days — create one pending row per day.
+                    const _days = _entry.days_list || (_entry.day ? [_entry.day] : []);
+
+                    // Parse start/end time strings from the combined 'time' field when not present directly.
+                    // Scheduler serializes datetime.time objects as a combined 'time' string, e.g. "07:30 AM – 09:30 AM".
+                    let _startTimeStr = _entry.start_time || '';
+                    let _endTimeStr   = _entry.end_time   || '';
+                    if ((!_startTimeStr || !_endTimeStr) && _entry.time) {
+                        const _tp = String(_entry.time).replace(/–/g, '-').split('-');
+                        if (_tp.length >= 2) {
+                            _startTimeStr = _tp[0].trim();
+                            _endTimeStr   = _tp[1].trim();
+                        }
+                    }
+
+                    for (const _day of _days) {
+                        if (typeof pendingManualSchedule !== 'undefined') {
+                            pendingManualSchedule.push({
+                                temp_id:       `_gen_${_genIdx++}`,
+                                subject_code:  _entry.subject_code  || _entry.subjectcode  || '',
+                                subject_name:  _entry.subject_name  || _entry.subjectname  || _entry.subject_code || '',
+                                faculty_id:    String(_entry.faculty_id || _entry.employeenumber || ''),
+                                faculty_name:  _entry.faculty_name  || _entry.instructor   || '',
+                                room_id:       String(_entry.room_id || _entry.roomid || ''),
+                                room:          _entry.room          || _entry.roomname     || 'TBA',
+                                day:           _day,
+                                days_list:     [_day],
+                                start_time:    _startTimeStr,
+                                end_time:      _endTimeStr,
+                                starttimeid:   _entry.starttimeid   || 0,
+                                endtimeid:     _entry.endtimeid     || 0,
+                                ay:            _genCtx.acadYear     || '',
+                                sem:           _genCtx.term         || '',
+                                fromGenerator: true,
+                                fromExisting:  false,
+                                isPreview:     false,
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (_ge) {
+            console.error('[from_generator] Failed to load transfer data:', _ge);
+        }
+    }
+
     // Load section options if program + year level are known, then auto-select if coming from Schedule Generation
     if (initProg && initYl && typeof _loadSectionOptions === 'function') {
         _loadSectionOptions()
@@ -5528,7 +5603,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     selectBcSect(initSect, initSectName);
                     if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
                     // When coming from Schedule Generation (mode=program), switch to Program View tab
-                    // so the saved draft timetable is immediately visible.
+                    // so the generator-transferred timetable is immediately visible.
                     if (initMode === 'program' && typeof switchEditorTab === 'function') {
                         const pvTab = document.getElementById('tab-main');
                         switchEditorTab('main', pvTab);
@@ -6161,9 +6236,10 @@ function switchEditorTab(tab, el) {
         if (bldgBar) bldgBar.style.display = '';
         if (calGrid) calGrid.style.display = '';
         if (wfBar)   wfBar.style.display   = '';
-        // Eagerly clear program pills before the room grid renders
+        // Eagerly clear all pills and invalidate any in-flight program-view fetch.
         document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p => p.remove());
-        // Re-enter room mode so room grid (not program timetable) renders
+        if (typeof _progFetchToken !== 'undefined') _progFetchToken++;
+        if (typeof _progPillsToken !== 'undefined') _progPillsToken++;
         currentMode = 'room';
         const roomId = document.getElementById('sel_room').value;
         renderGrid(roomId, formAyFilter(), formSemFilter());
@@ -6171,10 +6247,10 @@ function switchEditorTab(tab, el) {
         // PROGRAM VIEW — section-based timetable; no building/room filter
         if (pvHdr)   pvHdr.style.display  = 'flex';
         if (calGrid) calGrid.style.display = '';
-        currentMode = 'program';
-        // Eagerly clear any Room View pills so there is no flash of stale content
-        // while the async fetch in renderProgramTimetable is in-flight.
+        // Eagerly clear all pills and invalidate any in-flight room-view fetch.
         document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        if (typeof _gridRenderToken !== 'undefined') _gridRenderToken++;
+        currentMode = 'program';
         renderProgramTimetable();
     } else if (tab === 'faculty') {
         if (flPanel) flPanel.style.display = 'flex';

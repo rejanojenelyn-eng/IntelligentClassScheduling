@@ -302,54 +302,191 @@ def inject_user_display():
     except:
         return {'current_user_display': session.get('username', 'User')}
 
+
+def _auto_archive_semester(cur, old_sem_id):
+    """
+    On semester transition: copy all Published schedule records from the old semester
+    into historical_data, then mark their schedule_version rows as 'Archive'.
+    Called automatically when inject_active_period() detects a semester change.
+    Uses the caller's cursor so all writes share the same DB connection.
+    """
+    try:
+        # Skip if historical_data already contains records for this semester
+        cur.execute("SELECT COUNT(*) AS cnt FROM historical_data WHERE semesterid = %s", (old_sem_id,))
+        row = cur.fetchone()
+        if row and int(row['cnt'] or 0) > 0:
+            # Already archived — ensure version status is consistent
+            cur.execute("""
+                UPDATE schedule_version sv
+                SET    status = 'Archive'
+                FROM   schedule sc
+                WHERE  sv.scheduleid = sc.scheduleid
+                  AND  sc.semesterid = %s
+                  AND  sv.status     = 'Published'
+            """, (old_sem_id,))
+            return
+
+        # Aggregate Published sessions per subject-section into one historical row
+        cur.execute("""
+            SELECT
+                COALESCE(f.lastname || ', ' || f.firstname, 'TBA')      AS instructor,
+                cs.subjectcode,
+                cs.subjectname,
+                UPPER(c.programcode)                                     AS program,
+                cs.yearlevel,
+                STRING_AGG(DISTINCT ss.daydesc, '/'
+                           ORDER BY ss.daydesc)                         AS days,
+                COALESCE(
+                    MIN(ts_s.timevalue::text) || ' - ' || MAX(ts_e.timevalue::text),
+                    'TBA'
+                )                                                        AS time_str,
+                COALESCE(MAX(r.roomname), 'TBA')                         AS room,
+                sc.semesterid,
+                sem.academicyearid,
+                COALESCE(cs.lecturehours, 0)                             AS lec,
+                COALESCE(cs.laboratoryhours, 0)                          AS lab,
+                COALESCE(cs.creditunits, 0)                              AS unit,
+                COALESCE(cs.tuitionhours,
+                         cs.lecturehours + cs.laboratoryhours, 0)        AS hrs,
+                sc.employeenumber
+            FROM   schedule_version sv
+            JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
+            JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+            JOIN   semester sem         ON sc.semesterid          = sem.semesterid
+            LEFT JOIN faculty f         ON sc.employeenumber      = f.employeenumber
+            JOIN   schedule_sessions ss ON ss.versionid           = sv.versionid
+            LEFT JOIN room r            ON ss.roomid              = r.roomid
+            LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+            LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+            WHERE  sc.semesterid = %s
+              AND  sv.status     = 'Published'
+            GROUP BY
+                f.lastname, f.firstname, cs.subjectcode, cs.subjectname,
+                c.programcode, cs.yearlevel, sc.semesterid, sem.academicyearid,
+                cs.lecturehours, cs.laboratoryhours, cs.creditunits, cs.tuitionhours,
+                sc.employeenumber
+        """, (old_sem_id,))
+        rows = cur.fetchall()
+
+        archived = 0
+        for r in rows:
+            _insert_historical(
+                cur,
+                (r['instructor'] or 'TBA')[:150],
+                (r['subjectcode'] or '')[:15],
+                (r['subjectname'] or '')[:150],
+                (r['program'] or '')[:20],
+                r['yearlevel'],
+                (r['days'] or '')[:50],
+                (r['time_str'] or '')[:100],
+                (r['room'] or 'TBA')[:100],
+                r['semesterid'],
+                r['academicyearid'],
+                int(r['lec'] or 0),
+                int(r['lab'] or 0),
+                int(r['unit'] or 0),
+                int(r['hrs'] or 0),
+                r['employeenumber'],
+            )
+            archived += 1
+
+        # Mark Published versions as Archive (they are now in historical_data)
+        cur.execute("""
+            UPDATE schedule_version sv
+            SET    status = 'Archive'
+            FROM   schedule sc
+            WHERE  sv.scheduleid = sc.scheduleid
+              AND  sc.semesterid = %s
+              AND  sv.status     = 'Published'
+        """, (old_sem_id,))
+
+        if archived > 0:
+            print(f"[AUTO-ARCHIVE] Semester {old_sem_id}: moved {archived} Published records "
+                  f"to historical_data and set status=Archive.")
+
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        # Non-fatal — archive failure must not block the semester transition
+
+
 # --- CONTEXT PROCESSOR FOR DYNAMIC ACADEMIC YEAR ---
 @app.context_processor
 def inject_active_period():
+    """
+    Auto-detect and display the active Academic Year and Semester based on today's date.
+    - If today falls within a configured semester's date range, that semester is active.
+    - On transition (detected semester differs from currently-active), auto-archives
+      the old semester's Published schedules into historical_data, then updates flags.
+    - Between semesters, falls back to whichever semester was last set as active.
+    - 'Academic Year Not Detected' appears only when no semester records exist at all.
+    """
     try:
         today = date.today()
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # 1. FIND the semester that SHOULD be active based on Today's Date
+
+        _SEM_LABEL = {'A': '1ST SEMESTER', 'B': '2ND SEMESTER', 'C': 'SUMMER'}
+
+        # 1. Find the semester whose date range contains today
         cur.execute("""
             SELECT s.semesterid, s.semestertype, ay.academicyearid, ay.yearstart, ay.yearend
-            FROM semester s 
-            JOIN academicyear ay ON s.academicyearid = ay.academicyearid 
-            WHERE %s BETWEEN s.semstartdate AND s.semenddate
-            LIMIT 1
+            FROM   semester s
+            JOIN   academicyear ay ON s.academicyearid = ay.academicyearid
+            WHERE  %s BETWEEN s.semstartdate AND s.semenddate
+            LIMIT  1
         """, (today,))
-        actual = cur.fetchone()
-        
-        if actual:
-            # 2. AUTO-SYNC: Set this specific semester as the ONLY active one
-            cur.execute("UPDATE academicyear SET isactive = FALSE")
-            cur.execute("UPDATE semester SET isactive = FALSE")
-            cur.execute("UPDATE academicyear SET isactive = TRUE WHERE academicyearid = %s", (actual['academicyearid'],))
-            cur.execute("UPDATE semester SET isactive = TRUE WHERE semesterid = %s", (actual['semesterid'],))
-            conn.commit()
-            
-            ay_label = f"A.Y {actual['yearstart']} - {actual['yearend']}"
-            s_type = actual['semestertype']
-            sem_label = "1ST SEMESTER" if s_type == 'A' else "2ND SEMESTER" if s_type == 'B' else "SUMMER"
-            ay_id = actual['academicyearid']
+        date_matched = cur.fetchone()
+
+        # 2. Find what is currently flagged as active
+        cur.execute("""
+            SELECT s.semesterid, s.semestertype, ay.academicyearid, ay.yearstart, ay.yearend
+            FROM   semester s
+            JOIN   academicyear ay ON s.academicyearid = ay.academicyearid
+            WHERE  s.isactive = TRUE
+            LIMIT  1
+        """)
+        currently_active = cur.fetchone()
+
+        if date_matched:
+            target = date_matched
+            # Only write to DB when the active semester has changed (semester transition)
+            if not currently_active or currently_active['semesterid'] != target['semesterid']:
+                if currently_active:
+                    # Archive Published schedules from the outgoing semester
+                    _auto_archive_semester(cur, currently_active['semesterid'])
+                cur.execute("UPDATE academicyear SET isactive = FALSE")
+                cur.execute("UPDATE semester   SET isactive = FALSE")
+                cur.execute("UPDATE academicyear SET isactive = TRUE WHERE academicyearid = %s",
+                            (target['academicyearid'],))
+                cur.execute("UPDATE semester   SET isactive = TRUE WHERE semesterid = %s",
+                            (target['semesterid'],))
+                conn.commit()
+        elif currently_active:
+            # Between semesters: keep showing the last known active period
+            target = currently_active
         else:
-            # Fallback if today doesn't fall in any range
-            cur.execute("""
-                SELECT s.semestertype, ay.yearstart, ay.yearend, ay.academicyearid 
-                FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid 
-                WHERE s.isactive = TRUE LIMIT 1
-            """)
-            res = cur.fetchone()
-            if res:
-                ay_label, ay_id = f"A.Y {res['yearstart']} - {res['yearend']}", res['academicyearid']
-                sem_label = "1ST SEMESTER" if res['semestertype'] == 'A' else "2ND SEMESTER" if res['semestertype'] == 'B' else "SUMMER"
-            else:
-                ay_label, sem_label, ay_id = "NOT SET", "NOT SET", None
-            
+            cur.close(); conn.close()
+            return {
+                'current_ay_label': 'Academic Year Not Detected',
+                'current_sem_label': 'Not Configured',
+                'current_ay_id':    None,
+            }
+
         cur.close(); conn.close()
-        return {'current_ay_label': ay_label, 'current_sem_label': sem_label, 'current_ay_id': ay_id}
-    except:
-        return {'current_ay_label': "ERROR", 'current_sem_label': "ERROR", 'current_ay_id': None}
+        s_type = target['semestertype']
+        return {
+            'current_ay_label': f"A.Y {target['yearstart']} - {target['yearend']}",
+            'current_sem_label': _SEM_LABEL.get(s_type, s_type),
+            'current_ay_id':    target['academicyearid'],
+        }
+    except Exception:
+        return {
+            'current_ay_label': 'Academic Year Not Detected',
+            'current_sem_label': 'Error',
+            'current_ay_id':    None,
+        }
 
 # --- 1. ROOT ROUTE ---
 @app.route('/')
@@ -490,6 +627,7 @@ def academic_my_dashboard():
         FROM schedule_sessions ss
         JOIN schedule_version sv ON ss.versionid = sv.versionid
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN semester sem ON sc.semesterid = sem.semesterid
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
         LEFT JOIN room r ON ss.roomid = r.roomid
         LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
@@ -497,6 +635,7 @@ def academic_my_dashboard():
         LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
         LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
         WHERE sc.employeenumber = %s AND sv.status = 'Published'
+          AND sem.isactive = TRUE
           AND ss.daydesc = %s
         ORDER BY ts_s.timevalue
     """, (emp_num, today_day))
@@ -507,8 +646,10 @@ def academic_my_dashboard():
                COUNT(DISTINCT cs.subjectcode) as total_subjects
         FROM schedule_version sv
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN semester sem ON sc.semesterid = sem.semesterid
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
         WHERE sc.employeenumber = %s AND sv.status = 'Published'
+          AND sem.isactive = TRUE
     """, (emp_num,))
     stats = cur.fetchone()
     total_units    = int(stats['total_units'])    if stats else 0
@@ -2470,6 +2611,17 @@ def schedule():
         for r in (sem_data or [])
     ])
 
+    faculty_list = query_db("""
+        SELECT employeenumber, lastname || ', ' || firstname AS fullname
+        FROM faculty WHERE employeestatus != 'Archive'
+        ORDER BY lastname, firstname
+    """) or []
+    import json as _json2
+    faculty_json = _json2.dumps([
+        {'emp': str(f['employeenumber']), 'name': f['fullname']}
+        for f in faculty_list
+    ])
+
     return render_template('academic/schedule.html',
                            programs=programs,
                            acad_years=acad_years,
@@ -2479,7 +2631,8 @@ def schedule():
                            active_ay=active_ay,
                            current_year=today.year,
                            today=today.isoformat(),
-                           sem_json=sem_json)
+                           sem_json=sem_json,
+                           faculty_json=faculty_json)
 
 @app.route('/api/schedule/list/delete', methods=['POST'])
 def api_schedule_list_delete():
@@ -2536,6 +2689,7 @@ def get_offerings_schedule():
     sem           = request.args.get('semester')
     ay            = request.args.get('ay')
     section_id    = request.args.get('section_id')
+    emp_num       = request.args.get('emp_num')
     version_status = request.args.get('status', 'Published')
     # 'active' = both Published and Draft (excludes Archive)
     if version_status == 'active':
@@ -2570,11 +2724,27 @@ def get_offerings_schedule():
         # ── 1. Normalized schedule tables (always queried) ───────────────
         normalized_rows = []
         if True:
-            q_params = ([status_param] if status_param else []) + [prog, int(yl), sem, ay]
+            # Build WHERE clauses dynamically so instructor-only queries work
+            # (no program required when filtering by emp_num alone)
+            q_params = ([status_param] if status_param else [])
+            prog_clause = ''
+            yl_clause   = ''
+            if prog:
+                prog_clause = 'AND UPPER(pyl.programcode) = UPPER(%s)'
+                q_params = q_params + [prog]
+            _yl_int = int(yl) if str(yl).lstrip('-').isdigit() and int(yl) > 0 else 0
+            if _yl_int:
+                yl_clause = 'AND pyl.yearlevel = %s'
+                q_params = q_params + [_yl_int]
+            q_params = q_params + [sem, ay]
             section_clause = ''
             if section_id:
                 section_clause = 'AND sec.sectionid = %s'
                 q_params = q_params + [int(section_id)]
+            instructor_clause = ''
+            if emp_num:
+                instructor_clause = 'AND sc.employeenumber = %s'
+                q_params = q_params + [emp_num]
             cur.execute(f"""
             SELECT
                 cs.subjectcode,
@@ -2589,6 +2759,9 @@ def get_offerings_schedule():
                 COALESCE(cs.laboratoryhours, 0)                    AS laboratoryhours,
                 COALESCE(cs.creditunits,     0)                    AS creditunits,
                 (COALESCE(cs.lecturehours,0) + COALESCE(cs.laboratoryhours,0)) AS total_hours,
+                pyl.programcode                                     AS programcode,
+                pyl.yearlevel                                       AS yearlevel,
+                sec.sectionname                                     AS sectionname,
                 sv.status,
                 sv.versionid
             FROM schedule_version sv
@@ -2602,13 +2775,14 @@ def get_offerings_schedule():
             LEFT JOIN timeslot ts_s       ON ss.starttimeid            = ts_s.timeid
             LEFT JOIN timeslot ts_e       ON ss.endtimeid              = ts_e.timeid
             WHERE {status_clause}
-              AND UPPER(pyl.programcode) = UPPER(%s)
-              AND pyl.yearlevel = %s
+              {prog_clause}
+              {yl_clause}
               AND sc.semesterid = (
                   SELECT semesterid FROM semester
                   WHERE semestertype = %s AND academicyearid = %s LIMIT 1
               )
               {section_clause}
+              {instructor_clause}
               AND sv.version_number = (
                   SELECT MAX(sv2.version_number)
                   FROM schedule_version sv2
@@ -2617,7 +2791,7 @@ def get_offerings_schedule():
               )
             ORDER BY
                 CASE WHEN sv.status = 'Published' THEN 0 ELSE 1 END,
-                ts_s.timevalue NULLS LAST
+                pyl.programcode, pyl.yearlevel, ts_s.timevalue NULLS LAST
         """, q_params)
             normalized_rows = cur.fetchall()
             print(f"[DEBUG] normalized_rows count={len(normalized_rows)}")
@@ -3696,6 +3870,13 @@ def import_schedule():
         return f'LQ-{r}'  # everything else gets the prefix
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Ensure schedule_version extra columns exist before any INSERT uses them
+    try:
+        _ensure_source_col(cur)
+        _ensure_original_status_col(cur)
+        conn.commit()
+    except Exception:
+        pass
     try:
         cur.execute("""
             SELECT semesterid, semstartdate, semenddate
@@ -3746,8 +3927,24 @@ def import_schedule():
             import re as _re_prog
             prog       = _re_prog.sub(r'\s+\d+$', '', row.get('Program', '').strip()).strip()
             # Clamp yl to 1-5 — prevents smallint overflow when CSV has bad data in YearLevel column
-            _yl_raw = safe_int(row.get('YearLevel') or row.get('Year Level')) or 1
-            yl      = max(1, min(_yl_raw, 5)) if _yl_raw <= 32767 else 1
+            _yl_raw = safe_int(row.get('YearLevel') or row.get('Year Level')) or 0
+            yl      = max(1, min(_yl_raw, 5)) if 0 < _yl_raw <= 32767 else 0
+
+            # Fallback: parse program / year level from Course column when
+            # dedicated columns are absent — e.g. "BSIT 2", "DCPET 3"
+            _course_col = (row.get('Course') or row.get('Section') or row.get('course') or '').strip()
+            if (_course_col and (not prog or not yl)):
+                _mc_csv = _re_prog.match(
+                    r'^([A-Z][A-Z0-9\-]{1,15})\s+([1-5])(?:[^0-9]|$)',
+                    _course_col.upper()
+                )
+                if _mc_csv:
+                    if not prog:
+                        prog = _mc_csv.group(1)
+                    if not yl:
+                        yl = int(_mc_csv.group(2))
+
+            yl = yl or 1  # final fallback
             lec        = min(safe_int(row.get('LectureHours') or row.get('Lecture Hours') or row.get('Lec')), 999)
             lab        = min(safe_int(row.get('LaboratoryHours') or row.get('Laboratory Hours') or row.get('Lab')), 999)
             unit       = min(safe_int(row.get('CreditUnits') or row.get('Credit Units') or row.get('Units')), 999)
@@ -3915,13 +4112,20 @@ def import_schedule():
 
                     # 3. Find or create section
                     if not sec_id and _pyl_id:
-                        cur.execute("SELECT sectionid FROM sections WHERE programyearlevelid=%s AND isactive=TRUE ORDER BY sectionname LIMIT 1", (_pyl_id,))
-                        _sr = cur.fetchone(); sec_id = _sr['sectionid'] if _sr else None
+                        # Pass 0: exact match by course column value (e.g. "BSIT 2", "DCPET 3")
+                        if _course_col:
+                            cur.execute("SELECT sectionid FROM sections WHERE programyearlevelid=%s AND UPPER(sectionname)=UPPER(%s) LIMIT 1", (_pyl_id, _course_col))
+                            _sr = cur.fetchone(); sec_id = _sr['sectionid'] if _sr else None
+                        # Pass 1: any active section under this program_yearlevel
+                        if not sec_id:
+                            cur.execute("SELECT sectionid FROM sections WHERE programyearlevelid=%s AND isactive=TRUE ORDER BY sectionname LIMIT 1", (_pyl_id,))
+                            _sr = cur.fetchone(); sec_id = _sr['sectionid'] if _sr else None
                         if not sec_id:
                             cur.execute("SELECT sectionid FROM sections WHERE programyearlevelid=%s ORDER BY sectionname LIMIT 1", (_pyl_id,))
                             _sr = cur.fetchone(); sec_id = _sr['sectionid'] if _sr else None
                         if not sec_id:
-                            _sec_nm = f"{prog.upper()}-{yl}A"
+                            # Prefer course column value as the section name; fall back to generic
+                            _sec_nm = (_course_col if _course_col else f"{prog.upper()}-{yl}A")[:10]
                             try:
                                 cur.execute("SAVEPOINT sec_create")
                                 cur.execute("""
@@ -4888,6 +5092,13 @@ def sis_import_confirm():
         return f'LQ-{r}'
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Ensure schedule_version extra columns exist before any INSERT uses them
+    try:
+        _ensure_source_col(cur)
+        _ensure_original_status_col(cur)
+        conn.commit()
+    except Exception:
+        pass
     # Ensure all programs have program_yearlevel rows + default sections before we look them up
     try:
         _auto_setup_program_yearlevels(cur)
@@ -4923,14 +5134,16 @@ def sis_import_confirm():
         e_dt       = sem_res['semenddate']
         all_sem_ids = [r['semesterid'] for r in sem_rows]
 
-        # Resolve yearstart of the import AY for entry-year calculation
-        cur.execute("SELECT yearstart FROM academicyear WHERE academicyearid=%s", (ay_id,))
+        # Resolve yearstart + active flag of the import AY
+        cur.execute("SELECT yearstart, isactive FROM academicyear WHERE academicyearid=%s", (ay_id,))
         _ayr2 = cur.fetchone()
-        ay_yearstart = int(_ayr2['yearstart']) if _ayr2 else None
+        ay_yearstart  = int(_ayr2['yearstart']) if _ayr2 else None
+        ay_is_active  = bool(_ayr2 and _ayr2['isactive'])
         from datetime import date as _date2
         _today2 = _date2.today()
-        # Current = today is within [semstartdate, semenddate] (or no end date configured)
-        is_cur = (
+        # Current = AY is active OR today is within [semstartdate, semenddate] (or dates not set)
+        # Importing into an active AY always writes to normalized schedule tables, not historical
+        is_cur = ay_is_active or (
             (s_dt is None or s_dt <= _today2) and
             (e_dt is None or _today2 <= e_dt)
         )
@@ -5116,7 +5329,7 @@ def sis_import_confirm():
                 # Section name comes from the SIS Course column (e.g. "BSIT-2-A").
                 # Only fall back to a generic name if the course field is empty.
                 _course_raw = str(row.get('course', '') or '').strip()
-                _sec_nm = _course_raw if _course_raw else f"{offering_code.upper()}-{yl}A"
+                _sec_nm = (_course_raw if _course_raw else f"{offering_code.upper()}-{yl}A")[:10]
 
                 sec_id = None
                 if _pyl_id:
@@ -5206,14 +5419,15 @@ def sis_import_confirm():
                         def _rs(da, ts, rs):
                             df = DAY_MAP.get(da.upper(), da) if da else None
                             ss2 = es2 = None
+                            _sr_raw = _er_raw = ''
                             if ts and '-' in ts:
                                 pp = re.split(r'\s*-\s*', ts, maxsplit=1)
                                 if len(pp) == 2:
-                                    sr, er = pp[0].strip(), pp[1].strip()
-                                    em = re.search(r'(AM|PM)\s*$', er, re.IGNORECASE)
-                                    sm = re.search(r'(AM|PM)', sr, re.IGNORECASE)
-                                    ss2 = _pts(sr, force_pm=bool(em and em.group(1).upper()=='PM' and not sm))
-                                    es2 = _pts(er)
+                                    _sr_raw, _er_raw = pp[0].strip(), pp[1].strip()
+                                    em = re.search(r'(AM|PM)\s*$', _er_raw, re.IGNORECASE)
+                                    sm = re.search(r'(AM|PM)', _sr_raw, re.IGNORECASE)
+                                    ss2 = _pts(_sr_raw, force_pm=bool(em and em.group(1).upper()=='PM' and not sm))
+                                    es2 = _pts(_er_raw)
                             si2 = ei2 = None
                             if ss2:
                                 cur.execute("SELECT timeid FROM timeslot WHERE timevalue=%s::time", (ss2,))
@@ -5221,6 +5435,7 @@ def sis_import_confirm():
                             if es2:
                                 cur.execute("SELECT timeid FROM timeslot WHERE timevalue=%s::time", (es2,))
                                 _x = cur.fetchone(); ei2 = _x['timeid'] if _x else None
+                            # Recovery 1: if end <= start, try adding 12h to end (unmarked PM end)
                             if si2 and ei2 and ei2 <= si2 and es2:
                                 m2 = re.match(r'(\d{2}):(\d{2}):00', es2)
                                 if m2:
@@ -5230,6 +5445,18 @@ def sis_import_confirm():
                                         cur.execute("SELECT timeid FROM timeslot WHERE timevalue=%s::time", (alt,))
                                         _x = cur.fetchone()
                                         if _x: ei2 = _x['timeid']
+                            # Recovery 2: if still inverted, the force_pm on start was wrong —
+                            # retry start WITHOUT force_pm (e.g. "7:00 - 12:00 PM" → 7:00 AM)
+                            if si2 and ei2 and ei2 <= si2 and _sr_raw:
+                                ss2_retry = _pts(_sr_raw, force_pm=False)
+                                if ss2_retry:
+                                    cur.execute("SELECT timeid FROM timeslot WHERE timevalue=%s::time", (ss2_retry,))
+                                    _x = cur.fetchone()
+                                    if _x and _x['timeid'] < ei2:
+                                        si2 = _x['timeid']
+                            # Final guard: skip session if still inverted (never crash on constraint)
+                            if si2 and ei2 and ei2 <= si2:
+                                si2 = ei2 = None
                             ri2 = None
                             if rs and rs.upper() not in ('TBA', ''):
                                 nr2 = _nr(rs)
@@ -5588,13 +5815,29 @@ def _parse_schedule_csv(file_bytes):
                       'subject_code', 'Code', 'code')
         subj_nm = _g('SubjectName', 'Subject Name', 'subjectname',
                      'subject_name', 'Description', 'description')
-        prog_raw= _g('Program', 'program', 'Programme', 'programme',
-                     'ProgramCode', 'programcode')
-        prog    = re.sub(r'\s+\d+$', '', prog_raw).strip()
-        yl_raw  = _g('YearLevel', 'Year Level', 'yearlevel', 'year_level',
-                     'YrLevel', 'yrlevel')
-        _yl     = _si(yl_raw) or 1
-        yl      = max(1, min(_yl, 5)) if _yl <= 32767 else 1
+        prog_raw = _g('Program', 'program', 'Programme', 'programme',
+                      'ProgramCode', 'programcode')
+        prog     = re.sub(r'\s+\d+$', '', prog_raw).strip()
+        yl_raw   = _g('YearLevel', 'Year Level', 'yearlevel', 'year_level',
+                      'YrLevel', 'yrlevel')
+        _yl      = _si(yl_raw)   # 0 = not provided in dedicated column
+        course   = _g('Section', 'section', 'Course', 'course')
+
+        # Fallback: extract program / year level from Course column when their
+        # dedicated columns are absent — e.g. "BSIT 2", "DCPET 3", "DIT 1"
+        if (not prog or not _yl) and course:
+            import re as _rcc
+            _mc = _rcc.match(
+                r'^([A-Z][A-Z0-9\-]{1,15})\s+([1-5])(?:[^0-9]|$)',
+                course.strip().upper()
+            )
+            if _mc:
+                if not prog:
+                    prog = _mc.group(1)
+                if not _yl:
+                    _yl = int(_mc.group(2))
+
+        yl = max(1, min(_yl or 1, 5)) if (_yl or 1) <= 32767 else 1
 
         if not inst and not s_code:
             continue
@@ -5613,7 +5856,7 @@ def _parse_schedule_csv(file_bytes):
             'days':         _g('Day/s', 'Days', 'day/s', 'days', 'Day', 'day'),
             'time':         _g('Time', 'time'),
             'room':         _g('Room', 'room'),
-            'course':       _g('Section', 'section', 'Course', 'course'),
+            'course':       course,
             'program':      prog,
             'year_level':   yl,
         })
@@ -6009,18 +6252,35 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
             if status != 'blocked': status = 'warning'
             flags.append('Instructor not matched → will be saved as TBA')
 
-        # Section — blocks in legacy mode, warning-only in relaxed/configured mode
+        # Section — look up by exact course name first, then any active section;
+        # always a warning (auto-create on confirm), never a hard block.
+        course_name = (item.get('course') or '').strip()
         sec_id, sec_name = None, ''
         if prog and yl:
-            cur.execute("""
-                SELECT sec.sectionid, sec.sectionname FROM sections sec
-                JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-                WHERE UPPER(pyl.programcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
-                ORDER BY sec.sectionname LIMIT 1
-            """, (prog, yl))
-            r = cur.fetchone()
-            sec_id   = r['sectionid']   if r else None
-            sec_name = r['sectionname'] if r else ''
+            # Pass 1: exact match on the course column value (section name as written in the file)
+            if course_name:
+                cur.execute("""
+                    SELECT sec.sectionid, sec.sectionname FROM sections sec
+                    JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                    WHERE UPPER(pyl.programcode)=UPPER(%s) AND pyl.yearlevel=%s
+                      AND UPPER(sec.sectionname)=UPPER(%s) AND sec.isactive=TRUE
+                    LIMIT 1
+                """, (prog, yl, course_name))
+                r = cur.fetchone()
+                sec_id   = r['sectionid']   if r else None
+                sec_name = r['sectionname'] if r else ''
+            # Pass 2: any active section for that program + year
+            if not sec_id:
+                cur.execute("""
+                    SELECT sec.sectionid, sec.sectionname FROM sections sec
+                    JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                    WHERE UPPER(pyl.programcode)=UPPER(%s) AND pyl.yearlevel=%s AND sec.isactive=TRUE
+                    ORDER BY sec.sectionname LIMIT 1
+                """, (prog, yl))
+                r = cur.fetchone()
+                sec_id   = r['sectionid']   if r else None
+                sec_name = r['sectionname'] if r else ''
+            # Pass 3: include inactive sections as last resort
             if not sec_id:
                 cur.execute("""
                     SELECT sec.sectionid, sec.sectionname FROM sections sec
@@ -6032,12 +6292,10 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
                 sec_id   = r['sectionid']   if r else None
                 sec_name = r['sectionname'] if r else ''
         if not sec_id:
-            if relaxed:
-                if status != 'blocked': status = 'warning'
-                flags.append(f'No section for "{prog or "—"}" Yr {yl} → will be auto-created on import')
-            else:
-                status = 'blocked'
-                flags.append(f'No section for "{prog or "—"}" Yr {yl} → will be auto-created on import')
+            # Section will be auto-created during confirm — always a warning, never blocked
+            if status != 'blocked': status = 'warning'
+            _sec_label = course_name or f'{prog} {yl}' if prog else '—'
+            flags.append(f'Section "{_sec_label}" not found → will be auto-created on import')
 
         # Room (warning only)
         room_display = room_raw or 'TBA'
@@ -6252,6 +6510,7 @@ def schedule_unified_validate():
         'default_prog': data.get('default_prog', ''),
         'default_yls':  data.get('default_yls', []),
         'default_yl':   data.get('default_yl', 1),   # legacy fallback
+        'ay_id':        data.get('ay_id', ''),        # for program_yearlevel lookup
     }
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -6345,13 +6604,14 @@ def manual_schedule_editor():
         scheduler_mode = 'official'
     is_acad_head = session.get('role') == 'Academic Head'
 
-    init_mode      = request.args.get('mode', 'subject')
-    init_prog      = request.args.get('prog', '')
-    init_yl        = request.args.get('yl', '')
-    init_ay        = request.args.get('ay', '')
-    init_sem       = request.args.get('sem', '')
-    init_sect      = request.args.get('sect', '')
-    init_sect_name = request.args.get('sect_name', '')
+    init_mode         = request.args.get('mode', 'subject')
+    init_prog         = request.args.get('prog', '')
+    init_yl           = request.args.get('yl', '')
+    init_ay           = request.args.get('ay', '')
+    init_sem          = request.args.get('sem', '')
+    init_sect         = request.args.get('sect', '')
+    init_sect_name    = request.args.get('sect_name', '')
+    init_from_generator = request.args.get('from_generator', '')
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -6479,6 +6739,7 @@ def manual_schedule_editor():
                                init_mode=init_mode, init_prog=init_prog,
                                init_yl=init_yl, init_ay=init_ay, init_sem=init_sem,
                                init_sect=init_sect, init_sect_name=init_sect_name,
+                               init_from_generator=init_from_generator,
                                lab_constraint_enabled=lab_constraint_enabled,
                                weekend_enabled=weekend_enabled,
                                weekend_day=weekend_day,
@@ -7301,7 +7562,8 @@ def api_get_faculty_schedule():
                    f.lastname || ', ' || f.firstname AS instructor,
                    sc.employeenumber,
                    TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
-                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
+                   TO_CHAR(sem.semstartdate, 'MM/DD/YYYY') AS effectivity
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
@@ -7312,12 +7574,80 @@ def api_get_faculty_schedule():
             LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+            LEFT JOIN semester sem ON sc.semesterid = sem.semesterid
             WHERE {' AND '.join(filters)}
             ORDER BY ts_s.timevalue, ss.daydesc
         """, params or None)
         return jsonify([dict(r) for r in (rows or [])])
     except Exception as e:
         print(f"[api_get_faculty_schedule] Error: {e}")
+        return jsonify([]), 500
+
+
+@app.route('/api/faculty/my_local_schedule')
+def api_faculty_my_local_schedule():
+    """Local arrangement sessions assigned to the logged-in user (Faculty or Academic Head)."""
+    if 'loggedin' not in session or session.get('role') not in ('Faculty', 'Academic Head'):
+        return jsonify([])
+
+    emp_num = session.get('employeenumber')
+    if not emp_num:
+        acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s",
+                       [session.get('username')], one=True)
+        emp_num = acc['employeenumber'] if acc else None
+    if not emp_num:
+        return jsonify([])
+
+    ay_id    = request.args.get('ay_id')
+    semester = request.args.get('semester')
+
+    filters = [
+        "la.is_active = TRUE",
+        "la.status = 'Published'",
+        "las.faculty_employeenumber = %s"
+    ]
+    params = [emp_num]
+
+    if ay_id and semester:
+        filters.append("""la.semesterid = (
+            SELECT semesterid FROM semester
+            WHERE academicyearid = %s AND semestertype = %s LIMIT 1
+        )""")
+        params += [ay_id, semester]
+
+    try:
+        _ensure_local_tables()
+        rows = query_db(f"""
+            SELECT las.subjectcode,
+                   COALESCE(cs.subjectname, las.subjectcode) AS subjectname,
+                   COALESCE(cs.creditunits, 0) AS creditunits,
+                   las.daydesc,
+                   r.roomname,
+                   las.starttimeid, las.endtimeid,
+                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
+                   la.programcode,
+                   la.yearlevel,
+                   'Published' AS status,
+                   NULL AS effectivity,
+                   NULL AS sectionname,
+                   NULL AS instructor
+            FROM public.local_arrangement_sessions las
+            JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
+            LEFT JOIN LATERAL (
+                SELECT subjectname, creditunits FROM curriculumsubject
+                WHERE UPPER(subjectcode) = UPPER(las.subjectcode)
+                LIMIT 1
+            ) cs ON TRUE
+            LEFT JOIN room r ON las.roomid = r.roomid
+            LEFT JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+            WHERE {' AND '.join(filters)}
+            ORDER BY ts_s.timevalue, las.daydesc
+        """, params)
+        return jsonify([dict(r) for r in (rows or [])])
+    except Exception as e:
+        print(f"[api_faculty_my_local_schedule] Error: {e}")
         return jsonify([]), 500
 
 
@@ -11868,7 +12198,37 @@ def admin_class_schedule_sis():
 @app.route('/admin/schedule/room-schedule')
 def admin_room_schedule():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    return render_template('admin/room_schedule_admin.html')
+
+    buildings = query_db(
+        "SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname"
+    ) or []
+
+    rooms = query_db("""
+        SELECT r.roomid, r.roomname, r.roomtype, r.roomcapacity,
+               b.buildingid, b.buildingname
+        FROM room r JOIN building b ON r.buildingid = b.buildingid
+        WHERE b.isactive = TRUE
+        ORDER BY b.buildingname, r.roomname
+    """) or []
+
+    def _room_floor(name):
+        n = (name or '').replace(' ', '')
+        if 'LQ1' in n: return '1'
+        if 'LQ2' in n: return '2'
+        if 'LQ3' in n: return '3'
+        return 'other'
+
+    import json as _json
+    return render_template('admin/room_schedule_admin.html',
+        buildings_json=_json.dumps([{'id': b['buildingid'], 'name': b['buildingname']} for b in buildings]),
+        rooms_json=_json.dumps([{
+            'id': r['roomid'], 'name': r['roomname'],
+            'type': r['roomtype'] or 'Lecture',
+            'bid': r['buildingid'], 'bname': r['buildingname'],
+            'capacity': r['roomcapacity'] or 0,
+            'floor': _room_floor(r['roomname'])
+        } for r in rooms])
+    )
 
 def format_time(t):
     if not t: return "-"
@@ -14732,6 +15092,7 @@ def faculty_dashboard():
         total_subjects = 0
 
         if emp_num:
+            # Scope to the active semester so only the current period's schedule shows
             cursor.execute("""
                 SELECT cs.subjectcode, cs.subjectname, r.roomname, ss.daydesc,
                        TO_CHAR(ts_s.timevalue, 'HH12:MI AM') as start_time,
@@ -14740,6 +15101,7 @@ def faculty_dashboard():
                 FROM schedule_sessions ss
                 JOIN schedule_version sv ON ss.versionid = sv.versionid
                 JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                JOIN semester sem ON sc.semesterid = sem.semesterid
                 JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
                 LEFT JOIN room r ON ss.roomid = r.roomid
                 LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
@@ -14747,6 +15109,7 @@ def faculty_dashboard():
                 LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
                 LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
                 WHERE sc.employeenumber = %s AND sv.status = 'Published'
+                  AND sem.isactive = TRUE
                   AND ss.daydesc = %s
                 ORDER BY ts_s.timevalue
             """, (emp_num, today_day))
@@ -14757,8 +15120,10 @@ def faculty_dashboard():
                        COUNT(DISTINCT cs.subjectcode) as total_subjects
                 FROM schedule_version sv
                 JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+                JOIN semester sem ON sc.semesterid = sem.semesterid
                 JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
                 WHERE sc.employeenumber = %s AND sv.status = 'Published'
+                  AND sem.isactive = TRUE
             """, (emp_num,))
             stats = cursor.fetchone()
             if stats:
@@ -14910,11 +15275,27 @@ def faculty_schedule():
             'end': str(row['semenddate']) if row.get('semenddate') else None
         })
 
+    active = query_db("""
+        SELECT ay.academicyearid, ay.yearstart, ay.yearend, s.semestertype
+        FROM semester s
+        JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE s.isactive = TRUE LIMIT 1
+    """, one=True)
+    active_ay_id  = str(active['academicyearid']) if active else ''
+    active_sem    = active['semestertype']         if active else ''
+    active_ay_label = (f"A.Y {active['yearstart']}-{active['yearend']}") if active else ''
+    _sem_labels   = {'A': '1ST SEMESTER', 'B': '2ND SEMESTER', 'C': 'SUMMER'}
+    active_sem_label = _sem_labels.get(active_sem, active_sem)
+
     import json as _json
     return render_template('faculty/schedule_faculty.html',
         programs_json=_json.dumps([{'code': p['programcode'], 'name': p['programname']} for p in programs]),
         acad_years_json=_json.dumps(list(ay_map.values())),
-        faculty_json=_json.dumps([{'emp': str(f['employeenumber']), 'name': f['fullname']} for f in faculty_list])
+        faculty_json=_json.dumps([{'emp': str(f['employeenumber']), 'name': f['fullname']} for f in faculty_list]),
+        active_ay_id=active_ay_id,
+        active_sem=active_sem,
+        active_ay_label=active_ay_label,
+        active_sem_label=active_sem_label,
     )
 
 # --- Route for Room Schedule Page ---
@@ -15210,9 +15591,11 @@ def api_faculty_my_schedule_subjects():
                 sc.scheduleid
             FROM schedule sc
             JOIN schedule_version sv ON sc.scheduleid = sv.scheduleid AND sv.status = 'Published'
+            JOIN semester sem         ON sc.semesterid = sem.semesterid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN sections sec ON sc.sectionid = sec.sectionid
             WHERE sc.employeenumber = %s
+              AND sem.isactive = TRUE
             ORDER BY cs.subjectcode, sec.sectionname
         """, [str(emp_num)]) or []
         return jsonify({'success': True, 'subjects': [dict(r) for r in rows]})
@@ -15724,12 +16107,12 @@ def api_faculty_schedule_full():
         params += [ay_id, semester]
 
     if program:
-        filters.append("co.programcode = %s")
+        filters.append("UPPER(pyl.programcode) = UPPER(%s)")
         params.append(program)
 
     if year_level:
         try:
-            filters.append("sec.yearlevel = %s")
+            filters.append("pyl.yearlevel = %s")
             params.append(int(year_level))
         except ValueError:
             pass
@@ -15744,6 +16127,10 @@ def api_faculty_schedule_full():
     if emp_num:
         filters.append("sc.employeenumber = %s")
         params.append(emp_num)
+
+    # Require at least one meaningful filter to prevent dumping all programs
+    if not any([program, year_level, section_id, emp_num]):
+        return jsonify({'success': False, 'error': 'Select at least one filter'}), 400
 
     try:
         rows = query_db(f"""
@@ -15760,10 +16147,11 @@ def api_faculty_schedule_full():
                 r.roomname,
                 f.lastname || ', ' || f.firstname AS instructor,
                 sc.employeenumber,
-                TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
-                TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
+                TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time,
+                TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
                 TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
-                TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range
+                TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
+                (COALESCE(cs.lecturehours,0) + COALESCE(cs.laboratoryhours,0)) AS total_hours
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
@@ -15946,6 +16334,24 @@ def api_faculty_check_request_conflicts():
             acc = query_db("SELECT employeenumber FROM accounts WHERE username=%s", [session.get('username')], one=True)
             emp_num = acc['employeenumber'] if acc else None
 
+        # Derive semesterid from the schedule being changed, so conflict checks only
+        # compare sessions within the same Academic Year and Semester.
+        sem_id_for_check = None
+        if schedule_id and schedule_id.isdigit():
+            _sr = query_db("SELECT semesterid FROM schedule WHERE scheduleid = %s LIMIT 1",
+                           [int(schedule_id)], one=True)
+            if _sr:
+                sem_id_for_check = _sr['semesterid']
+        if sem_id_for_check is None:
+            # Fallback: use the currently-active semester
+            _as = query_db("""
+                SELECT s.semesterid FROM semester s WHERE s.isactive = TRUE LIMIT 1
+            """, one=True)
+            if _as:
+                sem_id_for_check = _as['semesterid']
+
+        _sem_filter = "AND sc.semesterid = %s" if sem_id_for_check else ""
+
         faculty_conflict = False
         section_conflict = False
         room_conflict    = False
@@ -15954,7 +16360,10 @@ def api_faculty_check_request_conflicts():
         room_detail      = ''
 
         if emp_num:
-            _fac_excl   = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
+            _fac_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
+            _fac_params = [str(emp_num), day, end_time, start_time]
+            if sem_id_for_check:
+                _fac_params.append(sem_id_for_check)
             rows = query_db(f"""
                 SELECT cs.subjectcode,
                        TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
@@ -15970,17 +16379,23 @@ def api_faculty_check_request_conflicts():
                   AND UPPER(ss.daydesc) = UPPER(%s)
                   AND ts_s.timevalue < %s::time
                   AND ts_e.timevalue > %s::time
+                  {_sem_filter}
                   {_fac_excl}
                 LIMIT 1
-            """, [str(emp_num), day, end_time, start_time]) or []
+            """, _fac_params) or []
             if rows:
                 faculty_conflict = True
                 r = rows[0]
                 faculty_detail = f"You already have {r['subjectcode']} ({r['start_t']}–{r['end_t']}) on {day}."
-            # Also check Local Arrangement sessions for this faculty
+            # Also check Local Arrangement sessions for this faculty (scoped by semester)
             if not faculty_conflict:
                 try:
-                    la_rows = query_db("""
+                    _la_fac_params = [str(emp_num), day, end_time, start_time]
+                    _la_sem_filter = ""
+                    if sem_id_for_check:
+                        _la_sem_filter = "AND la.semesterid = %s"
+                        _la_fac_params.append(sem_id_for_check)
+                    la_rows = query_db(f"""
                         SELECT las.subjectcode,
                                TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
                                TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
@@ -15993,8 +16408,9 @@ def api_faculty_check_request_conflicts():
                           AND UPPER(las.daydesc) = UPPER(%s)
                           AND ts_s.timevalue < %s::time
                           AND ts_e.timevalue > %s::time
+                          {_la_sem_filter}
                         LIMIT 1
-                    """, [str(emp_num), day, end_time, start_time]) or []
+                    """, _la_fac_params) or []
                     if la_rows:
                         faculty_conflict = True
                         r = la_rows[0]
@@ -16004,6 +16420,9 @@ def api_faculty_check_request_conflicts():
 
         if section_id:
             _sect_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
+            _sect_params = [int(section_id), day, end_time, start_time]
+            if sem_id_for_check:
+                _sect_params.append(sem_id_for_check)
             rows2 = query_db(f"""
                 SELECT cs.subjectcode,
                        TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
@@ -16019,9 +16438,10 @@ def api_faculty_check_request_conflicts():
                   AND UPPER(ss.daydesc) = UPPER(%s)
                   AND ts_s.timevalue < %s::time
                   AND ts_e.timevalue > %s::time
+                  {_sem_filter}
                   {_sect_excl}
                 LIMIT 1
-            """, [int(section_id), day, end_time, start_time]) or []
+            """, _sect_params) or []
             if rows2:
                 section_conflict = True
                 r2 = rows2[0]
@@ -16030,6 +16450,9 @@ def api_faculty_check_request_conflicts():
         if room_id:
             try:
                 _room_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
+                _room_params = [int(room_id), day, end_time, start_time]
+                if sem_id_for_check:
+                    _room_params.append(sem_id_for_check)
                 rows3 = query_db(f"""
                     SELECT cs.subjectcode,
                            TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
@@ -16045,16 +16468,22 @@ def api_faculty_check_request_conflicts():
                       AND UPPER(ss.daydesc) = UPPER(%s)
                       AND ts_s.timevalue < %s::time
                       AND ts_e.timevalue > %s::time
+                      {_sem_filter}
                       {_room_excl}
                     LIMIT 1
-                """, [int(room_id), day, end_time, start_time]) or []
+                """, _room_params) or []
                 if rows3:
                     room_conflict = True
                     r3 = rows3[0]
                     room_detail = f"The selected room is already occupied by {r3['subjectcode']} ({r3['start_t']}–{r3['end_t']}) on {day}."
-                # Also check Local Arrangement room occupancy
+                # Also check Local Arrangement room occupancy (same semester)
                 if not room_conflict:
-                    la_room = query_db("""
+                    _la_room_params = [int(room_id), day, end_time, start_time]
+                    _la_room_sem = ""
+                    if sem_id_for_check:
+                        _la_room_sem = "AND la.semesterid = %s"
+                        _la_room_params.append(sem_id_for_check)
+                    la_room = query_db(f"""
                         SELECT las.subjectcode,
                                TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t,
                                TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
@@ -16067,8 +16496,9 @@ def api_faculty_check_request_conflicts():
                           AND UPPER(las.daydesc) = UPPER(%s)
                           AND ts_s.timevalue < %s::time
                           AND ts_e.timevalue > %s::time
+                          {_la_room_sem}
                         LIMIT 1
-                    """, [int(room_id), day, end_time, start_time]) or []
+                    """, _la_room_params) or []
                     if la_room:
                         room_conflict = True
                         r_la = la_room[0]
@@ -16736,7 +17166,15 @@ def schedule_generation_view():
     ) or [])]
     curriculums = [c['curriculumyear'] for c in (query_db("SELECT DISTINCT curriculumyear FROM curriculum ORDER BY curriculumyear DESC;") or [])]
     terms = [{'id': 'A', 'name': '1ST SEMESTER'}, {'id': 'B', 'name': '2ND SEMESTER'}, {'id': 'C', 'name': 'SUMMER'}]
-    return render_template('academic/scheduleGeneration.html', programs=programs, acad_years=acad_years, curriculums=curriculums, terms=terms)
+    active_info = query_db("""
+        SELECT ay.academicyearid, s.semestertype
+        FROM semester s
+        JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+        WHERE s.isactive = TRUE LIMIT 1
+    """, one=True)
+    active_ay_id = active_info['academicyearid'] if active_info else ''
+    active_sem   = active_info['semestertype']   if active_info else ''
+    return render_template('academic/scheduleGeneration.html', programs=programs, acad_years=acad_years, curriculums=curriculums, terms=terms, active_ay_id=active_ay_id, active_sem=active_sem)
 
 def _compute_schedule_accuracy(schedule_data, program, year_level, term):
     """
@@ -17229,7 +17667,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
             LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
             WHERE  sc.semesterid           = %s
-              AND  sv.status               = 'Published'
+              AND  sv.status               IN ('Published', 'Draft')
               AND  NOT (UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s)
               AND  ss.roomid               IS NOT NULL
               AND  ss.daydesc              IS NOT NULL
@@ -17370,6 +17808,123 @@ def api_generate_schedule():
         'cross_violations':     cross_violations,
         'accuracy_data':        acc_data,
     })
+
+
+@app.route('/api/schedule/check-existing', methods=['POST'])
+def api_check_existing_schedule():
+    """Return whether a Draft or Published schedule already exists for the given section context."""
+    try:
+        data       = request.json or {}
+        program    = (data.get('program') or '').strip().upper()
+        year_level = int(data.get('yearLevel', 1))
+        term       = (data.get('term') or '').strip().upper()
+        acad_year  = data.get('acadYear', '')
+        section_id = data.get('section', '')
+
+        if not program or not term or not acad_year or not section_id:
+            return jsonify({'exists': False}), 200
+
+        try:
+            section_id = int(section_id)
+        except (ValueError, TypeError):
+            return jsonify({'exists': False}), 200
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            sem_id = _get_semester_id(cur, acad_year, term)
+        except Exception:
+            cur.close(); conn.close()
+            return jsonify({'exists': False}), 200
+
+        cur.execute("""
+            SELECT sv.status, COUNT(DISTINCT s.scheduleid) AS schedule_count
+            FROM   schedule_version sv
+            JOIN   schedule s              ON sv.scheduleid           = s.scheduleid
+            JOIN   curriculumsubject cs    ON s.curriculumsubjectid   = cs.curriculumsubjectid
+            JOIN   curriculum c            ON cs.curriculumid         = c.curriculumid
+            WHERE  UPPER(c.programcode) = UPPER(%s)
+              AND  cs.yearlevel            = %s
+              AND  s.semesterid            = %s
+              AND  s.sectionid             = %s
+              AND  sv.status               IN ('Draft', 'Published')
+              AND  sv.source               IS DISTINCT FROM 'local'
+            GROUP BY sv.status
+            ORDER BY CASE sv.status WHEN 'Published' THEN 1 WHEN 'Draft' THEN 2 ELSE 3 END
+            LIMIT 1
+        """, (program, year_level, sem_id, section_id))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+
+        if row and int(row['schedule_count']) > 0:
+            return jsonify({
+                'exists':        True,
+                'status':        row['status'],
+                'subject_count': int(row['schedule_count']),
+            }), 200
+        return jsonify({'exists': False}), 200
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'exists': False, 'error': str(e)}), 200
+
+
+@app.route('/api/schedule/archive-draft-for-editor', methods=['POST'])
+def api_archive_draft_for_editor():
+    """Archive the active Draft for the given section (Override path when going to Manual Editor)."""
+    conn = None
+    try:
+        data       = request.json or {}
+        program    = (data.get('program') or '').strip().upper()
+        year_level = int(data.get('yearLevel', 1))
+        term       = (data.get('term') or '').strip().upper()
+        acad_year  = data.get('acadYear', '')
+        section_id = data.get('section', '')
+
+        if not program or not term or not acad_year:
+            return jsonify({'success': True, 'archived': 0}), 200
+
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            sem_id = _get_semester_id(cur, acad_year, term)
+        except Exception:
+            cur.close(); conn.close()
+            return jsonify({'success': True, 'archived': 0}), 200
+
+        params = [program, year_level, sem_id]
+        section_clause = ''
+        if section_id:
+            try:
+                params.append(int(section_id))
+                section_clause = 'AND s.sectionid = %s'
+            except (ValueError, TypeError):
+                pass
+
+        # Archive both Draft AND Published — Override replaces the entire schedule,
+        # so old Published rows must be retired or they appear alongside the new Draft.
+        cur.execute(f"""
+            UPDATE schedule_version sv
+            SET    status = 'Archive'
+            FROM   schedule s, curriculumsubject cs, curriculum c
+            WHERE  sv.scheduleid           = s.scheduleid
+              AND  s.curriculumsubjectid   = cs.curriculumsubjectid
+              AND  cs.curriculumid         = c.curriculumid
+              AND  UPPER(c.programcode)    = UPPER(%s)
+              AND  cs.yearlevel            = %s
+              AND  s.semesterid            = %s
+              {section_clause}
+              AND  sv.status               IN ('Draft', 'Published')
+              AND  sv.source               IS DISTINCT FROM 'local'
+        """, params)
+        archived = cur.rowcount
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({'success': True, 'archived': archived}), 200
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/schedule/accuracy', methods=['POST'])

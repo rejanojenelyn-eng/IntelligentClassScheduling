@@ -796,7 +796,6 @@ document.addEventListener('DOMContentLoaded', () => {
         toast.classList.remove('hidden');
         setTimeout(() => toast.classList.add('hidden'), 4000);
 
-        _saveStateToStorage();
         if (data && data.accuracy_data && data.accuracy_data.success) {
             _renderAccuracyResult(data.accuracy_data);
         } else {
@@ -1165,33 +1164,105 @@ document.addEventListener('DOMContentLoaded', () => {
         const ctx = getContext();
 
         btnManualEditor.disabled = true;
-        btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
 
-        const _saveTimeout = new Promise(resolve => setTimeout(() => resolve({ _timedOut: true }), 10000));
         try {
-            const _saveFetch = fetch('/api/schedule/save-draft', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    batch_id:      currentBatchId,
-                    schedule_data: currentScheduleData,
-                    context:       ctx,
-                }),
-            }).then(r => r.json());
-            const result = await Promise.race([_saveFetch, _saveTimeout]);
-            if (result && result._timedOut) {
-                // Save is taking too long — navigate anyway; draft can be saved later
-            } else if (result && !result.success) {
-                await showInfo('Warning', 'Could not auto-save draft. The editor will still open.', 'error');
-            }
-        } catch (e) {
-            // proceed anyway
-        }
+            // ── Step 1: check for an existing Draft / Published schedule for this section ──
+            let existingCheck = { exists: false };
+            try {
+                const _cr = await fetch('/api/schedule/check-existing', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(ctx),
+                });
+                existingCheck = await _cr.json();
+            } catch (_ce) { /* network error — treat as no existing */ }
 
-        const sectName = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
-        const url = MANUAL_EDITOR_URL
-            + `?mode=program&prog=${encodeURIComponent(ctx.program)}&yl=${encodeURIComponent(ctx.yearLevel)}&ay=${encodeURIComponent(ctx.acadYear)}&sem=${encodeURIComponent(ctx.term)}&sect=${encodeURIComponent(ctx.section)}&sect_name=${encodeURIComponent(sectName)}`;
-        window.location.href = url;
+            if (existingCheck.exists) {
+                const _statusLabel = existingCheck.status || 'existing';
+                const _countStr    = existingCheck.subject_count
+                    ? ` with <strong>${existingCheck.subject_count}</strong> subject(s)`
+                    : '';
+
+                const _confirmBtn = document.getElementById('infoModalConfirmBtn');
+                const _prevLabel  = _confirmBtn.textContent;
+                _confirmBtn.textContent = 'Override';
+
+                const _doOverride = await showInfo(
+                    'Existing Schedule Detected',
+                    `This section already has a <strong>${_statusLabel}</strong> schedule${_countStr}.<br><br>`
+                    + '<strong>Cancel</strong> &mdash; stay on Generate Schedule and keep the existing schedule.<br>'
+                    + '<strong>Override</strong> &mdash; archive the existing schedule and open Manual Editor with the generated schedule.',
+                    'confirm'
+                );
+                _confirmBtn.textContent = _prevLabel;
+
+                if (!_doOverride) {
+                    btnManualEditor.disabled = false;
+                    btnManualEditor.innerHTML = '<i class="fas fa-edit"></i> Go to Manual Editor';
+                    return;
+                }
+
+                // Archive the existing Draft for this section before navigating
+                try {
+                    await fetch('/api/schedule/archive-draft-for-editor', {
+                        method:  'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body:    JSON.stringify(ctx),
+                    });
+                } catch (_ae) { /* archive failure is non-blocking */ }
+            }
+
+            // ── Step 2: save generator sessions as Draft to DB ──
+            // This gives Manual Editor full editing capabilities (delete, drag-and-drop, etc.).
+            // If the save fails for any reason, fall back to sessionStorage so the sessions
+            // are still visible via the generator overlay approach.
+            btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving Draft...';
+            let _savedAsDraft = false;
+            try {
+                const _sr = await fetch('/api/schedule/save-draft', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        batch_id:      currentBatchId,
+                        schedule_data: currentScheduleData,
+                        context:       ctx,
+                    }),
+                });
+                const _sd = await _sr.json();
+                _savedAsDraft = !!_sd.success;
+            } catch (_se) { _savedAsDraft = false; }
+
+            if (_savedAsDraft) {
+                // Draft saved — clear stale sessionStorage so Manual Editor loads from DB,
+                // giving the user a fully editable Draft identical to one saved manually.
+                try { sessionStorage.removeItem('_sched_gen_transfer'); } catch (_se) {}
+            } else {
+                // Fallback: pass via sessionStorage so Manual Editor can still show sessions.
+                try {
+                    sessionStorage.setItem('_sched_gen_transfer', JSON.stringify({
+                        schedule_data: currentScheduleData,
+                        context:       ctx,
+                    }));
+                } catch (_se) { /* sessionStorage unavailable — proceed anyway */ }
+            }
+
+            btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opening...';
+            const sectName = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
+            const url = MANUAL_EDITOR_URL
+                + `?mode=program`
+                + `&prog=${encodeURIComponent(ctx.program)}`
+                + `&yl=${encodeURIComponent(ctx.yearLevel)}`
+                + `&ay=${encodeURIComponent(ctx.acadYear)}`
+                + `&sem=${encodeURIComponent(ctx.term)}`
+                + `&sect=${encodeURIComponent(ctx.section)}`
+                + `&sect_name=${encodeURIComponent(sectName)}`
+                + `&from_generator=1`;
+            window.location.href = url;
+        } catch (e) {
+            btnManualEditor.disabled = false;
+            btnManualEditor.innerHTML = '<i class="fas fa-edit"></i> Go to Manual Editor';
+        }
     });
 
     // Shared helper: call /api/schedule/approve and handle all response cases.
@@ -1429,6 +1500,6 @@ document.addEventListener('DOMContentLoaded', () => {
         checkFormValidity();
     });
 
-    // Restore the last generated schedule if the user came back from Manual Editor
-    _restoreStateFromStorage();
+    // Always start with a clean slate — clear any schedule left from a previous session.
+    try { localStorage.removeItem(_LS_KEY); } catch(e) {}
 });

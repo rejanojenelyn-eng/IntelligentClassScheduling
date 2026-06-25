@@ -1,70 +1,68 @@
-/* schedule.faculty.js — Class Schedule (SIS) for Faculty view */
+/* schedule.faculty.js — Class Schedule (SIS) for Faculty view
+   FCS_ACTIVE_AY and FCS_ACTIVE_SEM are defined inline in the HTML template. */
 
-/* ── Config ── */
-const FCS_GRID_START = 7 * 60 + 30;   // 7:30 AM in minutes
-const FCS_GRID_END   = 18 * 60 + 30;   // Extended to 6:30 PM for mockup scope
-const FCS_SLOT_H     = 60;             // px per hour (= 1px per minute)
-const FCS_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-
-// Mockup Colors (Blue, Yellow, Red, Green etc.)
-const FCS_COLORS = [
-    '#5B8DF2', // Soft Blue
-    '#F2D05B', // Soft Yellow
-    '#F24C4C', // Soft Red
-    '#4CBF8A', // Soft Green
-    '#A661D9', // Soft Purple
-    '#F28F5B', // Soft Orange
-];
-const FCS_SEM_LABELS = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' };
-const DAY_MAP = {
-    MONDAY:'Monday',TUESDAY:'Tuesday',WEDNESDAY:'Wednesday',THURSDAY:'Thursday',
-    FRIDAY:'Friday',SATURDAY:'Saturday',SUNDAY:'Sunday',
-    MON:'Monday',TUE:'Tuesday',WED:'Wednesday',THU:'Thursday',
-    FRI:'Friday',SAT:'Saturday',SUN:'Sunday'
+/* ── Day sort order ── */
+const _FCS_DAY_SORT = {
+    'MON':0,'TUE':1,'WED':2,'THU':3,'FRI':4,'SAT':5,'SUN':6,
+    'Monday':0,'Tuesday':1,'Wednesday':2,'Thursday':3,'Friday':4,'Saturday':5,'Sunday':6
 };
+function _sortDays(arr) {
+    return [...arr].sort((a, b) => (_FCS_DAY_SORT[a.trim()] ?? 99) - (_FCS_DAY_SORT[b.trim()] ?? 99));
+}
+
+/* ── Color palette ── */
+const fcsColorPalette = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
+function fcsSubjectColor(code) {
+    let h = 0;
+    for (let i = 0; i < (code || '').length; i++) h = code.charCodeAt(i) + ((h << 5) - h);
+    return fcsColorPalette[Math.abs(h) % fcsColorPalette.length];
+}
+
+/* ── Time helpers ── */
+function fcsTimeToMins(t) {
+    if (!t || typeof t !== 'string') return null;
+    const parts = t.split(':');
+    if (parts.length < 2) return null;
+    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+}
+function fcsFmtTime(t) {
+    if (!t) return '—';
+    const [hh, mm] = t.split(':').map(Number);
+    const suffix = hh >= 12 ? 'PM' : 'AM';
+    const h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+    return h12 + ':' + String(mm).padStart(2, '0') + ' ' + suffix;
+}
 
 /* ── State ── */
-let _sessions   = [];
-let _sortAsc    = true;
-let _curView    = 'calendar';
+let fcsCurrentView = 'calendar';
+let _fcsSessions   = [];
+let _fcsController = null;
 
-/* ── Init data (from server-embedded JSON) ── */
-const _initEl     = document.getElementById('fcs-init-data');
-const _PROGRAMS   = JSON.parse(_initEl.dataset.programs   || '[]');
-const _ACAD_YEARS = JSON.parse(_initEl.dataset.acadYears  || '[]');
-const _FACULTY    = JSON.parse(_initEl.dataset.faculty    || '[]');
-const _AY_SEM_MAP = {};  // ay_id -> sems[]
+/* ── Init data ── */
+const _fcsInitEl   = document.getElementById('fcs-init-data');
+const _FCS_PROGRAMS = JSON.parse(_fcsInitEl.dataset.programs || '[]');
+const _FCS_FACULTY  = JSON.parse(_fcsInitEl.dataset.faculty  || '[]');
 
 /* ── Bootstrap ── */
 document.addEventListener('DOMContentLoaded', () => {
-    _populateDropdowns();
-    _buildEmptyGrid();
+    _fcsPopulateDropdowns();
+    // Show prompt — do NOT auto-load; wait for faculty to select a filter
+    document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
 });
 
-/* ═══════════════════════════════════════════
-   DROPDOWN POPULATION
-═══════════════════════════════════════════ */
-function _populateDropdowns() {
-    const aySel   = document.getElementById('fcsAy');
-    const progSel = document.getElementById('fcsProg');
-    const instrSel = document.getElementById('fcsInstr');
+/* ── Dropdown population ── */
+function _fcsPopulateDropdowns() {
+    const progSel  = document.getElementById('view_prog');
+    const instrSel = document.getElementById('view_instructor');
 
-    _ACAD_YEARS.forEach(ay => {
-        const opt = document.createElement('option');
-        opt.value = ay.id;
-        opt.textContent = ay.label;
-        aySel.appendChild(opt);
-        if (ay.sems) _AY_SEM_MAP[ay.id] = ay.sems;
-    });
-
-    _PROGRAMS.forEach(p => {
+    _FCS_PROGRAMS.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.code;
         opt.textContent = p.name;
         progSel.appendChild(opt);
     });
 
-    _FACULTY.forEach(f => {
+    _FCS_FACULTY.forEach(f => {
         const opt = document.createElement('option');
         opt.value = f.emp;
         opt.textContent = f.name;
@@ -72,378 +70,293 @@ function _populateDropdowns() {
     });
 }
 
-function fcsOnAyChange() {
-    const ayId = document.getElementById('fcsAy').value;
-    const sel  = document.getElementById('fcsSem');
-    Array.from(sel.options).forEach(o => { if (o.value) o.remove(); });
-
-    const sems = _AY_SEM_MAP[ayId] || [];
-    sems.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s.type;
-        opt.textContent = FCS_SEM_LABELS[s.type] || s.type;
-        sel.appendChild(opt);
-    });
-    _autoLoad();
+/* ── Year level rules ── */
+function fcsMaxYl(progCode) {
+    const code = (progCode || '').toUpperCase();
+    if (code === 'BSARCH') return 5;
+    if (code.startsWith('D')) return 3;
+    return 4;
 }
-
-function fcsOnProgChange() {
-    document.getElementById('fcsYl').value  = '';
-    document.getElementById('fcsSec').innerHTML = '<option value="">SELECT</option>';
-    _autoLoad();
-}
-
-function fcsOnYlChange() {
-    _populateSections();
-    _autoLoad();
-}
-
-async function _populateSections() {
-    const prog = document.getElementById('fcsProg').value;
-    const yl   = document.getElementById('fcsYl').value;
-    const sel  = document.getElementById('fcsSec');
+function fcsUpdateYearLevels() {
+    const prog = document.getElementById('view_prog').value;
+    const max  = fcsMaxYl(prog);
+    const sel  = document.getElementById('view_yl');
+    const cur  = parseInt(sel.value);
     sel.innerHTML = '<option value="">SELECT</option>';
-    if (!prog || !yl) return;
+    const labels = ['1ST YEAR','2ND YEAR','3RD YEAR','4TH YEAR','5TH YEAR'];
+    for (let i = 1; i <= max; i++) {
+        const opt = document.createElement('option');
+        opt.value = i; opt.textContent = labels[i-1];
+        if (i === Math.min(cur, max)) opt.selected = true;
+        sel.appendChild(opt);
+    }
+}
 
+async function fcsUpdateSections() {
+    const prog = document.getElementById('view_prog').value;
+    const yl   = document.getElementById('view_yl').value;
+    const sel  = document.getElementById('view_section');
+    sel.innerHTML = '<option value="">ALL SECTIONS</option>';
+    if (!prog || !yl) return;
     try {
-        const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${yl}`);
-        const data = await res.json();
+        const url = `/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}&ay=${encodeURIComponent(FCS_ACTIVE_AY)}&semester=${FCS_ACTIVE_SEM}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
         (data.sections || []).forEach(s => {
             const opt = document.createElement('option');
             opt.value = s.id;
             opt.textContent = s.name;
             sel.appendChild(opt);
         });
-    } catch (e) { /* ignore */ }
+    } catch(e) { console.error('[fcs] sections fetch error', e); }
 }
 
-function _autoLoad() {
-    const ay  = document.getElementById('fcsAy').value;
-    const sem = document.getElementById('fcsSem').value;
-    if (ay && sem) fcsLoadSchedule();
+/* ── Filter change handlers ── */
+function fcsOnProgChange() {
+    fcsUpdateYearLevels();
+    document.getElementById('view_section').innerHTML = '<option value="">ALL SECTIONS</option>';
+    fcsLoadSchedule();
 }
 
-/* ═══════════════════════════════════════════
-   LOAD SCHEDULE
-═══════════════════════════════════════════ */
+function fcsOnYlChange() {
+    fcsUpdateSections();
+    fcsLoadSchedule();
+}
+
+/* ── Load schedule ── */
 async function fcsLoadSchedule() {
-    const ay     = document.getElementById('fcsAy').value;
-    const sem    = document.getElementById('fcsSem').value;
-    const prog   = document.getElementById('fcsProg').value;
-    const yl     = document.getElementById('fcsYl').value;
-    const sec    = document.getElementById('fcsSec').value;
-    const instr  = document.getElementById('fcsInstr').value;
+    const prog   = document.getElementById('view_prog').value;
+    const yl     = document.getElementById('view_yl').value;
+    const sec    = document.getElementById('view_section').value;
+    const instr  = document.getElementById('view_instructor').value;
 
-    if (!ay || !sem) { _showState('empty'); return; }
+    // Require section OR instructor — program + year level alone shows too many results
+    if (!sec && !instr) {
+        document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
+        document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
+        document.getElementById('offeringsTableBody').innerHTML =
+            '<tr class="empty-row"><td colspan="11"><span class="empty-msg">Please select a Section or Instructor to view the schedule.</span></td></tr>';
+        _fcsSessions = [];
+        return;
+    }
 
-    _showState('loading');
-
-    const params = new URLSearchParams({ ay_id: ay, semester: sem });
+    const params = new URLSearchParams({ ay_id: FCS_ACTIVE_AY, semester: FCS_ACTIVE_SEM });
     if (prog)  params.set('program',    prog);
     if (yl)    params.set('year_level', yl);
     if (sec)   params.set('section_id', sec);
     if (instr) params.set('emp_num',    instr);
 
+    // Update header label
+    const progSel  = document.getElementById('view_prog');
+    const secSel   = document.getElementById('view_section');
+    const instrSel = document.getElementById('view_instructor');
+    const progText  = prog  ? progSel.options[progSel.selectedIndex].text.toUpperCase() : '';
+    const ylOrdinals = ['1st','2nd','3rd','4th','5th'];
+    const ylText    = yl ? (ylOrdinals[parseInt(yl)-1] || yl) + ' Year' : '';
+    const secText   = sec ? ' · ' + secSel.options[secSel.selectedIndex].text : '';
+    const instrText = instr ? ' · ' + instrSel.options[instrSel.selectedIndex].text : '';
+    const semLabel  = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[FCS_ACTIVE_SEM] || FCS_ACTIVE_SEM;
+    document.getElementById('gridLabel').innerText =
+        `${progText}${ylText ? '  —  ' + ylText : ''}${secText}${instrText}  ·  ${semLabel}`;
+
+    if (_fcsController) _fcsController.abort();
+    _fcsController = new AbortController();
+
     try {
-        const res  = await fetch('/api/faculty/schedule?' + params.toString());
-        const data = await res.json();
-
-        if (!data.success || !(data.sessions || []).length) {
-            _sessions = [];
-            _showState('empty');
-            return;
-        }
-
-        _sessions = data.sessions;
-        _showState('none');
-        _updateContextLabel(ay, sem, prog, yl);
-        _renderView();
-
-        // Attach change listeners for live filter
-        ['fcsSec','fcsInstr'].forEach(id => {
-            const el = document.getElementById(id);
-            // remove old listener to avoid stacking
-            const newEl = el.cloneNode(true);
-            el.parentNode.replaceChild(newEl, el);
-            newEl.addEventListener('change', () => fcsLoadSchedule());
+        const resp = await fetch('/api/faculty/schedule?' + params.toString() + '&_t=' + Date.now(), {
+            signal: _fcsController.signal, cache: 'no-store'
         });
-    } catch (e) {
-        console.error('[fcs] load error:', e);
-        _sessions = [];
-        _showState('empty');
+        if (!resp.ok) { console.error('[fcs] API error:', resp.status); return; }
+        const data = await resp.json();
+        _fcsSessions = data.success ? (data.sessions || []) : [];
+        requestAnimationFrame(() => fcsRenderCurrentView(_fcsSessions));
+    } catch(e) {
+        if (e.name !== 'AbortError') console.error('[fcs] load error:', e);
     }
 }
 
-document.getElementById('fcsSem').addEventListener('change', fcsLoadSchedule);
-
-/* ═══════════════════════════════════════════
-   VIEW TOGGLE
-═══════════════════════════════════════════ */
+/* ── View toggle ── */
 function fcsSetView(type) {
-    _curView = type;
-    document.getElementById('btnFcsCalendar').classList.toggle('active', type === 'calendar');
-    document.getElementById('btnFcsTable').classList.toggle('active', type === 'table');
-    _renderView();
+    fcsCurrentView = type;
+    document.getElementById('btn-calendar').classList.toggle('active', type === 'calendar');
+    document.getElementById('btn-table').classList.toggle('active', type === 'table');
+    document.getElementById('calendarViewWrapper').style.display = type === 'calendar' ? 'block' : 'none';
+    document.getElementById('tableViewWrapper').style.display    = type === 'table'    ? 'block' : 'none';
+    fcsRenderCurrentView(_fcsSessions);
 }
 
-function _renderView() {
-    if (_curView === 'calendar') {
-        document.getElementById('fcsCalendarPanel').style.display = 'block';
-        document.getElementById('fcsTablePanel').style.display    = 'none';
-        _renderCalendar();
-    } else {
-        document.getElementById('fcsCalendarPanel').style.display = 'none';
-        document.getElementById('fcsTablePanel').style.display    = 'block';
-        _renderTable();
-    }
+function fcsRenderCurrentView(sessions) {
+    if (fcsCurrentView === 'calendar') fcsRenderCalendar(sessions);
+    else fcsRenderTable(sessions);
 }
 
-/* ═══════════════════════════════════════════
-   CALENDAR VIEW
-═══════════════════════════════════════════ */
-function _buildEmptyGrid() {
-    const grid = document.getElementById('fcsCalGrid');
-    grid.innerHTML = '';
+/* ── Calendar render ── */
+function fcsRenderCalendar(sessions) {
+    const wrapper = document.getElementById('gridWrapper');
+    const table   = document.getElementById('mainTimetable');
+    wrapper.querySelectorAll('.schedule-pill, .cal-no-data').forEach(p => p.remove());
 
-    const slots = [];
-    for (let m = FRS_GRID_START; m <= FCS_GRID_END; m += 60) {
-        slots.push(m);
-    }
-
-    slots.forEach(m => {
-        // Time label (No AM/PM to match mockup)
-        const lbl = document.createElement('div');
-        lbl.className = 'fcs-time-label';
-        
-        const h = Math.floor(m / 60);
-        const min = m % 60;
-        const h12  = h === 0 ? 12 : h > 12 ? h - 12 : h;
-        lbl.textContent = `${h12}:${String(min).padStart(2,'0')}`;
-        
-        grid.appendChild(lbl);
-
-        // Day columns
-        FCS_DAYS.forEach(day => {
-            const cell = document.createElement('div');
-            cell.className = 'fcs-day-col';
-            cell.dataset.day = day;
-            cell.dataset.slot = m;
-
-            const line = document.createElement('div');
-            line.className = 'fcs-slot-line';
-            cell.appendChild(line);
-            grid.appendChild(cell);
-        });
-    });
-}
-
-function _renderCalendar() {
-    document.querySelectorAll('.fcs-pill').forEach(p => p.remove());
-
-    const sorted = _sortedSessions();
-    const byDay = {};
-    FCS_DAYS.forEach(d => byDay[d] = []);
-
-    sorted.forEach(s => {
-        const day = _normalizeDay(s.daydesc);
-        if (day && byDay[day] !== undefined) byDay[day].push(s);
-    });
-
-    FCS_DAYS.forEach(day => {
-        const cells = document.querySelectorAll(`.fcs-day-col[data-day="${day}"]`);
-        if (!cells.length) return;
-
-        byDay[day].forEach(s => {
-            const startM = _parseMins(s.start_time);
-            const endM   = _parseMins(s.end_time);
-            if (!startM || !endM) return;
-
-            const topPx    = (startM - FCS_GRID_START) * (FCS_SLOT_H / 60);
-            const heightPx = (endM - startM) * (FCS_SLOT_H / 60);
-            if (heightPx <= 0) return;
-
-            const slotM    = Math.floor((startM - FCS_GRID_START) / 60) * 60 + FCS_GRID_START;
-            const targetCell = document.querySelector(`.fcs-day-col[data-day="${day}"][data-slot="${slotM}"]`);
-            if (!targetCell) return;
-
-            const offsetInSlot = (startM - slotM) * (FCS_SLOT_H / 60);
-
-            // Assign color based on string hash for consistency
-            const bgColor = _subjectColor(s.subjectcode);
-            // Text color is white, except for Yellow background which needs dark text
-            const isYellow = bgColor === '#F2D05B';
-            const txtColor = isYellow ? '#333' : '#fff';
-
-            const pill = document.createElement('div');
-            pill.className  = 'fcs-pill';
-            pill.style.top  = offsetInSlot + 'px';
-            pill.style.height = heightPx + 'px';
-            pill.style.background = bgColor;
-            pill.style.color = txtColor;
-            pill.innerHTML = `
-                <span class="fcs-pill-code" style="color:${txtColor}">${_esc(s.subjectcode || '')}</span>
-                <span class="fcs-pill-name" style="color:${txtColor}">${_esc(s.subjectname || '')}</span>
-                <div class="fcs-pill-meta"><i class="fas fa-user-friends"></i> ${_esc((s.instructor || 'TBA').split(',')[0])}</div>
-                <div class="fcs-pill-meta"><i class="fas fa-door-open"></i> ${_esc(s.roomname || 'TBA')}</div>
-            `;
-            targetCell.appendChild(pill);
-        });
-    });
-}
-
-/* ═══════════════════════════════════════════
-   TABLE VIEW
-═══════════════════════════════════════════ */
-function _renderTable() {
-    const tbody  = document.getElementById('fcsTbody');
-    const sorted = _sortedSessions();
-
-    if (!sorted.length) {
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:#aaa;">No sessions to display.</td></tr>`;
+    if (!sessions || sessions.length === 0) {
+        const msg = document.createElement('div');
+        msg.className = 'cal-no-data';
+        msg.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#aaa;font-size:13px;pointer-events:none;z-index:5;text-align:center;';
+        msg.textContent = 'No schedule data found for the selected filters.';
+        wrapper.appendChild(msg);
         return;
     }
 
-    const merged = _mergeSessionRows(sorted);
+    // Deduplicate
+    const seen = new Set();
+    sessions = sessions.filter(s => {
+        const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+    });
 
-    tbody.innerHTML = merged.map(s => `
-        <tr>
-            <td>${_esc(s.instructor || '—')}</td>
-            <td class="td-code">${_esc(s.subjectcode || '—')}</td>
-            <td>${_esc(s.subjectname || '—')}</td>
-            <td class="td-num">${s.lecturehours ?? '—'}</td>
-            <td class="td-num">${s.laboratoryhours ?? '—'}</td>
-            <td class="td-units">${s.creditunits ?? '—'}</td>
-            <td>${_esc(s.programcode || '—')} ${s.yearlevel || '1'}</td>
-            <td style="white-space:nowrap; font-size:0.75rem;">${(_esc(s.time_range) || '—').replace(' - ', '<br> - ')}</td>
-            <td class="td-num">${(s.lecturehours||0)+(s.laboratoryhours||0) || '—'}</td>
-            <td class="td-days">${(_esc(s.days || s.daydesc) || '—').replace('/', '/<br>')}</td>
-            <td style="font-weight:900;">${_esc(s.roomname || '—')}</td>
-        </tr>
-    `).join('');
+    const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const firstCell = table.querySelector('tbody td:nth-child(2)');
+    const timeCol   = table.querySelector('.time-cell');
+    const thead     = table.querySelector('thead');
+    if (!firstCell || firstCell.offsetWidth === 0 || firstCell.offsetHeight === 0) {
+        requestAnimationFrame(() => fcsRenderCalendar(sessions)); return;
+    }
+
+    const colWidth   = firstCell.offsetWidth;
+    const pxPerMin   = firstCell.offsetHeight / 30;
+    const GRID_ORIGIN = 7 * 60 + 30;
+
+    const dayGroups = {};
+    sessions.forEach(s => {
+        if (!dayGroups[s.daydesc]) dayGroups[s.daydesc] = [];
+        dayGroups[s.daydesc].push(s);
+    });
+
+    Object.keys(dayGroups).forEach(dayName => {
+        const dayIdx = days.indexOf(dayName);
+        if (dayIdx < 0) return;
+        const daySessions = dayGroups[dayName];
+        daySessions.sort((a,b) => fcsTimeToMins(a.start_time) - fcsTimeToMins(b.start_time));
+
+        daySessions.forEach((sess, idx) => {
+            let start = fcsTimeToMins(sess.start_time), end = fcsTimeToMins(sess.end_time);
+            if (start === null) return;
+            if (start < GRID_ORIGIN) start += 12 * 60;
+            if (end !== null && end <= start) end += 12 * 60;
+
+            let overlapCount = 0, overlapIndex = 0;
+            daySessions.forEach((other, oIdx) => {
+                let oS = fcsTimeToMins(other.start_time), oE = fcsTimeToMins(other.end_time);
+                if (oS < GRID_ORIGIN) oS += 12 * 60; if (oE !== null && oE <= oS) oE += 12 * 60;
+                if (start < oE && end > oS) { overlapCount++; if (idx > oIdx) overlapIndex++; }
+            });
+
+            const pill = document.createElement('div');
+            pill.className = 'schedule-pill';
+            pill.style.backgroundColor = fcsSubjectColor(sess.subjectcode);
+            const w = (colWidth - 6) / (overlapCount || 1);
+            const pillH = (end - start) * pxPerMin - 2;
+
+            pill.style.width  = (w - 2) + 'px';
+            pill.style.height = pillH + 'px';
+            pill.style.left   = (timeCol.offsetWidth + (dayIdx * colWidth) + (overlapIndex * w) + 4) + 'px';
+            pill.style.top    = (thead.offsetHeight + (start - GRID_ORIGIN) * pxPerMin + 1) + 'px';
+
+            const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+            pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${fcsFmtTime(sess.start_time)} – ${fcsFmtTime(sess.end_time)}\n${sess.roomname}`;
+
+            const pillContent = `
+                <div class="pill-subject">${sess.subjectname}</div>
+                <div class="pill-instructor">${instrLast}</div>
+                <div class="pill-room">${sess.roomname || 'TBA'}</div>`;
+
+            if (pillH < 55) pill.classList.add('schedule-pill--compact');
+            else if (pillH < 85) pill.classList.add('schedule-pill--medium');
+            pill.innerHTML = pillContent;
+            wrapper.appendChild(pill);
+        });
+    });
 }
 
-function _mergeSessionRows(sessions) {
-    const map = {};
-    sessions.forEach(s => {
-        const key = `${s.subjectcode}|${s.employeenumber}|${s.time_range}|${s.roomname}`;
-        if (!map[key]) {
-            map[key] = { ...s, days: _dayAbbr(s.daydesc) };
-        } else {
-            const abbr = _dayAbbr(s.daydesc);
-            if (!map[key].days.includes(abbr)) map[key].days += '/' + abbr;
+/* ── Table render ── */
+function fcsRenderTable(sessions) {
+    const tbody = document.getElementById('offeringsTableBody');
+    if (!sessions || sessions.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-times" style="margin-right:6px;"></i>No schedule data found for the selected filters.</span></td></tr>';
+        return;
+    }
+
+    const grouped = {};
+    sessions.forEach(sess => {
+        const key = `${sess.subjectcode}||${sess.instructor}||${sess.sectionname}`;
+        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [] };
+        if (sess.daydesc) {
+            const ab = _fcsDayAbbr(sess.daydesc);
+            if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
+        }
+        if (sess.start_time) {
+            const t = `${fcsFmtTime(sess.start_time)} - ${fcsFmtTime(sess.end_time)}`;
+            if (!grouped[key].timesArr.includes(t)) grouped[key].timesArr.push(t);
         }
     });
-    return Object.values(map);
+
+    const groupedRows = Object.values(grouped);
+    const dataHtml = groupedRows.map(sess => {
+        const yl = sess.yearlevel || '';
+        const prog = sess.programcode || '';
+        const sec  = sess.sectionname || '';
+        const courseLabel = prog && yl ? `${prog} ${yl}${sec ? ' - ' + sec : ''}` : (prog || '-');
+        const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
+            ? `<span title="${sess.instructor}">${sess.instructor}</span>`
+            : '<span style="color:#aaa;font-style:italic;">TBA</span>';
+        const daysDisplay  = sess.daysArr.length  ? _sortDays(sess.daysArr).join('/') : '<span style="color:#aaa;">—</span>';
+        const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
+        const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
+            ? sess.roomname
+            : '<span style="color:#aaa;font-style:italic;">TBA</span>';
+        return `<tr>
+            <td class="td-instructor">${instrDisplay}</td>
+            <td class="td-code">${sess.subjectcode || '—'}</td>
+            <td class="td-desc" title="${sess.subjectname || ''}">${sess.subjectname || '—'}</td>
+            <td>${sess.lecturehours || 0}</td>
+            <td>${sess.laboratoryhours || 0}</td>
+            <td class="td-units">${sess.creditunits || 0}</td>
+            <td>${courseLabel}</td>
+            <td class="td-time">${timeDisplay}</td>
+            <td>${sess.total_hours || 0}</td>
+            <td class="td-days">${daysDisplay}</td>
+            <td class="td-room">${roomDisplay}</td>
+        </tr>`;
+    }).join('');
+
+    const totLec   = groupedRows.reduce((s, r) => s + (+(r.lecturehours    || 0)), 0);
+    const totLab   = groupedRows.reduce((s, r) => s + (+(r.laboratoryhours || 0)), 0);
+    const totCred  = groupedRows.reduce((s, r) => s + (+(r.creditunits     || 0)), 0);
+    const totHours = groupedRows.reduce((s, r) => s + (+(r.total_hours     || 0)), 0);
+    const totalHtml = `<tr class="sis-total-row">
+        <td colspan="3">TOTAL</td>
+        <td>${totLec}</td>
+        <td>${totLab}</td>
+        <td class="td-units">${totCred}</td>
+        <td></td>
+        <td class="td-time"></td>
+        <td>${totHours}</td>
+        <td class="td-days"></td>
+        <td class="td-room"></td>
+    </tr>`;
+
+    tbody.innerHTML = dataHtml + totalHtml;
 }
 
-/* ═══════════════════════════════════════════
-   SORT
-═══════════════════════════════════════════ */
-function fcsSortToggle() {
-    _sortAsc = !_sortAsc;
-    document.getElementById('fcsSortLabel').textContent = _sortAsc ? 'A-Z' : 'Z-A';
-    document.getElementById('fcsSortIcon').className = _sortAsc ? 'fas fa-sort-amount-down' : 'fas fa-sort-amount-up';
-    if (_sessions.length) _renderView();
+function _fcsDayAbbr(day) {
+    const map = { Monday:'MON', Tuesday:'TUE', Wednesday:'WED',
+                  Thursday:'THU', Friday:'FRI', Saturday:'SAT', Sunday:'SUN' };
+    return map[day] || day;
 }
 
-function _sortedSessions() {
-    return [..._sessions].sort((a, b) => {
-        const cmp = (a.subjectcode || '').localeCompare(b.subjectcode || '');
-        return _sortAsc ? cmp : -cmp;
-    });
-}
-
-/* ═══════════════════════════════════════════
-   EXPORT
-═══════════════════════════════════════════ */
+/* ── Export ── */
 function fcsExport() {
-    if (!_sessions.length) { alert('No schedule data to export.'); return; }
-
-    const merged = _mergeSessionRows(_sessions);
-    const header = ['Instructor','Subject Code','Subject Description','Lec Hours','Lab Hours','Credit Units','Course','Time','Hours','Days','Room'];
-    const rows   = merged.map(s => [
-        s.instructor || '',
-        s.subjectcode || '',
-        s.subjectname || '',
-        s.lecturehours ?? '',
-        s.laboratoryhours ?? '',
-        s.creditunits ?? '',
-        `${s.programcode || ''} ${s.yearlevel || ''}`.trim(),
-        s.time_range || '',
-        (s.lecturehours||0)+(s.laboratoryhours||0),
-        s.days || s.daydesc || '',
-        s.roomname || ''
-    ]);
-
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'class_schedule.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-}
-
-/* ═══════════════════════════════════════════
-   CONTEXT LABEL
-═══════════════════════════════════════════ */
-function _updateContextLabel(ayId, sem, prog, yl) {
-    const bar     = document.getElementById('fcsContextBar');
-    const ayObj   = _ACAD_YEARS.find(a => String(a.id) === String(ayId));
-    const progObj = _PROGRAMS.find(p => p.code === prog);
-    
-    let label = prog ? `${progObj ? progObj.name.toUpperCase() : prog.toUpperCase()} (${prog})` : 'ALL PROGRAMS';
-    if (yl) label += ` - ${yl}`; // Match mockup "BSIT - 1"
-
-    document.getElementById('fcsContextProg').textContent = label;
-    document.getElementById('fcsContextAy').textContent   = ayObj ? ayObj.label.toUpperCase() : '';
-    document.getElementById('fcsContextSem').textContent  = FCS_SEM_LABELS[sem] || sem;
-    bar.style.display = 'flex';
-}
-
-/* ═══════════════════════════════════════════
-   STATE HELPERS
-═══════════════════════════════════════════ */
-function _showState(state) {
-    document.getElementById('fcsLoading').style.display      = state === 'loading' ? 'block' : 'none';
-    document.getElementById('fcsEmpty').style.display        = state === 'empty'   ? 'block' : 'none';
-    document.getElementById('fcsCalendarPanel').style.display = (state === 'none' && _curView === 'calendar') ? 'block' : 'none';
-    document.getElementById('fcsTablePanel').style.display    = (state === 'none' && _curView === 'table')    ? 'block' : 'none';
-    if (state !== 'none') document.getElementById('fcsContextBar').style.display = 'none';
-}
-
-/* ═══════════════════════════════════════════
-   HELPERS
-═══════════════════════════════════════════ */
-function _parseMins(timeStr) {
-    if (!timeStr) return null;
-    const m = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-    if (!m) return null;
-    let h = parseInt(m[1]), mn = parseInt(m[2]);
-    const ampm = (m[3] || '').toUpperCase();
-    if (ampm === 'PM' && h !== 12) h += 12;
-    if (ampm === 'AM' && h === 12) h = 0;
-    return h * 60 + mn;
-}
-
-function _normalizeDay(s) {
-    if (!s) return null;
-    return DAY_MAP[s.toUpperCase()] || null;
-}
-
-function _dayAbbr(s) {
-    if (!s) return '';
-    const abbrs = { Monday:'MON', Tuesday:'TUE', Wednesday:'WED', Thursday:'THU', Friday:'FRI', Saturday:'SAT', Sunday:'SUN' };
-    return abbrs[s] || s.slice(0,3).toUpperCase();
-}
-
-function _subjectColor(code) {
-    let h = 0;
-    for (let i = 0; i < (code||'').length; i++) h = (code||'').charCodeAt(i) + ((h << 5) - h);
-    return FCS_COLORS[Math.abs(h) % FCS_COLORS.length];
-}
-
-function _esc(str) {
-    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const prog = document.getElementById('view_prog').value;
+    const yl   = document.getElementById('view_yl').value;
+    if (!prog) { alert('Please select a program before exporting.'); return; }
+    window.location.href = `/api/export_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${FCS_ACTIVE_SEM}&ay=${encodeURIComponent(FCS_ACTIVE_AY)}`;
 }

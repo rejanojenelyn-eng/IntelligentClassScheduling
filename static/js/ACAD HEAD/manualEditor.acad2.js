@@ -42,6 +42,11 @@ window.currentEditSession = null;
 let _splitMode = null;
 let currentMode = 'room'; // 'room' (Room View tab) | 'program' (Program View tab)
 
+// Render-token counters: incremented whenever a new render is requested.
+// Each in-flight fetch captures its token; stale completions detect the mismatch and abort.
+let _gridRenderToken = 0;
+let _progFetchToken  = 0;
+
 let _subjInfo         = null;
 let _facInfo          = null;
 let _existingDays     = [];
@@ -553,9 +558,10 @@ let pendingLeaveUrl = null;
 window.isLeavingIntentionally = false;
 
 function hasUnsavedChanges() {
-    // Only count confirmed new/modified entries — exclude fromExisting (already in DB)
-    // and isPreview (tentative UI state not yet committed by the user).
-    return pendingManualSchedule.some(s => !s.fromExisting && !s.isPreview) || !!window._pendingFacultyAssignment;
+    // Only count confirmed new/modified entries — exclude fromExisting (already in DB),
+    // isPreview (tentative UI state), and fromGenerator (unsaved transfer from the generator,
+    // shown as a visual reference but not yet edited by the user).
+    return pendingManualSchedule.some(s => !s.fromExisting && !s.isPreview && !s.fromGenerator) || !!window._pendingFacultyAssignment;
 }
 
 document.addEventListener('click', function(e) {
@@ -773,6 +779,9 @@ function timeStrToSlotIdx(timeStr) {
 }
 
 async function renderProgramTimetable() {
+    if (currentMode !== 'program') return;
+    const fetchToken = ++_progFetchToken;
+
     const prog = document.getElementById('sel_prog').value;
     const yl   = document.getElementById('sel_year').value;
     const sem  = document.getElementById('sel_sem').value;
@@ -815,20 +824,45 @@ async function renderProgramTimetable() {
         if (!resp.ok) return;
         const raw = await resp.json();
 
-        // Program View is a READ-ONLY section schedule visualizer.
-        // It shows only what is actually saved in the DB (Published + active Draft).
-        // Unsaved/pending entries from pendingManualSchedule are intentionally excluded:
-        // they are incomplete, may belong to a different subject's edit session, and cause
-        // phantom pills for sessions that were never saved. Users see their unsaved work
-        // in Room View while they are actively editing.
+        // Program View visualizes what is saved in the DB (Published + active Draft)
+        // PLUS any generator-transferred entries from pendingManualSchedule (fromGenerator=true).
+        // Generator entries always take full priority: old DB sessions for the same subject
+        // are hidden so the timetable shows only the new generated schedule (not a mix).
+        const _genEntries = (pendingManualSchedule || []).filter(e => e.fromGenerator);
+        const _genSubjectCodes = new Set(_genEntries.map(e => e.subject_code));
+
         const sessByKey = new Map();
         (raw || []).forEach(s => {
+            // Generator schedule replaces the old DB schedule for any subject it covers.
+            if (_genSubjectCodes.has(s.subjectcode)) return;
             const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
             const existing = sessByKey.get(key);
             // Prefer Published over Draft for the same slot; otherwise keep first seen
             if (!existing || s.status === 'Published') sessByKey.set(key, s);
         });
 
+        // Add generator entries — always overwrite, never skip (they already won above)
+        for (const _ge of _genEntries) {
+            const _key = `${_ge.subject_code}|${_ge.day}|${_ge.start_time}`;
+            sessByKey.set(_key, {
+                subjectcode:  _ge.subject_code,
+                subjectname:  _ge.subject_name || _ge.subject_code,
+                instructor:   _ge.faculty_name || 'TBA',
+                roomname:     _ge.room         || 'TBA',
+                daydesc:      _ge.day,
+                start_time:   _ge.start_time,
+                end_time:     _ge.end_time,
+                starttimeid:  _ge.starttimeid  || 0,
+                endtimeid:    _ge.endtimeid    || 0,
+                status:       'GeneratorTransfer',
+                temp_id:      _ge.temp_id,
+                room_id:      _ge.room_id,
+                faculty_id:   _ge.faculty_id,
+            });
+        }
+
+        // Abort if the mode changed or a newer fetch started while this one was in-flight.
+        if (currentMode !== 'program' || fetchToken !== _progFetchToken) return;
         _renderProgPills(Array.from(sessByKey.values()), prog, yl);
     } catch (e) { console.error('[renderProgramTimetable]', e); }
 }
@@ -889,19 +923,23 @@ function _renderProgPills(sessions, prog, yl) {
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
 
-            const isDraft = !sess.status || sess.status.toLowerCase() !== 'published';
-            // Local mode: always use subject color so pills are varied; draft gets dashed border only
-            pill.style.backgroundColor = (isDraft && sess.isPreview) ? '#c8d6da'
-                : (isDraft && !_IS_LOCAL_MODE) ? '#8e9ca0'
+            const isDraft       = !sess.status || sess.status.toLowerCase() !== 'published';
+            const isGenTransfer = sess.status === 'GeneratorTransfer';
+
+            // Generator pills use the same subject color as published sessions; dashed border marks
+            // them as unsaved. This keeps the timetable color-consistent with normal sessions.
+            pill.style.backgroundColor = (isDraft && sess.isPreview)             ? '#c8d6da'
+                : (isDraft && !_IS_LOCAL_MODE && !isGenTransfer)                  ? '#8e9ca0'
                 : getSubjectColor(sess.subjectcode);
-            if (isDraft) pill.style.border = '2px dashed #2c3e50';
+            if (isGenTransfer)    pill.style.border = '2px dashed #264653';
+            else if (isDraft)     pill.style.border = '2px dashed #2c3e50';
 
             // pill-merged class only when actually merged (multiple sections, data from server)
             const _pvMergedSects = sess._mergedSections || [];
             const _pvIsMerged = _pvMergedSects.length > 1;
             if (_pvIsMerged) pill.classList.add('pill-merged');
 
-            if (window.currentEditSession) {
+            if (!isGenTransfer && window.currentEditSession) {
                 const editKey = `${window.currentEditSession.subjectcode}_${window.currentEditSession.daydesc}_${window.currentEditSession.starttimeid}`;
                 const sessKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
                 if (editKey === sessKey) pill.classList.add('pill-editing');
@@ -919,37 +957,65 @@ function _renderProgPills(sessions, prog, yl) {
             const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
             const roomDisp  = sess.roomname || 'TBA';
             const subjName  = sess.subjectname || sess.subjectcode;
-            pill.title = `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}`;
+            pill.title = isGenTransfer
+                ? `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}\n(Generated — not yet saved)`
+                : `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}`;
 
             // Pill height thresholds for progressive info density
-            const compact   = pillH < 42;   // code only
-            const medium    = pillH < 70;   // code + room
-            const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
-            const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
-            const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null }));
-            const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
-            pill.innerHTML = compact
-                ? `${dropBtn}<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
-                : medium
-                    ? `${dropBtn}
-                       <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
-                       <div style="font-size:0.55rem;opacity:0.85;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`
-                    : `${dropBtn}
-                       <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
-                       <div style="font-size:0.6rem;margin-top:1px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${instrLast}</div>
-                       <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
+            const compact = pillH < 42;   // code only
+            const medium  = pillH < 70;   // code + room
 
-            pill.onclick = (e) => {
-                if (e.target.closest('.pill-drop-btn')) return;
-                const forEdit = {
-                    ...sess,
-                    starttimeid: startIdx,
-                    endtimeid:   endIdx,
-                    programcode: sess.programcode || prog,
-                    year_level:  sess.year_level  || yl
+            // Generator pills: same content as regular pills, click loads all sessions for that
+            // subject into slice rows so the user can review and edit before saving as Draft.
+            if (isGenTransfer) {
+                pill.innerHTML = compact
+                    ? `<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
+                    : medium
+                        ? `<div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                           <div style="font-size:0.55rem;opacity:0.85;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`
+                        : `<div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                           <div style="font-size:0.6rem;margin-top:1px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${instrLast}</div>
+                           <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
+                pill.onclick = () => {
+                    const forEdit = {
+                        ...sess,
+                        starttimeid: startIdx,
+                        endtimeid:   endIdx,
+                        programcode: sess.programcode || prog,
+                        year_level:  sess.year_level  || yl,
+                    };
+                    if (typeof window.handlePillClick === 'function') {
+                        window.handlePillClick(encodeURIComponent(JSON.stringify(forEdit)));
+                    }
                 };
-                window.handlePillClick(encodeURIComponent(JSON.stringify(forEdit)));
-            };
+            } else {
+                const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+                const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
+                const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null }));
+                const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
+                pill.innerHTML = compact
+                    ? `${dropBtn}<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
+                    : medium
+                        ? `${dropBtn}
+                           <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                           <div style="font-size:0.55rem;opacity:0.85;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`
+                        : `${dropBtn}
+                           <div class="pill-subject" style="margin-top:6px;">${sess.subjectcode}</div>
+                           <div style="font-size:0.6rem;margin-top:1px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${instrLast}</div>
+                           <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
+
+                pill.onclick = (e) => {
+                    if (e.target.closest('.pill-drop-btn')) return;
+                    const forEdit = {
+                        ...sess,
+                        starttimeid: startIdx,
+                        endtimeid:   endIdx,
+                        programcode: sess.programcode || prog,
+                        year_level:  sess.year_level  || yl
+                    };
+                    window.handlePillClick(encodeURIComponent(JSON.stringify(forEdit)));
+                };
+            }
 
             wrapper.appendChild(pill);
         });
@@ -980,8 +1046,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (initProg || initAy) await triggerCascade(true);
     if (initMode === 'program') switchMode('program');
 
-    // Auto-select section when arriving from "Edit to Manual Editor" on a draft card
-    if (initSect && initProg && initYl) {
+    // Auto-select section when arriving from "Edit to Manual Editor" on a draft card.
+    // Skip when from_generator=1 — the template DOMContentLoaded handler already called
+    // _loadSectionOptions() and selectBcSect(). A second _loadSectionOptions() call here
+    // would invoke _resetRightPanel() which clears generator entries from pendingManualSchedule.
+    const _isFromGenerator = (_initData.dataset.fromGenerator === '1');
+    if (initSect && initProg && initYl && !_isFromGenerator) {
         try {
             if (typeof _loadSectionOptions === 'function') await _loadSectionOptions();
             const r = await fetch(`/api/sections-by-program?program=${encodeURIComponent(initProg)}&yearLevel=${encodeURIComponent(initYl)}`);
@@ -1089,6 +1159,44 @@ async function triggerDSSLogic() {
         }
     }
     _skipExistingCheck = false;
+
+    // When generator entries exist for this subject, load them as pre-filled slice rows so the
+    // user can review and edit before saving as Draft. confirmAllSlots removes non-fromExisting
+    // entries for the current subject before processing, so there is no double-counting.
+    {
+        const _geAy  = document.getElementById('sel_ay').value;
+        const _geSem = document.getElementById('sel_sem').value;
+        const _geSessions = (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])
+            .filter(c => c.fromGenerator && c.subject_code === subjCode && c.ay === _geAy && c.sem === _geSem);
+        if (_geSessions.length > 0) {
+            // Pre-fill faculty from the first generator entry
+            const _geFacId = _geSessions[0].faculty_id;
+            if (_geFacId) {
+                const _geFac = allFaculty.find(f => String(f.id) === String(_geFacId));
+                if (_geFac) {
+                    document.getElementById('sel_faculty').value         = _geFac.id;
+                    document.getElementById('fac_display_name').value    = _geFac.name;
+                    document.getElementById('fac_trigger_text').textContent = _geFac.name;
+                    if (typeof window.onFacultySelect === 'function') window.onFacultySelect(_geFac.id);
+                }
+            }
+            // Recreate slice rows from generator data (skipFullCheck=true avoids false "fully
+            // scheduled" blocks — generator entries are already in pendingManualSchedule).
+            document.getElementById('time-slots-container').innerHTML = '';
+            for (const _ge of _geSessions) {
+                if (typeof addNewTimeSlot === 'function') {
+                    addNewTimeSlot(_ge.day, _ge.start_time, _ge.end_time, _ge.room_id || '', '', true);
+                }
+            }
+            // Mark all new rows dirty so confirmAllSlots (SAVE AS DRAFT) picks them up automatically.
+            document.querySelectorAll('.ts-row').forEach(row => {
+                const rowId = parseInt(row.id.replace('ts-row-', ''));
+                if (!isNaN(rowId) && typeof _markSliceDirty === 'function') _markSliceDirty(rowId);
+            });
+            _hasExistingSchedule = true;
+            return;
+        }
+    }
 
     try {
         const _ay  = document.getElementById('sel_ay').value;
@@ -1996,53 +2104,72 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
     btn.disabled = true;
 
     try {
-        const res = await fetch('/api/schedule/approve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ schedule_data: selectedDrafts, context })
-        });
-        const data = await res.json();
+        let overrideFlag = false;
+        while (true) {
+            const res = await fetch('/api/schedule/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ schedule_data: selectedDrafts, context, override: overrideFlag })
+            });
+            const data = await res.json();
 
-        if (data.success) {
-            window.isLeavingIntentionally = true;
-            await showValidationModal('Schedule Published', 'The schedule has been published successfully.');
-            pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-            hiddenDbSchedules.clear();
-            const currentSubj2 = document.getElementById('sel_subj').value;
-            if (currentSubj2) {
-                try {
-                    // Use existing_sessions (returns both Draft and Published with correct statuses)
-                    // so the editor immediately shows the correct Published/remaining-Draft state.
-                    const _sectId2 = document.getElementById('sel_section')?.value || '';
-                    const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
-                    const exData2 = await exResp2.json();
-                    if (exData2.success && exData2.sessions && exData2.sessions.length) {
-                        if (typeof _loadExistingSessionsIntoSlices === 'function') {
-                            await _loadExistingSessionsIntoSlices(exData2.sessions);
+            if (data.success) {
+                window.isLeavingIntentionally = true;
+                await showValidationModal('Schedule Published', 'The schedule has been published successfully.');
+                pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
+                hiddenDbSchedules.clear();
+                const currentSubj2 = document.getElementById('sel_subj').value;
+                if (currentSubj2) {
+                    try {
+                        // Use existing_sessions (returns both Draft and Published with correct statuses)
+                        // so the editor immediately shows the correct Published/remaining-Draft state.
+                        const _sectId2 = document.getElementById('sel_section')?.value || '';
+                        const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
+                        const exData2 = await exResp2.json();
+                        if (exData2.success && exData2.sessions && exData2.sessions.length) {
+                            if (typeof _loadExistingSessionsIntoSlices === 'function') {
+                                await _loadExistingSessionsIntoSlices(exData2.sessions);
+                            }
+                        } else {
+                            document.getElementById('time-slots-container').innerHTML = '';
+                            if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
                         }
-                    } else {
+                    } catch(e) {
                         document.getElementById('time-slots-container').innerHTML = '';
                         if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
                     }
-                } catch(e) {
-                    document.getElementById('time-slots-container').innerHTML = '';
-                    if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+                } else {
+                    resetFormState();
                 }
+                if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+                if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
+                // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
+                if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
+                if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
+                setTimeout(() => window.isLeavingIntentionally = false, 100);
+                break;
+            } else if (data.violations && data.violations.length) {
+                let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
+                data.violations.forEach(v => errorMsg += `• ${v.detail}\n`);
+                await showValidationModal('Constraint Violations', errorMsg);
+                break;
+            } else if (data.needs_confirmation) {
+                // A published schedule from the generator (or a prior approval) already exists.
+                // Ask the user if they want to replace it.
+                const info = data.existing_info || {};
+                const dateStr  = info.date          ? `, last approved on ${info.date}` : '';
+                const subCount = info.subject_count  ? `${info.subject_count} subject(s)` : 'subjects';
+                const ok = await showConfirmModal(
+                    `A published schedule already exists for this program and year level (${subCount}${dateStr}).\n\n` +
+                    `Approving will replace it with the sessions you are submitting now. Do you want to continue?`,
+                    'Replace Published Schedule'
+                );
+                if (!ok) break;
+                overrideFlag = true;
             } else {
-                resetFormState();
+                await showValidationModal('Publish Failed', data.error || 'An unknown error occurred. Please try again.');
+                break;
             }
-            if (typeof _updateSubjectList === 'function') await _updateSubjectList();
-            if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
-            // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
-            if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
-            if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
-            setTimeout(() => window.isLeavingIntentionally = false, 100);
-        } else if (data.violations && data.violations.length) {
-            let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
-            data.violations.forEach(v => errorMsg += `• ${v.detail}\n`);
-            await showValidationModal('Constraint Violations', errorMsg);
-        } else {
-            await showValidationModal('Publish Failed', data.error || 'An unknown error occurred. Please try again.');
         }
     } catch (e) {
         await showValidationModal('Connection Error', 'Could not reach the server. Please try again.');
@@ -2059,6 +2186,8 @@ function getTimeSlotIndex(timeStr) {
 
 async function renderGrid(roomId, ayFilter = '', semFilter = '') {
     if (currentMode === 'program') return;
+    const gridToken = ++_gridRenderToken;
+
     const wrapper = document.getElementById('gridWrapper');
     const table = document.getElementById('mainTimetable');
     wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
@@ -2069,6 +2198,9 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         const url = `/api/get_room_schedule/${roomId}?ay_id=${ayFilter}&semester=${semFilter}&scheduler_mode=${_sm()}&_t=${new Date().getTime()}`;
         const resp = await fetch(url);
         let sessions = await resp.json();
+
+        // Abort if the mode changed or a newer render was requested while this fetch was in-flight.
+        if (currentMode === 'program' || gridToken !== _gridRenderToken) return;
 
         sessions = sessions.filter(s => {
             // Versionid-scoped hide (only hides this specific section's row)
@@ -2149,7 +2281,10 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         const thead = table.querySelector('thead');
 
         if (!firstCell || firstCell.offsetWidth === 0) {
-            requestAnimationFrame(() => renderGrid(roomId, ayFilter, semFilter));
+            requestAnimationFrame(() => {
+                if (currentMode === 'program' || gridToken !== _gridRenderToken) return;
+                renderGrid(roomId, ayFilter, semFilter);
+            });
             return;
         }
 

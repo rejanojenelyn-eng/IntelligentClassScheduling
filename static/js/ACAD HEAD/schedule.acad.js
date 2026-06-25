@@ -64,6 +64,25 @@ function filterStatusList() {
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sl_ay').addEventListener('change', onAyChange);
     populateSemDropdown(ACTIVE_AY, ACTIVE_SEM);
+
+    // Populate instructor dropdown from init data
+    const _facultyJson = _initEl.dataset.faculty;
+    if (_facultyJson) {
+        try {
+            const _facultyList = JSON.parse(_facultyJson);
+            const instrSel = document.getElementById('view_instructor');
+            if (instrSel) {
+                instrSel.innerHTML = '<option value="">SELECT</option>';
+                _facultyList.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.emp;
+                    opt.textContent = f.name;
+                    instrSel.appendChild(opt);
+                });
+                instrSel.addEventListener('change', refreshOfferings);
+            }
+        } catch(e) { console.error('[schedule.acad] faculty parse error', e); }
+    }
 });
 
 /* ---- Notification dismiss ---- */
@@ -117,7 +136,7 @@ async function updateSections() {
     const yl   = document.getElementById('view_yl')?.value || '';
     const sel  = document.getElementById('view_section');
     if (!sel) return;
-    sel.innerHTML = '';
+    sel.innerHTML = '<option value="">ALL SECTIONS</option>';
     if (!ay || !sem) return;
     try {
         let url;
@@ -411,10 +430,13 @@ async function refreshOfferings() {
     const yl      = document.getElementById('view_yl').value;
     const sem     = document.getElementById('view_sem').value;
     const ay      = document.getElementById('view_ay').value;
-    const secSel  = document.getElementById('view_section');
-    const section = secSel ? secSel.value : '';
+    const secSel   = document.getElementById('view_section');
+    const section  = secSel ? secSel.value : '';
+    const instrSel = document.getElementById('view_instructor');
+    const empNum   = instrSel ? instrSel.value : '';
 
-    if (!pSel.value || !ay) {
+    // Need at least a program OR an instructor to fetch; AY is always required
+    if ((!pSel.value && !empNum) || !ay) {
         document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
         document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select a program and year level.</td></tr>';
         document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
@@ -422,21 +444,30 @@ async function refreshOfferings() {
         return;
     }
 
-    const pText    = pSel.options[pSel.selectedIndex].text;
     const ayEl     = document.getElementById('view_ay');
     const ayTxt    = ayEl.options[ayEl.selectedIndex]?.text || ay;
     const semLabel = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[sem] || sem;
-    const ylOrdinals = ['1st', '2nd', '3rd', '4th', '5th'];
-    const ylOrd = (ylOrdinals[parseInt(yl) - 1] || yl + 'th') + ' Year';
-    const ylNum = parseInt(yl) || '';
-    const secName = secSel && section ? ` · ${secSel.options[secSel.selectedIndex].text}` : '';
-    document.getElementById('gridLabel').innerText = `${pText.toUpperCase()}  —  ${ylNum}${secName}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+
+    let gridLabel;
+    if (pSel.value) {
+        const pText  = pSel.options[pSel.selectedIndex].text;
+        const ylNum  = parseInt(yl) || '';
+        const secName = secSel && section ? ` · ${secSel.options[secSel.selectedIndex].text}` : '';
+        const instrName = empNum && instrSel.options[instrSel.selectedIndex]
+            ? ` · ${instrSel.options[instrSel.selectedIndex].text}` : '';
+        gridLabel = `${pText.toUpperCase()}  —  ${ylNum}${secName}${instrName}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+    } else {
+        const instrName = instrSel && instrSel.options[instrSel.selectedIndex]
+            ? instrSel.options[instrSel.selectedIndex].text : '';
+        gridLabel = `INSTRUCTOR: ${instrName.toUpperCase()}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+    }
+    document.getElementById('gridLabel').innerText = gridLabel;
 
     if (_refreshController) _refreshController.abort();
     _refreshController = new AbortController();
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}${section ? '&section_id=' + section : ''}&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(pSel.value)}&year_level=${yl || 0}&semester=${sem}&ay=${encodeURIComponent(ay)}${section ? '&section_id=' + section : ''}${empNum ? '&emp_num=' + encodeURIComponent(empNum) : ''}&_t=${Date.now()}`;
         const resp = await fetch(url, { signal: _refreshController.signal, cache: 'no-store' });
         if (!resp.ok) { console.error('[Schedule] API error:', resp.status); return; }
         const data = await resp.json();

@@ -89,8 +89,8 @@ function validateAndOpen(modalId, populateFn) {
 function showLockWarning(modalId) {
   const labels = {
     modalAY:          { sub: 'Academic Year configuration', field: 'ay' },
-    modalEditEmpType: { sub: 'Employee Faculty Hours',      field: 'et' },
-    modalEditDesig:   { sub: 'Designee Faculty Hours',      field: 'desig' },
+    modalEditEmpType: { sub: 'Faculty Hours',      field: 'et' },
+    modalEditDesig:   { sub: 'Designee Hours',      field: 'desig' },
   };
   const info = labels[modalId] || { sub: 'this section', field: null };
   document.getElementById('lockWarnSub').textContent  = info.sub;
