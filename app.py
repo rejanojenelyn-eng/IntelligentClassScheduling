@@ -526,71 +526,48 @@ def login():
     if request.method == 'POST':
         username = str(request.form.get('username')).strip()
         password = str(request.form.get('password')).strip()
-        role_selected = request.form.get('role')
 
         user = query_db("SELECT * FROM Accounts WHERE Username = %s", (username,), one=True)
 
         if user:
-            user_data = {k.lower(): v for k, v in user.items()}
+            user_data   = {k.lower(): v for k, v in user.items()}
             db_password = str(user_data.get('passwordhash')).strip()
-            db_role = user_data.get('role')
+            db_role     = user_data.get('role')
 
             if check_password_hash(db_password, password):
-                if db_role == role_selected:
-                    session.clear()
-                    session['loggedin'] = True
-                    session['username'] = user_data.get('username')
-                    session['role'] = db_role
-                    try:
-                        _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
-                        _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
-                        _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
-                        _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
-                        _conn2.commit(); _cur2.close(); _conn2.close()
-                    except Exception: pass
+                session.clear()
+                session['loggedin'] = True
+                session['username'] = user_data.get('username')
+                session['role']     = db_role
+                try:
+                    _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
+                    _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
+                    _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
+                    _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
+                    _conn2.commit(); _cur2.close(); _conn2.close()
+                except Exception: pass
 
-                    if db_role == 'Admin':
-                        return redirect(url_for('admin_dashboard'))
-                    elif db_role == 'Academic Head':
-                        return redirect(url_for('academic_my_dashboard'))
-                    elif db_role == 'Faculty':
-                        return redirect(url_for('faculty_dashboard'))
-                    else:
-                        flash("Your role does not have an assigned dashboard.")
-                        return redirect(url_for('login'))
+                if db_role == 'Admin':
+                    return redirect(url_for('admin_dashboard'))
+                elif db_role == 'Academic Head':
+                    return redirect(url_for('academic_my_dashboard'))
+                elif db_role == 'Faculty':
+                    return redirect(url_for('faculty_dashboard'))
                 else:
-                    # Credentials valid but wrong role tab selected — set session to actual role and redirect
-                    session.clear()
-                    session['loggedin'] = True
-                    session['username'] = user_data.get('username')
-                    session['role'] = db_role
-                    if db_role == 'Admin':
-                        return redirect(url_for('admin_dashboard'))
-                    elif db_role == 'Academic Head':
-                        return redirect(url_for('academic_my_dashboard'))
-                    elif db_role == 'Faculty':
-                        return redirect(url_for('faculty_dashboard'))
-                    else:
-                        flash("Your account does not have an assigned dashboard.")
-                        session['active_role'] = db_role
-                        session['saved_username'] = username
+                    flash("Your account does not have an assigned dashboard.")
+                    return redirect(url_for('login'))
             else:
                 flash("Wrong password. Try again.")
-                session['active_role'] = role_selected
-                session['saved_username'] = username  # <-- SAVE USERNAME
+                session['saved_username'] = username
         else:
             flash("Username not found!")
-            session['active_role'] = role_selected
-            session['saved_username'] = username  # <-- SAVE USERNAME (so they can fix typos)
-        
+            session['saved_username'] = username
+
         return redirect(url_for('login'))
 
-    active_role   = session.get('active_role', 'Academic Head')
     saved_username = session.get('saved_username', '')
-    session.clear()   # wipe any stale admin/faculty session so it can't bleed into the new login
-
-    # Pass BOTH the active_role and saved_username to the HTML
-    return render_template('login.html', active_role=active_role, saved_username=saved_username)
+    session.clear()
+    return render_template('login.html', saved_username=saved_username)
 
 # ==============================================================================
 # --- ACADEMIC HEAD PERSONAL FACULTY VIEW ---
@@ -3938,14 +3915,15 @@ def import_schedule():
         from datetime import date as _date, timedelta as _td
         today      = _date.today()
 
-        # Determine whether this import belongs to the current (active) academic year.
-        # A schedule is "current" if the selected AY is still the active AY in the system
-        # (academicyear.isactive = TRUE), even if the specific semester's end date has
-        # already passed.  Only schedules from fully past academic years go to historical_data.
+        # Determine whether this import belongs to the current (active) semester.
+        # A schedule is "current" ONLY if:
+        #   1. The selected AY is the active AY in the system (academicyear.isactive = TRUE), AND
+        #   2. The specific semester's end date has NOT passed yet
+        # Any schedule for a past semester (even in the active AY) goes to historical_data.
         cur.execute("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1")
         _active_ay_row = cur.fetchone()
         _active_ay = _active_ay_row['academicyearid'] if _active_ay_row else None
-        is_current = (ay_id == _active_ay) or not (sem_end and sem_end < today)
+        is_current = (ay_id == _active_ay) and not (sem_end and sem_end < today)
         print(f"\n[DEBUG IMPORT] ay_id={ay_id!r} sem_type={sem_type!r} sem_id={sem_id!r} sem_end={sem_end} active_ay={_active_ay!r} is_current={is_current}")
 
         # Pre-compute values used by auto-create logic inside the row loop
@@ -4084,7 +4062,8 @@ def import_schedule():
 
                 # ── Auto-create missing records so imported data always lands in
                 #    the schedule tables (not historical_data) for the current AY ──
-                if not (cs_id and sec_id) and s_code and prog:
+                # Only auto-create for current semesters; past semesters go to historical_data
+                if is_current and not (cs_id and sec_id) and s_code and prog:
                     # 1. Find best curriculum for this program
                     _best_curr_id = None
                     _entry_year = (_ay_yearstart - (yl - 1)) if _ay_yearstart else None
@@ -4205,7 +4184,8 @@ def import_schedule():
                             _cs_r = cur.fetchone()
                         if _cs_r: cs_id = _cs_r['curriculumsubjectid']
 
-                if cs_id and sec_id:
+                # Only insert into current schedule tables for current semesters
+                if is_current and cs_id and sec_id:
                     import re as _re2
 
                     # 4. Skip if already imported for this semester (prevent duplicates on re-import)
@@ -4353,11 +4333,14 @@ def import_schedule():
                         inserted_as_current = True
                         saved_current += 1
 
-            if not inserted_as_current and not is_current:
-                norm_hist_room = normalize_room(room_raw) if room_raw.strip() else ''
-                hist_emp_num = _resolve_hist_empnum(cur, inst)
-                _insert_historical(cur, inst, s_code, subj_name, prog, yl, days_raw, time_raw, norm_hist_room, sem_id, ay_id, lec, lab, unit, hrs, emp_num=hist_emp_num)
-                saved_historical += 1
+            # Insert to historical_data if: (1) past semester, OR (2) current semester but couldn't insert
+            if not is_current or not inserted_as_current:
+                # Skip if already inserted as current (prevents duplicates for current semester)
+                if not inserted_as_current:
+                    norm_hist_room = normalize_room(room_raw) if room_raw.strip() else ''
+                    hist_emp_num = _resolve_hist_empnum(cur, inst)
+                    _insert_historical(cur, inst, s_code, subj_name, prog, yl, days_raw, time_raw, norm_hist_room, sem_id, ay_id, lec, lab, unit, hrs, emp_num=hist_emp_num)
+                    saved_historical += 1
 
         conn.commit()
         if is_current:
@@ -5186,9 +5169,9 @@ def sis_import_confirm():
         ay_is_active  = bool(_ayr2 and _ayr2['isactive'])
         from datetime import date as _date2
         _today2 = _date2.today()
-        # Current = AY is active OR today is within [semstartdate, semenddate] (or dates not set)
-        # Importing into an active AY always writes to normalized schedule tables, not historical
-        is_cur = ay_is_active or (
+        # Current = AY is active AND today is within [semstartdate, semenddate] (or dates not set)
+        # Past semesters (even in active AY) go to historical_data
+        is_cur = ay_is_active and (
             (s_dt is None or s_dt <= _today2) and
             (e_dt is None or _today2 <= e_dt)
         )
@@ -12341,6 +12324,37 @@ def _ensure_ay_finalized_col(cur):
         cur.execute("ALTER TABLE academicyear ADD COLUMN isfinalized BOOLEAN NOT NULL DEFAULT FALSE")
 
 
+def _ensure_ay_status_col(cur):
+    """Add status column to academicyear and migrate existing rows to proper lifecycle statuses."""
+    cur.execute("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'academicyear' AND column_name = 'status'
+    """)
+    if not cur.fetchone():
+        cur.execute("ALTER TABLE academicyear ADD COLUMN status VARCHAR(20) DEFAULT 'Upcoming'")
+        # Migrate existing Finalized AYs
+        cur.execute("""
+            UPDATE academicyear
+            SET status = 'Finalized'
+            WHERE COALESCE(isfinalized, FALSE) = TRUE
+        """)
+    # Add check constraint if missing
+    cur.execute("""
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'chk_academicyear_status'
+          AND table_name = 'academicyear'
+    """)
+    if not cur.fetchone():
+        try:
+            cur.execute("""
+                ALTER TABLE academicyear
+                ADD CONSTRAINT chk_academicyear_status
+                CHECK (status IN ('Upcoming', 'Current', 'Past', 'Finalized'))
+            """)
+        except Exception:
+            pass
+
+
 def _ensure_restrict_pt_col(cur):
     """Add restrict_pt_hours BOOLEAN DEFAULT TRUE to employeetype if not present."""
     cur.execute("""
@@ -12349,6 +12363,245 @@ def _ensure_restrict_pt_col(cur):
     """)
     if not cur.fetchone():
         cur.execute("ALTER TABLE employeetype ADD COLUMN restrict_pt_hours BOOLEAN NOT NULL DEFAULT TRUE")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Academic Year Lifecycle Validation Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _validate_ay_year_order(year_start, year_end):
+    """
+    Validate that year_start < year_end (prevents invalid AYs like 2023-2022).
+    Returns (is_valid, error_message).
+    """
+    try:
+        y_start = int(year_start)
+        y_end = int(year_end)
+
+        if y_start >= y_end:
+            return False, f"Invalid Academic Year: {year_start}-{year_end}. Start year must be less than end year."
+
+        if y_end - y_start != 1:
+            return False, f"Invalid Academic Year: {year_start}-{year_end}. Academic years must span exactly one year (e.g., 2025-2026)."
+
+        return True, None
+    except (ValueError, TypeError):
+        return False, "Invalid year format. Years must be numeric."
+
+
+def _validate_ay_not_duplicate(cur, ay_id, is_new=True):
+    """
+    Check if academic year already exists.
+    Returns (is_valid, error_message).
+    """
+    cur.execute("SELECT academicyearid, status FROM academicyear WHERE academicyearid = %s", (ay_id,))
+    existing = cur.fetchone()
+
+    if is_new and existing:
+        status = existing[1] if len(existing) > 1 else 'Unknown'
+        return False, f"Academic Year {ay_id} already exists with status '{status}'."
+
+    return True, None
+
+
+def _validate_ay_no_gaps(cur, year_start, year_end, ay_id):
+    """
+    Prevent skipping years and creating AYs that are already in the past.
+    Returns (is_valid, error_message).
+    """
+    try:
+        y_start = int(year_start)
+        y_end   = int(year_end)
+        current_year = date.today().year
+
+        # Block AYs whose end year is already in the past
+        if y_end <= current_year:
+            return False, (
+                f"Cannot create Academic Year {year_start}–{year_end}. "
+                f"That Academic Year is already in the past."
+            )
+
+        # Get min and max of existing years (excluding the AY being created/edited)
+        cur.execute("""
+            SELECT MIN(yearstart), MAX(yearend)
+            FROM academicyear
+            WHERE academicyearid != %s
+              AND yearstart IS NOT NULL AND yearend IS NOT NULL
+        """, (ay_id,))
+        row = cur.fetchone()
+
+        if not row or row[0] is None:
+            # First academic year — no sequence to maintain
+            return True, None
+
+        min_year_start = int(row[0])
+        max_year_end   = int(row[1])
+
+        # Forward gap: new AY skips years at the top of the sequence
+        if y_start > max_year_end + 1:
+            next_expected = f"{max_year_end}–{max_year_end + 1}"
+            return False, (
+                f"Cannot skip years. The next Academic Year to add must be "
+                f"AY {next_expected}, not {year_start}–{year_end}."
+            )
+
+        # Backward gap: new AY would create a hole below the earliest AY
+        if y_end < min_year_start - 1:
+            return False, (
+                f"Cannot create Academic Year {year_start}–{year_end}. "
+                f"It would leave a gap before the existing sequence "
+                f"(earliest AY starts {min_year_start})."
+            )
+
+        return True, None
+    except (ValueError, TypeError, IndexError) as e:
+        return False, f"Error validating year sequence: {e}"
+
+
+def _validate_ay_no_overlap(cur, ay_id, sem_configs):
+    """
+    Validate that academic year date ranges don't overlap with other AYs.
+    sem_configs: list of (label, start_date, end_date, sem_type) tuples.
+    Returns (is_valid, error_message).
+    """
+    from datetime import datetime
+
+    # Get all date ranges for this AY
+    this_ay_dates = []
+    for label, start_str, end_str, sem_type in sem_configs:
+        if start_str and end_str:
+            try:
+                start_date = datetime.strptime(start_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_str, '%Y-%m-%d').date()
+                this_ay_dates.append((label, start_date, end_date))
+            except ValueError:
+                continue
+
+    if not this_ay_dates:
+        return True, None  # No dates to validate
+
+    # Get all other academic years with their semester dates
+    cur.execute("""
+        SELECT ay.academicyearid, sem.semestertype, sem.semstartdate, sem.semenddate
+        FROM academicyear ay
+        JOIN semester sem ON sem.academicyearid = ay.academicyearid
+        WHERE ay.academicyearid != %s
+        AND sem.semstartdate IS NOT NULL
+        AND sem.semenddate IS NOT NULL
+        ORDER BY ay.academicyearid, sem.semestertype
+    """, (ay_id,))
+
+    other_semesters = cur.fetchall()
+
+    # Check for overlaps
+    for this_label, this_start, this_end in this_ay_dates:
+        for other_ay_id, other_sem_type, other_start, other_end in other_semesters:
+            # Check if date ranges overlap
+            if (this_start <= other_end and this_end >= other_start):
+                sem_type_labels = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+                other_sem_label = sem_type_labels.get(other_sem_type, other_sem_type)
+
+                return False, (f"{this_label} ({this_start} to {this_end}) overlaps with "
+                             f"{other_ay_id} {other_sem_label} ({other_start} to {other_end}). "
+                             f"Academic years cannot have overlapping date ranges.")
+
+    return True, None
+
+
+def _validate_semester_chronology(sem_configs):
+    """
+    Validate that semesters follow chronological order within an AY.
+    Returns (is_valid, error_message).
+    """
+    from datetime import datetime
+
+    sems_with_dates = []
+    for label, start_str, end_str, sem_type in sem_configs:
+        if start_str and end_str:
+            try:
+                start_date = datetime.strptime(start_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_str, '%Y-%m-%d').date()
+                sems_with_dates.append((label, start_date, end_date, sem_type))
+            except ValueError:
+                return False, f"{label} has invalid date format."
+
+    if len(sems_with_dates) < 2:
+        return True, None  # Not enough semesters to check order
+
+    # Check chronological order
+    for i in range(len(sems_with_dates) - 1):
+        current_label, current_start, current_end, current_type = sems_with_dates[i]
+        next_label, next_start, next_end, next_type = sems_with_dates[i + 1]
+
+        if current_end >= next_start:
+            return False, (f"{current_label} (ends {current_end}) must end before "
+                         f"{next_label} (starts {next_start}). Semesters must follow chronological order.")
+
+    return True, None
+
+
+def _check_ay_dependencies(cur, ay_id):
+    """
+    Check if an academic year has dependent records that would prevent deletion.
+    Returns (has_dependencies, dependency_list, count).
+    """
+    dependencies = []
+    total_count = 0
+
+    # Check for schedules
+    cur.execute("""
+        SELECT COUNT(*) FROM schedule sc
+        JOIN semester sem ON sem.semesterid = sc.semesterid
+        WHERE sem.academicyearid = %s
+    """, (ay_id,))
+    schedule_count = cur.fetchone()[0]
+    if schedule_count > 0:
+        dependencies.append(f"{schedule_count} schedule record(s)")
+        total_count += schedule_count
+
+    # Check for published schedules
+    cur.execute("""
+        SELECT COUNT(*) FROM schedule_version sv
+        JOIN schedule sc ON sc.scheduleid = sv.scheduleid
+        JOIN semester sem ON sem.semesterid = sc.semesterid
+        WHERE sem.academicyearid = %s AND sv.status = 'Published'
+    """, (ay_id,))
+    published_count = cur.fetchone()[0]
+    if published_count > 0:
+        dependencies.append(f"{published_count} published schedule(s)")
+
+    # Check for program year levels
+    cur.execute("""
+        SELECT COUNT(*) FROM program_yearlevel
+        WHERE academicyearid = %s
+    """, (ay_id,))
+    pyl_count = cur.fetchone()[0]
+    if pyl_count > 0:
+        dependencies.append(f"{pyl_count} program year level record(s)")
+        total_count += pyl_count
+
+    # Check for sections
+    cur.execute("""
+        SELECT COUNT(*) FROM sections sec
+        JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+        WHERE pyl.academicyearid = %s
+    """, (ay_id,))
+    section_count = cur.fetchone()[0]
+    if section_count > 0:
+        dependencies.append(f"{section_count} section(s)")
+        total_count += section_count
+
+    # Check for historical data
+    cur.execute("""
+        SELECT COUNT(*) FROM historical_data
+        WHERE academicyearid = %s
+    """, (ay_id,))
+    hist_count = cur.fetchone()[0]
+    if hist_count > 0:
+        dependencies.append(f"{hist_count} historical data record(s)")
+        total_count += hist_count
+
+    return len(dependencies) > 0, dependencies, total_count
 
 
 @app.route('/admin/settings')
@@ -12362,12 +12615,39 @@ def admin_settings():
             return[dict(zip(columns, row)) for row in cursor.fetchall()]
 
         _ensure_ay_finalized_col(cur)
+        _ensure_ay_status_col(cur)
         _ensure_restrict_pt_col(cur)
         cur.execute("ALTER TABLE program_yearlevel ADD COLUMN IF NOT EXISTS section_naming_format VARCHAR(30)")
-        # Widen sectionname to accommodate long generated names
+        cur.execute("ALTER TABLE sections ALTER COLUMN sectionname TYPE VARCHAR(100)")
+
+        # Auto-sync AY status from semester dates (skip Finalized — those are permanent)
         cur.execute("""
-            ALTER TABLE sections
-            ALTER COLUMN sectionname TYPE VARCHAR(100)
+            UPDATE academicyear ay
+            SET status = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM semester s
+                    WHERE s.academicyearid = ay.academicyearid
+                      AND CURRENT_DATE BETWEEN s.semstartdate AND s.semenddate
+                ) THEN 'Current'
+                WHEN (
+                    SELECT COUNT(*) FROM semester s
+                    WHERE s.academicyearid = ay.academicyearid
+                      AND s.semenddate IS NOT NULL
+                ) > 0
+                AND NOT EXISTS (
+                    SELECT 1 FROM semester s
+                    WHERE s.academicyearid = ay.academicyearid
+                      AND s.semenddate >= CURRENT_DATE
+                ) THEN 'Past'
+                ELSE 'Upcoming'
+            END
+            WHERE COALESCE(ay.isfinalized, FALSE) = FALSE
+        """)
+        # Keep isactive in sync with the Current AY for backward compatibility
+        cur.execute("""
+            UPDATE academicyear
+            SET isactive = (status = 'Current')
+            WHERE COALESCE(isfinalized, FALSE) = FALSE
         """)
         conn.commit()
 
@@ -12378,50 +12658,37 @@ def admin_settings():
         cur.execute('SELECT * FROM vw_academic_year_semesters ORDER BY academicyearid DESC')
         ay_data = to_dict(cur)
 
-        # Compute per-AY status: isfinalized + whether any Published schedule exists
+        # Get per-AY status, published flag, and invalid-year flag
         cur.execute("""
             SELECT ay.academicyearid,
-                   COALESCE(ay.isfinalized, FALSE)            AS isfinalized,
-                   BOOL_OR(sv.status = 'Published') IS TRUE   AS has_published
+                   COALESCE(ay.isfinalized, FALSE)                         AS isfinalized,
+                   COALESCE(ay.status, 'Upcoming')                         AS status,
+                   BOOL_OR(sv.status = 'Published') IS TRUE                AS has_published,
+                   COALESCE(ay.yearstart, 0) >= COALESCE(ay.yearend, 1)   AS is_invalid
             FROM   academicyear ay
             LEFT JOIN semester s   ON s.academicyearid  = ay.academicyearid
             LEFT JOIN schedule sc  ON sc.semesterid     = s.semesterid
             LEFT JOIN schedule_version sv ON sv.scheduleid = sc.scheduleid
-            GROUP BY ay.academicyearid, ay.isfinalized
+            GROUP BY ay.academicyearid, ay.isfinalized, ay.status, ay.yearstart, ay.yearend
         """)
-        ay_status_map = {row[0]: {'isfinalized': row[1], 'has_published': bool(row[2])}
-                         for row in cur.fetchall()}
-        def _to_date(val):
-            if val is None: return None
-            if isinstance(val, date): return val
-            try: return date.fromisoformat(str(val)[:10])
-            except: return None
+        ay_status_map = {row[0]: {
+            'isfinalized': row[1],
+            'status': row[2],
+            'has_published': bool(row[3]),
+            'is_invalid': bool(row[4]),
+        } for row in cur.fetchall()}
 
-        today = date.today()
         for ay in ay_data:
-            st = ay_status_map.get(ay['academicyearid'], {'isfinalized': False, 'has_published': False})
-            ay['isfinalized']   = st['isfinalized']
-            ay['has_published'] = st['has_published']
-
-            if ay['isfinalized']:
-                ay['computed_status'] = 'finalized'
-                continue
-
-            sem_starts = [_to_date(ay.get(k)) for k in ['1st sem start', '2nd sem start', '3rd sem start']]
-            sem_ends   = [_to_date(ay.get(k)) for k in ['1st sem end',   '2nd sem end',   '3rd sem end'  ]]
-            sem_starts = [d for d in sem_starts if d]
-            sem_ends   = [d for d in sem_ends   if d]
-
-            if not sem_starts and not sem_ends:
-                ay['computed_status'] = 'upcoming'
-            elif sem_ends and all(e < today for e in sem_ends):
-                ay['computed_status'] = 'past'
-            elif sem_starts and any(s <= today for s in sem_starts) and sem_ends and any(e >= today for e in sem_ends):
-                ay['computed_status'] = 'current'
-            elif sem_starts and all(s > today for s in sem_starts):
-                ay['computed_status'] = 'upcoming'
-            else:
-                ay['computed_status'] = 'current'
+            st = ay_status_map.get(ay['academicyearid'], {
+                'isfinalized': False,
+                'status': 'Upcoming',
+                'has_published': False,
+                'is_invalid': False,
+            })
+            ay['isfinalized']     = st['isfinalized']
+            ay['has_published']   = st['has_published']
+            ay['is_invalid']      = st['is_invalid']
+            ay['computed_status'] = st['status'].lower()  # For template compatibility
 
         cur.execute("SELECT * FROM EmployeeType ORDER BY EmployeeTypeID ASC")
         emp_types = to_dict(cur)
@@ -12607,6 +12874,34 @@ def admin_settings():
         """)
         yearlevel_data = to_dict(cur)
 
+        # ── Current AY display labels ────────────────────────
+        _SEM_LABEL_MAP = {'A': '1ST SEMESTER', 'B': '2ND SEMESTER', 'C': 'SUMMER'}
+        cur.execute("""
+            SELECT ay.yearstart, ay.yearend, s.semestertype
+            FROM   academicyear ay
+            LEFT JOIN semester s ON s.academicyearid = ay.academicyearid AND s.isactive = TRUE
+            WHERE  ay.status = 'Current' OR ay.isactive = TRUE
+            ORDER  BY ay.isactive DESC NULLS LAST, ay.yearstart DESC
+            LIMIT  1
+        """)
+        _cur_ay = cur.fetchone()
+        if _cur_ay:
+            current_ay_label  = f"A.Y {_cur_ay[0]} - {_cur_ay[1]}"
+            current_sem_label = _SEM_LABEL_MAP.get(_cur_ay[2], _cur_ay[2] or '—')
+        else:
+            current_ay_label  = "Not Set"
+            current_sem_label = "—"
+
+        # Max existing year end — used by JS to enforce no forward gaps and no past AYs
+        cur.execute("""
+            SELECT COALESCE(MAX(yearend), 0)
+            FROM academicyear
+            WHERE yearstart IS NOT NULL AND yearend IS NOT NULL
+              AND COALESCE(yearstart, 0) < COALESCE(yearend, 1)
+        """)
+        _max_ye = cur.fetchone()
+        max_existing_year_end = int(_max_ye[0]) if _max_ye and _max_ye[0] else 0
+
         return render_template('admin/settings_admin.html',
                                ay_list=ay_data, emp_types=emp_types,
                                designations=designations, designee_base=designee_base,
@@ -12620,7 +12915,10 @@ def admin_settings():
                                yearlevel_data=yearlevel_data,
                                prog_yearlevel_mgmt=prog_yearlevel_mgmt,
                                active_ay_id=active_ay_id,
-                               activity_logs=activity_logs)
+                               activity_logs=activity_logs,
+                               current_ay_label=current_ay_label,
+                               current_sem_label=current_sem_label,
+                               max_existing_year_end=max_existing_year_end)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
         return redirect(url_for('admin_dashboard'))
@@ -12802,137 +13100,383 @@ def activate_period():
 
 @app.route('/admin/settings/finalize_ay', methods=['POST'])
 def finalize_ay():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    """
+    Finalize an Academic Year - transitions status to 'Finalized' and locks all modifications.
+    This is a permanent action that can only be done by Admin.
+    """
+    if session.get('role') != 'Admin':
+        return redirect(url_for('login'))
+
     ay_id = request.form.get('ay_id', '').strip()
     if not ay_id:
         flash("Invalid Academic Year.", "error")
         return redirect(url_for('admin_settings'))
-    conn = get_db_connection(); cur = conn.cursor()
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
     try:
         _ensure_ay_finalized_col(cur)
-        cur.execute("UPDATE academicyear SET isfinalized = TRUE WHERE academicyearid = %s", (ay_id,))
+        _ensure_ay_status_col(cur)
+
+        # Get current status
+        cur.execute("SELECT status, isfinalized FROM academicyear WHERE academicyearid = %s", (ay_id,))
+        ay_row = cur.fetchone()
+
+        if not ay_row:
+            flash(f"Academic Year {ay_id} not found.", "error")
+            return redirect(url_for('admin_settings'))
+
+        current_status = ay_row[0]
+        is_already_finalized = ay_row[1]
+
+        if is_already_finalized:
+            flash(f"Academic Year {ay_id} is already Finalized.", "info")
+            return redirect(url_for('admin_settings'))
+
+        # Finalize: set status to 'Finalized' and isfinalized flag
+        cur.execute("""
+            UPDATE academicyear
+            SET status = 'Finalized', isfinalized = TRUE
+            WHERE academicyearid = %s
+        """, (ay_id,))
+
         conn.commit()
-        flash(f"Academic Year {ay_id} has been finalized and is now locked.", "success")
+
+        flash(f"Academic Year {ay_id} has been finalized and is now permanently locked.", "success")
         write_activity_log(
             "Finalized Academic Year",
-            f"Academic Year {ay_id} has been marked as Finalized. Settings and schedules are now historically protected.",
+            f"Academic Year {ay_id} has been marked as Finalized. All settings and schedules are now historically protected and cannot be modified.",
             category='calendar', color=_LOG_COLORS.get('calendar', 'blue')
         )
+
     except Exception as e:
         conn.rollback()
         flash(f"Error finalizing Academic Year: {e}", "error")
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
+
+    return redirect(url_for('admin_settings'))
+
+
+@app.route('/admin/settings/delete_ay', methods=['POST'])
+def delete_ay():
+    """
+    Delete an Academic Year - only allowed if it has no dependent records.
+    Upcoming AYs with no schedules can be deleted.
+    AYs with schedules, reports, or other dependencies cannot be deleted.
+    """
+    if session.get('role') != 'Admin':
+        return redirect(url_for('login'))
+
+    ay_id = request.form.get('ay_id', '').strip()
+    if not ay_id:
+        flash("Invalid Academic Year.", "error")
+        return redirect(url_for('admin_settings'))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        _ensure_ay_finalized_col(cur)
+        _ensure_ay_status_col(cur)
+
+        # Get the AY info
+        cur.execute("""
+            SELECT status, isfinalized, yearstart, yearend
+            FROM academicyear WHERE academicyearid = %s
+        """, (ay_id,))
+        ay_row = cur.fetchone()
+
+        if not ay_row:
+            flash(f"Academic Year {ay_id} not found.", "error")
+            return redirect(url_for('admin_settings'))
+
+        current_status = ay_row[0]
+        is_finalized   = ay_row[1]
+        year_start_val = ay_row[2]
+        year_end_val   = ay_row[3]
+
+        # Detect invalid AYs (reversed/wrong years, e.g. 2025-2024 stored as yearstart=2025, yearend=2024)
+        is_invalid_ay = (
+            year_start_val is not None and year_end_val is not None
+            and int(year_start_val) >= int(year_end_val)
+        )
+
+        # Finalized AYs are permanently locked — even if they somehow have wrong years
+        if is_finalized or current_status == 'Finalized':
+            flash(f"Cannot delete {ay_id}. Finalized Academic Years are permanently locked.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # Only Upcoming AYs or invalid AYs (reversed years) may be deleted
+        if current_status != 'Upcoming' and not is_invalid_ay:
+            flash(
+                f"Cannot delete {ay_id}. Only Upcoming Academic Years can be deleted. "
+                f"This Academic Year is currently '{current_status}'.",
+                "error"
+            )
+            return redirect(url_for('admin_settings'))
+
+        # Block if real schedule records exist
+        cur.execute("""
+            SELECT COUNT(*) FROM schedule sc
+            JOIN semester sem ON sem.semesterid = sc.semesterid
+            WHERE sem.academicyearid = %s
+        """, (ay_id,))
+        if cur.fetchone()[0] > 0:
+            flash(f"Cannot delete {ay_id}. It has existing schedule records. Remove all schedules first.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # Block if historical data exists
+        cur.execute("SELECT COUNT(*) FROM historical_data WHERE academicyearid = %s", (ay_id,))
+        if cur.fetchone()[0] > 0:
+            flash(f"Cannot delete {ay_id}. It contains historical data records that cannot be removed.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # Cascade delete: sections → program_yearlevel → semesters → academic year
+        cur.execute("""
+            DELETE FROM sections
+            WHERE programyearlevelid IN (
+                SELECT programyearlevelid FROM program_yearlevel WHERE academicyearid = %s
+            )
+        """, (ay_id,))
+        cur.execute("DELETE FROM program_yearlevel WHERE academicyearid = %s", (ay_id,))
+        cur.execute("DELETE FROM semester WHERE academicyearid = %s", (ay_id,))
+        cur.execute("DELETE FROM academicyear WHERE academicyearid = %s", (ay_id,))
+
+        conn.commit()
+
+        flash(f"Academic Year {ay_id} has been deleted successfully.", "success")
+        write_activity_log(
+            "Deleted Academic Year",
+            f"Academic Year {ay_id} (Upcoming) was deleted with no schedule or historical records.",
+            category='calendar', color=_LOG_COLORS.get('calendar', 'blue')
+        )
+
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error deleting Academic Year: {e}", "error")
+    finally:
+        cur.close()
+        conn.close()
+
     return redirect(url_for('admin_settings'))
 
 
 @app.route('/admin/settings/upsert_ay', methods=['POST'])
 def upsert_ay():
+    """
+    Create or update an Academic Year with comprehensive lifecycle validation.
+    Implements all business rules for Academic Year management.
+    """
     if session.get('role') != 'Admin': return redirect(url_for('login'))
 
     y_start = request.form.get('year_start')
     y_end = request.form.get('year_end')
+
+    # Validate year format
+    if not y_start or not y_end:
+        flash("Both start and end years are required.", "error")
+        return redirect(url_for('admin_settings'))
+
     ay_id = f"AY{y_start[2:4]}{y_end[2:4]}"
-    
-    sem_configs =[
+
+    sem_configs = [
         ('1st Semester', request.form.get('sem1_start'), request.form.get('sem1_end'), 'A'),
         ('2nd Semester', request.form.get('sem2_start'), request.form.get('sem2_end'), 'B'),
         ('Summer', request.form.get('sem3_start'), request.form.get('sem3_end'), 'C')
     ]
 
-    for label, s_start, s_end, s_type in sem_configs:
-        if s_start and s_end:
-            if s_end < s_start:
-                flash(f"Validation Error: {label} end date cannot be earlier than start date.", "error")
-                return redirect(url_for('admin_settings'))
-            try:
-                start_year_val = datetime.strptime(s_start, '%Y-%m-%d').year
-                end_year_val = datetime.strptime(s_end, '%Y-%m-%d').year
-                allowed_years =[int(y_start), int(y_end)]
-                if start_year_val not in allowed_years or end_year_val not in allowed_years:
-                    flash(f"Validation Error: {label} dates must fall within the years {y_start} or {y_end}.", "error")
-                    return redirect(url_for('admin_settings'))
-            except ValueError:
-                pass 
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    conn = get_db_connection(); cur = conn.cursor()
     try:
         _ensure_ay_finalized_col(cur)
-        # Block save if this AY has been finalized
-        cur.execute("SELECT COALESCE(isfinalized, FALSE) FROM academicyear WHERE academicyearid = %s", (ay_id,))
-        existing = cur.fetchone()
-        if existing and existing[0]:
-            flash(f"Academic Year {ay_id} is finalized and cannot be edited.", "error")
+        _ensure_ay_status_col(cur)
+
+        form_action = request.form.get('form_action', 'edit')
+
+        # Check if this is a new AY or editing existing
+        cur.execute("SELECT academicyearid, status, isfinalized FROM academicyear WHERE academicyearid = %s", (ay_id,))
+        existing_ay = cur.fetchone()
+        is_new = existing_ay is None
+
+        # When submitted from the Add modal, reject if AY already exists
+        if form_action == 'add' and existing_ay:
+            existing_status = existing_ay[1] if len(existing_ay) > 1 else 'Unknown'
+            flash(
+                f"Academic Year {y_start}–{y_end} already exists (status: {existing_status}). "
+                f"Use the edit button on that row to modify it.",
+                "error"
+            )
             return redirect(url_for('admin_settings'))
-        # If this AY has a published schedule, only allow dates to move forward (not backward)
-        cur.execute("""
-            SELECT COUNT(*) FROM schedule_version sv
-            JOIN schedule sc ON sc.scheduleid = sv.scheduleid
-            JOIN semester s  ON s.semesterid  = sc.semesterid
-            WHERE s.academicyearid = %s AND sv.status = 'Published'
-        """, (ay_id,))
-        if cur.fetchone()[0] > 0:
-            today_str = date.today().strftime('%Y-%m-%d')
+        current_status = existing_ay[1] if existing_ay and len(existing_ay) > 1 else 'Upcoming'
+        is_finalized = existing_ay[2] if existing_ay and len(existing_ay) > 2 else False
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 1: Prevent editing Finalized Academic Years
+        # ═══════════════════════════════════════════════════════
+        if is_finalized:
+            flash(f"Academic Year {ay_id} is Finalized and cannot be edited. Finalized academic years are permanently locked.", "error")
+            return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 2: Year order validation (prevent 2023-2022)
+        # ═══════════════════════════════════════════════════════
+        valid, error_msg = _validate_ay_year_order(y_start, y_end)
+        if not valid:
+            flash(error_msg, "error")
+            return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 3: Prevent duplicate Academic Years
+        # ═══════════════════════════════════════════════════════
+        valid, error_msg = _validate_ay_not_duplicate(cur, ay_id, is_new=is_new)
+        if not valid:
+            flash(error_msg, "error")
+            return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 4: Prevent skipping years
+        # ═══════════════════════════════════════════════════════
+        if is_new:
+            valid, error_msg = _validate_ay_no_gaps(cur, y_start, y_end, ay_id)
+            if not valid:
+                flash(error_msg, "error")
+                return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 5: Validate semester dates within each semester
+        # ═══════════════════════════════════════════════════════
+        for label, s_start, s_end, s_type in sem_configs:
+            if s_start and s_end:
+                if s_end < s_start:
+                    flash(f"Validation Error: {label} end date cannot be earlier than start date.", "error")
+                    return redirect(url_for('admin_settings'))
+
+                try:
+                    start_year_val = datetime.strptime(s_start, '%Y-%m-%d').year
+                    end_year_val = datetime.strptime(s_end, '%Y-%m-%d').year
+                    allowed_years = [int(y_start), int(y_end)]
+                    if start_year_val not in allowed_years or end_year_val not in allowed_years:
+                        flash(f"Validation Error: {label} dates must fall within the years {y_start} or {y_end}.", "error")
+                        return redirect(url_for('admin_settings'))
+                except ValueError:
+                    flash(f"Validation Error: {label} has invalid date format.", "error")
+                    return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 6: Semester chronological order
+        # ═══════════════════════════════════════════════════════
+        valid, error_msg = _validate_semester_chronology(sem_configs)
+        if not valid:
+            flash(error_msg, "error")
+            return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 7: No overlapping date ranges with other AYs
+        # ═══════════════════════════════════════════════════════
+        valid, error_msg = _validate_ay_no_overlap(cur, ay_id, sem_configs)
+        if not valid:
+            flash(error_msg, "error")
+            return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # VALIDATION 8: Past AYs with published schedules
+        # Can extend semester dates but not move them to past
+        # ═══════════════════════════════════════════════════════
+        if current_status == 'Past' or (existing_ay and not is_new):
             cur.execute("""
-                SELECT semestertype, semstartdate, semenddate
-                FROM semester WHERE academicyearid = %s
+                SELECT COUNT(*) FROM schedule_version sv
+                JOIN schedule sc ON sc.scheduleid = sv.scheduleid
+                JOIN semester s  ON s.semesterid  = sc.semesterid
+                WHERE s.academicyearid = %s AND sv.status = 'Published'
             """, (ay_id,))
-            existing_sems = {row[0]: (str(row[1]) if row[1] else None, str(row[2]) if row[2] else None)
-                             for row in cur.fetchall()}
-            for label, s_start, s_end, s_type in sem_configs:
-                old_start, old_end = existing_sems.get(s_type, (None, None))
-                # Only reject if the admin actually changed the value to something in the past
-                if s_start and s_start != old_start and s_start < today_str:
-                    flash(f"Validation Error: {label} start date cannot be set to a past date.", "error")
-                    return redirect(url_for('admin_settings'))
-                if s_end and s_end != old_end and s_end < today_str:
-                    flash(f"Validation Error: {label} end date cannot be set to a past date.", "error")
-                    return redirect(url_for('admin_settings'))
 
-        cur.execute("""
-            INSERT INTO AcademicYear (AcademicYearID, YearStart, YearEnd, IsActive)
-            VALUES (%s, %s, %s, FALSE)
-            ON CONFLICT (AcademicYearID)
-            DO UPDATE SET YearStart = EXCLUDED.YearStart, YearEnd = EXCLUDED.YearEnd
-        """, (ay_id, int(y_start), int(y_end)))
+            if cur.fetchone()[0] > 0:
+                today_str = date.today().strftime('%Y-%m-%d')
+                cur.execute("""
+                    SELECT semestertype, semstartdate, semenddate
+                    FROM semester WHERE academicyearid = %s
+                """, (ay_id,))
+                existing_sems = {row[0]: (str(row[1]) if row[1] else None, str(row[2]) if row[2] else None)
+                                 for row in cur.fetchall()}
 
+                for label, s_start, s_end, s_type in sem_configs:
+                    old_start, old_end = existing_sems.get(s_type, (None, None))
+
+                    # Only reject if moving dates backwards to the past
+                    if s_start and s_start != old_start and s_start < today_str:
+                        flash(f"Validation Error: {label} start date cannot be set to a past date for Academic Years with published schedules.", "error")
+                        return redirect(url_for('admin_settings'))
+
+                    # Allow extending end dates, but not moving them to the past
+                    if s_end and s_end != old_end and old_end and s_end < old_end:
+                        flash(f"Validation Error: {label} end date cannot be moved earlier for Academic Years with published schedules. You may only extend semester dates.", "error")
+                        return redirect(url_for('admin_settings'))
+
+        # ═══════════════════════════════════════════════════════
+        # Save Academic Year
+        # ═══════════════════════════════════════════════════════
+        if is_new:
+            # New academic year starts as 'Upcoming'
+            cur.execute("""
+                INSERT INTO AcademicYear (AcademicYearID, YearStart, YearEnd, IsActive, status)
+                VALUES (%s, %s, %s, FALSE, 'Upcoming')
+            """, (ay_id, int(y_start), int(y_end)))
+        else:
+            # Update existing academic year (keep current status)
+            cur.execute("""
+                UPDATE AcademicYear
+                SET YearStart = %s, YearEnd = %s
+                WHERE AcademicYearID = %s
+            """, (int(y_start), int(y_end), ay_id))
+
+        # Save semester dates
         for label, s_start, s_end, s_type in sem_configs:
             final_start = s_start if s_start else None
             final_end = s_end if s_end else None
             cur.execute("""
                 INSERT INTO Semester (AcademicYearID, SemesterType, SemStartDate, SemEndDate, IsActive)
                 VALUES (%s, %s, %s, %s, FALSE)
-                ON CONFLICT (AcademicYearID, SemesterType) 
+                ON CONFLICT (AcademicYearID, SemesterType)
                 DO UPDATE SET SemStartDate = EXCLUDED.SemStartDate, SemEndDate = EXCLUDED.SemEndDate
             """, (ay_id, s_type, final_start, final_end))
-            
+
         conn.commit()
 
-        # Auto-create program_yearlevel rows + default sections for the new AY so the
-        # Academic Head can schedule immediately without manually creating sections first.
-        try:
-            _pyl_cur = conn.cursor(cursor_factory=RealDictCursor)
-            _auto_setup_program_yearlevels(_pyl_cur)
-            _ensure_default_sections(_pyl_cur, ay_id)
-            _pyl_cur.close()
-            conn.commit()
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
+        # Auto-create program_yearlevel rows + default sections for new AYs
+        if is_new:
+            try:
+                _pyl_cur = conn.cursor(cursor_factory=RealDictCursor)
+                _auto_setup_program_yearlevels(_pyl_cur)
+                _ensure_default_sections(_pyl_cur, ay_id)
+                _pyl_cur.close()
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
+        action_verb = "Created" if is_new else "Updated"
         flash(f"Academic Year {ay_id} configuration saved successfully.", "success")
+
         sems_set = [lbl for lbl, ss, se, _ in sem_configs if ss and se]
         write_activity_log(
-            "Created Academic Calendar",
-            f'Registered start and end dates for Academic Year {y_start}-{y_end}'
+            f"{action_verb} Academic Calendar",
+            f'{action_verb} start and end dates for Academic Year {y_start}-{y_end}'
             + (f' ({", ".join(sems_set)})' if sems_set else ''),
-            category='calendar', color=_LOG_COLORS['calendar']
+            category='calendar', color=_LOG_COLORS.get('calendar', 'blue')
         )
+
     except Exception as e:
         conn.rollback()
         flash(f"Database Error: {str(e)}", "error")
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
     return redirect(url_for('admin_settings'))
 
@@ -16792,6 +17336,8 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
     submitted_units: dict = _dd(int)
     for cls in schedule_list:
         fid   = cls.get('faculty_id') or cls.get('employeenumber')
+        if str(fid or '').strip().upper() == 'TBA':
+            continue  # TBA has no faculty to load-check
         units = int(cls.get('units', 0) or cls.get('credit_units', 0)
                     or cls.get('creditunits', 0) or 0)
         if fid and units > 0:
@@ -17074,6 +17620,10 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
         r_id   = cls.get('roomid') or cls.get('room_id')
         start_t, end_t = cls.get('start_time'), cls.get('end_time')
 
+        # 'TBA' sentinel means faculty is To Be Announced — stored as NULL in the DB
+        if str(f_num or '').strip().upper() == 'TBA':
+            f_num = None
+
         # Collect all days — GA items have days_list with both days; per-day items use daydesc/day
         days_to_insert = list(cls.get('days_list') or [])
         if not days_to_insert:
@@ -17081,7 +17631,8 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
             if single:
                 days_to_insert = [single]
 
-        if not all([s_code, f_num, start_t, end_t]) or not days_to_insert: continue
+        # f_num may be None for TBA schedules — only skip if core fields are missing
+        if not all([s_code, start_t, end_t]) or not days_to_insert: continue
 
         # Resolve curriculumsubjectid from pre-loaded map (no DB round-trip)
         code_up  = s_code.upper()

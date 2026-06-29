@@ -20,40 +20,11 @@
             background-position: center;
         }
 
-        /* ── Admin corner button ── */
-        .admin-corner {
-            position: fixed;
-            top: 20px;
-            right: 28px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #fff;
-            font-size: 0.8rem;
-            font-weight: 800;
-            letter-spacing: 1.2px;
-            text-transform: uppercase;
-            cursor: pointer;
-            padding: 8px 16px;
-            border-radius: 30px;
-            background: rgba(255,255,255,0.15);
-            border: 1.5px solid rgba(255,255,255,0.35);
-            backdrop-filter: blur(6px);
-            transition: background 0.2s, border-color 0.2s;
-            z-index: 100;
-            text-decoration: none;
-        }
-        .admin-corner:hover {
-            background: rgba(255,255,255,0.25);
-            border-color: rgba(255,255,255,0.6);
-        }
-        .admin-corner i { font-size: 0.9rem; }
-
         /* ── Login card ── */
         .login-card {
             display: flex;
             width: 950px;
-            height: 560px;
+            height: 520px;
             background: #fdfdfd;
             border-radius: 40px;
             overflow: hidden;
@@ -88,44 +59,6 @@
         }
         .card-right h2 { font-size: 3rem; margin-bottom: 28px; font-weight: 700; letter-spacing: -1px; }
 
-        /* ROLE SELECTOR — 2 options */
-        .role-container {
-            position: relative;
-            display: flex;
-            background: rgba(235,235,235,0.95);
-            padding: 6px;
-            border-radius: 12px;
-            margin-bottom: 26px;
-            width: 100%;
-            height: 48px;
-            z-index: 1;
-        }
-        .sliding-pill {
-            position: absolute;
-            top: 6px;
-            left: 6px;
-            width: calc(50% - 8px);
-            height: calc(100% - 12px);
-            background: #630000;
-            border-radius: 10px;
-            transition: all 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            z-index: -1;
-        }
-        .role-option {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: #555;
-            cursor: pointer;
-            transition: color 0.3s;
-            user-select: none;
-        }
-        .role-option.active { color: #fff; }
-
         /* FORM */
         .form-group { margin-bottom: 20px; }
         label { display: block; font-size: 0.75rem; font-weight: 800; margin-bottom: 8px; letter-spacing: 1px; opacity: 0.9; }
@@ -140,12 +73,8 @@
             outline: none;
         }
 
-        .pw-wrapper {
-            position: relative;
-        }
-        .pw-wrapper input {
-            padding-right: 46px;
-        }
+        .pw-wrapper { position: relative; }
+        .pw-wrapper input { padding-right: 46px; }
         .pw-toggle {
             position: absolute;
             right: 14px;
@@ -161,13 +90,6 @@
         }
         .pw-toggle:hover { color: #555; }
 
-        .admin-field .pw-wrapper input {
-            padding-right: 40px;
-        }
-        .admin-field .pw-toggle { color: #aaa; }
-        .admin-field .pw-toggle:hover { color: #800000; }
-
-        /* Forgot password link */
         .forgot-link {
             display: block;
             text-align: right;
@@ -182,7 +104,6 @@
         }
         .forgot-link:hover { color: #fff; }
 
-        /* LOGIN BUTTON */
         .login-btn {
             width: 100%;
             max-width: 240px;
@@ -197,14 +118,13 @@
             cursor: pointer;
             transition: 0.3s;
             box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            display: block;
         }
         .login-btn:hover { background: #fff; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 
         .error-msg { color: #ffeb3b; font-size: 0.85rem; margin-top: 12px; text-align: center; font-weight: 600; }
 
-        /* ══════════════════════════════════
-           ADMIN LOGIN OVERLAY
-        ══════════════════════════════════ */
+        /* ══ FORGOT PASSWORD MODAL ══ */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -217,78 +137,6 @@
         }
         .modal-overlay.open { display: flex; }
 
-        /* Admin login card */
-        .admin-modal-card {
-            background: #fff;
-            border-radius: 20px;
-            width: 380px;
-            overflow: hidden;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
-            animation: modalIn 0.25s ease;
-        }
-        @keyframes modalIn { from { opacity:0; transform:translateY(-16px) scale(0.97); } to { opacity:1; transform:none; } }
-
-        .admin-modal-hdr {
-            background: linear-gradient(135deg, #4b0a0a, #800000);
-            padding: 22px 28px 18px;
-            color: #fff;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .admin-modal-hdr-icon {
-            width: 42px; height: 42px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.15);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.1rem;
-        }
-        .admin-modal-hdr-title { font-size: 1.1rem; font-weight: 800; letter-spacing: .5px; }
-        .admin-modal-hdr-sub   { font-size: 0.7rem; opacity: .75; margin-top: 2px; }
-        .admin-modal-close {
-            margin-left: auto;
-            background: none; border: none;
-            color: rgba(255,255,255,0.7); font-size: 1.1rem;
-            cursor: pointer; line-height: 1;
-        }
-        .admin-modal-close:hover { color: #fff; }
-
-        .admin-modal-body { padding: 24px 28px; }
-        .admin-field { margin-bottom: 16px; }
-        .admin-field label {
-            display: block; font-size: 0.65rem; font-weight: 800;
-            text-transform: uppercase; letter-spacing: 1px;
-            color: #800000; margin-bottom: 6px;
-        }
-        .admin-field input {
-            width: 100%; padding: 11px 14px;
-            border: 1.5px solid #ddd; border-radius: 8px;
-            font-size: 0.9rem; color: #333; outline: none;
-            transition: border-color 0.2s;
-        }
-        .admin-field input:focus { border-color: #800000; }
-        .admin-error { color: #c0392b; font-size: 0.75rem; margin-top: 10px; font-weight: 600; display: none; }
-
-        .admin-modal-ftr { padding: 0 28px 24px; display: flex; gap: 10px; }
-        .btn-admin-cancel {
-            flex: 1; padding: 10px; border-radius: 8px;
-            border: 1.5px solid #ddd; background: #fff;
-            color: #666; font-weight: 700; font-size: 0.8rem;
-            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
-        }
-        .btn-admin-cancel:hover { border-color: #800000; color: #800000; }
-        .btn-admin-login {
-            flex: 2; padding: 10px; border-radius: 8px;
-            border: none; background: #800000;
-            color: #fff; font-weight: 800; font-size: 0.8rem;
-            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
-            transition: background 0.15s;
-        }
-        .btn-admin-login:hover { background: #5c0000; }
-
-        /* ══════════════════════════════════
-           FORGOT PASSWORD MODAL
-        ══════════════════════════════════ */
         .forgot-modal-card {
             background: #fff;
             border-radius: 20px;
@@ -298,6 +146,8 @@
             animation: modalIn 0.25s ease;
             text-align: center;
         }
+        @keyframes modalIn { from { opacity:0; transform:translateY(-16px) scale(0.97); } to { opacity:1; transform:none; } }
+
         .forgot-modal-hdr {
             background: linear-gradient(135deg, #4b0a0a, #800000);
             padding: 30px 28px 22px;
@@ -336,11 +186,6 @@
 </head>
 <body>
 
-    <!-- Admin corner button -->
-    <a href="javascript:void(0)" class="admin-corner" onclick="openAdminLogin()">
-        <i class="fas fa-user-shield"></i> ADMIN
-    </a>
-
     <!-- Main login card -->
     <div class="login-card">
         <div class="card-left">
@@ -352,18 +197,10 @@
         <div class="card-right">
             <h2>Login</h2>
 
-            <form action="/login" method="POST" style="display:flex;flex-direction:column;">
-                <input type="hidden" name="role" id="selectedRole" value="Academic Head">
-
-                <div class="role-container">
-                    <div class="sliding-pill" id="pill"></div>
-                    <div class="role-option active" onclick="updateRole('Academic Head', 0, this)">
-                        <i class="fas fa-user-tie"></i> Academic Head
-                    </div>
-                    <div class="role-option" onclick="updateRole('Faculty', 1, this)">
-                        <i class="fas fa-user"></i> Faculty
-                    </div>
-                </div>
+            <form action="/login" method="POST" style="display:flex;flex-direction:column;" autocomplete="off">
+                <!-- Dummy hidden fields absorb browser autofill before it reaches the real inputs -->
+                <input type="text"     style="display:none" autocomplete="username">
+                <input type="password" style="display:none" autocomplete="current-password">
 
                 <div class="form-group">
                     <label>USERNAME</label>
@@ -373,7 +210,7 @@
                 <div class="form-group">
                     <label>PASSWORD</label>
                     <div class="pw-wrapper">
-                        <input type="password" name="password" id="mainPassword" required>
+                        <input type="password" name="password" id="mainPassword" required autocomplete="new-password">
                         <button type="button" class="pw-toggle" onclick="togglePw('mainPassword', this)" tabindex="-1">
                             <i class="fas fa-eye"></i>
                         </button>
@@ -391,49 +228,6 @@
                 {% endfor %}
             {% endif %}
             {% endwith %}
-        </div>
-    </div>
-
-    <!-- ══ ADMIN LOGIN MODAL ══ -->
-    <div class="modal-overlay" id="adminModalOverlay" onclick="if(event.target===this) closeAdminLogin()">
-        <div class="admin-modal-card">
-            <div class="admin-modal-hdr">
-                <div class="admin-modal-hdr-icon"><i class="fas fa-user-shield"></i></div>
-                <div>
-                    <div class="admin-modal-hdr-title">Administrator Login</div>
-                    <div class="admin-modal-hdr-sub">System administration access</div>
-                </div>
-                <button class="admin-modal-close" onclick="closeAdminLogin()">&#10005;</button>
-            </div>
-            <form action="/login" method="POST">
-                <input type="hidden" name="role" value="Admin">
-                <div class="admin-modal-body">
-                    <div class="admin-field">
-                        <label>Username</label>
-                        <input type="text" name="username" placeholder="Enter admin username" required autocomplete="off">
-                    </div>
-                    <div class="admin-field">
-                        <label>Password</label>
-                        <div class="pw-wrapper">
-                            <input type="password" name="password" id="adminPassword" placeholder="Enter password" required>
-                            <button type="button" class="pw-toggle" onclick="togglePw('adminPassword', this)" tabindex="-1">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </div>
-                    </div>
-                    {% with messages = get_flashed_messages() %}
-                    {% if messages %}
-                        {% for message in messages %}
-                        <div class="admin-error" style="display:block;">{{ message }}</div>
-                        {% endfor %}
-                    {% endif %}
-                    {% endwith %}
-                </div>
-                <div class="admin-modal-ftr">
-                    <button type="button" class="btn-admin-cancel" onclick="closeAdminLogin()">Cancel</button>
-                    <button type="submit" class="btn-admin-login"><i class="fas fa-sign-in-alt"></i> Login as Admin</button>
-                </div>
-            </form>
         </div>
     </div>
 
@@ -457,18 +251,6 @@
     </div>
 
 <script>
-    const ACTIVE_ROLE = '{{ active_role|default("Academic Head") }}';
-    const IS_ADMIN_LOGIN = ('{{ active_role }}' === 'Admin');
-
-    function updateRole(roleName, index, element) {
-        document.getElementById('selectedRole').value = roleName;
-        const pill   = document.getElementById('pill');
-        const offset = index * 50;
-        pill.style.left = `calc(${offset}% + 6px)`;
-        document.querySelectorAll('.role-option').forEach(opt => opt.classList.remove('active'));
-        element.classList.add('active');
-    }
-
     function togglePw(inputId, btn) {
         const input = document.getElementById(inputId);
         const icon  = btn.querySelector('i');
@@ -481,24 +263,8 @@
         }
     }
 
-    function openAdminLogin() { document.getElementById('adminModalOverlay').classList.add('open'); }
-    function closeAdminLogin() { document.getElementById('adminModalOverlay').classList.remove('open'); }
-    function openForgotPassword() { document.getElementById('forgotModalOverlay').classList.add('open'); }
+    function openForgotPassword()  { document.getElementById('forgotModalOverlay').classList.add('open'); }
     function closeForgotPassword() { document.getElementById('forgotModalOverlay').classList.remove('open'); }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        const roleOptions = document.querySelectorAll('.role-option');
-        if (ACTIVE_ROLE === 'Faculty') {
-            updateRole('Faculty', 1, roleOptions[1]);
-        } else {
-            updateRole('Academic Head', 0, roleOptions[0]);
-        }
-
-        // If flashed message came from an admin login attempt, re-open admin modal
-        if (IS_ADMIN_LOGIN) {
-            openAdminLogin();
-        }
-    });
 </script>
 </body>
 </html>

@@ -199,31 +199,91 @@ function buildTimeSelect(el, selectedVal) {
 function clean(v) { return (v && v !== 'None') ? v : ''; }
 
 /* ── ACADEMIC YEAR MODAL ────────────────────────────────── */
+
+function _ayTagError(msg) {
+  const wrap = document.getElementById('ay-tag-error');
+  const el   = document.getElementById('ay-tag-error-msg');
+  if (el)   el.textContent = msg || '';
+  if (wrap) wrap.style.display = msg ? '' : 'none';
+}
+
+/* Validates completed year values — returns null if valid, error string if invalid.
+   Returns null (no error) for empty/incomplete inputs so we don't fire while typing. */
+function _validateAYYears(ys, ye) {
+  if (!ys || !ye) return null; // Incomplete — caller decides
+  const y1 = parseInt(ys), y2 = parseInt(ye);
+  if (isNaN(y1) || isNaN(y2)) return null;
+  if (y1 >= y2) return `Invalid: ${y1}–${y2}. The start year must come before the end year (e.g. 2025–2026).`;
+  if (y2 - y1 !== 1) return `Invalid: ${y1}–${y2}. An Academic Year must span exactly one year (e.g. 2025–2026, not 2025–2027).`;
+
+  const currentYear    = new Date().getFullYear();
+  const maxExistingEnd = parseInt(document.getElementById('ay_max_year_end')?.value || '0');
+  const isAddMode      = (document.getElementById('ay_form_action')?.value || 'add') === 'add';
+
+  // Block AYs that are already in the past
+  if (y2 <= currentYear) return `Cannot create AY ${y1}–${y2}. That Academic Year is already in the past.`;
+
+  // In add mode: block duplicates (if y2 ≤ maxExistingEnd, this AY is already in the sequence)
+  if (isAddMode && maxExistingEnd > 0 && y2 <= maxExistingEnd) {
+    return `AY ${y1}–${y2} already exists. Use the edit (pencil) button on that row to modify it.`;
+  }
+
+  // Block forward gaps (must extend the sequence by exactly 1 year)
+  if (isAddMode && maxExistingEnd > 0 && y1 > maxExistingEnd + 1) {
+    return `Cannot skip years. The next Academic Year to add must be AY ${maxExistingEnd}–${maxExistingEnd + 1}, not ${y1}–${y2}.`;
+  }
+
+  return null;
+}
+
+/* Used on form submit — also catches fully missing values */
+function _requireAYYears(ys, ye) {
+  if (!ys || !ye || ys.length < 4 || ye.length < 4) return 'Academic Year tag is required (e.g. AY 2025-2026).';
+  return _validateAYYears(ys, ye);
+}
+
 function openAYModal() {
   document.getElementById('ay_modal_title').innerText    = 'ADD NEW ACADEMIC YEAR';
   document.getElementById('ay_submit_btn').textContent   = 'ADD CALENDAR';
   document.querySelectorAll('#modalAY input[type="date"]').forEach(i => { i.value = ''; i.removeAttribute('min'); });
-  document.getElementById('ay_year_start').value = '';
-  document.getElementById('ay_year_end').value   = '';
+  document.getElementById('ay_year_start').value  = '';
+  document.getElementById('ay_year_end').value    = '';
   document.getElementById('ay_tag_display').value = '';
+  document.getElementById('ay_form_action').value = 'add';
+  _ayTagError(null);
   openEditModal('modalAY');
 }
 
-/* Parse the typed tag (e.g. "AY 25-26", "25-26", "2025-2026") into hidden year fields */
+/* Parse the typed tag — only validate once both parts are complete */
 document.getElementById('ay_tag_display')?.addEventListener('input', function() {
   const raw = this.value.replace(/AY\s*/i, '').trim();
-  const parts = raw.split(/[-\s]+/);
-  if (parts.length < 2) return;
+  const parts = raw.split(/[-\/\s]+/);
+
+  // No separator yet, or second part is still being typed (< 2 chars) — wait silently
+  if (parts.length < 2 || !parts[1] || parts[1].length < 2) {
+    _ayTagError(null);
+    return;
+  }
+
   let y1 = parts[0].trim(), y2 = parts[1].trim();
   if (y1.length === 2) y1 = '20' + y1;
   if (y2.length === 2) y2 = '20' + y2;
-  if (y1.length === 4 && y2.length === 4 && !isNaN(y1) && !isNaN(y2)) {
+
+  const err = _validateAYYears(y1, y2);
+  if (err) {
+    _ayTagError(err);
+    document.getElementById('ay_year_start').value = '';
+    document.getElementById('ay_year_end').value   = '';
+    return;
+  }
+  _ayTagError(null);
+  if (y1.length === 4 && y2.length === 4) {
     document.getElementById('ay_year_start').value = y1;
     document.getElementById('ay_year_end').value   = y2;
   }
 });
 
-/* Auto-fill tag from 1st sem start date (overrides manual input only when date changes) */
+/* Auto-fill tag from 1st sem start date */
 document.getElementById('ay_s1s')?.addEventListener('change', function() {
   const yr = new Date(this.value).getFullYear();
   if (!yr || isNaN(yr)) return;
@@ -232,6 +292,32 @@ document.getElementById('ay_s1s')?.addEventListener('change', function() {
   document.getElementById('ay_tag_display').value = `AY ${yy1}-${yy2}`;
   document.getElementById('ay_year_start').value = yr;
   document.getElementById('ay_year_end').value   = yr + 1;
+  _ayTagError(null);
+});
+
+/* Block form submission if AY years are missing or invalid.
+   Re-parses the visible tag input so the correct error shows even when
+   hidden year fields were cleared by a prior inline validation. */
+document.querySelector('#modalAY form')?.addEventListener('submit', function(e) {
+  const tagVal = (document.getElementById('ay_tag_display')?.value || '').trim();
+  const raw    = tagVal.replace(/AY\s*/i, '').trim();
+  const parts  = raw.split(/[-\/\s]+/);
+  let y1 = (parts[0] || '').trim();
+  let y2 = (parts[1] || '').trim();
+  if (y1.length === 2) y1 = '20' + y1;
+  if (y2.length === 2) y2 = '20' + y2;
+
+  const err = _requireAYYears(y1, y2);
+  if (err) {
+    e.preventDefault();
+    _ayTagError(err);
+    document.getElementById('ay_tag_display')?.focus();
+    return false;
+  }
+
+  // Sync hidden fields before the form posts (they may have been cleared)
+  document.getElementById('ay_year_start').value = y1;
+  document.getElementById('ay_year_end').value   = y2;
 });
 
 /* Populated once the user resolves the warning modal, then the edit modal is opened */
@@ -245,8 +331,10 @@ function prepareAY(el) {
   const computedStatus  = d.status    || 'current';
 
   const populate = () => {
+    _ayTagError(null);
     document.getElementById('ay_modal_title').innerText  = isFinalized ? 'VIEW ACADEMIC YEAR' : 'EDIT ACADEMIC YEAR';
     document.getElementById('ay_submit_btn').textContent = 'SAVE CALENDAR';
+    document.getElementById('ay_form_action').value      = 'edit';
     document.getElementById('ay_year_start').value = d.start;
     document.getElementById('ay_year_end').value   = d.end;
     const yy1 = d.start?.slice(2), yy2 = d.end?.slice(2);
@@ -342,6 +430,14 @@ function openFinalizeModal(ayId) {
   const yy1 = ayId.slice(2, 4), yy2 = ayId.slice(4);
   document.getElementById('finalizeAYLabel').textContent = `AY ${yy1}-${yy2}`;
   openSModal('modalFinalizeAY');
+}
+
+/* ── DELETE ACADEMIC YEAR ───────────────────────────────── */
+function openDeleteAYModal(ayId) {
+  document.getElementById('deleteAYId').value = ayId;
+  const yy1 = ayId.slice(2, 4), yy2 = ayId.slice(4);
+  document.getElementById('deleteAYLabel').textContent = `AY ${yy1}-${yy2}`;
+  openSModal('modalDeleteAY');
 }
 
 /* ── EMPLOYEE TYPE MODAL ────────────────────────────────── */

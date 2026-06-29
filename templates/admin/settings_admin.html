@@ -106,6 +106,7 @@
               </td>
               <td style="text-align:center; padding:6px 10px;">
                 <div style="display:flex;gap:6px;justify-content:center;align-items:center;">
+                  <!-- Edit/View Button -->
                   <button class="ay-row-btn ay-row-edit"
                       onclick="prepareAY(this)"
                       data-id="{{ ay.academicyearid }}"
@@ -120,11 +121,23 @@
                       title="{{ 'View only — this Academic Year is finalized' if ay.isfinalized else ('Edit Academic Year' if ay.computed_status == 'current' else ('Edit Academic Year (past — consider finalizing)' if ay.computed_status == 'past' else 'Edit Academic Year')) }}">
                     <i class="fas {{ 'fa-eye' if ay.isfinalized else 'fa-edit' }}"></i>
                   </button>
-                  {% if not ay.isfinalized %}
+
+                  <!-- Finalize Button (only for Current/Past, not already Finalized) -->
+                  {% if not ay.isfinalized and ay.computed_status in ['current', 'past'] %}
                   <button class="ay-row-btn ay-row-finalize"
                       onclick="openFinalizeModal('{{ ay.academicyearid }}')"
                       title="Finalize this Academic Year (locks all settings permanently)">
                     <i class="fas fa-archive"></i>
+                  </button>
+                  {% endif %}
+
+                  <!-- Delete Button: Upcoming AYs with no deps, or invalid AYs (yearstart ≥ yearend) -->
+                  {% if (ay.computed_status == 'upcoming' or ay.is_invalid) and not ay.has_published and not ay.isfinalized %}
+                  <button class="ay-row-btn ay-row-delete"
+                      onclick="openDeleteAYModal('{{ ay.academicyearid }}')"
+                      title="{{ 'Delete — invalid Academic Year (reversed years)' if ay.is_invalid else 'Delete this Academic Year (only if it has no schedules)' }}"
+                      style="background:linear-gradient(135deg,#b71c1c,#7f0000);color:#fff;">
+                    <i class="fas fa-trash"></i>
                   </button>
                   {% endif %}
                 </div>
@@ -808,6 +821,42 @@
   </div>
 </div>
 
+<!-- ── MODAL: Delete Academic Year ──────────────────────── -->
+<div id="modalDeleteAY" class="s-modal">
+  <div class="s-modal-box w-md lock-warn-box">
+    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#b71c1c,#7f0000);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">DELETE ACADEMIC YEAR</span>
+        <span class="lock-warn-sub" id="deleteAYLabel">This action cannot be undone.</span>
+      </div>
+    </div>
+    <form id="deleteAYForm" action="{{ url_for('delete_ay') }}" method="POST">
+      <input type="hidden" name="ay_id" id="deleteAYId">
+      <div class="s-modal-body" style="padding-top:18px;">
+        <p class="lock-warn-body">
+          You are about to <strong>permanently delete</strong> this Academic Year.<br><br>
+          <strong>This action cannot be undone.</strong><br><br>
+          Academic Years can only be deleted if they have no associated:<br>
+          • Schedules (published or draft)<br>
+          • Program year levels<br>
+          • Sections<br>
+          • Historical data<br><br>
+          If this Academic Year has any dependencies, deletion will be blocked.
+        </p>
+        <div class="lock-warn-actions">
+          <button type="submit" class="btn-ay-finalize-confirm" style="background:linear-gradient(135deg,#b71c1c,#7f0000);">
+            <i class="fas fa-trash"></i> Delete Academic Year
+          </button>
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteAY')">
+            <i class="fas fa-times"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- ── MODAL: Add / Edit Academic Year ────────────── -->
 <div id="modalAY" class="s-modal">
   <div class="s-modal-box">
@@ -825,9 +874,13 @@
     <form action="{{ url_for('upsert_ay') }}" method="POST">
       <div class="s-modal-body">
 
-        <div class="mf" style="margin-bottom:18px;">
+        <div class="mf" style="margin-bottom:6px;">
           <label>ACADEMIC YEAR TAG</label>
-          <input type="text" id="ay_tag_display" class="m-input ay-tag-input" placeholder="e.g. AY 25-26">
+          <input type="text" id="ay_tag_display" class="m-input ay-tag-input" placeholder="e.g. AY 25-26 or 2025-2026" autocomplete="off">
+        </div>
+        <div id="ay-tag-error" style="display:none;margin-bottom:14px;padding:8px 12px;background:#fce4e4;border:1px solid #f5c6c6;border-radius:6px;">
+          <i class="fas fa-exclamation-circle" style="color:#c0392b;margin-right:6px;"></i>
+          <span style="color:#c0392b;font-size:.82rem;font-weight:600;" id="ay-tag-error-msg"></span>
         </div>
 
         <div class="mg-2">
@@ -860,6 +913,8 @@
         <!-- Hidden fields for year_start / year_end kept for backend compatibility -->
         <input type="hidden" name="year_start" id="ay_year_start">
         <input type="hidden" name="year_end"   id="ay_year_end">
+        <input type="hidden" id="ay_max_year_end" value="{{ max_existing_year_end }}">
+        <input type="hidden" name="form_action" id="ay_form_action" value="add">
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>

@@ -136,7 +136,7 @@ async function updateSections() {
     const yl   = document.getElementById('view_yl')?.value || '';
     const sel  = document.getElementById('view_section');
     if (!sel) return;
-    sel.innerHTML = '<option value="">ALL SECTIONS</option>';
+    sel.innerHTML = '<option value="">SELECT</option>';
     if (!ay || !sem) return;
     try {
         let url;
@@ -195,7 +195,7 @@ async function onSectionChange() {
             // Reload section dropdown scoped to this program, then re-select same section
             const ay  = document.getElementById('view_ay').value;
             const sem = document.getElementById('view_sem').value;
-            secSel.innerHTML = '<option value="">ALL SECTIONS</option>';
+            secSel.innerHTML = '<option value="">SELECT</option>';
             try {
                 const url = `/api/sections-by-program?program=${encodeURIComponent(match.value)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
                 const resp = await fetch(url);
@@ -435,10 +435,15 @@ async function refreshOfferings() {
     const instrSel = document.getElementById('view_instructor');
     const empNum   = instrSel ? instrSel.value : '';
 
-    // Need at least a program OR an instructor to fetch; AY is always required
-    if ((!pSel.value && !empNum) || !ay) {
-        document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
-        document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select a program and year level.</td></tr>';
+    // Require AY + (instructor OR a specific section selected)
+    // When program is set but no section chosen (SELECT), do not auto-load — too many sections at once.
+    const needsSection = pSel.value && !section && !empNum;
+    if ((!pSel.value && !empNum) || !ay || needsSection) {
+        const msg = needsSection
+            ? 'SELECT A SECTION TO VIEW SCHEDULE'
+            : 'SELECT FILTERS TO VIEW SCHEDULE';
+        document.getElementById('gridLabel').innerText = msg;
+        document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select a section to view its schedule.</td></tr>';
         document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
         window._lastSessions = [];
         return;

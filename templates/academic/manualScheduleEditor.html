@@ -1162,9 +1162,17 @@
                 <button id="btnAssignFaculty" class="btn-assign-faculty" onclick="_handleAssignFacultyBtnClick()" style="display:none;" title="Confirm this faculty for the current subject">
                     <i class="fas fa-user-check"></i> Assign Faculty
                 </button>
+                <!-- TBA button: assign subject to To Be Announced faculty -->
+                <button id="btnAssignTBA" class="btn-assign-faculty" onclick="_handleTBABtnClick()" style="display:none;background:linear-gradient(135deg,#7f8c8d,#636e72);" title="Assign as TBA — faculty will be announced later">
+                    <i class="fas fa-question-circle"></i> Assign as TBA
+                </button>
                 <!-- Soft-assignment lock badge (shown after faculty confirmed via Assign) -->
                 <div id="fac-soft-badge" onclick="startReassignFaculty()" title="Click to reassign this faculty">
                     <i class="fas fa-lock"></i> Faculty Assigned — Click to Reassign
+                </div>
+                <!-- TBA lock badge (shown after TBA is confirmed) -->
+                <div id="fac-tba-badge" style="display:none;margin-top:6px;width:100%;box-sizing:border-box;padding:6px 10px;border-radius:4px;background:linear-gradient(135deg,#7f8c8d,#636e72);color:#fff;font-size:0.72rem;font-weight:700;text-align:center;cursor:pointer;" onclick="_clearTBAAssignment()" title="Click to change faculty">
+                    <i class="fas fa-question-circle"></i> TBA — Click to Change
                 </div>
                 <div id="fac-stats-body">
                     <div class="fac-stats-metrics">
@@ -2014,13 +2022,24 @@ window.confirmAndPlace = async function() {
     }
 
     const subjSel  = document.getElementById('sel_subj');
-    const facVal   = document.getElementById('sel_faculty').value;
-    const facName  = document.getElementById('fac_display_name').value;
+    let   facVal   = document.getElementById('sel_faculty').value;
+    let   facName  = document.getElementById('fac_display_name').value;
     const roomVal  = document.getElementById('sel_room').value;
     const roomName = document.getElementById('room_display_name').value;
     const dayVal   = document.getElementById('sel_day').value;
     const startVal = document.getElementById('sel_start_time').value;
     const endVal   = document.getElementById('sel_end_time').value;
+
+    // If sel_faculty was cleared by a panel reset but TBA is still the stored assignment, restore it
+    if (!facVal && _currentSubjectCode) {
+        const _stored = _subjectFacultyAssignments[_currentSubjectCode];
+        if (_stored && _stored.id === 'TBA') {
+            facVal  = 'TBA';
+            facName = 'TBA';
+            document.getElementById('sel_faculty').value      = 'TBA';
+            document.getElementById('fac_display_name').value = 'TBA';
+        }
+    }
 
     if (!subjSel.value || !facVal || !roomVal || !dayVal || !startVal || !endVal) {
         await showValidationModal('Incomplete Form', 'Subject, Faculty, Room, Day, and Time Block are all required.');
@@ -2196,8 +2215,8 @@ window.confirmAndPlace = async function() {
         }
     }
 
-    // Faculty conflict — DB sessions
-    if (facVal) {
+    // Faculty conflict — DB sessions (skip for TBA — no specific faculty assigned)
+    if (facVal && facVal !== 'TBA') {
         try {
             const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
             const fSessions = await fResp.json();
@@ -2223,8 +2242,9 @@ window.confirmAndPlace = async function() {
         } catch(e) { console.error('DB faculty conflict check failed:', e); }
     }
 
-    // Faculty conflict — in-memory pending
+    // Faculty conflict — in-memory pending (skip for TBA)
     for (const c of pendingManualSchedule) {
+        if (facVal === 'TBA' || c.faculty_id === 'TBA') continue; // TBA has no specific faculty to conflict
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (String(c.faculty_id) === String(facVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
             const cStart = getTimeSlotIndex(c.start_time);
@@ -2969,11 +2989,24 @@ async function _onSubjectClick(code, name, units, hours) {
     // Skip in Local mode — faculty is always from the Official schedule, never re-assignable.
     if (!IS_LOCAL && !_lockedFacultyId && _subjectFacultyAssignments[code]) {
         const stored = _subjectFacultyAssignments[code];
-        document.getElementById('sel_faculty').value = stored.id;
-        document.getElementById('fac_display_name').value = stored.name;
-        document.getElementById('fac_trigger_text').textContent = stored.name;
-        if (typeof onFacultySelect === 'function') await onFacultySelect(stored.id);
-        if (typeof _updateFacultyUnitDisplay === 'function') await _updateFacultyUnitDisplay(stored.id);
+        if (stored.id === 'TBA') {
+            // Restore TBA state without calling onFacultySelect (no real faculty)
+            document.getElementById('sel_faculty').value      = 'TBA';
+            document.getElementById('fac_display_name').value = 'TBA';
+            document.getElementById('fac_trigger_text').textContent = 'TBA — To Be Announced';
+            const nameEl = document.getElementById('fac-stats-name');
+            const typeEl = document.getElementById('fac-stats-type');
+            if (nameEl) { nameEl.textContent = 'TBA'; nameEl.style.color = '#7f8c8d'; }
+            if (typeEl) { typeEl.textContent = 'To Be Announced'; typeEl.style.color = '#7f8c8d'; }
+            const statsBody = document.getElementById('fac-stats-body');
+            if (statsBody) statsBody.style.display = 'none';
+        } else {
+            document.getElementById('sel_faculty').value = stored.id;
+            document.getElementById('fac_display_name').value = stored.name;
+            document.getElementById('fac_trigger_text').textContent = stored.name;
+            if (typeof onFacultySelect === 'function') await onFacultySelect(stored.id);
+            if (typeof _updateFacultyUnitDisplay === 'function') await _updateFacultyUnitDisplay(stored.id);
+        }
     }
 
     // Auto-add one empty slice if no slices were loaded (no existing sessions).
@@ -3153,6 +3186,9 @@ function _resetRightPanel() {
     document.getElementById('fac_display_name').value = '';
     document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
     document.getElementById('sel_subj').value = '';
+    // Restore stats panel in case a TBA assignment hid it
+    const _rstStatsBody = document.getElementById('fac-stats-body');
+    if (_rstStatsBody) _rstStatsBody.style.display = '';
     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
     if (typeof _updateAssignFacultyBtn   === 'function') _updateAssignFacultyBtn();
     // Clear stale hidden-DB entries so sessions from the previous section
@@ -3171,13 +3207,17 @@ function _resetRightPanel() {
 // States: locked (has sessions) → hidden; confirmed-same → Re-Assign; new-pick → Assign/Confirm; none → hidden.
 function _updateAssignFacultyBtn() {
     const btn        = document.getElementById('btnAssignFaculty');
+    const btnTBA     = document.getElementById('btnAssignTBA');
+    const tbaBadge   = document.getElementById('fac-tba-badge');
     const softBadge  = document.getElementById('fac-soft-badge');
     const facWrapper = document.getElementById('fac_wrapper');
     if (!btn) return;
 
     // Local mode: faculty assignment is always read-only (from Official schedule)
     if (IS_LOCAL) {
-        btn.style.display = 'none';
+        btn.style.display    = 'none';
+        if (btnTBA)   btnTBA.style.display   = 'none';
+        if (tbaBadge) tbaBadge.style.display = 'none';
         if (softBadge)  softBadge.classList.remove('visible');
         if (facWrapper) facWrapper.style.display = 'none';
         return;
@@ -3185,11 +3225,14 @@ function _updateAssignFacultyBtn() {
     const hasSubject    = !!_currentSubjectCode;
     const selectedFacId = document.getElementById('sel_faculty').value;
     const hasFaculty    = !!selectedFacId;
+    const isTBA         = selectedFacId === 'TBA';
     const stored        = hasSubject ? _subjectFacultyAssignments[_currentSubjectCode] : null;
     const sameAsStored  = !!(stored && String(stored.id) === String(selectedFacId));
 
-    // Always hide soft badge first; will re-show selectively
+    // Always hide soft/tba badges first; will re-show selectively
     if (softBadge) softBadge.classList.remove('visible');
+    if (tbaBadge)  tbaBadge.style.display = 'none';
+    if (btnTBA)    btnTBA.style.display   = 'none';
 
     if (_lockedFacultyId) {
         btn.style.display = 'none';
@@ -3199,6 +3242,22 @@ function _updateAssignFacultyBtn() {
         btn.style.display = 'none';
         return;
     }
+
+    // TBA confirmed and unchanged — show TBA badge, hide everything else
+    if (isTBA && stored && stored.id === 'TBA') {
+        btn.style.display    = 'none';
+        if (tbaBadge) tbaBadge.style.display = 'block';
+        if (facWrapper) facWrapper.style.display = 'none';
+        return;
+    }
+    // TBA selected but not yet stored — show TBA assign button
+    if (isTBA && !stored) {
+        btn.style.display  = 'none';
+        if (btnTBA) { btnTBA.style.display = 'block'; btnTBA.innerHTML = '<i class="fas fa-question-circle"></i> Confirm TBA'; }
+        if (facWrapper) facWrapper.style.display = 'none';
+        return;
+    }
+
     if (stored && hasFaculty && sameAsStored) {
         // Faculty confirmed and unchanged — show lock badge, hide button + dropdown
         btn.style.display = 'none';
@@ -3214,11 +3273,20 @@ function _updateAssignFacultyBtn() {
             ? '<i class="fas fa-user-check"></i> Confirm Re-Assignment'
             : '<i class="fas fa-user-check"></i> Assign Faculty';
         if (facWrapper) facWrapper.style.display = 'block';
+        // Also show TBA option when a real faculty is selected but not yet confirmed
+        if (btnTBA && !stored) {
+            btnTBA.style.display = 'block';
+            btnTBA.innerHTML = '<i class="fas fa-question-circle"></i> Assign as TBA instead';
+        }
         return;
     }
-    // No faculty, no assignment — hide button, show dropdown
+    // No faculty, no assignment — hide assign button, show dropdown + TBA option
     btn.style.display = 'none';
     if (facWrapper) facWrapper.style.display = 'block';
+    if (btnTBA && hasSubject) {
+        btnTBA.style.display = 'block';
+        btnTBA.innerHTML = '<i class="fas fa-question-circle"></i> Assign as TBA';
+    }
 }
 
 // Dispatches to either startReassignFaculty or assignFacultyToSubject based on button state
@@ -3229,6 +3297,67 @@ function _handleAssignFacultyBtnClick() {
     } else {
         assignFacultyToSubject();
     }
+}
+
+/* ── TBA Faculty Assignment ──────────────────────────────────────────────────
+   Sets the current subject's faculty to TBA (To Be Announced).
+   Stored as NULL in the DB; displayed as "TBA" throughout the system.
+────────────────────────────────────────────────────────────────────────────── */
+function _handleTBABtnClick() {
+    if (IS_LOCAL) return;
+    if (!_currentSubjectCode) return;
+
+    document.getElementById('sel_faculty').value       = 'TBA';
+    document.getElementById('fac_display_name').value  = 'TBA';
+    document.getElementById('fac_trigger_text').textContent = 'TBA — To Be Announced';
+
+    const nameEl = document.getElementById('fac-stats-name');
+    const typeEl = document.getElementById('fac-stats-type');
+    const chevEl = document.getElementById('fac-stats-chevron');
+    if (nameEl) { nameEl.textContent = 'TBA'; nameEl.style.color = '#7f8c8d'; nameEl.style.fontWeight = '700'; }
+    if (typeEl) { typeEl.textContent = 'To Be Announced'; typeEl.style.color = '#7f8c8d'; }
+    if (chevEl) chevEl.style.display = 'none';
+
+    // Hide stats body — no metrics for TBA
+    const statsBody = document.getElementById('fac-stats-body');
+    if (statsBody) statsBody.style.display = 'none';
+
+    // Store TBA assignment for this subject (bypasses pending-confirmation flow)
+    _subjectFacultyAssignments[_currentSubjectCode] = { id: 'TBA', name: 'TBA' };
+    window._pendingFacultyAssignment = false;
+
+    // Clear any previously assigned real faculty from the DB — TBA means "none yet"
+    const _tAy   = document.getElementById('sel_ay').value;
+    const _tSem  = document.getElementById('sel_sem').value;
+    const _tYl   = document.getElementById('sel_year').value;
+    const _tProg = document.getElementById('sel_prog').value;
+    fetch(`/api/manual/assign_faculty/${encodeURIComponent(_currentSubjectCode)}` +
+          `?program=${encodeURIComponent(_tProg)}&year_level=${encodeURIComponent(_tYl)}` +
+          `&ay_id=${encodeURIComponent(_tAy)}&sem=${encodeURIComponent(_tSem)}`,
+          { method: 'DELETE' }).catch(() => {});
+
+    if (typeof _facInfo !== 'undefined') _facInfo = null;
+    _updateAssignFacultyBtn();
+}
+
+function _clearTBAAssignment() {
+    if (IS_LOCAL) return;
+    document.getElementById('sel_faculty').value       = '';
+    document.getElementById('fac_display_name').value  = '';
+    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+
+    const nameEl = document.getElementById('fac-stats-name');
+    const typeEl = document.getElementById('fac-stats-type');
+    const chevEl = document.getElementById('fac-stats-chevron');
+    if (nameEl) { nameEl.textContent = 'Select Faculty'; nameEl.style.color = '#9e9e9e'; nameEl.style.fontWeight = '600'; }
+    if (typeEl) { typeEl.textContent = 'click to search'; typeEl.style.color = '#bbb'; }
+    if (chevEl) { chevEl.style.display = ''; chevEl.className = 'fas fa-search fac-stats-chevron'; }
+
+    const statsBody = document.getElementById('fac-stats-body');
+    if (statsBody) statsBody.style.display = '';
+
+    if (_currentSubjectCode) delete _subjectFacultyAssignments[_currentSubjectCode];
+    _updateAssignFacultyBtn();
 }
 
 // Opens the dropdown so user can pick a new faculty (for reassignment flow)
@@ -3261,6 +3390,8 @@ function startReassignFaculty() {
     document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
 
     // Reset the faculty stats panel to the "no faculty selected" default state
+    const _rsb = document.getElementById('fac-stats-body');
+    if (_rsb) _rsb.style.display = '';  // restore if TBA hid it
     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
 
     _updateAssignFacultyBtn();
