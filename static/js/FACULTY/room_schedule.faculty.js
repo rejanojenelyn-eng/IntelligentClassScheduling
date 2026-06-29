@@ -19,11 +19,12 @@ const FRS_DAY_MAP = {
 };
 
 /* ── State ── */
-let _buildings  = [];
-let _rooms      = [];
-let _activeBldg = null;
-let _activeRoom = null;
-let _floorFilter = '';
+let _buildings       = [];
+let _rooms           = [];
+let _activeBldg      = null;
+let _activeRoom      = null;
+let _floorFilter     = '';
+let _currentConflict = null;  // set by _renderAvailRooms; blocks room card clicks when non-null
 
 /* ── Init ── */
 const _initEl = document.getElementById('frs-init-data');
@@ -341,6 +342,7 @@ async function frsFindAvailable() {
 
     // Availability is only computed when all three time criteria are provided
     const hasTimeFilter = !!(day && start && end);
+    if (!hasTimeFilter) _currentConflict = null;  // no time selected → no conflict possible
 
     const content = document.getElementById('frsAvailContent');
     content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-spinner fa-spin"></i> Loading rooms…</div>`;
@@ -386,6 +388,12 @@ async function frsFindAvailable() {
 
 function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
     const content = document.getElementById('frsAvailContent');
+
+    // Store whether there is an active scheduling conflict — used by frsRoomCardClick to block requests
+    const hasConflict = !!(conflicts && hasTimeFilter &&
+        (conflicts.faculty_conflict || conflicts.section_conflict));
+    _currentConflict = hasConflict ? conflicts : null;
+
     if (!rooms.length) {
         const msg = hasTimeFilter
             ? 'No available rooms found for the selected criteria.'
@@ -435,19 +443,22 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
             const statusChip = hasTimeFilter
                 ? `<div class="frs-avail-status-chip">&#10003; Available</div>`
                 : '';
-            const roomData = JSON.stringify({
-                id: r.roomid, name: r.roomname || '', building: r.buildingname || ''
-            }).replace(/"/g, '&quot;');
+            // When there is a scheduling conflict, style the card as blocked and show a conflict hint
+            const cardStyle   = hasConflict ? ' style="opacity:.7;cursor:not-allowed;"' : '';
+            const requestHint = hasConflict
+                ? `<div class="frs-avail-request-hint" style="color:#f0a500;"><i class="fas fa-triangle-exclamation"></i> Conflict — Cannot Request</div>`
+                : `<div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>`;
             html += `
-            <div class="frs-avail-card frs-avail-card-clickable" title="Request this room"
+            <div class="frs-avail-card frs-avail-card-clickable"${cardStyle}
+                 title="${hasConflict ? 'You have a scheduling conflict at this time' : 'Request this room'}"
                  onclick="frsRoomCardClick(${r.roomid}, '${_esc(r.roomname || '')}', '${_esc(r.buildingname || '')}')">
-                ${hasTimeFilter ? '<div class="frs-avail-dot"></div>' : ''}
+                ${hasTimeFilter ? `<div class="frs-avail-dot"${hasConflict ? ' style="background:#f0a500;"' : ''}></div>` : ''}
                 <div class="frs-avail-room-name">ROOM ${_esc(r.roomname || '')}</div>
                 ${badge}
                 ${timeLbl}
                 ${cap}
                 ${statusChip}
-                <div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>
+                ${requestHint}
             </div>`;
         });
         html += `</div>`;
@@ -456,9 +467,46 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
 }
 
 function frsRoomCardClick(roomId, roomName, buildingName) {
+    if (_currentConflict) {
+        _showConflictBlock();
+        return;
+    }
     if (typeof frsOpenRequestFromRoom === 'function') {
         frsOpenRequestFromRoom(roomId, roomName, buildingName);
     }
+}
+
+function _showConflictBlock() {
+    const lines = [];
+    if (_currentConflict.faculty_conflict) lines.push(`<b>Faculty Conflict:</b> ${_esc(_currentConflict.faculty_detail || '')}`);
+    if (_currentConflict.section_conflict) lines.push(`<b>Section Conflict:</b> ${_esc(_currentConflict.section_detail || '')}`);
+
+    let el = document.getElementById('frsConflictBlock');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'frsConflictBlock';
+        el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+        el.addEventListener('click', e => { if (e.target === el) el.style.display = 'none'; });
+        document.body.appendChild(el);
+    }
+    el.innerHTML = `
+        <div style="background:#fff;border-radius:10px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.28);overflow:hidden;">
+            <div style="background:#fff3cd;border-bottom:2px solid #f0a500;padding:14px 18px;display:flex;align-items:center;gap:10px;">
+                <i class="fas fa-triangle-exclamation" style="color:#f0a500;font-size:1.2rem;flex-shrink:0;"></i>
+                <span style="font-weight:800;font-size:0.88rem;color:#7a5200;letter-spacing:.3px;">SCHEDULE CONFLICT AT THIS TIME</span>
+            </div>
+            <div style="padding:16px 18px;font-size:0.82rem;color:#333;line-height:1.6;">
+                ${lines.join('<br>')}
+                <div style="margin-top:10px;font-size:0.76rem;color:#888;">You cannot submit a room request for a time when you already have a scheduled class.</div>
+            </div>
+            <div style="padding:10px 18px 16px;display:flex;justify-content:flex-end;">
+                <button onclick="document.getElementById('frsConflictBlock').style.display='none'"
+                        style="background:#c0392b;color:#fff;border:none;border-radius:6px;padding:8px 24px;font-size:0.82rem;font-weight:700;cursor:pointer;letter-spacing:.3px;">
+                    OK
+                </button>
+            </div>
+        </div>`;
+    el.style.display = 'flex';
 }
 
 /* ═══════════════════════════════════════════

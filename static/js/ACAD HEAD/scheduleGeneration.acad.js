@@ -88,11 +88,16 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadSections() {
         const prog = program.value;
         const yl   = yearLevel.value;
+        const ay   = acadYear.value;
+        const sem  = term.value;
         sectionFilter.innerHTML = '<option value="">SELECT</option>';
         if (!prog || !yl) { checkFormValidity(); return; }
         sectionFilter.innerHTML = '<option value="">Loading...</option>';
         try {
-            const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}`);
+            const params = new URLSearchParams({ program: prog, yearLevel: yl });
+            if (ay)  params.set('ay', ay);
+            if (sem) params.set('semester', sem);
+            const res  = await fetch(`/api/sections-by-program?${params}`);
             const data = await res.json();
             sectionFilter.innerHTML = '<option value="">SELECT</option>';
             (data.sections || []).forEach(sec => {
@@ -184,9 +189,14 @@ document.addEventListener('DOMContentLoaded', () => {
         checkFormValidity();
     });
     sectionFilter.addEventListener('change', checkFormValidity);
-    [acadYear, term, useHistorical].forEach(el => {
-        el.addEventListener('change', checkFormValidity);
+    // When AY or term changes, section list must be reloaded (sections are AY-specific)
+    [acadYear, term].forEach(el => {
+        el.addEventListener('change', async () => {
+            if (program.value && yearLevel.value) await loadSections();
+            else checkFormValidity();
+        });
     });
+    useHistorical.addEventListener('change', checkFormValidity);
 
     checkFormValidity();
 

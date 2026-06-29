@@ -1054,7 +1054,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (initSect && initProg && initYl && !_isFromGenerator) {
         try {
             if (typeof _loadSectionOptions === 'function') await _loadSectionOptions();
-            const r = await fetch(`/api/sections-by-program?program=${encodeURIComponent(initProg)}&yearLevel=${encodeURIComponent(initYl)}`);
+            const _p = new URLSearchParams({ program: initProg, yearLevel: initYl });
+            if (initAy) _p.set('ay', initAy);
+            const r = await fetch(`/api/sections-by-program?${_p}`);
             const d = await r.json();
             const match = (d.sections || []).find(s => String(s.id) === String(initSect));
             if (match && typeof selectBcSect === 'function') selectBcSect(match.id, match.name);
@@ -2096,7 +2098,8 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
 
     const selectedDrafts = selectedCandidates.map(c => c._raw);
 
-    const context = { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay };
+    const _approveSecId = document.getElementById('sel_section')?.value || '';
+    const context = { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay, sectionId: _approveSecId };
 
 
     const btn = document.getElementById('btnManualApprove');

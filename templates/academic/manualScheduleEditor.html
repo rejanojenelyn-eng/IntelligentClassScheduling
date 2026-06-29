@@ -4752,7 +4752,12 @@ async function _loadSectionOptions() {
     }
     menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">Loading…</div>';
     try {
-        const res  = await fetch(`/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}`, { signal: _sectionSignal });
+        const _secAy  = document.getElementById('sel_ay')?.value  || '';
+        const _secSem = document.getElementById('sel_sem')?.value || '';
+        const _secParams = new URLSearchParams({ program: prog, yearLevel: yl });
+        if (_secAy)  _secParams.set('ay', _secAy);
+        if (_secSem) _secParams.set('semester', _secSem);
+        const res  = await fetch(`/api/sections-by-program?${_secParams}`, { signal: _sectionSignal });
         if (_sectionSignal.aborted) return;
         const data = await res.json();
         if (_sectionSignal.aborted) return;
@@ -6798,11 +6803,12 @@ async function _loadDraftListPanel() {
     const cards   = document.getElementById('dlpCards');
     const subtitle = document.getElementById('dlpSubtitle');
 
-    // Require AY + program + year level to be selected before showing drafts
+    // Require AY + Semester + program + year level to be selected before showing drafts
     const _ctxAy   = document.getElementById('sel_ay')?.value   || '';
+    const _ctxSem  = document.getElementById('sel_sem')?.value  || '';
     const _ctxProg = document.getElementById('sel_prog')?.value || '';
     const _ctxYl   = document.getElementById('sel_year')?.value || '';
-    if (!_ctxAy || !_ctxProg || !_ctxYl) {
+    if (!_ctxAy || !_ctxSem || !_ctxProg || !_ctxYl) {
         if (cards) cards.innerHTML = `
             <div class="dlp-empty">
                 <i class="fas fa-filter" style="font-size:2rem;opacity:0.3;display:block;margin-bottom:10px;"></i>
@@ -6824,20 +6830,23 @@ async function _loadDraftListPanel() {
             return;
         }
 
-        // Filter to only show drafts matching the selected program + year level + AY
+        // Filter to only show drafts matching the selected AY + Semester + program + year level.
+        // Semester is required so drafts from other scheduling periods never bleed through.
         const _schedMode = document.getElementById('app-init-data')?.dataset.schedulerMode || 'official';
         const ctxData = data.filter(d =>
             (d.source === 'local' ? 'local' : 'official') === _schedMode &&
             (d.programcode || '').toUpperCase() === _ctxProg.toUpperCase() &&
             String(d.yearlevel || '') === String(_ctxYl) &&
-            String(d.acadyear  || '') === String(_ctxAy)
+            String(d.acadyear  || '') === String(_ctxAy) &&
+            String(d.term      || '') === String(_ctxSem)
         );
 
-        // Deduplicate: keep latest per program+year+source for this context
+        // Deduplicate: keep latest per program+year+term+section+source for this context.
+        // Term and sectionid are included so different semesters and sections stay separate.
         const groups = {};
         ctxData.forEach(d => {
             const src = d.source === 'local' ? 'local' : 'official';
-            const key = `${d.programcode||''}-${d.yearlevel||''}-${src}`;
+            const key = `${d.programcode||''}-${d.yearlevel||''}-${d.term||''}-${d.sectionid||''}-${src}`;
             if (!groups[key] || (d.datecreated||'') > (groups[key].datecreated||'')) groups[key] = d;
         });
         const sorted = Object.values(groups).sort((a,b) => (b.datecreated||'').localeCompare(a.datecreated||''));

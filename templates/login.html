@@ -337,7 +337,7 @@
 <body>
 
     <!-- Admin corner button -->
-    <a class="admin-corner" onclick="openAdminLogin()">
+    <a href="javascript:void(0)" class="admin-corner" onclick="openAdminLogin()">
         <i class="fas fa-user-shield"></i> ADMIN
     </a>
 
@@ -378,7 +378,7 @@
                             <i class="fas fa-eye"></i>
                         </button>
                     </div>
-                    <a class="forgot-link" onclick="openForgotPassword()">Forgot Password?</a>
+                    <a href="javascript:void(0)" class="forgot-link" onclick="openForgotPassword()">Forgot Password?</a>
                 </div>
 
                 <button type="submit" class="login-btn">LOGIN</button>
@@ -395,7 +395,7 @@
     </div>
 
     <!-- ══ ADMIN LOGIN MODAL ══ -->
-    <div class="modal-overlay" id="adminModalOverlay" onclick="if(event.target===this)closeAdminLogin()">
+    <div class="modal-overlay" id="adminModalOverlay" onclick="if(event.target===this) closeAdminLogin()">
         <div class="admin-modal-card">
             <div class="admin-modal-hdr">
                 <div class="admin-modal-hdr-icon"><i class="fas fa-user-shield"></i></div>
@@ -438,7 +438,7 @@
     </div>
 
     <!-- ══ FORGOT PASSWORD MODAL ══ -->
-    <div class="modal-overlay" id="forgotModalOverlay" onclick="if(event.target===this)closeForgotPassword()">
+    <div class="modal-overlay" id="forgotModalOverlay" onclick="if(event.target===this) closeForgotPassword()">
         <div class="forgot-modal-card">
             <div class="forgot-modal-hdr">
                 <div class="forgot-modal-icon"><i class="fas fa-lock"></i></div>
@@ -458,6 +458,7 @@
 
 <script>
     const ACTIVE_ROLE = '{{ active_role|default("Academic Head") }}';
+    const IS_ADMIN_LOGIN = ('{{ active_role }}' === 'Admin');
 
     function updateRole(roleName, index, element) {
         document.getElementById('selectedRole').value = roleName;
@@ -480,9 +481,9 @@
         }
     }
 
-    function openAdminLogin()    { document.getElementById('adminModalOverlay').classList.add('open'); }
-    function closeAdminLogin()   { document.getElementById('adminModalOverlay').classList.remove('open'); }
-    function openForgotPassword()  { document.getElementById('forgotModalOverlay').classList.add('open'); }
+    function openAdminLogin() { document.getElementById('adminModalOverlay').classList.add('open'); }
+    function closeAdminLogin() { document.getElementById('adminModalOverlay').classList.remove('open'); }
+    function openForgotPassword() { document.getElementById('forgotModalOverlay').classList.add('open'); }
     function closeForgotPassword() { document.getElementById('forgotModalOverlay').classList.remove('open'); }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -494,9 +495,9 @@
         }
 
         // If flashed message came from an admin login attempt, re-open admin modal
-        {% if active_role == 'Admin' %}
+        if (IS_ADMIN_LOGIN) {
             openAdminLogin();
-        {% endif %}
+        }
     });
 </script>
 </body>

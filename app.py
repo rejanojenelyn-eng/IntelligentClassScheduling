@@ -2273,7 +2273,52 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None):
                     cur.execute("ROLLBACK TO SAVEPOINT pyl_auto")
                     continue
 
+    # Ensure every program_yearlevel in the active AY has at least one default section
+    if active_ay_id:
+        _ensure_default_sections(cur, active_ay_id)
+
     return upserted
+
+
+def _ensure_default_sections(cur, ay_id):
+    """
+    For every program_yearlevel row under ay_id that has NO sections at all,
+    insert one default active section.  Name = section_naming_format if set,
+    otherwise '{programcode}{yearlevel}' (e.g. 'BPA1'), truncated to 10 chars.
+    Uses SAVEPOINT so a single conflict never aborts the outer transaction.
+    Returns the number of sections created.
+    """
+    if not ay_id:
+        return 0
+    cur.execute("""
+        SELECT pyl.programyearlevelid,
+               pyl.programcode,
+               pyl.yearlevel,
+               COALESCE(pyl.section_naming_format, '') AS naming_format
+        FROM   program_yearlevel pyl
+        WHERE  pyl.academicyearid = %s
+          AND  NOT EXISTS (
+                   SELECT 1 FROM sections sec
+                   WHERE  sec.programyearlevelid = pyl.programyearlevelid
+               )
+    """, (ay_id,))
+    rows = cur.fetchall()
+    created = 0
+    for r in rows:
+        pyl_id  = r['programyearlevelid']
+        prefix  = (r['naming_format'] or (r['programcode'] + str(r['yearlevel'])))[:10]
+        try:
+            cur.execute("SAVEPOINT sec_default")
+            cur.execute("""
+                INSERT INTO sections (programyearlevelid, sectionname, isactive)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
+            """, (pyl_id, prefix))
+            cur.execute("RELEASE SAVEPOINT sec_default")
+            created += 1
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sec_default")
+    return created
 
 
 def _reassign_curriculum_for_program(cur, programcode):
@@ -8391,22 +8436,29 @@ def _api_manual_faculty_load_impl():
     scheduled = 0
     if ay_id and sem:
         try:
-            sched = query_db("""
-                SELECT COALESCE(SUM(d.load_units), 0) AS sched_units
+            # Draft-preferred: for each subject+section pick the latest version, preferring
+            # Draft over Published. This prevents double-counting when a faculty is reassigned —
+            # the old Published (old faculty) is superseded by the new Draft (new faculty).
+            _status_filter = "'Published'" if scheduler_mode == 'local' else "'Draft', 'Published'"
+            _draft_priority = "" if scheduler_mode == 'local' else "CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END,"
+            sched = query_db(f"""
+                SELECT COALESCE(SUM(load_units), 0) AS sched_units
                 FROM (
-                    SELECT DISTINCT cs.subjectcode, sc.scheduleid,
+                    SELECT DISTINCT ON (cs.subjectcode, sg.sectionid)
                            (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS load_units
                     FROM schedule_version sv
-                    JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                    JOIN semester s ON sc.semesterid = s.semesterid
-                    WHERE sc.employeenumber = %s
+                    JOIN schedule sg ON sv.scheduleid = sg.scheduleid
+                    JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                    JOIN semester s ON sg.semesterid = s.semesterid
+                    WHERE sg.employeenumber = %s
                       AND s.academicyearid = %s
                       AND s.semestertype = %s
-                      AND sv.status IN ('Published', {})
+                      AND sv.status IN ({_status_filter})
+                    ORDER BY cs.subjectcode, sg.sectionid,
+                             {_draft_priority}
+                             sv.version_number DESC
                 ) AS d
-            """.format("'Published'" if scheduler_mode == 'local' else "'Published', 'Draft'"),
-            (emp_num, ay_id, sem), one=True)
+            """, (emp_num, ay_id, sem), one=True)
             if sched:
                 scheduled = int(sched['sched_units'] or 0)
         except Exception as _e:
@@ -8440,20 +8492,25 @@ def _api_manual_faculty_load_impl():
     assigned_subjects = []
     if ay_id and sem:
         try:
+            # Draft-preferred: pick the latest version per subject+section to avoid showing
+            # old Published assignment (old faculty) alongside a new Draft assignment (new faculty).
             rows = query_db("""
-                SELECT DISTINCT cs.subjectcode, cs.subjectname, sc.scheduleid,
+                SELECT DISTINCT ON (cs.subjectcode, sg.sectionid)
+                       cs.subjectcode, cs.subjectname, sg.scheduleid,
                        COALESCE(sec.sectionname, '') AS sectionname,
                        (COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS creditunits
                 FROM schedule_version sv
-                JOIN schedule sc          ON sv.scheduleid  = sc.scheduleid
-                JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                LEFT JOIN sections sec     ON sc.sectionid   = sec.sectionid
-                JOIN semester s            ON sc.semesterid  = s.semesterid
-                WHERE sc.employeenumber = %s
+                JOIN schedule sg          ON sv.scheduleid  = sg.scheduleid
+                JOIN curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
+                LEFT JOIN sections sec     ON sg.sectionid   = sec.sectionid
+                JOIN semester s            ON sg.semesterid  = s.semesterid
+                WHERE sg.employeenumber = %s
                   AND s.academicyearid  = %s
                   AND s.semestertype    = %s
                   AND sv.status IN ('Published', 'Draft')
-                ORDER BY cs.subjectcode, sec.sectionname
+                ORDER BY cs.subjectcode, sg.sectionid,
+                         CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END,
+                         sv.version_number DESC
             """, (emp_num, ay_id, sem))
             assigned_subjects = [dict(r) for r in (rows or [])]
         except Exception:
@@ -8768,19 +8825,13 @@ def api_manual_existing_sessions():
         # No Local Arrangement found — fall back to Official Published sessions
         rows = [dict(r) for r in pub_rows]
     elif draft_rows:
-        # Official Scheduler: merge Draft + Published, promoting overlap slots to Published colour.
-        # Published-only slots (existing confirmed sessions) appear FIRST so they stay as Slice 1,
-        # Slice 2, etc. — new Draft-only additions appear after them.
-        pub_slot_keys   = {(r['daydesc'], r['starttimeid']) for r in pub_rows}
-        draft_slot_keys = {(r['daydesc'], r['starttimeid']) for r in draft_rows}
-
+        # Official Scheduler: Draft is the definitive replacement for Published.
+        # Suppress ALL old Published slots so the calendar never shows the same subject
+        # as both Published and Draft simultaneously — even when time or room changed.
+        # Slots whose (day, timeid) still match a Published slot are promoted to
+        # 'Published' appearance so the UI shows they were already approved.
+        pub_slot_keys = {(r['daydesc'], r['starttimeid']) for r in pub_rows}
         rows = []
-        # 1) Published slots NOT already in the Draft come first (original sessions)
-        for r in pub_rows:
-            if (r['daydesc'], r['starttimeid']) not in draft_slot_keys:
-                rows.append(dict(r))
-
-        # 2) Draft slots come after (new additions); promote to Published colour if overlap
         for r in draft_rows:
             r = dict(r)
             if (r['daydesc'], r['starttimeid']) in pub_slot_keys:
@@ -12424,6 +12475,15 @@ def admin_settings():
         except Exception:
             activity_logs = []
 
+        # ── Active AY for Program Management ────────────────
+        cur.execute("""
+            SELECT academicyearid FROM academicyear
+            WHERE isactive = TRUE
+            ORDER BY yearstart DESC LIMIT 1
+        """)
+        _active_ay_row = cur.fetchone()
+        active_ay_id = _active_ay_row[0] if _active_ay_row else None
+
         # ── Program Management data ──────────────────────────
         cur.execute("""
             SELECT p.programcode, p.programname,
@@ -12433,14 +12493,14 @@ def admin_settings():
                    COUNT(DISTINCT c.curriculumid)                                    AS curr_count,
                    COUNT(DISTINCT pyl.programyearlevelid) FILTER (WHERE pyl.isactive = TRUE) AS offering_count,
                    COUNT(DISTINCT pyl.programyearlevelid)                            AS yearlevel_count,
-                   COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE)  AS section_count
+                   COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE AND pyl.academicyearid = %s) AS section_count
             FROM   programs p
             LEFT JOIN curriculum       c   ON c.programcode  = p.programcode
             LEFT JOIN program_yearlevel pyl ON pyl.programcode = p.programcode
             LEFT JOIN sections          sec ON sec.programyearlevelid = pyl.programyearlevelid
             GROUP  BY p.programcode, p.programname, p.programtype, p.isactive, p.numyearlevel
             ORDER  BY p.programname
-        """)
+        """, (active_ay_id,))
         programs_mgmt = to_dict(cur)
 
         cur.execute("""
@@ -12455,19 +12515,22 @@ def admin_settings():
         """)
         curricula_mgmt = to_dict(cur)
 
+        # Show only sections that belong to the active AY
         cur.execute("""
             SELECT sec.sectionid, sec.sectionname, pyl.yearlevel,
                    pyl.programcode, sec.isactive,
                    pyl.programyearlevelid,
                    pyl.programyearlevelid AS cohortid,
+                   pyl.academicyearid,
                    COALESCE(curr.curriculumcode, '') AS curriculumcode
             FROM   sections sec
             JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             LEFT JOIN curriculum curr ON curr.curriculumid = pyl.curriculumid
             JOIN   programs p    ON pyl.programcode = p.programcode
             WHERE  p.isactive = TRUE
+              AND  pyl.academicyearid = %s
             ORDER  BY pyl.programcode, pyl.yearlevel, sec.sectionname
-        """)
+        """, (active_ay_id,))
         sections_mgmt = to_dict(cur)
 
         # program_yearlevel rows act as "offerings"
@@ -12487,21 +12550,23 @@ def admin_settings():
             FROM   program_yearlevel pyl
             LEFT JOIN curriculum c ON c.curriculumid = pyl.curriculumid
             LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid
+            WHERE  pyl.academicyearid = %s
             GROUP  BY pyl.programyearlevelid, pyl.programcode, c.curriculumcode,
                       pyl.startacademicyear, pyl.isactive
             ORDER  BY pyl.programcode, pyl.startacademicyear DESC
-        """)
+        """, (active_ay_id,))
         offerings_mgmt = to_dict(cur)
 
-        # Per-program year-level management (latest pyl row per program+yearlevel,
-        # but section counts span ALL pyl rows for the same program+yearlevel)
+        # Per-program year-level management — pick the active-AY PYL row per program+yearlevel.
+        # Section counts are scoped to that same AY (not spanning all historical AYs).
         cur.execute("""
-            WITH pyl_latest AS (
+            WITH pyl_active AS (
                 SELECT DISTINCT ON (programcode, yearlevel)
                     programyearlevelid, programcode, yearlevel, isactive,
                     COALESCE(section_naming_format, '') AS section_naming_format,
                     startacademicyear, academicyearid
                 FROM program_yearlevel
+                WHERE academicyearid = %s
                 ORDER BY programcode, yearlevel, startacademicyear DESC NULLS LAST
             )
             SELECT
@@ -12515,23 +12580,17 @@ def admin_settings():
                 (
                     SELECT COUNT(sec.sectionid)
                     FROM sections sec
-                    JOIN program_yearlevel pyl2
-                      ON sec.programyearlevelid = pyl2.programyearlevelid
-                    WHERE UPPER(pyl2.programcode) = UPPER(pl.programcode)
-                      AND pyl2.yearlevel = pl.yearlevel
+                    WHERE sec.programyearlevelid = pl.programyearlevelid
                       AND sec.isactive = TRUE
                 ) AS active_section_count,
                 (
                     SELECT COUNT(sec.sectionid)
                     FROM sections sec
-                    JOIN program_yearlevel pyl2
-                      ON sec.programyearlevelid = pyl2.programyearlevelid
-                    WHERE UPPER(pyl2.programcode) = UPPER(pl.programcode)
-                      AND pyl2.yearlevel = pl.yearlevel
+                    WHERE sec.programyearlevelid = pl.programyearlevelid
                 ) AS total_section_count
-            FROM pyl_latest pl
+            FROM pyl_active pl
             ORDER BY pl.programcode, pl.yearlevel
-        """)
+        """, (active_ay_id,))
         prog_yearlevel_mgmt = to_dict(cur)
 
         # Year-level rows from program_yearlevel
@@ -12560,6 +12619,7 @@ def admin_settings():
                                offerings_mgmt=offerings_mgmt,
                                yearlevel_data=yearlevel_data,
                                prog_yearlevel_mgmt=prog_yearlevel_mgmt,
+                               active_ay_id=active_ay_id,
                                activity_logs=activity_logs)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
@@ -12713,9 +12773,10 @@ def activate_period():
         cur.execute("UPDATE AcademicYear SET IsActive = TRUE WHERE AcademicYearID = %s", (ay_id,))
         cur.execute("UPDATE Semester SET IsActive = TRUE WHERE AcademicYearID = %s AND SemesterType = %s", (ay_id, sem_type))
 
-        # 3. Re-generate program_yearlevel rows for the newly active AY
+        # 3. Re-generate program_yearlevel rows and default sections for the newly active AY
         _pyl_cur = conn.cursor(cursor_factory=RealDictCursor)
-        _auto_setup_program_yearlevels(_pyl_cur)
+        _auto_setup_program_yearlevels(_pyl_cur)   # also calls _ensure_default_sections internally
+        _ensure_default_sections(_pyl_cur, ay_id)  # explicit call in case AY just became active
         _pyl_cur.close()
 
         # 4. Check dates for warning only
@@ -12846,6 +12907,19 @@ def upsert_ay():
             """, (ay_id, s_type, final_start, final_end))
             
         conn.commit()
+
+        # Auto-create program_yearlevel rows + default sections for the new AY so the
+        # Academic Head can schedule immediately without manually creating sections first.
+        try:
+            _pyl_cur = conn.cursor(cursor_factory=RealDictCursor)
+            _auto_setup_program_yearlevels(_pyl_cur)
+            _ensure_default_sections(_pyl_cur, ay_id)
+            _pyl_cur.close()
+            conn.commit()
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+
         flash(f"Academic Year {ay_id} configuration saved successfully.", "success")
         sems_set = [lbl for lbl, ss, se, _ in sem_configs if ss and se]
         write_activity_log(
@@ -12859,7 +12933,7 @@ def upsert_ay():
         flash(f"Database Error: {str(e)}", "error")
     finally:
         cur.close(); conn.close()
-        
+
     return redirect(url_for('admin_settings'))
 
 @app.route('/admin/settings/update_emp_type', methods=['POST'])
@@ -13344,20 +13418,40 @@ def settings_add_section():
     prog_code    = request.form.get('program_code', '').strip().upper()
     year_level   = int(request.form.get('year_level', '1'))
     section_name = request.form.get('section_name', '').strip()
+    ay_id        = request.form.get('ay_id', '').strip()
     if not prog_code or not section_name:
         flash("Program code and section name are required.", "error")
         return redirect(url_for('admin_settings'))
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # Find the active program_yearlevel row for this program + year_level
-        cur.execute("""
-            SELECT pyl.programyearlevelid
-            FROM program_yearlevel pyl
-            WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.yearlevel = %s AND pyl.isactive = TRUE
-            ORDER BY pyl.startacademicyear DESC NULLS LAST
-            LIMIT 1
-        """, (prog_code, year_level))
-        pyl_row = cur.fetchone()
+        # If no AY specified, use the most recent active AY
+        if not ay_id:
+            cur.execute("SELECT academicyearid FROM academicyear WHERE isactive=TRUE ORDER BY yearstart DESC LIMIT 1")
+            _ay = cur.fetchone()
+            ay_id = _ay['academicyearid'] if _ay else None
+
+        # Find the program_yearlevel row for this program + year_level + active AY
+        pyl_row = None
+        if ay_id:
+            cur.execute("""
+                SELECT pyl.programyearlevelid
+                FROM program_yearlevel pyl
+                WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.yearlevel = %s
+                  AND pyl.academicyearid = %s
+                ORDER BY pyl.startacademicyear DESC NULLS LAST
+                LIMIT 1
+            """, (prog_code, year_level, ay_id))
+            pyl_row = cur.fetchone()
+        # Fallback: any active pyl row
+        if not pyl_row:
+            cur.execute("""
+                SELECT pyl.programyearlevelid
+                FROM program_yearlevel pyl
+                WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.yearlevel = %s AND pyl.isactive = TRUE
+                ORDER BY pyl.startacademicyear DESC NULLS LAST
+                LIMIT 1
+            """, (prog_code, year_level))
+            pyl_row = cur.fetchone()
 
         if not pyl_row:
             # Auto-create program_yearlevel row using _auto_setup_program_yearlevels
@@ -16923,11 +17017,18 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
     _ensure_source_col(cur)
     _ensure_original_status_col(cur)
     if not section_id:
+        # Filter by the AY derived from semester_id so sections from other academic years
+        # are not accidentally selected when multiple AYs share the same program/year-level.
         cur.execute("""
             SELECT sec.sectionid FROM public.sections sec
             JOIN public.program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-            WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.yearlevel = %s LIMIT 1
-        """, (program, year_level))
+            WHERE UPPER(pyl.programcode) = UPPER(%s)
+              AND pyl.yearlevel = %s
+              AND pyl.academicyearid = (
+                  SELECT academicyearid FROM public.semester WHERE semesterid = %s LIMIT 1
+              )
+            LIMIT 1
+        """, (program, year_level, semester_id))
         sec_res = cur.fetchone()
         section_id = sec_res['sectionid'] if sec_res else None
     if not section_id:
@@ -18614,6 +18715,10 @@ def api_approve_schedule():
     try:
         data, ctx = request.json or {}, (request.json or {}).get('context', {})
         program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')
+        _ctx_section_id = ctx.get('sectionId') or ctx.get('section_id') or ctx.get('section') or None
+        if _ctx_section_id:
+            try: _ctx_section_id = int(_ctx_section_id)
+            except (ValueError, TypeError): _ctx_section_id = None
 
         # ── Server-side CSP guard ── block approval if any hard constraint is violated
         from scheduler import CSPValidator
@@ -18836,7 +18941,8 @@ def api_approve_schedule():
         # Published snapshot = residual Published subjects (not being replaced) + new sessions.
         # published_baseline is always [] now (see _build_published_baseline).
         complete_snapshot = other_sessions + published_baseline + sched_data
-        _insert_batch(cur, complete_snapshot, sem_id, 'Published', max_v + 1, program, year_level)
+        _insert_batch(cur, complete_snapshot, sem_id, 'Published', max_v + 1, program, year_level,
+                      section_id=_ctx_section_id)
 
         # Auto-cleanup: remove ONLY the exact slots that were just published from the active Draft.
         # Use slot-level keys (subject+day+time), NOT subject codes — a subject can have multiple
@@ -18875,7 +18981,8 @@ def api_approve_schedule():
             _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor')
             if remaining_draft:
                 new_draft_v = max_v + 2
-                _insert_batch(cur, remaining_draft, sem_id, 'Draft', new_draft_v, program, year_level)
+                _insert_batch(cur, remaining_draft, sem_id, 'Draft', new_draft_v, program, year_level,
+                              section_id=_ctx_section_id)
         else:
             # No draft slots were consumed — check whether a draft already exists so we can
             # surface its version number to the caller (used by Generate Schedule UI).
@@ -19684,6 +19791,9 @@ def api_sections_by_program():
         if year_level:
             where.append("pyl.yearlevel = %s")
             params.append(int(year_level))
+        if ay:
+            where.append("pyl.academicyearid = %s")
+            params.append(ay)
 
         sql = """
             SELECT DISTINCT sec.sectionid, sec.sectionname,

@@ -1056,7 +1056,8 @@ function _renderSectionsPage(page) {
   const start = (page - 1) * _PM_SEC_PER_PAGE;
   const items = secs.slice(start, start + _PM_SEC_PER_PAGE);
 
-  if (titleEl) titleEl.textContent = `${total} Section${total !== 1 ? 's' : ''}`;
+  const _ayLabel = PM_DATA.active_ay_id ? ` · ${PM_DATA.active_ay_id}` : '';
+  if (titleEl) titleEl.textContent = `${total} Section${total !== 1 ? 's' : ''}${_ayLabel}`;
 
   if (total === 0) {
     tbody.innerHTML = `<tr><td colspan="4" class="pmd-empty-row">No sections found.</td></tr>`;

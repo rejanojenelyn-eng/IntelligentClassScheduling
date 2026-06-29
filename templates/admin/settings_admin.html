@@ -392,9 +392,10 @@
     <!-- Embed JSON data for JS consumption -->
     <script id="pm-data" type="application/json">
       {
-        "programs":   {{ programs_mgmt       | tojson }},
-        "sections":   {{ sections_mgmt       | tojson }},
-        "yearlevels": {{ prog_yearlevel_mgmt | tojson }}
+        "programs":    {{ programs_mgmt       | tojson }},
+        "sections":    {{ sections_mgmt       | tojson }},
+        "yearlevels":  {{ prog_yearlevel_mgmt | tojson }},
+        "active_ay_id": {{ active_ay_id | tojson }}
       }
     </script>
 
@@ -537,6 +538,11 @@
             <div class="pmd-section-hd">
               <div class="pmd-section-hd-left">
                 <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
+                {% if active_ay_id %}
+                <span style="font-size:.72rem;color:#888;margin-left:8px;font-weight:600;">
+                  {{ active_ay_id }}
+                </span>
+                {% endif %}
               </div>
               <div style="display:flex;align-items:center;gap:8px;">
                 <select class="pmd-filter-sel" id="pmdSecYLFilter" onchange="_renderSectionsPage(1)">
@@ -1137,6 +1143,7 @@
     </div>
     <form action="{{ url_for('settings_add_section') }}" method="POST">
       <input type="hidden" name="program_code" id="addSecProgCode">
+      <input type="hidden" name="ay_id" value="{{ active_ay_id or '' }}">
       <div class="s-modal-body">
         <div class="mf" style="margin-bottom:4px;">
           <label style="font-size:.75rem;color:#888;">YEAR LEVEL</label>
