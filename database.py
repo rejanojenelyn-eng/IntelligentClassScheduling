@@ -23,6 +23,7 @@ def _get_pool() -> '_pg_pool.ThreadedConnectionPool':
             host=Config.DB_HOST,
             port=Config.DB_PORT,
             sslmode=Config.DB_SSLMODE,
+            connect_timeout=10,
         )
     return _pool
 
