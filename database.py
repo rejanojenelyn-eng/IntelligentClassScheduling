@@ -81,26 +81,52 @@ class _PooledConnection:
 
 
 def get_db_connection():
-    """Return a pooled connection.  Call .close() when done — it returns the
-    connection to the pool rather than destroying the TCP socket."""
-    try:
-        p = _get_pool()
-        conn = p.getconn()
-        return _PooledConnection(conn, p)
-    except _pg_pool.PoolError as e:
-        # Pool momentarily exhausted — wait briefly and retry once before giving up.
-        print(f"Error getting DB connection from pool: {e} — retrying in 0.3s")
-        _time.sleep(0.3)
+    """Return a pooled connection, validated to be alive.  Call .close() when
+    done — it returns the connection to the pool rather than destroying the
+    TCP socket.
+
+    Hosted Postgres (e.g. Neon) can silently close idle connections in the
+    background. A connection sitting in the pool can therefore be dead by the
+    time it's checked out again, so we ping it with a cheap query first and
+    discard+retry with a fresh one if it's stale instead of handing back a
+    connection that will blow up on first use.
+    """
+    p = _get_pool()
+    for _ in range(3):
         try:
-            p = _get_pool()
             conn = p.getconn()
-            return _PooledConnection(conn, p)
-        except Exception as e2:
-            print(f"Pool retry also failed: {e2}")
+        except _pg_pool.PoolError as e:
+            print(f"Error getting DB connection from pool: {e} — retrying in 0.3s")
+            _time.sleep(0.3)
+            try:
+                conn = p.getconn()
+            except Exception as e2:
+                print(f"Pool retry also failed: {e2}")
+                return None
+        except Exception as e:
+            print(f"Error getting DB connection from pool: {e}")
             return None
-    except Exception as e:
-        print(f"Error getting DB connection from pool: {e}")
-        return None
+
+        try:
+            if conn.closed:
+                raise psycopg2.OperationalError("connection already closed")
+            ping = conn.cursor()
+            ping.execute("SELECT 1")
+            ping.fetchone()
+            ping.close()
+            conn.rollback()
+        except Exception:
+            # Stale/dead connection — discard it from the pool and try again.
+            try:
+                p.putconn(conn, close=True)
+            except Exception:
+                pass
+            continue
+
+        return _PooledConnection(conn, p)
+
+    print("Error getting DB connection: exhausted retries against stale connections")
+    return None
 
 
 def query_db(query, args=(), one=False):
