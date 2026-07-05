@@ -15,13 +15,14 @@ def _get_pool() -> '_pg_pool.ThreadedConnectionPool':
     global _pool
     if _pool is None:
         _pool = _pg_pool.ThreadedConnectionPool(
-            minconn=3,
-            maxconn=25,
+            minconn=1,
+            maxconn=10,
             dbname=Config.DB_NAME,
             user=Config.DB_USER,
             password=Config.DB_PASS,
             host=Config.DB_HOST,
             port=Config.DB_PORT,
+            sslmode=Config.DB_SSLMODE,
         )
     return _pool
 

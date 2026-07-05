@@ -1,6 +1,7 @@
 ﻿import os
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
 from database import get_db_connection, query_db
+from config import Config
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime, date, time, timedelta
@@ -248,7 +249,7 @@ from rf_dss import rf_get_faculty_info as _rf_get_faculty_info, rf_score_room as
 
 # 1. INITIALIZE APP FIRST
 app = Flask(__name__)
-app.secret_key = 'pup_lopez_super_secret_key' # Required for Login Sessions
+app.secret_key = Config.SECRET_KEY # Required for Login Sessions
 
 def write_activity_log(action, details, category='system', color='gray'):
     """Insert one row into activity_log. Never raises — logging must not break the caller."""
@@ -20436,6 +20437,10 @@ def _run_startup_migrations():
 _run_startup_migrations()
 
 # --- MAIN EXECUTION ---
+# Note: Render (and any WSGI host) imports `app` directly and runs it via
+# gunicorn, so this block only runs for local `python app.py` development.
 if __name__ == '__main__':
-   app.run(debug=True, use_reloader=False)
+   port = int(os.environ.get('PORT', 5000))
+   debug_mode = os.environ.get('FLASK_DEBUG', '1') == '1'
+   app.run(host='0.0.0.0', port=port, debug=debug_mode, use_reloader=False)
    
