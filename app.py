@@ -20437,10 +20437,11 @@ def _run_startup_migrations():
 _run_startup_migrations()
 
 # --- MAIN EXECUTION ---
-# Note: Render (and any WSGI host) imports `app` directly and runs it via
-# gunicorn, so this block only runs for local `python app.py` development.
 if __name__ == '__main__':
    port = int(os.environ.get('PORT', 5000))
-   debug_mode = os.environ.get('FLASK_DEBUG', '1') == '1'
-   app.run(host='0.0.0.0', port=port, debug=debug_mode, use_reloader=False)
+   # Debug defaults OFF — this is a public production URL now, and Werkzeug's
+   # debugger allows remote code execution if left on. Set FLASK_DEBUG=1
+   # locally if you need the interactive debugger for development.
+   debug_mode = os.environ.get('FLASK_DEBUG', '0') == '1'
+   app.run(host='0.0.0.0', port=port, debug=debug_mode, use_reloader=False, threaded=True)
    
