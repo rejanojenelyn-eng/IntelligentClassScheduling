@@ -1,5 +1,18 @@
 let selectedIdsForArchive = [];
 
+// ── Contact Number: numeric-only input ────────────────────────────────────────
+function _digitsOnly(el) {
+    if (!el) return;
+    el.addEventListener('input', () => {
+        const cleaned = el.value.replace(/\D/g, '');
+        if (cleaned !== el.value) el.value = cleaned;
+    });
+}
+document.addEventListener('DOMContentLoaded', () => {
+    _digitsOnly(document.getElementById('contact'));
+    _digitsOnly(document.getElementById('edit_contact'));
+});
+
 // ── Employee CSV/XLSX/PDF/DOCX analyze & review ───────────────────────────────
 let _empExtracted = [];
 let _empRawRows   = [];
@@ -971,5 +984,106 @@ async function executeExport() {
         _showExportToast('error', 'Partial Export', 'Some files failed: ' + errors.join('; '));
     } else {
         _showExportToast('error', 'Export Failed', errors.join('; '));
+    }
+}
+
+// ── Faculty Schedule / Faculty Load popup (eye icon) ──────────────────────────
+function openFacultyPopup(empNum, name) {
+    const modal = document.getElementById('facultyPopupModal');
+    if (!modal) return;
+    document.getElementById('facPopupName').textContent = name || 'Faculty';
+    modal.dataset.empNum = empNum;
+    _facSwitchTab('schedule');
+    modal.style.display = 'block';
+    _loadFacultySchedule(empNum);
+    _loadFacultyLoad(empNum);
+}
+
+function closeFacultyPopup() {
+    const modal = document.getElementById('facultyPopupModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function _facSwitchTab(tab) {
+    document.querySelectorAll('.fac-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.facTab === tab));
+    document.getElementById('facTabSchedule').style.display = tab === 'schedule' ? '' : 'none';
+    document.getElementById('facTabLoad').style.display     = tab === 'load'     ? '' : 'none';
+}
+
+const _FAC_DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+async function _loadFacultySchedule(empNum) {
+    const el = document.getElementById('facScheduleContent');
+    el.innerHTML = '<div class="fac-loading">Loading schedule...</div>';
+    try {
+        const params = new URLSearchParams({ emp_num: empNum });
+        if (ADMIN_ACTIVE_AY_ID) params.set('ay_id', ADMIN_ACTIVE_AY_ID);
+        if (ADMIN_ACTIVE_SEM)   params.set('semester', ADMIN_ACTIVE_SEM);
+        const res  = await fetch(`/api/manual/faculty_schedule?${params}`);
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+            el.innerHTML = '<div class="fac-empty">No published or draft sessions for the current semester.</div>';
+            return;
+        }
+        rows.sort((a, b) => _FAC_DAY_ORDER.indexOf(a.daydesc) - _FAC_DAY_ORDER.indexOf(b.daydesc));
+        el.innerHTML = `
+            <table class="fac-sched-table">
+                <thead><tr><th>Day</th><th>Time</th><th>Subject</th><th>Section</th><th>Room</th><th>Status</th></tr></thead>
+                <tbody>
+                    ${rows.map(r => `
+                        <tr>
+                            <td>${r.daydesc || '-'}</td>
+                            <td>${r.starttime || '-'} - ${r.endtime || '-'}</td>
+                            <td>${r.subjectcode || ''} ${r.subjectname ? '&mdash; ' + r.subjectname : ''}</td>
+                            <td>${r.sectionname || '-'}</td>
+                            <td>${r.roomname || '-'}</td>
+                            <td><span class="fac-status-badge fac-status-${(r.status || '').toLowerCase()}">${r.status || ''}</span></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        el.innerHTML = '<div class="fac-empty">Failed to load schedule.</div>';
+    }
+}
+
+async function _loadFacultyLoad(empNum) {
+    const el = document.getElementById('facLoadContent');
+    el.innerHTML = '<div class="fac-loading">Loading load summary...</div>';
+    try {
+        const params = new URLSearchParams({ emp_num: empNum });
+        if (ADMIN_ACTIVE_AY_ID) params.set('ay_id', ADMIN_ACTIVE_AY_ID);
+        if (ADMIN_ACTIVE_SEM)   params.set('sem', ADMIN_ACTIVE_SEM);
+        const res  = await fetch(`/api/manual/faculty_load?${params}`);
+        const data = await res.json();
+        if (!data.success) {
+            el.innerHTML = '<div class="fac-empty">No load data available for this faculty member.</div>';
+            return;
+        }
+        const subjects = [...(data.assigned_subjects || []), ...(data.pending_subjects || [])];
+        el.innerHTML = `
+            <div class="fac-load-summary">
+                <div class="fac-load-stat"><span class="fac-load-num">${data.total_units ?? 0}</span><span class="fac-load-label">Max Load</span></div>
+                <div class="fac-load-stat"><span class="fac-load-num">${data.scheduled_units ?? 0}</span><span class="fac-load-label">Scheduled</span></div>
+                <div class="fac-load-stat"><span class="fac-load-num">${data.pending_units ?? 0}</span><span class="fac-load-label">Pending</span></div>
+                <div class="fac-load-stat"><span class="fac-load-num">${data.available_units ?? 0}</span><span class="fac-load-label">Available</span></div>
+            </div>
+            ${subjects.length ? `
+                <table class="fac-sched-table">
+                    <thead><tr><th>Subject</th><th>Program / Year</th><th>Units</th><th></th></tr></thead>
+                    <tbody>
+                        ${subjects.map(s => `
+                            <tr>
+                                <td>${s.subjectcode || ''} ${s.subjectname ? '&mdash; ' + s.subjectname : ''}</td>
+                                <td>${s.programcode ? s.programcode + (s.yearlevel ? ' Y' + s.yearlevel : '') : (s.sectionname || '-')}</td>
+                                <td>${s.creditunits ?? 0}</td>
+                                <td>${s.is_pending ? '<span class="fac-status-badge fac-status-pending">Pending</span>' : ''}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>` : '<div class="fac-empty">No subjects assigned for the current semester.</div>'}
+        `;
+    } catch (e) {
+        el.innerHTML = '<div class="fac-empty">Failed to load load summary.</div>';
     }
 }

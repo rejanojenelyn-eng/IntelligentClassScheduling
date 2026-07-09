@@ -39,6 +39,19 @@ function closeRoomModal(id) {
 function openModal(id)  { openRoomModal(id); }
 function closeModal(id) { closeRoomModal(id); }
 
+// Room Schedule (eye icon) — opens as a popup so the Admin never navigates away
+// from /admin/rooms; closing it just hides the modal, nothing to redirect.
+function openRoomScheduleModal(roomId) {
+    const frame = document.getElementById('roomScheduleFrame');
+    if (frame) frame.src = `/room/view/${roomId}?modal=1`;
+    openRoomModal('modalRoomSchedule');
+}
+function closeRoomScheduleModal() {
+    closeRoomModal('modalRoomSchedule');
+    const frame = document.getElementById('roomScheduleFrame');
+    if (frame) frame.src = 'about:blank';
+}
+
 function _rmErr(errId, msg) {
     const el = document.getElementById(errId);
     if (!el) return;
@@ -131,20 +144,26 @@ window.addEventListener('click', () => {
 });
 
 // ── Open Edit Room Modal ──────────────────────────────────────────────────────
-function openEditRoomModal(id, name, type, capacity, bldgId) {
+function openEditRoomModal(id, name, type, capacity, bldgId, bldgName) {
     document.getElementById('edit_room_id').value       = id;
     document.getElementById('edit_room_name').value     = name;
     document.getElementById('edit_room_type').value     = type;
     document.getElementById('edit_room_capacity').value = capacity;
     const bldgSel = document.getElementById('edit_room_bldg_id');
-    if (bldgSel && bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined') {
-        bldgSel.value = String(bldgId);
-        // If the value didn't match any option, try adding the option dynamically
-        if (!bldgSel.value || bldgSel.value !== String(bldgId)) {
+    if (bldgSel) {
+        const bid = (bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined')
+                    ? String(bldgId) : '';
+        if (bid) {
+            bldgSel.value = bid;
+            // If the option wasn't in the list (e.g. building is inactive), add it temporarily
+            if (bldgSel.value !== bid && bldgName) {
+                const opt = new Option(bldgName, bid, true, true);
+                bldgSel.add(opt, 1); // insert after the placeholder
+                bldgSel.value = bid;
+            }
+        } else {
             bldgSel.value = '';
         }
-    } else if (bldgSel) {
-        bldgSel.value = '';
     }
     openRoomModal('modalEditRoom');
 }
@@ -207,6 +226,8 @@ async function submitAddRoom() {
 
     if (!name)     { _rmErr('errRoom', 'Room number is required.'); return; }
     if (!capacity) { _rmErr('errRoom', 'Capacity is required.'); return; }
+    const capNum = Number(capacity);
+    if (!Number.isInteger(capNum) || capNum < 35) { _rmErr('errRoom', 'Capacity must be a whole number of at least 35.'); return; }
     if (!bldg_id)  { _rmErr('errRoom', 'Please select a building.'); return; }
 
     const btn = document.getElementById('btnAddRoom');
@@ -238,6 +259,9 @@ async function submitEditRoom() {
     const bldg_id  =  document.getElementById('edit_room_bldg_id')?.value;
 
     if (!name) { _rmErr('errEditRoom', 'Room number is required.'); return; }
+    if (!capacity) { _rmErr('errEditRoom', 'Capacity is required.'); return; }
+    const capNum = Number(capacity);
+    if (!Number.isInteger(capNum) || capNum < 35) { _rmErr('errEditRoom', 'Capacity must be a whole number of at least 35.'); return; }
 
     const btn = document.getElementById('btnEditRoom');
     btn.disabled = true;
@@ -365,7 +389,7 @@ function _domAddRoomRow(r) {
         <td>
             <div class="action-btns-wrapper" style="justify-content:center;">
                 <button class="btn-action view" title="View"
-                    onclick="window.location.href='/room/view/${r.roomid}'">
+                    onclick="openRoomScheduleModal(${r.roomid})">
                     <i class="fas fa-eye"></i>
                 </button>
                 <button class="btn-action edit" title="Edit"

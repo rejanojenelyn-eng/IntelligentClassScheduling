@@ -368,6 +368,67 @@
 .close-btn { font-size: 24px; cursor: pointer; transition: 0.2s; }
 .close-btn:hover { color: #f1c40f; }
 
+/* --- FACULTY SCHEDULE / LOAD POPUP --- */
+.fac-popup-content { width: 800px; max-width: 92vw; }
+.fac-popup-tabs {
+    display: flex;
+    border-bottom: 1px solid #e2e2e2;
+    padding: 0 25px;
+    background: #fafafa;
+}
+.fac-tab-btn {
+    border: none;
+    background: none;
+    padding: 14px 18px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #888;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: 0.2s;
+}
+.fac-tab-btn:hover { color: var(--pup-maroon); }
+.fac-tab-btn.active { color: var(--pup-maroon); border-bottom-color: var(--pup-maroon); }
+.fac-popup-body { padding: 22px 25px; max-height: 60vh; overflow-y: auto; }
+.fac-tab-pane { min-height: 80px; }
+.fac-loading, .fac-empty { color: #888; font-size: 13px; text-align: center; padding: 30px 0; }
+
+.fac-load-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.fac-load-stat {
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 14px 10px;
+    text-align: center;
+}
+.fac-load-num { display: block; font-size: 1.4rem; font-weight: 800; color: var(--pup-maroon); }
+.fac-load-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: #888; margin-top: 4px; }
+
+.fac-sched-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.fac-sched-table th, .fac-sched-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+.fac-sched-table th { color: #888; font-weight: 700; font-size: 11px; letter-spacing: 0.5px; }
+
+.fac-status-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 10px;
+    font-size: 10.5px;
+    font-weight: 700;
+}
+.fac-status-published { background: rgba(34,139,34,0.1); color: #228B22; }
+.fac-status-draft     { background: rgba(230,126,34,0.12); color: #e67e22; }
+.fac-status-pending   { background: rgba(52,152,219,0.12); color: #3498db; }
+
 .form-grid {
     padding: 25px 30px;
     display: grid;

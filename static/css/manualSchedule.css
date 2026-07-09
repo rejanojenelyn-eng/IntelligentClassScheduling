@@ -153,6 +153,8 @@
     transition: transform 0.15s;
 }
 .mnav-icon:hover { transform: scale(1.1); }
+.mnav-icon.mnav-disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+.mnav-icon.mnav-disabled:hover { transform: none; }
 
 .manual-nav-tabs {
     display: flex;
@@ -1466,6 +1468,8 @@
 .ts-ss-item:hover, .ts-ss-item.active { background: #fef2f2; color: #630100; font-weight: 700; }
 .ts-ss-item.dim { display: none; }
 .ts-ss-item.before-start { display: none !important; }
+.ts-ss-item.room-unavailable { display: none; }
+.ts-ss-item.no-room { opacity: 0.4; cursor: not-allowed; pointer-events: none; font-style: italic; }
 
 /* Section headers inside the per-slice room dropdown */
 .ts-ss-sect-hdr {

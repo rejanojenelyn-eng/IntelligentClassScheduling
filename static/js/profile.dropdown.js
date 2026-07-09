@@ -140,7 +140,12 @@ async function openProfilePanel() {
     }
 
     const statusSel = document.getElementById('pfStatus');
-    if (statusSel) statusSel.value = d.employment_status || 'Active';
+    if (statusSel) {
+        statusSel.value = d.employment_status || 'Permanent';
+        // If the DB value doesn't match any option (e.g. blank/unrecognized), fall back
+        // to the first real option instead of leaving the select on nothing.
+        if (!statusSel.value) statusSel.value = 'Permanent';
+    }
 }
 
 function closeProfilePanel() {

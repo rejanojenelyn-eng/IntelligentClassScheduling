@@ -242,33 +242,53 @@ function _requireAYYears(ys, ye) {
   return _validateAYYears(ys, ye);
 }
 
+/* Builds the AY dropdown options for Add mode. Offers a range of years so the
+   admin has a real choice — the first (sequential-next) option is pre-selected
+   since it's normally the valid one, but _validateAYYears (wired to the select's
+   change event) still catches and explains any invalid pick rather than hiding
+   the options outright. */
+function _buildAYOptions() {
+  const sel = document.getElementById('ay_tag_display');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const maxEnd = parseInt(document.getElementById('ay_max_year_end')?.value || '0');
+  const cy   = new Date().getFullYear();
+  const base = maxEnd > 0 ? maxEnd : (cy - 1);
+  const opts = [];
+  for (let y1 = base; y1 <= base + 5; y1++) opts.push([y1, y1 + 1]);
+  opts.forEach(([y1, y2]) => {
+    const opt = document.createElement('option');
+    opt.value = `${y1}-${y2}`;
+    opt.textContent = `AY ${String(y1).slice(2)}-${String(y2).slice(2)}`;
+    sel.appendChild(opt);
+  });
+  if (opts.length) {
+    sel.value = `${opts[0][0]}-${opts[0][1]}`;
+    document.getElementById('ay_year_start').value = opts[0][0];
+    document.getElementById('ay_year_end').value   = opts[0][1];
+  }
+}
+
 function openAYModal() {
   document.getElementById('ay_modal_title').innerText    = 'ADD NEW ACADEMIC YEAR';
   document.getElementById('ay_submit_btn').textContent   = 'ADD CALENDAR';
   document.querySelectorAll('#modalAY input[type="date"]').forEach(i => { i.value = ''; i.removeAttribute('min'); });
-  document.getElementById('ay_year_start').value  = '';
-  document.getElementById('ay_year_end').value    = '';
-  document.getElementById('ay_tag_display').value = '';
   document.getElementById('ay_form_action').value = 'add';
   _ayTagError(null);
+  _buildAYOptions();
   openEditModal('modalAY');
 }
 
-/* Parse the typed tag — only validate once both parts are complete */
-document.getElementById('ay_tag_display')?.addEventListener('input', function() {
-  const raw = this.value.replace(/AY\s*/i, '').trim();
-  const parts = raw.split(/[-\/\s]+/);
-
-  // No separator yet, or second part is still being typed (< 2 chars) — wait silently
-  if (parts.length < 2 || !parts[1] || parts[1].length < 2) {
+/* Selecting a year in the dropdown sets the hidden start/end year fields */
+document.getElementById('ay_tag_display')?.addEventListener('change', function() {
+  const val = this.value;
+  if (!val) {
+    document.getElementById('ay_year_start').value = '';
+    document.getElementById('ay_year_end').value   = '';
     _ayTagError(null);
     return;
   }
-
-  let y1 = parts[0].trim(), y2 = parts[1].trim();
-  if (y1.length === 2) y1 = '20' + y1;
-  if (y2.length === 2) y2 = '20' + y2;
-
+  const [y1, y2] = val.split('-');
   const err = _validateAYYears(y1, y2);
   if (err) {
     _ayTagError(err);
@@ -277,41 +297,48 @@ document.getElementById('ay_tag_display')?.addEventListener('input', function() 
     return;
   }
   _ayTagError(null);
-  if (y1.length === 4 && y2.length === 4) {
-    document.getElementById('ay_year_start').value = y1;
-    document.getElementById('ay_year_end').value   = y2;
-  }
+  document.getElementById('ay_year_start').value = y1;
+  document.getElementById('ay_year_end').value   = y2;
 });
 
-/* Auto-fill tag from 1st sem start date */
-document.getElementById('ay_s1s')?.addEventListener('change', function() {
-  const yr = new Date(this.value).getFullYear();
-  if (!yr || isNaN(yr)) return;
-  const yy1 = String(yr).slice(2);
-  const yy2 = String(yr + 1).slice(2);
-  document.getElementById('ay_tag_display').value = `AY ${yy1}-${yy2}`;
-  document.getElementById('ay_year_start').value = yr;
-  document.getElementById('ay_year_end').value   = yr + 1;
-  _ayTagError(null);
-});
+/* Returns an error string if the semester duration is less than 15 weeks, else null. */
+function _checkSemDuration(startId, endId, label) {
+  const s = document.getElementById(startId)?.value;
+  const e = document.getElementById(endId)?.value;
+  if (!s || !e) return null; // optional semesters (e.g. summer) may be blank
+  const start = new Date(s), end = new Date(e);
+  if (isNaN(start) || isNaN(end)) return null;
+  if (end <= start) return `${label}: end date must be after start date.`;
+  // Difference in whole weeks
+  const weeks = Math.floor((end - start) / (7 * 24 * 60 * 60 * 1000));
+  if (weeks < 15) return `${label}: must span at least 15 weeks.`;
+  return null;
+}
 
 /* Block form submission if AY years are missing or invalid.
    Re-parses the visible tag input so the correct error shows even when
    hidden year fields were cleared by a prior inline validation. */
 document.querySelector('#modalAY form')?.addEventListener('submit', function(e) {
   const tagVal = (document.getElementById('ay_tag_display')?.value || '').trim();
-  const raw    = tagVal.replace(/AY\s*/i, '').trim();
-  const parts  = raw.split(/[-\/\s]+/);
-  let y1 = (parts[0] || '').trim();
-  let y2 = (parts[1] || '').trim();
-  if (y1.length === 2) y1 = '20' + y1;
-  if (y2.length === 2) y2 = '20' + y2;
+  const [y1, y2] = tagVal.split('-');
 
   const err = _requireAYYears(y1, y2);
   if (err) {
     e.preventDefault();
     _ayTagError(err);
     document.getElementById('ay_tag_display')?.focus();
+    return false;
+  }
+
+  // Validate each semester spans at least 2 months
+  const semErrors = [
+    _checkSemDuration('ay_s1s', 'ay_s1e', '1st Semester'),
+    _checkSemDuration('ay_s2s', 'ay_s2e', '2nd Semester'),
+    _checkSemDuration('ay_s3s', 'ay_s3e', 'Summer'),
+  ].filter(Boolean);
+  if (semErrors.length) {
+    e.preventDefault();
+    _ayTagError(semErrors[0]);
     return false;
   }
 
@@ -337,8 +364,15 @@ function prepareAY(el) {
     document.getElementById('ay_form_action').value      = 'edit';
     document.getElementById('ay_year_start').value = d.start;
     document.getElementById('ay_year_end').value   = d.end;
-    const yy1 = d.start?.slice(2), yy2 = d.end?.slice(2);
-    document.getElementById('ay_tag_display').value = `AY ${yy1}-${yy2}`;
+    const sel = document.getElementById('ay_tag_display');
+    if (sel) {
+      sel.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = `${d.start}-${d.end}`;
+      opt.textContent = `AY ${d.start?.slice(2)}-${d.end?.slice(2)}`;
+      sel.appendChild(opt);
+      sel.value = opt.value;
+    }
     /* Forward-only rule: only enforce min=today on fields that are already today or future.
        Past-dated fields (already elapsed sems) get no min so they pass browser validation
        unchanged — the backend handles it if the admin actually edits them. */
@@ -1143,8 +1177,8 @@ function _renderSectionsPage(page) {
   const fyl = document.getElementById('pmdSecYLFilter')?.value ?? '';
   let secs  = _PM_CURRENT_SECTIONS;
   if (fyl)          secs = secs.filter(s => String(s.yearlevel) === String(fyl));
-  if (fv === 'true')  secs = secs.filter(s => s.isactive === true);
-  if (fv === 'false') secs = secs.filter(s => s.isactive === false);
+  if (fv === 'true')  secs = secs.filter(s => s.has_schedule === true);
+  if (fv === 'false') secs = secs.filter(s => s.has_schedule === false);
 
   const total = secs.length;
   const pages = Math.max(1, Math.ceil(total / _PM_SEC_PER_PAGE));
@@ -1162,8 +1196,8 @@ function _renderSectionsPage(page) {
   }
 
   tbody.innerHTML = items.map(s => {
-    const sCls  = s.isactive ? 'pmd-status-active' : 'pmd-status-inactive';
-    const sLbl  = s.isactive ? 'Active' : 'Inactive';
+    const sCls  = s.has_schedule ? 'pmd-status-active' : 'pmd-status-inactive';
+    const sLbl  = s.has_schedule ? 'Active' : 'Inactive';
     const secId = s.sectionid || '';
     const pylId = s.programyearlevelid || '';
     const sName = s.sectionname.replace(/'/g, "\\'");

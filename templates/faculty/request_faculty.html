@@ -103,7 +103,7 @@
             <div class="rfeq-row">
                 <div class="rfeq-group full">
                     <label>Reason</label>
-                    <textarea id="editMuReason" placeholder="Reason for this make-up class..."></textarea>
+                    <textarea id="editMuReason" placeholder="Reason for this make-up class..." autocomplete="off"></textarea>
                 </div>
             </div>
         </div>
@@ -171,7 +171,7 @@
             <div class="rfeq-row">
                 <div class="rfeq-group full">
                     <label>Reason</label>
-                    <textarea id="editAdjReason" placeholder="Reason for this schedule adjustment..."></textarea>
+                    <textarea id="editAdjReason" placeholder="Reason for this schedule adjustment..." autocomplete="off"></textarea>
                 </div>
             </div>
         </div>
@@ -485,6 +485,10 @@ async function rfSaveEdit(type) {
         };
         if (!payload.request_date) return showToast('Please select a date.', 'warning');
         if (!payload.room_id)      return showToast('Please select a room.', 'warning');
+        if (payload.start_time && payload.end_time &&
+            _RF_SLOTS.indexOf(payload.end_time) <= _RF_SLOTS.indexOf(payload.start_time)) {
+            return showToast('End Time must be later than Start Time.', 'warning');
+        }
     } else {
         id = document.getElementById('editAdjId').value;
         const _adjDay    = document.getElementById('editAdjDay').value;
@@ -504,6 +508,10 @@ async function rfSaveEdit(type) {
         };
         if (!payload.day)        return showToast('Please select a new day.', 'warning');
         if (!payload.start_date) return showToast('Please enter an effective from date.', 'warning');
+        if (_adjStart && _adjEnd &&
+            _RF_SLOTS.indexOf(_adjEnd) <= _RF_SLOTS.indexOf(_adjStart)) {
+            return showToast('End Time must be later than Start Time.', 'warning');
+        }
 
         // Conflict validation before saving
         if (_adjDay && _adjStart && _adjEnd) {

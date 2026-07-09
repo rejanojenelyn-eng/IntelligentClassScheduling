@@ -13,10 +13,10 @@
     
     <!-- HEADER TITLE & BUTTONS -->
     <div class="page-header-row">
-        <h1 class="page-title">EMPLOYEE MANAGEMENT</h1>
+        <h1 class="page-title">FACULTY MANAGEMENT</h1>
         <div class="header-actions">
             <button class="btn-top btn-add-new" onclick="openAddModal()">
-                <i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE
+                <i class="fas fa-user-plus"></i> ADD NEW FACULTY
             </button>
             <a href="{{ url_for('admin_archived_employees') }}" class="btn-top btn-view-archive">
                 <i class="fas fa-archive"></i> VIEW ARCHIVE
@@ -61,16 +61,16 @@
         <div class="filter-inputs-row">
             <!-- Search -->
             <div class="filter-group">
-                <label>Search Employee</label>
+                <label>Search Faculty</label>
                 <div class="search-wrapper">
-                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="SELECT">
+                    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="SELECT" autocomplete="off">
                     <i class="fas fa-search"></i>
                 </div>
             </div>
 
             <!-- Employee Type -->
             <div class="filter-group">
-                <label>Employee Type</label>
+                <label>Faculty Type</label>
                 <select id="typeFilter" onchange="filterTable()">
                     <option value="">SELECT</option>
                     {% for etype in employee_types %}
@@ -81,7 +81,7 @@
 
             <!-- Status -->
             <div class="filter-group">
-                <label>Employee Status</label>
+                <label>Faculty Status</label>
                 <select id="statusFilter" onchange="filterTable()">
                     <option value="">SELECT</option>
                     <option value="Permanent">Permanent</option>
@@ -105,7 +105,7 @@
         <!-- Sort, Export and Import Buttons -->
         <div class="filter-secondary-actions">
             <button class="btn-secondary" onclick="sortTable()">
-                <i class="fas fa-sort-alpha-down"></i> <span id="sortDirection">SORT: A-Z</span> <i class="fas fa-chevron-down" style="font-size:10px; margin-left:4px;"></i>
+                <i id="sortIcon" class="fas fa-sort-alpha-down"></i> <span id="sortDirection">SORT: A-Z</span> <i class="fas fa-chevron-down" style="font-size:10px; margin-left:4px;"></i>
             </button>
             <button class="btn-secondary" onclick="openExportModal()">
                 <i class="fas fa-upload"></i> EXPORT
@@ -162,7 +162,8 @@
                     <td class="emp-status" style="color: #666; font-weight:600;">{{ emp.employeestatus|upper }}</td>
                     
                     <td class="action-icons" style="text-align: center;">
-                        <i class="far fa-eye view"></i>
+                        <i class="far fa-eye view"
+                            onclick="openFacultyPopup('{{ emp.employeenumber }}', '{{ emp.lastname }}, {{ emp.firstname }}')"></i>
                         <i class="far fa-edit edit" 
                             data-emp="{{ emp | tojson | forceescape }}"
                             onclick="openEditFromEl(this)"></i>
@@ -177,21 +178,21 @@
 
 <!-- MODALS -->
 
-<!-- ADD NEW EMPLOYEE MODAL -->
+<!-- ADD NEW FACULTY MODAL -->
 <div id="addEmployeeModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2><i class="fas fa-user-plus"></i> ADD NEW EMPLOYEE</h2>
+            <h2><i class="fas fa-user-plus"></i> ADD NEW FACULTY</h2>
             <span class="close-btn" onclick="closeAddModal()">&times;</span>
         </div>
         <form id="addEmployeeForm" action="{{ url_for('admin_add_employee') }}" method="POST">
             <div class="form-grid">
-                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" name="employee_number" required></div>
+                <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" name="first_name" required></div>
                 <div class="form-group"><label>MIDDLE NAME (OPTIONAL)</label><input type="text" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" name="last_name" required></div>
                 <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" name="email" required></div>
-                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" name="contact" required></div>
+                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="contact" name="contact" inputmode="numeric" pattern="[0-9]+" maxlength="15" title="Numbers only" required></div>
                 <hr class="form-divider full-width">
                  <div class="form-group">
                     <label>SPECIALIZATION</label>
@@ -203,7 +204,7 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>EMPLOYEE TYPE</label>
+                    <label>FACULTY TYPE</label>
                     <select name="type_id" id="add_type" required onchange="toggleDesignation('add')">
                         <option value="" disabled selected>Select Type</option>
                         {% for etype in employee_types %}
@@ -232,27 +233,27 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn-cancel" onclick="closeAddModal()">CANCEL</button>
-                <button type="submit" class="btn-save">SAVE EMPLOYEE</button>
+                <button type="submit" class="btn-save">SAVE FACULTY</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- EDIT EMPLOYEE MODAL -->
+<!-- EDIT FACULTY MODAL -->
 <div id="editEmployeeModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2><i class="fas fa-user-edit"></i> EDIT EMPLOYEE</h2>
+            <h2><i class="fas fa-user-edit"></i> EDIT FACULTY</h2>
             <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
         <form id="editEmployeeForm" action="{{ url_for('admin_edit_employee') }}" method="POST">
             <div class="form-grid">
-                <div class="form-group full-width"><label>EMPLOYEE NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
+                <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>
                 <div class="form-group"><label>MIDDLE NAME (OPTIONAL)</label><input type="text" id="edit_m_name" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name" required></div>
                 <div class="form-group"><label>EMAIL ADDRESS</label><input type="email" id="edit_email" name="email" required></div>
-                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact" required></div>
+                <div class="form-group"><label>CONTACT NUMBER</label><input type="text" id="edit_contact" name="contact" inputmode="numeric" pattern="[0-9]+" maxlength="15" title="Numbers only" required></div>
                 <hr class="form-divider full-width">
                  <div class="form-group">
                     <label>SPECIALIZATION</label>
@@ -261,7 +262,7 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>EMPLOYEE TYPE</label>
+                    <label>FACULTY TYPE</label>
                     <select id="edit_type" name="type_id" required onchange="toggleDesignation('edit')">
                         {% for etype in employee_types %}<option value="{{ etype.employeetypeid }}" data-typename="{{ etype.typename }}">{{ etype.typename }}</option>{% endfor %}
                     </select>
@@ -282,7 +283,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn-cancel" onclick="closeEditModal()">CANCEL</button>
-                <button type="submit" class="btn-save">UPDATE EMPLOYEE</button>
+                <button type="submit" class="btn-save">UPDATE FACULTY</button>
             </div>
         </form>
     </div>
@@ -702,7 +703,34 @@
     <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
 </div>
 
+
+<!-- FACULTY SCHEDULE / LOAD MODAL -->
+<div id="facultyPopupModal" class="modal">
+    <div class="modal-content fac-popup-content">
+        <div class="modal-header">
+            <h2><i class="fas fa-id-badge"></i> <span id="facPopupName">Faculty</span></h2>
+            <span class="close-btn" onclick="closeFacultyPopup()">&times;</span>
+        </div>
+        <div class="fac-popup-tabs">
+            <button type="button" class="fac-tab-btn active" data-fac-tab="schedule" onclick="_facSwitchTab('schedule')">Faculty Schedule</button>
+            <button type="button" class="fac-tab-btn" data-fac-tab="load" onclick="_facSwitchTab('load')">Faculty Load</button>
+        </div>
+        <div class="fac-popup-body">
+            <div id="facTabSchedule" class="fac-tab-pane">
+                <div id="facScheduleContent" class="fac-loading">Loading schedule...</div>
+            </div>
+            <div id="facTabLoad" class="fac-tab-pane" style="display:none;">
+                <div id="facLoadContent" class="fac-loading">Loading load summary...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Admin Specific Script Maintained -->
+<script>
+  const ADMIN_ACTIVE_AY_ID = {{ active_ay_id | tojson }};
+  const ADMIN_ACTIVE_SEM   = {{ active_sem | tojson }};
+</script>
 <script src="{{ url_for('static', filename='js/ADMIN/employee.admin.js') }}"></script>
 
 {% endblock %}

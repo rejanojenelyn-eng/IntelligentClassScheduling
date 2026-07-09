@@ -148,7 +148,20 @@
             </div>
             <div class="cs-filter-unit cs-filter-program">
                 <label>PROGRAM</label>
-                <select id="view_prog" onchange="updateYearLevels(); refreshOfferings()">
+                <div class="prog-search-wrapper" id="progWrapper">
+                    <div class="prog-search-trigger" id="progTrigger">
+                        <span id="progTriggerText">SELECT</span>
+                        <i class="fas fa-chevron-down prog-search-chevron"></i>
+                    </div>
+                    <div class="prog-search-menu" id="progMenu">
+                        <div class="prog-search-box">
+                            <input type="text" id="progSearch" class="prog-search-input"
+                                   placeholder="Ex., BSIT..." autocomplete="off">
+                        </div>
+                        <div class="prog-search-list" id="progList"></div>
+                    </div>
+                </div>
+                <select id="view_prog" onchange="updateYearLevels(); refreshOfferings()" style="display:none;">
                     <option value="">SELECT</option>
                     {% for p in programs %}
                     <option value="{{ p.programcode }}">{{ p.programname }}</option>
