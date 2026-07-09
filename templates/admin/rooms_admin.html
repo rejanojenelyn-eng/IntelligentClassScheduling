@@ -172,11 +172,11 @@
                             <td class="td-building">{{ r.buildingname }}</td>
                             <td>
                                 <div class="action-btns-wrapper" style="justify-content: center;">
-                                    <button class="btn-action view" title="View" onclick="window.location.href='/room/view/{{ r.roomid }}'">
+                                    <button class="btn-action view" title="View" onclick="openRoomScheduleModal({{ r.roomid }})">
                                         <i class="fas fa-eye"></i>
                                     </button>
                                     <button class="btn-action edit" title="Edit"
-                                        onclick="openEditRoomModal({{ r.roomid }}, '{{ r.roomname }}', '{{ r.roomtype }}', {{ r.roomcapacity }}, {{ r.buildingid or 'null' }})">
+                                        onclick="openEditRoomModal({{ r.roomid }}, '{{ r.roomname }}', '{{ r.roomtype }}', {{ r.roomcapacity }}, {{ r.buildingid or 'null' }}, '{{ r.buildingname or '' }}')">
                                         <i class="fas fa-pen"></i>
                                     </button>
                                     <button class="btn-action delete" title="Delete"
@@ -276,7 +276,7 @@
                 </div>
                 <div class="rm-field">
                     <label>Capacity <span class="rm-req">*</span></label>
-                    <input type="number" id="inp_room_cap" class="rm-input" placeholder="e.g. 40" min="1" max="999">
+                    <input type="number" id="inp_room_cap" class="rm-input" placeholder="e.g. 40" min="35" max="999" step="1">
                 </div>
             </div>
         </div>
@@ -323,13 +323,27 @@
                 </div>
                 <div class="rm-field">
                     <label>Capacity <span class="rm-req">*</span></label>
-                    <input type="number" id="edit_room_capacity" class="rm-input" min="1" max="999">
+                    <input type="number" id="edit_room_capacity" class="rm-input" min="35" max="999" step="1">
                 </div>
             </div>
         </div>
         <div class="rm-footer">
             <button class="rm-btn-cancel" onclick="closeRoomModal('modalEditRoom')">Cancel</button>
             <button class="rm-btn-confirm" id="btnEditRoom" onclick="submitEditRoom()"><i class="fas fa-check"></i> Update Room</button>
+        </div>
+    </div>
+</div>
+
+<!-- ROOM SCHEDULE (VIEW) MODAL — popup only, never navigates away from this page -->
+<div id="modalRoomSchedule" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomScheduleModal()">
+    <div class="rm-box rm-box-wide" style="max-width:1100px;">
+        <div class="rm-header">
+            <div class="rm-hdr-icon"><i class="fas fa-calendar-alt"></i></div>
+            <div><h2>Room Schedule</h2><p>Room availability and published schedule.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomScheduleModal()">&#215;</button>
+        </div>
+        <div class="rm-body" style="padding:0;">
+            <iframe id="roomScheduleFrame" src="about:blank" style="width:100%; height:72vh; border:0; display:block;"></iframe>
         </div>
     </div>
 </div>

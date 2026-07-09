@@ -442,22 +442,12 @@ class CSPValidator:
                         })
                 else:
                     if not is_weekend:
-                        if night_svc and night_svc > 0:
-                            if et.get('restrict_pt_hours', True):
-                                pt_start = et.get('parttime_start') or time(16, 30)
-                                pt_end   = et.get('parttime_end')   or time(18, 0)
-                                if end <= pt_start or start >= pt_end:
-                                    violations.append({
-                                        'rule': 'HC3',
-                                        'subject': subj_code,
-                                        'detail': (
-                                            f'This designee has approved evening teaching service '
-                                            f'({format_time_12h(pt_start)}–{format_time_12h(pt_end)}). '
-                                            f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) '
-                                            f'falls outside this permitted evening window.'
-                                        )
-                                    })
-                        else:
+                        # PT/Night Teaching Service is a maximum COUNT of evening nights per
+                        # week (see HC7 / _check_night_pt_cap), not a fixed clock window —
+                        # a designee with e.g. 2 approved nights may be scheduled any evening
+                        # hours on up to 2 distinct weekdays. Only the "zero approved nights"
+                        # case is a hard no here; the count cap itself is enforced by HC7.
+                        if not (night_svc and night_svc > 0):
                             violations.append({
                                 'rule': 'HC3',
                                 'subject': subj_code,
@@ -649,8 +639,12 @@ class CSPValidator:
     # ── HC7 Night PT cap ────────────────────────────────────────
 
     def _check_night_pt_cap(self, schedule, faculty_map):
+        # PT/Night Teaching Service is a per-designee cap on the number of DISTINCT
+        # weekday NIGHTS they may be scheduled outside their regular daytime hours —
+        # not a class count (one night can hold more than one session) and not a
+        # fixed clock window (see the HC3 note in _check_time_windows).
         violations = []
-        night_count = defaultdict(int)
+        night_days: dict = defaultdict(set)
         for cls in schedule:
             fnum = cls.get('faculty_id')
             if not fnum or fnum not in faculty_map:
@@ -658,15 +652,33 @@ class CSPValidator:
             fac = faculty_map[fnum]
             if fac.get('designationid') is None:
                 continue
-            if cls['day'] in WEEKDAYS and is_night_time(cls['start_time']):
-                night_count[fnum] += 1
+            day = cls.get('day')
+            if day not in WEEKDAYS:
+                continue
 
-        for fnum, count in night_count.items():
-            if count > 2:
+            et            = fac.get('employeetype', {})
+            regular_start = et.get('regular_start') or time(7, 30)
+            _raw_re       = et.get('regular_end')
+            regular_end   = _raw_re if (_raw_re and _raw_re != regular_start) else time(16, 30)
+            # Within this designee's own regular daytime hours — doesn't count as a night
+            if cls['start_time'] >= regular_start and cls['end_time'] <= regular_end:
+                continue
+            night_days[fnum].add(day)
+
+        for fnum, days in night_days.items():
+            fac       = faculty_map[fnum]
+            night_svc = int(fac.get('nightteachingservice') or 0)
+            if night_svc <= 0:
+                continue  # "no approved evening service at all" is already flagged by HC3
+            if len(days) > night_svc:
                 violations.append({
                     'rule': 'HC7',
                     'subject': 'multiple',
-                    'detail': f'Faculty {fnum} has {count} night PT classes (max 2 for designees)'
+                    'detail': (
+                        f'Faculty {fac.get("fullname") or fnum} is approved for {night_svc} '
+                        f'evening night(s) per week, but this schedule uses {len(days)} '
+                        f'({", ".join(sorted(days))}).'
+                    )
                 })
         return violations
 
@@ -769,7 +781,13 @@ class CSPValidator:
         merge_scope   = str(self._cfg.get('hc_merge_scope', 'nstp_only'))
         for i, a in enumerate(schedule):
             for b in schedule[i+1:]:
-                if a.get('room_id') != b.get('room_id'):
+                a_room, b_room = a.get('room_id'), b.get('room_id')
+                # A room that's TBA (not yet decided) can never conflict with anything —
+                # skip before the equality check, otherwise two unrelated TBA sessions
+                # (both falsy/'TBA') would be treated as "same room" and falsely flagged.
+                if not a_room or not b_room or str(a_room).upper() == 'TBA' or str(b_room).upper() == 'TBA':
+                    continue
+                if a_room != b_room:
                     continue
                 a_code = (a.get('subject_code') or a.get('subjectcode') or '').upper()
                 b_code = (b.get('subject_code') or b.get('subjectcode') or '').upper()
@@ -882,7 +900,14 @@ class CSPValidator:
                 (cls.get('room_type') or cls.get('roomtype') or '').strip().lower() == 'laboratory'
                 for cls in sessions
             )
-            if not has_lab_room:
+            # A session with room TBA means the room isn't decided yet — defer the lab-room
+            # requirement for this subject rather than hard-blocking (the Academic Head will
+            # resolve it once a real room is assigned).
+            has_tba_room = any(
+                not cls.get('room_id') or str(cls.get('room_id')).upper() == 'TBA'
+                for cls in sessions
+            )
+            if not has_lab_room and not has_tba_room:
                 violations.append({
                     'rule':    'HC_LAB',
                     'subject': code,

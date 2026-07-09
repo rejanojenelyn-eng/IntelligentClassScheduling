@@ -126,7 +126,7 @@
                              onclick="toggleDropdown(event, 'employeeSubMenu', 'employeeArrow')">
                             <span class="nav-link-main">
                                 <i class="fas fa-users"></i>
-                                <span class="nav-label">Employee Management</span>
+                                <span class="nav-label">Faculty Management</span>
                             </span>
                             <i class="fas fa-caret-down nav-arrow {{ 'rotated' if 'employee' in request.path }}" id="employeeArrow"></i>
                         </div>
@@ -134,13 +134,13 @@
                             <li>
                                 <a href="{{ url_for('employee') }}"
                                    class="sub-menu-link {{ 'active' if request.path == url_for('employee') }}">
-                                    Employee List
+                                    Faculty List
                                 </a>
                             </li>
                             <li>
                                 <a href="{{ url_for('archived_employees') }}"
                                    class="sub-menu-link {{ 'active' if '/employee/archived' in request.path }}">
-                                    Archived Employee
+                                    Archived Faculty
                                 </a>
                             </li>
                         </ul>
@@ -303,9 +303,9 @@
                 <div class="up-field" id="pfStatusSection">
                     <label>Employment Status</label>
                     <select id="pfStatus" class="up-select">
-                        <option value="Active">Active</option>
-                        <option value="Inactive">Inactive</option>
-                        <option value="Part-time">Part-time</option>
+                        <option value="Permanent">Permanent</option>
+                        <option value="Part-Time">Part-Time</option>
+                        <option value="Temporary">Temporary</option>
                     </select>
                 </div>
             </div>
@@ -336,15 +336,15 @@
             <div class="up-form">
                 <div class="up-field">
                     <label>Current Password</label>
-                    <input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password">
+                    <input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password">
                 </div>
                 <div class="up-field">
                     <label>New Password</label>
-                    <input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters">
+                    <input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters" autocomplete="new-password">
                 </div>
                 <div class="up-field">
                     <label>Confirm New Password</label>
-                    <input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password">
+                    <input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password">
                 </div>
                 <div id="pwError" class="up-error" style="display:none;"></div>
             </div>
@@ -382,6 +382,21 @@
 
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ACAD HEAD/base.acad.js') }}"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('input[type="text"], input[type="search"], input[type="number"], input[type="email"]').forEach(function (el) {
+            if (el.id === 'globalSearch') return;
+            el.setAttribute('autocomplete', 'off');
+            if (!el.readOnly) {
+                el.setAttribute('readonly', '');
+                el.addEventListener('focus', function () { this.removeAttribute('readonly'); });
+                el.addEventListener('blur',  function () {
+                    if (!this.value) this.setAttribute('readonly', '');
+                });
+            }
+        });
+    });
+    </script>
 </body>
 
 </html>

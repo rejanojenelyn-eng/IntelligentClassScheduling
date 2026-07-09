@@ -1,3 +1,8 @@
+// TEMP DEBUG SWITCH — set to false (or remove) once the vanishing/duplicate pill
+// issue is confirmed fixed. When true, renderGrid and _onSubjectClick log their
+// pendingManualSchedule / hiddenDbSchedules state to the console at each step.
+window._DEBUG_RENDERGRID = true;
+
 const _initData  = document.getElementById('app-init-data');
 const allRooms   = JSON.parse(_initData.dataset.rooms);
 const allFaculty = JSON.parse(_initData.dataset.faculty);
@@ -37,6 +42,28 @@ const timeSlots = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '
 
 let pendingManualSchedule = [];
 let hiddenDbSchedules = new Set();
+
+// Single source of truth for which raw DB rows should stay hidden from the room calendar
+// (because a local pendingManualSchedule copy already renders them instead, while their
+// slices are being edited). hiddenDbSchedules used to be mutated ad hoc — cleared in one
+// place, added-to in another, "un-hidden" in a third — and every one of those call sites
+// had to independently stay in sync with whatever fromExisting/fromGenerator entries
+// currently existed in pendingManualSchedule. That kept drifting out of sync (a session
+// left hidden with no local copy left to render it, or vice versa), causing pills to
+// randomly vanish or duplicate across subject/section switches. Calling this after any
+// change to pendingManualSchedule (instead of hand-editing hiddenDbSchedules directly)
+// guarantees the two always agree.
+function _rebuildHiddenDbSchedules() {
+    hiddenDbSchedules = new Set();
+    pendingManualSchedule.forEach(c => {
+        if (!c.fromExisting && !c.fromGenerator) return;
+        if (c.versionid) {
+            hiddenDbSchedules.add(`v:${c.versionid}`);
+        } else if (c.day && c.start_time) {
+            hiddenDbSchedules.add(`${c.subject_code}_${c.day}_${getTimeSlotIndex(c.start_time)}`);
+        }
+    });
+}
 let currentBldgId = 'ALL';
 window.currentEditSession = null;
 let _splitMode = null;
@@ -373,10 +400,18 @@ async function fetchExistingDays() {
 }
 
 async function onFacultySelect(empNum) {
+    // Snapshot which subject was active when this call started. If the user switches to a
+    // different subject while the faculty_info fetch below is still in flight, _subjClickToken
+    // (bumped by every _onSubjectClick call) will have moved on by the time we resolve — bail
+    // out instead of stamping the NEW subject's specialization warning with the OLD subject's
+    // faculty data (that race is what caused a stale "may not be the ideal fit" note to show
+    // up against a freshly-selected/TBA subject that was never actually checked against it).
+    const _mySubjToken = typeof _subjClickToken !== 'undefined' ? _subjClickToken : 0;
     _facInfo = null;
     if (empNum) {
         try {
             const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}`).then(r => r.json());
+            if (typeof _subjClickToken !== 'undefined' && _subjClickToken !== _mySubjToken) return;
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
 
@@ -629,6 +664,22 @@ async function selectDSSOption(type, value, displayText) {
     if (typeof _updateWorkflowBar === 'function') _updateWorkflowBar();
 }
 
+// Resolve a session's instructor display name, falling back to a client-side allFaculty
+// lookup by employee number when the backend's pre-joined instructor string comes back
+// blank (e.g. a faculty record with incomplete name fields breaks the SQL concatenation
+// even though the employeenumber assignment itself is valid) — otherwise a genuinely
+// assigned faculty shows up as "TBA" on the pill despite being correctly locked/shown
+// elsewhere (e.g. the Edit Schedule panel, which resolves faculty by ID separately).
+function _resolveInstructorName(sess) {
+    if (sess.instructor && sess.instructor.trim()) return sess.instructor;
+    const empNum = sess.employee_number || sess.faculty_id || sess.employeenumber || '';
+    if (empNum && typeof allFaculty !== 'undefined') {
+        const fac = allFaculty.find(f => String(f.id) === String(empNum));
+        if (fac && fac.name) return fac.name;
+    }
+    return '';
+}
+
 /* Faculty helper utilities */
 function _facInitials(name) {
     return (name.split(',')[0] || '').trim().substring(0, 2).toUpperCase() || '??';
@@ -657,6 +708,7 @@ function buildDSSMenu(type, sections) {
     searchInput.type = 'text';
     searchInput.className = 'dss-search-input';
     searchInput.placeholder = 'Ex., Dela Cruz, Juan';
+    searchInput.autocomplete = 'off';
     searchInput.addEventListener('input', function() {
         const q = this.value.toLowerCase();
         menu.querySelectorAll('.dss-option').forEach(opt => {
@@ -954,12 +1006,15 @@ function _renderProgPills(sessions, prog, yl) {
             pill.style.cursor = 'pointer';
             pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
 
-            const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+            const _resolvedInstr = _resolveInstructorName(sess);
+            const instrLast = (_resolvedInstr || 'TBA').split(',')[0].trim();
             const roomDisp  = sess.roomname || 'TBA';
             const subjName  = sess.subjectname || sess.subjectcode;
+            const timeRange = (timeSlots[startIdx - 1] && timeSlots[endIdx - 1])
+                ? `${timeSlots[startIdx - 1]} – ${timeSlots[endIdx - 1]}` : '';
             pill.title = isGenTransfer
-                ? `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}\n(Generated — not yet saved)`
-                : `${sess.subjectcode} — ${subjName}\n${sess.instructor || 'TBA'}\n${roomDisp}`;
+                ? `${sess.subjectcode} — ${subjName}\n${_resolvedInstr || 'TBA'}\n${timeRange}\n${roomDisp}\n(Generated — not yet saved)`
+                : `${sess.subjectcode} — ${subjName}\n${_resolvedInstr || 'TBA'}\n${timeRange}\n${roomDisp}`;
 
             // Pill height thresholds for progressive info density
             const compact = pillH < 42;   // code only
@@ -1265,11 +1320,21 @@ window.handlePillClick = async function(sessJson) {
     if (!progStr) progStr = document.getElementById('sel_prog').value;
     if (!ylStr)   ylStr   = document.getElementById('sel_year').value;
 
+    const _priorProg = document.getElementById('sel_prog').value;
+    const _priorYl   = document.getElementById('sel_year').value;
+
     if (progStr) {
         document.getElementById('sel_prog').value = progStr;
         document.getElementById('prog_trigger_text').innerText = progStr;
+        const bcProgText = document.getElementById('bc-prog-text');
+        if (bcProgText) bcProgText.textContent = progStr;
     }
-    if (ylStr) document.getElementById('sel_year').value = ylStr;
+    if (ylStr) {
+        document.getElementById('sel_year').value = ylStr;
+        const _ylLabels  = { '1': '1ST YEAR', '2': '2ND YEAR', '3': '3RD YEAR', '4': '4TH YEAR', '5': '5TH YEAR' };
+        const bcYearText = document.getElementById('bc-year-text');
+        if (bcYearText) bcYearText.textContent = _ylLabels[ylStr] || `YEAR ${ylStr}`;
+    }
 
     const progTrigger = document.getElementById('prog_trigger');
     progTrigger.style.pointerEvents = 'none';
@@ -1277,6 +1342,30 @@ window.handlePillClick = async function(sessJson) {
     document.getElementById('sel_year').disabled = true;
 
     if (progStr) await triggerCascade(true);
+
+    // Resolve the section the clicked pill actually belongs to. This must run whenever
+    // the currently selected section doesn't already match — not only when program/year
+    // changed — since a section may simply never have been chosen yet (still showing
+    // "-Select Section-") even though program/year were already correct.
+    const _desiredSectId   = sess.section_id || sess.sectionid || null;
+    const _desiredSectName = sess.sectionname || null;
+    const _curSectId       = document.getElementById('sel_section')?.value || '';
+    const _curSectName     = (document.getElementById('bc-sect-text')?.textContent || '').trim();
+    const _sectAlreadySet  = _desiredSectId
+        ? String(_curSectId) === String(_desiredSectId)
+        : (_desiredSectName ? _curSectName === _desiredSectName : false);
+
+    if ((_desiredSectId || _desiredSectName) && !_sectAlreadySet) {
+        if (typeof _loadSectionOptions === 'function') {
+            await _loadSectionOptions(_desiredSectId, _desiredSectName);
+        }
+    }
+
+    // _loadSectionOptions() clears window.currentEditSession (via _resetRightPanel) whenever
+    // it switches away from a previously selected section. Restore it — we ARE editing this
+    // pill's session — otherwise downstream logic (pill-editing highlight, faculty lock, etc.)
+    // in this same function loses track of what's being edited.
+    window.currentEditSession = sess;
 
     const subjSel = document.getElementById('sel_subj');
     let optExists = Array.from(subjSel.options).some(opt => opt.value === sess.subjectcode);
@@ -2075,7 +2164,16 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
                 return;
             }
         }
-        contextDrafts = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem);
+        // Scope to currentSubj here too, matching the other two contextDrafts assignments
+        // above. Without this, Room View — which now keeps other subjects' pendingManualSchedule
+        // entries around instead of purging them on switch — pulls in already-Published
+        // subjects' sessions as well, submitting them alongside the one actually being approved
+        // and triggering a false "replace published schedule" confirmation for subjects that
+        // were never touched in this action.
+        contextDrafts = pendingManualSchedule.filter(c =>
+            c.ay === ay && c.sem === sem &&
+            (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
+        );
     }
 
     if (contextDrafts.length === 0) {
@@ -2120,7 +2218,8 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
                 window.isLeavingIntentionally = true;
                 await showValidationModal('Schedule Published', 'The schedule has been published successfully.');
                 pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-                hiddenDbSchedules.clear();
+                if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+                else hiddenDbSchedules.clear();
                 const currentSubj2 = document.getElementById('sel_subj').value;
                 if (currentSubj2) {
                     try {
@@ -2205,6 +2304,16 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         // Abort if the mode changed or a newer render was requested while this fetch was in-flight.
         if (currentMode === 'program' || gridToken !== _gridRenderToken) return;
 
+        // TEMP DEBUG — remove once the vanishing-pill issue is confirmed fixed.
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[renderGrid] raw fetch returned', sessions.length, 'sessions:',
+                sessions.map(s => `${s.subjectcode}/${s.daydesc}/v:${s.versionid}`));
+            console.log('[renderGrid] hiddenDbSchedules =', Array.from(hiddenDbSchedules));
+            console.log('[renderGrid] pendingManualSchedule fromExisting/fromGenerator entries =',
+                pendingManualSchedule.filter(c => c.fromExisting || c.fromGenerator)
+                    .map(c => `${c.subject_code}/${c.day}/v:${c.versionid}`));
+        }
+
         sessions = sessions.filter(s => {
             // Versionid-scoped hide (only hides this specific section's row)
             if (s.versionid && hiddenDbSchedules.has(`v:${s.versionid}`)) return false;
@@ -2212,6 +2321,11 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             const dbKey = `${s.subjectcode}_${s.daydesc}_${s.starttimeid}`;
             return !hiddenDbSchedules.has(dbKey);
         });
+
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[renderGrid] after hide-filter:', sessions.length, 'sessions remain:',
+                sessions.map(s => `${s.subjectcode}/${s.daydesc}`));
+        }
 
         const localForRoom = pendingManualSchedule.filter(c =>
             String(c.room_id) === String(roomId) &&
@@ -2223,6 +2337,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             subjectcode:  c.subject_code,
             subjectname:  c.subject_name,
             instructor:   c.instructor,
+            employee_number: c.faculty_id || '',  // fallback for resolving a name if instructor text is blank
             daydesc:      c.day,
             starttimeid:  getTimeSlotIndex(c.start_time),
             endtimeid:    getTimeSlotIndex(c.end_time),
@@ -2233,11 +2348,17 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             year_level:   c.year_level,
             programcode:  c.course || '',         // expose for badge rendering
             sectionname:  c.sectionname || '',    // expose for badge rendering
+            section_id:   c.section_id || '',      // expose for pill-click section resolution
             isLocal:      true,
             fromExisting: c.fromExisting || false,
             status:       c.status || 'Draft',
             isPreview:    c.isPreview || false
         }));
+
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[renderGrid] localForRoom merge adds', localForRoom.length, 'entries:',
+                localForRoom.map(s => `${s.subjectcode}/${s.daydesc} (fromExisting=${s.fromExisting})`));
+        }
 
         sessions = sessions.concat(localForRoom);
         sessions.sort((a, b) => {
@@ -2256,11 +2377,34 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             slotMap.get(key).push(s);
         });
         // Build representative list: one entry per slot, carrying all merged sections
-        const _ctxProg = (document.getElementById('sel_prog')?.value || '').toUpperCase();
-        const _ctxYl   = String(document.getElementById('sel_year')?.value || '');
+        const _ctxProg    = (document.getElementById('sel_prog')?.value || '').toUpperCase();
+        const _ctxYl      = String(document.getElementById('sel_year')?.value || '');
+        const _ctxSectId  = document.getElementById('sel_section')?.value || '';
+        const _ctxSectNameRaw = (document.getElementById('bc-sect-text')?.textContent || '').trim();
+        // "-Select Section-" is the placeholder shown before any section is chosen — it must
+        // never be treated as a real section name to match against (that always fails and
+        // forces the "no section selected yet" fallback below to be skipped incorrectly).
+        const _ctxSectName = _ctxSectNameRaw === '-Select Section-' ? '' : _ctxSectNameRaw;
         const uniq = Array.from(slotMap.values()).map(group => {
             const rep = { ...group[0] };
-            rep._mergedSections = group.map(s => ({
+
+            // Dedupe by section identity — a raw DB row and its local pendingManualSchedule
+            // mirror copy (added while that session's slices are being edited) both represent
+            // the SAME section's booking and must not render as two separate badges on one
+            // pill. Prefer the entry with a real versionid / non-empty sectionname since the
+            // local mirror copy doesn't always carry that from its source API response.
+            const bySection = new Map();
+            group.forEach(s => {
+                const sectKey = String(s.section_id || s.sectionid || '') || (s.sectionname || '') ||
+                    `${s.programcode || ''}-${s.year_level || ''}`;
+                const existing = bySection.get(sectKey);
+                if (!existing || (!existing.versionid && s.versionid) || (!existing.sectionname && s.sectionname)) {
+                    bySection.set(sectKey, s);
+                }
+            });
+            const dedupedGroup = Array.from(bySection.values());
+
+            rep._mergedSections = dedupedGroup.map(s => ({
                 sectionname: s.sectionname || '',
                 programcode: s.programcode || '',
                 year_level:  s.year_level  || '',
@@ -2268,15 +2412,28 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 versionid:   s.versionid   || null,
                 temp_id:     s.temp_id     || null,
             }));
-            // The delete action should target the CURRENT section's entry, not the representative.
-            // If the user is editing a specific program/year level, find that entry in the group.
-            const _ctxMatch = group.find(s =>
+            // The delete/edit action should target the CURRENTLY SELECTED section's entry,
+            // not just any entry sharing this program/year level. A merged pill can hold
+            // several sections at the same program+year (e.g. NSTP shared across sections) —
+            // matching on program+year alone picked an arbitrary one of them, so editing or
+            // deleting "your" session could silently act on a different section's saved row.
+            const _ctxMatch = dedupedGroup.find(s =>
                 (s.programcode || '').toUpperCase() === _ctxProg &&
-                String(s.year_level || '') === _ctxYl
+                String(s.year_level || '') === _ctxYl &&
+                (
+                    _ctxSectId
+                        ? String(s.section_id || s.sectionid || '') === String(_ctxSectId)
+                        : (_ctxSectName ? (s.sectionname || '') === _ctxSectName : true)
+                )
             );
-            rep._deleteTarget = _ctxMatch || group[0]; // fallback to first if no ctx match
+            rep._deleteTarget = _ctxMatch || dedupedGroup[0]; // fallback to first if no ctx match
             return rep;
         });
+
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[renderGrid] FINAL pills to draw:', uniq.length, '—',
+                uniq.map(s => `${s.subjectcode}/${s.daydesc}`));
+        }
 
         const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
         const firstCell = table.querySelector('tbody td:nth-child(2)');
@@ -2349,17 +2506,19 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 pill.style.cursor = 'pointer';
                 pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
 
-                const instrLast = (sess.instructor || 'TBA').split(',')[0].trim();
+                const instrLast = (_resolveInstructorName(sess) || 'TBA').split(',')[0].trim();
 
                 // Tooltip lists all sections
                 const _sectLines = _mergedSects.map(ms => {
                     const lbl = ms.sectionname || `${ms.programcode} Yr${ms.year_level}`;
                     return `${lbl} (${ms.status})`;
                 }).join('\n');
-                pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${instrLast}${_sectLines ? '\n' + _sectLines : ''}`;
+                const _timeRange = (timeSlots[start - 1] && timeSlots[end - 1])
+                    ? `${timeSlots[start - 1]} – ${timeSlots[end - 1]}` : '';
+                pill.title = `${sess.subjectcode}\n${sess.subjectname || ''}\n${instrLast}\n${_timeRange}${_sectLines ? '\n' + _sectLines : ''}`;
 
                 const _dbKey  = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
-                const _label  = `${sess.subjectcode} — ${sess.daydesc} ${sess.start_fmt || ''} – ${sess.end_fmt || ''} in ${sess.roomname || 'TBA'}`;
+                const _label  = `${sess.subjectcode} — ${sess.daydesc} ${_timeRange} in ${sess.roomname || 'TBA'}`;
                 // Use the section matching the current editing context, not always group[0],
                 // so clicking × deletes the right section's version from a merged pill.
                 const _delTgt = sess._deleteTarget || sess;
@@ -2395,7 +2554,11 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
 
                 pill.onclick = (e) => {
                     if (e.target.closest('.pill-drop-btn')) return;
-                    window.handlePillClick(encodeURIComponent(JSON.stringify(sess)));
+                    // Edit the section matching the current context (_deleteTarget), not the
+                    // merged pill's representative — see _ctxMatch above. Using the raw
+                    // representative here meant editing a merged pill could silently apply
+                    // changes to whichever section's row happened to load first.
+                    window.handlePillClick(encodeURIComponent(JSON.stringify(sess._deleteTarget || sess)));
                 };
 
                 wrapper.appendChild(pill);
@@ -2591,10 +2754,11 @@ async function selectRoom(roomId, roomName) {
         if (bldgTab) bldgTab.classList.add('active');
     }
 
-    // Re-evaluate lab warning now that a room is selected
+    // Re-evaluate lab warning now that a room is selected (skip for TBA — room not decided yet,
+    // so there's nothing to validate against the Laboratory-room requirement)
     const labWarnEl = document.getElementById('room_dss_warning');
     const isLabSubj = _subjInfo && _subjInfo.laboratoryhours > 0;
-    if (labWarnEl && isLabSubj) {
+    if (labWarnEl && isLabSubj && roomId !== 'TBA') {
         const roomType = (room && room.type) ? room.type.toLowerCase() : '';
         const isLabRoom = roomType === 'laboratory';
         if (LAB_CONSTRAINT_ENABLED && !isLabRoom) {
@@ -2605,6 +2769,8 @@ async function selectRoom(roomId, roomName) {
         } else {
             _updateLabWarning(labWarnEl, isLabSubj, LAB_CONSTRAINT_ENABLED);
         }
+    } else if (labWarnEl && roomId === 'TBA') {
+        labWarnEl.style.display = 'none';
     }
 
     document.querySelectorAll('.room-pill').forEach(el => {

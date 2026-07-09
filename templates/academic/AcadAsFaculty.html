@@ -17,13 +17,13 @@
 
     <!-- Quick Action Cards -->
     <div class="action-grid">
-        <a href="{{ url_for('faculty_schedule') }}" class="btn-action-outline">
+        <a href="{{ url_for('schedule') }}" class="btn-action-outline">
             <i class="fa-regular fa-calendar-check"></i> View My Schedule
         </a>
         <a href="{{ url_for('academic_my_teaching_assignment') }}" class="btn-action-outline">
             <i class="fa-solid fa-book-open"></i> Teaching Assignment
         </a>
-        <a href="{{ url_for('room') }}" class="btn-action-outline">
+        <a href="{{ url_for('room_schedule_view') }}" class="btn-action-outline">
             <i class="fa-solid fa-magnifying-glass"></i> Find Available Room
         </a>  
     </div>
@@ -70,17 +70,14 @@
                 <div class="section-header">
                     <div class="section-title">INBOX</div>
                 </div>
-                <div class="inbox-card">
+                <div class="inbox-card inbox-empty">
                     <div class="inbox-left">
-                        <div class="inbox-icon"><i class="fa-solid fa-check"></i></div>
+                        <div class="inbox-icon"><i class="fa-regular fa-bell"></i></div>
                         <div class="inbox-text">
-                            <h4>Your schedule has been approved</h4>
-                            <p>&bull; 2h ago</p>
+                            <h4>No recent activity</h4>
+                            <p>Faculty schedule requests are managed under Requests.</p>
                         </div>
                     </div>
-                    <a href="{{ url_for('requests_view') }}" class="inbox-link">
-                        VIEW DETAILS &rarr;
-                    </a>
                 </div>
             </div>
         </div>

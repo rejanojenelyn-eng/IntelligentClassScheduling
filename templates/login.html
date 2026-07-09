@@ -265,6 +265,12 @@
 
     function openForgotPassword()  { document.getElementById('forgotModalOverlay').classList.add('open'); }
     function closeForgotPassword() { document.getElementById('forgotModalOverlay').classList.remove('open'); }
+
+    // After a failed login attempt, jump straight into the (empty) password field
+    // so the user can retype it without an extra click.
+    if (document.querySelector('.error-msg')) {
+        document.getElementById('mainPassword')?.focus();
+    }
 </script>
 </body>
 </html>

@@ -62,8 +62,17 @@ function filterStatusList() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('sl_ay').addEventListener('change', onAyChange);
-    populateSemDropdown(ACTIVE_AY, ACTIVE_SEM);
+    // NOTE: 'sl_ay'/'sl_sem' referenced by onAyChange()/populateSemDropdown() below don't
+    // exist in either template that loads this file — the live Schedule List filter bar
+    // uses slFilterAy/slFilterProg/slFilterSem with its own renderFilteredSchedList()
+    // instead (see that markup). Calling this unconditionally threw on every page load
+    // and silently aborted the rest of this handler, so it's guarded out here.
+    const _slAyEl = document.getElementById('sl_ay');
+    if (_slAyEl) {
+        _slAyEl.addEventListener('change', onAyChange);
+        populateSemDropdown(ACTIVE_AY, ACTIVE_SEM);
+    }
+    _initProgSearchDropdown();
 
     // Populate instructor dropdown from init data
     const _facultyJson = _initEl.dataset.faculty;
@@ -84,6 +93,79 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch(e) { console.error('[schedule.acad] faculty parse error', e); }
     }
 });
+
+/* ── Custom searchable PROGRAM dropdown (shared markup/CSS with the Faculty
+   Class Schedule page — builds its option list from view_prog's own <option>
+   elements so it's always in sync with whatever the server rendered). ── */
+function _initProgSearchDropdown() {
+    const wrapper     = document.getElementById('progWrapper');
+    const trigger     = document.getElementById('progTrigger');
+    const triggerText = document.getElementById('progTriggerText');
+    const search       = document.getElementById('progSearch');
+    const list         = document.getElementById('progList');
+    const hiddenSel    = document.getElementById('view_prog');
+    if (!wrapper || !trigger || !list || !hiddenSel) return;
+
+    list.innerHTML = '';
+    Array.from(hiddenSel.options).forEach(opt => {
+        if (!opt.value) return; // skip the "SELECT" placeholder
+        const row = document.createElement('div');
+        row.className = 'prog-search-option';
+        row.dataset.value = opt.value;
+        row.dataset.name  = opt.textContent;
+        row.innerHTML = `<strong>${opt.value}</strong> — ${opt.textContent}`;
+        list.appendChild(row);
+    });
+    _syncProgDropdownDisplay();
+
+    function openDropdown() {
+        if (wrapper.classList.contains('locked')) return;
+        wrapper.classList.add('open');
+        search.value = '';
+        filterOptions('');
+        search.focus();
+    }
+    function closeDropdown() { wrapper.classList.remove('open'); }
+    function filterOptions(q) {
+        list.querySelectorAll('.prog-search-option').forEach(opt => {
+            const code = (opt.dataset.value || '').toLowerCase();
+            const name = (opt.dataset.name  || '').toLowerCase();
+            opt.style.display = (!q || code.includes(q) || name.includes(q)) ? '' : 'none';
+        });
+    }
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        wrapper.classList.contains('open') ? closeDropdown() : openDropdown();
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('input', function() { filterOptions(this.value.trim().toLowerCase()); });
+    list.addEventListener('click', e => {
+        const opt = e.target.closest('.prog-search-option');
+        if (!opt) return;
+        hiddenSel.value = opt.dataset.value;
+        closeDropdown();
+        _syncProgDropdownDisplay();
+        hiddenSel.dispatchEvent(new Event('change'));
+    });
+    document.addEventListener('click', e => {
+        if (!wrapper.contains(e.target)) closeDropdown();
+    });
+}
+
+/* Keeps the visible trigger text in sync whenever view_prog's value is set
+   programmatically (e.g. auto-selected from a section, or restored from an
+   overlay URL param) rather than through the dropdown's own click handler. */
+function _syncProgDropdownDisplay() {
+    const hiddenSel    = document.getElementById('view_prog');
+    const triggerText  = document.getElementById('progTriggerText');
+    if (!hiddenSel || !triggerText) return;
+    if (!hiddenSel.value) { triggerText.textContent = 'SELECT'; triggerText.title = ''; return; }
+    const selOpt = hiddenSel.options[hiddenSel.selectedIndex];
+    const fullText = selOpt ? `${selOpt.value} — ${selOpt.textContent}` : 'SELECT';
+    triggerText.textContent = fullText;
+    triggerText.title = fullText;
+}
 
 /* ---- Notification dismiss ---- */
 function closeNotif() {
@@ -174,6 +256,7 @@ async function onSectionChange() {
     if (!selectedId) {
         // Section cleared → reset program + year level and reload all sections
         progSel.value = '';
+        _syncProgDropdownDisplay();
         const ylSel = document.getElementById('view_yl');
         if (ylSel) ylSel.value = '';
         await updateSections();
@@ -187,6 +270,7 @@ async function onSectionChange() {
             .find(o => o.value.toUpperCase() === sectionOffering.toUpperCase());
         if (match && progSel.value.toUpperCase() !== match.value.toUpperCase()) {
             progSel.value = match.value;
+            _syncProgDropdownDisplay();
             updateYearLevels();
             if (sectionYl) {
                 const ylSel = document.getElementById('view_yl');
@@ -517,6 +601,7 @@ function initOverlayMode() {
     if (window._OVERLAY_SEM && semEl)  semEl.value = window._OVERLAY_SEM;
     if (window._OVERLAY_PROG && progEl) {
         progEl.value = window._OVERLAY_PROG;
+        _syncProgDropdownDisplay();
         updateYearLevels();
     }
     if (window._OVERLAY_YL && ylEl) ylEl.value = window._OVERLAY_YL;
@@ -527,6 +612,8 @@ function initOverlayMode() {
         const el = document.getElementById(id);
         if (el) { el.disabled = true; el.style.opacity = '0.65'; }
     });
+    const progWrapEl = document.getElementById('progWrapper');
+    if (progWrapEl) progWrapEl.classList.add('locked');
 
     // Hide import button (editing not allowed in overlay mode)
     const importGroup = document.querySelector('.pill-import-group');

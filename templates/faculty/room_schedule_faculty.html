@@ -1010,7 +1010,7 @@
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">Reason for Request</label>
-                    <textarea id="muReason" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event."></textarea>
+                    <textarea id="muReason" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea>
                 </div>
             </div>
             <!-- Row 7: Note -->
@@ -1123,7 +1123,7 @@
             <div class="req-form-row">
                 <div class="req-form-group full">
                     <label class="req-form-label">Reason for Request</label>
-                    <textarea id="adjReason" placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event."></textarea>
+                    <textarea id="adjReason" placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea>
                 </div>
             </div>
         </div>
@@ -1334,13 +1334,15 @@ async function _checkConflicts(p) {
     const date      = isMakeup ? (document.getElementById('muDate')?.value || '') : '';
     const day       = isMakeup ? '' : (document.getElementById('adjDay')?.value || '');
     const roomId    = (isMakeup ? _muRoomChosen : _adjRoomChosen)?.id || '';
+    const subjCode  = document.getElementById(p + 'Subject')?.value || '';
     if (!start || !end || (!date && !day)) { _hideConflictBanner(p); return; }
 
     const params = new URLSearchParams({ start_time: start, end_time: end });
-    if (date)      params.set('date',       date);
-    if (day)       params.set('day',        day);
-    if (sectionId) params.set('section_id', sectionId);
-    if (roomId)    params.set('room_id',    roomId);
+    if (date)      params.set('date',         date);
+    if (day)       params.set('day',          day);
+    if (sectionId) params.set('section_id',   sectionId);
+    if (roomId)    params.set('room_id',      roomId);
+    if (subjCode)  params.set('subject_code', subjCode);
 
     try {
         const res  = await fetch('/api/faculty/check_request_conflicts?' + params.toString());
@@ -1350,9 +1352,10 @@ async function _checkConflicts(p) {
         const textEl   = document.getElementById(p + 'ConflictText');
         if (!banner || !textEl) return;
         const lines = [];
-        if (data.room_conflict)    lines.push(`<b>Room conflict:</b> ${data.room_detail}`);
-        if (data.faculty_conflict) lines.push(`<b>Faculty conflict:</b> ${data.faculty_detail}`);
+        if (data.room_conflict)     lines.push(`<b>Room conflict:</b> ${data.room_detail}`);
+        if (data.faculty_conflict)  lines.push(`<b>Faculty conflict:</b> ${data.faculty_detail}`);
         if (data.section_conflict) lines.push(`<b>Section conflict:</b> ${data.section_detail}`);
+        if (data.duration_conflict) lines.push(`<b>Duration mismatch:</b> ${data.duration_detail}`);
         if (lines.length) {
             textEl.innerHTML = lines.join('<br>');
             banner.style.display = '';
@@ -1649,9 +1652,46 @@ function _resetRoomDisplay(p, msg) {
     else            _adjRoomChosen = null;
 }
 
+/* Fully blank a request form's fields — called before every fresh open so a
+   cancelled/closed attempt never leaves stale values (or a disabled room
+   picker) behind for the next time the modal is opened. */
+function _resetReqForm(p) {
+    const daySel = document.getElementById(p + 'Day');
+    if (daySel) daySel.value = '';
+    if (p === 'mu') { const d = document.getElementById('muDate'); if (d) d.value = ''; }
+
+    const startSel = document.getElementById(p + 'Start');
+    const endSel   = document.getElementById(p + 'End');
+    if (startSel) { _fillTimeSelect(startSel, []); startSel.value = ''; }
+    if (endSel)   { _fillTimeSelect(endSel,   []); endSel.value   = ''; }
+
+    _resetRoomDisplay(p, p === 'mu' ? '— Select date & time first —' : '— Select day & time first —');
+    const wrap = document.getElementById(p + 'RoomWrap');
+    const box  = wrap ? wrap.querySelector('.room-sel-box') : null;
+    if (wrap) wrap.classList.remove('no-rooms', 'open');
+    if (box)  { box.style.pointerEvents = ''; box.style.opacity = ''; box.style.borderColor = ''; }
+
+    const overlay   = document.getElementById(p === 'mu' ? 'reqMakeupOverlay' : 'reqAdjOverlay');
+    const submitBtn = overlay ? overlay.querySelector('.btn-req-submit') : null;
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.title = ''; }
+
+    const subjSel = document.getElementById(p + 'SubjectSel');
+    if (subjSel) subjSel.value = '';
+    reqSubjectChanged(p); // clears Subject/Section/Program/Yl hidden fields + section select placeholder
+
+    const reasonEl = document.getElementById(p + 'Reason');
+    if (reasonEl) reasonEl.value = '';
+
+    if (p === 'adj') _adjBlockedSlots = [];
+    else             _muBlockedSlots  = [];
+
+    _hideConflictBanner(p);
+}
+
 function frsOpenForm(type) {
     document.getElementById('reqPickerOverlay').classList.remove('open');
     if (type === 'makeup') {
+        _resetReqForm('mu');
         document.getElementById('reqMakeupOverlay').classList.add('open');
         const pre = window._preRoom;
         const filterDate  = document.getElementById('frsAvailDate')?.value  || '';
@@ -1673,6 +1713,7 @@ function frsOpenForm(type) {
             muOnDateTimeChange();
         }
     } else {
+        _resetReqForm('adj');
         document.getElementById('reqAdjOverlay').classList.add('open');
         const pre         = window._preRoom;
         const filterDay   = document.getElementById('frsAvailDay')?.value   || '';
@@ -1747,6 +1788,10 @@ async function reqSubmit(type) {
     if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
     if (!payload.section_id)   return showToast('Please select a section.', 'warning');
     if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
+    if (payload.start_time && payload.end_time &&
+        _REQ_SLOTS.indexOf(payload.end_time) <= _REQ_SLOTS.indexOf(payload.start_time)) {
+        return showToast('End Time must be later than Start Time.', 'warning');
+    }
 
     const submitBtn = document.querySelector(`#req${isMakeup ? 'Makeup' : 'Adj'}Overlay .btn-req-submit`);
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'SUBMITTING...'; }

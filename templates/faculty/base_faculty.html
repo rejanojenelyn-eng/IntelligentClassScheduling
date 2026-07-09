@@ -189,7 +189,7 @@
                 <div class="up-field" id="pfDesignationSection"><label>Designation</label><select id="pfDesignation" class="up-select"></select></div>
                 <div class="up-field" id="pfSpecializationSection"><label>Specialization</label><select id="pfSpecialization" class="up-select"></select></div>
                 <div class="up-field" id="pfStatusSection"><label>Employment Status</label>
-                    <select id="pfStatus" class="up-select"><option value="Active">Active</option><option value="Inactive">Inactive</option><option value="Part-time">Part-time</option></select>
+                    <select id="pfStatus" class="up-select"><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select>
                 </div>
             </div>
             <div class="up-panel-ft">
@@ -209,9 +209,9 @@
             <h2 class="up-panel-title">Change Password</h2>
             <p class="up-panel-sub">Update your account password.</p>
             <div class="up-form">
-                <div class="up-field"><label>Current Password</label><input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password"></div>
-                <div class="up-field"><label>New Password</label><input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters"></div>
-                <div class="up-field"><label>Confirm New Password</label><input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password"></div>
+                <div class="up-field"><label>Current Password</label><input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password"></div>
+                <div class="up-field"><label>New Password</label><input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters" autocomplete="new-password"></div>
+                <div class="up-field"><label>Confirm New Password</label><input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password"></div>
                 <div id="pwError" class="up-error" style="display:none;"></div>
             </div>
             <div class="up-panel-ft">
@@ -242,5 +242,20 @@
 
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/FACULTY/base.faculty.js') }}"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('input[type="text"], input[type="search"], input[type="number"], input[type="email"]').forEach(function (el) {
+            if (el.id === 'globalSearch') return;
+            el.setAttribute('autocomplete', 'off');
+            if (!el.readOnly) {
+                el.setAttribute('readonly', '');
+                el.addEventListener('focus', function () { this.removeAttribute('readonly'); });
+                el.addEventListener('blur',  function () {
+                    if (!this.value) this.setAttribute('readonly', '');
+                });
+            }
+        });
+    });
+    </script>
 </body>
 </html>

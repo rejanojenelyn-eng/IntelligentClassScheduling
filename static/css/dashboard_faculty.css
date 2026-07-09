@@ -268,21 +268,35 @@ body, * {
     margin-top: 35px;
 }
 .inbox-card {
-    color: #ffffff;
-    padding: 16px 20px;
+    background-color: #ffffff;
+    color: #2b2b2b;
+    padding: 14px 18px;
     border-radius: 8px;
+    border: 1px solid #ececec;
+    border-left: 4px solid transparent;
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 10px;
+    transition: box-shadow 0.15s, transform 0.15s;
 }
 .inbox-card:last-child { margin-bottom: 0; }
+.inbox-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08); transform: translateY(-1px); }
 
-.inbox-approved { background-color: #800000; box-shadow: 0 4px 10px rgba(128,0,0,0.18); }
-.inbox-rejected { background-color: #c0392b; box-shadow: 0 4px 10px rgba(192,57,43,0.18); }
-.inbox-pending  { background-color: #5a6268; box-shadow: 0 4px 10px rgba(90,98,104,0.15); }
-.inbox-empty    { background-color: #f1f3f5; color: #868e96; box-shadow: none; border: 1px solid #e9ecef; }
-.inbox-empty .inbox-icon { background-color: #dee2e6; color: #868e96; }
+.inbox-approved { border-left-color: #1e8449; }
+.inbox-approved .inbox-icon { background-color: rgba(30,132,73,0.12); color: #1e8449; }
+.inbox-approved .inbox-link { color: #1e8449; }
+
+.inbox-rejected { border-left-color: #c0392b; }
+.inbox-rejected .inbox-icon { background-color: rgba(192,57,43,0.12); color: #c0392b; }
+.inbox-rejected .inbox-link { color: #c0392b; }
+
+.inbox-pending  { border-left-color: #d9860a; }
+.inbox-pending .inbox-icon { background-color: rgba(217,134,10,0.12); color: #d9860a; }
+.inbox-pending .inbox-link { color: #d9860a; }
+
+.inbox-empty    { background-color: #f8f9fa; color: #868e96; border-color: #e9ecef; }
+.inbox-empty .inbox-icon { background-color: #e9ecef; color: #adb5bd; }
 .inbox-empty .inbox-link { display: none; }
 
 .inbox-left {
@@ -291,28 +305,27 @@ body, * {
     gap: 15px;
 }
 .inbox-icon {
-    background-color: rgba(255,255,255,0.25);
     width: 38px;
     height: 38px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    font-size: 15px;
     flex-shrink: 0;
 }
 .inbox-text h4 {
     margin: 0 0 3px 0;
     font-size: 13px;
     font-weight: 700;
+    color: #2b2b2b;
 }
 .inbox-text p {
     margin: 0;
     font-size: 11px;
-    opacity: 0.80;
+    color: #999;
 }
 .inbox-link {
-    color: #ffffff;
     text-decoration: none;
     font-size: 11px;
     font-weight: 700;

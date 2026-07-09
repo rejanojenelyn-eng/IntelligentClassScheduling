@@ -54,12 +54,22 @@ document.addEventListener('DOMContentLoaded', () => {
 function _fcsPopulateDropdowns() {
     const progSel  = document.getElementById('view_prog');
     const instrSel = document.getElementById('view_instructor');
+    const progList = document.getElementById('fcsProgList');
 
     _FCS_PROGRAMS.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.code;
         opt.textContent = p.name;
         progSel.appendChild(opt);
+
+        if (progList) {
+            const row = document.createElement('div');
+            row.className = 'prog-search-option';
+            row.dataset.value = p.code;
+            row.dataset.name  = p.name;
+            row.innerHTML = `<strong>${p.code}</strong> — ${p.name}`;
+            progList.appendChild(row);
+        }
     });
 
     _FCS_FACULTY.forEach(f => {
@@ -67,6 +77,59 @@ function _fcsPopulateDropdowns() {
         opt.value = f.emp;
         opt.textContent = f.name;
         instrSel.appendChild(opt);
+    });
+
+    _fcsInitProgSearchDropdown();
+}
+
+/* ── Custom searchable program dropdown (mirrors the pattern used in
+   Schedule Generation's PROGRAM picker) ── */
+function _fcsInitProgSearchDropdown() {
+    const wrapper     = document.getElementById('fcsProgWrapper');
+    const trigger     = document.getElementById('fcsProgTrigger');
+    const triggerText = document.getElementById('fcsProgTriggerText');
+    const search       = document.getElementById('fcsProgSearch');
+    const list         = document.getElementById('fcsProgList');
+    const hiddenSel    = document.getElementById('view_prog');
+    if (!wrapper || !trigger || !list || !hiddenSel) return;
+
+    function openDropdown() {
+        wrapper.classList.add('open');
+        search.value = '';
+        filterOptions('');
+        search.focus();
+    }
+    function closeDropdown() {
+        wrapper.classList.remove('open');
+    }
+    function filterOptions(q) {
+        list.querySelectorAll('.prog-search-option').forEach(opt => {
+            const code = (opt.dataset.value || '').toLowerCase();
+            const name = (opt.dataset.name  || '').toLowerCase();
+            opt.style.display = (!q || code.includes(q) || name.includes(q)) ? '' : 'none';
+        });
+    }
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        wrapper.classList.contains('open') ? closeDropdown() : openDropdown();
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('input', function() { filterOptions(this.value.trim().toLowerCase()); });
+    list.addEventListener('click', e => {
+        const opt = e.target.closest('.prog-search-option');
+        if (!opt) return;
+        const val  = opt.dataset.value;
+        const name = opt.dataset.name;
+        hiddenSel.value = val;
+        const fullText = val ? `${val} — ${name}` : 'SELECT';
+        triggerText.textContent = fullText;
+        triggerText.title = fullText;
+        closeDropdown();
+        hiddenSel.dispatchEvent(new Event('change'));
+    });
+    document.addEventListener('click', e => {
+        if (!wrapper.contains(e.target)) closeDropdown();
     });
 }
 

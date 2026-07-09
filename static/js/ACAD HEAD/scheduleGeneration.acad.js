@@ -1118,10 +1118,54 @@ document.addEventListener('DOMContentLoaded', () => {
     btnSaveDraft.addEventListener('click', async () => {
         if (!currentScheduleData.length) return;
 
+        const ctx = getContext();
+
+        // ── Ask for consent before silently replacing an existing Draft/Published ──
+        let existingCheck = { exists: false };
+        try {
+            const _cr = await fetch('/api/schedule/check-existing', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(ctx),
+            });
+            existingCheck = await _cr.json();
+        } catch (_ce) { /* network error — treat as no existing */ }
+
+        if (existingCheck.exists) {
+            const _statusLabel = existingCheck.status || 'existing';
+            const _countStr    = existingCheck.subject_count
+                ? ` with <strong>${existingCheck.subject_count}</strong> subject(s)`
+                : '';
+
+            const _confirmBtn = document.getElementById('infoModalConfirmBtn');
+            const _prevLabel  = _confirmBtn.textContent;
+            _confirmBtn.textContent = 'Continue';
+
+            const _proceed = await showInfo(
+                'Existing Schedule Detected',
+                `This section already has a <strong>${_statusLabel}</strong> schedule${_countStr}.<br><br>`
+                + '<strong>Cancel</strong> &mdash; stop and keep the existing schedule as is.<br>'
+                + '<strong>Continue</strong> &mdash; archive it and save this as the new Draft.',
+                'confirm'
+            );
+            _confirmBtn.textContent = _prevLabel;
+
+            if (!_proceed) return;
+
+            // Override replaces the entire schedule — archive both the old Draft AND the
+            // old Published so this subject shows as DRAFT only, not a stale PUB/DRAFT combo.
+            try {
+                await fetch('/api/schedule/archive-draft-for-editor', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(ctx),
+                });
+            } catch (_ae) { /* archive failure is non-blocking */ }
+        }
+
         btnSaveDraft.disabled = true;
         btnSaveDraft.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
-        const ctx = getContext();
         try {
             const res  = await fetch('/api/schedule/save-draft', {
                 method: 'POST',
@@ -1308,34 +1352,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
 
             } else if (data.needs_confirmation) {
-                // An existing Published schedule was found — ask whether to override it.
+                // An existing Published schedule was found — notify, then auto-override
+                // (same behavior as Save Draft: the prior version is archived automatically).
                 const ei       = data.existing_info || {};
                 const dateStr  = ei.date         ? ` (published on ${ei.date})`                       : '';
                 const subjStr  = ei.subject_count ? ` with <strong>${ei.subject_count}</strong> subjects` : '';
 
-                // Temporarily relabel the confirm button to "Override"
-                const confirmBtn = document.getElementById('infoModalConfirmBtn');
-                const prevLabel  = confirmBtn.textContent;
-                confirmBtn.textContent = 'Override';
-
-                const doOverride = await showInfo(
-                    'Existing Schedule Detected',
-                    `This section already has an approved schedule${subjStr}${dateStr}.<br><br>`
-                    + 'What would you like to do?<br><br>'
-                    + '<strong>Cancel</strong> — stop the approval process.<br>'
-                    + '<strong>Override</strong> — archive the existing schedule and publish this one as the new active schedule.',
-                    'confirm'
+                await showInfo(
+                    'Existing Schedule Found',
+                    `This section already has an approved schedule${subjStr}${dateStr}.<br>`
+                    + 'It will be archived and replaced by the schedule you are publishing now.',
+                    'info'
                 );
-                confirmBtn.textContent = prevLabel;
 
-                if (doOverride) {
-                    // User chose Override — re-submit with override flag
-                    await _submitApproval(true);
-                } else {
-                    // User cancelled
-                    btnApprove.disabled = false;
-                    btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
-                }
+                await _submitApproval(true);
 
             } else {
                 // #11: Show per-faculty load violation details when applicable

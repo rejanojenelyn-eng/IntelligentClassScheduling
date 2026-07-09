@@ -104,17 +104,6 @@
     .btn-assign-faculty.reassign { background: #7f8c8d; }
     .btn-assign-faculty.reassign:hover { background: #6c7a7d; }
 
-    /* ── Soft faculty-assignment lock badge ── */
-    #fac-soft-badge {
-        display: none; margin-top: 6px; width: 100%; box-sizing: border-box;
-        padding: 7px 10px; background: #1565c0; color: white;
-        border-radius: 4px; font-size: 0.74rem; font-weight: 700;
-        cursor: pointer; letter-spacing: 0.3px; text-align: center;
-        transition: background 0.18s;
-    }
-    #fac-soft-badge:hover { background: #0d47a1; }
-    #fac-soft-badge.visible { display: block; }
-
     /* ── Pill drop button ── */
     .pill-drop-btn {
         position: absolute; top: 2px; right: 2px;
@@ -535,7 +524,6 @@
     /* ── Local Scheduler: faculty section read-only ── */
     .local-fac-ro .fac-stats-header { pointer-events: none !important; cursor: default !important; }
     .local-fac-ro #fac-lock-badge   { pointer-events: none !important; cursor: default !important; }
-    .local-fac-ro #fac-soft-badge   { display: none !important; }
     .local-fac-ro #btnAssignFaculty  { display: none !important; }
 
   
@@ -882,8 +870,8 @@
 
             <div class="manual-nav-bar">
                 <div class="mnav-left-tools">
-                    <i class="fas fa-undo mnav-icon" title="Undo"></i>
-                    <i class="fas fa-redo mnav-icon" title="Redo"></i>
+                    <i class="fas fa-undo mnav-icon" id="mnavUndoIcon" title="Undo"></i>
+                    <i class="fas fa-redo mnav-icon" id="mnavRedoIcon" title="Redo"></i>
                     <i class="fas fa-sync-alt mnav-icon" title="Refresh" onclick="location.reload()"></i>
                 </div>
                 <div class="manual-nav-tabs">
@@ -950,35 +938,66 @@
 
                 <!-- Main content area -->
                 <div class="fl-content">
-                    <h2 class="fl-main-title">TEACHING ASSIGNMENTS</h2>
-
-                    <h3 class="fl-section-sub" id="fl-reg-label">REGULAR LOAD</h3>
-                    <div class="fl-table-wrap">
-                        <table class="fl-table">
-                            <thead><tr>
-                                <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                                <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
-                            </tr></thead>
-                            <tbody id="fl-regular-body">
-                                <tr><td colspan="7" class="fl-no-data">Select a faculty member above</td></tr>
-                            </tbody>
-                        </table>
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                        <h2 class="fl-main-title" style="border:none;margin:0;padding:0;" id="fl-view-heading">TEACHING ASSIGNMENTS</h2>
+                        <div class="sched-mode-toggle">
+                            <button class="btn-sched-mode sched-mode-active" id="btnFlTeaching" onclick="_setFlView('teaching')">TEACHING ASSIGNMENT</button>
+                            <button class="btn-sched-mode" id="btnFlCalendar" onclick="_setFlView('calendar')">CALENDAR VIEW</button>
+                        </div>
                     </div>
-                    <div class="fl-total-line" id="fl-reg-total-label">TOTAL REGULAR LOAD: <span id="fl-total-regular">—</span></div>
+                    <div style="border-bottom:2px solid #630100;margin:6px 0 14px;"></div>
 
-                    <h3 class="fl-section-sub" style="margin-top:16px;" id="fl-pt-label">PART TIME LOAD</h3>
-                    <div class="fl-table-wrap">
-                        <table class="fl-table">
-                            <thead><tr>
-                                <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                                <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
-                            </tr></thead>
-                            <tbody id="fl-parttime-body">
-                                <tr><td colspan="7" class="fl-no-data">—</td></tr>
-                            </tbody>
-                        </table>
+                    <div id="flTableView">
+                        <h3 class="fl-section-sub" id="fl-reg-label">REGULAR LOAD</h3>
+                        <div class="fl-table-wrap">
+                            <table class="fl-table">
+                                <thead><tr>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
+                                </tr></thead>
+                                <tbody id="fl-regular-body">
+                                    <tr><td colspan="7" class="fl-no-data">Select a faculty member above</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="fl-total-line" id="fl-reg-total-label">TOTAL REGULAR LOAD: <span id="fl-total-regular">—</span></div>
+
+                        <h3 class="fl-section-sub" style="margin-top:16px;" id="fl-pt-label">PART TIME LOAD</h3>
+                        <div class="fl-table-wrap">
+                            <table class="fl-table">
+                                <thead><tr>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
+                                </tr></thead>
+                                <tbody id="fl-parttime-body">
+                                    <tr><td colspan="7" class="fl-no-data">—</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="fl-total-line" id="fl-pt-total-label">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
                     </div>
-                    <div class="fl-total-line" id="fl-pt-total-label">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
+
+                    <!-- Calendar View — hidden until toggled; mirrors Room View's grid markup/CSS -->
+                    <div id="flCalendarView" style="display:none;">
+                        <div class="timetable-wrapper" id="flGridWrapper" style="height:600px;">
+                            <table class="timetable" id="flTimetable">
+                                <thead>
+                                    <tr>
+                                        <th>TIME</th><th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                                        <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                {% for time in ['7:30 AM','8:00 AM','8:30 AM','9:00 AM','9:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM','12:00 PM','12:30 PM','1:00 PM','1:30 PM','2:00 PM','2:30 PM','3:00 PM','3:30 PM','4:00 PM','4:30 PM','5:00 PM','5:30 PM','6:00 PM','6:30 PM','7:00 PM','7:30 PM','8:00 PM','8:30 PM','9:00 PM'] %}
+                                    <tr>
+                                        <td class="time-col">{{ time }}</td>
+                                        <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
 
             </div><!-- /facultyLoadPanel -->
@@ -1166,10 +1185,6 @@
                 <button id="btnAssignTBA" class="btn-assign-faculty" onclick="_handleTBABtnClick()" style="display:none;background:linear-gradient(135deg,#7f8c8d,#636e72);" title="Assign as TBA — faculty will be announced later">
                     <i class="fas fa-question-circle"></i> Assign as TBA
                 </button>
-                <!-- Soft-assignment lock badge (shown after faculty confirmed via Assign) -->
-                <div id="fac-soft-badge" onclick="startReassignFaculty()" title="Click to reassign this faculty">
-                    <i class="fas fa-lock"></i> Faculty Assigned — Click to Reassign
-                </div>
                 <!-- TBA lock badge (shown after TBA is confirmed) -->
                 <div id="fac-tba-badge" style="display:none;margin-top:6px;width:100%;box-sizing:border-box;padding:6px 10px;border-radius:4px;background:linear-gradient(135deg,#7f8c8d,#636e72);color:#fff;font-size:0.72rem;font-weight:700;text-align:center;cursor:pointer;" onclick="_clearTBAAssignment()" title="Click to change faculty">
                     <i class="fas fa-question-circle"></i> TBA — Click to Change
@@ -1307,7 +1322,7 @@
             <label style="font-size:0.65rem;font-weight:900;letter-spacing:1px;color:#666;text-transform:uppercase;display:block;margin-bottom:6px;">
                 Reason / Description <span style="font-weight:400;letter-spacing:0;text-transform:none;color:#aaa;">(optional)</span>
             </label>
-            <textarea id="localReasonInput" rows="3"
+            <textarea id="localReasonInput" rows="3" autocomplete="off"
                 placeholder="e.g. Part-time faculty temporary morning slot, room substitution for specific section…"
                 style="width:100%;box-sizing:border-box;border:1.5px solid #ddd;border-radius:6px;padding:10px 12px;font-size:0.82rem;resize:vertical;font-family:inherit;line-height:1.45;"></textarea>
         </div>
@@ -1392,7 +1407,7 @@
      data-from-generator="{{ init_from_generator }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260707a-debug"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -1795,8 +1810,7 @@ window.onFacultySelect = async function(empNum) {
         const currentSubj = document.getElementById('sel_subj').value || _currentSubjectCode;
         
         const meta = _subjectMeta[currentSubj] || {};
-        // FIX: Gamitin ang total_hours imbes na student units
-        const subjectUnits = parseFloat(meta.total_hours || (_subjInfo ? _subjInfo.total_hours : 0));
+        const subjectUnits = parseFloat(meta.units ?? (_subjInfo ? _subjInfo.creditunits : 0));
 
         if (subjectUnits > 0) {
             const ay = document.getElementById('sel_ay').value;
@@ -1816,7 +1830,7 @@ window.onFacultySelect = async function(empNum) {
                     seenSubjects.add(c.subject_code);
                     
                   const uMeta = _subjectMeta[c.subject_code];
-                    pendingUnits += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
+                    pendingUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
                 }
             }
             // Include server-side pending reservations (from other programs/sections)
@@ -1908,12 +1922,19 @@ window.onFacultySelect = async function(empNum) {
 };
 
 const _origHandlePillClick = window.handlePillClick;
-let _pillClickLock = false; 
+// Rapid back-and-forth pill clicking used to be handled with a hard lock that silently
+// DROPPED any click made while a previous one was still processing — so when a user
+// clicked several pills quickly, most clicks were ignored and the panel settled on
+// whichever older click happened to still be in-flight, not the one the user actually
+// wanted last. Instead, every click is now processed immediately and stamped with an
+// incrementing token; at each checkpoint after an await, a click bails out if a NEWER
+// click has since started, so the section/panel state always converges on the LATEST
+// click rather than an arbitrary earlier one.
+let _pillClickToken = 0;
 
 window.handlePillClick = async function(sessJson) {
-    if (_pillClickLock) return;  
-    _pillClickLock = true;
-    try {
+    const _myPillToken = ++_pillClickToken;
+    window._pillClickCurrentToken = _myPillToken;
     const sess = JSON.parse(decodeURIComponent(sessJson));
     const code = sess.subjectcode || sess.subject_code;
 
@@ -1947,7 +1968,8 @@ window.handlePillClick = async function(sessJson) {
 
         window.currentEditSession = null;
         _currentSubjectCode = code;
-        await triggerCascade(true); 
+        await triggerCascade(true);
+        if (_myPillToken !== _pillClickToken) return; // a newer pill click has since started
         const subjSel = document.getElementById('sel_subj');
         if (!Array.from(subjSel.options).some(o => o.value === code)) {
             const tmp = document.createElement('option');
@@ -1957,15 +1979,35 @@ window.handlePillClick = async function(sessJson) {
         subjSel.value = code;
 
         _currentSubjectCode = null;
-        if (typeof _loadSectionOptions === 'function') _loadSectionOptions();
-        const bcSect = document.getElementById('bc-sect-text');
-        if (bcSect) bcSect.textContent = '-Select Section-';
-        document.getElementById('sel_section').value = '';
+    }
+
+    // Resolve the section the clicked pill actually belongs to. This must run whenever the
+    // currently selected section doesn't already match — not only when program/year changed —
+    // since a section may simply never have been chosen yet (still "-Select Section-") even
+    // though program/year were already correct. This also rebuilds the Curriculum Guide list
+    // (via selectBcSect → _updateSubjectList) so the pill's subject is loaded and highlighted.
+    const desiredSectId   = sess.section_id || sess.sectionid || null;
+    const desiredSectName = sess.sectionname || null;
+    const curSectId       = document.getElementById('sel_section')?.value || '';
+    const curSectName     = (document.getElementById('bc-sect-text')?.textContent || '').trim();
+    const sectAlreadySet  = desiredSectId
+        ? String(curSectId) === String(desiredSectId)
+        : (desiredSectName ? curSectName === desiredSectName : false);
+
+    if ((desiredSectId || desiredSectName) && !sectAlreadySet) {
+        if (typeof _loadSectionOptions === 'function') {
+            await _loadSectionOptions(desiredSectId, desiredSectName);
+        }
+    } else if (progChanged || ylChanged) {
+        // Section already matched even though program/year changed (e.g. re-clicking within
+        // the same section) — still clear the stale right panel from the old context.
         _resetRightPanel();
     }
+    if (_myPillToken !== _pillClickToken) return; // a newer pill click has since started
 
     const meta = _subjectMeta[code] || {};
     await _onSubjectClick(code, sess.subjectname || code, meta.units || 0, meta.total_hours || 0);
+    if (_myPillToken !== _pillClickToken) return; // a newer pill click has since started
 
     if (typeof _refreshSubjectScheduledHours === 'function') {
         _refreshSubjectScheduledHours().catch(() => {});
@@ -1985,6 +2027,7 @@ window.handlePillClick = async function(sessJson) {
 
     // Select the matching time slice (bidirectional: pill → slice)
     setTimeout(() => {
+        if (_myPillToken !== _pillClickToken) return; // a newer pill click has since started
         const sessStart = _TS_TIMES[sess.starttimeid - 1] || sess.start_time || sess.start_fmt || '';
         let matched = false;
         document.querySelectorAll('.ts-row').forEach(row => {
@@ -1998,9 +2041,6 @@ window.handlePillClick = async function(sessJson) {
         });
         if (!matched) document.querySelectorAll('.schedule-pill').forEach(p => p.classList.remove('pill-slice-active'));
     }, 500);
-    } finally {
-        _pillClickLock = false;
-    }
 };
 
 window.confirmAndPlace = async function() {
@@ -2139,8 +2179,8 @@ window.confirmAndPlace = async function() {
         return 'none';
     })();
 
-    // Room conflict — DB sessions
-    if (roomVal) {
+    // Room conflict — DB sessions (skip for TBA — no specific room assigned yet)
+    if (roomVal && roomVal !== 'TBA') {
         try {
             const rResp = await fetch(`/api/get_room_schedule/${roomVal}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
             const rSessions = await rResp.json();
@@ -2183,9 +2223,10 @@ window.confirmAndPlace = async function() {
         } catch(e) { console.error('DB room conflict check failed:', e); }
     }
 
-    // Room conflict — in-memory pending
+    // Room conflict — in-memory pending (skip for TBA)
     if (!_mergeConfirmed) {
         for (const c of pendingManualSchedule) {
+            if (roomVal === 'TBA' || c.room_id === 'TBA') continue; // TBA has no specific room to conflict over
             if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
             if (String(c.room_id) === String(roomVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
                 const cStart = getTimeSlotIndex(c.start_time);
@@ -2751,8 +2792,6 @@ function _applyLocalFacultyReadonly() {
     if (facWrapper) facWrapper.style.display = 'none';
     const btnAssign  = document.getElementById('btnAssignFaculty');
     if (btnAssign)   btnAssign.style.display  = 'none';
-    const softBadge  = document.getElementById('fac-soft-badge');
-    if (softBadge)   softBadge.style.display  = 'none';
 
     // Patch the right-field-label to say "FACULTY (OFFICIAL)"
     const facLabel = document.querySelector('.editor-right-panel-new .right-field-label');
@@ -2791,7 +2830,15 @@ function _localSetBlockPanel(blocked) {
 }
 
 /* ── Subject click handler ── */
+// Guards against a race where switching subjects quickly lets an older click's
+// async chain (triggerDSSLogic, faculty stats fetch, etc.) finish AFTER a newer
+// click's reset already ran, re-stamping the panel with the previous subject's
+// stale faculty info. Any code that writes to the faculty display after an await
+// must check this token first.
+let _subjClickToken = 0;
+
 async function _onSubjectClick(code, name, units, hours) {
+    const _myClickToken = ++_subjClickToken;
     // Prompt if there are unsaved pending slices for the current subject
     if (_currentSubjectCode && _currentSubjectCode !== code) {
         const pendingForCurrent = pendingManualSchedule.filter(c =>
@@ -2819,31 +2866,46 @@ async function _onSubjectClick(code, name, units, hours) {
         if ((_hasPendingSlices || _hasPendingFaculty) &&
             !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
 
-        // Un-hide DB sessions that were masked for the old subject so the room calendar shows them.
-        // _loadExistingSessionsIntoSlices hides by BOTH slot-key ("CODE_Day_TimeId") AND
-        // versionid-key ("v:NNN"). The slot-key filter alone leaves v: entries in the set,
-        // causing renderGrid to keep hiding those rows after switching subjects.
-        const _oldCode = _currentSubjectCode;
-        const _oldVersionIds = new Set(
-            pendingManualSchedule
-                .filter(c => c.subject_code === _oldCode && c.versionid)
-                .map(c => `v:${c.versionid}`)
-        );
-        hiddenDbSchedules = new Set(
-            Array.from(hiddenDbSchedules).filter(
-                k => !k.startsWith(_oldCode + '_') && !_oldVersionIds.has(k)
-            )
-        );
-
         // Clear pending for old subject (scoped to current ay/sem/year_level) and reset slices
         const _clrAy  = document.getElementById('sel_ay').value;
         const _clrSem = document.getElementById('sel_sem').value;
         const _clrYl  = document.getElementById('sel_year').value;
-        pendingManualSchedule = pendingManualSchedule.filter(c =>
-            c.subject_code !== _currentSubjectCode ||
-            c.ay !== _clrAy || c.sem !== _clrSem ||
-            (c.year_level && String(c.year_level) !== String(_clrYl))
-        );
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[_onSubjectClick] switching', _currentSubjectCode, '->', code,
+                '| clr ay/sem/yl =', _clrAy, _clrSem, _clrYl);
+            console.log('[_onSubjectClick] pendingManualSchedule BEFORE purge:',
+                pendingManualSchedule.map(c => `${c.subject_code} ay=${c.ay} sem=${c.sem} yl=${c.year_level} fromExisting=${c.fromExisting} v=${c.versionid}`));
+        }
+        pendingManualSchedule = pendingManualSchedule.filter(c => {
+            const _isOldSubjScope = c.subject_code === _currentSubjectCode &&
+                c.ay === _clrAy && c.sem === _clrSem &&
+                (!c.year_level || String(c.year_level) === String(_clrYl));
+            if (!_isOldSubjScope) return true; // unrelated entry — always keep
+
+            // Console debugging (see [renderGrid] logs) proved that a subject's DB row is
+            // not always retrievable again via /api/get_room_schedule once its local copy
+            // is dropped — the raw fetch can simply not include it (e.g. room/version
+            // mismatch), so there is no guaranteed fallback to restore the pill from. In
+            // Room View, the grid must keep showing every schedule block currently placed
+            // regardless of which subject is actively being edited — including ones not
+            // yet saved (e.g. a fresh TBA-faculty slice), since the user sees them sitting
+            // on the calendar and switching subjects shouldn't silently erase them. Only
+            // Program View (scoped to one subject/section at a time) still clears them.
+            if (currentMode !== 'program') return true;
+            return false;
+        });
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[_onSubjectClick] pendingManualSchedule AFTER purge:',
+                pendingManualSchedule.map(c => `${c.subject_code} ay=${c.ay} sem=${c.sem} yl=${c.year_level} fromExisting=${c.fromExisting} v=${c.versionid}`));
+        }
+        // Re-derive hiddenDbSchedules from whatever pendingManualSchedule looks like now —
+        // the old subject's local copy was just dropped above, so its raw DB row must stop
+        // being hidden (its hide-key is no longer in the rebuilt set) and become the visible
+        // representation again, restoring the pill in the room calendar.
+        if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+        if (window._DEBUG_RENDERGRID) {
+            console.log('[_onSubjectClick] hiddenDbSchedules AFTER rebuild:', Array.from(hiddenDbSchedules));
+        }
         document.getElementById('time-slots-container').innerHTML = '';
         _activeSliceId = null;
         _dirtySliceIds.clear();
@@ -2857,6 +2919,10 @@ async function _onSubjectClick(code, name, units, hours) {
             document.getElementById('sel_faculty').value = '';
             document.getElementById('fac_display_name').value = '';
             document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+            // Drop the previous subject's faculty info and specialization warning so they
+            // don't carry over into the new subject's panel before a fresh one loads.
+            if (typeof _facInfo !== 'undefined') _facInfo = null;
+            if (typeof _checkFacultySpecWarning === 'function') _checkFacultySpecWarning();
             if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
         }
     }
@@ -2911,10 +2977,63 @@ async function _onSubjectClick(code, name, units, hours) {
         if (c.fromExisting && String(c.year_level) === String(_yl)) return true;
         return false;
     });
-    if (_hasLoaded) _skipExistingCheck = true;
+    if (_hasLoaded) {
+        _skipExistingCheck = true;
+        // We're reusing already-loaded local copies instead of re-fetching, so their raw DB
+        // rows must stay suppressed — an earlier hiddenDbSchedules rebuild (e.g. from a section
+        // switch that happened in between) may not have included them at that point. Re-deriving
+        // now guarantees every fromExisting/fromGenerator entry currently in pendingManualSchedule
+        // has its raw DB row hidden, so the same session doesn't render twice.
+        if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+
+        // Room View now preserves this subject's pendingManualSchedule entries across subject
+        // switches, but two things get reset unconditionally every time you switch away from a
+        // subject: the slice panel DOM (#time-slots-container.innerHTML = '') and the faculty
+        // lock (_clearFacultyLock()). Both are normally rebuilt by _loadExistingSessionsIntoSlices
+        // when a subject is loaded — but that function is deliberately skipped right here because
+        // the data is "already loaded", so nothing re-populates either of them. Without this,
+        // switching back to this subject shows an empty Time Allotment panel and an unlocked
+        // faculty picker even though the subject is fully scheduled. Restore both directly from
+        // the preserved data.
+        const _matchingEntries = pendingManualSchedule.filter(c =>
+            c.subject_code === code && c.ay === ay && c.sem === sem
+        );
+        if (_matchingEntries.length && !document.querySelectorAll('.ts-row').length &&
+            typeof addNewTimeSlot === 'function') {
+            _matchingEntries.forEach(c => {
+                const _existingJson = JSON.stringify({
+                    status:       c.status || 'Draft',
+                    _localTempId: c.temp_id,
+                    versionid:    c.versionid || null,
+                    subjectcode:  c.subject_code,
+                    daydesc:      c.day,
+                    starttimeid:  getTimeSlotIndex(c.start_time)
+                });
+                addNewTimeSlot(c.day, c.start_time, c.end_time, c.room_id, _existingJson);
+            });
+            if (_matchingEntries.some(c => c.fromExisting)) _hasExistingSchedule = true;
+
+            // Restore the faculty lock/display from whichever entry actually has one assigned.
+            const _facEntry = _matchingEntries.find(c => c.faculty_id && c.faculty_id !== 'TBA');
+            if (_facEntry && !_lockedFacultyId) {
+                const _facNameResolved = _facEntry.instructor ||
+                    (typeof allFaculty !== 'undefined' ? allFaculty.find(f => String(f.id) === String(_facEntry.faculty_id))?.name : '') || '';
+                if (_facNameResolved) {
+                    document.getElementById('sel_faculty').value = _facEntry.faculty_id;
+                    document.getElementById('fac_display_name').value = _facNameResolved;
+                    document.getElementById('fac_trigger_text').textContent = _facNameResolved;
+                    if (typeof _setFacultyLock === 'function') _setFacultyLock(String(_facEntry.faculty_id), _facNameResolved);
+                }
+            }
+        }
+    }
 
     // Trigger DSS logic (loads faculty + room recommendations, auto-loads existing sessions)
     if (typeof triggerDSSLogic === 'function') await triggerDSSLogic();
+
+    // A newer subject click has since started — its own reset/stamp already applies.
+    // Don't let this stale chain overwrite the panel with the WRONG subject's data.
+    if (_myClickToken !== _subjClickToken) return;
 
     // After triggerDSSLogic, _subjInfo is now correctly set. Rebuild day dropdowns on any
     // existing slices (stale from a same-subject re-click after section switch) so they
@@ -3103,9 +3222,15 @@ let _facNameObserver = null;   // MutationObserver: keeps fac-stats-name showing
 function _setFacultyLock(facId, facName) {
     _lockedFacultyId   = facId;
     _lockedFacultyName = facName;
-    const badge = document.getElementById('fac-lock-badge');
-    if (badge) badge.classList.add('visible');
-    
+    // Official mode: reassign action lives on the single btnAssignFaculty button (see
+    // _updateAssignFacultyBtn). Local mode has no reassign action at all — the lock
+    // badge is repurposed there as a read-only "Official Faculty" label instead
+    // (see _applyLocalFacultyReadonly), so it still needs to be shown.
+    if (IS_LOCAL) {
+        const badge = document.getElementById('fac-lock-badge');
+        if (badge) badge.classList.add('visible');
+    }
+
     // --- FIX: Explicitly manage visibility to prevent CSS bugs causing disappearance ---
     const facWrapper = document.getElementById('fac_wrapper');
     if (facWrapper) facWrapper.style.display = 'none'; // Hide the search dropdown
@@ -3149,6 +3274,7 @@ function _setFacultyLock(facId, facName) {
             _facNameObserver.observe(nameEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style'] });
         }
     }
+    _updateAssignFacultyBtn();
 }
 function _clearFacultyLock() {
     _lockedFacultyId   = null;
@@ -3191,25 +3317,33 @@ function _resetRightPanel() {
     if (_rstStatsBody) _rstStatsBody.style.display = '';
     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(null);
     if (typeof _updateAssignFacultyBtn   === 'function') _updateAssignFacultyBtn();
-    // Clear stale hidden-DB entries so sessions from the previous section
-    // are no longer suppressed when viewing a different section's room view.
-    if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
     // Drop fromExisting and fromGenerator entries — they belong to the previous context
     // and will re-appear from DB or the next generator transfer once a new section/subject is selected.
-    if (typeof pendingManualSchedule !== 'undefined') {
+    // Room View shows every section's bookings for a room at once, so it must NOT be
+    // scoped to "the previous context" — clearing this here would make another section's
+    // pill vanish from the grid just because a different pill was clicked. Only Program
+    // View (scoped to one section) needs this reset.
+    if (typeof pendingManualSchedule !== 'undefined' && typeof currentMode !== 'undefined' && currentMode === 'program') {
         pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting && !c.fromGenerator);
     }
+    // Re-derive hiddenDbSchedules from whatever pendingManualSchedule looks like now, instead
+    // of blindly clearing it — a blind clear here was un-hiding raw DB rows whose local copy
+    // was intentionally KEPT (Room View, other sections), producing duplicate pills; a blind
+    // clear elsewhere combined with a purge here was instead leaving no copy at all, making a
+    // pill vanish. Rebuilding keeps the hide-set and the local copies permanently in sync.
+    if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
 }
 
 /* ── Assign Faculty helpers ─────────────────────────────────── */
 
-// Controls the Assign/Re-Assign button and dropdown visibility based on current state.
-// States: locked (has sessions) → hidden; confirmed-same → Re-Assign; new-pick → Assign/Confirm; none → hidden.
+// Controls the single Assign/Reassign button's label, icon and click action based on
+// current state. One element drives all three non-hidden states (fresh pick, soft-
+// assigned, locked) instead of three separate buttons/badges.
+// States: locked (has sessions) → Reassign; confirmed-same → Reassign; new-pick → Assign/Confirm; none → hidden.
 function _updateAssignFacultyBtn() {
     const btn        = document.getElementById('btnAssignFaculty');
     const btnTBA     = document.getElementById('btnAssignTBA');
-    const tbaBadge   = document.getElementById('fac-tba-badge');
-    const softBadge  = document.getElementById('fac-soft-badge');
+    const tbaBadge    = document.getElementById('fac-tba-badge');
     const facWrapper = document.getElementById('fac_wrapper');
     if (!btn) return;
 
@@ -3218,7 +3352,6 @@ function _updateAssignFacultyBtn() {
         btn.style.display    = 'none';
         if (btnTBA)   btnTBA.style.display   = 'none';
         if (tbaBadge) tbaBadge.style.display = 'none';
-        if (softBadge)  softBadge.classList.remove('visible');
         if (facWrapper) facWrapper.style.display = 'none';
         return;
     }
@@ -3229,21 +3362,26 @@ function _updateAssignFacultyBtn() {
     const stored        = hasSubject ? _subjectFacultyAssignments[_currentSubjectCode] : null;
     const sameAsStored  = !!(stored && String(stored.id) === String(selectedFacId));
 
-    // Always hide soft/tba badges first; will re-show selectively
-    if (softBadge) softBadge.classList.remove('visible');
     if (tbaBadge)  tbaBadge.style.display = 'none';
     if (btnTBA)    btnTBA.style.display   = 'none';
+    btn.classList.remove('reassign');
 
-    if (_lockedFacultyId) {
-        btn.style.display = 'none';
-        return;
-    }
     if (!hasSubject) {
         btn.style.display = 'none';
         return;
     }
 
-    // TBA confirmed and unchanged — show TBA badge, hide everything else
+    // Locked (has real schedule sessions) — one button, reassign action, safety
+    // confirmation happens inside unlockFacultyChoice() itself.
+    if (_lockedFacultyId) {
+        btn.style.display = 'block';
+        btn.dataset.action = 'reassign-locked';
+        btn.classList.add('reassign');
+        btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
+        return;
+    }
+
+    // TBA confirmed and unchanged — show TBA badge, hide the assign/reassign button
     if (isTBA && stored && stored.id === 'TBA') {
         btn.style.display    = 'none';
         if (tbaBadge) tbaBadge.style.display = 'block';
@@ -3259,16 +3397,19 @@ function _updateAssignFacultyBtn() {
     }
 
     if (stored && hasFaculty && sameAsStored) {
-        // Faculty confirmed and unchanged — show lock badge, hide button + dropdown
-        btn.style.display = 'none';
-        if (softBadge) softBadge.classList.add('visible');
+        // Faculty confirmed and unchanged (soft-assigned, no schedule yet) — same
+        // button, reassign action, reopens the picker.
+        btn.style.display  = 'block';
+        btn.dataset.action = 'reassign-soft';
+        btn.classList.add('reassign');
+        btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
         if (facWrapper) facWrapper.style.display = 'none';
         return;
     }
-    btn.classList.remove('reassign');
     if (hasFaculty) {
         // New (or first) pick pending confirmation
-        btn.style.display = 'block';
+        btn.style.display  = 'block';
+        btn.dataset.action = 'assign';
         btn.innerHTML     = stored
             ? '<i class="fas fa-user-check"></i> Confirm Re-Assignment'
             : '<i class="fas fa-user-check"></i> Assign Faculty';
@@ -3289,10 +3430,13 @@ function _updateAssignFacultyBtn() {
     }
 }
 
-// Dispatches to either startReassignFaculty or assignFacultyToSubject based on button state
+// Dispatches the single Assign/Reassign button to the right handler for its current state.
 function _handleAssignFacultyBtnClick() {
     const btn = document.getElementById('btnAssignFaculty');
-    if (btn && btn.classList.contains('reassign')) {
+    const action = btn?.dataset.action;
+    if (action === 'reassign-locked') {
+        unlockFacultyChoice();
+    } else if (action === 'reassign-soft') {
         startReassignFaculty();
     } else {
         assignFacultyToSubject();
@@ -3337,6 +3481,11 @@ function _handleTBABtnClick() {
           { method: 'DELETE' }).catch(() => {});
 
     if (typeof _facInfo !== 'undefined') _facInfo = null;
+    // Nulling _facInfo alone doesn't erase the warning box already on screen — it only
+    // stops a FUTURE check from re-adding one. Explicitly re-run the check so a stale
+    // mismatch note from whichever faculty/subject was previously selected actually
+    // clears now that this subject is TBA (no faculty to evaluate against).
+    if (typeof _checkFacultySpecWarning === 'function') _checkFacultySpecWarning();
     _updateAssignFacultyBtn();
 }
 
@@ -3654,7 +3803,7 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (_pendingSubjsSeen.has(_pendKey)) continue;
                     _pendingSubjsSeen.add(_pendKey);
                     const uMeta = _subjectMeta[c.subject_code];
-                    _pendingExtraUnits += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
+                    _pendingExtraUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
                 }
             }
 
@@ -3689,7 +3838,7 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (_serverPendingCodes.has(uc)) continue;
                     if (_dbSessionCodes2.has(uc)) continue;
                     const uMeta = _subjectMeta[subjCode];
-                    _localExtraUnits += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
+                    _localExtraUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
                 }
             }
 
@@ -3832,16 +3981,24 @@ let _dssRoomSections = null; // cached from last buildDSSMenu('room', ...) call
     };
 })();
 
+function _tbaRoomItem(rowId, selRoomId) {
+    // Pinned "TBA" option — lets a slice be saved with no specific room yet,
+    // mirroring the existing Faculty TBA convention.
+    const activeCls = String(selRoomId) === 'TBA' ? ' active' : '';
+    return `<div class="ts-ss-item${activeCls}" style="background:linear-gradient(135deg,#7f8c8d,#636e72);color:#fff;font-weight:700;" data-val="TBA" onmousedown="tsSel('tsr',${rowId},'TBA')"><i class="fas fa-question-circle"></i> TBA — Room to be assigned</div>`;
+}
+
 function _buildSliceRoomItems(rowId, selRoomId) {
     const sections = _dssRoomSections;
+    const tbaItem = _tbaRoomItem(rowId, selRoomId);
     if (!sections || !sections.length) {
         // No DSS data yet — show all rooms alphabetically
-        return allRooms.map(r => {
+        return tbaItem + allRooms.map(r => {
             const rn = r.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
             return `<div class="ts-ss-item${String(r.id)===String(selRoomId)?' active':''}" data-val="${r.id}" onmousedown="tsSel('tsr',${rowId},'${r.id}')">${rn}</div>`;
         }).join('');
     }
-    let html = '';
+    let html = tbaItem;
     sections.forEach(sec => {
         if (!sec.items.length) return;
         const isRec = sec.cls === 'recommended';
@@ -3863,6 +4020,7 @@ function _refreshAllSliceRoomLists() {
         if (!listEl) return;
         const curVal = row.querySelector('.ts-room-hidden')?.value || '';
         listEl.innerHTML = _buildSliceRoomItems(rowId, curVal);
+        _applyRoomAvailabilityFilter(parseInt(rowId));
     });
 }
 
@@ -3958,6 +4116,25 @@ function tsClose(p, id) {
                     }
                 }
             }
+        } else if (p === 'tsr') {
+            const txtEl = document.getElementById(`${p}-txt-${id}`);
+            const hidEl = document.getElementById(`${p}-hid-${id}`);
+            if (txtEl && hidEl) {
+                const typed = txtEl.value.trim();
+                if (!typed) {
+                    // Search box was cleared — actually clear the room assignment (not just
+                    // the displayed text), so pendingManualSchedule's room_id is genuinely
+                    // empty and the slice's pill stops rendering on every room's calendar.
+                    if (hidEl.value) tsSel(p, id, '');
+                } else {
+                    // Typed text that wasn't picked from the list — revert to whatever room
+                    // is actually selected instead of leaving a mismatched display.
+                    const canonicalName = hidEl.value === 'TBA'
+                        ? 'TBA — Room to be assigned'
+                        : (allRooms.find(r => String(r.id) === String(hidEl.value))?.name || '');
+                    if (typed.toLowerCase() !== canonicalName.toLowerCase()) txtEl.value = canonicalName;
+                }
+            }
         }
     }, 150);
 }
@@ -3972,8 +4149,9 @@ function tsFilter(p, id) {
         if (!matchesQuery) {
             item.style.display = 'none';
         } else {
-            // Restore class-based visibility for occupied/before-start items
-            item.style.display = (item.classList.contains('occ-dim') || item.classList.contains('before-start')) ? 'none' : '';
+            // Restore class-based visibility for occupied/before-start/unavailable-room items
+            item.style.display = (item.classList.contains('occ-dim') || item.classList.contains('before-start')
+                || item.classList.contains('room-unavailable')) ? 'none' : '';
         }
     });
 
@@ -4006,8 +4184,21 @@ function tsSel(p, id, val) {
         _markSliceModified(id);
         _syncSliceToPending(id);
         _updateWorkflowBar();
+        _applyRoomAvailabilityFilter(id);
     } else if (p === 'tsr') {
         _markSliceModified(id);
+        if (val === 'TBA') {
+            // Room not yet decided — there is no real room to look up a building for,
+            // sync the header dropdown against, or prefetch occupancy for.
+            if (txtEl) { txtEl.style.color = '#7f8c8d'; txtEl.style.fontWeight = '700'; }
+            const _bldgElTba = document.getElementById(`tsr-bldg-${id}`);
+            if (_bldgElTba) _bldgElTba.textContent = '—';
+            _syncSliceToPending(id);
+            _updateWorkflowBar();
+            _applyRoomOccupancyFilter(id); // clears any stale occupancy dimming for this slice
+            return;
+        }
+        if (txtEl) { txtEl.style.color = ''; txtEl.style.fontWeight = ''; }
         // Update building display for this slice
         if (!window._bldgNameMap) {
             window._bldgNameMap = {};
@@ -4105,12 +4296,19 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     if (existingJson) div.dataset.existingJson = existingJson;
     div.addEventListener('click', e => _selectSlice(id, e));
 
-    const roomName = roomId ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '') : '';
+    const roomName = roomId === 'TBA' ? 'TBA — Room to be assigned'
+        : roomId ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '') : '';
     const roomNameSafe = roomName.replace(/"/g, '&quot;');
+    const roomTextStyle = roomId === 'TBA' ? ' style="color:#7f8c8d;font-weight:700;"' : '';
     const roomItems = _buildSliceRoomItems(id, roomId);
-    const mkTimeItems = (pfx, preVal) => _TS_TIMES.map(t =>
-        `<div class="ts-ss-item${t===preVal?' active':''}" data-val="${t}" onmousedown="tsSel('${pfx}',${id},'${t}')">${t}</div>`
-    ).join('');
+    const mkTimeItems = (pfx, preVal) => _TS_TIMES.map((t, i) => {
+        // The very last slot can never be a valid Start Time — there is no later slot
+        // left to serve as its End Time, which otherwise renders the End dropdown empty.
+        const noRoom = pfx === 'tsst' && i === _TS_TIMES.length - 1;
+        return `<div class="ts-ss-item${t===preVal?' active':''}${noRoom?' no-room':''}" data-val="${t}"` +
+            `${noRoom?' title="No end time is available after this slot"':''}` +
+            `${noRoom?'':` onmousedown="tsSel('${pfx}',${id},'${t}')"`}>${t}</div>`;
+    }).join('');
 
     // Compute slice status label for EXISTING rows
     const _sliceStatusHtml = existingJson ? _sliceStatusHtmlFor(existingJson) : '';
@@ -4136,7 +4334,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             <div class="ts-room-field">
                 <div class="ts-label">ROOM</div>
                 <div class="ts-ss-wrap">
-                    <input type="text" id="tsr-txt-${id}" class="ts-ss-input"
+                    <input type="text" id="tsr-txt-${id}" class="ts-ss-input"${roomTextStyle}
                         placeholder="Search room…" autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly value="${roomNameSafe}"
                         oninput="tsFilter('tsr',${id})" onkeyup="tsFilter('tsr',${id})" onfocus="this.removeAttribute('readonly'); tsOpen('tsr',${id})" onblur="tsClose('tsr',${id})">
                     <input type="hidden" id="tsr-hid-${id}" class="ts-room-hidden" value="${roomId}">
@@ -4170,6 +4368,11 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     document.getElementById('time-slots-container').appendChild(div);
     _renumberSlices();
     if (startVal) _filterEndTimeItems(id, startVal);
+    if (dayVal && startVal && endVal) {
+        const _preAy  = document.getElementById('sel_ay')?.value  || '';
+        const _preSem = document.getElementById('sel_sem')?.value || '';
+        _prefetchRoomsOccupancyForDay(dayVal, _preAy, _preSem).catch(() => {});
+    }
 
     // New (unsaved) slices start dirty and auto-selected
     if (!existingJson) {
@@ -4192,6 +4395,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
 /* ── Dim start-time items that are occupied in the same day+room (Issue 17) ── */
 function _filterConflictingStartTimes(newId, dayVal, roomId) {
     if (!dayVal || !roomId) return;
+    if (roomId === 'TBA') return; // no real room to dim other slices' start times against
     const ay  = document.getElementById('sel_ay')?.value  || '';
     const sem = document.getElementById('sel_sem')?.value || '';
     const occupied = (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])
@@ -4330,6 +4534,9 @@ async function removeTimeSlot(id) {
         );
         if (!ok2) return;
 
+        // This slice was never saved to DB, so the removal is a pure local mutation — safe to undo.
+        if (typeof _pushHistorySnapshot === 'function') _pushHistorySnapshot();
+
         // Also remove the matching confirmed-but-unsaved entry from pendingManualSchedule.
         // These entries are added by confirmAndPlace with temp_ids like "DRAFT_..." — they
         // never get cleaned up when the UI row is removed, causing ghost blocks in the grid.
@@ -4390,6 +4597,11 @@ function onTsDayChange(id) {
     _syncSliceToPending(id);
     _updateWorkflowBar();
     _applyRoomOccupancyFilter(id);
+    const _dayVal = document.getElementById(`ts-day-${id}`)?.value || '';
+    const _ay  = document.getElementById('sel_ay')?.value  || '';
+    const _sem = document.getElementById('sel_sem')?.value || '';
+    if (_dayVal) _prefetchRoomsOccupancyForDay(_dayVal, _ay, _sem).catch(() => {});
+    else _applyRoomAvailabilityFilter(id);
 }
 
 function onTsStartChange(id) {
@@ -4402,6 +4614,7 @@ function onTsStartChange(id) {
     _syncSliceToPending(id);
     _updateWorkflowBar();
     _filterEndTimeItems(id, startVal);
+    _applyRoomAvailabilityFilter(id);
 }
 
 function _filterEndTimeItems(id, startVal) {
@@ -4440,9 +4653,11 @@ function _syncSliceToPending(id) {
     const newStart  = row.querySelector('.ts-start-hidden')?.value || '';
     const newEnd    = row.querySelector('.ts-end-hidden')?.value   || '';
     const newRoomId = row.querySelector('.ts-room-hidden')?.value  || '';
-    const newRoomNm = newRoomId
-        ? (allRooms.find(r => String(r.id) === String(newRoomId))?.name || '')
-        : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '');
+    const newRoomNm = newRoomId === 'TBA'
+        ? 'TBA'
+        : newRoomId
+            ? (allRooms.find(r => String(r.id) === String(newRoomId))?.name || '')
+            : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '');
 
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
@@ -4538,17 +4753,35 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
     _activeSliceId = null;
     _dirtySliceIds.clear();
 
-    // Purge ALL fromExisting entries for this ay+sem, not just for the incoming subject.
-    // Stale fromExisting entries from previously-viewed subjects linger in pendingManualSchedule
-    // and contaminate submitted_codes on the next save (causing their Published baseline to bleed
-    // into the Draft snapshot). Clearing all fromExisting here prevents cross-subject contamination.
+    // Purge stale fromExisting entries for the CURRENT program+year context (ay+sem+course+
+    // year_level), not just for the incoming subject. Stale fromExisting entries from
+    // previously-viewed subjects IN THIS SAME CONTEXT linger in pendingManualSchedule and
+    // contaminate submitted_codes on the next save (causing their Published baseline to bleed
+    // into the Draft snapshot). Clearing them here prevents cross-subject contamination.
+    // Scoping by course+year_level (not just ay+sem) matters because pill clicks in Room View
+    // can load a DIFFERENT program/section's subject while that section's own pills are still
+    // showing on the grid — a blanket ay+sem purge would delete their only client-side copy
+    // and make them vanish from the grid even though they're unrelated to this save context.
     // Genuinely-new (not fromExisting) entries for other subjects are preserved intact.
     const incomingCodes = new Set(sessions.map(s => s.subjectcode));
-    const ay  = document.getElementById('sel_ay').value;
-    const sem = document.getElementById('sel_sem').value;
+    const ay   = document.getElementById('sel_ay').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const prog = document.getElementById('sel_prog').value;
+    const yl   = document.getElementById('sel_year').value;
     pendingManualSchedule = pendingManualSchedule.filter(c => {
         if (c.ay !== ay || c.sem !== sem) return true;
-        if (c.fromExisting) return false;  // clear ALL fromExisting for this ay+sem
+        if (c.fromExisting) {
+            const _sameContext = c.course === prog && String(c.year_level) === String(yl);
+            if (!_sameContext) return true; // different program+year — always keep
+            // Same program+year context. In Room View, only purge a stale copy of the
+            // SAME subject being (re)loaded right now — a DIFFERENT subject's local copy
+            // sharing this program+year is that pill's only rendering source (confirmed via
+            // debug logging: the raw DB fetch does not reliably include it), so purging it
+            // here would make it vanish from the grid with no fallback. Program View (scoped
+            // to one subject/section at a time) keeps the original blanket behavior.
+            if (currentMode !== 'program' && !incomingCodes.has(c.subject_code)) return true;
+            return false;
+        }
         if (c.isPreview && incomingCodes.has(c.subject_code)) return false;  // clear preview for incoming subject
         return true;
     });
@@ -4610,19 +4843,24 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
             || (typeof timeSlots !== 'undefined' ? timeSlots : _TS_TIMES)[sess.starttimeid - 1] || '';
         const et = sess.end_time || sess.end_fmt
             || (typeof timeSlots !== 'undefined' ? timeSlots : _TS_TIMES)[sess.endtimeid - 1] || '';
-        const roomName = sess.roomname || '';
-        const room = allRooms.find(r => r.name === roomName);
-        const roomId = room ? String(room.id) : '';
-
-        // Add to pendingManualSchedule and hide original DB pill.
-        // Use versionid-scoped key so only this section's row is hidden;
-        // other merged sections sharing the same slot stay visible.
-        const localTempId = 'DRAFT_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-        if (sess.versionid) {
-            hiddenDbSchedules.add(`v:${sess.versionid}`);
+        // Prefer the raw room id the backend sent; only fall back to name-matching for
+        // sources that don't carry an id. A session saved with no room (roomid IS NULL
+        // in the DB) means it was explicitly assigned TBA — reflect that, don't silently
+        // drop it back to an unselected/blank room field.
+        let roomId, roomName;
+        if (sess.roomid !== undefined && sess.roomid !== null && sess.roomid !== '') {
+            roomId   = String(sess.roomid);
+            roomName = sess.roomname || (allRooms.find(r => String(r.id) === roomId)?.name || '');
         } else {
-            hiddenDbSchedules.add(`${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`);
+            const _rn = sess.roomname || '';
+            const room = _rn ? allRooms.find(r => r.name === _rn) : null;
+            roomId   = room ? String(room.id) : 'TBA';
+            roomName = room ? room.name : 'TBA';
         }
+
+        // Add to pendingManualSchedule; hiddenDbSchedules is rebuilt from this array once
+        // below (after the loop), which hides this entry's raw DB row automatically.
+        const localTempId = 'DRAFT_' + Date.now() + '_' + Math.random().toString(36).slice(2);
 
         const newClass = {
             temp_id:      localTempId,
@@ -4643,6 +4881,14 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
             time:         `${st} - ${et}`,
             course:       document.getElementById('sel_prog').value,
             year_level:   document.getElementById('sel_year').value,
+            // /api/manual/existing_sessions doesn't return section identity (it only takes
+            // section_id as a filter, not as output), so this local mirror copy must borrow
+            // it from the currently-selected section in the DOM — otherwise this entry (and
+            // any pill rendered from it) has no section_id/sectionname to match against when
+            // a pill is later clicked, and no way to tell it apart from a different section's
+            // merged badge on the same pill.
+            section_id:   document.getElementById('sel_section')?.value || '',
+            sectionname:  (document.getElementById('bc-sect-text')?.textContent || '').trim(),
             units:             typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 0,
             total_subject_hrs: typeof _subjInfo !== 'undefined' && _subjInfo ? parseFloat(_subjInfo.total_hours || 0) : 0,
             isLocal:      true,
@@ -4655,6 +4901,10 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         const sessWithTempId = { ...sess, _localTempId: localTempId };
         addNewTimeSlot(sess.daydesc, st, et, roomId, JSON.stringify(sessWithTempId));
     }
+
+    // Hide every loaded entry's raw DB row now that its local copy exists, without disturbing
+    // hide-keys for any OTHER subject's local copies elsewhere in pendingManualSchedule.
+    if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
 
     // Rebuild day dropdowns so they reflect _subjInfo's Sunday restrictions
     // (_subjInfo is correctly set at this point from triggerDSSLogic)
@@ -4807,15 +5057,25 @@ function selectBcSect(id, name) {
     const _prevSectId = document.getElementById('sel_section').value;
     document.getElementById('sel_section').value = id;
     if (_prevSectId && _prevSectId !== id) {
-        // Clear stale hidden-DB entries so another section's sessions aren't suppressed
-        // in the room calendar view.
-        if (typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.clear();
+        // Switching sections means switching editing context entirely — any undo/redo
+        // history from the previous section no longer applies.
+        if (typeof _clearHistoryStacks === 'function') _clearHistoryStacks();
         // Drop fromExisting AND fromGenerator entries — they belong to the previous section.
         // Generator entries must not suppress DB sessions or skip the existing-check for
         // a different section.
-        if (typeof pendingManualSchedule !== 'undefined') {
+        // Room View is intentionally NOT scoped to a single section — it shows every
+        // section's bookings for the room being viewed. Only clear this cross-section
+        // cache in Program View, where the timetable IS scoped to the current section;
+        // doing it in Room View would erase other sections' pills straight off the grid
+        // (e.g. clicking one pill to edit it would make an unrelated section's pill in
+        // the same room vanish).
+        if (typeof pendingManualSchedule !== 'undefined' && currentMode === 'program') {
             pendingManualSchedule = pendingManualSchedule.filter(c => !c.fromExisting && !c.fromGenerator);
         }
+        // Re-derive hiddenDbSchedules from whatever pendingManualSchedule looks like now,
+        // instead of blindly clearing it — keeps the hide-set and the surviving local copies
+        // permanently in sync regardless of which branch above ran.
+        if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
     }
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
 
@@ -4859,7 +5119,7 @@ function selectBcSect(id, name) {
 
 let _sectionLoadController = null;
 
-async function _loadSectionOptions() {
+async function _loadSectionOptions(desiredSectionId, desiredSectionName) {
     // Cancel any in-flight request so rapid Program/Year switches don't race
     if (_sectionLoadController) _sectionLoadController.abort();
     _sectionLoadController = new AbortController();
@@ -4899,6 +5159,16 @@ async function _loadSectionOptions() {
             menu.innerHTML = secs.map(s =>
                 `<div class="bc-option" onclick="selectBcSect('${s.id}','${s.name.replace(/'/g,"\\'")}')"><strong>${s.name}</strong></div>`
             ).join('');
+
+            // Auto-select the section a clicked calendar pill actually belongs to,
+            // instead of leaving it on "-Select Section-" after a program/year switch.
+            if (desiredSectionId || desiredSectionName) {
+                const match = secs.find(s =>
+                    (desiredSectionId && String(s.id) === String(desiredSectionId)) ||
+                    (desiredSectionName && s.name === desiredSectionName)
+                );
+                if (match) selectBcSect(match.id, match.name);
+            }
         }
     } catch(e) {
         if (_sectionSignal.aborted) return;
@@ -5051,8 +5321,12 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             let coveredLabHrs = 0;
             for (const c of contextDrafts) {
                 if ((c.subject_code || c.subjectcode) !== code) continue;
+                // Room TBA — room isn't decided yet, so defer the lab-room check rather than
+                // blocking the save; count its hours as covered for now (revisited once a real
+                // room is assigned).
+                const isTbaRoom = c.room_id === 'TBA';
                 const cRoom = (typeof allRooms !== 'undefined') && allRooms.find(r => String(r.id) === String(c.room_id));
-                if (cRoom && (cRoom.type || '').toLowerCase() === 'laboratory') {
+                if (isTbaRoom || (cRoom && (cRoom.type || '').toLowerCase() === 'laboratory')) {
                     const si = (typeof timeSlots !== 'undefined') ? timeSlots.indexOf(c.start_time) : -1;
                     const ei = (typeof timeSlots !== 'undefined') ? timeSlots.indexOf(c.end_time)   : -1;
                     if (si >= 0 && ei > si) coveredLabHrs += (ei - si) * 0.5;
@@ -5120,7 +5394,11 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
 
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-            hiddenDbSchedules.clear();
+            if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+            else hiddenDbSchedules.clear();
+            // Saved entries are now committed — any undo/redo history pointing at the
+            // pre-save array shape no longer applies.
+            if (typeof _clearHistoryStacks === 'function') _clearHistoryStacks();
 
             const prog        = document.getElementById('sel_prog').value;
             const yl          = document.getElementById('sel_year').value;
@@ -5215,9 +5493,11 @@ async function confirmAllSlots() {
             start:    row.querySelector('.ts-start-hidden')?.value || '',
             end:      row.querySelector('.ts-end-hidden')?.value   || '',
             roomId,
-            roomName: roomId
-                ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '')
-                : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || ''),
+            roomName: roomId === 'TBA'
+                ? 'TBA'
+                : roomId
+                    ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '')
+                    : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || ''),
             isDirty:  _dirtySliceIds.has(rowId) || row.dataset.dirty === 'true',
             isActive: String(_activeSliceId) === String(rowId),
         };
@@ -5283,6 +5563,7 @@ async function confirmAllSlots() {
         for (let j = i + 1; j < rowsToSave.length; j++) {
             const b = rowsToSave[j];
             if (a.day !== b.day || a.roomId !== b.roomId) continue;
+            if (a.roomId === 'TBA' || b.roomId === 'TBA') continue; // TBA has no real room to conflict over
             const bS = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(b.start) : 0;
             const bE = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(b.end)   : 0;
             if (aS < bE && aE > bS) {
@@ -5445,9 +5726,11 @@ async function saveIndividualSlice(id) {
     const start  = row.querySelector('.ts-start-hidden')?.value || '';
     const end    = row.querySelector('.ts-end-hidden')?.value   || '';
     const roomId = row.querySelector('.ts-room-hidden')?.value  || '';
-    const roomName = roomId
-        ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '')
-        : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '');
+    const roomName = roomId === 'TBA'
+        ? 'TBA'
+        : roomId
+            ? (allRooms.find(r => String(r.id) === String(roomId))?.name || '')
+            : (row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '');
 
     if (!day || !start || !end) {
         await showValidationModal('Incomplete Slice', 'Fill in Day, Start Time, and End Time before saving this slice.');
@@ -5575,6 +5858,7 @@ document.addEventListener('DOMContentLoaded', () => {
         progSearchInput.type = 'text';
         progSearchInput.className = 'dss-search-input';
         progSearchInput.placeholder = 'Ex., BSIT...';
+        progSearchInput.autocomplete = 'off';
         progSearchInput.addEventListener('input', function() {
             const q = this.value.toLowerCase();
             progMenu.querySelectorAll('.prog-option').forEach(opt => {
@@ -5595,6 +5879,7 @@ document.addEventListener('DOMContentLoaded', () => {
         bcSearchInput.type = 'text';
         bcSearchInput.className = 'dss-search-input';
         bcSearchInput.placeholder = 'Ex., BSIT...';
+        bcSearchInput.autocomplete = 'off';
         bcSearchInput.addEventListener('click', e => e.stopPropagation());
         bcSearchInput.addEventListener('input', function() {
             const q = this.value.toLowerCase();
@@ -5967,7 +6252,18 @@ _onSubjectClick = async function(code, name, units, hours) {
    ══════════════════════════════════════════════════════════════ */
 const _origHandlePillClickEnh = window.handlePillClick;
 window.handlePillClick = async function(sessJson) {
-    await _origHandlePillClickEnh.call(this, sessJson);
+    // _origHandlePillClickEnh runs synchronously up to its first await, stamping
+    // window._pillClickCurrentToken with the token it claimed — capture that token
+    // NOW (synchronously, before awaiting) so a newer click that starts WHILE we wait
+    // can't overwrite the value we need to compare against afterward.
+    const _callPromise  = _origHandlePillClickEnh.call(this, sessJson);
+    const _myPillToken  = window._pillClickCurrentToken;
+    await _callPromise;
+
+    // If a newer pill click has started (and possibly already finished) since, bail out
+    // here too — otherwise this stale click could still override the room selection /
+    // header mode set by that newer click.
+    if (_myPillToken !== _pillClickToken) return;
 
     const sess    = JSON.parse(decodeURIComponent(sessJson));
     const roomName = sess.roomname || sess.room || '';
@@ -6131,9 +6427,100 @@ async function _prefetchRoomOccupancy(roomId, ay, sem) {
     });
 }
 
+/* ══════════════════════════════════════════════════════════════
+   ROOM DROPDOWN FILTERING — only show rooms free for the chosen
+   Day + Start + End, instead of dimming start times after a room
+   is already picked. Bulk-fetches occupancy for every room on the
+   chosen day in one request (see /api/rooms_occupancy_by_day),
+   Published+Draft aware to match _getOccupiedRanges above.
+   ══════════════════════════════════════════════════════════════ */
+
+// Occupancy-by-day cache keyed by `${day}|${ay}|${sem}` → {roomId: [{startIdx,endIdx}]}
+window._roomsByDayCache = window._roomsByDayCache || {};
+
+async function _prefetchRoomsOccupancyForDay(day, ay, sem) {
+    if (!day || !ay || !sem) return;
+    const key = `${day}|${ay}|${sem}`;
+    try {
+        const resp = await fetch(`/api/rooms_occupancy_by_day?day=${encodeURIComponent(day)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+        window._roomsByDayCache[key] = await resp.json();
+    } catch(e) {
+        window._roomsByDayCache[key] = {};
+    }
+    document.querySelectorAll('.ts-row').forEach(row => {
+        const rowId = parseInt(row.id.replace('ts-row-', ''));
+        if (!isNaN(rowId)) _applyRoomAvailabilityFilter(rowId);
+    });
+}
+
+// Hides room options that are already booked for this slice's Day + Start + End.
+// Only filters once all three are chosen; TBA and the slice's own current room
+// (if editing an existing one) are always kept visible.
+function _applyRoomAvailabilityFilter(rowId) {
+    const row  = document.getElementById(`ts-row-${rowId}`);
+    const list = document.getElementById(`tsr-list-${rowId}`);
+    if (!row || !list) return;
+
+    list.querySelectorAll('.ts-ss-item.room-unavailable').forEach(i => i.classList.remove('room-unavailable'));
+
+    const day   = row.querySelector('.ts-day-sel')?.value       || '';
+    const start = row.querySelector('.ts-start-hidden')?.value  || '';
+    const end   = row.querySelector('.ts-end-hidden')?.value    || '';
+    if (!day || !start || !end) return;
+
+    const startIdx = _TS_TIMES.indexOf(start);
+    const endIdx   = _TS_TIMES.indexOf(end);
+    if (startIdx < 0 || endIdx <= startIdx) return;
+
+    const ay  = document.getElementById('sel_ay')?.value  || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    const selRoomId = row.querySelector('.ts-room-hidden')?.value || '';
+    const _cacheKey = `${day}|${ay}|${sem}`;
+    // Don't rely on some earlier caller having already prefetched this day's occupancy —
+    // that's a race (e.g. an existing slice's day/start/end are all set at once, and the
+    // fetch triggered elsewhere may not have resolved yet by the time this runs, silently
+    // leaving every room looking "free"). Fetch it here if missing; the fetch itself
+    // re-invokes this function for every row once it resolves.
+    if (!(_cacheKey in window._roomsByDayCache)) {
+        if (ay && sem) _prefetchRoomsOccupancyForDay(day, ay, sem).catch(() => {});
+        return;
+    }
+    const dayOccupancy = window._roomsByDayCache[_cacheKey] || {};
+
+    let excludeTempId = 'PREVIEW_' + rowId;
+    if (row.dataset.existingJson) {
+        try { excludeTempId = JSON.parse(row.dataset.existingJson)._localTempId; } catch(e) {}
+    }
+
+    // Local pending-schedule occupancy per room, same day (mirrors _getOccupiedRanges,
+    // but grouped by room instead of scoped to one room).
+    const localByRoom = {};
+    const pending = (typeof pendingManualSchedule !== 'undefined') ? pendingManualSchedule : [];
+    pending.forEach(c => {
+        if (!c.room_id || c.room_id === 'TBA') return;
+        if (c.day !== day || c.ay !== ay || c.sem !== sem) return;
+        if (c.temp_id === excludeTempId) return;
+        if (c.isPreview) return;
+        const si = _TS_TIMES.indexOf(c.start_time);
+        const ei = _TS_TIMES.indexOf(c.end_time);
+        if (si >= 0 && ei > si) {
+            (localByRoom[c.room_id] = localByRoom[c.room_id] || []).push({ startIdx: si, endIdx: ei });
+        }
+    });
+
+    list.querySelectorAll('.ts-ss-item').forEach(item => {
+        const rid = item.dataset.val;
+        if (!rid || rid === 'TBA' || String(rid) === String(selRoomId)) return;
+        const ranges = [...(dayOccupancy[rid] || []), ...(localByRoom[rid] || [])];
+        const occupied = ranges.some(r => startIdx < r.endIdx && endIdx > r.startIdx);
+        if (occupied) item.classList.add('room-unavailable');
+    });
+}
+
 function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId) {
     const ranges = [];
     if (!roomId || !day) return ranges;
+    if (roomId === 'TBA') return ranges; // TBA sessions don't occupy a real room
 
     // Current subject + faculty for merge-class exemption
     const curSubj    = (document.getElementById('sel_subj')?.value || '').toUpperCase();
@@ -6214,6 +6601,9 @@ function _applyRoomOccupancyFilter(sliceId) {
     const _ogRG = renderGrid;
     renderGrid = async function(roomId, ayFilter, semFilter) {
         delete window._roomDbCache[`${roomId}|${ayFilter}|${semFilter}`];
+        // Day-keyed occupancy isn't scoped to a single room — clear it all so the next
+        // Add Schedule room-availability check reflects whatever just changed.
+        window._roomsByDayCache = {};
         await _ogRG.call(this, roomId, ayFilter, semFilter);
         // Run in background — don't block the grid render
         _prefetchRoomOccupancy(roomId, ayFilter, semFilter).catch(() => {});
@@ -6539,7 +6929,9 @@ async function saveLocalArrangement(skipModal = false) {
                     c => !(c.ay === ay && c.sem === sem)
                 );
             }
-            hiddenDbSchedules.clear();
+            if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+            else hiddenDbSchedules.clear();
+            if (typeof _clearHistoryStacks === 'function') _clearHistoryStacks();
 
             // Re-load the just-saved arrangement's sessions into the slice panel so
             // the calendar, slices, and Version History all show identical data.
@@ -6677,16 +7069,36 @@ async function _initFlFacultyMenu() {
         ? [...allFaculty].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         : [];
 
+    menu.innerHTML = '';
+
+    // Search box — same pattern/classes as the Room/Faculty DSS dropdowns elsewhere in this page
+    const searchBox = document.createElement('div');
+    searchBox.className = 'dss-search-box';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'dss-search-input';
+    searchInput.placeholder = 'Ex., Dela Cruz, Juan';
+    searchInput.autocomplete = 'off';
+    searchInput.addEventListener('input', function() {
+        const q = this.value.toLowerCase();
+        menu.querySelectorAll('.fl-fac-opt[data-name]').forEach(opt => {
+            opt.style.display = opt.dataset.name.includes(q) ? '' : 'none';
+        });
+    });
+    searchBox.appendChild(searchInput);
+    menu.appendChild(searchBox);
+
     if (!src.length) {
-        menu.innerHTML = '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty available</div>';
+        menu.insertAdjacentHTML('beforeend',
+            '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty available</div>');
         return;
     }
 
-    menu.innerHTML = src.map(f =>
-        `<div class="fl-fac-opt" onclick="selectFlFaculty('${(f.id||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
+    menu.insertAdjacentHTML('beforeend', src.map(f =>
+        `<div class="fl-fac-opt" data-name="${(f.name || f.id || '').toLowerCase().replace(/"/g,'&quot;')}" onclick="selectFlFaculty('${(f.id||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
             ${f.name || f.id || '—'}
         </div>`
-    ).join('');
+    ).join(''));
 }
 
 /* Returns true when the Faculty Load panel is currently visible */
@@ -6708,10 +7120,22 @@ async function _refreshFlIfVisible(empNum, name) {
 
 function toggleFlFacMenu(e) {
     e.stopPropagation();
-    document.getElementById('flFacMenu').classList.toggle('fl-fac-open');
+    const menu = document.getElementById('flFacMenu');
+    const opening = !menu.classList.contains('fl-fac-open');
+    menu.classList.toggle('fl-fac-open', opening);
+    if (opening) {
+        const searchInput = menu.querySelector('.dss-search-input');
+        if (searchInput) {
+            searchInput.value = '';
+            menu.querySelectorAll('.fl-fac-opt[data-name]').forEach(opt => opt.style.display = '');
+            setTimeout(() => searchInput.focus(), 40);
+        }
+    }
 }
 
-document.addEventListener('click', () => {
+document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('flFacTrigger')?.closest('.fl-fac-wrap');
+    if (wrap && wrap.contains(e.target)) return;
     document.getElementById('flFacMenu')?.classList.remove('fl-fac-open');
 });
 
@@ -6735,7 +7159,9 @@ async function selectFlFaculty(empNum, name) {
         const isPartTime = empType.includes('part') && !empType.includes('design');
 
         document.getElementById('fl-emp-type').textContent    = data.faculty.employee_type || '—';
-        document.getElementById('fl-total-units').textContent = data.max_units || '0';
+        const _totalHrs = parseFloat(data.total_teaching_hours || 0);
+        document.getElementById('fl-total-units').textContent =
+            `${data.max_units || '0'}${_totalHrs > 0 ? ` (${_totalHrs} hrs)` : ''}`;
         document.getElementById('fl-avail-units').textContent = data.available_units ?? '—';
 
         // Relabel sections based on employee type:
@@ -6761,6 +7187,43 @@ async function selectFlFaculty(empNum, name) {
             if (regTotalLabel) regTotalLabel.dataset.prefix = `TOTAL REGULAR LOAD (max ${regMax}): `;
             if (ptLabel)       ptLabel.textContent   = 'PART TIME LOAD';
             if (ptTotalLabel)  ptTotalLabel.dataset.prefix  = `TOTAL PART-TIME LOAD (max ${ptMax}): `;
+        }
+
+        // Non-part-time faculty don't have real TS sessions of their own (Regular Load and
+        // Part Time Load above are unchanged, populated exactly as before) — but their TS
+        // quota still gets its own section, table and total line, matching the Regular/Part
+        // Time visual pattern, for consistency. No session data distinguishes TS sessions
+        // from Part-Time ones for these employee types, so the table always shows "no
+        // sessions" — only the cap on the total line is real.
+        let _tsSection = document.getElementById('fl-ts-section');
+        if (!isPartTime) {
+            if (!_tsSection) {
+                const _ptTotalLabelEl = document.getElementById('fl-pt-total-label');
+                if (_ptTotalLabelEl) {
+                    _tsSection = document.createElement('div');
+                    _tsSection.id = 'fl-ts-section';
+                    _tsSection.innerHTML = `
+                        <h3 class="fl-section-sub" style="margin-top:16px;">TEACHING SUBSTITUTION (TS)</h3>
+                        <div class="fl-table-wrap">
+                            <table class="fl-table">
+                                <thead><tr>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
+                                </tr></thead>
+                                <tbody><tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div class="fl-total-line" id="fl-ts-total-label"></div>`;
+                    _ptTotalLabelEl.after(_tsSection);
+                }
+            }
+            if (_tsSection) {
+                _tsSection.style.display = '';
+                const _tsTotalLabelEl = document.getElementById('fl-ts-total-label');
+                if (_tsTotalLabelEl) _tsTotalLabelEl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>0 units (0 hrs)</strong>`;
+            }
+        } else if (_tsSection) {
+            _tsSection.style.display = 'none';
         }
 
         const cols = s => `
@@ -6803,6 +7266,7 @@ async function selectFlFaculty(empNum, name) {
         };
 
         const _sumUnits = arr => arr.reduce((t, s) => t + (parseFloat(s.units) || 0), 0);
+        const _sumHrs   = arr => arr.reduce((t, s) => t + (parseFloat(s.hrs) || 0), 0);
 
         const groupedReg = _groupSessions(regSessions);
         const groupedPt  = _groupSessions(ptSessions);
@@ -6817,10 +7281,12 @@ async function selectFlFaculty(empNum, name) {
             : '<tr><td colspan="7" class="fl-no-data">—</td></tr>';
         const regUsed = _sumUnits(groupedReg);
         const ptUsed  = _sumUnits(groupedPt);
+        const regHrs  = _sumHrs(groupedReg);
+        const ptHrs   = _sumHrs(groupedPt);
         const regPfx  = (document.getElementById('fl-reg-total-label')?.dataset.prefix) || 'TOTAL REGULAR LOAD: ';
         const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
-        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} units</strong>`;
-        document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} units</strong>`;
+        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} units (${regHrs} hrs)</strong>`;
+        document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} units (${ptHrs} hrs)</strong>`;
 
         // Pending assignments — subjects reserved via "Assign Faculty" but not yet scheduled.
         const _pendSessions = data.pending_sessions || [];
@@ -6872,6 +7338,11 @@ async function selectFlFaculty(empNum, name) {
         } else if (_pendSection) {
             _pendSection.style.display = 'none';
         }
+
+        // Cache sessions for the Calendar View toggle and render it now, so switching
+        // between Teaching Assignment / Calendar View is instant (no re-fetch needed).
+        _flCurrentSessions = data.sessions || [];
+        renderFlCalendar(_flCurrentSessions);
     } catch(e) {
         _flShowMsg('Failed to load: ' + e.message);
     }
@@ -6882,6 +7353,120 @@ function _flShowMsg(msg) {
     const pt  = document.getElementById('fl-parttime-body');
     if (reg) reg.innerHTML = `<tr><td colspan="7" class="fl-no-data">${msg}</td></tr>`;
     if (pt)  pt.innerHTML  = `<tr><td colspan="7" class="fl-no-data">—</td></tr>`;
+    _flCurrentSessions = [];
+    renderFlCalendar([]);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   FACULTY LOAD — CALENDAR VIEW
+   Toggles between the existing table view and a weekly time-grid,
+   reusing the same .timetable/.schedule-pill markup and pill-
+   positioning math as Room View's renderGrid().
+   ══════════════════════════════════════════════════════════════ */
+let _flCurrentSessions = [];
+let _flViewMode = 'teaching';
+
+function _setFlView(mode) {
+    _flViewMode = mode;
+    const tableView = document.getElementById('flTableView');
+    const calView   = document.getElementById('flCalendarView');
+    const btnT      = document.getElementById('btnFlTeaching');
+    const btnC      = document.getElementById('btnFlCalendar');
+    const heading   = document.getElementById('fl-view-heading');
+    if (mode === 'calendar') {
+        if (tableView) tableView.style.display = 'none';
+        if (calView)   calView.style.display   = '';
+        if (btnT) btnT.classList.remove('sched-mode-active');
+        if (btnC) btnC.classList.add('sched-mode-active');
+        if (heading) heading.textContent = 'WEEKLY CALENDAR';
+        renderFlCalendar(_flCurrentSessions);
+    } else {
+        if (tableView) tableView.style.display = '';
+        if (calView)   calView.style.display   = 'none';
+        if (btnC) btnC.classList.remove('sched-mode-active');
+        if (btnT) btnT.classList.add('sched-mode-active');
+        if (heading) heading.textContent = 'TEACHING ASSIGNMENTS';
+    }
+}
+
+function renderFlCalendar(sessions) {
+    const wrapper = document.getElementById('flGridWrapper');
+    const table   = document.getElementById('flTimetable');
+    if (!wrapper || !table) return;
+    wrapper.querySelectorAll('.schedule-pill').forEach(p => p.remove());
+    if (_flViewMode !== 'calendar') return; // avoid measuring a hidden (0-size) table
+
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const firstCell = table.querySelector('tbody td:nth-child(2)');
+    const timeCol    = table.querySelector('.time-col');
+    const thead      = table.querySelector('thead');
+    if (!firstCell || firstCell.offsetWidth === 0) return;
+
+    const colWidth   = firstCell.offsetWidth;
+    const rowHeight  = firstCell.offsetHeight;
+    const leftOffset = timeCol.offsetWidth;
+    const topOffset  = thead.offsetHeight;
+
+    // Parse "10:00 AM - 12:00 PM" (as returned by /api/faculty/teaching_assignments)
+    // into 1-based slot indices matching _TS_TIMES / the calendar's 30-min rows.
+    const _parseRange = tr => {
+        const parts = (tr || '').split(' - ');
+        if (parts.length !== 2) return null;
+        const s = _TS_TIMES.indexOf(parts[0].trim()) + 1;
+        const e = _TS_TIMES.indexOf(parts[1].trim()) + 1;
+        return (s > 0 && e > s) ? { s, e } : null;
+    };
+
+    const dayGroups = {};
+    (sessions || []).forEach(s => {
+        const range = _parseRange(s.time_range);
+        if (!range || !s.days) return;
+        const entry = { ...s, ...range };
+        (dayGroups[s.days] = dayGroups[s.days] || []).push(entry);
+    });
+
+    Object.keys(dayGroups).forEach(dayName => {
+        const dayIdx = days.indexOf(dayName);
+        if (dayIdx < 0) return;
+        const daySessions = dayGroups[dayName];
+
+        daySessions.forEach((sess, idx) => {
+            let overlapCount = 0, overlapIndex = 0;
+            daySessions.forEach((other, oIdx) => {
+                if (sess.s < other.e && sess.e > other.s) {
+                    overlapCount++;
+                    if (idx > oIdx) overlapIndex++;
+                }
+            });
+
+            const pill = document.createElement('div');
+            pill.className = 'schedule-pill';
+            pill.style.backgroundColor = (typeof getSubjectColor === 'function')
+                ? getSubjectColor(sess.subjectcode) : '#630100';
+
+            const w     = (colWidth - 6) / (overlapCount || 1);
+            const pillH = Math.max((sess.e - sess.s) * rowHeight - 6, 20);
+            pill.style.width  = (w - 2) + 'px';
+            pill.style.height = pillH + 'px';
+            pill.style.left   = (leftOffset + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
+            pill.style.top    = (topOffset + (sess.s - 1) * rowHeight + 3) + 'px';
+            pill.style.cursor = 'default';
+            pill.title = `${sess.subjectcode} — ${sess.subjectname || ''}\n${sess.time_range}\n${sess.year_section || ''}\n${sess.room || 'TBA'}`;
+
+            const compact = pillH < 42;
+            const medium  = pillH < 62;
+            const sectionLine = sess.year_section
+                ? `<div style="font-size:0.6rem;font-weight:700;opacity:0.9;">${sess.year_section}</div>` : '';
+            const roomLine = `<div style="font-size:0.62rem;opacity:0.9;">${sess.room || 'TBA'}</div>`;
+            pill.innerHTML = compact
+                ? `<div class="pill-subject">${sess.subjectcode}</div>`
+                : medium
+                    ? `<div class="pill-subject">${sess.subjectcode}</div>${sectionLine}`
+                    : `<div class="pill-subject">${sess.subjectcode}</div>${sectionLine}${roomLine}`;
+
+            wrapper.appendChild(pill);
+        });
+    });
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -8036,5 +8621,89 @@ async function restoreVersion(versionId, btn) {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE'; }
     }
 }
+
+// ── Undo / Redo history ─────────────────────────────────────────────────────
+// Snapshots pendingManualSchedule + hiddenDbSchedules around discrete user
+// actions (slice field edits, local-only slice removal). Cleared whenever the
+// editing context changes (AY/Sem/Program/Year/Section) or a save commits the
+// array into a new baseline — see the call sites of _clearHistoryStacks().
+let _undoStack = [];
+let _redoStack = [];
+const _UNDO_MAX_DEPTH = 50;
+
+function _cloneEntry(c) {
+    // days_list is the only field ever mutated as a nested array in place; everything
+    // else on a pendingManualSchedule entry is a scalar (string/number/boolean).
+    return { ...c, days_list: Array.isArray(c.days_list) ? [...c.days_list] : c.days_list };
+}
+function _snapshotState() {
+    return { pending: pendingManualSchedule.map(_cloneEntry), hidden: new Set(hiddenDbSchedules) };
+}
+function _pushHistorySnapshot() {
+    _undoStack.push(_snapshotState());
+    if (_undoStack.length > _UNDO_MAX_DEPTH) _undoStack.shift();
+    _redoStack.length = 0;
+    _updateUndoRedoButtons();
+}
+function _clearHistoryStacks() {
+    _undoStack = []; _redoStack = [];
+    _updateUndoRedoButtons();
+}
+function _restoreSnapshot(snap) {
+    pendingManualSchedule = snap.pending.map(_cloneEntry);
+    hiddenDbSchedules = new Set(snap.hidden);
+    const ay  = document.getElementById('sel_ay')?.value  || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    const rm  = document.getElementById('sel_room')?.value || '';
+    if (currentMode === 'program') renderProgramTimetable();
+    else renderGrid(rm, ay, sem);
+    _updateUndoRedoButtons();
+}
+function _undo() {
+    if (!_undoStack.length) return;
+    _redoStack.push(_snapshotState());
+    _restoreSnapshot(_undoStack.pop());
+}
+function _redo() {
+    if (!_redoStack.length) return;
+    _undoStack.push(_snapshotState());
+    _restoreSnapshot(_redoStack.pop());
+}
+function _updateUndoRedoButtons() {
+    const u = document.getElementById('mnavUndoIcon');
+    const r = document.getElementById('mnavRedoIcon');
+    if (u) u.classList.toggle('mnav-disabled', _undoStack.length === 0);
+    if (r) r.classList.toggle('mnav-disabled', _redoStack.length === 0);
+}
+
+document.getElementById('mnavUndoIcon')?.addEventListener('click', _undo);
+document.getElementById('mnavRedoIcon')?.addEventListener('click', _redo);
+_updateUndoRedoButtons();
+
+document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'z') { e.preventDefault(); _undo(); }
+    else if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))) { e.preventDefault(); _redo(); }
+});
+
+// Wrap the discrete user-action entry points so each becomes one undo step.
+const _origTsSel = tsSel;
+tsSel = function(p, id, val) { _pushHistorySnapshot(); return _origTsSel(p, id, val); };
+
+const _origOnTsDayChange = onTsDayChange;
+onTsDayChange = function(id) { _pushHistorySnapshot(); return _origOnTsDayChange(id); };
+
+const _origSaveIndividualSlice = saveIndividualSlice;
+saveIndividualSlice = async function(id) { _pushHistorySnapshot(); return _origSaveIndividualSlice(id); };
+
+// Wrap the already-wrapped triggerCascade one more time so any context change
+// (AY/Sem/Program/Year) resets the history — it's a different dataset entirely.
+const _origTriggerCascade3 = window.triggerCascade;
+window.triggerCascade = async function(skipGridRender) {
+    _clearHistoryStacks();
+    return _origTriggerCascade3.call(this, skipGridRender);
+};
 </script>
 {% endblock %}

@@ -1045,7 +1045,7 @@
 .cs-filter-box {
     background: #630100;
     border-radius: 4px;
-    overflow: hidden;
+    overflow: visible;
     margin-bottom: 8px;
     box-shadow: none;
 }
@@ -1071,8 +1071,8 @@
 .cs-filter-row {
     display: flex;
     align-items: flex-end;
-    gap: 12px;
-    padding: 7px 18px 9px;
+    gap: 22px;
+    padding: 9px 18px 12px;
     flex-wrap: wrap;
 }
 
@@ -1101,6 +1101,7 @@
     font-weight: 600;
     cursor: pointer;
     min-width: 100px;
+    box-sizing: border-box;
     transition: background 0.15s, border-color 0.15s;
 }
 
@@ -1115,8 +1116,86 @@
     color: white;
 }
 
-.cs-filter-program select { min-width: 190px; }
+.cs-filter-program select { min-width: 420px; }
 .cs-filter-instructor select { min-width: 160px; }
+
+/* ── Custom searchable PROGRAM dropdown (shared by Faculty / Academic Head /
+   Admin Class Schedule (SIS) filter bars — mirrors Schedule Generation's) ── */
+.prog-search-wrapper { position: relative; width: 420px; }
+.prog-search-trigger {
+    background: rgba(255,255,255,0.13);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
+}
+.prog-search-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prog-search-trigger:hover,
+.prog-search-wrapper.open .prog-search-trigger {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.55);
+}
+.prog-search-chevron { font-size: 0.6rem; opacity: 0.75; flex-shrink: 0; transition: transform 0.15s; }
+.prog-search-wrapper.open .prog-search-chevron { transform: rotate(180deg); }
+.prog-search-wrapper.locked .prog-search-trigger { pointer-events: none; opacity: 0.65; }
+.prog-search-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 420px;
+    background: white;
+    border: 1px solid #630100;
+    border-radius: 4px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    z-index: 500;
+    display: none;
+    overflow: hidden;
+}
+.prog-search-wrapper.open .prog-search-menu { display: block; }
+.prog-search-box {
+    padding: 7px 8px;
+    border-bottom: 1px solid #e8e8e8;
+    background: #fafafa;
+    position: sticky;
+    top: 0;
+}
+.prog-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 0.73rem;
+    color: #333;
+    outline: none;
+}
+.prog-search-input:focus { border-color: #630100; }
+.prog-search-input::placeholder { color: #bbb; font-style: italic; }
+.prog-search-list { max-height: 220px; overflow-y: auto; }
+.prog-search-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: #333;
+    border-bottom: 1px solid #f0f0f0;
+    white-space: normal;
+    line-height: 1.35;
+}
+.prog-search-option:last-child { border-bottom: none; }
+.prog-search-option:hover { background: #fff8f0; color: #630100; }
+.prog-search-option strong { color: #630100; font-weight: 900; }
 
 .cs-filter-right {
     margin-left: auto;
