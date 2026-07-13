@@ -124,11 +124,19 @@ _TABLE_STRATEGIES = [
 # Small helpers
 # ---------------------------------------------------------------------------
 
+_DASH_VARIANTS_RE = re.compile(r'[‐‑‒–—−]')
+
 def _clean(val):
     if val is None:
         return ''
+    s = str(val)
+    # Normalize unicode dash variants (en dash, em dash, minus sign, etc.) to a
+    # plain hyphen so PDFs that render "ELEC BSA-P1" with a different dash glyph
+    # on different pages don't produce two "different" subject codes that survive
+    # dedup as if they were distinct subjects.
+    s = _DASH_VARIANTS_RE.sub('-', s)
     # Collapse all whitespace / newlines to a single space
-    return re.sub(r'\s+', ' ', str(val)).strip()
+    return re.sub(r'\s+', ' ', s).strip()
 
 def _parse_int(val):
     try:

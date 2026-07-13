@@ -126,7 +126,7 @@
                 <div class="curr-prog-body">
                     {% for c in prog_currs %}
                     <div class="curr-syllabi-row">
-                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</span>
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }}){% if c.curriculumtype == 'Bridging' %} - BRIDGING{% endif %}</span>
                         <div class="curr-syllabi-actions">
                             <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
                             <button class="btn-del-curr" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}','{{ c.curriculumyear }}')">
@@ -277,6 +277,15 @@
                         <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                         <input type="text" name="curriculum_year" id="modalCurriculumYear" required placeholder="YYYY-YYYY">
                     </div>
+                    <div class="form-group-modal">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <label style="margin:0;">Has Bridging Subjects?</label>
+                            <label class="curr-toggle-switch">
+                                <input type="checkbox" id="csvHasBridging">
+                                <span class="curr-toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="form-section-vert">
                     <h3>2. CSV Column Format</h3>
@@ -333,6 +342,15 @@
                     <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                     <input type="text" id="pdfCurriculumYear" placeholder="YYYY-YYYY">
                 </div>
+                <div class="form-group-modal">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <label style="margin:0;">Has Bridging Subjects?</label>
+                        <label class="curr-toggle-switch">
+                            <input type="checkbox" id="pdfHasBridging">
+                            <span class="curr-toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
             </div>
             <div class="form-section-vert">
                 <h3>2. Column Format</h3>
@@ -386,6 +404,7 @@
             <input type="hidden" name="subjects_data"  id="pdfConfirmData">
             <input type="hidden" name="import_source"  id="pdfConfirmSource">
             <input type="hidden" name="override"       id="pdfConfirmOverride" value="0">
+            <input type="hidden" name="has_bridging"   id="pdfConfirmHasBridging" value="0">
         </form>
         <div class="modal-footer-flex">
             <button type="button" class="btn-modal btn-cancel" onclick="backFromReviewModal()"><i class="fas fa-arrow-left"></i> Back</button>
@@ -423,6 +442,15 @@
                     <div class="form-group-modal">
                         <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                         <input type="text" name="curriculum_year" id="xlsxModalCurriculumYear" required placeholder="YYYY-YYYY">
+                    </div>
+                    <div class="form-group-modal">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <label style="margin:0;">Has Bridging Subjects?</label>
+                            <label class="curr-toggle-switch">
+                                <input type="checkbox" id="xlsxHasBridging">
+                                <span class="curr-toggle-slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <input type="hidden" name="year_level" id="xlsxModalYearLevel" value="0">
                     <input type="hidden" name="semester" id="xlsxModalSemester" value="All">
@@ -483,6 +511,15 @@
                     <label>Curriculum Year <small>(e.g. 2024-2025)</small></label>
                     <input type="text" id="docxCurriculumYear" placeholder="YYYY-YYYY">
                 </div>
+                <div class="form-group-modal">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <label style="margin:0;">Has Bridging Subjects?</label>
+                        <label class="curr-toggle-switch">
+                            <input type="checkbox" id="docxHasBridging">
+                            <span class="curr-toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
             </div>
             <div class="form-section-vert">
                 <h3>2. Column Format</h3>
@@ -523,6 +560,7 @@
                 <br><br>
                 <em style="color: #888;">Note: The system will block this deletion if there are active schedules or student sections currently linked to this curriculum.</em>
             </p>
+            <div id="deleteBlockedList" style="display:none; text-align:left; max-height:220px; overflow-y:auto; margin-top:15px; border:1px solid #fee; border-radius:4px; padding:12px; background:#fff5f5; font-size:0.82rem; line-height:1.5;"></div>
         </div>
         <div class="modal-footer-logout" style="display: flex; gap: 12px; justify-content: center; padding-bottom: 25px;">
             <button class="btn-modal btn-cancel-logout" onclick="closeDeleteModal()" style="padding: 10px 30px; background: #eee; border: none; border-radius: 4px; font-weight: 700; cursor: pointer;">Cancel</button>

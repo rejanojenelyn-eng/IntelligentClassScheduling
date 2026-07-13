@@ -1455,8 +1455,10 @@ async function confirmAndPlace() {
         const startIdx = getTimeSlotIndex(startVal) - 1;
 
         // ── HC7: Night-class cap for Designee faculty ──
+        // night_service is nights/week of night OFFICE duty, subtracted from the
+        // 6-night (Mon–Sat) week to get nights available for evening teaching.
         if (_facInfo.has_designation && isWkd && startIdx >= NIGHT_START_IDX) {
-            const nightCap = _facInfo.night_service;
+            const nightCap = Math.max(0, 6 - (_facInfo.night_service || 0));
             let pendingNight = 0;
             for (const c of pendingManualSchedule) {
                 if (String(c.faculty_id) !== String(facVal)) continue;

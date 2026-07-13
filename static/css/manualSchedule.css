@@ -1696,6 +1696,7 @@
 }
 .subj-type-lec { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
 .subj-type-lab { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
+.subj-bridging-pill { background: #800000; color: #fff; border: 1px solid #800000; }
 .subj-item-active .subj-type-pill {
     background: rgba(255,255,255,0.22);
     color: white;
@@ -2088,7 +2089,13 @@
     gap: 6px;
 }
 .cg-title-icon { color: rgba(255,255,255,0.65); font-size: 0.68rem; }
+.cg-cy-wrap {
+    position: relative;
+    margin-left: auto;
+    margin-right: 5px;
+}
 .cg-cy-label {
+    display: inline-block;
     font-size: 0.52rem;
     font-weight: 800;
     color: rgba(255,255,255,0.80);
@@ -2097,8 +2104,23 @@
     padding: 2px 7px;
     border-radius: 10px;
     border: 1px solid rgba(255,255,255,0.18);
-    margin-left: auto;
-    margin-right: 5px;
+    white-space: nowrap;
+}
+/* Only interactive when a sibling Bridging curriculum exists (see _toggleCgCurrMenu) —
+   otherwise it's a plain, non-clickable label exactly as before this feature. */
+.cg-cy-label.cg-cy-clickable {
+    cursor: pointer;
+    color: #fff;
+    background: rgba(255,255,255,0.22);
+}
+.cg-cy-label.cg-cy-clickable::after {
+    content: '\25BE';
+    margin-left: 4px;
+}
+#cg-curr-menu.bc-dropdown {
+    left: auto;
+    right: 0;
+    min-width: 130px;
 }
 .cg-count-badge {
     font-size: 0.52rem;

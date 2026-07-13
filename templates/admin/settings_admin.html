@@ -408,9 +408,20 @@
         "programs":    {{ programs_mgmt       | tojson }},
         "sections":    {{ sections_mgmt       | tojson }},
         "yearlevels":  {{ prog_yearlevel_mgmt | tojson }},
-        "active_ay_id": {{ active_ay_id | tojson }}
+        "active_ay_id": {{ selected_mgmt_ay | tojson }}
       }
     </script>
+
+    {% if mgmt_ay_options|length > 1 %}
+    <div class="pm-ay-selector" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <label style="font-size:.72rem;font-weight:700;color:#888;">MANAGING SECTIONS FOR:</label>
+      <select class="pmd-filter-sel" id="pmMgmtAySelect" onchange="_switchMgmtAy(this.value)">
+        {% for opt in mgmt_ay_options %}
+        <option value="{{ opt.id }}" {{ 'selected' if opt.id == selected_mgmt_ay else '' }}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
 
     <!-- Main two-panel layout -->
     <div class="pm-layout">
@@ -551,9 +562,9 @@
             <div class="pmd-section-hd">
               <div class="pmd-section-hd-left">
                 <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
-                {% if active_ay_id %}
+                {% if selected_mgmt_ay %}
                 <span style="font-size:.72rem;color:#888;margin-left:8px;font-weight:600;">
-                  {{ active_ay_id }}
+                  {{ selected_mgmt_ay }}
                 </span>
                 {% endif %}
               </div>
@@ -1036,7 +1047,7 @@
                    onchange="updateDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT TEACHING SERVICE ALLOWED</label>
+            <label>PT / NIGHT OFFICE SERVICE (NIGHTS/WEEK)</label>
             <input type="number" name="night_teaching" id="modal_des_night" class="m-input" min="0" required
                    onchange="updateDesigHours()">
           </div>
@@ -1053,7 +1064,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service sets the maximum evening assignments allowed, not a fixed time restriction.</p>
+        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service is how many nights per week (Mon–Sat) this designee is on night office duty — it's subtracted from 6 to get how many nights they may still teach in the evening.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1089,7 +1100,7 @@
                    onchange="updateAddDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT TEACHING SERVICE ALLOWED</label>
+            <label>PT / NIGHT OFFICE SERVICE (NIGHTS/WEEK)</label>
             <input type="number" name="night_teaching" id="add_des_night" class="m-input" min="0" required
                    onchange="updateAddDesigHours()">
           </div>
@@ -1102,7 +1113,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours band is computed from the night teaching service value. PT/Night Teaching Service sets the maximum evening assignments allowed.</p>
+        <p class="m-note">* Regular hours band is computed from the night office service value. PT/Night Teaching Service is how many nights per week (Mon–Sat) this designee is on night office duty — it's subtracted from 6 to get how many nights they may still teach in the evening.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1200,7 +1211,7 @@
     </div>
     <form action="{{ url_for('settings_add_section') }}" method="POST">
       <input type="hidden" name="program_code" id="addSecProgCode">
-      <input type="hidden" name="ay_id" value="{{ active_ay_id or '' }}">
+      <input type="hidden" name="ay_id" value="{{ selected_mgmt_ay or '' }}">
       <div class="s-modal-body">
         <div class="mf" style="margin-bottom:4px;">
           <label style="font-size:.75rem;color:#888;">YEAR LEVEL</label>

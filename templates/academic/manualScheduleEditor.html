@@ -759,7 +759,7 @@
                     </div>
                     <div class="lp-filter-field">
                         <div class="lp-ay-label" style="margin-bottom:4px;">Section</div>
-                        <div class="lp-filter-btn" onclick="toggleBcMenu('bc-sect-menu', event)">
+                        <div class="lp-filter-btn" onclick="toggleBcSectMenu(event)">
                             <span id="bc-sect-text">-Select Section-</span>
                             <i class="fas fa-chevron-down lp-filter-caret"></i>
                         </div>
@@ -823,7 +823,16 @@
             <!-- Curriculum Guide header -->
             <div class="cg-header">
                 <span class="cg-title"><i class="fas fa-list-alt cg-title-icon"></i> CURRICULUM GUIDE</span>
-                <span id="cg-cy-label" class="cg-cy-label" style="display:none;"></span>
+                <!-- The C.Y badge doubles as the Regular/Bridging picker's trigger when this section's
+                     program+year has a sibling Bridging curriculum (see _toggleCgCurrMenu). The choice
+                     is per-section and per-session only — never persisted (see _onCurriculumModeChange). -->
+                <div class="cg-cy-wrap" id="cg-cy-wrap" style="display:none;">
+                    <span id="cg-cy-label" class="cg-cy-label" onclick="_toggleCgCurrMenu(event)"></span>
+                    <div class="bc-dropdown" id="cg-curr-menu">
+                        <div class="bc-option" id="cg-curr-opt-regular" onclick="_onCurriculumModeChange('regular')">C.Y --</div>
+                        <div class="bc-option" id="cg-curr-opt-bridging" onclick="_onCurriculumModeChange('bridging')">C.Y -- - BRIDGING</div>
+                    </div>
+                </div>
                 <span class="cg-count-badge" id="cg-count-badge" style="display:none;">0 subjects</span>
             </div>
 
@@ -930,7 +939,9 @@
                     <div class="fl-info-bar">
                         <span class="fl-info-pill">EMPLOYEE TYPE: <strong id="fl-emp-type">—</strong></span>
                         <span class="fl-info-sep">|</span>
-                        <span class="fl-info-pill">TOTAL UNITS: <strong id="fl-total-units">—</strong></span>
+                        <span class="fl-info-pill">ALLOWED UNITS: <strong id="fl-max-units">—</strong></span>
+                        <span class="fl-info-sep">|</span>
+                        <span class="fl-info-pill">ASSIGNED UNITS: <strong id="fl-total-units">—</strong></span>
                         <span class="fl-info-sep">|</span>
                         <span class="fl-info-pill">AVAILABLE UNITS: <strong id="fl-avail-units">—</strong></span>
                     </div>
@@ -1407,7 +1418,7 @@
      data-from-generator="{{ init_from_generator }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260707a-debug"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260710a"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -2101,10 +2112,14 @@ window.confirmAndPlace = async function() {
         
         for (const c of pendingManualSchedule) {
             if (c.subject_code === subjSel.value && c.ay === ay && c.sem === sem) {
+                // Must match THIS section — otherwise a leftover entry from another section
+                // of the same subject (e.g. BSCE1-1's, still in memory while BSCE1-2 is now
+                // selected) would count toward this section's hours-required cap.
+                if (c.section_id && String(c.section_id) !== String(sectionId)) continue;
                 // Wag i-double count ang mismong slice na ine-edit natin ngayon
                 if (window.currentEditSession && c.temp_id === window.currentEditSession._localTempId) continue;
                 if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
-                
+
                 const si = getTimeSlotIndex(c.start_time);
                 const ei = getTimeSlotIndex(c.end_time);
                 if (si > 0 && ei > si) scheduledAlready += (ei - si) * 0.5;
@@ -2322,9 +2337,13 @@ window.confirmAndPlace = async function() {
         }
     } catch(e) { console.error('DB section conflict check failed:', e); }
 
-    // Section conflict — in-memory pending
+    // Section conflict — in-memory pending. Must also match the actual section_id, not just
+    // program+year-level — two different sections of the same program+year (e.g. BSCE1-1 and
+    // BSCE1-2) are allowed to have classes at the same day/time; matching on program+year alone
+    // (as this used to) falsely flagged a "conflict" against an unrelated section's pending entry.
     for (const c of pendingManualSchedule) {
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
+        if (c.section_id && String(c.section_id) !== String(sectionId)) continue;
         if (c.course === prog && String(c.year_level) === String(yl) && c.day === dayVal && c.ay === ay && c.sem === sem) {
             const cStart = getTimeSlotIndex(c.start_time);
             const cEnd   = getTimeSlotIndex(c.end_time);
@@ -2384,16 +2403,97 @@ function _updateCurrYearTag() {
         fmt = p.length >= 2 ? `${String(p[0]).slice(-2)}-${String(p[1]).slice(-2)}` : raw;
     }
     document.getElementById('curr-year-tag').textContent = raw ? `C.Y ${fmt}` : 'C.Y --';
+    const cgWrap = document.getElementById('cg-cy-wrap');
+    if (cgWrap) cgWrap.style.display = raw ? '' : 'none';
+    // Text itself is finalized by _updateCurriculumModeSelectVisibility (below), which runs
+    // right after this in triggerCascade and knows whether to append the mode + caret.
     const cgCy = document.getElementById('cg-cy-label');
-    if (cgCy) {
-        if (raw) {
-            cgCy.textContent = `C.Y ${fmt}`;
-            cgCy.style.display = '';
+    if (cgCy) cgCy.dataset.cyFmt = raw ? `C.Y ${fmt}` : '';
+}
+
+/* ── Curriculum picker (Regular / Bridging) — the C.Y badge itself is the trigger. Only
+   clickable when the resolved Regular curriculum for this program+year has a sibling
+   Bridging curriculum AND the current section+term isn't locked to one already.
+   Reset to 'regular' on every program/year change (triggerCascade); on a section switch
+   (selectBcSect) it instead defaults from that section+term's persisted lock, if any — see
+   _curriculumModeLocked. Once a faculty is assigned/confirmed under a mode, that section+term
+   is locked to it (server-enforced too) until every schedule/assignment for it is cleared. ── */
+function _updateCurriculumModeSelectVisibility() {
+    const cgCy = document.getElementById('cg-cy-label');
+    if (!cgCy) return;
+    const cyFmt = cgCy.dataset.cyFmt || 'C.Y --';
+    // Dropdown options show the actual curriculum each choice resolves to — same "CY YYYY-YYYY
+    // - BRIDGING" convention used in the Admin syllabi list — not a generic "Regular"/"Bridging"
+    // label, so the Academic Head can see exactly which curriculum they're switching to.
+    const optReg = document.getElementById('cg-curr-opt-regular');
+    const optBridge = document.getElementById('cg-curr-opt-bridging');
+    if (optReg)    optReg.textContent    = cyFmt;
+    if (optBridge) optBridge.textContent = `${cyFmt} - BRIDGING`;
+
+    if (_curriculumHasBridgingSibling) {
+        const _cgLabelText = _curriculumViewMode === 'bridging' ? `${cyFmt} - BRIDGING` : cyFmt;
+        if (_curriculumModeLocked) {
+            cgCy.innerHTML = `${_cgLabelText} <i class="fas fa-lock" style="font-size:0.8em;opacity:0.7;"></i>`;
+            cgCy.classList.remove('cg-cy-clickable');
+            cgCy.classList.add('cg-cy-locked');
+            cgCy.title = 'Curriculum locked — a faculty is already assigned under this curriculum ' +
+                'for this section this term. Clear all schedules/assignments for this section+term to change it.';
         } else {
-            cgCy.textContent = '';
-            cgCy.style.display = 'none';
+            cgCy.textContent = _cgLabelText;
+            cgCy.classList.add('cg-cy-clickable');
+            cgCy.classList.remove('cg-cy-locked');
+            cgCy.title = '';
         }
+    } else {
+        cgCy.textContent = cyFmt;
+        cgCy.classList.remove('cg-cy-clickable', 'cg-cy-locked');
+        cgCy.title = '';
+        document.getElementById('cg-curr-menu')?.classList.remove('open');
     }
+}
+
+function _toggleCgCurrMenu(event) {
+    event.stopPropagation();
+    if (!_curriculumHasBridgingSibling) return; // nothing to pick — plain label, not a trigger
+    if (_curriculumModeLocked) return; // locked — picker is read-only until cleared
+    const menu = document.getElementById('cg-curr-menu');
+    if (!menu) return;
+    const isOpen = menu.classList.contains('open');
+    document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+    if (!isOpen) menu.classList.add('open');
+}
+
+// Fetches the persisted curriculum lock for a section+term (see /api/manual/curriculum_lock)
+// and applies it to _curriculumViewMode/_curriculumModeLocked. Falls back to unlocked Regular
+// on any error so a lookup failure never blocks scheduling.
+async function _applyCurriculumLockForSection(sectionId, ay, sem) {
+    _curriculumViewMode   = 'regular';
+    _curriculumModeLocked = false;
+    if (!sectionId || !ay || !sem) return;
+    try {
+        const resp = await fetch(`/api/manual/curriculum_lock?section_id=${encodeURIComponent(sectionId)}` +
+            `&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+        const data = await resp.json();
+        if (data.success && data.locked) {
+            _curriculumViewMode   = data.curriculum_mode === 'bridging' ? 'bridging' : 'regular';
+            _curriculumModeLocked = true;
+        }
+    } catch(e) { /* keep the unlocked-Regular default on failure */ }
+}
+
+function _onCurriculumModeChange(mode) {
+    _curriculumViewMode = (mode === 'bridging') ? 'bridging' : 'regular';
+    document.getElementById('cg-curr-menu')?.classList.remove('open');
+    _updateCurriculumModeSelectVisibility();
+    // A subject that was active under the previous mode may not exist in the new one
+    // (or vice versa) — drop the open editing session rather than leave it dangling.
+    if (typeof _resetRightPanel === 'function') _resetRightPanel();
+    // Clearing sel_subj back to just the placeholder makes _refreshSubjectScheduledHours'
+    // "options.length <= 1" check take its full-rebuild branch, so Bridging-only subjects
+    // are added/removed as needed instead of just having their hours patched in place.
+    const subjSel = document.getElementById('sel_subj');
+    if (subjSel) subjSel.innerHTML = '<option value="">-- Select Subject --</option>';
+    if (typeof _updateSubjectList === 'function') _updateSubjectList().catch(() => {});
 }
 
 /* ── Section open/close helpers ── */
@@ -2462,6 +2562,7 @@ async function _updateSubjectList() {
         const labhours   = parseFloat(opt.dataset.labhours || 0);
         const dbSched    = parseFloat(opt.dataset.dbScheduled || 0);
         const savedStatus = opt.dataset.savedStatus || '';
+        const isBridging  = opt.dataset.isBridging === '1';
         _subjectMeta[code] = { name, units, total_hours: hours, labhours };
 
         // Use live pending hours (includes generator-transferred entries) before falling back to DB.
@@ -2500,6 +2601,7 @@ async function _updateSubjectList() {
                     <div class="subj-item-top-row">
                         <span class="subj-item-code">${code}</span>
                         <span class="${typePillCls}">${typePillText}</span>
+                        ${isBridging ? '<span class="subj-type-pill subj-bridging-pill">BRIDGING</span>' : ''}
                     </div>
                     <span class="subj-item-name">${name}</span>
                     <div class="subj-hrs-row">
@@ -2596,7 +2698,7 @@ async function _refreshSubjectScheduledHours() {
     const sectId   = document.getElementById('sel_section')?.value || '';
     if (!ay || !sem || !currId || !yl) return;
     try {
-        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}&section_id=${encodeURIComponent(sectId)}`);
+        const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}&section_id=${encodeURIComponent(sectId)}&curriculum_mode=${typeof _curriculumViewMode !== 'undefined' ? _curriculumViewMode : 'regular'}`);
         const data = await resp.json();
         if (!data.subjects) return;
         const subjSel = document.getElementById('sel_subj');
@@ -2612,6 +2714,7 @@ async function _refreshSubjectScheduledHours() {
                 opt.dataset.labhours    = s.laboratoryhours  || 0;
                 opt.dataset.dbScheduled = s.scheduled_hours  || 0;
                 opt.dataset.savedStatus = s.saved_status     || '';
+                opt.dataset.isBridging  = s.is_bridging ? '1' : '0';
                 subjSel.appendChild(opt);
             });
         } else {
@@ -2620,6 +2723,7 @@ async function _refreshSubjectScheduledHours() {
                 if (opt) {
                     if (s.scheduled_hours !== undefined) opt.dataset.dbScheduled = s.scheduled_hours || 0;
                     if (s.saved_status    !== undefined) opt.dataset.savedStatus  = s.saved_status   || '';
+                    opt.dataset.isBridging = s.is_bridging ? '1' : '0';
                 }
             });
         }
@@ -2630,9 +2734,10 @@ async function _refreshSubjectScheduledHours() {
 /* ── Overall progress bar updater ── */
 function _updateOverallProgress() {
     const subjSel = document.getElementById('sel_subj');
-    const ay  = document.getElementById('sel_ay')?.value  || '';
-    const sem = document.getElementById('sel_sem')?.value || '';
-    const yl  = document.getElementById('sel_year')?.value || '';
+    const ay   = document.getElementById('sel_ay')?.value  || '';
+    const sem  = document.getElementById('sel_sem')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
     let totalReq  = 0, totalSched = 0, doneCount = 0, totalCount = 0;
     Array.from(subjSel.options).forEach(opt => {
         if (!opt.value) return;
@@ -2650,6 +2755,10 @@ function _updateOverallProgress() {
                     if (!c.fromExisting || c.subject_code !== code) continue;
                     if (c.ay !== ay || c.sem !== sem) continue;
                     if (yl && c.year_level && String(c.year_level) !== String(yl)) continue;
+                    // Same cross-section leak as _getScheduledHoursForCode: program+year-level
+                    // alone don't distinguish BSCE1-1 from BSCE1-2, and Room View deliberately
+                    // leaves other sections' fromExisting entries in pendingManualSchedule.
+                    if (sect && c.section_id && String(c.section_id) !== String(sect)) continue;
                     const si = _TS_TIMES.indexOf(c.start_time);
                     const ei = _TS_TIMES.indexOf(c.end_time);
                     if (si >= 0 && ei > si) fromExistHrs += (ei - si) * 0.5;
@@ -2733,6 +2842,7 @@ function _updateWorkflowBar() {
 function _getScheduledHoursForCode(code, ay, sem) {
     const yl   = document.getElementById('sel_year')?.value || '';
     const prog = document.getElementById('sel_prog')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
     // Count unsaved pending hours first
     let pendingHours = 0;
     if (typeof pendingManualSchedule !== 'undefined') {
@@ -2741,9 +2851,15 @@ function _getScheduledHoursForCode(code, ay, sem) {
             // Scope to the currently selected year level so the same subject code
             // in a different year level doesn't inflate the count.
             if (yl && c.year_level && String(c.year_level) !== String(yl)) continue;
-            // Scope to the currently selected program so another section's pending
-            // entries don't show up in this section's progress bar.
+            // Scope to the currently selected program — same program+year-level check as
+            // above, but program and year level alone do NOT distinguish between two
+            // sections of the SAME program+year (e.g. BSCE1-1 vs BSCE1-2). A pending
+            // entry left over from another section (fromExisting/fromGenerator mirrors are
+            // deliberately NOT cleared on section switch while in Room View, since Room
+            // View intentionally keeps showing other sections' pills) must not count toward
+            // THIS section's progress — hence the explicit section_id check below.
             if (prog && c.course && c.course !== prog) continue;
+            if (sect && c.section_id && String(c.section_id) !== String(sect)) continue;
             const si = _TS_TIMES.indexOf(c.start_time);
             const ei = _TS_TIMES.indexOf(c.end_time);
             if (si >= 0 && ei > si) pendingHours += (ei - si) * 0.5;
@@ -2841,11 +2957,16 @@ async function _onSubjectClick(code, name, units, hours) {
     const _myClickToken = ++_subjClickToken;
     // Prompt if there are unsaved pending slices for the current subject
     if (_currentSubjectCode && _currentSubjectCode !== code) {
+        // Same "genuinely unsaved" definition hasUnsavedChanges() uses for the browser leave
+        // warning: fromExisting (already in DB) and isPreview (transient hover/click preview,
+        // never a real edit) never count. Previously isPreview/fromGenerator weren't excluded
+        // here, so simply opening a subject that still had a stale preview entry lying around —
+        // no actual edits made — could falsely trigger the "Unsaved Changes" switch prompt.
         const pendingForCurrent = pendingManualSchedule.filter(c =>
             c.subject_code === _currentSubjectCode &&
             c.ay === document.getElementById('sel_ay').value &&
             c.sem === document.getElementById('sel_sem').value &&
-            !c.fromExisting
+            !c.fromExisting && !c.isPreview && !c.fromGenerator
         );
         // Only flag rows that are genuinely modified/new with content.
         // Rows with existingJson are existing sessions — check _dirtySliceIds instead of
@@ -2865,6 +2986,11 @@ async function _onSubjectClick(code, name, units, hours) {
         const _hasPendingFaculty = !!window._pendingFacultyAssignment;
         if ((_hasPendingSlices || _hasPendingFaculty) &&
             !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
+
+        // A reassignment in progress on the old subject is being discarded (switching away
+        // without saving) — clear its auto-publish flag so a later, unrelated save of this
+        // subject doesn't unexpectedly auto-publish (see unlockFacultyChoice / _triggerSaveDraft).
+        if (window._reassignAutoPublishSubjects) window._reassignAutoPublishSubjects.delete(_currentSubjectCode);
 
         // Clear pending for old subject (scoped to current ay/sem/year_level) and reset slices
         const _clrAy  = document.getElementById('sel_ay').value;
@@ -2970,9 +3096,16 @@ async function _onSubjectClick(code, name, units, hours) {
     // Skip DB existing-sessions fetch if this subject is already covered by loaded entries.
     // Generator entries (fromGenerator) take full priority — loading old DB sessions on top
     // would double-count hours and mix old/new schedules. Also skip if fromExisting already loaded.
-    const _yl = document.getElementById('sel_year').value;
+    // Must also match the currently selected section — Room View deliberately preserves another
+    // section's fromExisting/fromGenerator entries in pendingManualSchedule (so its pill keeps
+    // showing there), but that means clicking the same subject code under a DIFFERENT section
+    // must NOT treat that leftover entry as "already loaded for me" — it belongs to the other
+    // section's real published/draft session, not this one's.
+    const _yl   = document.getElementById('sel_year').value;
+    const _sect = document.getElementById('sel_section')?.value || '';
     const _hasLoaded = pendingManualSchedule.some(c => {
         if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) return false;
+        if (c.section_id && String(c.section_id) !== String(_sect)) return false;
         if (c.fromGenerator) return true;  // generator entries block the old-session fetch
         if (c.fromExisting && String(c.year_level) === String(_yl)) return true;
         return false;
@@ -2995,9 +3128,28 @@ async function _onSubjectClick(code, name, units, hours) {
         // switching back to this subject shows an empty Time Allotment panel and an unlocked
         // faculty picker even though the subject is fully scheduled. Restore both directly from
         // the preserved data.
-        const _matchingEntries = pendingManualSchedule.filter(c =>
+        const _matchingEntriesRaw = pendingManualSchedule.filter(c =>
             c.subject_code === code && c.ay === ay && c.sem === sem
         );
+        // Dedupe by day+starttime before rendering — pendingManualSchedule can end up holding
+        // more than one entry for what is really the same slot (e.g. a raw DB mirror alongside
+        // a stray local copy from an earlier edit pass). Rendering both would draw two Time
+        // Slice rows — one commonly still tagged Published/"approved" — for a slot that only
+        // exists once in the database, inflating the scheduled-hours count (over-scheduling).
+        // Same "prefer Published over Draft" rule _loadExistingSessionsIntoSlices already uses.
+        const _matchingEntries = (() => {
+            const _seen = new Map();
+            for (const c of _matchingEntriesRaw) {
+                const _key = `${c.day}_${getTimeSlotIndex(c.start_time)}`;
+                const _existing = _seen.get(_key);
+                if (!_existing) { _seen.set(_key, c); continue; }
+                if ((c.status || '').toLowerCase() === 'published' &&
+                    (_existing.status || '').toLowerCase() !== 'published') {
+                    _seen.set(_key, c);
+                }
+            }
+            return Array.from(_seen.values());
+        })();
         if (_matchingEntries.length && !document.querySelectorAll('.ts-row').length &&
             typeof addNewTimeSlot === 'function') {
             _matchingEntries.forEach(c => {
@@ -3136,6 +3288,12 @@ async function _onSubjectClick(code, name, units, hours) {
 
     _updateAssignFacultyBtn();
 
+    // Final, authoritative pill focus — mirrors _selectSlice's "auto-select the room, then
+    // highlight and scroll" pattern. Covers every path through this function (fresh fetch,
+    // the _hasLoaded/_skipExistingCheck reuse branch, generator entries, etc.) instead of
+    // relying on whichever intermediate branch happened to already be looking at the right room.
+    await _focusSubjectPillInCalendar(code);
+
     // Late-arriving safety net: 600 ms after subject click, re-confirm faculty panel is correct.
     // Outlasts any background async work (renderGrid, _updateSubjectList, DSS fetches) that might
     // reset the display after _onSubjectClick returns.
@@ -3157,6 +3315,44 @@ async function _onSubjectClick(code, name, units, hours) {
             }
         }, 600);
     }
+}
+
+// Highlights the calendar pill(s) belonging to `code`, navigating the grid to the
+// subject's room first if needed (Room View only — Program View already renders every
+// subject's pills at once). Same "select room, then highlight and scroll" flow _selectSlice
+// uses for Time Slices.
+async function _focusSubjectPillInCalendar(code) {
+    if (!code) return;
+
+    const applyHighlight = () => {
+        document.querySelectorAll('.schedule-pill').forEach(p => {
+            const key = p.dataset.pillKey || '';
+            p.classList.toggle('pill-subject-focus', key.startsWith(code + '_'));
+        });
+        const focused = document.querySelector('.schedule-pill.pill-subject-focus');
+        if (focused) focused.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+
+    if (currentMode === 'program') {
+        applyHighlight();
+        return;
+    }
+
+    const ay  = document.getElementById('sel_ay').value;
+    const sem = document.getElementById('sel_sem').value;
+    const entry = pendingManualSchedule.find(c =>
+        c.subject_code === code && c.ay === ay && c.sem === sem && c.room_id && !c.isPreview
+    );
+    const targetRoomId = entry ? String(entry.room_id) : '';
+    const curRoomId     = document.getElementById('sel_room')?.value || '';
+
+    if (targetRoomId && targetRoomId !== curRoomId) {
+        const rm = allRooms.find(r => String(r.id) === targetRoomId);
+        if (rm && typeof selectRoom === 'function') {
+            try { await selectRoom(String(rm.id), rm.name); } catch(e) {}
+        }
+    }
+    applyHighlight();
 }
 
 async function _confirmSubjectSwitch(hasSlices, hasFaculty) {
@@ -3340,6 +3536,23 @@ function _resetRightPanel() {
 // current state. One element drives all three non-hidden states (fresh pick, soft-
 // assigned, locked) instead of three separate buttons/badges.
 // States: locked (has sessions) → Reassign; confirmed-same → Reassign; new-pick → Assign/Confirm; none → hidden.
+// True when the currently-open subject already has real (saved) schedule sessions whose
+// faculty is still TBA/unset. _lockedFacultyId only gets set when an existing session's
+// faculty resolves to a real allFaculty entry (see _loadExistingSessionsIntoSlices) — a TBA
+// session leaves it unset, so without this check, picking a real faculty for it fell through
+// to assignFacultyToSubject()'s plain reservation write instead of the proper reassignment
+// flow (unlockFacultyChoice), leaving the already-Published/Draft session's employeenumber
+// stuck at NULL forever while the UI showed the newly picked faculty as "assigned".
+function _currentSubjectHasExistingTbaSchedule() {
+    if (!_currentSubjectCode || typeof pendingManualSchedule === 'undefined') return false;
+    const ay  = document.getElementById('sel_ay')?.value  || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    return pendingManualSchedule.some(c =>
+        c.subject_code === _currentSubjectCode && c.ay === ay && c.sem === sem &&
+        c.fromExisting && (!c.faculty_id || c.faculty_id === 'TBA')
+    );
+}
+
 function _updateAssignFacultyBtn() {
     const btn        = document.getElementById('btnAssignFaculty');
     const btnTBA     = document.getElementById('btnAssignTBA');
@@ -3372,8 +3585,11 @@ function _updateAssignFacultyBtn() {
     }
 
     // Locked (has real schedule sessions) — one button, reassign action, safety
-    // confirmation happens inside unlockFacultyChoice() itself.
-    if (_lockedFacultyId) {
+    // confirmation happens inside unlockFacultyChoice() itself. Also true for a subject whose
+    // existing sessions are still TBA — see _currentSubjectHasExistingTbaSchedule — so picking
+    // a real faculty for it goes through the proper reassignment/resave flow instead of just
+    // writing the soft reservation table.
+    if (_lockedFacultyId || _currentSubjectHasExistingTbaSchedule()) {
         btn.style.display = 'block';
         btn.dataset.action = 'reassign-locked';
         btn.classList.add('reassign');
@@ -3443,6 +3659,32 @@ function _handleAssignFacultyBtnClick() {
     }
 }
 
+// Propagates a faculty change (TBA ↔ a real name, or a straight reassignment) to any of
+// this subject's time slices that are already placed on the calendar but not yet saved
+// (pendingManualSchedule). Without this, the pill(s) for those slices keep showing whatever
+// faculty they were placed under until the next save/reload, even though the right panel
+// (Edit Schedule) already shows the new one — the two visibly disagree until then.
+function _syncSubjectFacultyToCalendar(code, facId, facName) {
+    if (!code || typeof pendingManualSchedule === 'undefined') return;
+    const ay   = document.getElementById('sel_ay').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const sect = document.getElementById('sel_section')?.value || '';
+    let touched = false;
+    pendingManualSchedule.forEach(c => {
+        if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) return;
+        if (sect && c.section_id && String(c.section_id) !== String(sect)) return;
+        c.faculty_id = facId;
+        c.instructor = facName;
+        touched = true;
+    });
+    if (!touched) return;
+    if (typeof currentMode !== 'undefined' && currentMode === 'program') {
+        if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
+    } else if (typeof renderGrid === 'function') {
+        renderGrid(document.getElementById('sel_room').value, ay, sem);
+    }
+}
+
 /* ── TBA Faculty Assignment ──────────────────────────────────────────────────
    Sets the current subject's faculty to TBA (To Be Announced).
    Stored as NULL in the DB; displayed as "TBA" throughout the system.
@@ -3487,6 +3729,7 @@ function _handleTBABtnClick() {
     // clears now that this subject is TBA (no faculty to evaluate against).
     if (typeof _checkFacultySpecWarning === 'function') _checkFacultySpecWarning();
     _updateAssignFacultyBtn();
+    _syncSubjectFacultyToCalendar(_currentSubjectCode, 'TBA', 'TBA');
 }
 
 function _clearTBAAssignment() {
@@ -3564,28 +3807,74 @@ function assignFacultyToSubject() {
         showValidationModal('No Faculty Selected', 'Please select a faculty before assigning.');
         return;
     }
-    _subjectFacultyAssignments[code] = { id: facId, name: facName };
-    window._pendingFacultyAssignment = false;
 
-    // Persist to DB so the assignment survives page refresh
     const ay   = document.getElementById('sel_ay').value;
     const sem  = document.getElementById('sel_sem').value;
     const yl   = document.getElementById('sel_year').value;
     const prog = document.getElementById('sel_prog').value;
+
+    // Block the assignment itself if it would exceed this faculty's maximum teaching load.
+    // Previously this HC (max load) was only ever caught later — either when confirming a
+    // time slot (HC8 in confirmAndPlace) or, worst case, all the way at Publish/Approve —
+    // so an overloaded faculty could still get "Assigned" here and only fail much later.
+    // _facLoadData is populated by _updateFacultyUnitDisplay whenever the faculty selection
+    // changes, so it already reflects THIS faculty's current server-side load.
+    if (facId !== 'TBA' && typeof _facLoadData !== 'undefined' && _facLoadData) {
+        const subjectUnits = (typeof _subjectMeta !== 'undefined' && _subjectMeta[code])
+            ? parseFloat(_subjectMeta[code].units || 0) : 0;
+        let pendingUnits = 0;
+        if (typeof pendingManualSchedule !== 'undefined') {
+            for (const c of pendingManualSchedule) {
+                if (String(c.faculty_id) !== String(facId)) continue;
+                if (c.ay !== ay || c.sem !== sem) continue;
+                if ((c.subject_code || '') === code) continue; // this subject's units are added fresh below
+                const uMeta = _subjectMeta && _subjectMeta[c.subject_code];
+                pendingUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
+            }
+        }
+        const scheduledUnits = _facLoadData.scheduled_units || 0;
+        const totalAfter     = scheduledUnits + pendingUnits + subjectUnits;
+        const maxLoad         = _facLoadData.total_units || 0;
+        if (maxLoad > 0 && totalAfter > maxLoad) {
+            showValidationModal('Maximum Load Exceeded',
+                `Assigning ${facName} to this subject would bring their total load to ${totalAfter} unit${totalAfter !== 1 ? 's' : ''}, ` +
+                `exceeding the allowed maximum of ${maxLoad} units. Please choose a different faculty.`);
+            return;
+        }
+    }
+
+    _subjectFacultyAssignments[code] = { id: facId, name: facName };
+    window._pendingFacultyAssignment = false;
+
+    const _sectIdForLock = document.getElementById('sel_section')?.value || '';
+
+    // Persist to DB so the assignment survives page refresh. This is also the trigger that
+    // locks this section+term's curriculum choice (Regular vs Bridging) server-side — see
+    // api_manual_save_assignment / _ensure_curriculum_lock_table in app.py.
     fetch('/api/manual/assign_faculty', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             program: prog, year_level: parseInt(yl) || 0,
             acadYear: ay, term: sem,
-            subjectcode: code, employeenumber: facId
+            subjectcode: code, employeenumber: facId,
+            section_id: _sectIdForLock || null,
+            curriculum_mode: typeof _curriculumViewMode !== 'undefined' ? _curriculumViewMode : 'regular'
         })
     }).catch(() => {}); // non-blocking; memory state is already updated
+
+    // Reflect the lock immediately client-side too, instead of waiting for the next section
+    // visit's /api/manual/curriculum_lock fetch — the picker becomes read-only right away.
+    if (facId !== 'TBA' && _sectIdForLock && typeof _curriculumModeLocked !== 'undefined' && !_curriculumModeLocked) {
+        _curriculumModeLocked = true;
+        if (typeof _updateCurriculumModeSelectVisibility === 'function') _updateCurriculumModeSelectVisibility();
+    }
 
     // Refresh the Currently Assigned list immediately
     if (typeof _updateFacultyUnitDisplay === 'function') _updateFacultyUnitDisplay(facId);
     // Update button to "Re-Assign Faculty" state
     _updateAssignFacultyBtn();
+    _syncSubjectFacultyToCalendar(code, facId, facName);
 
     const btn = document.getElementById('btnAssignFaculty');
     if (btn) {
@@ -3635,9 +3924,21 @@ window.unlockFacultyChoice = async function() {
     if (IS_LOCAL) return;  // Local mode: faculty is always from Official schedule
     const sliceCount = document.querySelectorAll('.ts-row').length;
     if (!sliceCount) { _clearFacultyLock(); return; }
+
+    // If any of this subject's existing sessions are currently Published, the reassignment
+    // gets auto-published immediately after the Draft save below (see _triggerSaveDraft) —
+    // no separate manual "Approve/Publish" click required for the new faculty to go live.
+    const wasPublished = Array.from(document.querySelectorAll('.ts-row')).some(row => {
+        try {
+            return (JSON.parse(row.dataset.existingJson || '{}').status || '').toLowerCase() === 'published';
+        } catch(e) { return false; }
+    });
+
     const ok = await showConfirmModal(
-        `Changing the faculty will reassign all ${sliceCount} existing schedule(s). ` +
-        `The schedule will be saved as a new Draft with the new faculty and will require re-approval. Continue?`,
+        wasPublished
+            ? `Changing the faculty will reassign all ${sliceCount} existing schedule(s). ` +
+              `Since this schedule is Published, the new faculty assignment will take effect immediately. Continue?`
+            : `Changing the faculty will reassign all ${sliceCount} existing schedule(s) with the new faculty. Continue?`,
         'Change Faculty'
     );
     if (!ok) return;
@@ -3647,6 +3948,11 @@ window.unlockFacultyChoice = async function() {
     const sem  = document.getElementById('sel_sem').value;
     const prog = document.getElementById('sel_prog').value;
     const yl   = document.getElementById('sel_year').value;
+
+    if (wasPublished && code) {
+        window._reassignAutoPublishSubjects = window._reassignAutoPublishSubjects || new Set();
+        window._reassignAutoPublishSubjects.add(code);
+    }
 
     // Mark all existing rows as dirty so they get re-processed with the new faculty on the next save.
     // This converts Published fromExisting slices into editable Draft entries.
@@ -4462,6 +4768,18 @@ async function removeTimeSlot(id) {
     const row = document.getElementById(`ts-row-${id}`);
     if (!row) return;
 
+    // Capture the room this slice occupied before it's removed from the DOM — needed below
+    // to refresh the room-occupancy cache regardless of which view is currently active.
+    const _removedRoomId = row.querySelector('.ts-room-hidden')?.value || '';
+    // Capture this slice's duration before removal — needed below to decrement the cached
+    // dbScheduled hours immediately, instead of waiting for a full server re-fetch.
+    const _removedStart = row.querySelector('.ts-start-hidden')?.value || '';
+    const _removedEnd   = row.querySelector('.ts-end-hidden')?.value   || '';
+    const _removedHrs = (() => {
+        const si = _TS_TIMES.indexOf(_removedStart), ei = _TS_TIMES.indexOf(_removedEnd);
+        return (si >= 0 && ei > si) ? (ei - si) * 0.5 : 0;
+    })();
+
     const existingJson = row.dataset.existingJson || '';
 
     // Block drop of an unmodified duplicate — removing it without any changes would
@@ -4521,6 +4839,19 @@ async function removeTimeSlot(id) {
         const dbKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
         if (dbKey && typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.add(dbKey);
 
+        // Decrement the cached "hours already in the DB" count for this subject right away.
+        // _getScheduledHoursForCode falls back to this cached value once no pending mirror
+        // entries remain for the subject — without this, the left-panel progress bar and
+        // the top summary keep showing the pre-deletion total until a full server re-fetch.
+        if (_removedHrs > 0 && sess.subjectcode) {
+            const _subjSelForDec = document.getElementById('sel_subj');
+            const _optForDec = _subjSelForDec && Array.from(_subjSelForDec.options).find(o => o.value === sess.subjectcode);
+            if (_optForDec) {
+                const _curDb = parseFloat(_optForDec.dataset.dbScheduled || 0);
+                _optForDec.dataset.dbScheduled = Math.max(0, _curDb - _removedHrs);
+            }
+        }
+
     } else {
         const ok1 = await showConfirmModal(
             "You are about to delete this schedule slice.",
@@ -4565,12 +4896,44 @@ async function removeTimeSlot(id) {
     if (_currentSubjectCode && ay && sem) {
         const _rmMeta = (_subjectMeta && _subjectMeta[_currentSubjectCode]) || {};
         _updateUnitProgress(_currentSubjectCode, ay, sem, _rmMeta.units || 0, _rmMeta.total_hours || 0);
+
+        // _updateUnitProgress already refreshed the hours bar/text, but it never touches the
+        // separate "saved status" badge (Draft/Published label — see _updateSubjectList). If
+        // that was this subject's LAST remaining time slice, the badge is now stale (still
+        // showing a status for a schedule that no longer has any sessions) and would only
+        // clear on a full page reload otherwise. Same cleanup _dropSession does on pill delete.
+        if (!document.querySelectorAll('.ts-row').length) {
+            const _subjSelForClr = document.getElementById('sel_subj');
+            const _optForClr = _subjSelForClr && Array.from(_subjSelForClr.options)
+                .find(o => o.value === _currentSubjectCode);
+            if (_optForClr) { _optForClr.dataset.savedStatus = ''; _optForClr.dataset.dbScheduled = '0'; }
+            const _cardForClr = document.querySelector(`.subj-item[data-code="${_currentSubjectCode}"]`);
+            const _badgeForClr = _cardForClr && _cardForClr.querySelector('.subj-badge');
+            if (_badgeForClr) _badgeForClr.remove();
+        }
     }
     if (typeof currentMode !== 'undefined' && currentMode === 'program') {
         if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
     } else if (typeof renderGrid === 'function') {
         renderGrid(document.getElementById('sel_room').value, ay, sem);
     }
+
+    // Room-occupancy cache (window._roomDbCache) drives the Add Schedule panel's conflict
+    // detection and is normally only refreshed by renderGrid — which Program View never
+    // calls. Without this, a deleted session keeps showing as occupied when re-adding a
+    // slot to the same room/day/time until the whole page is reloaded. Refresh it directly
+    // here so deletion is reflected immediately regardless of the active view.
+    if (_removedRoomId && _removedRoomId !== 'TBA' && typeof _prefetchRoomOccupancy === 'function') {
+        delete window._roomDbCache[`${_removedRoomId}|${ay}|${sem}`];
+        _prefetchRoomOccupancy(_removedRoomId, ay, sem).catch(() => {});
+    }
+    // Same staleness problem for the room-dropdown availability cache (keyed by day, not
+    // room) — clear it too so a freed-up room/slot is offered again without a full reload.
+    if (typeof window._roomsByDayCache !== 'undefined') window._roomsByDayCache = {};
+    document.querySelectorAll('.ts-row').forEach(r => {
+        const rId = parseInt(r.id.replace('ts-row-', ''));
+        if (!isNaN(rId) && typeof _applyRoomAvailabilityFilter === 'function') _applyRoomAvailabilityFilter(rId);
+    });
 }
 
 function _sliceStatusHtmlFor(existingJson) {
@@ -5008,6 +5371,51 @@ function toggleBcMenu(menuId, event) {
     if (!isOpen) menu.classList.add('open');
 }
 
+// Section list is fetched dynamically (unlike AY/Sem/Prog/Year, which are baked into
+// the page at load). Re-fetch on every open so a section added elsewhere (e.g. Settings,
+// another tab) shows up immediately instead of requiring a Program/Year re-select or a
+// full page reload. Only the option list is rebuilt here — current selection and the
+// right panel are left untouched (unlike _loadSectionOptions, which resets both).
+function toggleBcSectMenu(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('bc-sect-menu');
+    if (!menu) return;
+    const isOpen = menu.classList.contains('open');
+    document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
+    if (isOpen) return;
+    menu.classList.add('open');
+    _refreshSectMenuOptions();
+}
+
+async function _refreshSectMenuOptions() {
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const menu = document.getElementById('bc-sect-menu');
+    if (!menu || !prog || !yl) return;
+
+    const curId = document.getElementById('sel_section')?.value || '';
+    try {
+        const ay  = document.getElementById('sel_ay')?.value  || '';
+        const sem = document.getElementById('sel_sem')?.value || '';
+        const params = new URLSearchParams({ program: prog, yearLevel: yl });
+        if (ay)  params.set('ay', ay);
+        if (sem) params.set('semester', sem);
+        const res  = await fetch(`/api/sections-by-program?${params}`);
+        const data = await res.json();
+        const secs = data.sections || [];
+        if (!secs.length) {
+            menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">No sections found</div>';
+        } else {
+            menu.innerHTML = secs.map(s =>
+                `<div class="bc-option" onclick="selectBcSect('${s.id}','${s.name.replace(/'/g,"\\'")}')"><strong>${s.name}</strong></div>`
+            ).join('');
+        }
+    } catch(e) {
+        // Keep whatever was already rendered rather than clobbering it with an error state —
+        // this is a background refresh of an already-open list, not the initial load.
+    }
+}
+
 function selectBcAy(val, label) {
     const el = document.getElementById('bc-ay-text');
     if (el) el.textContent = label;
@@ -5051,12 +5459,19 @@ function selectBcYear(val, label) {
 }
 
 /* ── Section filter helpers ── */
-function selectBcSect(id, name) {
+async function selectBcSect(id, name) {
     const textEl = document.getElementById('bc-sect-text');
     if (textEl) textEl.textContent = name;
     const _prevSectId = document.getElementById('sel_section').value;
     document.getElementById('sel_section').value = id;
     if (_prevSectId && _prevSectId !== id) {
+        // The right panel (active subject, its faculty, and its TIME ALLOTMENT slices)
+        // belongs entirely to the section being left — a subject clicked/loaded under the
+        // previous section must never stay open while a different section is now selected,
+        // or its stale day/room/time slices (and PUBLISHED/complete status) would appear to
+        // apply to the new section too, risking an accidental save under the wrong section.
+        if (typeof _resetRightPanel === 'function') _resetRightPanel();
+
         // Switching sections means switching editing context entirely — any undo/redo
         // history from the previous section no longer applies.
         if (typeof _clearHistoryStacks === 'function') _clearHistoryStacks();
@@ -5098,6 +5513,22 @@ function selectBcSect(id, name) {
     if (_cgDone)  _cgDone.textContent  = '…';
     if (_cgSched) _cgSched.textContent = '…';
     if (_cgReq)   _cgReq.textContent   = '…';
+
+    // A curriculum choice is per-section+term: default it from whatever this section+term is
+    // already locked to (see _applyCurriculumLockForSection), falling back to Regular/unlocked
+    // if nothing has been scheduled here yet. Forces a full subject-list rebuild (via the
+    // innerHTML reset below) so the previous section's options don't linger here.
+    const _sbsAy  = document.getElementById('sel_ay')?.value  || '';
+    const _sbsSem = document.getElementById('sel_sem')?.value || '';
+    if (typeof _applyCurriculumLockForSection === 'function') {
+        await _applyCurriculumLockForSection(id, _sbsAy, _sbsSem);
+    } else {
+        _curriculumViewMode = 'regular';
+    }
+    document.getElementById('cg-curr-menu')?.classList.remove('open');
+    if (typeof _updateCurriculumModeSelectVisibility === 'function') _updateCurriculumModeSelectVisibility();
+    const _subjSelForModeReset = document.getElementById('sel_subj');
+    if (_subjSelForModeReset) _subjSelForModeReset.innerHTML = '<option value="">-- Select Subject --</option>';
 
     // Refresh subject statuses (badges/hours) and visible panels for the selected section
     _updateSubjectList().catch(() => {});
@@ -5435,6 +5866,18 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const _vhPanelPost = document.getElementById('versionHistoryPanel');
             if (_vhPanelPost && _vhPanelPost.style.display !== 'none') _loadVersionHistoryPanel();
             setTimeout(() => window.isLeavingIntentionally = false, 100);
+
+            // Faculty reassignment on a previously-Published subject (see unlockFacultyChoice):
+            // immediately publish this Draft too, so the new faculty goes live without a
+            // separate manual Approve step.
+            if (window._reassignAutoPublishSubjects && currentSubj &&
+                window._reassignAutoPublishSubjects.has(currentSubj)) {
+                window._reassignAutoPublishSubjects.delete(currentSubj);
+                if (typeof window._runManualApprove === 'function') {
+                    await window._runManualApprove({ auto: true });
+                }
+            }
+
             return true;
         } else {
             if (data.violations && data.violations.length) {
@@ -6002,6 +6445,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                 endtimeid:     _entry.endtimeid     || 0,
                                 ay:            _genCtx.acadYear     || '',
                                 sem:           _genCtx.term         || '',
+                                // Must be tagged so this entry only ever renders/pre-fills under the
+                                // section it was generated for — without it, switching sections while
+                                // this sessionStorage fallback transfer is still pending would show
+                                // this section's generated schedule under every other section too.
+                                section_id:    _genCtx.section || _genCtx.sectionId || _genCtx.section_id || '',
                                 fromGenerator: true,
                                 fromExisting:  false,
                                 isPreview:     false,
@@ -6096,6 +6544,7 @@ window.triggerCascade = async function(skipGridRender) {
         const flText = document.getElementById('flFacText');
         if (flText) flText.textContent = '— Select Faculty —';
         document.getElementById('fl-emp-type').textContent    = '—';
+        document.getElementById('fl-max-units').textContent   = '—';
         document.getElementById('fl-total-units').textContent = '—';
         document.getElementById('fl-avail-units').textContent = '—';
         if (!_cascAy || !_cascSem) {
@@ -6786,6 +7235,7 @@ function switchEditorTab(tab, el) {
             // No context — show placeholder
             _flShowMsg('Select Academic Year and Semester to view faculty load.');
             document.getElementById('fl-emp-type').textContent    = '—';
+            document.getElementById('fl-max-units').textContent   = '—';
             document.getElementById('fl-total-units').textContent = '—';
             document.getElementById('fl-avail-units').textContent = '—';
             document.getElementById('flFacText').textContent      = '— Select Faculty —';
@@ -7159,9 +7609,10 @@ async function selectFlFaculty(empNum, name) {
         const isPartTime = empType.includes('part') && !empType.includes('design');
 
         document.getElementById('fl-emp-type').textContent    = data.faculty.employee_type || '—';
+        document.getElementById('fl-max-units').textContent   = data.max_units ?? '—';
         const _totalHrs = parseFloat(data.total_teaching_hours || 0);
         document.getElementById('fl-total-units').textContent =
-            `${data.max_units || '0'}${_totalHrs > 0 ? ` (${_totalHrs} hrs)` : ''}`;
+            `${data.assigned_units || '0'}${_totalHrs > 0 ? ` (${_totalHrs} hrs)` : ''}`;
         document.getElementById('fl-avail-units').textContent = data.available_units ?? '—';
 
         // Relabel sections based on employee type:
@@ -7189,12 +7640,8 @@ async function selectFlFaculty(empNum, name) {
             if (ptTotalLabel)  ptTotalLabel.dataset.prefix  = `TOTAL PART-TIME LOAD (max ${ptMax}): `;
         }
 
-        // Non-part-time faculty don't have real TS sessions of their own (Regular Load and
-        // Part Time Load above are unchanged, populated exactly as before) — but their TS
-        // quota still gets its own section, table and total line, matching the Regular/Part
-        // Time visual pattern, for consistency. No session data distinguishes TS sessions
-        // from Part-Time ones for these employee types, so the table always shows "no
-        // sessions" — only the cap on the total line is real.
+        // Non-part-time faculty don't have TS sessions of their own — TS is the overflow
+        // once Regular and PT are both filled to their max (see cap-then-spill below).
         let _tsSection = document.getElementById('fl-ts-section');
         if (!isPartTime) {
             if (!_tsSection) {
@@ -7210,24 +7657,22 @@ async function selectFlFaculty(empNum, name) {
                                     <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
                                     <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                                 </tr></thead>
-                                <tbody><tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr></tbody>
+                                <tbody id="fl-ts-body"><tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr></tbody>
                             </table>
                         </div>
                         <div class="fl-total-line" id="fl-ts-total-label"></div>`;
                     _ptTotalLabelEl.after(_tsSection);
                 }
             }
-            if (_tsSection) {
-                _tsSection.style.display = '';
-                const _tsTotalLabelEl = document.getElementById('fl-ts-total-label');
-                if (_tsTotalLabelEl) _tsTotalLabelEl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>0 units (0 hrs)</strong>`;
-            }
+            if (_tsSection) _tsSection.style.display = '';
         } else if (_tsSection) {
             _tsSection.style.display = 'none';
         }
 
         const cols = s => `
-            <td>${s.subjectcode||'—'}</td>
+            <td>${s.subjectcode||'—'}${s._split
+                ? ' <span title="This session\'s units are split across buckets — the portion that still fits here is counted, the rest overflows to TS." style="font-size:0.7em;color:#b8860b;font-weight:700;">(split)</span>'
+                : ''}</td>
             <td>${s.subjectname||'—'}</td>
             <td>${s.units||'—'}</td>
             <td>${s.year_section||'—'}</td>
@@ -7238,27 +7683,18 @@ async function selectFlFaculty(empNum, name) {
         const reg = document.getElementById('fl-regular-body');
         const pt  = document.getElementById('fl-parttime-body');
 
-        // Time-based session classification (applies to all employee types):
-        // Weekday sessions ending by 4 PM (end hour ≤ 16) → Regular Load (or TS for Part-time).
-        // Evening (end hour > 16) or weekend sessions → Part-Time Load.
-        const _WKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
-        const _endHr = s => parseInt((s.time_code || '').slice(2)) || 0;
-
-        const regSessions = data.sessions.filter(s =>
-            _WKDAYS.has(s.days || '') && _endHr(s) <= 16
-        );
-        const ptSessions = data.sessions.filter(s =>
-            !_WKDAYS.has(s.days || '') || _endHr(s) > 16
-        );
-
-        // Merge multi-day sessions for the same subject into one row
+        // Merge multi-day sessions for the same subject+section into one row. Keying by
+        // subjectcode alone would collapse a faculty's separate teaching assignments when
+        // the same subject code is taught in two different sections (e.g. COMP 002 in both
+        // BSIT-1 and DIT-1) — each is a distinct assignment and must stay its own row.
         const _groupSessions = arr => {
             const map = new Map();
             arr.forEach(s => {
-                if (!map.has(s.subjectcode)) {
-                    map.set(s.subjectcode, { ...s, _days: [s.days] });
+                const key = `${s.subjectcode}|${s.year_section}`;
+                if (!map.has(key)) {
+                    map.set(key, { ...s, _days: [s.days] });
                 } else {
-                    const ex = map.get(s.subjectcode);
+                    const ex = map.get(key);
                     if (s.days && !ex._days.includes(s.days)) ex._days.push(s.days);
                 }
             });
@@ -7268,8 +7704,61 @@ async function selectFlFaculty(empNum, name) {
         const _sumUnits = arr => arr.reduce((t, s) => t + (parseFloat(s.units) || 0), 0);
         const _sumHrs   = arr => arr.reduce((t, s) => t + (parseFloat(s.hrs) || 0), 0);
 
-        const groupedReg = _groupSessions(regSessions);
-        const groupedPt  = _groupSessions(ptSessions);
+        // Cap-then-spill: the bucket is filled up to its max, and any remaining capacity is
+        // used automatically — a session that only partly fits gets SPLIT (the portion that
+        // still fits stays in this bucket, only the excess overflows into TS) rather than
+        // dumping the whole session into TS just because it doesn't fit in one piece. TS is
+        // strictly an overflow bucket — a faculty only lands there once their other load
+        // bucket(s) are truly full, never as a first-class classification of its own.
+        const _capSpill = (list, max) => {
+            let running = 0;
+            const kept = [], spilled = [];
+            for (const s of list) {
+                const u = parseFloat(s.units) || 0;
+                const remaining = +(max - running).toFixed(2);
+                if (remaining <= 0) {
+                    spilled.push(s);
+                } else if (u <= remaining) {
+                    running += u;
+                    kept.push(s);
+                } else {
+                    // Straddles the cap boundary — split proportionally between the two buckets.
+                    const hrs  = parseFloat(s.hrs) || 0;
+                    const frac = u > 0 ? remaining / u : 0;
+                    running = max;
+                    kept.push({ ...s, units: remaining, hrs: +(hrs * frac).toFixed(2), _split: true });
+                    spilled.push({ ...s, units: +(u - remaining).toFixed(2), hrs: +(hrs * (1 - frac)).toFixed(2), _split: true });
+                }
+            }
+            return { kept, spilled };
+        };
+
+        let groupedReg, groupedPt, tsSessions;
+        if (isPartTime) {
+            // Part-time faculty have no separate "regular daytime duty" bucket to classify
+            // by day/time — every session they teach is Part-Time Load first, full stop.
+            // Only once ptMax is exceeded does the overflow become TS (displayed via the
+            // "reg" table, already relabeled "TEACHING SUBSTITUTION (TS)" above for PT).
+            const allSessions = _groupSessions(data.sessions);
+            const ptSpill = _capSpill(allSessions, ptMax);
+            groupedPt  = ptSpill.kept;
+            groupedReg = ptSpill.spilled;
+            tsSessions = [];
+        } else {
+            // Weekday sessions ending by 4 PM (end hour ≤ 16) → Regular Load.
+            // Evening (end hour > 16) or weekend sessions → Part-Time Load.
+            const _WKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday']);
+            const _endHr = s => parseInt((s.time_code || '').slice(2)) || 0;
+            const regSessions = data.sessions.filter(s => _WKDAYS.has(s.days || '') && _endHr(s) <= 16);
+            const ptSessions  = data.sessions.filter(s => !_WKDAYS.has(s.days || '') || _endHr(s) > 16);
+            groupedReg = _groupSessions(regSessions);
+            groupedPt  = _groupSessions(ptSessions);
+            const regSpill = _capSpill(groupedReg, regMax);
+            const ptSpill  = _capSpill(groupedPt, ptMax);
+            groupedReg = regSpill.kept;
+            groupedPt  = ptSpill.kept;
+            tsSessions = [...regSpill.spilled, ...ptSpill.spilled];
+        }
 
         const noRegMsg = isPartTime ? 'No TS sessions' : 'No sessions found';
 
@@ -7287,6 +7776,19 @@ async function selectFlFaculty(empNum, name) {
         const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
         document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} units (${regHrs} hrs)</strong>`;
         document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} units (${ptHrs} hrs)</strong>`;
+
+        if (!isPartTime) {
+            const tsBody      = document.getElementById('fl-ts-body');
+            const tsTotalLbl  = document.getElementById('fl-ts-total-label');
+            const tsUsed      = _sumUnits(tsSessions);
+            const tsHrs       = _sumHrs(tsSessions);
+            if (tsBody) {
+                tsBody.innerHTML = tsSessions.length
+                    ? tsSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
+                    : '<tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr>';
+            }
+            if (tsTotalLbl) tsTotalLbl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>${tsUsed} units (${tsHrs} hrs)</strong>`;
+        }
 
         // Pending assignments — subjects reserved via "Assign Faculty" but not yet scheduled.
         const _pendSessions = data.pending_sessions || [];
@@ -7639,6 +8141,17 @@ async function confirmDlpDelete() {
             const sub = document.getElementById('dlpSubtitle');
             if (sub) sub.textContent = `${remaining} draft${remaining!==1?'s':''}`;
             if (!remaining) document.getElementById('dlpCards').innerHTML = '<div class="dlp-empty"><i class="fas fa-folder-open"></i><div>No drafts left.</div></div>';
+
+            // The deleted draft's scheduled hours/status were baked into the Curriculum Guide
+            // cards and calendar pills — neither was touched above, so both would keep showing
+            // this draft as still scheduled until a full page reload. Refresh both now.
+            if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+            const _dlpRoom = document.getElementById('sel_room')?.value;
+            if (typeof currentMode !== 'undefined' && currentMode === 'program') {
+                if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
+            } else if (_dlpRoom && typeof renderGrid === 'function') {
+                renderGrid(_dlpRoom, formAyFilter(), formSemFilter());
+            }
         } else { alert('Delete failed: ' + (data.error||'Unknown error')); }
     } catch(e) { alert('Delete failed: ' + e.message); }
     finally { btn.disabled=false; btn.innerHTML='<i class="fas fa-trash-alt"></i> Delete'; }
@@ -8554,8 +9067,14 @@ function _showRestoreChoiceModal_UNUSED(typeLabel, origStatus) {
 }
 
 async function restoreVersion(versionId, btn) {
-    // Block restore when there are unsaved pending entries to prevent accidental overwrites
-    if (typeof pendingManualSchedule !== 'undefined' && pendingManualSchedule.some(s => !s.fromExisting)) {
+    // Block restore when there are unsaved pending entries to prevent accidental overwrites.
+    // Reuse hasUnsavedChanges()'s definition (fromExisting/isPreview/fromGenerator all don't
+    // count) instead of a bare !fromExisting check — otherwise merely having viewed a subject
+    // that left a stale preview entry behind could falsely block a restore with no real edits.
+    const _hasUnsavedForRestore = typeof hasUnsavedChanges === 'function'
+        ? hasUnsavedChanges()
+        : (typeof pendingManualSchedule !== 'undefined' && pendingManualSchedule.some(s => !s.fromExisting));
+    if (_hasUnsavedForRestore) {
         await showValidationModal('Unsaved Changes',
             'You have unsaved schedule changes on the board. Save or discard them before restoring a version.');
         return;

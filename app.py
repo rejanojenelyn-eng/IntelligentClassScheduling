@@ -2287,10 +2287,12 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None):
                 start_yr = ay_yearstart - (yl - 1)
                 startacademicyear = f"{start_yr}-{start_yr + 1}"
 
-                # Best curriculum: latest whose curriculumyear start <= cohort's entry year
+                # Best curriculum: latest Regular whose curriculumyear start <= cohort's entry year.
+                # Bridging curricula are never auto-assigned — they only supplement the guide display.
                 cur.execute("""
                     SELECT curriculumid FROM curriculum
                     WHERE UPPER(programcode) = UPPER(%s)
+                      AND curriculumtype = 'Regular'
                       AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
                     ORDER BY curriculumyear DESC LIMIT 1
                 """, (prog_code, start_yr))
@@ -2364,12 +2366,32 @@ def _ensure_default_sections(cur, ay_id):
     return created
 
 
+def _mark_bridging_subjects(cur, subjects, prog_code, curr_year):
+    """Flag each subject dict (in place) with is_bridging: True if its subject code
+    does not exist anywhere in the program's Regular curriculum for the same
+    curriculum year. If no Regular curriculum exists yet for that program+year,
+    every subject is marked bridging (nothing to diff against yet)."""
+    cur.execute("""
+        SELECT UPPER(TRIM(cs.subjectcode)) AS code
+        FROM curriculumsubject cs
+        JOIN curriculum c ON cs.curriculumid = c.curriculumid
+        WHERE c.programcode = %s AND c.curriculumyear = %s AND c.curriculumtype = 'Regular'
+    """, (prog_code, curr_year))
+    regular_codes = {r['code'] for r in cur.fetchall()}
+    for s in subjects:
+        code = str(s.get('sc', '')).strip().upper()
+        s['is_bridging'] = bool(code) and (not regular_codes or code not in regular_codes)
+    return subjects
+
+
 def _reassign_curriculum_for_program(cur, programcode):
     """
     Recalculate and UPDATE curriculumid for all program_yearlevel rows of a program.
     Rule: highest curriculumyear that is <= the cohort's startacademicyear.
     COALESCE preserves the existing curriculumid when no matching curriculum is found,
     so a manually-assigned or previously-correct value is never overwritten with NULL.
+    Only considers Regular curricula — a Bridging curriculum must never become a
+    cohort's primary teaching curriculum; it only supplements the guide display.
     Call this after any curriculum INSERT/UPDATE for that program.
     """
     cur.execute("""
@@ -2379,6 +2401,7 @@ def _reassign_curriculum_for_program(cur, programcode):
                 SELECT c.curriculumid
                 FROM curriculum c
                 WHERE UPPER(c.programcode) = UPPER(pyl.programcode)
+                  AND c.curriculumtype = 'Regular'
                   AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT)
                       <= CAST(SUBSTRING(pyl.startacademicyear, 1, 4) AS INT)
                 ORDER BY c.curriculumyear DESC
@@ -2853,6 +2876,7 @@ def get_offerings_schedule():
                 pyl.programcode                                     AS programcode,
                 pyl.yearlevel                                       AS yearlevel,
                 sec.sectionname                                     AS sectionname,
+                sec.sectionid                                       AS section_id,
                 sv.status,
                 sv.versionid
             FROM schedule_version sv
@@ -4149,6 +4173,7 @@ def import_schedule():
                         cur.execute("""
                             SELECT curriculumid FROM curriculum
                             WHERE UPPER(programcode)=UPPER(%s)
+                              AND curriculumtype = 'Regular'
                               AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
                             ORDER BY curriculumyear DESC LIMIT 1
                         """, (prog, _entry_year))
@@ -4157,6 +4182,7 @@ def import_schedule():
                         cur.execute("""
                             SELECT curriculumid FROM curriculum
                             WHERE UPPER(programcode)=UPPER(%s)
+                              AND curriculumtype = 'Regular'
                             ORDER BY curriculumyear DESC NULLS LAST LIMIT 1
                         """, (prog,))
                         _cr = cur.fetchone(); _best_curr_id = _cr['curriculumid'] if _cr else None
@@ -4174,7 +4200,7 @@ def import_schedule():
                             if _ca: _best_curr_id = _ca['curriculumid']
                         except Exception:
                             cur.execute("ROLLBACK TO SAVEPOINT curr_auto")
-                            cur.execute("SELECT curriculumid FROM curriculum WHERE UPPER(programcode)=UPPER(%s) ORDER BY curriculumyear DESC NULLS LAST LIMIT 1", (prog,))
+                            cur.execute("SELECT curriculumid FROM curriculum WHERE UPPER(programcode)=UPPER(%s) AND curriculumtype='Regular' ORDER BY curriculumyear DESC NULLS LAST LIMIT 1", (prog,))
                             _ca2 = cur.fetchone()
                             if _ca2: _best_curr_id = _ca2['curriculumid']
 
@@ -4245,22 +4271,13 @@ def import_schedule():
                                 _sr3 = cur.fetchone()
                                 if _sr3: sec_id = _sr3['sectionid']
 
-                    # 4. Find or create curriculumsubject
-                    if not cs_id and _best_curr_id:
-                        cur.execute("""
-                            INSERT INTO curriculumsubject (curriculumid, subjectcode, subjectname, creditunits, lecturehours, laboratoryhours, tuitionhours, yearlevel, semester)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO UPDATE SET
-                                subjectname=EXCLUDED.subjectname, creditunits=EXCLUDED.creditunits,
-                                lecturehours=EXCLUDED.lecturehours, laboratoryhours=EXCLUDED.laboratoryhours,
-                                tuitionhours=EXCLUDED.tuitionhours
-                            RETURNING curriculumsubjectid
-                        """, (_best_curr_id, s_code.upper(), subj_name or s_code, unit, lec, lab, lec + lab, yl, _sem_char))
-                        _cs_r = cur.fetchone()
-                        if not _cs_r:
-                            cur.execute("SELECT curriculumsubjectid FROM curriculumsubject WHERE curriculumid=%s AND UPPER(subjectcode)=UPPER(%s) LIMIT 1", (_best_curr_id, s_code))
-                            _cs_r = cur.fetchone()
-                        if _cs_r: cs_id = _cs_r['curriculumsubjectid']
+                    # NOTE: previously this auto-created a curriculumsubject row here when the
+                    # imported schedule referenced a code not already in the curriculum — that
+                    # silently polluted the curriculum (phantom subjects like ROTC/BIOL 313 that
+                    # were never in the actual curriculum file). Schedule import must not add
+                    # subjects to the curriculum; leaving cs_id unset here makes the row fall
+                    # through to historical_data below instead, which is reported to the admin
+                    # as "could not be matched" rather than silently mutating the curriculum.
 
                 # Only insert into current schedule tables for current semesters
                 if is_current and cs_id and sec_id:
@@ -5036,16 +5053,18 @@ def sis_import_preview():
                 cur.execute("""
                     SELECT curriculumid FROM curriculum
                     WHERE UPPER(programcode)=UPPER(%s)
+                      AND curriculumtype = 'Regular'
                       AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
                     ORDER BY curriculumyear DESC LIMIT 1
                 """, (offering_code, entry_year))
                 _cr = cur.fetchone()
                 best_curr_id = _cr['curriculumid'] if _cr else None
             if not best_curr_id and offering_code:
-                # Fallback: latest curriculum for this program
+                # Fallback: latest Regular curriculum for this program
                 cur.execute("""
                     SELECT curriculumid FROM curriculum
                     WHERE UPPER(programcode)=UPPER(%s)
+                      AND curriculumtype = 'Regular'
                     ORDER BY curriculumyear DESC NULLS LAST LIMIT 1
                 """, (offering_code,))
                 _cr = cur.fetchone()
@@ -5216,7 +5235,7 @@ def sis_import_confirm():
     cur.execute("SELECT programcode FROM programs")
     _prog_norm_map = {r['programcode'].strip().upper(): r['programcode'].strip() for r in cur.fetchall()}
 
-    saved_c = 0; saved_h = 0; created_subj = 0; created_sec = 0; saved_skip = 0
+    saved_c = 0; saved_h = 0; created_sec = 0; saved_skip = 0
     # Initialised before loop so the except block can always report context.
     prog = ''; yl = 1; s_code = ''
 
@@ -5276,7 +5295,7 @@ def sis_import_confirm():
             cur.execute("DELETE FROM schedule WHERE semesterid = ANY(%s)", (all_sem_ids,))
             print(f"[SIS Override] Cleared existing schedule for semesterids={all_sem_ids}")
 
-        saved_skip = 0; created_subj = 0; created_sec = 0
+        saved_skip = 0; created_sec = 0
         skipped_details = []
 
         # Build a normalization map so "BSBIO AT" (space) → "BSBIO-AT" (hyphen),
@@ -5340,6 +5359,7 @@ def sis_import_confirm():
                     cur.execute("""
                         SELECT curriculumid FROM curriculum
                         WHERE UPPER(programcode)=UPPER(%s)
+                          AND curriculumtype = 'Regular'
                           AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
                         ORDER BY curriculumyear DESC LIMIT 1
                     """, (offering_code, entry_year))
@@ -5348,6 +5368,7 @@ def sis_import_confirm():
                     cur.execute("""
                         SELECT curriculumid FROM curriculum
                         WHERE UPPER(programcode)=UPPER(%s)
+                          AND curriculumtype = 'Regular'
                         ORDER BY curriculumyear DESC NULLS LAST LIMIT 1
                     """, (offering_code,))
                     _cr = cur.fetchone(); best_curr_id = _cr['curriculumid'] if _cr else None
@@ -5371,6 +5392,7 @@ def sis_import_confirm():
                         cur.execute("""
                             SELECT curriculumid FROM curriculum
                             WHERE UPPER(programcode)=UPPER(%s)
+                              AND curriculumtype = 'Regular'
                             ORDER BY curriculumyear DESC NULLS LAST LIMIT 1
                         """, (offering_code,))
                         _ca2 = cur.fetchone()
@@ -5469,31 +5491,12 @@ def sis_import_confirm():
                             _sr3 = cur.fetchone()
                             if _sr3: sec_id = _sr3['sectionid']
 
-                # ── Auto-create curriculum entry if cs_id still not found ──
-                if not cs_id and s_code and best_curr_id:
-                    _sem_char = 'B' if ('2' in str(sem_type or '') or str(sem_type or '').upper() == 'B') else \
-                                'C' if ('SUM' in str(sem_type or '').upper() or str(sem_type or '').upper() == 'C') else 'A'
-                    cur.execute("""
-                        INSERT INTO curriculumsubject (curriculumid, subjectcode, subjectname, creditunits, lecturehours, laboratoryhours, tuitionhours, yearlevel, semester)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO UPDATE SET
-                            subjectname = EXCLUDED.subjectname,
-                            creditunits = EXCLUDED.creditunits,
-                            lecturehours = EXCLUDED.lecturehours,
-                            laboratoryhours = EXCLUDED.laboratoryhours,
-                            tuitionhours = EXCLUDED.tuitionhours
-                        RETURNING curriculumsubjectid
-                    """, (best_curr_id, s_code.upper(), subj_nm or s_code, unit, lec, lab, lec + lab, yl, _sem_char))
-                    _cs_r = cur.fetchone()
-                    if _cs_r:
-                        created_subj += 1
-                    else:
-                        cur.execute("""
-                            SELECT curriculumsubjectid FROM curriculumsubject
-                            WHERE curriculumid=%s AND UPPER(subjectcode)=UPPER(%s) LIMIT 1
-                        """, (best_curr_id, s_code))
-                        _cs_r = cur.fetchone()
-                    if _cs_r: cs_id = _cs_r['curriculumsubjectid']
+                # NOTE: previously auto-created a curriculumsubject row here when the SIS
+                # schedule data referenced a code not already in the curriculum — that
+                # silently polluted the curriculum (phantom subjects that were never in
+                # the actual curriculum file). Leaving cs_id unset here makes the row fall
+                # through to the skip/historical handling below, which already reports
+                # "subject not in curriculum" instead of mutating the curriculum.
 
                 if cs_id and sec_id:
                     cur.execute("""
@@ -5649,8 +5652,6 @@ def sis_import_confirm():
 
         conn.commit()
         msg = f'{saved_c} row(s) imported to schedule.'
-        if created_subj:
-            msg += f' {created_subj} new subject(s) auto-added to curriculum.'
         if created_sec:
             msg += f' {created_sec} new section(s) auto-created.'
         if saved_skip:
@@ -6340,7 +6341,7 @@ def _validate_schedule_rows(raw_rows, cur, config=None):
                 r = cur.fetchone(); cs_id = r['curriculumsubjectid'] if r else None
         if not cs_id:
             if status != 'blocked': status = 'warning'
-            flags.append(f'Subject "{s_code}" not in curriculum → will be auto-added on import')
+            flags.append(f'Subject "{s_code}" not in curriculum → row will be skipped/archived, not added to curriculum')
 
         # Instructor (warning only)
         emp_num = None
@@ -7923,31 +7924,44 @@ def api_get_curriculum():
                                  WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
                     FROM curriculum c
                     WHERE UPPER(c.programcode) = UPPER(%s)
+                      AND c.curriculumtype = 'Regular'
                       AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT) <= %s
                     ORDER BY c.curriculumyear DESC LIMIT 1
                 """, (prog, entry_start))
                 res = cur.fetchone()
             if not res:
-                # Last resort: oldest available curriculum for the program — better than
-                # returning the newest, which would be wrong for senior cohorts.
+                # Last resort: oldest available Regular curriculum for the program — better
+                # than returning the newest, which would be wrong for senior cohorts.
                 cur.execute("""
                     SELECT c.curriculumid, c.curriculumyear, c.curriculumcode,
                            ARRAY(SELECT DISTINCT cs2.yearlevel FROM curriculumsubject cs2
                                  WHERE cs2.curriculumid = c.curriculumid ORDER BY cs2.yearlevel) AS year_levels
                     FROM curriculum c
                     WHERE UPPER(c.programcode) = UPPER(%s)
+                      AND c.curriculumtype = 'Regular'
                     ORDER BY c.curriculumyear ASC LIMIT 1
                 """, (prog,))
                 res = cur.fetchone()
 
         if res:
+            # Does a sibling Bridging curriculum exist for this same program+year? Drives
+            # whether the Manual Editor shows the Regular/Bridging selector at all — the
+            # Regular curriculum resolved above always stays the silent default otherwise.
+            cur.execute("""
+                SELECT 1 FROM curriculum
+                WHERE UPPER(programcode) = UPPER(%s) AND curriculumyear = %s AND curriculumtype = 'Bridging'
+                LIMIT 1
+            """, (prog, res['curriculumyear']))
+            has_bridging = bool(cur.fetchone())
+
             return jsonify({
                 "success": True,
                 "curriculum_id": res['curriculumid'],
                 "curriculum_code": res['curriculumcode'],
                 "curriculum_year": str(res['curriculumyear'] or ''),
                 "label": f"{res['curriculumcode']} (C.Y {res['curriculumyear']})",
-                "available_year_levels": res['year_levels']
+                "available_year_levels": res['year_levels'],
+                "has_bridging": has_bridging
             })
         return jsonify({"success": False})
     finally:
@@ -8742,6 +8756,26 @@ def _ensure_faculty_assignment_table(cur):
             UNIQUE (programcode, yearlevel, semesterid, subjectcode)
         )
     """)
+    # sectionid: added for the per-section curriculum lock feature (see
+    # _ensure_curriculum_lock_table) — nullable so existing rows / older callers that don't
+    # pass a section stay valid; not added to the UNIQUE key so existing scoping is unchanged.
+    cur.execute("ALTER TABLE public.subject_faculty_assignment ADD COLUMN IF NOT EXISTS sectionid INTEGER")
+
+# Once a section has a confirmed faculty assignment or real schedule under a given curriculum
+# (Regular vs Bridging), that choice must not silently change — see [[project-bridging-subjects]].
+# One row per (section, semester); first assignment wins (ON CONFLICT DO NOTHING at the insert
+# site) and the row is treated as authoritative until reconciliation finds nothing left backing
+# it (see api_manual_curriculum_lock), at which point it's cleared automatically.
+def _ensure_curriculum_lock_table(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS public.section_curriculum_lock (
+            sectionid       INTEGER     NOT NULL,
+            semesterid      INTEGER     NOT NULL,
+            curriculum_mode VARCHAR(10) NOT NULL DEFAULT 'regular',
+            locked_at       TIMESTAMP   DEFAULT NOW(),
+            PRIMARY KEY (sectionid, semesterid)
+        )
+    """)
 
 @app.route('/api/manual/assign_faculty', methods=['GET'])
 def api_manual_get_assignments():
@@ -8782,6 +8816,8 @@ def api_manual_save_assignment():
     term        = data.get('term', '').strip()
     subjectcode = data.get('subjectcode', '').strip().upper()
     emp_num     = str(data.get('employeenumber', '')).strip()
+    section_id  = data.get('section_id')
+    curriculum_mode = data.get('curriculum_mode') or 'regular'
     if not all([program, year_level, ay, term, subjectcode, emp_num]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
     try:
@@ -8790,11 +8826,23 @@ def api_manual_save_assignment():
         sem_id = _get_semester_id(cur, ay, term)
         cur.execute("""
             INSERT INTO public.subject_faculty_assignment
-                (programcode, yearlevel, semesterid, subjectcode, employeenumber)
-            VALUES (%s, %s, %s, %s, %s)
+                (programcode, yearlevel, semesterid, subjectcode, employeenumber, sectionid)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (programcode, yearlevel, semesterid, subjectcode)
-            DO UPDATE SET employeenumber = EXCLUDED.employeenumber, createdat = NOW()
-        """, (program.upper(), int(year_level), sem_id, subjectcode, emp_num))
+            DO UPDATE SET employeenumber = EXCLUDED.employeenumber, sectionid = EXCLUDED.sectionid, createdat = NOW()
+        """, (program.upper(), int(year_level), sem_id, subjectcode, emp_num, section_id))
+
+        # First confirmed faculty assignment for this section+term locks its curriculum
+        # choice (Regular vs Bridging) — DO NOTHING on conflict so a later assignment in the
+        # same term can't silently switch it. See _ensure_curriculum_lock_table.
+        if section_id:
+            _ensure_curriculum_lock_table(cur)
+            cur.execute("""
+                INSERT INTO public.section_curriculum_lock (sectionid, semesterid, curriculum_mode)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (sectionid, semesterid) DO NOTHING
+            """, (int(section_id), sem_id, 'bridging' if curriculum_mode == 'bridging' else 'regular'))
+
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
     except Exception as e:
@@ -8823,6 +8871,61 @@ def api_manual_delete_assignment(subjectcode):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/manual/curriculum_lock')
+def api_manual_curriculum_lock():
+    """Whether a section's Regular-vs-Bridging curriculum choice is locked for a given term,
+    and if so, which mode it's locked to. See _ensure_curriculum_lock_table."""
+    section_id = request.args.get('section_id', '').strip()
+    ay         = request.args.get('ay_id', '').strip()
+    term       = request.args.get('sem', '').strip()
+    if not all([section_id, ay, term]):
+        return jsonify({'success': True, 'locked': False})
+    try:
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        sem_id = _get_semester_id(cur, ay, term)
+        _ensure_curriculum_lock_table(cur)
+        cur.execute("""
+            SELECT curriculum_mode FROM public.section_curriculum_lock
+            WHERE sectionid = %s AND semesterid = %s
+        """, (int(section_id), sem_id))
+        row = cur.fetchone()
+        if not row:
+            cur.close(); conn.close()
+            return jsonify({'success': True, 'locked': False})
+
+        # Self-healing reconciliation: a lock set purely from a confirmed faculty assignment
+        # (the trigger — happens before any real time slice exists) shouldn't survive forever
+        # if that assignment was later removed and nothing was ever actually scheduled. Verify
+        # there's still real evidence of scheduling for this section+term before honoring the
+        # lock; otherwise clear it so the curriculum picker becomes free to choose again.
+        _ensure_faculty_assignment_table(cur)
+        cur.execute("""
+            SELECT 1 FROM public.subject_faculty_assignment
+            WHERE sectionid = %s AND semesterid = %s LIMIT 1
+        """, (int(section_id), sem_id))
+        has_reservation = cur.fetchone() is not None
+
+        cur.execute("""
+            SELECT 1 FROM public.schedule s
+            JOIN public.schedule_version sv ON sv.scheduleid = s.scheduleid
+            WHERE s.sectionid = %s AND s.semesterid = %s AND sv.status IN ('Draft','Published')
+            LIMIT 1
+        """, (int(section_id), sem_id))
+        has_schedule = cur.fetchone() is not None
+
+        if not has_reservation and not has_schedule:
+            cur.execute("""
+                DELETE FROM public.section_curriculum_lock WHERE sectionid = %s AND semesterid = %s
+            """, (int(section_id), sem_id))
+            conn.commit(); cur.close(); conn.close()
+            return jsonify({'success': True, 'locked': False})
+
+        cur.close(); conn.close()
+        return jsonify({'success': True, 'locked': True, 'curriculum_mode': row['curriculum_mode']})
+    except Exception as e:
+        return jsonify({'success': False, 'locked': False, 'error': str(e)})
 
 
 @app.route('/api/manual/existing_days')
@@ -9072,18 +9175,44 @@ def api_get_subjects():
     ay_id          = request.args.get('ay_id', '').strip()
     scheduler_mode = request.args.get('scheduler_mode', 'official')
     _gs_section_id = request.args.get('section_id', '').strip()
+    # 'regular' (default) shows only the Regular curriculum's subjects — the Academic Head
+    # must explicitly switch a section to 'bridging' via the Manual Editor's curriculum
+    # selector to see the Bridging-only subjects; it is never on automatically.
+    curriculum_mode = request.args.get('curriculum_mode', 'regular').strip().lower()
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("""
-            SELECT cs.SubjectCode, cs.SubjectName,
-                   COALESCE(cs.CreditUnits, 0) AS creditunits,
-                   COALESCE(cs.LaboratoryHours, 0) AS laboratoryhours,
-                   (COALESCE(cs.LectureHours, 0) + COALESCE(cs.LaboratoryHours, 0)) AS total_hours
-            FROM CurriculumSubject cs
-            WHERE cs.CurriculumID = %s AND cs.YearLevel = %s AND cs.Semester = %s
-            ORDER BY cs.SubjectName ASC
-        """, (curr_id, yl, sem))
+        if curriculum_mode == 'bridging':
+            # Bridging mode shows ONLY the subjects detected as unique to the Bridging
+            # curriculum — not merged with the Regular curriculum's subjects. The Academic
+            # Head uses Regular mode for everything else; switching to Bridging is a
+            # focused view of just the new/different subjects that need scheduling.
+            cur.execute("""
+                SELECT cs2.SubjectCode, cs2.SubjectName,
+                       COALESCE(cs2.CreditUnits, 0) AS creditunits,
+                       COALESCE(cs2.LaboratoryHours, 0) AS laboratoryhours,
+                       (COALESCE(cs2.LectureHours, 0) + COALESCE(cs2.LaboratoryHours, 0)) AS total_hours,
+                       TRUE AS is_bridging
+                FROM CurriculumSubject cs2
+                JOIN Curriculum cbridge ON cs2.CurriculumID = cbridge.CurriculumID
+                WHERE cbridge.CurriculumType = 'Bridging'
+                  AND cs2.IsBridging = TRUE
+                  AND cbridge.ProgramCode   = (SELECT ProgramCode   FROM Curriculum WHERE CurriculumID = %s)
+                  AND cbridge.CurriculumYear = (SELECT CurriculumYear FROM Curriculum WHERE CurriculumID = %s)
+                  AND cs2.YearLevel = %s AND cs2.Semester = %s
+                ORDER BY SubjectName ASC
+            """, (curr_id, curr_id, yl, sem))
+        else:
+            cur.execute("""
+                SELECT cs.SubjectCode, cs.SubjectName,
+                       COALESCE(cs.CreditUnits, 0) AS creditunits,
+                       COALESCE(cs.LaboratoryHours, 0) AS laboratoryhours,
+                       (COALESCE(cs.LectureHours, 0) + COALESCE(cs.LaboratoryHours, 0)) AS total_hours,
+                       FALSE AS is_bridging
+                FROM CurriculumSubject cs
+                WHERE cs.CurriculumID = %s AND cs.YearLevel = %s AND cs.Semester = %s
+                ORDER BY SubjectName ASC
+            """, (curr_id, yl, sem))
         subjects = cur.fetchall()
 
         # Attach scheduled hours per subject when AY context is provided.
@@ -9206,6 +9335,7 @@ def api_get_subjects():
                 'total_hours':    s['total_hours'],
                 'scheduled_hours': sm.get('hours', 0) if isinstance(sm, dict) else float(sm or 0),
                 'saved_status':    sm.get('status')   if isinstance(sm, dict) else None,
+                'is_bridging':    bool(s.get('is_bridging', False)),
             })
         return jsonify({"success": True, "subjects": result})
     finally:
@@ -11651,7 +11781,6 @@ def import_curriculum():
             if csv_yl > 0:
                 last_yl = csv_yl
             final_yl = last_yl  # carry forward when cell is blank
-            final_yl = parse_int(get_val(row, 'yl'))
 
             raw_s = get_val(row, 'sem').upper()
             if '1' in raw_s or 'A' in raw_s:        final_sem = 'A'
@@ -11721,6 +11850,9 @@ def analyze_curriculum_csv():
 
     ui_year = request.form.get('year_level', '0')
     ui_sem  = request.form.get('semester', 'All')
+    prog_code    = request.form.get('program_code', '').strip()
+    curr_year    = request.form.get('curriculum_year', '').strip()
+    has_bridging = request.form.get('has_bridging', '0') == '1'
 
     try:
         stream = io.StringIO(file.stream.read().decode('UTF8'), newline=None)
@@ -11761,6 +11893,12 @@ def analyze_curriculum_csv():
         })
 
     warnings = [] if subjects else ['No subjects could be extracted. Check your column mapping and file format.']
+    if has_bridging and subjects and prog_code and curr_year:
+        _conn = get_db_connection(); _cur = _conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            _mark_bridging_subjects(_cur, subjects, prog_code, curr_year)
+        finally:
+            _cur.close(); _conn.close()
     return jsonify({'subjects': subjects, 'confidence': 75 if subjects else 0,
                     'warnings': warnings, 'subject_count': len(subjects)})
 
@@ -11782,6 +11920,9 @@ def analyze_curriculum_xlsx():
 
     ui_year = request.form.get('year_level', '0')
     ui_sem  = request.form.get('semester', 'All')
+    prog_code    = request.form.get('program_code', '').strip()
+    curr_year    = request.form.get('curriculum_year', '').strip()
+    has_bridging = request.form.get('has_bridging', '0') == '1'
 
     try:
         import openpyxl
@@ -11824,6 +11965,12 @@ def analyze_curriculum_xlsx():
         })
 
     warnings = [] if subjects else ['No subjects could be extracted. Check your column mapping and file format.']
+    if has_bridging and subjects and prog_code and curr_year:
+        _conn = get_db_connection(); _cur = _conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            _mark_bridging_subjects(_cur, subjects, prog_code, curr_year)
+        finally:
+            _cur.close(); _conn.close()
     return jsonify({'subjects': subjects, 'confidence': 75 if subjects else 0,
                     'warnings': warnings, 'subject_count': len(subjects)})
 
@@ -11846,8 +11993,18 @@ def analyze_curriculum_pdf():
             if v and v != 'skip' and v in _CURR_FIELDS:
                 override_col_map.setdefault(v, i)
 
+    prog_code    = request.form.get('program_code', '').strip()
+    curr_year    = request.form.get('curriculum_year', '').strip()
+    has_bridging = request.form.get('has_bridging', '0') == '1'
+
     try:
         result = parse_curriculum_pdf(file.stream.read(), override_col_map)
+        if has_bridging and result.get('subjects') and prog_code and curr_year:
+            _conn = get_db_connection(); _cur = _conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                _mark_bridging_subjects(_cur, result['subjects'], prog_code, curr_year)
+            finally:
+                _cur.close(); _conn.close()
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e), 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 500
@@ -11862,6 +12019,8 @@ def confirm_pdf_import():
     subjects_json  = request.form.get('subjects_data', '[]')
     import_source  = request.form.get('import_source', 'File').strip() or 'File'
     override       = request.form.get('override', '0') == '1'
+    has_bridging   = request.form.get('has_bridging', '0') == '1'
+    curr_type      = 'Bridging' if has_bridging else 'Regular'
 
     if not prog_code or not curr_year:
         flash("Missing required fields.")
@@ -11893,12 +12052,12 @@ def confirm_pdf_import():
     try:
         cur.execute("""
             SELECT c.curriculumid FROM curriculum c
-            WHERE c.programcode = %s AND c.curriculumyear = %s
-        """, (prog_code, curr_year))
+            WHERE c.programcode = %s AND c.curriculumyear = %s AND c.curriculumtype = %s
+        """, (prog_code, curr_year, curr_type))
         existing = cur.fetchone()
         if existing:
             if not override:
-                flash(f"Import Blocked: Curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
+                flash(f"Import Blocked: A {curr_type} curriculum for {prog_code} C.Y {curr_year} already exists in the system.")
                 return redirect(url_for('admin_curriculum'))
             existing_id = existing['curriculumid']
             step = 'clearing existing subjects for override'
@@ -11916,9 +12075,9 @@ def confirm_pdf_import():
             curr_code = f"CY{years[0][-2:]}{years[1][-2:]}" if len(years) == 2 else "CY0000"
             step = 'creating curriculum record'
             cur.execute("""
-                INSERT INTO Curriculum (CurriculumCode, programcode, CurriculumYear)
-                VALUES (%s, %s, %s) RETURNING CurriculumID
-            """, (curr_code, prog_code, curr_year))
+                INSERT INTO Curriculum (CurriculumCode, programcode, CurriculumYear, CurriculumType)
+                VALUES (%s, %s, %s, %s) RETURNING CurriculumID
+            """, (curr_code, prog_code, curr_year, curr_type))
             curr_id = cur.fetchone()['curriculumid']
 
         step = 'inserting subjects'
@@ -11932,16 +12091,18 @@ def confirm_pdf_import():
             co  = str(s.get('co',  '')).strip()[:100]
             pre_clean = pre if pre.upper() not in ('NONE', '-', 'N/A', '') else None
             co_clean  = co  if co.upper()  not in ('NONE', '-', 'N/A', '') else None
+            is_bridging = bool(s.get('is_bridging', False))
             cur.execute("""
-                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours, YearLevel, Semester)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO CurriculumSubject (CurriculumID, SubjectCode, SubjectName, CreditUnits, LectureHours, LaboratoryHours, TuitionHours, YearLevel, Semester, IsBridging)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT ON CONSTRAINT uq_curriculumsubject DO UPDATE SET
                     SubjectName = EXCLUDED.SubjectName,
                     CreditUnits = EXCLUDED.CreditUnits,
                     LectureHours = EXCLUDED.LectureHours,
                     LaboratoryHours = EXCLUDED.LaboratoryHours,
-                    TuitionHours = EXCLUDED.TuitionHours
-            """, (curr_id, sc, sn, parse_int(s.get('u')), parse_int(s.get('lc')), parse_int(s.get('lb')), parse_int(s.get('th')), yl, sem))
+                    TuitionHours = EXCLUDED.TuitionHours,
+                    IsBridging = EXCLUDED.IsBridging
+            """, (curr_id, sc, sn, parse_int(s.get('u')), parse_int(s.get('lc')), parse_int(s.get('lb')), parse_int(s.get('th')), yl, sem, is_bridging))
 
             if pre_clean or co_clean:
                 try:
@@ -11962,7 +12123,12 @@ def confirm_pdf_import():
         _reassign_curriculum_for_program(cur, prog_code)
         conn.commit()
         action_word = "overridden" if (existing and override) else "imported"
-        flash(f"{import_source} Import Successful: {prog_code} C.Y {curr_year} — {len(subjects)} subjects {action_word}.")
+        type_note = f" as a {curr_type} curriculum" if has_bridging else ""
+        bridging_note = ""
+        if has_bridging:
+            bridging_count = sum(1 for s in subjects if s.get('is_bridging'))
+            bridging_note = f" ({bridging_count} flagged as Bridging Subjects)"
+        flash(f"{import_source} Import Successful: {prog_code} C.Y {curr_year} — {len(subjects)} subjects {action_word}{type_note}{bridging_note}.")
     except Exception as e:
         conn.rollback()
         flash(f"Import failed while {step}: {e}")
@@ -12138,8 +12304,18 @@ def analyze_curriculum_docx_route():
             if v and v != 'skip' and v in _CURR_FIELDS:
                 override_col_map.setdefault(v, i)
 
+    prog_code    = request.form.get('program_code', '').strip()
+    curr_year    = request.form.get('curriculum_year', '').strip()
+    has_bridging = request.form.get('has_bridging', '0') == '1'
+
     try:
         result = parse_curriculum_docx(file.stream.read(), override_col_map)
+        if has_bridging and result.get('subjects') and prog_code and curr_year:
+            _conn = get_db_connection(); _cur = _conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                _mark_bridging_subjects(_cur, result['subjects'], prog_code, curr_year)
+            finally:
+                _cur.close(); _conn.close()
         return jsonify(result)
     except Exception as e:
         return jsonify({
@@ -12154,16 +12330,69 @@ def check_curriculum_duplicate():
         return jsonify({'error': 'Unauthorized'}), 403
     prog_code = request.args.get('program_code', '').strip()
     curr_year = request.args.get('curriculum_year', '').strip()
+    curr_type = request.args.get('curriculum_type', 'Regular').strip() or 'Regular'
     if not prog_code or not curr_year:
         return jsonify({'exists': False})
     conn = get_db_connection(); cur = conn.cursor()
     try:
         cur.execute("""
             SELECT curriculumid FROM curriculum
-            WHERE programcode = %s AND curriculumyear = %s
-        """, (prog_code, curr_year))
+            WHERE programcode = %s AND curriculumyear = %s AND curriculumtype = %s
+        """, (prog_code, curr_year, curr_type))
         row = cur.fetchone()
         return jsonify({'exists': bool(row), 'curriculum_id': row[0] if row else None})
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/curriculum/<int:curriculum_id>/blocking_schedules')
+def curriculum_blocking_schedules(curriculum_id):
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT cs.subjectcode, cs.subjectname,
+                   sec.sectionname, sec.sectionid,
+                   pyl.programcode, pyl.yearlevel,
+                   sem.semestertype, sem.academicyearid,
+                   STRING_AGG(DISTINCT sv.status, ', ') AS version_statuses
+            FROM schedule s
+            JOIN curriculumsubject cs      ON s.curriculumsubjectid    = cs.curriculumsubjectid
+            LEFT JOIN sections sec         ON s.sectionid               = sec.sectionid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid  = pyl.programyearlevelid
+            LEFT JOIN semester sem         ON s.semesterid              = sem.semesterid
+            LEFT JOIN schedule_version sv  ON sv.scheduleid             = s.scheduleid
+            WHERE cs.curriculumid = %s
+            GROUP BY s.scheduleid, cs.subjectcode, cs.subjectname, sec.sectionname,
+                     sec.sectionid, pyl.programcode, pyl.yearlevel, sem.semestertype, sem.academicyearid
+            ORDER BY sem.academicyearid DESC NULLS LAST, cs.subjectcode
+        """, (curriculum_id,))
+        schedules = cur.fetchall()
+        # Only Published/Draft actually block deletion — Archive-only rows get purged
+        # automatically when the curriculum is deleted (see admin_delete_curriculum step 3c).
+        for row in schedules:
+            statuses = (row.get('version_statuses') or '')
+            row['is_blocking'] = ('Published' in statuses) or ('Draft' in statuses)
+
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM historical_data hd
+            JOIN curriculumsubject cs
+              ON UPPER(hd."Subject Code") = UPPER(cs.subjectcode)
+            WHERE cs.curriculumid = %s
+        """, (curriculum_id,))
+        historical_count = cur.fetchone()['cnt']
+
+        return jsonify({
+            'success': True,
+            'schedules': schedules,
+            'historical_count': historical_count,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -12175,12 +12404,15 @@ def admin_delete_curriculum(curriculum_id):
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # ── 1. Block if any current schedule rows reference this curriculum ──
+        # ── 1. Block only if a LIVE (Published/Draft) schedule references this curriculum.
+        #    Archive-status schedules don't count — they're purged below (step 3c) so a
+        #    curriculum whose schedules were all deleted/replaced can still be removed.
         cur.execute("""
             SELECT COUNT(*) AS cnt
             FROM schedule s
             JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
-            WHERE cs.curriculumid = %s
+            JOIN schedule_version sv ON sv.scheduleid = s.scheduleid
+            WHERE cs.curriculumid = %s AND sv.status IN ('Published', 'Draft')
         """, (curriculum_id,))
         if cur.fetchone()['cnt'] > 0:
             flash("Cannot delete: this curriculum is linked to existing schedules.", "error")
@@ -12230,6 +12462,42 @@ def admin_delete_curriculum(curriculum_id):
         """, (curriculum_id,))
         cur.execute("""
             UPDATE program_yearlevel SET isactive = FALSE, curriculumid = NULL WHERE curriculumid = %s
+        """, (curriculum_id,))
+
+        # 3c. Purge Archive-only schedule data left over from this curriculum's subjects
+        #     (Published/Draft already blocked deletion above, so anything remaining here
+        #     is safe to remove). Order matches the pattern used elsewhere in this file:
+        #     class_meeting_request → schedule_sessions → schedule_version → schedule.
+        cur.execute("""
+            DELETE FROM class_meeting_request
+            WHERE scheduleid IN (
+                SELECT s.scheduleid FROM schedule s
+                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE cs.curriculumid = %s
+            )
+        """, (curriculum_id,))
+        cur.execute("""
+            DELETE FROM schedule_sessions
+            WHERE versionid IN (
+                SELECT sv.versionid FROM schedule_version sv
+                JOIN schedule s ON sv.scheduleid = s.scheduleid
+                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE cs.curriculumid = %s
+            )
+        """, (curriculum_id,))
+        cur.execute("""
+            DELETE FROM schedule_version
+            WHERE scheduleid IN (
+                SELECT s.scheduleid FROM schedule s
+                JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE cs.curriculumid = %s
+            )
+        """, (curriculum_id,))
+        cur.execute("""
+            DELETE FROM schedule
+            WHERE curriculumsubjectid IN (
+                SELECT curriculumsubjectid FROM curriculumsubject WHERE curriculumid = %s
+            )
         """, (curriculum_id,))
 
         # 4b. Delete curriculum subjects
@@ -12941,6 +13209,31 @@ def admin_settings():
         _active_ay_row = cur.fetchone()
         active_ay_id = _active_ay_row[0] if _active_ay_row else None
 
+        # ── Next AY (chronologically after the active one) ──
+        # Lets Program Management pre-configure sections for the upcoming year before
+        # it becomes active, instead of only ever touching the currently active AY.
+        next_ay_id = None
+        if active_ay_id:
+            cur.execute("""
+                SELECT academicyearid FROM academicyear
+                WHERE yearstart > (SELECT yearstart FROM academicyear WHERE academicyearid = %s)
+                ORDER BY yearstart ASC LIMIT 1
+            """, (active_ay_id,))
+            _next_ay_row = cur.fetchone()
+            next_ay_id = _next_ay_row[0] if _next_ay_row else None
+
+        mgmt_ay_options = []
+        if active_ay_id:
+            mgmt_ay_options.append({'id': active_ay_id, 'label': f'Current · {active_ay_id}'})
+        if next_ay_id:
+            mgmt_ay_options.append({'id': next_ay_id, 'label': f'Next · {next_ay_id}'})
+
+        # Which AY's sections/year-levels Program Management displays and edits.
+        # Defaults to the active AY; only the active or next AY may be selected.
+        _requested_mgmt_ay = request.args.get('mgmt_ay', '').strip()
+        _valid_mgmt_ay_ids = {o['id'] for o in mgmt_ay_options}
+        selected_mgmt_ay = _requested_mgmt_ay if _requested_mgmt_ay in _valid_mgmt_ay_ids else active_ay_id
+
         # ── Program Management data ──────────────────────────
         cur.execute("""
             SELECT p.programcode, p.programname,
@@ -12957,7 +13250,7 @@ def admin_settings():
             LEFT JOIN sections          sec ON sec.programyearlevelid = pyl.programyearlevelid
             GROUP  BY p.programcode, p.programname, p.programtype, p.isactive, p.numyearlevel
             ORDER  BY p.programname
-        """, (active_ay_id,))
+        """, (selected_mgmt_ay,))
         programs_mgmt = to_dict(cur)
 
         cur.execute("""
@@ -12972,7 +13265,8 @@ def admin_settings():
         """)
         curricula_mgmt = to_dict(cur)
 
-        # Show only sections that belong to the active AY
+        # Show only sections that belong to the selected Program Management AY
+        # (defaults to the active AY; admin may switch to the next AY via mgmt_ay)
         cur.execute("""
             SELECT sec.sectionid, sec.sectionname, pyl.yearlevel,
                    pyl.programcode, sec.isactive,
@@ -12990,7 +13284,7 @@ def admin_settings():
             WHERE  p.isactive = TRUE
               AND  pyl.academicyearid = %s
             ORDER  BY pyl.programcode, pyl.yearlevel, sec.sectionname
-        """, (active_ay_id,))
+        """, (selected_mgmt_ay,))
         sections_mgmt = to_dict(cur)
 
         # program_yearlevel rows act as "offerings"
@@ -13014,10 +13308,10 @@ def admin_settings():
             GROUP  BY pyl.programyearlevelid, pyl.programcode, c.curriculumcode,
                       pyl.startacademicyear, pyl.isactive
             ORDER  BY pyl.programcode, pyl.startacademicyear DESC
-        """, (active_ay_id,))
+        """, (selected_mgmt_ay,))
         offerings_mgmt = to_dict(cur)
 
-        # Per-program year-level management — pick the active-AY PYL row per program+yearlevel.
+        # Per-program year-level management — pick the selected-AY PYL row per program+yearlevel.
         # Section counts are scoped to that same AY (not spanning all historical AYs).
         cur.execute("""
             WITH pyl_active AS (
@@ -13050,7 +13344,7 @@ def admin_settings():
                 ) AS total_section_count
             FROM pyl_active pl
             ORDER BY pl.programcode, pl.yearlevel
-        """, (active_ay_id,))
+        """, (selected_mgmt_ay,))
         prog_yearlevel_mgmt = to_dict(cur)
 
         # Year-level rows from program_yearlevel
@@ -13108,6 +13402,8 @@ def admin_settings():
                                yearlevel_data=yearlevel_data,
                                prog_yearlevel_mgmt=prog_yearlevel_mgmt,
                                active_ay_id=active_ay_id,
+                               mgmt_ay_options=mgmt_ay_options,
+                               selected_mgmt_ay=selected_mgmt_ay,
                                activity_logs=activity_logs,
                                current_ay_label=current_ay_label,
                                current_sem_label=current_sem_label,
@@ -17619,17 +17915,26 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
         return []
 
     from collections import defaultdict as _dd
-    submitted_units: dict = _dd(int)
+
+    # schedule_list has one entry per DAY/time-slice (confirmAndPlace gives each confirmed
+    # slice its own days_list of one), so a subject split across multiple sessions (e.g. a
+    # Mon+Wed lecture, or a lecture+lab pair) appears as multiple entries here. Dedupe to one
+    # per (faculty, subject, section) BEFORE summing, and resolve each subject's real credit
+    # units from curriculumsubject rather than trusting the payload's 'units' field, which
+    # actually carries total TEACHING HOURS (see confirmAndPlace's newClass.units) — comparing
+    # hours against a credit-unit-based max load silently inflated the total.
+    seen_submitted = set()
     for cls in schedule_list:
-        fid   = cls.get('faculty_id') or cls.get('employeenumber')
+        fid = cls.get('faculty_id') or cls.get('employeenumber')
         if str(fid or '').strip().upper() == 'TBA':
             continue  # TBA has no faculty to load-check
-        units = int(cls.get('units', 0) or cls.get('credit_units', 0)
-                    or cls.get('creditunits', 0) or 0)
-        if fid and units > 0:
-            submitted_units[fid] += units
+        subj = (cls.get('subject_code') or cls.get('subjectcode') or '').strip().upper()
+        sect = cls.get('section_id') or cls.get('sectionid') or ''
+        if not fid or not subj:
+            continue
+        seen_submitted.add((fid, subj, sect))
 
-    if not submitted_units:
+    if not seen_submitted:
         return []
 
     conn = None
@@ -17638,22 +17943,48 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
         if conn is None:
             return []
         cur  = conn.cursor(cursor_factory=RealDictCursor)
+
+        subj_codes = list({s for (_fid, s, _sect) in seen_submitted})
+        cur.execute("""
+            SELECT UPPER(subjectcode) AS code, MAX(COALESCE(creditunits, 0)) AS units
+            FROM public.curriculumsubject
+            WHERE UPPER(subjectcode) = ANY(%s)
+            GROUP BY UPPER(subjectcode)
+        """, (subj_codes,))
+        credit_map = {r['code']: int(r['units'] or 0) for r in (cur.fetchall() or [])}
+
+        submitted_units: dict = _dd(int)
+        for (fid, subj, _sect) in seen_submitted:
+            submitted_units[fid] += credit_map.get(subj, 0)
+        submitted_units = {k: v for k, v in submitted_units.items() if v > 0}
+        if not submitted_units:
+            cur.close(); conn.close()
+            return []
+
         excl_prog = (exclude_program or '').upper()
         excl_yl   = int(exclude_year_level or 0)
-        # Sum units already committed in OTHER sections (exclude the one being saved)
+        # Sum units already committed in OTHER sections (exclude the one being saved) — one
+        # row per real (faculty, subject, section) teaching assignment, not one per raw
+        # schedule_version row (a subject split across multiple sessions produces multiple
+        # schedule_version rows, one per slice, which must not each add its full credit units).
         cur.execute("""
-            SELECT sc.employeenumber AS faculty_id,
-                   COALESCE(SUM(COALESCE(cs.creditunits, 0)), 0) AS committed_units
-            FROM schedule_version sv
-            JOIN schedule sc          ON sv.scheduleid         = sc.scheduleid
-            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
-            WHERE sc.semesterid = %s
-              AND sv.status IN ('Published', 'Draft')
-              AND sc.employeenumber = ANY(%s)
-              AND cs.creditunits > 0
-              AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)
-            GROUP BY sc.employeenumber
+            SELECT employeenumber AS faculty_id, COALESCE(SUM(creditunits), 0) AS committed_units
+            FROM (
+                SELECT DISTINCT ON (sc.employeenumber, cs.subjectcode, sc.sectionid)
+                    sc.employeenumber, COALESCE(cs.creditunits, 0) AS creditunits
+                FROM schedule_version sv
+                JOIN schedule sc          ON sv.scheduleid         = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+                WHERE sc.semesterid = %s
+                  AND sv.status IN ('Published', 'Draft')
+                  AND sc.employeenumber = ANY(%s)
+                  AND cs.creditunits > 0
+                  AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)
+                ORDER BY sc.employeenumber, cs.subjectcode, sc.sectionid,
+                         CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END, sv.version_number DESC
+            ) d
+            GROUP BY employeenumber
         """, (sem_id, list(submitted_units.keys()), excl_prog, excl_yl))
         existing_loads = {r['faculty_id']: int(r['committed_units'] or 0)
                           for r in (cur.fetchall() or [])}
@@ -17693,9 +18024,10 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
 def _check_designee_night_limit(schedule_list, faculty_map, sem_id,
                                 exclude_program=None, exclude_year_level=None):
     """
-    PT/Night Teaching Service is a per-designee cap on the number of DISTINCT weekday
-    nights they may be scheduled outside their regular daytime hours (see settings —
-    "sets the maximum evening assignments allowed, not a fixed time restriction").
+    PT/Night Teaching Service is the number of nights/week a designee is on night
+    OFFICE duty, not a count of teaching nights. It's subtracted from the 6-night
+    (Mon–Sat) week to get the DISTINCT weekday nights they may still be scheduled
+    outside their regular daytime hours (0 office nights = all 6 free).
     Combines the submitted payload with whatever nights are already committed in
     OTHER programs/year-levels this semester, so approving a new subject correctly
     detects "this designee already has N nights elsewhere."
@@ -17787,22 +18119,22 @@ def _check_designee_night_limit(schedule_list, faculty_map, sem_id,
 
     violations = []
     for fid, new_days in submitted_nights.items():
-        fac       = faculty_map[fid]
-        night_svc = int(fac.get('nightteachingservice') or 0)
-        if night_svc <= 0:
-            continue  # "no approved evening service" is enforced elsewhere (HC3)
-        already  = existing_nights.get(fid, set())
-        combined = already | new_days
-        if len(combined) > night_svc:
+        fac            = faculty_map[fid]
+        night_svc      = int(fac.get('nightteachingservice') or 0)
+        allowed_nights = max(0, 6 - night_svc)
+        already        = existing_nights.get(fid, set())
+        combined       = already | new_days
+        if len(combined) > allowed_nights:
             violations.append({
                 'faculty_id':     fid,
                 'faculty_name':   fac.get('fullname') or fid,
-                'allowed_nights': night_svc,
+                'allowed_nights': allowed_nights,
                 'existing_nights': sorted(already),
                 'total_nights':    len(combined),
                 'detail': (
-                    f'{fac.get("fullname") or fid} is approved for {night_svc} evening '
-                    f'night(s) per week, but is already scheduled on '
+                    f'{fac.get("fullname") or fid} has {night_svc} night office service '
+                    f'duty/duties per week, leaving {allowed_nights} evening night(s) available '
+                    f'for teaching, but is already scheduled on '
                     f'{", ".join(sorted(already)) or "none"} elsewhere this term — adding '
                     f'{", ".join(sorted(new_days))} would bring it to {len(combined)}.'
                 )
@@ -17904,15 +18236,23 @@ def _get_semester_id(cur, acad_year, term):
 
 # ── DATABASE BATCH VERSIONING LOGIC ───────────────────────────────────
 
-def _archive_status(cur, program, year_level, term, semester_id, status_to_archive, source=None):
+def _archive_status(cur, program, year_level, term, semester_id, status_to_archive, source=None, section_id=None):
     # 'term' kept for signature compatibility; 's.semesterid = %s' already identifies the semester.
     # The old 'cs.semester = %s' filter was incorrectly restricting archiving to subjects whose
     # curriculum semester designation matched the current term, leaving other subjects un-archived
     # and causing duplicate Published records in SIS queries.
+    #
+    # section_id MUST be passed whenever the caller is acting on behalf of one specific section
+    # (saving/publishing/deleting/restoring a draft for that section). Without it, this archives
+    # every OTHER section of the same program+yearlevel+semester too — e.g. saving a draft for
+    # BSCE1-2 would silently archive BSCE1-1's Draft/Published rows as collateral damage.
     extra = "AND sv.source = %s" if source else ""
+    extra_sect = "AND s.sectionid = %s" if section_id else ""
     params = [program, year_level, semester_id, status_to_archive]
     if source:
         params.append(source)
+    if section_id:
+        params.append(section_id)
     cur.execute(f"""
         UPDATE public.schedule_version sv
         SET status = 'Archive'
@@ -17922,14 +18262,23 @@ def _archive_status(cur, program, year_level, term, semester_id, status_to_archi
           AND c.programcode = %s
           AND cs.yearlevel = %s AND s.semesterid = %s AND sv.status = %s
           {extra}
+          {extra_sect}
     """, params)
 
-def _archive_status_for_subjects(cur, program, year_level, term, semester_id, status_to_archive, subject_codes):
-    """Archive only sessions for specific subject codes, leaving other subjects' versions intact."""
+def _archive_status_for_subjects(cur, program, year_level, term, semester_id, status_to_archive, subject_codes, section_id=None):
+    """Archive only sessions for specific subject codes, leaving other subjects' versions intact.
+
+    section_id MUST be passed when the caller is acting on behalf of one specific section — see
+    the warning in _archive_status above; the same cross-section bleed applies here otherwise.
+    """
     if not subject_codes: return
     upper_codes = [s.upper() for s in subject_codes]
     placeholders = ','.join(['%s'] * len(upper_codes))
+    extra_sect = "AND s.sectionid = %s" if section_id else ""
     # 'term' kept for signature compatibility; removed cs.semester = %s (same fix as _archive_status)
+    params = [program, year_level, semester_id, status_to_archive] + upper_codes
+    if section_id:
+        params.append(section_id)
     cur.execute(f"""
         UPDATE public.schedule_version sv
         SET status = 'Archive'
@@ -17939,7 +18288,8 @@ def _archive_status_for_subjects(cur, program, year_level, term, semester_id, st
           AND c.programcode = %s
           AND cs.yearlevel = %s AND s.semesterid = %s AND sv.status = %s
           AND UPPER(cs.subjectcode) IN ({placeholders})
-    """, [program, year_level, semester_id, status_to_archive] + upper_codes)
+          {extra_sect}
+    """, params)
 
 def _group_carry_forward_sessions(sessions):
     """Group per-day rows from _fetch_section_sessions into multi-day items.
@@ -19544,7 +19894,7 @@ def api_save_draft():
         )
 
         # Archive all Draft records for this section + source namespace before writing new snapshot.
-        _archive_status(cur, program, year_level, term, sem_id, 'Draft', source=draft_source)
+        _archive_status(cur, program, year_level, term, sem_id, 'Draft', source=draft_source, section_id=ctx_section_id)
 
         # Draft snapshot = other subjects' Drafts (carry-forward) + newly submitted Draft slices.
         # NOTE: Published baseline is intentionally excluded — Draft must only contain Draft content.
@@ -19820,7 +20170,7 @@ def api_approve_schedule():
         }
         if _draft_absorbed_codes:
             _archive_status_for_subjects(cur, program, year_level, term, sem_id,
-                                         'Draft', list(_draft_absorbed_codes))
+                                         'Draft', list(_draft_absorbed_codes), section_id=_ctx_section_id)
 
         # _build_published_baseline now always returns [] — every submitted subject is fully
         # replaced by sched_data.  The old slot-level carry-forward caused false room conflicts
@@ -19904,7 +20254,9 @@ def api_approve_schedule():
         # Check AFTER all validation so conflicts are caught first.
         override = bool(data.get('override'))
         if not override:
-            cur.execute("""
+            _dup_guard_sect = "AND s.sectionid = %s" if _ctx_section_id else ""
+            _dup_guard_params = [program, year_level, sem_id, submitted_codes] + ([_ctx_section_id] if _ctx_section_id else [])
+            cur.execute(f"""
                 SELECT MAX(sv.datecreated) AS latest_date,
                        COUNT(DISTINCT cs.subjectcode) AS subject_count
                 FROM public.schedule_version sv
@@ -19917,7 +20269,8 @@ def api_approve_schedule():
                   AND sv.status = 'Published'
                   AND sv.source IS DISTINCT FROM 'local'
                   AND UPPER(cs.subjectcode) = ANY(%s)
-            """, (program, year_level, sem_id, submitted_codes))
+                  {_dup_guard_sect}
+            """, _dup_guard_params)
             _ex = cur.fetchone()
             if _ex and _ex['subject_count'] and int(_ex['subject_count']) > 0:
                 _date_str = ''
@@ -19947,10 +20300,14 @@ def api_approve_schedule():
 """, (program, year_level, sem_id))
         max_v = cur.fetchone()['max_v']
 
-        # Archive ALL existing Published revisions (any source except local arrangements)
-        # to prevent duplicate Published schedules from accumulating in SIS.
+        # Archive existing Published revisions for THIS SECTION ONLY (any source except local
+        # arrangements) to prevent duplicate Published schedules from accumulating in SIS.
         # Draft history is preserved — only Published status is archived here.
-        cur.execute("""
+        # Must be scoped by section — without it, publishing one section (e.g. BSCE1-2) would
+        # archive every other section's (e.g. BSCE1-1's) already-Published schedule too.
+        _pub_archive_sect = "AND s.sectionid = %s" if _ctx_section_id else ""
+        _pub_archive_params = [program, year_level, sem_id] + ([_ctx_section_id] if _ctx_section_id else [])
+        cur.execute(f"""
             UPDATE public.schedule_version sv
             SET status = 'Archive'
             FROM public.schedule s, public.curriculumsubject cs, public.curriculum c
@@ -19962,7 +20319,8 @@ def api_approve_schedule():
               AND s.semesterid = %s
               AND sv.status = 'Published'
               AND sv.source IS DISTINCT FROM 'local'
-        """, (program, year_level, sem_id))
+              {_pub_archive_sect}
+        """, _pub_archive_params)
 
         # Published snapshot = residual Published subjects (not being replaced) + new sessions.
         # published_baseline is always [] now (see _build_published_baseline).
@@ -20004,7 +20362,7 @@ def api_approve_schedule():
         # completely untouched — no new revision, no data loss.
         new_draft_v = None
         if len(remaining_draft) < len(all_current_draft):
-            _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor')
+            _archive_status(cur, program, year_level, term, sem_id, 'Draft', source='manual_editor', section_id=_ctx_section_id)
             if remaining_draft:
                 new_draft_v = max_v + 2
                 _insert_batch(cur, remaining_draft, sem_id, 'Draft', new_draft_v, program, year_level,
@@ -20034,13 +20392,15 @@ def api_approve_schedule():
 
 @app.route('/api/schedule/drafts/<int:version_id>', methods=['DELETE'])
 def api_delete_draft(version_id):
-    """Archive all Draft schedule_versions that share the same program/yearlevel/semester as version_id."""
+    """Archive all Draft schedule_versions for the same section/program/yearlevel/semester as version_id."""
     try:
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Resolve program/year/term/semesterid from the given versionid.
+        # Resolve program/year/term/semesterid/sectionid from the given versionid.
         # The versionid may belong to any one Draft row for this group — that's enough to identify the group.
+        # sectionid is essential — without it this would archive every OTHER section's Draft too.
         cur.execute("""
-            SELECT c.programcode AS programcode, cs.yearlevel, cs.semester AS term, s.semesterid
+            SELECT c.programcode AS programcode, cs.yearlevel, cs.semester AS term, s.semesterid,
+                   s.sectionid AS sectionid
             FROM public.schedule_version sv
             JOIN public.schedule s ON sv.scheduleid = s.scheduleid
             JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
@@ -20052,7 +20412,8 @@ def api_delete_draft(version_id):
         if not row:
             cur.close(); conn.close()
             return jsonify({'success': False, 'error': 'Version not found'}), 404
-        _archive_status(cur, row['programcode'], row['yearlevel'], row['term'], row['semesterid'], 'Draft')
+        _archive_status(cur, row['programcode'], row['yearlevel'], row['term'], row['semesterid'], 'Draft',
+                        section_id=row['sectionid'])
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
     except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
@@ -20139,7 +20500,11 @@ def api_faculty_teaching_assignments():
             SELECT COALESCE(SUM(d.units),0) AS total,
                    COALESCE(SUM(d.hrs),0)   AS total_hrs
             FROM (
-                SELECT DISTINCT cs.subjectcode,
+                -- One row per (subject, section): a faculty teaching the same subject
+                -- code in two different sections has two real teaching assignments and
+                -- must be counted twice. Draft is preferred over Published for the same
+                -- subject+section so a reassignment isn't double-counted.
+                SELECT DISTINCT ON (cs.subjectcode, sc.sectionid)
                     COALESCE(cs.creditunits,0) AS units,
                     COALESCE(cs.tuitionhours, cs.lecturehours+cs.laboratoryhours, 0) AS hrs
                 FROM schedule_version sv
@@ -20148,6 +20513,9 @@ def api_faculty_teaching_assignments():
                 JOIN semester sem ON sc.semesterid=sem.semesterid
                 WHERE sc.employeenumber=%s AND sem.academicyearid=%s
                   AND sem.semestertype=%s AND sv.status IN ('Published','Draft')
+                ORDER BY cs.subjectcode, sc.sectionid,
+                         CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END,
+                         sv.version_number DESC
             ) d
         """, (emp_num, ay_id, sem))
         total_row = cur.fetchone()
@@ -20168,6 +20536,13 @@ def api_faculty_teaching_assignments():
             if _sem_row:
                 _sem_id = _sem_row['semesterid']
                 _sched_codes = set(s['subjectcode'].upper() for s in sessions)
+                # Only surface a reservation as "pending" if its subject genuinely belongs to
+                # the CURRENTLY active curriculum for that program+year+AY (via
+                # program_yearlevel.curriculumid) — matching by subjectcode alone, across every
+                # curriculum ever imported, let a reservation made under an older curriculum
+                # year keep showing forever as a phantom pending assignment after an admin
+                # re-mapped that program+year to a newer curriculum, even though the subject no
+                # longer appears anywhere in the Curriculum Guide the Academic Head actually sees.
                 cur.execute("""
                     SELECT sfa.subjectcode,
                            MAX(sfa.programcode) AS programcode,
@@ -20176,12 +20551,17 @@ def api_faculty_teaching_assignments():
                            COALESCE(MAX(cs.creditunits), 0) AS units,
                            COALESCE(MAX(COALESCE(cs.tuitionhours, cs.lecturehours+cs.laboratoryhours, 0)), 0) AS hrs
                     FROM public.subject_faculty_assignment sfa
-                    LEFT JOIN curriculumsubject cs
-                           ON UPPER(cs.subjectcode) = UPPER(sfa.subjectcode)
+                    JOIN public.program_yearlevel pyl
+                         ON pyl.programcode    = sfa.programcode
+                        AND pyl.yearlevel      = sfa.yearlevel
+                        AND pyl.academicyearid = %s
+                    JOIN public.curriculumsubject cs
+                         ON cs.curriculumid = pyl.curriculumid
+                        AND UPPER(cs.subjectcode) = UPPER(sfa.subjectcode)
                     WHERE sfa.employeenumber = %s
                       AND sfa.semesterid     = %s
                     GROUP BY sfa.subjectcode
-                """, (emp_num, _sem_id))
+                """, (ay_id, emp_num, _sem_id))
                 for pr in (cur.fetchall() or []):
                     code = (pr['subjectcode'] or '').upper()
                     if code in _sched_codes:
@@ -20202,6 +20582,25 @@ def api_faculty_teaching_assignments():
                     })
                     pending_units += units_val
                     pending_hrs   += hrs_val
+
+                # Self-healing cleanup: a reservation whose subject no longer resolves against
+                # the CURRENT curriculum for its program+year+AY (e.g. the admin re-mapped that
+                # program+year to a newer curriculum since this was assigned) is stale — remove
+                # it so it stops showing up as a phantom pending assignment forever. Scoped to
+                # this faculty+semester only; never touches reservations that still resolve.
+                cur.execute("""
+                    DELETE FROM public.subject_faculty_assignment sfa
+                    WHERE sfa.employeenumber = %s AND sfa.semesterid = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM public.program_yearlevel pyl
+                          JOIN public.curriculumsubject cs ON cs.curriculumid = pyl.curriculumid
+                          WHERE pyl.programcode     = sfa.programcode
+                            AND pyl.yearlevel       = sfa.yearlevel
+                            AND pyl.academicyearid  = %s
+                            AND UPPER(cs.subjectcode) = UPPER(sfa.subjectcode)
+                      )
+                """, (emp_num, _sem_id, ay_id))
+                conn.commit()
         except Exception:
             pass
 
@@ -20388,6 +20787,7 @@ def api_restore_version(version_id):
         # Fetch context from any versionid that belongs to this snapshot group
         cur.execute("""
             SELECT c.programcode AS programcode, cs.yearlevel, cs.semester AS term, sg.semesterid,
+                   sg.sectionid AS sectionid,
                    sv.version_number AS src_vn,
                    sv.original_status AS src_orig
             FROM   schedule_version sv
@@ -20401,16 +20801,17 @@ def api_restore_version(version_id):
             cur.close(); conn.close()
             return jsonify({'success': False, 'error': 'Version not found'}), 404
 
-        prog, year_level, term, sem_id, src_vn = (
+        prog, year_level, term, sem_id, src_vn, sect_id = (
             row['programcode'], row['yearlevel'], row['term'],
-            row['semesterid'], row['src_vn']
+            row['semesterid'], row['src_vn'], row['sectionid']
         )
 
-        # Always archive BOTH Published and Draft before restoring.
+        # Always archive BOTH Published and Draft before restoring — scoped to this section only.
         # This prevents the subject from showing PUB/DRAFT simultaneously after restore,
-        # which confuses users and creates duplicate calendar blocks.
-        _archive_status(cur, prog, year_level, term, sem_id, 'Published', source='manual_editor')
-        _archive_status(cur, prog, year_level, term, sem_id, 'Draft',     source='manual_editor')
+        # which confuses users and creates duplicate calendar blocks. Without section scoping,
+        # restoring one section's version would archive every other section's current state too.
+        _archive_status(cur, prog, year_level, term, sem_id, 'Published', source='manual_editor', section_id=sect_id)
+        _archive_status(cur, prog, year_level, term, sem_id, 'Draft',     source='manual_editor', section_id=sect_id)
 
         if restore_mode == 'draft':
             target_status = 'Draft'
@@ -20425,11 +20826,13 @@ def api_restore_version(version_id):
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
             WHERE  UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s AND sg.semesterid = %s
-              AND  sv.source = 'manual_editor'
-        """, (prog, year_level, sem_id))
+              AND  sv.source = 'manual_editor' AND sg.sectionid = %s
+        """, (prog, year_level, sem_id, sect_id))
         new_v = cur.fetchone()['max_v'] + 1
 
-        # Collect all schedule_version rows at the source version_number for this section
+        # Collect all schedule_version rows at the source version_number for this section only —
+        # version_number is not unique across sections, so this must stay scoped or it will pull
+        # in and restore unrelated sections' rows that happen to share the same revision number.
         cur.execute("""
             SELECT sv.versionid, sv.scheduleid
             FROM   schedule_version sv
@@ -20437,8 +20840,8 @@ def api_restore_version(version_id):
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
             WHERE  UPPER(c.programcode) = UPPER(%s) AND cs.yearlevel = %s
-              AND  sg.semesterid = %s AND sv.version_number = %s
-        """, (prog, year_level, sem_id, src_vn))
+              AND  sg.semesterid = %s AND sv.version_number = %s AND sg.sectionid = %s
+        """, (prog, year_level, sem_id, src_vn, sect_id))
         src_rows = cur.fetchall()
 
         for src in src_rows:
@@ -20959,6 +21362,14 @@ def _run_startup_migrations():
             ALTER TABLE historical_data
             ADD COLUMN IF NOT EXISTS employeenumber VARCHAR(50)
         """)
+        _cur.execute("""
+            ALTER TABLE curriculum
+            ADD COLUMN IF NOT EXISTS curriculumtype VARCHAR(10) NOT NULL DEFAULT 'Regular'
+        """)
+        _cur.execute("""
+            ALTER TABLE curriculumsubject
+            ADD COLUMN IF NOT EXISTS isbridging BOOLEAN NOT NULL DEFAULT FALSE
+        """)
         _auto_setup_program_yearlevels(_cur)
         _c.commit()
         _backfill_historical_empnums(_cur)
@@ -20971,5 +21382,5 @@ _run_startup_migrations()
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
-   app.run(debug=True, use_reloader=False)
+   app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
    

@@ -442,18 +442,20 @@ class CSPValidator:
                         })
                 else:
                     if not is_weekend:
-                        # PT/Night Teaching Service is a maximum COUNT of evening nights per
-                        # week (see HC7 / _check_night_pt_cap), not a fixed clock window —
-                        # a designee with e.g. 2 approved nights may be scheduled any evening
-                        # hours on up to 2 distinct weekdays. Only the "zero approved nights"
-                        # case is a hard no here; the count cap itself is enforced by HC7.
-                        if not (night_svc and night_svc > 0):
+                        # PT/Night Teaching Service is a count of nights/week this designee
+                        # is on OFFICE duty in the evening, not a count of nights they may
+                        # teach. It's subtracted from the 6-night (Mon–Sat) week to get the
+                        # nights actually available for evening teaching (see HC7 /
+                        # _check_night_pt_cap) — 0 office nights means all 6 are free.
+                        allowed_nights = max(0, 6 - int(night_svc or 0))
+                        if allowed_nights <= 0:
                             violations.append({
                                 'rule': 'HC3',
                                 'subject': subj_code,
                                 'detail': (
-                                    f'This designee/administrator does not have approved evening teaching service '
-                                    f'and may not be scheduled for classes outside regular hours on {day}. '
+                                    f'This designee/administrator has no evening teaching nights available '
+                                    f'(fully committed to night office service) and may not be scheduled for '
+                                    f'classes outside regular hours on {day}. '
                                     f'Please assign a different faculty or update the faculty hours settings.'
                                 )
                             })
@@ -639,8 +641,9 @@ class CSPValidator:
     # ── HC7 Night PT cap ────────────────────────────────────────
 
     def _check_night_pt_cap(self, schedule, faculty_map):
-        # PT/Night Teaching Service is a per-designee cap on the number of DISTINCT
-        # weekday NIGHTS they may be scheduled outside their regular daytime hours —
+        # PT/Night Teaching Service is the number of nights/week this designee is on
+        # night OFFICE duty, not a count of teaching nights. Subtract it from the
+        # 6-night (Mon–Sat) week to get the nights available for evening teaching —
         # not a class count (one night can hold more than one session) and not a
         # fixed clock window (see the HC3 note in _check_time_windows).
         violations = []
@@ -666,17 +669,17 @@ class CSPValidator:
             night_days[fnum].add(day)
 
         for fnum, days in night_days.items():
-            fac       = faculty_map[fnum]
-            night_svc = int(fac.get('nightteachingservice') or 0)
-            if night_svc <= 0:
-                continue  # "no approved evening service at all" is already flagged by HC3
-            if len(days) > night_svc:
+            fac            = faculty_map[fnum]
+            night_svc      = int(fac.get('nightteachingservice') or 0)
+            allowed_nights = max(0, 6 - night_svc)
+            if len(days) > allowed_nights:
                 violations.append({
                     'rule': 'HC7',
                     'subject': 'multiple',
                     'detail': (
-                        f'Faculty {fac.get("fullname") or fnum} is approved for {night_svc} '
-                        f'evening night(s) per week, but this schedule uses {len(days)} '
+                        f'Faculty {fac.get("fullname") or fnum} has {night_svc} night office '
+                        f'service duty/duties per week, leaving {allowed_nights} evening night(s) '
+                        f'available for teaching, but this schedule uses {len(days)} '
                         f'({", ".join(sorted(days))}).'
                     )
                 })
@@ -1865,7 +1868,8 @@ class IntelligentScheduler:
         _sched_units: dict = defaultdict(int)
 
         # HC7: Track night PT class count per designee faculty so the builder never
-        # exceeds the cap (max 2) during placement, matching CSP validator logic.
+        # exceeds their cap (6 minus night office-service duties) during placement,
+        # matching CSP validator logic.
         _night_cls_count: dict = defaultdict(int)
 
         # Track slots during building to eliminate hard overlaps in generated individuals.
@@ -2054,14 +2058,16 @@ class IntelligentScheduler:
 
                 # Faculty-allowed blocks
                 allowed_blks = self._get_allowed_blocks_for_faculty(chosen_fac, valid_blks)
-                # HC7: if this designee has already reached the night PT cap, remove
-                # night blocks so this placement cannot push them over the limit.
+                # HC7: if this designee has already reached their night PT cap (6 minus
+                # their night office-service duties), remove night blocks so this
+                # placement cannot push them over the limit.
                 _fac_id_build = chosen_fac['employeenumber']
-                if (chosen_fac.get('designationid') is not None
-                        and _night_cls_count[_fac_id_build] >= 2):
-                    _day_only = [(s, e, k) for s, e, k in allowed_blks if not is_night_time(s)]
-                    if _day_only:
-                        allowed_blks = _day_only
+                if chosen_fac.get('designationid') is not None:
+                    _allowed_nights_build = max(0, 6 - int(chosen_fac.get('nightteachingservice') or 0))
+                    if _night_cls_count[_fac_id_build] >= _allowed_nights_build:
+                        _day_only = [(s, e, k) for s, e, k in allowed_blks if not is_night_time(s)]
+                        if _day_only:
+                            allowed_blks = _day_only
                 regular_blks = [(s, e) for (s, e, k) in allowed_blks if k == 'regular']
                 pt_blks      = [(s, e) for (s, e, k) in allowed_blks if k != 'regular']
 

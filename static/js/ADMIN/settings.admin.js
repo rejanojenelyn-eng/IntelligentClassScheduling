@@ -862,6 +862,14 @@ function exportLogs() {
 let PM_DATA     = { programs: [], sections: [], yearlevels: [] };
 let PM_SELECTED = null;
 
+// Reloads Settings with the Program Management panel scoped to a different AY
+// (Current or Next). Selected tab/program survive via localStorage (see below).
+function _switchMgmtAy(ayId) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('mgmt_ay', ayId);
+  window.location.href = url.toString();
+}
+
 function initProgramPanel() {
   const raw = document.getElementById('pm-data');
   if (!raw) return;

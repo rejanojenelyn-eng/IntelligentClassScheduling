@@ -763,12 +763,16 @@ async function analyzeXlsxCurriculum() {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
     _importSource = 'Excel (XLSX)';
+    _pdfHasBridging = !!document.getElementById('xlsxHasBridging')?.checked;
 
     const fd = new FormData();
     fd.append('file', fileInput.files[0]);
     for (let i = 0; i < 11; i++) fd.append(`col_${i}`, document.getElementById(`x_col_${i}`).value);
     fd.append('year_level', document.getElementById('xlsxModalYearLevel').value);
     fd.append('semester',   document.getElementById('xlsxModalSemester').value);
+    fd.append('program_code', progCode);
+    fd.append('curriculum_year', currYear);
+    fd.append('has_bridging', _pdfHasBridging ? '1' : '0');
 
     try {
         const res  = await fetch('/admin/curriculum/import/xlsx/analyze', { method: 'POST', body: fd });
@@ -838,12 +842,16 @@ async function analyzeCsvCurriculum() {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
     _importSource = 'CSV';
+    _pdfHasBridging = !!document.getElementById('csvHasBridging')?.checked;
 
     const fd = new FormData();
     fd.append('file', fileInput.files[0]);
     for (let i = 0; i < 11; i++) fd.append(`col_${i}`, document.getElementById(`h_col_${i}`).value);
     fd.append('year_level', document.getElementById('modalYearLevel').value);
     fd.append('semester',   document.getElementById('modalSemester').value);
+    fd.append('program_code', progCode);
+    fd.append('curriculum_year', currYear);
+    fd.append('has_bridging', _pdfHasBridging ? '1' : '0');
 
     try {
         const res  = await fetch('/admin/curriculum/import/csv/analyze', { method: 'POST', body: fd });
@@ -866,13 +874,67 @@ async function analyzeCsvCurriculum() {
 
 let deleteTargetId = null;
 
-function confirmDeleteCurriculum(id, year) {
+async function confirmDeleteCurriculum(id, year) {
     deleteTargetId = id;
     document.getElementById('deleteYearText').innerText = "C.Y " + year;
-    document.getElementById('deleteCurriculumModal').style.display = "flex";
-    document.getElementById('confirmDeleteBtn').onclick = function () {
+
+    const blockedList = document.getElementById('deleteBlockedList');
+    const confirmBtn   = document.getElementById('confirmDeleteBtn');
+    blockedList.style.display = "none";
+    blockedList.innerHTML = "";
+    confirmBtn.disabled = false;
+    confirmBtn.style.opacity = "";
+    confirmBtn.style.cursor = "";
+    confirmBtn.onclick = function () {
         window.location.href = "/admin/curriculum/delete/" + deleteTargetId;
     };
+    document.getElementById('deleteCurriculumModal').style.display = "flex";
+
+    try {
+        const res  = await fetch(`/admin/curriculum/${id}/blocking_schedules`);
+        const data = await res.json();
+        if (!data.success) return;
+
+        const allSchedules   = data.schedules || [];
+        const blockers       = allSchedules.filter(s => s.is_blocking);
+        const archivedOnly   = allSchedules.filter(s => !s.is_blocking);
+        const hasHardBlock   = blockers.length > 0 || data.historical_count > 0;
+
+        if (!hasHardBlock && archivedOnly.length === 0) return;
+
+        const rowLabel = s => {
+            const prog = s.programcode ? `${s.programcode} Y${s.yearlevel}` : 'Unknown program';
+            const sec  = s.sectionname ? `Section ${s.sectionname}` : 'No section';
+            const term = (s.semestertype && s.academicyearid) ? `${s.semestertype} ${s.academicyearid}` : 'Unknown term';
+            const status = s.version_statuses || 'no version';
+            return `${s.subjectcode} — ${sec} (${prog}), ${term} [${status}]`;
+        };
+
+        let html = '';
+        if (hasHardBlock) {
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            confirmBtn.style.cursor = "not-allowed";
+            confirmBtn.onclick = null;
+
+            html += '<strong style="color:#c0392b;">Cannot delete — this curriculum is linked to:</strong><ul style="margin:8px 0 0 18px; padding:0;">';
+            blockers.forEach(s => { html += `<li>${rowLabel(s)}</li>`; });
+            if (data.historical_count > 0) {
+                html += `<li>${data.historical_count} historical schedule record(s)</li>`;
+            }
+            html += '</ul><p style="margin-top:8px;">Remove or archive these schedules first, then retry.</p>';
+        }
+        if (archivedOnly.length > 0) {
+            html += `<p style="margin-top:${hasHardBlock ? '12px' : '0'}; color:#666;"><i class="fas fa-info-circle"></i> ${archivedOnly.length} archived schedule record(s) will be permanently deleted along with this curriculum:</p><ul style="margin:6px 0 0 18px; padding:0; color:#666;">`;
+            archivedOnly.forEach(s => { html += `<li>${rowLabel(s)}</li>`; });
+            html += '</ul>';
+        }
+
+        blockedList.innerHTML = html;
+        blockedList.style.display = "block";
+    } catch (e) {
+        console.error('Failed to check blocking schedules:', e);
+    }
 }
 
 function closeDeleteModal() { document.getElementById('deleteCurriculumModal').style.display = "none"; }
@@ -1053,6 +1115,7 @@ let _pdfExtractedSubjects = [];
 let _pdfProgCode = '';
 let _pdfCurrYear = '';
 let _importSource = 'File';   // tracks which file type was used for import
+let _pdfHasBridging = false;  // true when the admin marked this import as a Bridging curriculum
 
 async function analyzePdf() {
     const progCode  = document.getElementById('pdfProgramCode').value;
@@ -1074,9 +1137,13 @@ async function analyzePdf() {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
     _importSource = 'PDF';
+    _pdfHasBridging = !!document.getElementById('pdfHasBridging')?.checked;
 
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
+    formData.append('program_code', progCode);
+    formData.append('curriculum_year', currYear);
+    formData.append('has_bridging', _pdfHasBridging ? '1' : '0');
     if (document.getElementById('pdfCustomColumnView').style.display !== 'none') {
         for (let i = 0; i < 11; i++) {
             formData.append(`col_${i}`, document.getElementById(`pdf_h_col_${i}`).value);
@@ -1131,9 +1198,13 @@ async function analyzeDocx() {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
     _importSource = 'Word (DOCX)';
+    _pdfHasBridging = !!document.getElementById('docxHasBridging')?.checked;
 
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
+    formData.append('program_code', progCode);
+    formData.append('curriculum_year', currYear);
+    formData.append('has_bridging', _pdfHasBridging ? '1' : '0');
     if (document.getElementById('docxCustomColumnView').style.display !== 'none') {
         for (let i = 0; i < 11; i++) {
             formData.append(`col_${i}`, document.getElementById(`docx_h_col_${i}`).value);
@@ -1403,10 +1474,15 @@ function _buildReviewRow(s, origIdx) {
         .map(n => `<option value="${n}" ${s.yl == n ? 'selected' : ''}>${n}</option>`)
         .join('');
 
+    const bridgingTag = s.is_bridging
+        ? '<span style="display:inline-block;margin-left:5px;padding:1px 6px;font-size:10px;font-weight:700;' +
+          'letter-spacing:.4px;color:#fff;background:#800000;border-radius:9px;vertical-align:middle;">BRIDGING</span>'
+        : '';
+
     tr.innerHTML = `
         <td><input class="rev-input rev-code ${!s.sc ? 'rev-missing' : ''}" type="text"
             value="${_esc(s.sc)}" placeholder="e.g. CC101"
-            onchange="_updateField(${origIdx},'sc',this.value)"></td>
+            onchange="_updateField(${origIdx},'sc',this.value)">${bridgingTag}</td>
         <td><input class="rev-input rev-desc" type="text"
             value="${_esc(s.sn)}" placeholder="Subject Description"
             onchange="_updateField(${origIdx},'sn',this.value)"></td>
@@ -1491,20 +1567,33 @@ function backFromReviewModal() {
     }
 }
 
+// Guards against a rapid double-click firing two overlapping confirm/import
+// submissions (each of which would insert its own copy of the subjects).
+let _confirmImportInFlight = false;
+
 async function confirmPdfImport() {
+    if (_confirmImportInFlight) return;
+
     const valid = _pdfExtractedSubjects.filter(s => s.sc && s.sc.trim());
     if (!valid.length) {
         alert('No valid subjects to import. Each row must have a Subject Code.');
         return;
     }
 
+    _confirmImportInFlight = true;
+    const btn = document.querySelector('#pdfConfirmForm .btn-confirm');
+    if (btn) btn.disabled = true;
+
+    const currType = _pdfHasBridging ? 'Bridging' : 'Regular';
     try {
-        const res  = await fetch(`/admin/curriculum/check-duplicate?program_code=${encodeURIComponent(_pdfProgCode)}&curriculum_year=${encodeURIComponent(_pdfCurrYear)}`);
+        const res  = await fetch(`/admin/curriculum/check-duplicate?program_code=${encodeURIComponent(_pdfProgCode)}&curriculum_year=${encodeURIComponent(_pdfCurrYear)}&curriculum_type=${encodeURIComponent(currType)}`);
         const data = await res.json();
         if (data.exists) {
             const msg = document.getElementById('duplicateCurrMsg');
-            if (msg) msg.textContent = `A curriculum for ${_pdfProgCode} C.Y ${_pdfCurrYear} already exists in the system.`;
+            if (msg) msg.textContent = `A ${currType} curriculum for ${_pdfProgCode} C.Y ${_pdfCurrYear} already exists in the system.`;
             document.getElementById('duplicateCurrModal').style.display = 'flex';
+            _confirmImportInFlight = false;
+            if (btn) btn.disabled = false;
             return;
         }
     } catch (_e) {
@@ -1519,16 +1608,19 @@ function closeDuplicateCurrModal() {
 }
 
 function proceedWithCurrOverride() {
+    if (_confirmImportInFlight) return;
+    _confirmImportInFlight = true;
     closeDuplicateCurrModal();
     _doImportConfirm(true);
 }
 
 function _doImportConfirm(override) {
     const valid = _pdfExtractedSubjects.filter(s => s.sc && s.sc.trim());
-    document.getElementById('pdfConfirmProg').value     = _pdfProgCode;
-    document.getElementById('pdfConfirmYear').value     = _pdfCurrYear;
-    document.getElementById('pdfConfirmData').value     = JSON.stringify(valid);
-    document.getElementById('pdfConfirmSource').value   = _importSource;
-    document.getElementById('pdfConfirmOverride').value = override ? '1' : '0';
+    document.getElementById('pdfConfirmProg').value        = _pdfProgCode;
+    document.getElementById('pdfConfirmYear').value        = _pdfCurrYear;
+    document.getElementById('pdfConfirmData').value        = JSON.stringify(valid);
+    document.getElementById('pdfConfirmSource').value      = _importSource;
+    document.getElementById('pdfConfirmOverride').value    = override ? '1' : '0';
+    document.getElementById('pdfConfirmHasBridging').value = _pdfHasBridging ? '1' : '0';
     document.getElementById('pdfConfirmForm').submit();
 }
