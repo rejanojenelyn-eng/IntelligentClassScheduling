@@ -384,9 +384,35 @@
                 </select>
               </div>
             </div>
+
+            <div class="pair-list-head" style="margin-top:14px;">
+              <span class="param-sublabel">MERGE CLASS CONFIGURATION — ALLOWED SECTION PAIRINGS</span>
+              <button class="btn-add-item" onclick="addSectionPair()"><i class="fas fa-plus"></i> ADD PAIR</button>
+            </div>
+            <p class="card-desc" style="margin:2px 0 8px;">Only the section combinations listed below are eligible to merge during scheduling (e.g. DOMT-LOM paired to DOMT-MOM). Sections not part of a configured pair are always treated as a normal room conflict.</p>
+            <div id="merge-section-pairs-container"></div>
+
+            <div class="pair-list-head" style="margin-top:18px;">
+              <span class="param-sublabel">MERGED CLASS FACULTY LOAD POLICY</span>
+              <button class="btn-add-item" onclick="addMergeLoadPolicyRow()"><i class="fas fa-plus"></i> ADD RULE</button>
+            </div>
+            <p class="card-desc" style="margin:2px 0 8px;">Define which subjects count as merged for a given number of sections (e.g. NSTP with 2–3 merged sections). Credited units and teaching hours are never entered manually — they're always pulled automatically from the subject's own record (credited units, tuition hours) whenever a rule matches. When no rule matches, the subject's real credited units and the shared session's actual duration are used instead.</p>
+            <div class="mlp-table-wrap">
+              <table class="mlp-table">
+                <thead>
+                  <tr>
+                    <th>SUBJECT</th><th>MERGED SECTIONS</th><th>CREDITED UNITS</th><th>TUITION HOURS</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="mergeLoadPolicyBody">
+                  <tr><td colspan="5" class="mlp-empty">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+
             <div class="status-row" style="margin-top:10px;">
               <i class="fas fa-check-circle ic-green"></i>
-              <span>Merge policy is system-enforced during automated schedule generation, official scheduling, and manual assignment validation.</span>
+              <span>Merge policy is system-enforced during automated schedule generation, official scheduling, and manual assignment validation. Faculty load for a merged class always credits one shared assignment — never multiplied by the number of merged sections — using the load policy rule above when one matches, otherwise the subject's real units/duration.</span>
             </div>
           </div>
         </div>

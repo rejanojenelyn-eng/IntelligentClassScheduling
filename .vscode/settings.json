@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "templates/**/*.html": "jinja-html"
+    },
+    "html.validate.scripts": false
+}

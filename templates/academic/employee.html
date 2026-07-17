@@ -113,6 +113,9 @@
             <button class="btn-secondary" onclick="openImportTypeModal()">
                 <i class="fas fa-file-import"></i> IMPORT
             </button>
+            <button class="btn-secondary" onclick="openFacSubExportModal()">
+                <i class="fas fa-chalkboard-teacher"></i> SUBJECT/FACULTY ASSIGNMENT EXPORT
+            </button>
         </div>
     </div>
 
@@ -648,6 +651,134 @@
         <div class="emp-export-toast-msg" id="exportToastMsg"></div>
     </div>
     <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
+</div>
+
+<!-- SUBJECT/FACULTY ASSIGNMENT EXPORT MODAL -->
+<div id="facSubExportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeFacSubExportModal()">
+    <div class="emp-export-dialog">
+        <div class="emp-export-header">
+            <div class="emp-export-header-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+            <div>
+                <h2>Subject/Faculty Assignment Export</h2>
+                <p>Select Academic Year, Semester, and Faculty Type(s) below</p>
+            </div>
+            <button class="emp-export-close" onclick="closeFacSubExportModal()">&#215;</button>
+        </div>
+        <div class="emp-export-summary">
+            <div class="emp-export-summary-icon"><i class="fas fa-list-alt"></i></div>
+            <div>
+                <span class="emp-export-count" id="facSubCount">0</span>
+                <span class="emp-export-count-label">Assignments to Export</span>
+            </div>
+            <div class="emp-export-summary-info" id="facSubScopeLabel">Select filters to begin</div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Academic Year</span>
+            </div>
+            <div class="emp-cb-list" id="facSubAyList">
+                {% for ay in acad_years %}
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-ay-cb" value="{{ ay.academicyearid }}" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>AY {{ ay.yearstart }}-{{ ay.yearend }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Semester</span>
+            </div>
+            <div class="emp-cb-list">
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="A" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>1st Semester</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="B" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>2nd Semester</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="C" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Summer</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Faculty Type</span>
+                <button class="emp-export-select-all" id="facSubTypeAllBtn" onclick="_toggleFacSubAllTypes()">All</button>
+            </div>
+            <div class="emp-cb-list">
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Designee" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Designee</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Part-time" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Part-Time</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Regular" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Regular</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Export Format</span>
+                <button class="emp-export-select-all" id="facSubFmtAllBtn" onclick="_toggleFacSubAllFmts()">Select All</button>
+            </div>
+            <div class="emp-export-format-grid">
+                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
+                    <div class="emp-format-name">CSV</div>
+                    <div class="emp-format-desc">Comma separated values</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
+                    <div class="emp-format-name">Excel (XLSX)</div>
+                    <div class="emp-format-desc">Microsoft Excel workbook</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
+                    <div class="emp-format-name">PDF</div>
+                    <div class="emp-format-desc">Portable document format</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
+                    <div class="emp-format-name">Word (DOCX)</div>
+                    <div class="emp-format-desc">Microsoft Word document</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+            </div>
+            <div class="emp-export-format-error" id="facSubFmtError" style="display:none;">
+                Please select at least one export format.
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <label class="emp-export-label">Export Filename</label>
+            <div class="emp-filename-input-wrapper">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="facSubFilenameInput" class="emp-filename-input" value="Faculty_Subject_Assignment" placeholder="Enter filename...">
+            </div>
+        </div>
+
+        <div class="emp-export-footer">
+            <button class="emp-export-cancel" onclick="closeFacSubExportModal()">Cancel</button>
+            <button class="emp-export-confirm" id="facSubConfirmBtn" onclick="executeFacSubExport()" disabled>
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
 </div>
 
 <!-- FACULTY SCHEDULE / LOAD MODAL -->

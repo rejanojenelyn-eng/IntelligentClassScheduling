@@ -237,14 +237,11 @@ async function _exportPDF(data, filename) {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const now = new Date().toLocaleString();
 
-    doc.setFillColor(128, 0, 0);
-    doc.rect(0, 0, 297, 32, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
-    doc.text('Archived Employee Records', 148.5, 16, { align: 'center' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text('Generated: ' + now, 148.5, 25, { align: 'center' });
     doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
+    doc.text('Archived Employee Records', 148.5, 14, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text('Generated: ' + now, 148.5, 21, { align: 'center' });
 
     doc.autoTable({
         columns: [
@@ -258,10 +255,10 @@ async function _exportPDF(data, filename) {
             { header: 'Date Archived',  dataKey: 'date_archived'},
         ],
         body: data.map((e, i) => ({ no: i + 1, ...e })),
-        startY: 37,
-        styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak' },
-        headStyles: { fillColor: [128, 0, 0], textColor: 255, fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [253, 245, 245] },
+        startY: 27,
+        styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
+        headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
         margin: { left: 10, right: 10 },
     });
 

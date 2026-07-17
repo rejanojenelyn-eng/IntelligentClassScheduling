@@ -341,6 +341,18 @@ class CSPValidator:
         weekend_day = cfg.get('hc_weekend_day', 'sunday_only')
         self._weekend_restricted_days = WEEKEND if weekend_day == 'all_weekends' else ['Sunday']
 
+        # ── Allowed merge section pairs ────────────────────────
+        # Each pair is ["PROGRAMCODE-SECTIONNAME", "PROGRAMCODE-SECTIONNAME"]; stored as an
+        # unordered frozenset so either ordering matches. Empty/unparsable → no pairs configured.
+        raw_merge_pairs = cfg.get('hc_merge_section_pairs', '[]')
+        self._merge_section_pairs = set()
+        try:
+            for pair in json.loads(raw_merge_pairs or '[]'):
+                if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0] and pair[1]:
+                    self._merge_section_pairs.add(frozenset((str(pair[0]).upper(), str(pair[1]).upper())))
+        except (TypeError, ValueError):
+            pass
+
     # ── Helper: is this HC toggle enabled? ────────────────────
     def _enabled(self, key: str) -> bool:
         return bool(self._cfg.get(key, 1))
@@ -778,6 +790,30 @@ class CSPValidator:
 
     # ── HC9 Room overlap ────────────────────────────────────────
 
+    def _section_label(self, cls):
+        """'PROGRAMCODE-SECTIONNAME' identity for a gene/session dict, or None when the
+        dict carries no section identity (e.g. the GA's internal single-section gene
+        representation) — callers must treat None as "can't restrict, allow through"."""
+        prog = cls.get('course') or cls.get('program') or cls.get('programcode')
+        sect = cls.get('section_name') or cls.get('sectionname')
+        if not prog or not sect:
+            return None
+        return f"{str(prog).upper()}-{sect}"
+
+    def _section_pair_allowed(self, a, b):
+        """Only configured section pairs (Merge Class Configuration, Settings page) may
+        merge. When either side has no resolvable section identity, the restriction
+        can't be evaluated — fall back to allowing the merge (legacy behavior) rather
+        than blocking scheduling paths that never carried section context to begin with."""
+        if not self._merge_section_pairs:
+            return True  # nothing configured yet — don't newly restrict existing behavior
+        label_a, label_b = self._section_label(a), self._section_label(b)
+        if not label_a or not label_b:
+            return True
+        if label_a == label_b:
+            return True  # same section, e.g. two time-slices of the same assignment
+        return frozenset((label_a, label_b)) in self._merge_section_pairs
+
     def _check_room_overlaps(self, schedule):
         violations = []
         merge_enabled = bool(self._cfg.get('hc_merge_enabled', 1))
@@ -806,7 +842,7 @@ class CSPValidator:
                         # NSTP/OU: flexible — different faculty may teach merged sections
                         # Non-NSTP: strict — only same faculty may share a slot
                         same_fac = a.get('faculty_id') == b.get('faculty_id')
-                        if is_nstp or same_fac:
+                        if (is_nstp or same_fac) and self._section_pair_allowed(a, b):
                             continue  # valid merge — skip room conflict
                 for day_a in a.get('days_list', [a.get('day')]):
                     for day_b in b.get('days_list', [b.get('day')]):

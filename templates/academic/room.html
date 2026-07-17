@@ -113,6 +113,9 @@
                     <button class="btn-outline-action" onclick="openRoomExportModal()">
                         <i class="fas fa-upload"></i> EXPORT
                     </button>
+                    <button class="btn-outline-action" onclick="openRoomSchedExportModal()">
+                        <i class="fas fa-calendar-alt"></i> ROOM SCHEDULE EXPORT
+                    </button>
                 </div>
             </div>
 
@@ -405,6 +408,97 @@
   <div class="room-exp-toast-body">
     <div class="room-exp-toast-title" id="roomExpToastTitle"></div>
     <div class="room-exp-toast-msg"   id="roomExpToastMsg"></div>
+  </div>
+</div>
+
+<!-- ROOM SCHEDULE EXPORT MODAL (Calendar View per room) -->
+<div id="roomSchedExpModal" class="room-exp-overlay" style="display:none;">
+  <div class="room-exp-dialog">
+    <div class="room-exp-header">
+      <div class="room-exp-header-icon"><i class="fas fa-calendar-alt"></i></div>
+      <div class="room-exp-header-text">
+        <div class="room-exp-header-title">Room Schedule Export</div>
+        <div class="room-exp-header-sub">Select Academic Year &amp; Semester — a weekly calendar will be generated per room</div>
+      </div>
+      <button class="room-exp-close-btn" onclick="closeRoomSchedExportModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="room-exp-body">
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-calendar"></i>&nbsp;Step 1 &mdash; Select Academic Year</div>
+        <div class="room-exp-bldg-list" id="roomSchedAyList">
+          {% for ay in acad_years %}
+          <div class="room-exp-bldg-item" onclick="_toggleRoomSchedCb(this)">
+            <input type="checkbox" class="rse-ay-cb" value="{{ ay.academicyearid }}" onclick="event.stopPropagation()" onchange="_onRoomSchedCbChange(this)">
+            <span class="room-exp-bldg-name">AY {{ ay.yearstart }}-{{ ay.yearend }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-book-open"></i>&nbsp;Step 2 &mdash; Select Semester</div>
+        <div class="room-exp-bldg-list">
+          <div class="room-exp-bldg-item" onclick="_toggleRoomSchedCb(this)">
+            <input type="checkbox" class="rse-sem-cb" value="A" onclick="event.stopPropagation()" onchange="_onRoomSchedCbChange(this)">
+            <span class="room-exp-bldg-name">1st Semester</span>
+          </div>
+          <div class="room-exp-bldg-item" onclick="_toggleRoomSchedCb(this)">
+            <input type="checkbox" class="rse-sem-cb" value="B" onclick="event.stopPropagation()" onchange="_onRoomSchedCbChange(this)">
+            <span class="room-exp-bldg-name">2nd Semester</span>
+          </div>
+          <div class="room-exp-bldg-item" onclick="_toggleRoomSchedCb(this)">
+            <input type="checkbox" class="rse-sem-cb" value="C" onclick="event.stopPropagation()" onchange="_onRoomSchedCbChange(this)">
+            <span class="room-exp-bldg-name">Summer</span>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:.75rem;color:#555;">
+          <span id="roomSchedCount" style="font-weight:700;color:#800000;">0</span> schedule row(s) &nbsp;&middot;&nbsp;
+          <span id="roomSchedRoomCount" style="font-weight:700;color:#800000;">0</span> room(s) will be exported
+        </div>
+      </div>
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-file-alt"></i>&nbsp;Step 3 &mdash; Select Export Formats</div>
+        <div class="room-exp-formats" style="grid-template-columns:repeat(3,1fr);">
+          <div class="room-exp-fmt-card room-exp-xlsx-card" data-format="xlsx" onclick="_roomSchedToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-excel"></i></div>
+            <div class="fmt-name">XLSX</div><div class="fmt-desc">Excel Workbook</div>
+          </div>
+          <div class="room-exp-fmt-card room-exp-pdf-card"  data-format="pdf"  onclick="_roomSchedToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-pdf"></i></div>
+            <div class="fmt-name">PDF</div><div class="fmt-desc">Portable Document</div>
+          </div>
+          <div class="room-exp-fmt-card room-exp-docx-card" data-format="docx" onclick="_roomSchedToggleFmtCard(this)">
+            <div class="fmt-icon"><i class="fas fa-file-word"></i></div>
+            <div class="fmt-name">DOCX</div><div class="fmt-desc">Word Document</div>
+          </div>
+        </div>
+        <div class="room-exp-fmt-error" id="roomSchedFmtError">Please select at least one export format.</div>
+      </div>
+      <div>
+        <div class="room-exp-section-label"><i class="fas fa-cog"></i>&nbsp;Step 4 &mdash; Export Settings</div>
+        <div class="room-exp-settings-grid">
+          <div class="room-exp-field">
+            <label>Filename</label>
+            <input type="text" id="roomSchedFilename" value="Room_Schedule_Export">
+          </div>
+        </div>
+        <div class="room-exp-summary" id="roomSchedSummaryText">Select Academic Year, Semester, and formats to see export summary</div>
+      </div>
+    </div>
+    <div class="room-exp-footer">
+      <span class="room-exp-footer-info" id="roomSchedFooterInfo"></span>
+      <div class="room-exp-footer-btns">
+        <button class="room-exp-cancel-btn" onclick="closeRoomSchedExportModal()">Cancel</button>
+        <button class="room-exp-confirm-btn" id="roomSchedConfirmBtn" onclick="roomSchedExecuteExport()" disabled>
+          <i class="fas fa-download"></i>
+          <span id="roomSchedBtnLabel">Export</span>
+        </button>
+      </div>
+    </div>
+    <div class="room-exp-loading" id="roomSchedLoadingOverlay">
+      <div class="room-exp-spinner"></div>
+      <div class="room-exp-loading-text" id="roomSchedLoadingText">Exporting...</div>
+      <div class="room-exp-loading-sub"  id="roomSchedLoadingSubText">Please wait</div>
+    </div>
   </div>
 </div>
 

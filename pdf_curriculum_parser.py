@@ -980,6 +980,7 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         no_yl  = sum(1 for s in subjects if not s.get('yl'))
         no_sem = sum(1 for s in subjects if not s.get('sem'))
         no_th  = sum(1 for s in subjects if not s.get('th'))
+        no_u   = sum(1 for s in subjects if not s.get('u'))
         if no_yl:
             warnings.append(
                 f'{no_yl} subject(s) have no detected year level — please set in the review screen.'
@@ -987,6 +988,22 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         if no_sem:
             warnings.append(
                 f'{no_sem} subject(s) have no detected semester — please set in the review screen.'
+            )
+        if no_th:
+            warnings.append(
+                f'{no_th} subject(s) have no detected tuition hours — please verify in the review screen.'
+            )
+        if no_u:
+            # Credited Units silently defaults to 0 whenever the "Credited Units" header
+            # isn't matched for a given table (each year/semester's table is detected
+            # independently — one table can fail to find this column while its neighbors
+            # succeed). A subject legitimately worth 0 units is rare, so a whole table
+            # coming back at 0 almost always means the column was missed, not real data.
+            warnings.append(
+                f'{no_u} subject(s) show 0 credited units — this usually means the "Credited '
+                f'Units" column wasn\'t detected for one of the tables in this PDF (a genuine '
+                f'0-unit subject is unusual). Please verify these against the source document '
+                f'in the review screen before confirming the import.'
             )
 
     # Filter out expected/structural skip entries from the skipped list so only

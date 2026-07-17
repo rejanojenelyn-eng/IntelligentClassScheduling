@@ -742,6 +742,255 @@ function addDayPair() {
   savePairs();
 }
 
+/* ── Merge Class — Allowed Section Pairings ──────────────── */
+/* Section "value" is a stable "PROGRAMCODE-SECTIONNAME" label — matched against
+   schedule rows at merge-validation time, independent of any one academic year's
+   sectionid so a configured pairing keeps working after sections are recreated
+   for a new AY. */
+function _getMergeSectionOptions() {
+  const raw = document.getElementById('pm-data');
+  if (!raw) return [];
+  let data;
+  try { data = JSON.parse(raw.textContent); } catch { return []; }
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  const seen = new Map();
+  sections.forEach(s => {
+    const prog = (s.programcode || '').toUpperCase();
+    const name = s.sectionname || '';
+    if (!prog || !name) return;
+    const value = `${prog}-${name}`;
+    if (seen.has(value)) return;
+    seen.set(value, { value, label: `${value}${s.yearlevel ? ' (Year ' + s.yearlevel + ')' : ''}` });
+  });
+  return Array.from(seen.values()).sort((a, b) => a.value.localeCompare(b.value));
+}
+
+function loadSectionPairsFromState() {
+  try {
+    const raw = _hcState.hc_merge_section_pairs;
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return arr.map(p => ({ from: p[0], to: p[1] }));
+  } catch { return null; }
+}
+
+function saveSectionPairs() {
+  const data = [];
+  document.querySelectorAll('#merge-section-pairs-container .pair-row').forEach(row => {
+    const sels = row.querySelectorAll('.pair-section-sel');
+    if (sels.length === 2 && sels[0].value && sels[1].value) data.push([sels[0].value, sels[1].value]);
+  });
+  _hcState.hc_merge_section_pairs = JSON.stringify(data);
+  _scheduleHCSave();
+}
+
+function renderSectionPair(pair, container, options) {
+  const opts = options || _getMergeSectionOptions();
+  const optHtml = sel =>
+    (opts.length ? opts : [{ value: sel, label: sel || '—' }])
+      .map(o => `<option value="${o.value}"${o.value===sel?' selected':''}>${o.label}</option>`).join('');
+  const row = document.createElement('div');
+  row.className = 'pair-row';
+  row.innerHTML = `
+    <select class="pair-section-sel pair-day-sel" onchange="saveSectionPairs()">
+      ${optHtml(pair.from)}
+    </select>
+    <span class="pair-badge">paired to</span>
+    <select class="pair-section-sel pair-day-sel" onchange="saveSectionPairs()">
+      ${optHtml(pair.to)}
+    </select>
+    <button type="button" class="btn-del" onclick="this.closest('.pair-row').remove(); saveSectionPairs();">
+      <i class="fas fa-trash-alt"></i>
+    </button>`;
+  container.appendChild(row);
+}
+
+function initSectionPairs() {
+  const container = document.getElementById('merge-section-pairs-container');
+  if (!container) return;
+  const options = _getMergeSectionOptions();
+  const pairs = loadSectionPairsFromState() || [];
+  pairs.forEach(p => renderSectionPair(p, container, options));
+}
+
+function addSectionPair() {
+  const c = document.getElementById('merge-section-pairs-container');
+  const options = _getMergeSectionOptions();
+  if (!options.length) { _showToast('error', 'No sections available to pair. Add sections under Program Management first.'); return; }
+  renderSectionPair({ from: options[0].value, to: (options[1] || options[0]).value }, c, options);
+  saveSectionPairs();
+}
+
+/* ── Merged Class Faculty Load Policy ────────────────────── */
+let _MLP_SUBJECTS = null;   // [{subjectcode, subjectname}] — fetched once, cached
+let _MLP_POLICIES = [];     // current rule list from the server
+
+async function _getMlpSubjects() {
+  if (_MLP_SUBJECTS) return _MLP_SUBJECTS;
+  try {
+    const res  = await fetch('/api/subjects/all');
+    const data = await res.json();
+    _MLP_SUBJECTS = Array.isArray(data.subjects) ? data.subjects : [];
+  } catch { _MLP_SUBJECTS = []; }
+  return _MLP_SUBJECTS;
+}
+
+async function loadMergeLoadPolicies() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  try {
+    const res  = await fetch('/admin/settings/merge_load_policies');
+    const data = await res.json();
+    _MLP_POLICIES = data.success ? (data.policies || []) : [];
+  } catch { _MLP_POLICIES = []; }
+  await _getMlpSubjects();
+  _renderMergeLoadPolicyTable();
+}
+
+function _renderMergeLoadPolicyTable() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  if (!_MLP_POLICIES.length) {
+    body.innerHTML = '<tr><td colspan="5" class="mlp-empty">No rules configured — merged classes use the subject\'s real units/duration by default.</td></tr>';
+    return;
+  }
+  body.innerHTML = _MLP_POLICIES.map(p => _mlpReadRowHtml(p)).join('');
+}
+
+function _mlpReadRowHtml(p) {
+  return `
+    <tr data-policyid="${p.policyid}">
+        <td>${escHtml(p.subjectcode)}${p.subjectname ? `<span class="mlp-sub-name">${escHtml(p.subjectname)}</span>` : ''}</td>
+        <td>${p.min_sections}–${p.max_sections} sections</td>
+        <td>${p.creditunits ?? '—'}</td>
+        <td>${p.tuitionhours ?? '—'}</td>
+        <td class="mlp-actions">
+            <button class="mlp-edit" title="Edit" onclick="editMergeLoadPolicyRow(${p.policyid})"><i class="fas fa-pen"></i></button>
+            <button class="mlp-del" title="Delete" onclick="deleteMergeLoadPolicyRow(${p.policyid})"><i class="fas fa-trash-alt"></i></button>
+        </td>
+    </tr>`;
+}
+
+function _mlpSubjectOptionsHtml(selected) {
+  const subs = _MLP_SUBJECTS || [];
+  if (!subs.length) return `<option value="${selected||''}">${selected||'—'}</option>`;
+  return subs.map(s =>
+    `<option value="${s.subjectcode}"${s.subjectcode===selected?' selected':''}>${escHtml(s.subjectcode)}${s.subjectname ? ' — ' + escHtml(s.subjectname) : ''}</option>`
+  ).join('');
+}
+
+/* Credited units / tuition hours are read-only previews only — always derived
+   server-side from the subject's own record, never editable here. */
+function _mlpEditRowHtml(p) {
+  const id = p.policyid ?? '';
+  return `
+    <tr data-policyid="${id}" data-editing="1">
+        <td><select class="mlp-input mlp-f-subject" onchange="_mlpRefreshPreview(this)">${_mlpSubjectOptionsHtml(p.subjectcode)}</select></td>
+        <td>
+            <div class="mlp-range-inputs">
+                <input type="number" class="mlp-input mlp-f-min" min="2" value="${p.min_sections ?? 2}">
+                <span>–</span>
+                <input type="number" class="mlp-input mlp-f-max" min="2" value="${p.max_sections ?? 2}">
+            </div>
+        </td>
+        <td class="mlp-preview-units">${p.creditunits ?? '…'}</td>
+        <td class="mlp-preview-hours">${p.tuitionhours ?? '…'}</td>
+        <td class="mlp-actions">
+            <button class="mlp-save" title="Save" onclick="saveMergeLoadPolicyRow(${id ? id : 'null'}, this)"><i class="fas fa-check"></i></button>
+            <button class="mlp-cancel" title="Cancel" onclick="cancelMergeLoadPolicyRow(${id ? id : 'null'}, this)"><i class="fas fa-times"></i></button>
+        </td>
+    </tr>`;
+}
+
+/* Live-preview the credited units/tuition hours that will apply once the selected
+   subject in an edit row is changed — purely informational, computed client-side from
+   the same _MLP_SUBJECTS list is not possible (creditunits/hours aren't in that list),
+   so this re-fetches the authoritative value from the server for just that subject. */
+async function _mlpRefreshPreview(selectEl) {
+  const row = selectEl.closest('tr');
+  const unitsCell = row.querySelector('.mlp-preview-units');
+  const hoursCell = row.querySelector('.mlp-preview-hours');
+  unitsCell.textContent = '…'; hoursCell.textContent = '…';
+  try {
+    const res  = await fetch(`/admin/settings/merge_load_policies/subject_preview?subjectcode=${encodeURIComponent(selectEl.value)}`);
+    const data = await res.json();
+    unitsCell.textContent = data.creditunits ?? '—';
+    hoursCell.textContent = data.tuitionhours ?? '—';
+  } catch {
+    unitsCell.textContent = '—'; hoursCell.textContent = '—';
+  }
+}
+
+async function addMergeLoadPolicyRow() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  await _getMlpSubjects();
+  if (!(_MLP_SUBJECTS && _MLP_SUBJECTS.length)) {
+    _showToast('error', 'No subjects found. Import a curriculum first.');
+    return;
+  }
+  if (body.querySelector('[data-editing="1"]')) return;   // one edit at a time
+  if (body.querySelector('.mlp-empty')) body.innerHTML = '';
+  body.insertAdjacentHTML('afterbegin', _mlpEditRowHtml({
+    subjectcode: _MLP_SUBJECTS[0].subjectcode, min_sections: 2, max_sections: 2,
+  }));
+  const firstRow = body.querySelector('tr[data-editing="1"]');
+  if (firstRow) _mlpRefreshPreview(firstRow.querySelector('.mlp-f-subject'));
+}
+
+function editMergeLoadPolicyRow(policyid) {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body || body.querySelector('[data-editing="1"]')) return;
+  const p = _MLP_POLICIES.find(x => x.policyid === policyid);
+  if (!p) return;
+  const row = body.querySelector(`tr[data-policyid="${policyid}"]`);
+  if (row) row.outerHTML = _mlpEditRowHtml(p);
+}
+
+function cancelMergeLoadPolicyRow(policyid, btn) {
+  const row = btn.closest('tr');
+  const existing = _MLP_POLICIES.find(x => x.policyid === policyid);
+  if (existing) {
+    row.outerHTML = _mlpReadRowHtml(existing);
+  } else {
+    row.remove();
+    if (!_MLP_POLICIES.length) _renderMergeLoadPolicyTable();
+  }
+}
+
+async function saveMergeLoadPolicyRow(policyid, btn) {
+  const row = btn.closest('tr');
+  const payload = {
+    subjectcode:  row.querySelector('.mlp-f-subject').value,
+    min_sections: row.querySelector('.mlp-f-min').value,
+    max_sections: row.querySelector('.mlp-f-max').value,
+  };
+  const url    = policyid ? `/admin/settings/merge_load_policies/${policyid}` : '/admin/settings/merge_load_policies';
+  const method = policyid ? 'PUT' : 'POST';
+  try {
+    const res  = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) { _showToast('error', data.error || 'Could not save rule.'); return; }
+    _showToast('success', policyid ? 'Rule updated.' : 'Rule added.');
+    await loadMergeLoadPolicies();
+  } catch {
+    _showToast('error', 'Network error — could not save rule.');
+  }
+}
+
+async function deleteMergeLoadPolicyRow(policyid) {
+  if (!confirm('Delete this merged class load policy rule?')) return;
+  try {
+    const res  = await fetch(`/admin/settings/merge_load_policies/${policyid}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) { _showToast('error', data.error || 'Could not delete rule.'); return; }
+    _showToast('success', 'Rule deleted.');
+    await loadMergeLoadPolicies();
+  } catch {
+    _showToast('error', 'Network error — could not delete rule.');
+  }
+}
+
 /* ── Time Slots ─────────────────────────────────────────── */
 function loadSlotsFromState() {
   try {
@@ -1465,6 +1714,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initHCToggles();
   initDayPairs();
   initTimeSlots();
+  initSectionPairs();
+  loadMergeLoadPolicies();
   initProgramPanel();
 
   /* Wire AJAX submit for Edit Section rename form */

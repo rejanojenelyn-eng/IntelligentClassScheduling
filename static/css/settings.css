@@ -497,6 +497,61 @@
 }
 .btn-del:hover { color: #c0392b; }
 
+/* ── Merged Class Faculty Load Policy table ──────────── */
+.mlp-table-wrap {
+  border: 1.5px solid var(--m-mid);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.mlp-table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+.mlp-table thead th {
+  background: var(--m);
+  color: #fff;
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-align: left;
+  padding: 8px 10px;
+}
+.mlp-table tbody td {
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-1);
+  font-weight: 600;
+  vertical-align: middle;
+}
+.mlp-table tbody tr:nth-child(even) { background: var(--alt-row); }
+.mlp-empty { color: var(--text-3); font-weight: 500; text-align: center; padding: 14px !important; }
+.mlp-sub-name { display: block; font-size: .68rem; font-weight: 500; color: var(--text-3); }
+.mlp-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+.mlp-actions button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-xs);
+  font-size: .78rem;
+  color: #bbb;
+  transition: color var(--ease);
+}
+.mlp-actions .mlp-edit:hover  { color: var(--m); }
+.mlp-actions .mlp-save:hover  { color: #2e7d32; }
+.mlp-actions .mlp-cancel:hover{ color: #888; }
+.mlp-actions .mlp-del:hover   { color: #c0392b; }
+.mlp-table select.mlp-input,
+.mlp-table input.mlp-input {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1.5px solid var(--m-mid);
+  border-radius: var(--r-xs);
+  font-size: .74rem;
+  font-weight: 700;
+  outline: none;
+}
+.mlp-input:focus { border-color: var(--m); }
+.mlp-range-inputs { display: flex; align-items: center; gap: 5px; }
+.mlp-range-inputs input { width: 52px; text-align: center; }
+
 /* ── Time Slots Grid ────────────────────────────────── */
 .slots-grid {
   display: grid;
