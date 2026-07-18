@@ -487,15 +487,15 @@ async function _roomExportXLSX(buildings,filename){
 }
 async function _roomExportPDF(buildings,filename){
     const{jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-    const W=210,M=10,CW=190,HDR_H=32,PAGE_H=297,now=new Date().toLocaleString();
-    function drawBanner(){doc.setFillColor(128,0,0);doc.rect(0,0,W,HDR_H,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(13);doc.text('PUP LOPEZ CAMPUS',W/2,11,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text('ROOMS AND BUILDINGS',W/2,18,{align:'center'});doc.setFontSize(7.5);doc.text('Generated: '+now,W/2,26,{align:'center'});doc.setTextColor(0,0,0);}
+    const W=210,M=10,CW=190,HDR_H=24,PAGE_H=297,now=new Date().toLocaleString();
+    function drawBanner(){doc.setTextColor(0,0,0);doc.setFont('helvetica','bold');doc.setFontSize(13);doc.text('PUP LOPEZ CAMPUS',W/2,11,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text('ROOMS AND BUILDINGS',W/2,18,{align:'center'});doc.setFontSize(7.5);doc.text('Generated: '+now,W/2,24,{align:'center'});}
     drawBanner();let y=HDR_H+5;
     buildings.forEach((bldg,idx)=>{
         const rooms=bldg.rooms||[];const minNeeded=8+9+Math.min(rooms.length,3)*8+8+5;
         if(idx>0){if(y+minNeeded>PAGE_H-10){doc.addPage();drawBanner();y=HDR_H+5;}else{y+=5;}}
-        doc.setFillColor(55,55,55);doc.rect(M,y,CW,8,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text(bldg.buildingname.toUpperCase(),M+4,y+5.5);
-        doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.text(`Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`,W-M-3,y+5.5,{align:'right'});doc.setTextColor(0,0,0);y+=9;
-        doc.autoTable({columns:[{header:'#',dataKey:'_num'},{header:'Room Number',dataKey:'roomname'},{header:'Room Type',dataKey:'roomtype'},{header:'Capacity',dataKey:'roomcapacity'}],body:rooms.map((r,i)=>({...r,_num:i+1})),startY:y,styles:{fontSize:8.5,cellPadding:2.5},headStyles:{fillColor:[128,0,0],textColor:255,fontStyle:'bold',fontSize:9},alternateRowStyles:{fillColor:[253,245,245]},columnStyles:{0:{cellWidth:12,halign:'center'},1:{cellWidth:102},2:{cellWidth:50,halign:'center'},3:{cellWidth:26,halign:'center'}},tableWidth:CW,foot:[['','TOTAL ROOMS','',rooms.length]],footStyles:{fillColor:[240,230,230],fontStyle:'bold',fontSize:9,textColor:[80,0,0]},showFoot:'lastPage',margin:{top:HDR_H+4,left:M,right:M},didDrawPage:(d)=>{if(d.pageNumber>1){drawBanner();}}});
+        doc.setTextColor(0,0,0);doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text(bldg.buildingname.toUpperCase(),M,y+4);
+        doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.text(`Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`,W-M,y+4,{align:'right'});y+=7;
+        doc.autoTable({columns:[{header:'#',dataKey:'_num'},{header:'Room Number',dataKey:'roomname'},{header:'Room Type',dataKey:'roomtype'},{header:'Capacity',dataKey:'roomcapacity'}],body:rooms.map((r,i)=>({...r,_num:i+1})),startY:y,styles:{fontSize:8.5,cellPadding:2.5,lineColor:[0,0,0],lineWidth:0.2,textColor:[0,0,0]},headStyles:{fillColor:[255,255,255],textColor:[0,0,0],fontStyle:'bold',fontSize:9,lineColor:[0,0,0],lineWidth:0.2},alternateRowStyles:{fillColor:[255,255,255]},columnStyles:{0:{cellWidth:12,halign:'center'},1:{cellWidth:102},2:{cellWidth:50,halign:'center'},3:{cellWidth:26,halign:'center'}},tableWidth:CW,foot:[['','TOTAL ROOMS','',rooms.length]],footStyles:{fillColor:[255,255,255],fontStyle:'bold',fontSize:9,textColor:[0,0,0],lineColor:[0,0,0],lineWidth:0.2},showFoot:'lastPage',margin:{top:HDR_H+4,left:M,right:M},didDrawPage:(d)=>{if(d.pageNumber>1){drawBanner();}}});
         y=doc.lastAutoTable.finalY+3;
     });
     const total=doc.internal.getNumberOfPages();
@@ -537,4 +537,133 @@ async function roomExecuteExport(){
     _hideRoomExpLoading();btn.disabled=false;
     if(errors.length)_showRoomExpToast('error','Export Errors',errors.join(' | '));
     else{const n=selectedFmts.length;_showRoomExpToast('success','Export Complete',`${n} file${n===1?'':'s'} generated.`);}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ROOM SCHEDULE EXPORT — Calendar View per room (AY + Semester only)
+═══════════════════════════════════════════════════════════ */
+const _ROOM_SCHED_COUNT_ROUTE  = '/admin/rooms/schedule-export/count';
+const _ROOM_SCHED_EXPORT_ROUTE = '/admin/rooms/schedule-export';
+let _roomSchedCountTmr = null;
+
+function openRoomSchedExportModal() {
+    document.querySelectorAll('#roomSchedExpModal .rse-ay-cb, #roomSchedExpModal .rse-sem-cb').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#roomSchedExpModal .room-exp-bldg-item').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('#roomSchedExpModal .room-exp-fmt-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById('roomSchedFilename').value = 'Room_Schedule_Export';
+    document.getElementById('roomSchedCount').textContent = '0';
+    document.getElementById('roomSchedRoomCount').textContent = '0';
+    document.getElementById('roomSchedSummaryText').textContent = 'Select Academic Year, Semester, and formats to see export summary';
+    document.getElementById('roomSchedFooterInfo').textContent = '';
+    document.getElementById('roomSchedBtnLabel').textContent = 'Export';
+    document.getElementById('roomSchedConfirmBtn').disabled = true;
+    document.getElementById('roomSchedFmtError').style.display = 'none';
+    document.getElementById('roomSchedExpModal').style.display = 'flex';
+}
+function closeRoomSchedExportModal() {
+    document.getElementById('roomSchedExpModal').style.display = 'none';
+}
+
+function _toggleRoomSchedCb(itemEl) {
+    const cb = itemEl.querySelector('input[type=checkbox]');
+    cb.checked = !cb.checked;
+    _onRoomSchedCbChange(cb);
+}
+function _onRoomSchedCbChange(cb) {
+    cb.closest('.room-exp-bldg-item').classList.toggle('selected', cb.checked);
+    _updateRoomSchedFooter();
+    clearTimeout(_roomSchedCountTmr);
+    _roomSchedCountTmr = setTimeout(_fetchRoomSchedCount, 400);
+}
+function _roomSchedToggleFmtCard(el) { el.classList.toggle('selected'); _updateRoomSchedFooter(); }
+
+function _roomSchedFilters() {
+    return {
+        ay_ids:    Array.from(document.querySelectorAll('#roomSchedExpModal .rse-ay-cb:checked')).map(c => c.value),
+        sem_types: Array.from(document.querySelectorAll('#roomSchedExpModal .rse-sem-cb:checked')).map(c => c.value),
+    };
+}
+
+async function _fetchRoomSchedCount() {
+    const f = _roomSchedFilters();
+    if (!f.ay_ids.length || !f.sem_types.length) {
+        document.getElementById('roomSchedCount').textContent = '0';
+        document.getElementById('roomSchedRoomCount').textContent = '0';
+        _updateRoomSchedFooter();
+        return;
+    }
+    try {
+        const res  = await fetch(_ROOM_SCHED_COUNT_ROUTE, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(f) });
+        const data = await res.json();
+        if (data.error) { document.getElementById('roomSchedSummaryText').textContent = 'Error: ' + data.error; return; }
+        document.getElementById('roomSchedCount').textContent     = data.count || 0;
+        document.getElementById('roomSchedRoomCount').textContent = data.rooms || 0;
+    } catch (e) {
+        document.getElementById('roomSchedSummaryText').textContent = 'Network error — check server connection.';
+    }
+    _updateRoomSchedFooter();
+}
+
+function _updateRoomSchedFooter() {
+    const f     = _roomSchedFilters();
+    const fmts  = Array.from(document.querySelectorAll('#roomSchedExpModal .room-exp-fmt-card.selected')).map(c => c.dataset.format.toUpperCase());
+    const rooms = parseInt(document.getElementById('roomSchedRoomCount').textContent) || 0;
+    const hasFilters = f.ay_ids.length > 0 && f.sem_types.length > 0;
+    const ok = hasFilters && fmts.length > 0 && rooms > 0;
+
+    document.getElementById('roomSchedConfirmBtn').disabled = !ok;
+    const sumEl = document.getElementById('roomSchedSummaryText');
+    if (!hasFilters) {
+        sumEl.innerHTML = 'Select Academic Year, Semester, and formats to see export summary';
+    } else if (rooms === 0) {
+        sumEl.innerHTML = 'No scheduled rooms found for the selected Academic Year/Semester.';
+    } else {
+        sumEl.innerHTML = `<strong>${rooms}</strong> room${rooms===1?'':'s'} &times; <strong>${fmts.length}</strong> format${fmts.length===1?'':'s'} will be generated`;
+    }
+    const info = document.getElementById('roomSchedFooterInfo');
+    if (info) info.textContent = fmts.join(', ');
+    const btnLbl = document.getElementById('roomSchedBtnLabel');
+    if (btnLbl) btnLbl.textContent = ok ? `Export ${rooms} Room${rooms===1?'':'s'}` : 'Export';
+}
+
+async function roomSchedExecuteExport() {
+    const f      = _roomSchedFilters();
+    const fmts   = Array.from(document.querySelectorAll('#roomSchedExpModal .room-exp-fmt-card.selected')).map(c => c.dataset.format);
+    const fmtErr = document.getElementById('roomSchedFmtError');
+    if (!fmts.length) { fmtErr.style.display = 'block'; return; }
+    fmtErr.style.display = 'none';
+    if (!f.ay_ids.length || !f.sem_types.length) {
+        _showRoomExpToast('error', 'Missing Selection', 'Select at least one Academic Year and Semester.');
+        return;
+    }
+    const filename = (document.getElementById('roomSchedFilename').value || 'Room_Schedule_Export').trim().replace(/[\/\\:*?"<>|]/g, '_');
+    const btn = document.getElementById('roomSchedConfirmBtn');
+    btn.disabled = true;
+
+    const loadEl  = document.getElementById('roomSchedLoadingOverlay');
+    const loadTxt = document.getElementById('roomSchedLoadingText');
+    loadTxt.textContent = 'Generating room schedule export...';
+    loadEl.style.display = 'flex';
+
+    try {
+        const resp = await fetch(_ROOM_SCHED_EXPORT_ROUTE, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ...f, formats: fmts, filename }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || resp.statusText);
+        }
+        const blob = await resp.blob();
+        const ext  = fmts.length > 1 ? '.zip' : '.' + fmts[0];
+        const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + ext });
+        a.click(); URL.revokeObjectURL(a.href);
+        closeRoomSchedExportModal();
+        _showRoomExpToast('success', 'Export Complete', 'Room schedule export downloaded.');
+    } catch (e) {
+        _showRoomExpToast('error', 'Export Failed', e.message);
+    } finally {
+        loadEl.style.display = 'none';
+        btn.disabled = false;
+    }
 }

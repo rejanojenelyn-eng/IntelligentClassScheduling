@@ -85,6 +85,10 @@
         .se-fmt-docx .se-fmt-icon { color:#2b5797; } .se-fmt-pdf  .se-fmt-icon { color:#c0392b; }
         .se-fmt-name { font-size:.85rem; font-weight:800; color:#333; }
         .se-fmt-desc { font-size:.68rem; color:#999; margin-top:3px; }
+        .se-overlay-layout { z-index:1600; }
+        .se-layout-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+        .se-fmt-table .se-fmt-icon { color:#630100; }
+        .se-fmt-calendar .se-fmt-icon { color:#0277bd; }
         .se-fn-row { display:flex; gap:10px; align-items:flex-end; margin-top:14px; }
         .se-fn-field { flex:1; display:flex; flex-direction:column; gap:4px; }
         .se-fn-field label { font-size:.72rem; font-weight:700; color:#555; text-transform:uppercase; }
@@ -315,6 +319,10 @@
           </div>
           <hr class="se-filter-divider">
           <h4><i class="fas fa-layer-group"></i> Year Level</h4>
+          <div class="se-prog-actions">
+            <button type="button" onclick="seSelectAllYL(true)">Select All</button>
+            <button type="button" onclick="seSelectAllYL(false)">Clear All</button>
+          </div>
           <div class="se-cb-list">
             <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="1" onchange="seUpdateCount()"><label>1st Year</label></label>
             <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="2" onchange="seUpdateCount()"><label>2nd Year</label></label>
@@ -379,6 +387,37 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════
+     EXPORT LAYOUT PICKER MODAL (Table View / Calendar View)
+════════════════════════════════════════════════════════════ -->
+<div id="seLayoutModal" class="se-overlay se-overlay-layout">
+  <div class="se-dialog" style="width:min(560px,96vw);">
+    <div class="se-hdr">
+      <div class="se-hdr-title"><i class="fas fa-th-large"></i> Choose Export Layout</div>
+      <button class="se-hdr-close" onclick="seCloseLayout()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="se-body">
+      <div class="se-sec-lbl">Layout</div>
+      <div class="se-layout-grid">
+        <div class="se-fmt-card se-fmt-table" onclick="seChooseLayout('table')">
+          <span class="se-fmt-icon"><i class="fas fa-table"></i></span>
+          <div class="se-fmt-name">Table View</div>
+          <div class="se-fmt-desc">Official subject-offerings list, grouped by program and year level.</div>
+        </div>
+        <div class="se-fmt-card se-fmt-calendar" onclick="seChooseLayout('calendar')">
+          <span class="se-fmt-icon"><i class="fas fa-calendar-week"></i></span>
+          <div class="se-fmt-name">Calendar View</div>
+          <div class="se-fmt-desc">Weekly timetable (Mon&ndash;Sun) with subjects placed by day and time slot.</div>
+        </div>
+      </div>
+    </div>
+    <div class="se-footer">
+      <button class="se-btn-cancel" onclick="seCloseLayout()"><i class="fas fa-arrow-left"></i> Back</button>
+      <span></span>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════════════════════════
    SCHEDULE EXPORT ENGINE
@@ -393,6 +432,28 @@
         document.querySelectorAll('.se-ay-cb,.se-sem-cb,.se-yl-cb,.se-prog-cb').forEach(cb => cb.checked = false);
         document.getElementById('seProgSearch').value = '';
         seFilterProgs();
+
+        /* Pre-apply the filters currently active on the schedule page (Acad Year,
+           Semester, Program, Year Level) so Export defaults to the filtered view. */
+        const active = _activePageFilters();
+        let appliedAny = false;
+        if (active.ay) {
+            const cb = document.querySelector(`.se-ay-cb[value="${CSS.escape(active.ay)}"]`);
+            if (cb) { cb.checked = true; appliedAny = true; }
+        }
+        if (active.sem) {
+            const cb = document.querySelector(`.se-sem-cb[value="${CSS.escape(active.sem)}"]`);
+            if (cb) { cb.checked = true; appliedAny = true; }
+        }
+        if (active.prog) {
+            const cb = document.querySelector(`.se-prog-cb[value="${CSS.escape(active.prog)}"]`);
+            if (cb) { cb.checked = true; appliedAny = true; }
+        }
+        if (active.yl) {
+            const cb = document.querySelector(`.se-yl-cb[value="${CSS.escape(active.yl)}"]`);
+            if (cb) { cb.checked = true; appliedAny = true; }
+        }
+
         FMTS.forEach(f => {
             const card = document.getElementById('seFmt' + f[0].toUpperCase() + f.slice(1));
             if (card) card.classList.remove('sel');
@@ -400,12 +461,26 @@
         document.getElementById('seFilename').value = 'schedule_export';
         document.getElementById('seCountRows').textContent = '—';
         document.getElementById('seCountProgs').textContent = '—';
-        document.getElementById('seSumMsg').textContent = 'Apply filters and select a format to begin.';
+        document.getElementById('seSumMsg').textContent = appliedAny
+            ? 'Filters applied from the current schedule view. Select a format to begin.'
+            : 'Apply filters and select a format to begin.';
         document.getElementById('seBtnExport').disabled = true;
         document.getElementById('seBtnLbl').textContent = 'Export';
         document.getElementById('seLoading').classList.remove('active');
         document.getElementById('seModal').style.display = 'flex';
+        document.getElementById('seLayoutModal').style.display = 'none';
+
+        if (appliedAny) seUpdateCount();
     };
+
+    function _activePageFilters() {
+        return {
+            ay:   document.getElementById('view_ay')?.value || '',
+            sem:  document.getElementById('view_sem')?.value || '',
+            prog: document.getElementById('view_prog')?.value || '',
+            yl:   document.getElementById('view_yl')?.value || ''
+        };
+    }
     window.seClose = () => { document.getElementById('seModal').style.display = 'none'; };
 
     window.seToggleFmt = (fmt) => {
@@ -427,6 +502,10 @@
     };
     window.seSelectAllProgs = (checked) => {
         document.querySelectorAll('.se-prog-item:not([style*="display: none"]) .se-prog-cb').forEach(cb => cb.checked = checked);
+        seUpdateCount();
+    };
+    window.seSelectAllYL = (checked) => {
+        document.querySelectorAll('.se-yl-cb').forEach(cb => cb.checked = checked);
         seUpdateCount();
     };
 
@@ -520,10 +599,28 @@
         return parts.join('_');
     }
 
+    /* PDF/DOCX/XLSX support a Layout choice (Table View vs Calendar View);
+       CSV is always flat data, so it skips the layout picker entirely. */
     window.seDoExport = async () => {
+        const formats = [..._selFmts];
+        if (!formats.length) { alert('Please select at least one export format.'); return; }
+        const needsLayout = formats.some(f => f === 'pdf' || f === 'docx' || f === 'xlsx');
+        if (needsLayout) {
+            document.getElementById('seLayoutModal').style.display = 'flex';
+        } else {
+            _seRunExport('table');
+        }
+    };
+
+    window.seCloseLayout = () => { document.getElementById('seLayoutModal').style.display = 'none'; };
+    window.seChooseLayout = (layout) => {
+        document.getElementById('seLayoutModal').style.display = 'none';
+        _seRunExport(layout);
+    };
+
+    async function _seRunExport(layout) {
         const formats  = [..._selFmts];
         const filename = document.getElementById('seFilename').value.trim() || 'schedule_export';
-        if (!formats.length) { alert('Please select at least one export format.'); return; }
         const loadEl  = document.getElementById('seLoading');
         const loadLbl = document.getElementById('seLoadLbl');
         const STEPS   = ['Fetching schedule data…','Building document…','Applying formatting…','Finalizing file…'];
@@ -538,7 +635,7 @@
             const resp = await fetch('/academic/schedule/export', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ..._filters(), formats, filename })
+                body: JSON.stringify({ ..._filters(), formats, filename, layout })
             });
             clearInterval(stepTmr);
             if (!resp.ok) {
@@ -560,7 +657,7 @@
         } finally {
             loadEl.classList.remove('active');
         }
-    };
+    }
 })();
 </script>
 {% endblock %}

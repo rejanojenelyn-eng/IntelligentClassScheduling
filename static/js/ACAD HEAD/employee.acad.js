@@ -804,14 +804,11 @@ async function _exportPDF(data, filename) {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const now = new Date();
 
-    doc.setFillColor(128, 0, 0);
-    doc.rect(0, 0, 297, 32, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
-    doc.text('Employee Records', 148.5, 16, { align: 'center' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text('Generated: ' + now.toLocaleString(), 148.5, 25, { align: 'center' });
     doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
+    doc.text('Employee Records', 148.5, 14, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text('Generated: ' + now.toLocaleString(), 148.5, 21, { align: 'center' });
 
     doc.autoTable({
         columns: [
@@ -824,10 +821,10 @@ async function _exportPDF(data, filename) {
             { header: 'Status',          dataKey: 'status'  },
         ],
         body: data.map((e, i) => ({ no: i + 1, emp_num: e.emp_num, name: e.name, spec: e.spec, email: e.email, type: e.type, status: e.status })),
-        startY: 37,
-        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
-        headStyles: { fillColor: [128, 0, 0], textColor: 255, fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [253, 245, 245] },
+        startY: 27,
+        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
+        headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
         margin: { left: 10, right: 10 },
     });
 
@@ -1046,5 +1043,156 @@ async function _loadFacultyLoad(empNum) {
         `;
     } catch (e) {
         el.innerHTML = '<div class="fac-empty">Failed to load load summary.</div>';
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SUBJECT/FACULTY ASSIGNMENT EXPORT
+═══════════════════════════════════════════════════════════ */
+const _FACSUB_COUNT_ROUTE  = '/admin/faculty/subject-export/count';
+const _FACSUB_EXPORT_ROUTE = '/admin/faculty/subject-export';
+let _facSubCountTmr = null;
+let _facSubLastFacultyCount = 0;
+
+function openFacSubExportModal() {
+    _facSubLastFacultyCount = 0;
+    document.querySelectorAll('#facSubExportModal .fse-ay-cb, #facSubExportModal .fse-sem-cb, #facSubExportModal .fse-type-cb').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#facSubExportModal .emp-cb-item').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('#facSubExportModal .emp-export-format-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById('facSubFilenameInput').value = 'Faculty_Subject_Assignment';
+    document.getElementById('facSubCount').textContent = '0';
+    document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
+    document.getElementById('facSubFmtError').style.display = 'none';
+    document.getElementById('facSubConfirmBtn').disabled = true;
+    document.getElementById('facSubTypeAllBtn').textContent = 'All';
+    document.getElementById('facSubFmtAllBtn').textContent = 'Select All';
+    document.getElementById('facSubExportModal').style.display = 'flex';
+}
+function closeFacSubExportModal() {
+    document.getElementById('facSubExportModal').style.display = 'none';
+}
+
+function _toggleFacSubCb(itemEl) {
+    const cb = itemEl.querySelector('input[type=checkbox]');
+    cb.checked = !cb.checked;
+    _onFacSubCbChange(cb);
+}
+function _onFacSubCbChange(cb) {
+    cb.closest('.emp-cb-item').classList.toggle('selected', cb.checked);
+    _syncFacSubTypeAllBtn();
+    _updateFacSubFooter();
+    clearTimeout(_facSubCountTmr);
+    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
+}
+
+function _toggleFacSubAllTypes() {
+    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
+    const allSel = Array.from(cbs).every(cb => cb.checked);
+    cbs.forEach(cb => { cb.checked = !allSel; cb.closest('.emp-cb-item').classList.toggle('selected', !allSel); });
+    _syncFacSubTypeAllBtn();
+    _updateFacSubFooter();
+    clearTimeout(_facSubCountTmr);
+    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
+}
+function _syncFacSubTypeAllBtn() {
+    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
+    const allSel = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
+    document.getElementById('facSubTypeAllBtn').textContent = allSel ? 'Clear' : 'All';
+}
+
+function _toggleFacSubFmtCard(el) {
+    el.classList.toggle('selected');
+    const all    = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
+    const allSel = Array.from(all).every(c => c.classList.contains('selected'));
+    document.getElementById('facSubFmtAllBtn').textContent = allSel ? 'Deselect All' : 'Select All';
+    _updateFacSubFooter();
+}
+function _toggleFacSubAllFmts() {
+    const cards  = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
+    const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
+    cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
+    document.getElementById('facSubFmtAllBtn').textContent = !allSel ? 'Deselect All' : 'Select All';
+    _updateFacSubFooter();
+}
+
+function _facSubFilters() {
+    return {
+        ay_ids:        Array.from(document.querySelectorAll('#facSubExportModal .fse-ay-cb:checked')).map(c => c.value),
+        sem_types:     Array.from(document.querySelectorAll('#facSubExportModal .fse-sem-cb:checked')).map(c => c.value),
+        faculty_types: Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value),
+    };
+}
+
+async function _fetchFacSubCount() {
+    const f = _facSubFilters();
+    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
+        document.getElementById('facSubCount').textContent = '0';
+        _facSubLastFacultyCount = 0;
+        document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
+        _updateFacSubFooter();
+        return;
+    }
+    try {
+        const res  = await fetch(_FACSUB_COUNT_ROUTE, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(f) });
+        const data = await res.json();
+        if (data.error) { document.getElementById('facSubScopeLabel').textContent = 'Error: ' + data.error; return; }
+        document.getElementById('facSubCount').textContent = data.count || 0;
+        const nFac = data.faculty || 0;
+        _facSubLastFacultyCount = nFac;
+        // All roster faculty are always included (even with no assigned load
+        // this period), so the button is enabled whenever the roster is
+        // non-empty — not gated on there being actual assignment rows.
+        document.getElementById('facSubScopeLabel').textContent = nFac
+            ? `${nFac} faculty member${nFac === 1 ? '' : 's'} (${data.count || 0} assignment${(data.count || 0) === 1 ? '' : 's'})`
+            : 'No faculty match the selected type(s).';
+    } catch (e) {
+        document.getElementById('facSubScopeLabel').textContent = 'Network error — check server connection.';
+    }
+    _updateFacSubFooter();
+}
+
+function _updateFacSubFooter() {
+    const f    = _facSubFilters();
+    const fmts = document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected');
+    const hasFilters = f.ay_ids.length > 0 && f.sem_types.length > 0 && f.faculty_types.length > 0;
+    const ok = hasFilters && fmts.length > 0 && _facSubLastFacultyCount > 0;
+    document.getElementById('facSubConfirmBtn').disabled = !ok;
+}
+
+async function executeFacSubExport() {
+    const f      = _facSubFilters();
+    const fmts   = Array.from(document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected')).map(c => c.dataset.format);
+    const fmtErr = document.getElementById('facSubFmtError');
+    if (!fmts.length) { fmtErr.style.display = 'block'; return; }
+    fmtErr.style.display = 'none';
+    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
+        _showExportToast('error', 'Missing Selection', 'Select at least one Academic Year, Semester, and Faculty Type.');
+        return;
+    }
+    const filename = (document.getElementById('facSubFilenameInput').value || 'Faculty_Subject_Assignment').trim().replace(/[\/\\:*?"<>|]/g, '_');
+    const btn = document.getElementById('facSubConfirmBtn');
+    btn.disabled = true;
+    closeFacSubExportModal();
+    _showExportLoading('Generating Export', 'Building faculty/subject assignment report...');
+
+    try {
+        const resp = await fetch(_FACSUB_EXPORT_ROUTE, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ...f, formats: fmts, filename }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || resp.statusText);
+        }
+        const blob = await resp.blob();
+        const ext  = fmts.length > 1 ? '.zip' : '.' + fmts[0];
+        const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + ext });
+        a.click(); URL.revokeObjectURL(a.href);
+        _showExportToast('success', 'Export Complete', 'Faculty/subject assignment export downloaded.');
+    } catch (e) {
+        _showExportToast('error', 'Export Failed', e.message);
+    } finally {
+        _hideExportLoading();
+        btn.disabled = false;
     }
 }

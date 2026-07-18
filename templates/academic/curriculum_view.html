@@ -2,6 +2,8 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -62,7 +64,7 @@
                 </select>
             </div>
         </div>
-        <button class="curr-view-export-btn" onclick="handleFilteredExport()">
+        <button class="curr-view-export-btn" onclick="document.getElementById('viewExpModal').style.display='flex'">
             <i class="fas fa-external-link-alt"></i> EXPORT
         </button>
     </div>
@@ -119,6 +121,43 @@
         <div class="curr-view-no-subjects">No subjects found for the selected filters.</div>
     {% endif %}
 
+</div>
+
+<!-- Export Format Picker Modal -->
+<div id="viewExpModal" class="custom-modal" style="display:none; z-index:9999;">
+    <div class="modal-content-lg" style="width:380px;">
+        <div class="modal-header-maroon">
+            <h2><i class="fas fa-download"></i> Export Curriculum</h2>
+            <span class="close-btn" onclick="document.getElementById('viewExpModal').style.display='none'">&times;</span>
+        </div>
+        <div class="modal-body-vertical" style="padding:20px 24px;gap:10px;">
+            <p style="color:#555;font-size:0.85rem;margin:0 0 4px;">
+                Choose export format for <strong>{{ info.programname }} — C.Y {{ info.curriculumyear }}</strong>:
+            </p>
+            <button class="import-type-btn" onclick="viewCurrExport('pdf')">
+                <i class="fas fa-file-pdf import-type-icon" style="color:#c0392b;"></i>
+                <div><div class="import-type-title">PDF</div><div class="import-type-desc">Landscape PDF, one page per semester</div></div>
+            </button>
+            <button class="import-type-btn" onclick="viewCurrExport('docx')">
+                <i class="fas fa-file-word import-type-icon" style="color:#2b5797;"></i>
+                <div><div class="import-type-title">Word (DOCX)</div><div class="import-type-desc">Editable Word document</div></div>
+            </button>
+            <button class="import-type-btn" onclick="viewCurrExport('xlsx')">
+                <i class="fas fa-file-excel import-type-icon" style="color:#1d6f42;"></i>
+                <div><div class="import-type-title">Excel (XLSX)</div><div class="import-type-desc">Excel workbook with subject tables</div></div>
+            </button>
+            <button class="import-type-btn" onclick="viewCurrExport('csv')">
+                <i class="fas fa-file-csv import-type-icon" style="color:#630100;"></i>
+                <div><div class="import-type-title">CSV</div><div class="import-type-desc">Comma-separated values</div></div>
+            </button>
+            <div id="viewExpStatus" style="display:none;color:#630100;font-size:0.82rem;font-weight:600;margin-top:6px;">
+                <i class="fas fa-spinner fa-spin"></i> Exporting…
+            </div>
+        </div>
+        <div class="modal-footer-flex">
+            <button type="button" class="btn-modal btn-cancel" onclick="document.getElementById('viewExpModal').style.display='none'">Cancel</button>
+        </div>
+    </div>
 </div>
 
 <script>

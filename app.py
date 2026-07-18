@@ -1327,7 +1327,7 @@ def employee():
     if not conn:
         return render_template('academic/employee.html', employees=[], total=0,
                                reg=0, pt=0, des=0, specializations=[], employee_types=[], designations=[],
-                               active_ay_id='', active_sem='')
+                               active_ay_id='', active_sem='', acad_years=[])
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -1369,6 +1369,7 @@ def employee():
         """, one=True)
         active_ay_id = active['academicyearid'] if active else ''
         active_sem   = active['semestertype']    if active else ''
+        acad_years   = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
 
         cur.close()
         conn.close()
@@ -1384,7 +1385,8 @@ def employee():
             des=counts.get('Designee', 0),
             total=len(employees),
             active_ay_id=active_ay_id,
-            active_sem=active_sem
+            active_sem=active_sem,
+            acad_years=acad_years
         )
     except Exception as e:
         import traceback
@@ -1393,7 +1395,7 @@ def employee():
         except: pass
         return render_template('academic/employee.html', employees=[], total=0,
                                reg=0, pt=0, des=0, specializations=[], employee_types=[], designations=[],
-                               active_ay_id='', active_sem='')
+                               active_ay_id='', active_sem='', acad_years=[])
 
 @app.route('/add_employee', methods=['POST'])
 def add_employee():
@@ -2235,13 +2237,15 @@ def archived_employees():
                            employee_types=et_rows,
                            specializations=spec_rows)
 
-def _auto_setup_program_yearlevels(cur, prog_filter=None):
+def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
     """
     Upserts program_yearlevel rows for every active program across ALL academic years
     (needed for historical schedule data integrity).
 
-    Sections are only created for the currently active academic year.
-    Sections belonging to non-active academic years are deactivated.
+    Sections are created for the currently active academic year, plus extra_ay_id if
+    given — this lets callers backfill default sections for an academic year the user
+    is actively viewing (e.g. an upcoming AY) without having to flip which AY is
+    globally "active".
 
     Pass prog_filter (programcode string) to limit to a single program.
     Returns count of program_yearlevel rows upserted.
@@ -2320,6 +2324,10 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None):
     # Ensure every program_yearlevel in the active AY has at least one default section
     if active_ay_id:
         _ensure_default_sections(cur, active_ay_id)
+
+    # Also backfill for an explicitly requested AY that isn't the active one.
+    if extra_ay_id and extra_ay_id != active_ay_id:
+        _ensure_default_sections(cur, extra_ay_id)
 
     return upserted
 
@@ -2540,15 +2548,16 @@ def room():
                 END
         """)
         rooms =[{k.lower(): v for k, v in row.items()} for row in raw_rooms] if raw_rooms else[]
+        acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
 
         return render_template('academic/room.html',
                                total_labs=total_labs['count'] if total_labs else 0,
                                total_lec=total_lec['count'] if total_lec else 0,
                                total_rooms=total_rooms['count'] if total_rooms else 0,
                                total_bldgs=total_bldgs['count'] if total_bldgs else 0,
-                               buildings=buildings, rooms=rooms)
+                               buildings=buildings, rooms=rooms, acad_years=acad_years)
     except Exception as e:
-        return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[])
+        return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[], acad_years=[])
 
 
 
@@ -3328,8 +3337,12 @@ def export_schedule():
 #  SCHEDULE EXPORT  (multi-format: CSV / XLSX / DOCX / PDF)
 # ══════════════════════════════════════════════════════════════
 
-def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
-    """Return merged list of schedule rows (normalized + historical fallback)."""
+def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True):
+    """Return list of schedule rows (normalized + historical fallback).
+    When merge=True (default), collapses multiple schedule_sessions rows per
+    subject offering into one (used by Table View exports). When merge=False,
+    returns one row per individual day/time session, needed by Calendar View
+    exports to place each meeting on its own day/time cell."""
     nf, np_ = ["sv.status IN ('Published', 'Draft')"], []
     if ay_ids:
         nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); np_.extend(ay_ids)
@@ -3357,6 +3370,7 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
                  THEN TO_CHAR(ts_s.timevalue,'HH12:MI AM')||' - '||TO_CHAR(ts_e.timevalue,'HH12:MI AM')
                  ELSE NULL END AS "Time",
             COALESCE(r.roomname,'TBA') AS "Room",
+            r.roomid AS "RoomID",
             ay.yearstart||'-'||ay.yearend AS "AcademicYear",
             sem.semestertype AS "SemesterType"
         FROM schedule_version sv
@@ -3414,6 +3428,7 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
             hd."Day/s"             AS "Day/s",
             hd."Time"              AS "Time",
             hd."Room"              AS "Room",
+            NULL                   AS "RoomID",
             ay.yearstart||'-'||ay.yearend AS "AcademicYear",
             sem.semestertype AS "SemesterType"
         FROM historical_data hd
@@ -3430,7 +3445,340 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels):
     hist_extra     = [r for r in hist_rows if r['SubjectCode'] not in norm_with_time]
     hist_codes     = {r['SubjectCode'] for r in hist_rows}
     norm_untimed   = [r for r in norm_rows if not r['Time'] and r['SubjectCode'] not in hist_codes]
-    return norm_timed + hist_extra + norm_untimed
+    combined = norm_timed + hist_extra + norm_untimed
+    return _sch_merge_session_rows(combined) if merge else combined
+
+
+_SCH_WEEKDAY_ORDER = {'MONDAY': 0, 'TUESDAY': 1, 'WEDNESDAY': 2, 'THURSDAY': 3,
+                       'FRIDAY': 4, 'SATURDAY': 5, 'SUNDAY': 6}
+_SCH_WEEKDAY_ABBR  = {'MONDAY': 'MON', 'TUESDAY': 'TUE', 'WEDNESDAY': 'WED', 'THURSDAY': 'THU',
+                       'FRIDAY': 'FRI', 'SATURDAY': 'SAT', 'SUNDAY': 'SUN'}
+
+
+def _sch_merge_session_rows(rows):
+    """A single subject offering can have several schedule_sessions rows (one
+    per meeting day/time/room — e.g. lecture on Mon/Thu in one room, lab on Sat
+    in another). Collapse those into one row per offering instead of repeating
+    the whole row per session, combining the distinct days (e.g. 'Mon/Thu') and,
+    when they differ, times and rooms."""
+    groups = {}
+    order  = []
+    for r in rows:
+        key = (r.get('Instructor'), r.get('SubjectCode'), r.get('SubjectName'),
+               r.get('LectureHours'), r.get('LaboratoryHours'), r.get('CreditUnits'),
+               r.get('Program'), r.get('YearLevel'), r.get('Section'),
+               r.get('AcademicYear'), r.get('SemesterType'))
+        if key not in groups:
+            groups[key] = {'base': r, 'days': [], 'times': [], 'rooms': []}
+            order.append(key)
+        g = groups[key]
+        day = (r.get('Day/s') or '').strip()
+        if day and day not in g['days']:
+            g['days'].append(day)
+        time = (r.get('Time') or '').strip()
+        if time and time not in g['times']:
+            g['times'].append(time)
+        room = (r.get('Room') or '').strip()
+        if room and room not in g['rooms']:
+            g['rooms'].append(room)
+
+    merged = []
+    for key in order:
+        g = groups[key]
+        base = dict(g['base'])
+        days_sorted = sorted(g['days'], key=lambda d: _SCH_WEEKDAY_ORDER.get(d.strip().upper(), 99))
+        base['Day/s'] = '/'.join(_SCH_WEEKDAY_ABBR.get(d.strip().upper(), d.strip()) for d in days_sorted)
+        base['Time']  = ' / '.join(g['times'])
+        base['Room']  = ' / '.join(g['rooms'])
+        merged.append(base)
+    return merged
+
+
+# ── Calendar View: paired-day columns (M/TH, T/F, W/S, SUN) with per-day
+# sub-columns, on a fine-grained (30-min) time grid so schedule blocks can be
+# positioned proportionally to their actual start/end time rather than
+# snapped to the nearest standard slice boundary. ──
+_SCH_CAL_GRID_START = 450    # 7:30 AM, in minutes-past-midnight
+_SCH_CAL_GRID_END   = 1230   # 8:30 PM
+_SCH_CAL_FINE_STEP  = 30     # minutes per fine grid row
+
+_SCH_CAL_COLS = [
+    ('M/TH', ('MON', 'THU')),
+    ('T/F',  ('TUE', 'FRI')),
+    ('W/S',  ('WED', 'SAT')),
+    ('SUN',  ('SUN',)),
+]
+# day code -> (pair_idx, subcol_idx) e.g. 'THU' -> (0, 1)
+_SCH_CAL_DAY_TO_COL = {d: (pi, si) for pi, (_lbl, members) in enumerate(_SCH_CAL_COLS) for si, d in enumerate(members)}
+# absolute grid column (0 = Time) where each pair's subcol 0 begins: M=1,TH=2,T=3,F=4,W=5,S=6,SUN=7
+_SCH_CAL_COL_BASE = [1, 3, 5, 7]
+_SCH_CAL_NCOLS    = 8  # Time + M,TH,T,F,W,S + SUN
+_SCH_CAL_SUBLBL   = {'MON': 'M', 'TUE': 'T', 'WED': 'W', 'THU': 'TH', 'FRI': 'F', 'SAT': 'S', 'SUN': 'SUN'}
+
+# Standard PUP Lopez class scheduling time slices (start_min, end_min, display label),
+# matching the official Tentative Faculty Schedule template (with lunch/dinner gaps).
+_SCH_STANDARD_SLOTS = [
+    (450,  540,  '7:30-9:00'),
+    (540,  630,  '9:00-10:30'),
+    (630,  720,  '10:30-12:00'),
+    (750,  840,  '12:30-2:00'),
+    (840,  930,  '2:00-3:30'),
+    (930,  1020, '3:30-5:00'),
+    (1050, 1140, '5:30-7:00'),
+    (1140, 1230, '7:00-8:30'),
+]
+
+
+def _sch_build_fine_rows():
+    """Split the 7:30 AM-8:30 PM grid into fixed 30-min rows; each row records
+    the standard-slice label (only on the slice's first row, so it can be
+    merged/shown once) and whether the row falls in a break/gap (12:00-12:30,
+    5:00-5:30) between slices."""
+    rows = []
+    t = _SCH_CAL_GRID_START
+    while t < _SCH_CAL_GRID_END:
+        in_slot = None
+        for s, e, lbl in _SCH_STANDARD_SLOTS:
+            if s <= t < e:
+                in_slot = (s, e, lbl)
+                break
+        if in_slot:
+            s, e, lbl = in_slot
+            rows.append((t, t + _SCH_CAL_FINE_STEP, lbl if t == s else None, False))
+        else:
+            rows.append((t, t + _SCH_CAL_FINE_STEP, None, True))
+        t += _SCH_CAL_FINE_STEP
+    return rows
+
+
+_SCH_CAL_FINE_ROWS = _sch_build_fine_rows()  # 26 fixed-height rows (24 slice rows + 2 break rows)
+
+
+def _sch_cal_row_range(start_min, end_min):
+    """Map an actual [start_min,end_min) time range to the (first,last) fine
+    grid row indices it covers, clamped to the grid range."""
+    lo = max(_SCH_CAL_GRID_START, min(start_min, _SCH_CAL_GRID_END))
+    hi = max(_SCH_CAL_GRID_START, min(end_min, _SCH_CAL_GRID_END))
+    if hi <= lo:
+        hi = lo + 1
+    n = len(_SCH_CAL_FINE_ROWS)
+    first_idx = (lo - _SCH_CAL_GRID_START) // _SCH_CAL_FINE_STEP
+    last_idx  = max(first_idx, (hi - _SCH_CAL_GRID_START - 1) // _SCH_CAL_FINE_STEP)
+    return max(0, min(first_idx, n - 1)), max(0, min(last_idx, n - 1))
+
+
+_SCH_DAY_TOKENS   = {
+    'MONDAY': 'MON', 'MON': 'MON', 'M': 'MON',
+    'TUESDAY': 'TUE', 'TUE': 'TUE', 'TUES': 'TUE', 'T': 'TUE',
+    'WEDNESDAY': 'WED', 'WED': 'WED', 'W': 'WED',
+    'THURSDAY': 'THU', 'THU': 'THU', 'THUR': 'THU', 'THURS': 'THU', 'TH': 'THU',
+    'FRIDAY': 'FRI', 'FRI': 'FRI', 'F': 'FRI',
+    'SATURDAY': 'SAT', 'SAT': 'SAT', 'S': 'SAT',
+    'SUNDAY': 'SUN', 'SUN': 'SUN', 'SU': 'SUN',
+}
+_SCH_DAY_SEQ_ORDER = ['THURS', 'THUR', 'MON', 'TUES', 'TUE', 'WED', 'SAT', 'SUN', 'THU', 'TH', 'FRI', 'SU', 'M', 'T', 'W', 'F', 'S']
+
+
+def _sch_split_days(raw):
+    """Parse a Day/s string ('Monday', 'MON/THU', 'MWF', 'TTh', ...) into a
+    list of 3-letter day codes ('MON','TUE',...), for Calendar View placement."""
+    import re
+    if not raw:
+        return []
+    parts = [p for p in re.split(r'[\s,;/]+', raw.strip().upper()) if p]
+    result = []
+    for p in parts:
+        a = _SCH_DAY_TOKENS.get(p)
+        if a and a not in result:
+            result.append(a)
+    if result:
+        return result
+    # Compact form like "MWF" or "TTh" with no separators
+    s = re.sub(r'[\s,;/]+', '', raw.strip().upper())
+    found = []
+    while s:
+        hit = False
+        for tok in _SCH_DAY_SEQ_ORDER:
+            if s.startswith(tok):
+                a = _SCH_DAY_TOKENS.get(tok)
+                if a and a not in found:
+                    found.append(a)
+                s = s[len(tok):]
+                hit = True
+                break
+        if not hit:
+            s = s[1:]
+    return found
+
+
+def _sch_parse_time_range(time_str):
+    """Parse 'H:MM AM - H:MM PM'-style strings into (start_min, end_min, display).
+    Returns None if the string can't be parsed (e.g. blank/TBA)."""
+    import re
+    if not time_str or not time_str.strip():
+        return None
+    parts = re.split(r'\s*-\s*|\s+to\s+', time_str.strip(), maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return None
+
+    def _parse_one(t):
+        t = t.strip().upper().replace('.', '')
+        for fmt in ('%I:%M %p', '%I:%M%p', '%H:%M', '%I %p'):
+            try:
+                return datetime.strptime(t, fmt)
+            except ValueError:
+                continue
+        return None
+
+    sd, ed = _parse_one(parts[0]), _parse_one(parts[1])
+    if not sd or not ed:
+        return None
+    disp = f"{sd.strftime('%I:%M %p').lstrip('0')} - {ed.strftime('%I:%M %p').lstrip('0')}"
+    return (sd.hour * 60 + sd.minute, ed.hour * 60 + ed.minute, disp)
+
+
+def _sch_cal_default_block_text(info):
+    """Default schedule-block text (Subject Offerings Calendar View):
+    Time / SubjectCode (Section) / Instructor / Room."""
+    sec_suffix = f" ({info['section']})" if info['section'] else ''
+    return f"{info['disp']}\n{info['subjectcode']}{sec_suffix}\n{info['instructor']}\n{info['room']}"
+
+
+def _sch_build_calendar(yl_rows, text_fn=None):
+    """Build the faculty-schedule-style weekly timetable from per-session
+    (unmerged) rows, positioning each class as one block on the fine-grained
+    time grid, proportional to its actual start/end time (the standard slices
+    are only a printed guide, not a snapping boundary).
+
+    A class meeting on both members of a paired column (e.g. Mon+Thu at the
+    same time) is emitted as ONE block spanning both sub-columns, not two
+    separate entries. A class meeting on only one member (e.g. Saturday only)
+    occupies only that sub-column. A single row whose Day/s already lists
+    days from different pairs (e.g. "MWF") is correctly split into one block
+    per pair it touches (each still a single, non-duplicated occurrence
+    within that pair's column). Genuinely concurrent classes that land in the
+    same sub-column/time (different sections/rooms running in parallel) are
+    stacked inside one merged block rather than corrupting the grid.
+
+    Returns (blocks, unscheduled):
+      blocks      - [{'pair_idx', 'subcols': (0,) or (1,) or (0,1),
+                      'row_start', 'row_end', 'lines': [block_text, ...]}, ...]
+      unscheduled - [entry_text, ...] for rows with no day/time, or a time
+                    that falls entirely outside the 7:30 AM-8:30 PM grid
+    """
+    # Step 1: collapse repeated per-day rows that represent the SAME schedule
+    # (same instructor/subject/section/room/time) into one identity, tracking
+    # every day it was seen on.
+    identities = {}
+    order = []
+    unscheduled = []
+    for r in yl_rows:
+        days   = _sch_split_days(r.get('Day/s'))
+        parsed = _sch_parse_time_range(r.get('Time'))
+        sec_suffix = f" ({r['Section']})" if r.get('Section') else ''
+        note = (f"{r.get('SubjectCode') or ''}{sec_suffix} — {r.get('Day/s') or 'No Day'} "
+                f"{r.get('Time') or 'No Time'} ({r.get('Room') or 'TBA'})")
+        if not days or not parsed:
+            unscheduled.append(note)
+            continue
+        start, end, disp = parsed
+        if end <= _SCH_CAL_GRID_START or start >= _SCH_CAL_GRID_END:
+            unscheduled.append(note)
+            continue
+        key = (r.get('Instructor'), r.get('SubjectCode'), r.get('Section'), r.get('Room'), start, end)
+        if key not in identities:
+            identities[key] = {
+                'days': set(), 'start': start, 'end': end, 'disp': disp,
+                'subjectcode': r.get('SubjectCode') or '', 'section': r.get('Section'),
+                'instructor': r.get('Instructor') or 'TBA', 'room': r.get('Room') or 'TBA',
+                'program': r.get('Program'),
+            }
+            order.append(key)
+        identities[key]['days'].update(days)
+
+    # Step 2: expand each identity into the (pair_idx -> subcols touched) it occupies.
+    raw = []
+    build_text = text_fn or _sch_cal_default_block_text
+    for gi, key in enumerate(order):
+        info = identities[key]
+        touched = {}
+        for d in info['days']:
+            pc = _SCH_CAL_DAY_TO_COL.get(d)
+            if pc is None:
+                continue
+            pair_idx, subcol_idx = pc
+            touched.setdefault(pair_idx, set()).add(subcol_idx)
+        text = build_text(info)
+        for pair_idx, subcols in touched.items():
+            raw.append({'pair_idx': pair_idx, 'subcols': subcols, 'start': info['start'],
+                        'end': info['end'], 'text': text, 'group_id': gi})
+
+    # Step 3: per (pair_idx, subcol), merge overlapping/concurrent time ranges
+    # so two different classes that truly collide share one block instead of
+    # producing an invalid overlapping region.
+    per_subcol = {}
+    for b in raw:
+        for sc in b['subcols']:
+            per_subcol.setdefault((b['pair_idx'], sc), []).append((b['start'], b['end'], b['text'], b['group_id']))
+
+    merged_subcol = {}
+    for key, items in per_subcol.items():
+        items_sorted = sorted(items, key=lambda x: x[0])
+        groups = []
+        for start, end, text, gid in items_sorted:
+            if groups and start < groups[-1]['end']:
+                g = groups[-1]
+                g['end'] = max(g['end'], end)
+                g['items'].append((start, end, text, gid))
+            else:
+                groups.append({'start': start, 'end': end, 'items': [(start, end, text, gid)]})
+        merged_subcol[key] = groups
+
+    # Step 4: where both sub-columns of a pair have an identical single-identity
+    # block at the same time, collapse it into one block spanning both.
+    blocks = []
+    for pair_idx in range(3):
+        left  = merged_subcol.get((pair_idx, 0), [])
+        right = merged_subcol.get((pair_idx, 1), [])
+        consumed_l, consumed_r = set(), set()
+        li = ri = 0
+        while li < len(left) and ri < len(right):
+            gl, gr = left[li], right[ri]
+            if (gl['start'] == gr['start'] and gl['end'] == gr['end']
+                    and len(gl['items']) == 1 and len(gr['items']) == 1
+                    and gl['items'][0][3] == gr['items'][0][3]):
+                blocks.append({'pair_idx': pair_idx, 'subcols': (0, 1),
+                                'start': gl['start'], 'end': gl['end'], 'lines': [gl['items'][0][2]]})
+                consumed_l.add(li); consumed_r.add(ri)
+                li += 1; ri += 1
+            elif gl['start'] <= gr['start']:
+                li += 1
+            else:
+                ri += 1
+        for idx, g in enumerate(left):
+            if idx not in consumed_l:
+                blocks.append({'pair_idx': pair_idx, 'subcols': (0,), 'start': g['start'],
+                                'end': g['end'], 'lines': [it[2] for it in g['items']]})
+        for idx, g in enumerate(right):
+            if idx not in consumed_r:
+                blocks.append({'pair_idx': pair_idx, 'subcols': (1,), 'start': g['start'],
+                                'end': g['end'], 'lines': [it[2] for it in g['items']]})
+    for g in merged_subcol.get((3, 0), []):
+        blocks.append({'pair_idx': 3, 'subcols': (0,), 'start': g['start'],
+                        'end': g['end'], 'lines': [it[2] for it in g['items']]})
+
+    for b in blocks:
+        b['row_start'], b['row_end'] = _sch_cal_row_range(b['start'], b['end'])
+
+    return blocks, unscheduled
+
+
+def _sch_cal_abs_cols(pair_idx, subcols):
+    """Return (first_col, last_col) absolute grid columns (0=Time) for a
+    block occupying the given subcol(s) of the given pair."""
+    base = _SCH_CAL_COL_BASE[pair_idx]
+    cols = sorted(base + sc for sc in subcols)
+    return cols[0], cols[-1]
 
 
 def _sch_exp_groups(rows):
@@ -3440,6 +3788,41 @@ def _sch_exp_groups(rows):
         yl = r['YearLevel'] or 0
         g.setdefault(p, {}).setdefault(yl, []).append(r)
     return {p: dict(sorted(ylmap.items())) for p, ylmap in sorted(g.items())}
+
+
+def _room_cal_block_text(info):
+    """Room Schedule Calendar block text: Time / SubjectCode / Program+Section
+    (e.g. 'BSIT 1A') / Instructor. No room shown — each calendar already
+    represents a single room."""
+    prog = (info.get('program') or '').strip()
+    sec  = (info.get('section') or '').strip()
+    suffix = sec
+    if prog and sec.upper().startswith(prog.upper()):
+        suffix = sec[len(prog):].lstrip('-').strip()
+    prog_sec = f"{prog} {suffix}".strip() if (prog or suffix) else ''
+    lines = [info['disp'], info.get('subjectcode') or '']
+    if prog_sec:
+        lines.append(prog_sec)
+    lines.append(info.get('instructor') or 'TBA')
+    return '\n'.join(lines)
+
+
+def _room_exp_groups(rows):
+    """Group per-session schedule rows by room. Keyed internally by RoomID
+    (when known) so two different rooms that happen to share a name are never
+    merged, but the returned list is always sorted and titled by Room Name
+    alone — building is ignored for ordering, per Room Schedule Export spec.
+    Rows with no real room assigned ('TBA'/blank) are excluded."""
+    g = {}
+    for r in rows:
+        name = (r.get('Room') or '').strip()
+        if not name or name.upper() == 'TBA':
+            continue
+        key = r.get('RoomID') if r.get('RoomID') is not None else name
+        if key not in g:
+            g[key] = {'name': name, 'rows': []}
+        g[key]['rows'].append(r)
+    return sorted(g.values(), key=lambda v: v['name'].upper())
 
 
 @app.route('/academic/schedule/export/count', methods=['POST'])
@@ -3474,6 +3857,9 @@ def schedule_export_multi():
     programs    = data.get('programs', [])
     year_levels = [int(y) for y in data.get('year_levels', [])]
     formats     = [f.lower() for f in data.get('formats', ['csv'])]
+    layout      = (data.get('layout') or 'table').lower()
+    if layout not in ('table', 'calendar'):
+        layout = 'table'
     filename    = (data.get('filename', '') or 'schedule_export').strip()
     for ext in ('.pdf', '.docx', '.xlsx', '.csv', '.zip'):
         if filename.lower().endswith(ext):
@@ -3485,36 +3871,47 @@ def schedule_export_multi():
         rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
         groups = _sch_exp_groups(rows)
         sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
-        sem_labels = ', '.join(sem_map.get(s, s) for s in sorted(sem_types)) if sem_types else 'All Semesters'
+        uniq_sems  = sorted({r['SemesterType'] for r in rows if r.get('SemesterType')})
+        sem_labels = ' & '.join(sem_map.get(s, s) for s in uniq_sems) if uniq_sems else 'All Semesters'
+        uniq_ays   = sorted({r['AcademicYear'] for r in rows if r.get('AcademicYear')})
+        ay_label   = uniq_ays[0] if len(uniq_ays) == 1 else ('Multiple Academic Years' if len(uniq_ays) > 1 else '')
+
+        prog_codes = list(groups.keys())
+        prog_name_map = {}
+        if prog_codes:
+            cur.execute(f"SELECT programcode, programname FROM programs WHERE programcode IN ({','.join(['%s']*len(prog_codes))})", prog_codes)
+            prog_name_map = {r['programcode']: r['programname'] for r in cur.fetchall()}
+
+        # Calendar View needs per-session (unmerged) rows so each day/time meeting
+        # can be placed in its own grid cell — only fetched when actually needed.
+        cal_rows = cal_groups = None
+        if layout == 'calendar':
+            cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False)
+            cal_groups = _sch_exp_groups(cal_rows)
+
+        mime_map = {
+            'csv':  ('text/csv', '.csv'),
+            'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+            'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+            'pdf':  ('application/pdf', '.pdf'),
+        }
 
         if len(formats) == 1:
             fmt = formats[0]
-            if fmt == 'csv':
-                out, mime, ext = _sch_gen_csv(rows), 'text/csv', '.csv'
-            elif fmt == 'xlsx':
-                out, mime, ext = _sch_gen_xlsx(rows, groups), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'
-            elif fmt == 'docx':
-                out, mime, ext = _sch_gen_docx(rows, groups, sem_labels), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'
-            elif fmt == 'pdf':
-                out, mime, ext = _sch_gen_pdf(rows, groups, sem_labels), 'application/pdf', '.pdf'
-            else:
+            if fmt not in mime_map:
                 return jsonify({'error': f'Unknown format: {fmt}'}), 400
+            out = _sch_export_bytes(fmt, layout, rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map)
+            mime, ext = mime_map[fmt]
             return Response(out, mimetype=mime,
                             headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
         else:
             import zipfile
             buf = io.BytesIO()
-            fmt_map = {
-                'csv':  (lambda: _sch_gen_csv(rows),                   '.csv'),
-                'xlsx': (lambda: _sch_gen_xlsx(rows, groups),          '.xlsx'),
-                'docx': (lambda: _sch_gen_docx(rows, groups, sem_labels), '.docx'),
-                'pdf':  (lambda: _sch_gen_pdf(rows, groups, sem_labels),  '.pdf'),
-            }
             with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for fmt in formats:
-                    if fmt in fmt_map:
-                        fn, ext = fmt_map[fmt]
-                        zf.writestr(filename + ext, fn())
+                    if fmt in mime_map:
+                        out = _sch_export_bytes(fmt, layout, rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map)
+                        zf.writestr(filename + mime_map[fmt][1], out)
             buf.seek(0)
             return Response(buf.read(), mimetype='application/zip',
                             headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
@@ -3605,59 +4002,109 @@ def _sch_gen_csv(rows):
     return out.getvalue().encode('utf-8-sig')
 
 
-def _sch_gen_xlsx(rows, groups):
+_SCH_OFF_HEADERS = ['Instructor', 'Subject Code', 'Subject Description', 'Lec. Hours',
+                     'Lab. Hours', 'Credit Units', 'Course', 'Hours', 'Day/s', 'Time', 'Room (LQ xxx)']
+_SCH_OFF_YL_LBL  = {1: 'FIRST YEAR', 2: 'SECOND YEAR', 3: 'THIRD YEAR', 4: 'FOURTH YEAR', 5: 'FIFTH YEAR'}
+
+
+def _sch_official_row(r):
+    """One data row in official SIS column order: Instructor…Room."""
+    course = ' '.join(str(v) for v in (r.get('Program'), r.get('YearLevel')) if v).strip()
+    return [
+        r.get('Instructor') or '', r.get('SubjectCode') or '', r.get('SubjectName') or '',
+        r.get('LectureHours') or 0, r.get('LaboratoryHours') or 0, r.get('CreditUnits') or 0,
+        course, r.get('Hours') or 0, r.get('Day/s') or '', r.get('Time') or '', r.get('Room') or '',
+    ]
+
+
+def _sch_official_totals(yl_rows):
+    return (sum(r.get('LectureHours') or 0 for r in yl_rows),
+            sum(r.get('LaboratoryHours') or 0 for r in yl_rows),
+            sum(r.get('CreditUnits') or 0 for r in yl_rows),
+            sum(r.get('Hours') or 0 for r in yl_rows))
+
+
+def _sch_official_title(sem_label, ay_label):
+    title = f'SUBJECT OFFERINGS FOR {sem_label.upper()}'
+    if ay_label:
+        title += f', ACADEMIC YEAR {ay_label}'
+    return title
+
+
+def _sch_official_prog_label(prog, prog_names):
+    name = (prog_names or {}).get(prog)
+    return f'{name.upper()} ({prog})' if name else prog
+
+
+def _sch_gen_xlsx(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 
-    wb  = Workbook()
-    ws  = wb.active
-    ws.title = 'Schedule'
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Subject Offerings'
+    ws.sheet_view.showGridLines = False
 
-    hdr_fill  = PatternFill('solid', fgColor='440000')
-    prog_fill = PatternFill('solid', fgColor='5C0000')
-    yl_fill   = PatternFill('solid', fgColor='7A0000')
-    wht_font  = Font(bold=True, color='FFFFFF', size=10)
-    thin      = Side(style='thin', color='DDDDDD')
-    brd       = Border(left=thin, right=thin, top=thin, bottom=thin)
+    YELLOW = PatternFill('solid', fgColor='FFFF00')
+    thin   = Side(style='thin', color='000000')
+    brd    = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_font = Font(bold=True, size=12)
+    prog_font  = Font(bold=True, size=11)
+    yl_font    = Font(bold=True, size=10)
+    hdr_font   = Font(bold=True, size=9)
+    data_font  = Font(size=9)
+    center     = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-    HEADERS  = ['Instructor','Subject Code','Subject Description',
-                'Lec Hrs','Lab Hrs','Units','Section','Day/s','Time','Hours','Room']
-    COL_KEYS = ['Instructor','SubjectCode','SubjectName',
-                'LectureHours','LaboratoryHours','CreditUnits','Section','Day/s','Time','Hours','Room']
-    YL_LBL   = {1:'FIRST YEAR',2:'SECOND YEAR',3:'THIRD YEAR',4:'FOURTH YEAR',5:'FIFTH YEAR'}
-    NCOLS    = len(HEADERS)
-    COL_W    = [22, 14, 38, 7, 7, 7, 16, 12, 22, 7, 14]
+    NCOLS    = len(_SCH_OFF_HEADERS)
+    COL_W    = [24, 14, 36, 9, 9, 10, 10, 8, 10, 20, 16]
+    NUM_COLS = (4, 5, 6, 8)
 
+    title = _sch_official_title(sem_label, ay_label)
     rn = 1
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 20; rn += 1
+
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = title_font; c.fill = YELLOW
+    c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 18; rn += 1
+    rn += 1
+
     for prog, ylmap in groups.items():
         ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-        c = ws.cell(rn, 1, prog)
-        c.font = wht_font; c.fill = prog_fill
-        c.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[rn].height = 22; rn += 1
+        c = ws.cell(rn, 1, _sch_official_prog_label(prog, prog_names))
+        c.font = prog_font; c.alignment = Alignment(horizontal='center')
+        for col in range(1, NCOLS + 1):
+            ws.cell(rn, col).border = brd
+        ws.row_dimensions[rn].height = 20; rn += 1
 
         for yl, yl_rows in ylmap.items():
-            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-            c = ws.cell(rn, 1, YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED')
-            c.font = wht_font; c.fill = yl_fill
-            c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            c = ws.cell(rn, 1, _SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED')
+            c.font = yl_font
+            ws.row_dimensions[rn].height = 16; rn += 1
+
+            for ci, h in enumerate(_SCH_OFF_HEADERS, 1):
+                c = ws.cell(rn, ci, h); c.font = hdr_font; c.border = brd; c.alignment = center
+            ws.row_dimensions[rn].height = 26; rn += 1
+
+            for r in yl_rows:
+                for ci, v in enumerate(_sch_official_row(r), 1):
+                    c = ws.cell(rn, ci, v); c.border = brd; c.font = data_font
+                    c.alignment = center if ci in NUM_COLS else Alignment(
+                        vertical='center', horizontal='left' if ci in (1, 3) else 'center', wrap_text=True)
+                ws.row_dimensions[rn].height = 15; rn += 1
+
+            lec, lab, units, hrs = _sch_official_totals(yl_rows)
+            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=3)
+            for col in range(1, NCOLS + 1):
+                ws.cell(rn, col).border = brd
+            c = ws.cell(rn, 1, 'TOTAL'); c.font = hdr_font; c.alignment = Alignment(horizontal='center')
+            for ci, val in ((4, lec), (5, lab), (6, units), (8, hrs)):
+                c = ws.cell(rn, ci, val); c.font = hdr_font; c.alignment = center
             ws.row_dimensions[rn].height = 18; rn += 1
-
-            for ci, h in enumerate(HEADERS, 1):
-                c = ws.cell(rn, ci, h)
-                c.font = wht_font; c.fill = hdr_fill; c.border = brd
-                c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            ws.row_dimensions[rn].height = 28; rn += 1
-
-            for i, r in enumerate(yl_rows):
-                bg = 'FFFFFF' if i % 2 == 0 else 'FDF5F5'
-                for ci, key in enumerate(COL_KEYS, 1):
-                    c = ws.cell(rn, ci, r.get(key) or '')
-                    c.fill = PatternFill('solid', fgColor=bg)
-                    c.border = brd; c.font = Font(size=9)
-                    c.alignment = Alignment(vertical='center')
-                ws.row_dimensions[rn].height = 16; rn += 1
+            rn += 1
 
         rn += 1
 
@@ -3669,7 +4116,7 @@ def _sch_gen_xlsx(rows, groups):
     return buf.read()
 
 
-def _sch_gen_docx(rows, groups, sem_label):
+def _sch_gen_docx(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -3684,26 +4131,8 @@ def _sch_gen_docx(rows, groups, sem_label):
     sec.left_margin = sec.right_margin  = Cm(1.5)
     sec.top_margin  = sec.bottom_margin = Cm(1.5)
 
-    DARK  = RGBColor(0x5C, 0x00, 0x00)
-    MED   = RGBColor(0x7A, 0x00, 0x00)
-    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-
-    h1 = doc.add_heading('CLASS SCHEDULE', 0)
-    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in h1.runs:
-        run.font.color.rgb = DARK; run.font.size = Pt(16)
-
-    sp = doc.add_paragraph(sem_label)
-    sp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    if sp.runs:
-        sp.runs[0].font.color.rgb = MED; sp.runs[0].font.size = Pt(11)
-    doc.add_paragraph()
-
-    HDR_COLS = ['Instructor','Subject Code','Subject Description',
-                'Lec','Lab','Units','Section','Day/s','Time','Hrs','Room']
-    COL_KEYS = ['Instructor','SubjectCode','SubjectName',
-                'LectureHours','LaboratoryHours','CreditUnits','Section','Day/s','Time','Hours','Room']
-    YL_LBL   = {1:'First Year',2:'Second Year',3:'Third Year',4:'Fourth Year',5:'Fifth Year'}
+    BLACK = RGBColor(0x00, 0x00, 0x00)
+    title = _sch_official_title(sem_label, ay_label)
 
     def _bg(cell, hex6):
         tc   = cell._tc
@@ -3714,42 +4143,62 @@ def _sch_gen_docx(rows, groups, sem_label):
         shd.set(qn('w:fill'), hex6)
         tcPr.append(shd)
 
-    def _hdr_cell(cell, text, sz=8):
-        cell.text = ''
-        run = cell.paragraphs[0].add_run(text)
-        run.font.bold = True; run.font.color.rgb = WHITE; run.font.size = Pt(sz)
-        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _bg(cell, '440000')
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-
-    def _data_cell(cell, text, hex6, sz=8):
+    def _cell_text(cell, text, bold=False, sz=8, fill=None, align=WD_ALIGN_PARAGRAPH.LEFT):
         cell.text = ''
         run = cell.paragraphs[0].add_run(str(text) if text is not None else '')
-        run.font.size = Pt(sz)
-        _bg(cell, hex6)
+        run.font.bold = bold; run.font.size = Pt(sz); run.font.color.rgb = BLACK
+        cell.paragraphs[0].alignment = align
+        if fill: _bg(cell, fill)
         cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
+    h1 = doc.add_heading(title, 0)
+    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in h1.runs:
+        run.font.color.rgb = BLACK; run.font.size = Pt(14)
+
+    camp = doc.add_table(rows=1, cols=1)
+    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _cell_text(camp.rows[0].cells[0], 'LOPEZ, QUEZON CAMPUS', bold=True, sz=11,
+               fill='FFFF00', align=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.add_paragraph()
+
+    first_prog = True
     for prog, ylmap in groups.items():
-        h = doc.add_heading(prog, level=1)
-        for run in h.runs:
-            run.font.color.rgb = DARK; run.font.size = Pt(13)
+        if not first_prog:
+            doc.add_page_break()
+        first_prog = False
+
+        h2 = doc.add_heading(_sch_official_prog_label(prog, prog_names), level=1)
+        h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in h2.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(13)
 
         for yl, yl_rows in ylmap.items():
-            h2 = doc.add_heading(YL_LBL.get(yl, f'Year {yl}').upper() if yl else 'UNCLASSIFIED', level=2)
-            for run in h2.runs:
-                run.font.color.rgb = MED; run.font.size = Pt(11)
+            h3 = doc.add_heading(_SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED', level=2)
+            for run in h3.runs:
+                run.font.color.rgb = BLACK; run.font.size = Pt(11)
 
-            tbl = doc.add_table(rows=1 + len(yl_rows), cols=len(HDR_COLS))
+            tbl = doc.add_table(rows=2 + len(yl_rows), cols=len(_SCH_OFF_HEADERS))
             tbl.style = 'Table Grid'
             tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-            for ci, h_txt in enumerate(HDR_COLS):
-                _hdr_cell(tbl.rows[0].cells[ci], h_txt)
+            for ci, h_txt in enumerate(_SCH_OFF_HEADERS):
+                _cell_text(tbl.rows[0].cells[ci], h_txt, bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
 
             for ri, r in enumerate(yl_rows):
-                bg = 'FFFFFF' if ri % 2 == 0 else 'FDF5F5'
-                for ci, key in enumerate(COL_KEYS):
-                    _data_cell(tbl.rows[ri + 1].cells[ci], r.get(key) or '', bg)
+                vals = _sch_official_row(r)
+                for ci, v in enumerate(vals):
+                    align = WD_ALIGN_PARAGRAPH.CENTER if ci in (3, 4, 5, 7) else WD_ALIGN_PARAGRAPH.LEFT
+                    _cell_text(tbl.rows[ri + 1].cells[ci], v, sz=8, align=align)
+
+            lec, lab, units, hrs = _sch_official_totals(yl_rows)
+            trow = tbl.rows[-1]
+            merged = trow.cells[0].merge(trow.cells[2])
+            _cell_text(merged, 'TOTAL', bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _cell_text(trow.cells[3], lec, bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _cell_text(trow.cells[4], lab, bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _cell_text(trow.cells[5], units, bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _cell_text(trow.cells[7], hrs, bold=True, sz=8, align=WD_ALIGN_PARAGRAPH.CENTER)
 
             doc.add_paragraph()
 
@@ -3758,12 +4207,12 @@ def _sch_gen_docx(rows, groups, sem_label):
     return buf.read()
 
 
-def _sch_gen_pdf(rows, groups, sem_label):
+def _sch_gen_pdf(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
     buf = io.BytesIO()
@@ -3771,47 +4220,58 @@ def _sch_gen_pdf(rows, groups, sem_label):
                             leftMargin=1.5*cm, rightMargin=1.5*cm,
                             topMargin=1.5*cm, bottomMargin=1.5*cm)
 
-    DARK   = colors.HexColor('#5C0000')
-    MED    = colors.HexColor('#7A0000')
-    LIGHT  = colors.HexColor('#A03030')
-    STRIPE = colors.HexColor('#FDF5F5')
-    WHITE  = colors.white
-    LGRAY  = colors.HexColor('#DDDDDD')
+    BLACK  = colors.black
+    YELLOW = colors.HexColor('#FFFF00')
 
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=DARK, fontSize=16, spaceAfter=4, alignment=TA_CENTER)
-    h2 = ParagraphStyle('H2', parent=styles['Heading2'], textColor=MED,  fontSize=13, spaceAfter=2, alignment=TA_LEFT)
-    h3 = ParagraphStyle('H3', parent=styles['Heading3'], textColor=LIGHT,fontSize=10, spaceAfter=2, alignment=TA_LEFT)
-    sm = ParagraphStyle('SM', parent=styles['Normal'],   textColor=MED,  fontSize=10, spaceAfter=6, alignment=TA_CENTER)
+    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=BLACK, fontSize=14, spaceAfter=2, alignment=TA_CENTER)
+    campus_style = ParagraphStyle('Campus', parent=styles['Normal'], textColor=BLACK, fontSize=11,
+                                   alignment=TA_CENTER, fontName='Helvetica-Bold')
+    h2 = ParagraphStyle('H2', parent=styles['Heading2'], textColor=BLACK, fontSize=13, spaceAfter=2, alignment=TA_CENTER)
+    h3 = ParagraphStyle('H3', parent=styles['Heading3'], textColor=BLACK, fontSize=10, spaceAfter=2, alignment=TA_LEFT)
 
-    HDR_COLS = ['Instructor','Subj Code','Subject Description','Lec','Lab','Units','Section','Day/s','Time','Hrs','Room']
-    COL_KEYS = ['Instructor','SubjectCode','SubjectName','LectureHours','LaboratoryHours','CreditUnits','Section','Day/s','Time','Hours','Room']
-    YL_LBL   = {1:'First Year',2:'Second Year',3:'Third Year',4:'Fourth Year',5:'Fifth Year'}
-    COL_W    = [3.8*cm, 2.2*cm, 5.5*cm, 1.1*cm, 1.1*cm, 1.1*cm, 2.5*cm, 1.8*cm, 3.5*cm, 1.1*cm, 2.3*cm]
+    COL_W = [3.6*cm, 2.2*cm, 5.3*cm, 1.3*cm, 1.3*cm, 1.4*cm, 1.6*cm, 1.2*cm, 1.6*cm, 3.2*cm, 2.4*cm]
+    title = _sch_official_title(sem_label, ay_label)
 
-    story = [Paragraph('CLASS SCHEDULE', h1), Paragraph(sem_label, sm), Spacer(1, 0.3*cm)]
+    story = [Paragraph(title, h1)]
+    camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[sum(COL_W)])
+    camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), YELLOW), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+    story.append(camp_tbl)
+    story.append(Spacer(1, 0.3*cm))
 
+    first_prog = True
     for prog, ylmap in groups.items():
-        story.append(Paragraph(prog, h2))
+        if not first_prog:
+            story.append(PageBreak())
+        first_prog = False
+
+        story.append(Paragraph(_sch_official_prog_label(prog, prog_names), h2))
+
         for yl, yl_rows in ylmap.items():
-            yl_label = YL_LBL.get(yl, f'Year {yl}').upper() if yl else 'UNCLASSIFIED'
+            yl_label = _SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED'
             story.append(Paragraph(yl_label, h3))
 
-            tbl_data = [HDR_COLS]
+            tbl_data = [_SCH_OFF_HEADERS]
             for r in yl_rows:
-                tbl_data.append([str(r.get(k) or '') for k in COL_KEYS])
+                tbl_data.append([str(v) for v in _sch_official_row(r)])
+
+            lec, lab, units, hrs = _sch_official_totals(yl_rows)
+            tbl_data.append(['TOTAL', '', '', str(lec), str(lab), str(units), '', str(hrs), '', '', ''])
+            last_row = len(tbl_data) - 1
 
             tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
             tbl.setStyle(TableStyle([
-                ('BACKGROUND',     (0,0),  (-1,0),  DARK),
-                ('TEXTCOLOR',      (0,0),  (-1,0),  WHITE),
                 ('FONTNAME',       (0,0),  (-1,0),  'Helvetica-Bold'),
                 ('FONTSIZE',       (0,0),  (-1,-1), 7),
                 ('FONTNAME',       (0,1),  (-1,-1), 'Helvetica'),
                 ('ALIGN',          (0,0),  (-1,0),  'CENTER'),
+                ('ALIGN',          (3,1),  (5,-1),  'CENTER'),
+                ('ALIGN',          (7,1),  (7,-1),  'CENTER'),
                 ('VALIGN',         (0,0),  (-1,-1), 'MIDDLE'),
-                ('GRID',           (0,0),  (-1,-1), 0.5, LGRAY),
-                ('ROWBACKGROUNDS', (0,1),  (-1,-1), [WHITE, STRIPE]),
+                ('GRID',           (0,0),  (-1,-1), 0.5, BLACK),
+                ('SPAN',           (0,last_row), (2,last_row)),
+                ('FONTNAME',       (0,last_row), (-1,last_row), 'Helvetica-Bold'),
+                ('ALIGN',          (0,last_row), (0,last_row), 'CENTER'),
                 ('LEFTPADDING',    (0,0),  (-1,-1), 3),
                 ('RIGHTPADDING',   (0,0),  (-1,-1), 3),
                 ('TOPPADDING',     (0,0),  (-1,-1), 3),
@@ -3824,6 +4284,1369 @@ def _sch_gen_pdf(rows, groups, sem_label):
     doc.build(story)
     buf.seek(0)
     return buf.read()
+
+
+def _sch_gen_xlsx_calendar(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
+    """Calendar View XLSX — faculty-schedule-style weekly timetable: paired-day
+    columns (M/TH, T/F, W/S, SUN) with separate Mon/Thu, Tue/Fri, Wed/Sat
+    sub-columns, on a fixed-height fine time grid. Each block is positioned
+    (via cell merge) proportionally to its actual start/end time rather than
+    snapped to the printed time-slice guide, grouped by Program → Year Level."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Weekly Timetable'
+    ws.sheet_view.showGridLines = False
+
+    YELLOW = PatternFill('solid', fgColor='FFFF00')
+    thin   = Side(style='thin', color='000000')
+    brd    = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_font = Font(bold=True, size=12)
+    prog_font  = Font(bold=True, size=11)
+    yl_font    = Font(bold=True, size=10)
+    hdr_font   = Font(bold=True, size=8.5)
+    data_font  = Font(size=6.5)
+    center     = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    NCOLS = _SCH_CAL_NCOLS
+    COL_W = [10, 12, 12, 12, 12, 12, 12, 12]
+    ROW_H_NORMAL = 20
+    ROW_H_GAP    = 5
+
+    title = _sch_official_title(sem_label, ay_label)
+    rn = 1
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 16; rn += 1
+
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = title_font; c.fill = YELLOW
+    c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 14; rn += 1
+
+    for prog, ylmap in groups.items():
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, _sch_official_prog_label(prog, prog_names))
+        c.font = prog_font; c.alignment = Alignment(horizontal='center')
+        for col in range(1, NCOLS + 1):
+            ws.cell(rn, col).border = brd
+        ws.row_dimensions[rn].height = 14; rn += 1
+
+        for yl, yl_rows in ylmap.items():
+            c = ws.cell(rn, 1, _SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED')
+            c.font = yl_font
+            ws.row_dimensions[rn].height = 13; rn += 1
+
+            blocks, unscheduled = _sch_build_calendar(yl_rows)
+
+            # Single header row — the M/TH, T/F, W/S grouping is already implied
+            # by the adjacent day-letter columns, so no separate pair-label row.
+            hdr_row = rn
+            c = ws.cell(hdr_row, 1, 'TIME'); c.font = hdr_font; c.border = brd; c.alignment = center
+            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                base = _SCH_CAL_COL_BASE[pi]
+                for si, d in enumerate(members):
+                    c = ws.cell(hdr_row, base + 1 + si, _SCH_CAL_SUBLBL[d])
+                    c.font = hdr_font; c.border = brd; c.alignment = center
+            sun_col = _SCH_CAL_COL_BASE[3] + 1
+            c = ws.cell(hdr_row, sun_col, 'SUN'); c.font = hdr_font; c.border = brd; c.alignment = center
+            ws.row_dimensions[hdr_row].height = 14
+
+            data_start = hdr_row + 1
+            for fi, (fs, fe, flbl, is_gap) in enumerate(_SCH_CAL_FINE_ROWS):
+                excel_row = data_start + fi
+                ws.row_dimensions[excel_row].height = ROW_H_GAP if is_gap else ROW_H_NORMAL
+                for col in range(1, NCOLS + 1):
+                    ws.cell(excel_row, col).border = brd
+
+            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                r0, r1 = _sch_cal_row_range(s_start, s_end)
+                er0, er1 = data_start + r0, data_start + r1
+                if er1 > er0:
+                    ws.merge_cells(start_row=er0, start_column=1, end_row=er1, end_column=1)
+                c = ws.cell(er0, 1, s_label); c.font = hdr_font; c.alignment = center
+
+            for b in blocks:
+                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                er0, er1 = data_start + b['row_start'], data_start + b['row_end']
+                ec0, ec1 = col0 + 1, col1 + 1
+                if er1 > er0 or ec1 > ec0:
+                    ws.merge_cells(start_row=er0, start_column=ec0, end_row=er1, end_column=ec1)
+                c = ws.cell(er0, ec0, '\n\n'.join(b['lines'])); c.font = data_font; c.alignment = center
+
+            rn = data_start + len(_SCH_CAL_FINE_ROWS)
+
+            if unscheduled:
+                c = ws.cell(rn, 1, 'Unscheduled / TBA:'); c.font = hdr_font; rn += 1
+                for u in unscheduled:
+                    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+                    c = ws.cell(rn, 1, u); c.font = data_font
+                    rn += 1
+
+            rn += 1
+        rn += 1
+
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _sch_gen_docx_calendar(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
+    """Calendar View DOCX — faculty-schedule-style weekly timetable, mirroring
+    _sch_gen_xlsx_calendar's fixed-height fine grid with Mon/Thu, Tue/Fri,
+    Wed/Sat sub-columns and proportionally-merged schedule blocks."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches, Cm, Emu
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width  = Inches(8.5)
+    sec.page_height = Inches(11)
+    sec.left_margin = sec.right_margin  = Cm(1.3)
+    sec.top_margin  = sec.bottom_margin = Cm(1.0)
+
+    BLACK = RGBColor(0x00, 0x00, 0x00)
+    title = _sch_official_title(sem_label, ay_label)
+
+    def _bg(cell, hex6):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex6)
+        tcPr.append(shd)
+
+    def _cell_lines(cell, entries, bold=False, sz=8, fill=None, align=WD_ALIGN_PARAGRAPH.CENTER):
+        cell.text = ''
+        p = cell.paragraphs[0]
+        p.alignment = align
+        # Word's default paragraph style adds space-before/after (and >1.0 line
+        # spacing) to every paragraph; with EXACT row heights Word expands the
+        # row to fit that extra space rather than clipping it, which silently
+        # inflates every row and is what actually blew the page-fit budget.
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after  = Pt(0)
+        pf.line_spacing = 1.0
+        flat = []
+        for e in (entries or ['']):
+            flat.extend(str(e).split('\n'))
+        if not flat:
+            flat = ['']
+        for i, line in enumerate(flat):
+            run = p.add_run(line)
+            run.font.bold = bold; run.font.size = Pt(sz); run.font.color.rgb = BLACK
+            if i < len(flat) - 1:
+                run.add_break()
+        if fill: _bg(cell, fill)
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    def _set_row_height(row, pts, exact=True):
+        row.height = Pt(pts)
+        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY if exact else WD_ROW_HEIGHT_RULE.AT_LEAST
+
+    def _cant_split(row):
+        trPr = row._tr.get_or_add_trPr()
+        el = OxmlElement('w:cantSplit')
+        trPr.append(el)
+
+    def _keep_with_next(row):
+        # Chains every row's paragraphs to "keep with next", which combined with
+        # cantSplit is the standard Word technique to stop a table breaking
+        # across a page boundary between rows (not just within one row).
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                p.paragraph_format.keep_with_next = True
+
+    h1 = doc.add_heading(title, 0)
+    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    h1.paragraph_format.space_after = Pt(2)
+    for run in h1.runs:
+        run.font.color.rgb = BLACK; run.font.size = Pt(12)
+
+    camp = doc.add_table(rows=1, cols=1)
+    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _cell_lines(camp.rows[0].cells[0], ['LOPEZ, QUEZON CAMPUS'], bold=True, sz=9, fill='FFFF00')
+
+    first_prog = True
+    for prog, ylmap in groups.items():
+        if not first_prog:
+            doc.add_page_break()
+        first_prog = False
+
+        h2 = doc.add_heading(_sch_official_prog_label(prog, prog_names), level=1)
+        h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        h2.paragraph_format.space_before = Pt(4)
+        h2.paragraph_format.space_after  = Pt(2)
+        for run in h2.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(11)
+
+        yl_items = list(ylmap.items())
+        for yl_i, (yl, yl_rows) in enumerate(yl_items):
+            h3 = doc.add_heading(_SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED', level=2)
+            h3.paragraph_format.space_before = Pt(2)
+            h3.paragraph_format.space_after  = Pt(1)
+            for run in h3.runs:
+                run.font.color.rgb = BLACK; run.font.size = Pt(9)
+
+            blocks, unscheduled = _sch_build_calendar(yl_rows)
+            n_fine = len(_SCH_CAL_FINE_ROWS)
+
+            # Single header row — the M/TH, T/F, W/S grouping is already implied
+            # by the adjacent day-letter columns, so no separate pair-label row.
+            tbl = doc.add_table(rows=1 + n_fine, cols=_SCH_CAL_NCOLS)
+            tbl.style = 'Table Grid'
+            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+            tbl.autofit = False
+            # Fill the content width (page width minus the 1.3cm side margins)
+            # instead of leaving the table narrow with extra centered whitespace.
+            widths_in = [0.9, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92]
+            for row in tbl.rows:
+                row_cells = row.cells  # cache — re-reading .cells per column re-triggers a full grid scan
+                for ci, w in enumerate(widths_in):
+                    row_cells[ci].width = Inches(w)
+
+            # NOTE: use tbl.rows[r].cells[c] (cheap list indexing), never
+            # tbl.cell(r, c) — python-docx's Table.cell() recomputes the
+            # entire merge-grid from scratch on every call, which turns a
+            # ~200-cell table into an O(n^2) operation and was the actual
+            # cause of multi-second (or worse) generation times per table.
+            hdr_row_cells = tbl.rows[0].cells
+            _cell_lines(hdr_row_cells[0], ['TIME'], bold=True, sz=7.5)
+            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                base = _SCH_CAL_COL_BASE[pi]
+                for si, d in enumerate(members):
+                    _cell_lines(hdr_row_cells[base + si], [_SCH_CAL_SUBLBL[d]], bold=True, sz=7)
+            sun_col = _SCH_CAL_COL_BASE[3]
+            _cell_lines(hdr_row_cells[sun_col], ['SUN'], bold=True, sz=7.5)
+            _set_row_height(tbl.rows[0], 9)
+
+            for fi in range(n_fine):
+                _set_row_height(tbl.rows[1 + fi], 4 if _SCH_CAL_FINE_ROWS[fi][3] else 13)
+                fine_row_cells = tbl.rows[1 + fi].cells
+                for ci in range(_SCH_CAL_NCOLS):
+                    _cell_lines(fine_row_cells[ci], [''], sz=6.5)
+
+            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                r0, r1 = _sch_cal_row_range(s_start, s_end)
+                cell = tbl.rows[1 + r0].cells[0]
+                if r1 > r0:
+                    cell = cell.merge(tbl.rows[1 + r1].cells[0])
+                _cell_lines(cell, [s_label], bold=True, sz=7)
+
+            for b in blocks:
+                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                cell = tbl.rows[1 + b['row_start']].cells[col0]
+                if b['row_end'] > b['row_start'] or col1 > col0:
+                    cell = cell.merge(tbl.rows[1 + b['row_end']].cells[col1])
+                _cell_lines(cell, b['lines'], sz=6.5)
+
+            # Apply cantSplit/keepNext AFTER all cell content is written — _cell_lines
+            # resets each cell's paragraph, which would otherwise wipe out these
+            # properties if set beforehand. This is what actually stops Word from
+            # breaking the table across a page boundary between rows.
+            n_rows = len(tbl.rows)
+            for ri, row in enumerate(tbl.rows):
+                _cant_split(row)
+                if ri < n_rows - 1:
+                    _keep_with_next(row)
+
+            if unscheduled:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(1)
+                p.paragraph_format.space_after  = Pt(1)
+                run = p.add_run('Unscheduled / TBA: ' + '; '.join(unscheduled))
+                run.font.size = Pt(7); run.font.color.rgb = BLACK
+
+            # Force exactly 2 calendar tables per page: break after every 2nd
+            # year level (unless it's the section's last table already).
+            if yl_i % 2 == 1 and yl_i < len(yl_items) - 1:
+                doc.add_page_break()
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _sch_gen_pdf_calendar(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
+    """Calendar View PDF — faculty-schedule-style weekly timetable, mirroring
+    _sch_gen_xlsx_calendar's fixed-height fine grid with Mon/Thu, Tue/Fri,
+    Wed/Sat sub-columns and proportionally-positioned (SPAN-merged) blocks."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, KeepTogether
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.3*cm, rightMargin=1.3*cm,
+                            topMargin=1.2*cm, bottomMargin=1.2*cm)
+
+    BLACK  = colors.black
+    YELLOW = colors.HexColor('#FFFF00')
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=BLACK, fontSize=12, spaceAfter=1, alignment=TA_CENTER)
+    campus_style = ParagraphStyle('Campus', parent=styles['Normal'], textColor=BLACK, fontSize=9,
+                                   alignment=TA_CENTER, fontName='Helvetica-Bold')
+    h2 = ParagraphStyle('H2', parent=styles['Heading2'], textColor=BLACK, fontSize=11, spaceAfter=1, alignment=TA_CENTER)
+    h3 = ParagraphStyle('H3', parent=styles['Heading3'], textColor=BLACK, fontSize=9, spaceAfter=1, alignment=TA_LEFT)
+    hdr_style  = ParagraphStyle('Hdr', parent=styles['Normal'], textColor=BLACK, fontSize=7, alignment=TA_CENTER,
+                                 fontName='Helvetica-Bold', leading=8)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], textColor=BLACK, fontSize=5.8, alignment=TA_CENTER, leading=6.8)
+    time_style = ParagraphStyle('TimeCell', parent=styles['Normal'], textColor=BLACK, fontSize=6.5, alignment=TA_CENTER,
+                                 fontName='Helvetica-Bold', leading=7.5)
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], textColor=BLACK, fontSize=7.5, alignment=TA_LEFT)
+
+    NCOLS   = _SCH_CAL_NCOLS
+    TOTAL_W = (21 - 2.6) * cm
+    TIME_W  = 1.7 * cm
+    DAY_W   = (TOTAL_W - TIME_W) / (NCOLS - 1)
+    COL_W   = [TIME_W] + [DAY_W] * (NCOLS - 1)
+    ROW_H_NORMAL = 0.4 * cm
+    ROW_H_GAP    = 0.12 * cm
+    HDR_H        = 0.38 * cm
+
+    title = _sch_official_title(sem_label, ay_label)
+
+    story = [Paragraph(title, h1)]
+    camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[TOTAL_W])
+    camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), YELLOW), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+    story.append(camp_tbl)
+    story.append(Spacer(1, 0.1*cm))
+
+    first_prog = True
+    for prog, ylmap in groups.items():
+        if not first_prog:
+            story.append(PageBreak())
+        first_prog = False
+
+        story.append(Paragraph(_sch_official_prog_label(prog, prog_names), h2))
+
+        yl_items = list(ylmap.items())
+        for yl_i, (yl, yl_rows) in enumerate(yl_items):
+            yl_label = _SCH_OFF_YL_LBL.get(yl, f'YEAR {yl}') if yl else 'UNCLASSIFIED'
+            yl_flow = [Paragraph(yl_label, h3)]
+
+            blocks, unscheduled = _sch_build_calendar(yl_rows)
+            n_fine = len(_SCH_CAL_FINE_ROWS)
+
+            # Single header row — the M/TH, T/F, W/S grouping is already implied
+            # by the adjacent day-letter columns, so no separate pair-label row.
+            grid = [[Paragraph('', cell_style) for _ in range(NCOLS)] for _ in range(1 + n_fine)]
+            span_cmds = []
+
+            grid[0][0] = Paragraph('TIME', hdr_style)
+            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                base = _SCH_CAL_COL_BASE[pi]
+                for si, d in enumerate(members):
+                    grid[0][base + si] = Paragraph(_SCH_CAL_SUBLBL[d], hdr_style)
+            sun_col = _SCH_CAL_COL_BASE[3]
+            grid[0][sun_col] = Paragraph('SUN', hdr_style)
+
+            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                r0, r1 = _sch_cal_row_range(s_start, s_end)
+                grid[1 + r0][0] = Paragraph(s_label, time_style)
+                if r1 > r0:
+                    span_cmds.append(('SPAN', (0, 1 + r0), (0, 1 + r1)))
+
+            for b in blocks:
+                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                r0, r1 = 1 + b['row_start'], 1 + b['row_end']
+                cell_txt = '<br/><br/>'.join(line.replace('\n', '<br/>') for line in b['lines'])
+                grid[b['row_start'] + 1][col0] = Paragraph(cell_txt, cell_style)
+                if r1 > r0 or col1 > col0:
+                    span_cmds.append(('SPAN', (col0, r0), (col1, r1)))
+
+            row_heights = [HDR_H] + [
+                ROW_H_GAP if _SCH_CAL_FINE_ROWS[i][3] else ROW_H_NORMAL for i in range(n_fine)
+            ]
+
+            tbl = Table(grid, colWidths=COL_W, rowHeights=row_heights)
+            tbl.setStyle(TableStyle(span_cmds + [
+                ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID',          (0, 0), (-1, -1), 0.4, BLACK),
+                ('LEFTPADDING',   (0, 0), (-1, -1), 2),
+                ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
+                ('TOPPADDING',    (0, 0), (-1, -1), 1),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ]))
+            yl_flow.append(tbl)
+
+            if unscheduled:
+                yl_flow.append(Spacer(1, 0.05*cm))
+                yl_flow.append(Paragraph('Unscheduled / TBA: ' + '; '.join(unscheduled), note_style))
+
+            story.append(KeepTogether(yl_flow))
+            story.append(Spacer(1, 0.2*cm))
+
+            # Force exactly 2 calendar tables per page: break after every 2nd
+            # year level (unless it's the section's last table already).
+            if yl_i % 2 == 1 and yl_i < len(yl_items) - 1:
+                story.append(PageBreak())
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+def _room_official_title(sem_label, ay_label):
+    title = f'ROOM SCHEDULE FOR {sem_label.upper()}'
+    if ay_label:
+        title += f', ACADEMIC YEAR {ay_label}'
+    return title
+
+
+def _room_gen_xlsx_calendar(room_groups, sem_label='All Semesters', ay_label=''):
+    """Room Schedule Calendar View XLSX — one weekly-timetable calendar per
+    room (sorted alphabetically by room name), reusing the same paired-day,
+    fixed-fine-grid layout as the Subject Offerings Calendar View."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Room Schedules'
+    ws.sheet_view.showGridLines = False
+
+    YELLOW = PatternFill('solid', fgColor='FFFF00')
+    thin   = Side(style='thin', color='000000')
+    brd    = Border(left=thin, right=thin, top=thin, bottom=thin)
+    title_font = Font(bold=True, size=12)
+    room_font  = Font(bold=True, size=11)
+    hdr_font   = Font(bold=True, size=8.5)
+    data_font  = Font(size=6.5)
+    center     = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    NCOLS = _SCH_CAL_NCOLS
+    COL_W = [10, 12, 12, 12, 12, 12, 12, 12]
+    ROW_H_NORMAL = 20
+    ROW_H_GAP    = 5
+
+    title = _room_official_title(sem_label, ay_label)
+    rn = 1
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 16; rn += 1
+
+    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+    c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = title_font; c.fill = YELLOW
+    c.alignment = Alignment(horizontal='center')
+    ws.row_dimensions[rn].height = 14; rn += 1
+
+    for room in room_groups:
+        c = ws.cell(rn, 1, room['name']); c.font = room_font
+        c.alignment = Alignment(horizontal='left')
+        ws.row_dimensions[rn].height = 15; rn += 1
+
+        blocks, unscheduled = _sch_build_calendar(room['rows'], text_fn=_room_cal_block_text)
+
+        hdr_row = rn
+        c = ws.cell(hdr_row, 1, 'TIME'); c.font = hdr_font; c.border = brd; c.alignment = center
+        for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+            base = _SCH_CAL_COL_BASE[pi]
+            for si, d in enumerate(members):
+                c = ws.cell(hdr_row, base + 1 + si, _SCH_CAL_SUBLBL[d])
+                c.font = hdr_font; c.border = brd; c.alignment = center
+        sun_col = _SCH_CAL_COL_BASE[3] + 1
+        c = ws.cell(hdr_row, sun_col, 'SUN'); c.font = hdr_font; c.border = brd; c.alignment = center
+        ws.row_dimensions[hdr_row].height = 14
+
+        data_start = hdr_row + 1
+        for fi, (fs, fe, flbl, is_gap) in enumerate(_SCH_CAL_FINE_ROWS):
+            excel_row = data_start + fi
+            ws.row_dimensions[excel_row].height = ROW_H_GAP if is_gap else ROW_H_NORMAL
+            for col in range(1, NCOLS + 1):
+                ws.cell(excel_row, col).border = brd
+
+        for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+            r0, r1 = _sch_cal_row_range(s_start, s_end)
+            er0, er1 = data_start + r0, data_start + r1
+            if er1 > er0:
+                ws.merge_cells(start_row=er0, start_column=1, end_row=er1, end_column=1)
+            c = ws.cell(er0, 1, s_label); c.font = hdr_font; c.alignment = center
+
+        for b in blocks:
+            col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+            er0, er1 = data_start + b['row_start'], data_start + b['row_end']
+            ec0, ec1 = col0 + 1, col1 + 1
+            if er1 > er0 or ec1 > ec0:
+                ws.merge_cells(start_row=er0, start_column=ec0, end_row=er1, end_column=ec1)
+            c = ws.cell(er0, ec0, '\n\n'.join(b['lines'])); c.font = data_font; c.alignment = center
+
+        rn = data_start + len(_SCH_CAL_FINE_ROWS)
+
+        if unscheduled:
+            c = ws.cell(rn, 1, 'Unscheduled / TBA:'); c.font = hdr_font; rn += 1
+            for u in unscheduled:
+                ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+                c = ws.cell(rn, 1, u); c.font = data_font
+                rn += 1
+
+        rn += 1
+
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _room_gen_docx_calendar(room_groups, sem_label='All Semesters', ay_label=''):
+    """Room Schedule Calendar View DOCX — one weekly-timetable calendar per
+    room (sorted alphabetically by room name), mirroring the Subject
+    Offerings Calendar View's fixed-height fine grid and 2-per-page pagination."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width  = Inches(8.5)
+    sec.page_height = Inches(11)
+    sec.left_margin = sec.right_margin  = Cm(1.3)
+    sec.top_margin  = sec.bottom_margin = Cm(1.0)
+
+    BLACK = RGBColor(0x00, 0x00, 0x00)
+    title = _room_official_title(sem_label, ay_label)
+
+    def _bg(cell, hex6):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex6)
+        tcPr.append(shd)
+
+    def _cell_lines(cell, entries, bold=False, sz=8, fill=None, align=WD_ALIGN_PARAGRAPH.CENTER):
+        cell.text = ''
+        p = cell.paragraphs[0]
+        p.alignment = align
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after  = Pt(0)
+        pf.line_spacing = 1.0
+        flat = []
+        for e in (entries or ['']):
+            flat.extend(str(e).split('\n'))
+        if not flat:
+            flat = ['']
+        for i, line in enumerate(flat):
+            run = p.add_run(line)
+            run.font.bold = bold; run.font.size = Pt(sz); run.font.color.rgb = BLACK
+            if i < len(flat) - 1:
+                run.add_break()
+        if fill: _bg(cell, fill)
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    def _set_row_height(row, pts, exact=True):
+        row.height = Pt(pts)
+        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY if exact else WD_ROW_HEIGHT_RULE.AT_LEAST
+
+    def _cant_split(row):
+        trPr = row._tr.get_or_add_trPr()
+        el = OxmlElement('w:cantSplit')
+        trPr.append(el)
+
+    def _keep_with_next(row):
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                p.paragraph_format.keep_with_next = True
+
+    h1 = doc.add_heading(title, 0)
+    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    h1.paragraph_format.space_after = Pt(2)
+    for run in h1.runs:
+        run.font.color.rgb = BLACK; run.font.size = Pt(12)
+
+    camp = doc.add_table(rows=1, cols=1)
+    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _cell_lines(camp.rows[0].cells[0], ['LOPEZ, QUEZON CAMPUS'], bold=True, sz=9, fill='FFFF00')
+
+    for room_i, room in enumerate(room_groups):
+        h3 = doc.add_heading(room['name'], level=1)
+        h3.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        h3.paragraph_format.space_before = Pt(4)
+        h3.paragraph_format.space_after  = Pt(2)
+        for run in h3.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(11)
+
+        blocks, unscheduled = _sch_build_calendar(room['rows'], text_fn=_room_cal_block_text)
+        n_fine = len(_SCH_CAL_FINE_ROWS)
+
+        tbl = doc.add_table(rows=1 + n_fine, cols=_SCH_CAL_NCOLS)
+        tbl.style = 'Table Grid'
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        tbl.autofit = False
+        # Fill the content width (page width minus the 1.3cm side margins)
+        # instead of leaving the table narrow with extra centered whitespace.
+        widths_in = [0.9, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92]
+        for row in tbl.rows:
+            row_cells = row.cells  # cache — re-reading .cells per column re-triggers a full grid scan
+            for ci, w in enumerate(widths_in):
+                row_cells[ci].width = Inches(w)
+
+        # NOTE: use tbl.rows[r].cells[c] (cheap list indexing), never
+        # tbl.cell(r, c) — python-docx's Table.cell() recomputes the entire
+        # merge-grid from scratch on every call, which turns a ~200-cell
+        # table into an O(n^2) operation and was the actual cause of
+        # multi-second (or worse) generation times per room's calendar.
+        hdr_row_cells = tbl.rows[0].cells
+        _cell_lines(hdr_row_cells[0], ['TIME'], bold=True, sz=7.5)
+        for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+            base = _SCH_CAL_COL_BASE[pi]
+            for si, d in enumerate(members):
+                _cell_lines(hdr_row_cells[base + si], [_SCH_CAL_SUBLBL[d]], bold=True, sz=7)
+        sun_col = _SCH_CAL_COL_BASE[3]
+        _cell_lines(hdr_row_cells[sun_col], ['SUN'], bold=True, sz=7.5)
+        _set_row_height(tbl.rows[0], 9)
+
+        for fi in range(n_fine):
+            _set_row_height(tbl.rows[1 + fi], 4 if _SCH_CAL_FINE_ROWS[fi][3] else 13)
+            fine_row_cells = tbl.rows[1 + fi].cells
+            for ci in range(_SCH_CAL_NCOLS):
+                _cell_lines(fine_row_cells[ci], [''], sz=6.5)
+
+        for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+            r0, r1 = _sch_cal_row_range(s_start, s_end)
+            cell = tbl.rows[1 + r0].cells[0]
+            if r1 > r0:
+                cell = cell.merge(tbl.rows[1 + r1].cells[0])
+            _cell_lines(cell, [s_label], bold=True, sz=7)
+
+        for b in blocks:
+            col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+            cell = tbl.rows[1 + b['row_start']].cells[col0]
+            if b['row_end'] > b['row_start'] or col1 > col0:
+                cell = cell.merge(tbl.rows[1 + b['row_end']].cells[col1])
+            _cell_lines(cell, b['lines'], sz=6.5)
+
+        n_rows = len(tbl.rows)
+        for ri, row in enumerate(tbl.rows):
+            _cant_split(row)
+            if ri < n_rows - 1:
+                _keep_with_next(row)
+
+        if unscheduled:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(1)
+            p.paragraph_format.space_after  = Pt(1)
+            run = p.add_run('Unscheduled / TBA: ' + '; '.join(unscheduled))
+            run.font.size = Pt(7); run.font.color.rgb = BLACK
+
+        # Force exactly 2 room calendars per page: break after every 2nd room
+        # (unless it's the very last room already).
+        if room_i % 2 == 1 and room_i < len(room_groups) - 1:
+            doc.add_page_break()
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _room_gen_pdf_calendar(room_groups, sem_label='All Semesters', ay_label=''):
+    """Room Schedule Calendar View PDF — one weekly-timetable calendar per
+    room (sorted alphabetically by room name), mirroring the Subject
+    Offerings Calendar View's fixed-height fine grid and 2-per-page pagination."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, KeepTogether
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.3*cm, rightMargin=1.3*cm,
+                            topMargin=1.2*cm, bottomMargin=1.2*cm)
+
+    BLACK  = colors.black
+    YELLOW = colors.HexColor('#FFFF00')
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=BLACK, fontSize=12, spaceAfter=1, alignment=TA_CENTER)
+    campus_style = ParagraphStyle('Campus', parent=styles['Normal'], textColor=BLACK, fontSize=9,
+                                   alignment=TA_CENTER, fontName='Helvetica-Bold')
+    h3 = ParagraphStyle('H3Room', parent=styles['Heading2'], textColor=BLACK, fontSize=11, spaceAfter=2, alignment=TA_LEFT)
+    hdr_style  = ParagraphStyle('Hdr', parent=styles['Normal'], textColor=BLACK, fontSize=7, alignment=TA_CENTER,
+                                 fontName='Helvetica-Bold', leading=8)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], textColor=BLACK, fontSize=5.8, alignment=TA_CENTER, leading=6.8)
+    time_style = ParagraphStyle('TimeCell', parent=styles['Normal'], textColor=BLACK, fontSize=6.5, alignment=TA_CENTER,
+                                 fontName='Helvetica-Bold', leading=7.5)
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], textColor=BLACK, fontSize=7.5, alignment=TA_LEFT)
+
+    NCOLS   = _SCH_CAL_NCOLS
+    TOTAL_W = (21 - 2.6) * cm
+    TIME_W  = 1.7 * cm
+    DAY_W   = (TOTAL_W - TIME_W) / (NCOLS - 1)
+    COL_W   = [TIME_W] + [DAY_W] * (NCOLS - 1)
+    ROW_H_NORMAL = 0.4 * cm
+    ROW_H_GAP    = 0.12 * cm
+    HDR_H        = 0.38 * cm
+
+    title = _room_official_title(sem_label, ay_label)
+
+    story = [Paragraph(title, h1)]
+    camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[TOTAL_W])
+    camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), YELLOW), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+    story.append(camp_tbl)
+    story.append(Spacer(1, 0.1*cm))
+
+    for room_i, room in enumerate(room_groups):
+        room_flow = [Paragraph(room['name'], h3)]
+
+        blocks, unscheduled = _sch_build_calendar(room['rows'], text_fn=_room_cal_block_text)
+        n_fine = len(_SCH_CAL_FINE_ROWS)
+
+        grid = [[Paragraph('', cell_style) for _ in range(NCOLS)] for _ in range(1 + n_fine)]
+        span_cmds = []
+
+        grid[0][0] = Paragraph('TIME', hdr_style)
+        for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+            base = _SCH_CAL_COL_BASE[pi]
+            for si, d in enumerate(members):
+                grid[0][base + si] = Paragraph(_SCH_CAL_SUBLBL[d], hdr_style)
+        sun_col = _SCH_CAL_COL_BASE[3]
+        grid[0][sun_col] = Paragraph('SUN', hdr_style)
+
+        for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+            r0, r1 = _sch_cal_row_range(s_start, s_end)
+            grid[1 + r0][0] = Paragraph(s_label, time_style)
+            if r1 > r0:
+                span_cmds.append(('SPAN', (0, 1 + r0), (0, 1 + r1)))
+
+        for b in blocks:
+            col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+            r0, r1 = 1 + b['row_start'], 1 + b['row_end']
+            cell_txt = '<br/><br/>'.join(line.replace('\n', '<br/>') for line in b['lines'])
+            grid[b['row_start'] + 1][col0] = Paragraph(cell_txt, cell_style)
+            if r1 > r0 or col1 > col0:
+                span_cmds.append(('SPAN', (col0, r0), (col1, r1)))
+
+        row_heights = [HDR_H] + [
+            ROW_H_GAP if _SCH_CAL_FINE_ROWS[i][3] else ROW_H_NORMAL for i in range(n_fine)
+        ]
+
+        tbl = Table(grid, colWidths=COL_W, rowHeights=row_heights)
+        tbl.setStyle(TableStyle(span_cmds + [
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID',          (0, 0), (-1, -1), 0.4, BLACK),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
+            ('TOPPADDING',    (0, 0), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+        ]))
+        room_flow.append(tbl)
+
+        if unscheduled:
+            room_flow.append(Spacer(1, 0.05*cm))
+            room_flow.append(Paragraph('Unscheduled / TBA: ' + '; '.join(unscheduled), note_style))
+
+        story.append(KeepTogether(room_flow))
+        story.append(Spacer(1, 0.2*cm))
+
+        # Force exactly 2 room calendars per page: break after every 2nd room
+        # (unless it's the very last room already).
+        if room_i % 2 == 1 and room_i < len(room_groups) - 1:
+            story.append(PageBreak())
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+# ── Subject / Faculty Assignment Export ───────────────────────────────────────
+_FACSUB_TYPE_ORDER  = ['Designee', 'Part-time', 'Regular']
+_FACSUB_TYPE_LABELS = {
+    'Designee':  'DESIGNEES',
+    'Part-time': 'PART-TIME FACULTY',
+    'Regular':   'REGULAR FACULTY',
+}
+
+
+def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
+    """Faculty/Subject Assignment Export: one row per current schedule
+    assignment (subject+section+semester+employee), joined to faculty type
+    for grouping. Historical/legacy data is excluded — it has no employee
+    link, so it can't be classified by faculty type."""
+    nf, params = ["sv.status IN ('Published', 'Draft')"], []
+    if ay_ids:
+        nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); params.extend(ay_ids)
+    if sem_types:
+        nf.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); params.extend(sem_types)
+    if faculty_types:
+        nf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})"); params.extend(faculty_types)
+
+    q = """
+        SELECT
+            f.employeenumber AS "EmpNum",
+            f.lastname  AS "LastName",
+            f.firstname AS "FirstName",
+            COALESCE(f.lastname||', '||f.firstname||COALESCE(' '||f.middlename,''),'TBA') AS "FacultyName",
+            et.typename      AS "FacultyType",
+            cs.subjectcode   AS "SubjectCode",
+            cs.subjectname   AS "SubjectDescription",
+            pyl.programcode  AS "Program",
+            pyl.yearlevel    AS "YearLevel",
+            sec.sectionname  AS "Section",
+            (COALESCE(cs.lecturehours,0)+COALESCE(cs.laboratoryhours,0)) AS "Hours",
+            ay.yearstart||'-'||ay.yearend AS "AcademicYear",
+            sem.semestertype AS "SemesterType"
+        FROM schedule sc
+        JOIN schedule_version sv        ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs       ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN sections sec               ON sc.sectionid = sec.sectionid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        JOIN semester sem               ON sc.semesterid = sem.semesterid
+        JOIN academicyear ay            ON sem.academicyearid = ay.academicyearid
+        JOIN faculty f                  ON sc.employeenumber = f.employeenumber
+        JOIN employeetype et            ON f.employeetypeid = et.employeetypeid
+        WHERE """ + " AND ".join(nf) + """
+          AND sv.version_number = (
+              SELECT MAX(sv2.version_number)
+              FROM schedule_version sv2
+              WHERE sv2.scheduleid = sv.scheduleid
+                AND sv2.status = sv.status
+          )
+        ORDER BY et.typename, f.lastname, f.firstname, cs.subjectcode
+    """
+    cur.execute(q, params)
+    return cur.fetchall()
+
+
+def _facsub_roster_fetch(cur, faculty_types):
+    """All active faculty matching the selected type(s), independent of
+    Academic Year/Semester — so faculty with no assigned load this period
+    still appear in the report."""
+    nf, params = [], []
+    if faculty_types:
+        nf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})")
+        params.extend(faculty_types)
+    where = f"WHERE {' AND '.join(nf)}" if nf else ""
+    q = f"""
+        SELECT
+            f.employeenumber AS "EmpNum",
+            f.lastname  AS "LastName",
+            f.firstname AS "FirstName",
+            COALESCE(f.lastname||', '||f.firstname||COALESCE(' '||f.middlename,''),'TBA') AS "FacultyName",
+            et.typename AS "FacultyType"
+        FROM faculty f
+        JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        {where}
+        ORDER BY et.typename, f.lastname, f.firstname
+    """
+    cur.execute(q, params)
+    return cur.fetchall()
+
+
+def _facsub_exp_groups(roster_rows, assignment_rows):
+    """Group into [{'type','label','faculty':[{'name','rows':[...]}]}],
+    ordered Designee -> Part-time -> Regular (only types actually present).
+    Every faculty member in the roster appears exactly once — those with no
+    assignment_rows for the selected period get an empty 'rows' list (the
+    generators render this as a 'no assigned load' placeholder). Faculty
+    with assignments keep their subject rows in original (subject-code)
+    order, so consecutive rows for the same faculty member can have their
+    Name shown/merged only once."""
+    assign_by_fac = {}
+    for r in assignment_rows:
+        key = (r.get('LastName'), r.get('FirstName'), r.get('EmpNum'))
+        assign_by_fac.setdefault(key, []).append(r)
+
+    by_type = {}
+    for fr in roster_rows:
+        ft  = fr.get('FacultyType') or 'Unclassified'
+        key = (fr.get('LastName'), fr.get('FirstName'), fr.get('EmpNum'))
+        by_type.setdefault(ft, []).append({'name': fr.get('FacultyName'), 'rows': assign_by_fac.get(key, [])})
+
+    order = [t for t in _FACSUB_TYPE_ORDER if t in by_type]
+    order += sorted(t for t in by_type if t not in _FACSUB_TYPE_ORDER)
+
+    result = []
+    for ft in order:
+        faculty_list = sorted(by_type[ft], key=lambda f: (f['name'] or '').upper())
+        result.append({'type': ft, 'label': _FACSUB_TYPE_LABELS.get(ft, ft.upper()), 'faculty': faculty_list})
+    return result
+
+
+def _facsub_course_label(r):
+    """'Course' column: Program + Year/Section, e.g. 'BSIT 1A'."""
+    prog = (r.get('Program') or '').strip()
+    sec  = (r.get('Section') or '').strip()
+    suffix = sec
+    if prog and sec.upper().startswith(prog.upper()):
+        suffix = sec[len(prog):].lstrip('-').strip()
+    return f"{prog} {suffix}".strip() if (prog or suffix) else ''
+
+
+def _facsub_official_title_lines(sem_label, ay_label):
+    """Two-line report header, repeated before EACH faculty-type section:
+    'SUBJECT / FACULTY ASSIGNMENT REPORT' then '1ST SEMESTER, ACADEMIC YEAR ...'."""
+    line2 = sem_label.upper()
+    if ay_label:
+        line2 += f', ACADEMIC YEAR {ay_label}'
+    return ['SUBJECT / FACULTY ASSIGNMENT REPORT', line2]
+
+
+def _facsub_gen_csv(groups, sem_label='All Semesters', ay_label=''):
+    out = io.StringIO()
+    w = csv.writer(out)
+    title_lines = _facsub_official_title_lines(sem_label, ay_label)
+    for grp in groups:
+        if not grp['faculty']:
+            continue
+        for line in title_lines:
+            w.writerow([line])
+        w.writerow([grp['label']])
+        w.writerow(['Name', 'Subject Code', 'Subject Description', 'Course', 'Hours'])
+        for fac in grp['faculty']:
+            if not fac['rows']:
+                w.writerow([fac['name'], '', '', '', ''])
+                continue
+            for i, r in enumerate(fac['rows']):
+                name = fac['name'] if i == 0 else ''
+                w.writerow([name, r.get('SubjectCode') or '', r.get('SubjectDescription') or '',
+                            _facsub_course_label(r), r.get('Hours') or 0])
+        w.writerow([])
+    return out.getvalue().encode('utf-8-sig')
+
+
+def _facsub_gen_xlsx(groups, sem_label='All Semesters', ay_label=''):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.pagebreak import Break
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Faculty Assignments'
+    ws.sheet_view.showGridLines = False
+
+    thin  = Side(style='thin', color='000000')
+    brd   = Border(left=thin, right=thin, top=thin, bottom=thin)
+    SHADE = PatternFill('solid', fgColor='F2F2F2')  # subtle alternating band per faculty member
+    title_font = Font(bold=True, size=13)
+    sub_font   = Font(bold=True, size=10)
+    sect_font  = Font(bold=True, size=12)
+    hdr_font   = Font(bold=True, size=9)
+    data_font  = Font(size=9)
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left   = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    HEADERS = ['Name', 'Subject Code', 'Subject Description', 'Course', 'Hours']
+    NCOLS   = len(HEADERS)
+    COL_W   = [28, 14, 42, 14, 10]
+
+    title_lines = _facsub_official_title_lines(sem_label, ay_label)
+    rn = 1
+    first_section = True
+    for grp in groups:
+        if not grp['faculty']:
+            continue
+        if not first_section:
+            ws.row_breaks.append(Break(id=rn - 1))
+        first_section = False
+
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, title_lines[0]); c.font = title_font; c.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[rn].height = 22; rn += 1
+
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, title_lines[1]); c.font = sub_font; c.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[rn].height = 18; rn += 1
+        rn += 1
+
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, grp['label']); c.font = sect_font; c.alignment = Alignment(horizontal='left')
+        for col in range(1, NCOLS + 1):
+            ws.cell(rn, col).border = brd
+        ws.row_dimensions[rn].height = 20; rn += 1
+
+        for ci, h in enumerate(HEADERS, 1):
+            c = ws.cell(rn, ci, h); c.font = hdr_font; c.border = brd; c.alignment = center
+        ws.row_dimensions[rn].height = 20; rn += 1
+
+        for fac_idx, fac in enumerate(grp['faculty']):
+            start_row = rn
+            fill = SHADE if fac_idx % 2 == 1 else None
+            if not fac['rows']:
+                c = ws.cell(rn, 1, fac['name']); c.font = data_font; c.border = brd; c.alignment = left
+                if fill: c.fill = fill
+                for col in range(2, NCOLS + 1):
+                    c = ws.cell(rn, col, ''); c.border = brd
+                    if fill: c.fill = fill
+                ws.row_dimensions[rn].height = 15
+                rn += 1
+            else:
+                for r in fac['rows']:
+                    vals = ['', r.get('SubjectCode') or '', r.get('SubjectDescription') or '',
+                            _facsub_course_label(r), r.get('Hours') or 0]
+                    for ci, v in enumerate(vals, 1):
+                        c = ws.cell(rn, ci, v); c.font = data_font; c.border = brd
+                        c.alignment = center if ci in (2, 4, 5) else left
+                        # Fill is applied to every physical row (including col 1,
+                        # before it gets merged) rather than relying on
+                        # merge_cells() to propagate the anchor's fill — unlike
+                        # borders, openpyxl does not carry fill over to the
+                        # other cells in a merged range on save.
+                        if fill: c.fill = fill
+                    ws.row_dimensions[rn].height = 15
+                    rn += 1
+                end_row = rn - 1
+                c = ws.cell(start_row, 1, fac['name']); c.font = data_font; c.alignment = left
+                if end_row > start_row:
+                    ws.merge_cells(start_row=start_row, start_column=1, end_row=end_row, end_column=1)
+
+        rn += 1
+
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _facsub_gen_docx(groups, sem_label='All Semesters', ay_label=''):
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width  = Inches(8.5)
+    sec.page_height = Inches(11)
+    sec.left_margin = sec.right_margin  = Cm(1.5)
+    sec.top_margin  = sec.bottom_margin = Cm(1.5)
+
+    BLACK = RGBColor(0x00, 0x00, 0x00)
+    title_lines = _facsub_official_title_lines(sem_label, ay_label)
+    SHADE = 'F2F2F2'  # subtle alternating band per faculty member's row block
+
+    def _bg(cell, hex6):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex6)
+        tcPr.append(shd)
+
+    def _cell_text(cell, text, bold=False, sz=9, align=WD_ALIGN_PARAGRAPH.LEFT, fill=None):
+        cell.text = ''
+        p = cell.paragraphs[0]
+        p.alignment = align
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(0)
+        run = p.add_run('' if text is None else str(text))
+        run.font.bold = bold; run.font.size = Pt(sz); run.font.color.rgb = BLACK
+        if fill: _bg(cell, fill)
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    HEADERS   = ['Name', 'Subject Code', 'Subject Description', 'Course', 'Hours']
+    # Fill the content width (page width minus the 1.5cm side margins) instead
+    # of leaving the table narrow with extra centered whitespace.
+    WIDTHS_IN = [1.35, 0.93, 3.21, 1.14, 0.62]
+
+    first = True
+    for grp in groups:
+        if not grp['faculty']:
+            continue
+        if not first:
+            doc.add_page_break()
+        first = False
+
+        h1 = doc.add_heading(title_lines[0], 0)
+        h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        h1.paragraph_format.space_after = Pt(2)
+        for run in h1.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(14)
+
+        hsub = doc.add_paragraph(title_lines[1])
+        hsub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        hsub.paragraph_format.space_after = Pt(4)
+        for run in hsub.runs:
+            run.font.bold = True; run.font.size = Pt(11); run.font.color.rgb = BLACK
+
+        h2 = doc.add_heading(grp['label'], level=1)
+        for run in h2.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(12)
+
+        total_rows = 1 + sum(max(len(fac['rows']), 1) for fac in grp['faculty'])
+        tbl = doc.add_table(rows=total_rows, cols=len(HEADERS))
+        tbl.style = 'Table Grid'
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        tbl.autofit = False
+        for row in tbl.rows:
+            row_cells = row.cells  # cache — re-reading .cells per column re-triggers a full grid scan
+            for ci, w in enumerate(WIDTHS_IN):
+                row_cells[ci].width = Inches(w)
+
+        for ci, h in enumerate(HEADERS):
+            _cell_text(tbl.rows[0].cells[ci], h, bold=True, sz=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+        ri = 1
+        for fac_idx, fac in enumerate(grp['faculty']):
+            fill = SHADE if fac_idx % 2 == 1 else None
+            start_ri = ri
+            if not fac['rows']:
+                row_cells = tbl.rows[ri].cells  # cache — re-reading .cells per column re-triggers a full grid scan
+                _cell_text(row_cells[0], fac['name'], sz=9, fill=fill)
+                for ci in range(1, 5):
+                    _cell_text(row_cells[ci], '', sz=9, fill=fill)
+                ri += 1
+            else:
+                for r in fac['rows']:
+                    row_cells = tbl.rows[ri].cells
+                    _cell_text(row_cells[0], '', sz=9, fill=fill)
+                    _cell_text(row_cells[1], r.get('SubjectCode') or '', sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, fill=fill)
+                    _cell_text(row_cells[2], r.get('SubjectDescription') or '', sz=9, fill=fill)
+                    _cell_text(row_cells[3], _facsub_course_label(r), sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, fill=fill)
+                    _cell_text(row_cells[4], r.get('Hours') or 0, sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, fill=fill)
+                    ri += 1
+                end_ri = ri - 1
+                name_cell = tbl.rows[start_ri].cells[0]
+                if end_ri > start_ri:
+                    for extra_ri in range(start_ri + 1, end_ri + 1):
+                        name_cell = name_cell.merge(tbl.rows[extra_ri].cells[0])
+                _cell_text(name_cell, fac['name'], sz=9, fill=fill)
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return buf.read()
+
+
+def _facsub_gen_pdf(groups, sem_label='All Semesters', ay_label=''):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+
+    BLACK = colors.black
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('H1', parent=styles['Heading1'], textColor=BLACK, fontSize=14, spaceAfter=2, alignment=TA_CENTER)
+    hsub = ParagraphStyle('HSub', parent=styles['Normal'], textColor=BLACK, fontSize=11, spaceAfter=8,
+                           alignment=TA_CENTER, fontName='Helvetica-Bold')
+    h2 = ParagraphStyle('H2', parent=styles['Heading2'], textColor=BLACK, fontSize=12, spaceAfter=4, alignment=TA_LEFT)
+    cell_style   = ParagraphStyle('Cell', parent=styles['Normal'], textColor=BLACK, fontSize=8, alignment=TA_LEFT, leading=10)
+    cell_c_style = ParagraphStyle('CellC', parent=cell_style, alignment=TA_CENTER)
+
+    COL_W = [3.2*cm, 2.1*cm, 7.7*cm, 2.8*cm, 1.6*cm]
+    title_lines = _facsub_official_title_lines(sem_label, ay_label)
+
+    HEADERS = ['Name', 'Subject Code', 'Subject Description', 'Course', 'Hours']
+
+    story = []
+    first = True
+    for grp in groups:
+        if not grp['faculty']:
+            continue
+        if not first:
+            story.append(PageBreak())
+        first = False
+
+        story.append(Paragraph(title_lines[0], h1))
+        story.append(Paragraph(title_lines[1], hsub))
+        story.append(Paragraph(grp['label'], h2))
+
+        tbl_data  = [HEADERS]
+        span_cmds = []
+        shade_cmds = []
+        row_i = 1
+        for fac_idx, fac in enumerate(grp['faculty']):
+            start_i = row_i
+            if not fac['rows']:
+                tbl_data.append([
+                    Paragraph(fac['name'], cell_style),
+                    '', '', '', '',
+                ])
+                row_i += 1
+            else:
+                for r in fac['rows']:
+                    tbl_data.append([
+                        Paragraph('', cell_style),
+                        Paragraph(r.get('SubjectCode') or '', cell_c_style),
+                        Paragraph(r.get('SubjectDescription') or '', cell_style),
+                        Paragraph(_facsub_course_label(r), cell_c_style),
+                        Paragraph(str(r.get('Hours') or 0), cell_c_style),
+                    ])
+                    row_i += 1
+                end_i = row_i - 1
+                tbl_data[start_i][0] = Paragraph(fac['name'], cell_style)
+                if end_i > start_i:
+                    span_cmds.append(('SPAN', (0, start_i), (0, end_i)))
+            # Subtle alternating shading per faculty member's row block, so
+            # it's easy to see where one faculty member's load ends and the
+            # next begins without relying on thicker borders.
+            if fac_idx % 2 == 1:
+                shade_cmds.append(('BACKGROUND', (0, start_i), (-1, row_i - 1), colors.HexColor('#F2F2F2')))
+
+        style_cmds = span_cmds + shade_cmds + [
+            ('FONTNAME',      (0, 0), (-1, 0),  'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0), (-1, 0),  9),
+            ('ALIGN',         (0, 0), (-1, 0),  'CENTER'),
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID',          (0, 0), (-1, -1), 0.5, BLACK),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('TOPPADDING',    (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ]
+
+        tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
+        tbl.setStyle(TableStyle(style_cmds))
+        story.append(tbl)
+        story.append(Spacer(1, 0.5*cm))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+_FACSUB_ROLES = ('Admin', 'Academic Head')
+
+
+@app.route('/admin/faculty/subject-export/count', methods=['POST'])
+def facsub_export_count():
+    if session.get('role') not in _FACSUB_ROLES:
+        return jsonify({'error': 'Unauthorized'}), 403
+    data          = request.get_json() or {}
+    ay_ids        = data.get('ay_ids', [])
+    sem_types     = data.get('sem_types', [])
+    faculty_types = data.get('faculty_types', [])
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        roster = _facsub_roster_fetch(cur, faculty_types)
+        rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
+        return jsonify({'count': len(rows), 'faculty': len(roster)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/faculty/subject-export', methods=['POST'])
+def facsub_export():
+    if session.get('role') not in _FACSUB_ROLES:
+        return jsonify({'error': 'Unauthorized'}), 403
+    data          = request.get_json() or {}
+    ay_ids        = data.get('ay_ids', [])
+    sem_types     = data.get('sem_types', [])
+    faculty_types = data.get('faculty_types', [])
+    formats       = [f.lower() for f in data.get('formats', ['pdf'])]
+    filename      = (data.get('filename', '') or 'faculty_subject_assignment').strip()
+    for ext in ('.pdf', '.docx', '.xlsx', '.csv', '.zip'):
+        if filename.lower().endswith(ext):
+            filename = filename[:-len(ext)]
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        roster = _facsub_roster_fetch(cur, faculty_types)
+        rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
+        groups = _facsub_exp_groups(roster, rows)
+
+        # Derive the header's semester/AY text from the user's actual selection
+        # (not from the fetched assignment rows) — with the new "include every
+        # faculty member" behavior, a selected type can legitimately have zero
+        # assignments, and the header must still reflect what was selected.
+        sem_map   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+        sem_label = ' & '.join(sem_map.get(s, s) for s in sorted(sem_types)) if sem_types else 'All Semesters'
+        ay_label = ''
+        if ay_ids:
+            cur.execute(
+                f"SELECT yearstart, yearend FROM academicyear WHERE academicyearid IN "
+                f"({','.join(['%s']*len(ay_ids))}) ORDER BY yearstart", ay_ids)
+            ay_rows = cur.fetchall()
+            if len(ay_rows) == 1:
+                ay_label = f"{ay_rows[0]['yearstart']}-{ay_rows[0]['yearend']}"
+            elif len(ay_rows) > 1:
+                ay_label = 'Multiple Academic Years'
+
+        mime_map = {
+            'csv':  ('text/csv', '.csv'),
+            'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+            'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+            'pdf':  ('application/pdf', '.pdf'),
+        }
+        gen_map = {
+            'csv':  lambda: _facsub_gen_csv(groups, sem_label, ay_label),
+            'xlsx': lambda: _facsub_gen_xlsx(groups, sem_label, ay_label),
+            'docx': lambda: _facsub_gen_docx(groups, sem_label, ay_label),
+            'pdf':  lambda: _facsub_gen_pdf(groups, sem_label, ay_label),
+        }
+
+        if len(formats) == 1:
+            fmt = formats[0]
+            if fmt not in mime_map:
+                return jsonify({'error': f'Unknown format: {fmt}'}), 400
+            out = gen_map[fmt]()
+            mime, ext = mime_map[fmt]
+            return Response(out, mimetype=mime,
+                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+        else:
+            import zipfile
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for fmt in formats:
+                    if fmt in gen_map:
+                        zf.writestr(filename + mime_map[fmt][1], gen_map[fmt]())
+            buf.seek(0)
+            return Response(buf.read(), mimetype='application/zip',
+                            headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+def _sch_export_bytes(fmt, layout, rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map):
+    """Dispatch a single export format/layout combination to the right generator.
+    CSV is always flat (layout has no effect on it)."""
+    if fmt == 'csv':
+        return _sch_gen_csv(rows)
+    use_cal = (layout == 'calendar')
+    r, g = (cal_rows, cal_groups) if use_cal else (rows, groups)
+    if fmt == 'xlsx':
+        return (_sch_gen_xlsx_calendar if use_cal else _sch_gen_xlsx)(r, g, sem_labels, ay_label, prog_name_map)
+    if fmt == 'docx':
+        return (_sch_gen_docx_calendar if use_cal else _sch_gen_docx)(r, g, sem_labels, ay_label, prog_name_map)
+    if fmt == 'pdf':
+        return (_sch_gen_pdf_calendar if use_cal else _sch_gen_pdf)(r, g, sem_labels, ay_label, prog_name_map)
+    return None
 
 
 def _resolve_hist_empnum(cur, inst_name):
@@ -9305,6 +11128,70 @@ def admin_dashboard():
         cur.close()
         conn.close()
 
+def _build_employee_docx():
+    """Generate a styled DOCX file from POSTed employee JSON using python-docx."""
+    from docx import Document
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    data      = request.get_json(silent=True) or {}
+    employees = data.get('employees', [])
+    title     = data.get('title', 'Employee Records')
+    timestamp = data.get('timestamp', '')
+
+    has_contact = any(str(e.get('contact', '')).strip() for e in employees)
+    headers = ['#', 'Employee Number', 'Employee Name', 'Specialization', 'Email']
+    if has_contact: headers.append('Contact')
+    headers += ['Employment Type', 'Status']
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.left_margin = sec.right_margin = Inches(0.8)
+    sec.top_margin  = sec.bottom_margin = Inches(0.8)
+
+    h = doc.add_heading(title, 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    if timestamp:
+        p = doc.add_paragraph(timestamp)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in p.runs:
+            run.font.size = Pt(9); run.font.italic = True
+
+    doc.add_paragraph()
+
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.style = 'Table Grid'
+
+    for i, h_text in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h_text
+        for para in cell.paragraphs:
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in para.runs:
+                run.bold = True; run.font.size = Pt(9)
+
+    for idx, emp in enumerate(employees):
+        row = table.add_row()
+        vals = [str(idx + 1), emp.get('emp_num', ''), emp.get('name', ''),
+                emp.get('spec', ''), emp.get('email', '')]
+        if has_contact: vals.append(emp.get('contact', ''))
+        vals += [emp.get('type', ''), emp.get('status', '')]
+        for j, val in enumerate(vals):
+            cell = row.cells[j]
+            cell.text = '' if val is None else str(val)
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(9)
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers={'Content-Disposition': 'attachment; filename="employees.docx"'}
+    )
+
 @app.route('/admin/employee/export/docx', methods=['POST'])
 def admin_export_employees_docx():
     if session.get('role') != 'Admin':
@@ -9339,23 +11226,20 @@ def _build_employee_xlsx():
     headers += ['Employment Type', 'Status']
     ncols = len(headers)
 
-    MAROON = 'FF800000'; WHITE = 'FFFFFFFF'
-    thin   = Side(style='thin', color='FF888888')
+    thin   = Side(style='thin', color='FF000000')
     bdr    = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     # ── Row 1: Title ──────────────────────────────────────────────────────────
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
     c = ws.cell(row=1, column=1, value=title)
-    c.font      = Font(bold=True, size=14, color=WHITE, name='Calibri')
-    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.font      = Font(bold=True, size=14, name='Calibri')
     c.alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 30
 
     # ── Row 2: Subtitle ───────────────────────────────────────────────────────
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
     c = ws.cell(row=2, column=1, value=timestamp)
-    c.font      = Font(size=9, color='FFDDDDDD', italic=True, name='Calibri')
-    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.font      = Font(size=9, italic=True, name='Calibri')
     c.alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[2].height = 16
 
@@ -9365,16 +11249,13 @@ def _build_employee_xlsx():
     # ── Row 4: Column headers ─────────────────────────────────────────────────
     for ci, h in enumerate(headers, 1):
         c = ws.cell(row=4, column=ci, value=h)
-        c.font      = Font(bold=True, size=10, color=WHITE, name='Calibri')
-        c.fill      = PatternFill('solid', fgColor=MAROON)
+        c.font      = Font(bold=True, size=10, name='Calibri')
         c.alignment = Alignment(horizontal='center', vertical='center')
         c.border    = bdr
     ws.row_dimensions[4].height = 22
     ws.freeze_panes = 'A5'
 
     # ── Rows 5+: Data ─────────────────────────────────────────────────────────
-    PINK  = PatternFill('solid', fgColor='FFFFF0F0')
-    WHITE_FILL = PatternFill('solid', fgColor='FFFFFFFF')
     data_font = Font(size=9, name='Calibri')
 
     for ri, emp in enumerate(employees):
@@ -9383,10 +11264,9 @@ def _build_employee_xlsx():
                 emp.get('spec',''), emp.get('email','')]
         if has_contact: vals.append(emp.get('contact',''))
         vals += [emp.get('type',''), emp.get('status','')]
-        fill = PINK if ri % 2 == 1 else WHITE_FILL
         for ci, val in enumerate(vals, 1):
             c = ws.cell(row=rn, column=ci, value=val)
-            c.font = data_font; c.fill = fill; c.border = bdr
+            c.font = data_font; c.border = bdr
             c.alignment = Alignment(vertical='center')
         ws.row_dimensions[rn].height = 16
 
@@ -9419,10 +11299,8 @@ def export_employees_xlsx():
 # ── Archived Employee DOCX Export ─────────────────────────────────────────────
 def _build_archived_employee_docx():
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
+    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
 
     data      = request.get_json(silent=True) or {}
     employees = data.get('employees', [])
@@ -9438,26 +11316,17 @@ def _build_archived_employee_docx():
 
     h = doc.add_heading(title, 0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in h.runs:
-        run.font.color.rgb = RGBColor(0x80, 0x00, 0x00)
 
     if timestamp:
         p = doc.add_paragraph(timestamp)
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         for run in p.runs:
-            run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-            run.font.size = Pt(9)
+            run.font.size = Pt(9); run.font.italic = True
 
     doc.add_paragraph()
 
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = 'Table Grid'
-
-    def _shd(cell, hex_color):
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd  = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto')
-        shd.set(qn('w:fill'), hex_color); tcPr.append(shd)
 
     for i, h_text in enumerate(headers):
         cell = table.rows[0].cells[i]
@@ -9466,8 +11335,6 @@ def _build_archived_employee_docx():
             para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for run in para.runs:
                 run.bold = True; run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        _shd(cell, '800000')
 
     for idx, emp in enumerate(employees):
         row = table.add_row()
@@ -9476,7 +11343,7 @@ def _build_archived_employee_docx():
                 emp.get('type', ''), emp.get('status', ''), emp.get('date_archived', '')]
         for j, val in enumerate(vals):
             cell = row.cells[j]
-            cell.text = val
+            cell.text = '' if val is None else str(val)
             for para in cell.paragraphs:
                 for run in para.runs:
                     run.font.size = Pt(9)
@@ -9515,8 +11382,7 @@ def _build_archived_employee_xlsx():
     headers = ['#', 'Employee Name', 'Specialization', 'Email', 'Contact', 'Employment Type', 'Status', 'Date Archived']
     ncols   = len(headers)
 
-    MAROON = 'FF800000'; WHITE = 'FFFFFFFF'
-    thin   = Side(style='thin', color='FF888888')
+    thin   = Side(style='thin', color='FF000000')
     bdr    = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     wb = openpyxl.Workbook()
@@ -9525,15 +11391,13 @@ def _build_archived_employee_xlsx():
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
     c = ws.cell(row=1, column=1, value=title)
-    c.font      = Font(bold=True, size=14, color=WHITE, name='Calibri')
-    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.font      = Font(bold=True, size=14, name='Calibri')
     c.alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 30
 
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
     c = ws.cell(row=2, column=1, value=timestamp)
-    c.font      = Font(size=9, color='FFDDDDDD', italic=True, name='Calibri')
-    c.fill      = PatternFill('solid', fgColor=MAROON)
+    c.font      = Font(size=9, italic=True, name='Calibri')
     c.alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[2].height = 16
 
@@ -9541,15 +11405,12 @@ def _build_archived_employee_xlsx():
 
     for ci, h in enumerate(headers, 1):
         c = ws.cell(row=4, column=ci, value=h)
-        c.font      = Font(bold=True, size=10, color=WHITE, name='Calibri')
-        c.fill      = PatternFill('solid', fgColor=MAROON)
+        c.font      = Font(bold=True, size=10, name='Calibri')
         c.alignment = Alignment(horizontal='center', vertical='center')
         c.border    = bdr
     ws.row_dimensions[4].height = 22
     ws.freeze_panes = 'A5'
 
-    PINK       = PatternFill('solid', fgColor='FFFFF0F0')
-    WHITE_FILL = PatternFill('solid', fgColor='FFFFFFFF')
     data_font  = Font(size=9, name='Calibri')
 
     for ri, emp in enumerate(employees):
@@ -9557,10 +11418,9 @@ def _build_archived_employee_xlsx():
         vals = [ri + 1, emp.get('name', ''), emp.get('spec', ''),
                 emp.get('email', ''), emp.get('contact', ''),
                 emp.get('type', ''), emp.get('status', ''), emp.get('date_archived', '')]
-        fill = PINK if ri % 2 == 1 else WHITE_FILL
         for ci, val in enumerate(vals, 1):
             c = ws.cell(row=rn, column=ci, value=val)
-            c.font = data_font; c.fill = fill; c.border = bdr
+            c.font = data_font; c.border = bdr
             c.alignment = Alignment(vertical='center')
         ws.row_dimensions[rn].height = 16
 
@@ -9710,33 +11570,18 @@ def _build_curriculum_docx():
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
 
     payload   = request.get_json(silent=True) or {}
     curricula = payload.get('curricula', [])
-    timestamp = payload.get('timestamp', '')
 
     HEADERS    = ['Subject Code', 'Prereq', 'Co-req', 'Description', 'Lec Hrs', 'Lab Hrs', 'Credited Units', 'Tuition Hrs']
     KEYS       = ['subject_code', 'prerequisite', 'corequisite', 'subject_name', 'lecture_hours', 'lab_hours', 'credit_units', 'tuition_hours']
     COL_WIDTHS = [Inches(0.9), Inches(0.9), Inches(0.7), Inches(2.5), Inches(0.5), Inches(0.5), Inches(0.5), Inches(0.5)]
+    BLACK      = RGBColor(0, 0, 0)
 
-    def _shd(cell, hex_color):
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd  = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), hex_color)
-        tcPr.append(shd)
-
-    def _shade_para(para, fill_hex):
-        pPr = para._p.get_or_add_pPr()
-        shd = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), fill_hex)
-        pPr.append(shd)
-
-    def _sr(run, bold=False, size=9, color=None, italic=False):
-        run.bold = bold; run.italic = italic
-        run.font.size = Pt(size); run.font.name = 'Calibri'
-        if color: run.font.color.rgb = RGBColor(*color)
+    def _sr(run, bold=False, size=9, italic=False, underline=False):
+        run.bold = bold; run.italic = italic; run.underline = underline
+        run.font.size = Pt(size); run.font.name = 'Calibri'; run.font.color.rgb = BLACK
 
     doc = Document()
     for sec in doc.sections:
@@ -9750,68 +11595,72 @@ def _build_curriculum_docx():
         first_curr = False
 
         h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = h.add_run(f"{curr.get('curriculum_code','')}  —  {curr.get('program_name','')}")
-        _sr(r, bold=True, size=16, color=(128, 0, 0))
-
-        h2 = doc.add_paragraph(); h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r2 = h2.add_run(f"Curriculum Year: {curr.get('curriculum_year','')}   |   {timestamp}")
-        _sr(r2, size=9, color=(100, 100, 100), italic=True)
+        r = h.add_run(f"{(curr.get('program_name') or '').upper()} (LOPEZ, QUEZON) (CY {curr.get('curriculum_year','')})")
+        _sr(r, bold=True, size=14)
         doc.add_paragraph()
 
         for yl_data in curr.get('year_levels', []):
             yh = doc.add_paragraph()
             yh.paragraph_format.space_before = Pt(10)
             yh.paragraph_format.space_after  = Pt(2)
-            _shade_para(yh, 'E8DEDE')
-            _sr(yh.add_run('  ' + yl_data['label'].upper() + '  '), bold=True, size=13, color=(80, 0, 0))
+            _sr(yh.add_run(yl_data['label'].upper()), bold=True, size=12)
 
             for sem_data in yl_data.get('semesters', []):
                 sh = doc.add_paragraph()
                 sh.paragraph_format.space_before = Pt(4)
                 sh.paragraph_format.space_after  = Pt(2)
-                _sr(sh.add_run(sem_data['label']), bold=True, size=10, color=(128, 0, 0))
+                _sr(sh.add_run(sem_data['label']), bold=True, size=10, underline=True)
+
+                subjs = sem_data.get('subjects', [])
+                if not subjs:
+                    tbl = doc.add_table(rows=2, cols=len(HEADERS))
+                    tbl.style = 'Table Grid'
+                    for ci, (cell, hdr) in enumerate(zip(tbl.rows[0].cells, HEADERS)):
+                        cell.text = hdr; _sr(cell.paragraphs[0].runs[0], bold=True, size=9)
+                        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        cell.width = COL_WIDTHS[ci]
+                    merged = tbl.rows[1].cells[0].merge(tbl.rows[1].cells[-1])
+                    merged.text = 'No subject'
+                    _sr(merged.paragraphs[0].runs[0], italic=True, size=9)
+                    merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    doc.add_paragraph()
+                    continue
 
                 tbl = doc.add_table(rows=1, cols=len(HEADERS))
                 tbl.style = 'Table Grid'
                 for ci, (cell, hdr) in enumerate(zip(tbl.rows[0].cells, HEADERS)):
-                    cell.text = hdr; _shd(cell, '800000')
-                    _sr(cell.paragraphs[0].runs[0], bold=True, size=9, color=(255, 255, 255))
+                    cell.text = hdr; _sr(cell.paragraphs[0].runs[0], bold=True, size=9)
                     cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cell.width = COL_WIDTHS[ci]
 
-                subjs = sem_data.get('subjects', [])
-                for ri, subj in enumerate(subjs):
-                    fill = 'FFF0F0' if ri % 2 == 1 else 'FFFFFF'
+                for subj in subjs:
                     row_cells = tbl.add_row().cells
                     for ci, (cell, key) in enumerate(zip(row_cells, KEYS)):
                         val = subj.get(key)
                         cell.text = '' if val is None else str(val)
-                        _shd(cell, fill)
                         if cell.paragraphs[0].runs:
                             _sr(cell.paragraphs[0].runs[0], size=8)
                         cell.width = COL_WIDTHS[ci]
 
-                if subjs:
-                    tot_cells = tbl.add_row().cells
-                    for ci in range(len(tot_cells)):
-                        _shd(tot_cells[ci], 'F0F0F0')
-                        if ci < len(COL_WIDTHS): tot_cells[ci].width = COL_WIDTHS[ci]
-                    # Merge cols 0-3 (Subject Code through Description) for the label
-                    merged = tot_cells[0].merge(tot_cells[3])
-                    merged.text = 'TOTAL UNITS'
-                    if merged.paragraphs[0].runs:
-                        _sr(merged.paragraphs[0].runs[0], bold=True, size=9)
-                    merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                    # Credited Units column (index 6)
-                    tot_cells[6].text = str(sem_data.get('total_units', 0))
-                    if tot_cells[6].paragraphs[0].runs:
-                        _sr(tot_cells[6].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
-                    tot_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    # Tuition Hours column (index 7)
-                    tot_cells[7].text = str(sem_data.get('total_tuition', 0))
-                    if tot_cells[7].paragraphs[0].runs:
-                        _sr(tot_cells[7].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
-                    tot_cells[7].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                tot_cells = tbl.add_row().cells
+                for ci in range(len(tot_cells)):
+                    if ci < len(COL_WIDTHS): tot_cells[ci].width = COL_WIDTHS[ci]
+                # Merge cols 0-3 (Subject Code through Description) for the label
+                merged = tot_cells[0].merge(tot_cells[3])
+                merged.text = 'TOTAL UNITS'
+                if merged.paragraphs[0].runs:
+                    _sr(merged.paragraphs[0].runs[0], bold=True, size=9)
+                merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Credited Units column (index 6)
+                tot_cells[6].text = str(sem_data.get('total_units', 0))
+                if tot_cells[6].paragraphs[0].runs:
+                    _sr(tot_cells[6].paragraphs[0].runs[0], bold=True, size=9)
+                tot_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Tuition Hours column (index 7)
+                tot_cells[7].text = str(sem_data.get('total_tuition', 0))
+                if tot_cells[7].paragraphs[0].runs:
+                    _sr(tot_cells[7].paragraphs[0].runs[0], bold=True, size=9)
+                tot_cells[7].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                 doc.add_paragraph()
 
@@ -9832,20 +11681,17 @@ def admin_export_curriculum_docx():
 def _build_curriculum_xlsx():
     """Generate a detailed XLSX export — one sheet per curriculum, grouped by year/semester."""
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 
     payload   = request.get_json(silent=True) or {}
     curricula = payload.get('curricula', [])
-    title     = payload.get('title', 'Curriculum Export')
-    timestamp = payload.get('timestamp', '')
 
     HEADERS    = ['Subject Code', 'Prereq', 'Co-req', 'Description', 'Lec Hrs', 'Lab Hrs', 'Credited Units', 'Tuition Hrs']
     KEYS       = ['subject_code', 'prerequisite', 'corequisite', 'subject_name', 'lecture_hours', 'lab_hours', 'credit_units', 'tuition_hours']
     COL_WIDTHS = [16, 18, 16, 42, 8, 8, 14, 12]
     NCOLS      = len(HEADERS)
-    MAROON     = 'FF800000'; WHITE = 'FFFFFFFF'
-    thin       = Side(style='thin', color='FFCCCCCC')
+    thin       = Side(style='thin', color='FF000000')
     bdr        = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     wb = openpyxl.Workbook()
@@ -9854,87 +11700,67 @@ def _build_curriculum_xlsx():
     for curr in curricula:
         sheet_name = (curr.get('curriculum_code') or 'Sheet')[:31]
         ws = wb.create_sheet(title=sheet_name)
+        ws.sheet_view.showGridLines = False
 
+        title = f"{(curr.get('program_name') or '').upper()} (LOPEZ, QUEZON) (CY {curr.get('curriculum_year','')})"
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
         c = ws.cell(row=1, column=1, value=title)
-        c.font = Font(bold=True, size=14, color=WHITE, name='Calibri')
-        c.fill = PatternFill('solid', fgColor=MAROON)
+        c.font = Font(bold=True, size=13, name='Calibri')
         c.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[1].height = 28
+        ws.row_dimensions[1].height = 24
 
-        curr_label = f"{curr.get('curriculum_code','')}  |  {curr.get('program_name','')}  |  C.Y {curr.get('curriculum_year','')}"
-        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=NCOLS)
-        c = ws.cell(row=2, column=1, value=curr_label)
-        c.font = Font(bold=True, size=11, color=WHITE, name='Calibri')
-        c.fill = PatternFill('solid', fgColor=MAROON)
-        c.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[2].height = 20
-
-        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=NCOLS)
-        c = ws.cell(row=3, column=1, value=timestamp)
-        c.font = Font(size=8, color='FFDDDDDD', italic=True, name='Calibri')
-        c.fill = PatternFill('solid', fgColor=MAROON)
-        c.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[3].height = 14
-
-        rn = 4
+        rn = 3
         for yl_data in curr.get('year_levels', []):
-            ws.row_dimensions[rn].height = 8; rn += 1
-
-            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
             c = ws.cell(row=rn, column=1, value=yl_data['label'].upper())
-            c.font = Font(bold=True, size=11, color=WHITE, name='Calibri')
-            c.fill = PatternFill('solid', fgColor='FF333333')
-            c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
-            ws.row_dimensions[rn].height = 20; rn += 1
+            c.font = Font(bold=True, size=11, name='Calibri')
+            ws.row_dimensions[rn].height = 18; rn += 1
 
             for sem_data in yl_data.get('semesters', []):
-                ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-                c = ws.cell(row=rn, column=1, value=f"  {sem_data['label']}")
-                c.font = Font(bold=True, size=10, color=MAROON, name='Calibri')
-                c.fill = PatternFill('solid', fgColor='FFFFF5F5')
-                c.alignment = Alignment(horizontal='left', vertical='center')
-                ws.row_dimensions[rn].height = 17; rn += 1
+                c = ws.cell(row=rn, column=1, value=sem_data['label'])
+                c.font = Font(bold=True, size=10, underline='single', name='Calibri')
+                ws.row_dimensions[rn].height = 16; rn += 1
 
                 for ci, h in enumerate(HEADERS, 1):
                     c = ws.cell(row=rn, column=ci, value=h)
-                    c.font = Font(bold=True, size=9, color=WHITE, name='Calibri')
-                    c.fill = PatternFill('solid', fgColor=MAROON)
-                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    c.font = Font(bold=True, size=9, name='Calibri')
+                    c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
                     c.border = bdr
-                ws.row_dimensions[rn].height = 18; rn += 1
+                ws.row_dimensions[rn].height = 20; rn += 1
 
                 subjs = sem_data.get('subjects', [])
-                for si, subj in enumerate(subjs):
-                    fill = PatternFill('solid', fgColor='FFFFF0F0') if si % 2 == 1 else PatternFill('solid', fgColor='FFFFFFFF')
-                    vals = [subj.get(k, '') for k in KEYS]
-                    for ci, val in enumerate(vals, 1):
-                        c = ws.cell(row=rn, column=ci, value=val)
-                        c.font = Font(size=9, name='Calibri')
-                        c.fill = fill; c.border = bdr
-                        c.alignment = Alignment(vertical='center', wrap_text=(ci == 4))
-                    ws.row_dimensions[rn].height = 15; rn += 1
-
                 if subjs:
-                    fill_tot  = PatternFill('solid', fgColor='FFE8E8E8')
-                    total_tu  = sem_data.get('total_tuition', 0)
-                    # cols: [SubjCode, Prereq, Coreq, Description, Lec, Lab, CreditedUnits, TuitionHrs]
-                    #        1         2       3      4             5    6    7               8
-                    tot_vals  = ['', '', '', 'TOTAL UNITS', '', '', sem_data.get('total_units', 0), total_tu]
-                    for ci, val in enumerate(tot_vals, 1):
-                        c = ws.cell(row=rn, column=ci, value=val)
-                        c.fill = fill_tot; c.border = bdr
-                        if ci == 4:   # Description col — label
-                            c.font = Font(bold=True, size=9, name='Calibri')
-                            c.alignment = Alignment(horizontal='right', vertical='center')
-                        elif ci in (7, 8):   # Credited Units & Tuition Hrs totals
-                            c.font = Font(bold=True, size=10, color=MAROON, name='Calibri')
-                            c.alignment = Alignment(horizontal='center', vertical='center')
-                        else:
+                    for subj in subjs:
+                        vals = [subj.get(k, '') for k in KEYS]
+                        for ci, val in enumerate(vals, 1):
+                            c = ws.cell(row=rn, column=ci, value=val)
                             c.font = Font(size=9, name='Calibri')
-                    ws.row_dimensions[rn].height = 17; rn += 1
+                            c.border = bdr
+                            c.alignment = Alignment(vertical='center', wrap_text=(ci == 4))
+                        ws.row_dimensions[rn].height = 15; rn += 1
 
-                ws.row_dimensions[rn].height = 5; rn += 1
+                    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=4)
+                    for col in range(1, NCOLS + 1):
+                        ws.cell(row=rn, column=col).border = bdr
+                    c = ws.cell(row=rn, column=1, value='TOTAL UNITS')
+                    c.font = Font(bold=True, size=9, name='Calibri')
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    c = ws.cell(row=rn, column=7, value=sem_data.get('total_units', 0))
+                    c.font = Font(bold=True, size=9, name='Calibri')
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    c = ws.cell(row=rn, column=8, value=sem_data.get('total_tuition', 0))
+                    c.font = Font(bold=True, size=9, name='Calibri')
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    ws.row_dimensions[rn].height = 17; rn += 1
+                else:
+                    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+                    c = ws.cell(row=rn, column=1, value='No subject')
+                    c.font = Font(italic=True, size=9, name='Calibri')
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    for col in range(1, NCOLS + 1):
+                        ws.cell(row=rn, column=col).border = bdr
+                    ws.row_dimensions[rn].height = 16; rn += 1
+
+                ws.row_dimensions[rn].height = 6; rn += 1
 
         for ci, w in enumerate(COL_WIDTHS, 1):
             ws.column_dimensions[get_column_letter(ci)].width = w
@@ -9995,6 +11821,7 @@ def admin_employee():
     """, one=True)
     active_ay_id = active['academicyearid'] if active else ''
     active_sem   = active['semestertype']    if active else ''
+    acad_years   = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
 
     cur.close()
     conn.close()
@@ -10010,7 +11837,8 @@ def admin_employee():
         des=counts.get('Designee', 0),
         total=len(employees),
         active_ay_id=active_ay_id,
-        active_sem=active_sem
+        active_sem=active_sem,
+        acad_years=acad_years
     )
 
 @app.route('/admin/add_employee', methods=['POST'])
@@ -10802,11 +12630,13 @@ def admin_rooms():
     raw_buildings = query_db("SELECT BuildingID as buildingid, BuildingName as buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
     raw_rooms = query_db("SELECT r.*, b.BuildingName FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID ORDER BY r.RoomName ASC")
     rooms =[{k.lower(): v for k, v in row.items()} for row in raw_rooms] if raw_rooms else[]
+    acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
 
     return render_template('admin/rooms_admin.html',
-                           total_labs=total_labs['c'], total_lec=total_lec['c'], 
-                           total_rooms=total_rooms['c'], total_bldgs=total_bldgs['c'], 
-                           buildings=raw_buildings, rooms=rooms, raw_buildings=raw_buildings)
+                           total_labs=total_labs['c'], total_lec=total_lec['c'],
+                           total_rooms=total_rooms['c'], total_bldgs=total_bldgs['c'],
+                           buildings=raw_buildings, rooms=rooms, raw_buildings=raw_buildings,
+                           acad_years=acad_years)
 
 @app.route('/admin/add_building', methods=['POST'])
 def add_building():
@@ -11100,7 +12930,7 @@ def api_delete_building():
 # ── Room Export Routes ─────────────────────────────────────────────────────────
 @app.route('/admin/rooms/export/list', methods=['GET'])
 def admin_rooms_export_list():
-    if session.get('role') not in ('Admin', 'Acad Head'):
+    if session.get('role') not in ('Admin', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     rows = query_db("""
         SELECT b.BuildingID AS buildingid, b.BuildingName AS buildingname,
@@ -11119,7 +12949,7 @@ def admin_rooms_export_list():
 
 @app.route('/admin/rooms/export/data', methods=['POST'])
 def admin_rooms_export_data():
-    if session.get('role') not in ('Admin', 'Acad Head'):
+    if session.get('role') not in ('Admin', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     payload      = request.get_json(silent=True) or {}
     building_ids = payload.get('building_ids', [])
@@ -11169,10 +12999,8 @@ def admin_rooms_export_data():
 
 def _build_rooms_docx():
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
+    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
 
     payload   = request.get_json(silent=True) or {}
     buildings = payload.get('buildings', [])
@@ -11181,22 +13009,9 @@ def _build_rooms_docx():
     HEADERS    = ['Room Number', 'Room Type', 'Capacity']
     COL_WIDTHS = [Inches(3.3), Inches(2.1), Inches(1.5)]
 
-    def _shd(cell, hex_color):
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd  = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto')
-        shd.set(qn('w:fill'), hex_color); tcPr.append(shd)
-
-    def _shade_para(para, fill_hex):
-        pPr = para._p.get_or_add_pPr()
-        shd = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto')
-        shd.set(qn('w:fill'), fill_hex); pPr.append(shd)
-
-    def _sr(run, bold=False, size=9, color=None, italic=False):
+    def _sr(run, bold=False, size=9, italic=False):
         run.bold = bold; run.italic = italic
         run.font.size = Pt(size); run.font.name = 'Calibri'
-        if color: run.font.color.rgb = RGBColor(*color)
 
     doc = Document()
     for sec in doc.sections:
@@ -11204,19 +13019,16 @@ def _build_rooms_docx():
         sec.left_margin = sec.right_margin = Inches(0.8)
 
     h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _sr(h.add_run('PUP LOPEZ CAMPUS  —  ROOMS AND BUILDINGS'),
-        bold=True, size=16, color=(128, 0, 0))
+    _sr(h.add_run('PUP LOPEZ CAMPUS  —  ROOMS AND BUILDINGS'), bold=True, size=16)
     h2 = doc.add_paragraph(); h2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _sr(h2.add_run(timestamp), size=9, color=(100, 100, 100), italic=True)
+    _sr(h2.add_run(timestamp), size=9, italic=True)
     doc.add_paragraph()
 
     for idx, bldg in enumerate(buildings):
         bh = doc.add_paragraph()
         bh.paragraph_format.space_before = Pt(16 if idx > 0 else 4)
         bh.paragraph_format.space_after  = Pt(2)
-        _shade_para(bh, 'E8DEDE')
-        _sr(bh.add_run('  ' + bldg.get('buildingname', '').upper() + '  '),
-            bold=True, size=13, color=(80, 0, 0))
+        _sr(bh.add_run((bldg.get('buildingname') or '').upper()), bold=True, size=13)
 
         sl = doc.add_paragraph()
         sl.paragraph_format.space_before = Pt(0)
@@ -11225,24 +13037,23 @@ def _build_rooms_docx():
             f"Lecture Rooms: {bldg.get('total_lecture', 0)}   |   "
             f"Laboratories: {bldg.get('total_lab', 0)}   |   "
             f"Total: {len(bldg.get('rooms', []))}"),
-            size=9, color=(100, 100, 100), italic=True)
+            size=9, italic=True)
 
         rooms = bldg.get('rooms', [])
         tbl = doc.add_table(rows=1, cols=len(HEADERS))
         tbl.style = 'Table Grid'
         for ci, (cell, hdr) in enumerate(zip(tbl.rows[0].cells, HEADERS)):
-            cell.text = hdr; _shd(cell, '800000')
-            _sr(cell.paragraphs[0].runs[0], bold=True, size=9, color=(255, 255, 255))
+            cell.text = hdr
+            _sr(cell.paragraphs[0].runs[0], bold=True, size=9)
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             cell.width = COL_WIDTHS[ci]
 
         for ri, room in enumerate(rooms):
-            fill = 'FFF0F0' if ri % 2 == 1 else 'FFFFFF'
             rc = tbl.add_row().cells
-            vals = [room.get('roomname', ''),
-                    room.get('roomtype', ''), str(room.get('roomcapacity', ''))]
+            vals = [room.get('roomname') or '',
+                    room.get('roomtype') or '', str(room.get('roomcapacity', ''))]
             for ci, (cell, val) in enumerate(zip(rc, vals)):
-                cell.text = val; _shd(cell, fill)
+                cell.text = val
                 if cell.paragraphs[0].runs:
                     _sr(cell.paragraphs[0].runs[0], size=9)
                     cell.paragraphs[0].alignment = (
@@ -11251,16 +13062,15 @@ def _build_rooms_docx():
 
         tot = tbl.add_row().cells
         for ci in range(len(tot)):
-            _shd(tot[ci], 'F0E8E8')
             tot[ci].width = COL_WIDTHS[ci]
         merged = tot[0].merge(tot[1])
         merged.text = 'TOTAL ROOMS'
         if merged.paragraphs[0].runs:
-            _sr(merged.paragraphs[0].runs[0], bold=True, size=9, color=(128, 0, 0))
+            _sr(merged.paragraphs[0].runs[0], bold=True, size=9)
         merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
         tot[2].text = str(len(rooms))
         if tot[2].paragraphs[0].runs:
-            _sr(tot[2].paragraphs[0].runs[0], bold=True, size=10, color=(128, 0, 0))
+            _sr(tot[2].paragraphs[0].runs[0], bold=True, size=10)
         tot[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     buf = io.BytesIO(); doc.save(buf); buf.seek(0)
@@ -11281,12 +13091,7 @@ def _build_rooms_xlsx():
     HEADERS    = ['Room Number', 'Room Type', 'Capacity']
     COL_WIDTHS = [32, 18, 12]
 
-    maroon   = PatternFill('solid', fgColor='800000')
-    dk_gray  = PatternFill('solid', fgColor='333333')
-    lt_pink  = PatternFill('solid', fgColor='FFF0F0')
-    tot_fill = PatternFill('solid', fgColor='F0E8E8')
-    wht      = PatternFill('solid', fgColor='FFFFFF')
-    thin     = Side(style='thin', color='E0D0D0')
+    thin     = Side(style='thin', color='000000')
     bdr      = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     wb = Workbook()
@@ -11299,43 +13104,36 @@ def _build_rooms_xlsx():
 
         ws.merge_cells('A1:C1')
         ws['A1'] = 'PUP LOPEZ CAMPUS  —  ROOMS AND BUILDINGS'
-        ws['A1'].font      = Font(bold=True, size=13, color='FFFFFF', name='Calibri')
-        ws['A1'].fill      = maroon
+        ws['A1'].font      = Font(bold=True, size=13, name='Calibri')
         ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[1].height = 24
 
         ws.merge_cells('A2:C2')
         ws['A2'] = bldg.get('buildingname', '')
-        ws['A2'].font      = Font(bold=True, size=11, color='FFFFFF', name='Calibri')
-        ws['A2'].fill      = dk_gray
+        ws['A2'].font      = Font(bold=True, size=11, name='Calibri')
         ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[2].height = 18
 
         ws.merge_cells('A3:C3')
         ws['A3'] = timestamp
-        ws['A3'].font      = Font(italic=True, size=8, color='DDDDDD', name='Calibri')
-        ws['A3'].fill      = dk_gray
+        ws['A3'].font      = Font(italic=True, size=8, name='Calibri')
         ws['A3'].alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[3].height = 14
 
         for ci, hdr in enumerate(HEADERS, 1):
             cell = ws.cell(row=4, column=ci, value=hdr)
-            cell.font      = Font(bold=True, size=9, color='FFFFFF', name='Calibri')
-            cell.fill      = maroon
+            cell.font      = Font(bold=True, size=9, name='Calibri')
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border    = bdr
         ws.row_dimensions[4].height = 16
 
         for ri, room in enumerate(rooms):
             rn   = ri + 5
-            fill = lt_pink if ri % 2 == 1 else wht
             vals = [room.get('roomname', ''),
                     room.get('roomtype', ''), room.get('roomcapacity', '')]
             for ci, val in enumerate(vals, 1):
                 cell = ws.cell(row=rn, column=ci, value=val)
-                cell.font      = Font(size=9, name='Calibri',
-                                      color='800000' if ci == 1 else '333333')
-                cell.fill      = fill
+                cell.font      = Font(size=9, name='Calibri')
                 cell.alignment = Alignment(
                     horizontal='left' if ci == 1 else 'center', vertical='center')
                 cell.border    = bdr
@@ -11343,13 +13141,11 @@ def _build_rooms_xlsx():
         tot_row = len(rooms) + 5
         ws.merge_cells(f'A{tot_row}:B{tot_row}')
         ws[f'A{tot_row}'] = 'TOTAL ROOMS'
-        ws[f'A{tot_row}'].font      = Font(bold=True, size=9, color='800000', name='Calibri')
-        ws[f'A{tot_row}'].fill      = tot_fill
+        ws[f'A{tot_row}'].font      = Font(bold=True, size=9, name='Calibri')
         ws[f'A{tot_row}'].alignment = Alignment(horizontal='right', vertical='center')
         ws[f'A{tot_row}'].border    = bdr
         ws[f'C{tot_row}'] = len(rooms)
-        ws[f'C{tot_row}'].font      = Font(bold=True, size=10, color='800000', name='Calibri')
-        ws[f'C{tot_row}'].fill      = tot_fill
+        ws[f'C{tot_row}'].font      = Font(bold=True, size=10, name='Calibri')
         ws[f'C{tot_row}'].alignment = Alignment(horizontal='center', vertical='center')
         ws[f'C{tot_row}'].border    = bdr
 
@@ -11365,15 +13161,97 @@ def _build_rooms_xlsx():
 
 @app.route('/admin/rooms/export/docx', methods=['POST'])
 def admin_export_rooms_docx():
-    if session.get('role') not in ('Admin', 'Acad Head'):
+    if session.get('role') not in ('Admin', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     return _build_rooms_docx()
 
 @app.route('/admin/rooms/export/xlsx', methods=['POST'])
 def admin_export_rooms_xlsx():
-    if session.get('role') not in ('Admin', 'Acad Head'):
+    if session.get('role') not in ('Admin', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     return _build_rooms_xlsx()
+
+# ── Room Schedule Export (Calendar View, per room) ────────────────────────────
+@app.route('/admin/rooms/schedule-export/count', methods=['POST'])
+def room_schedule_export_count():
+    if session.get('role') not in _ROOM_ROLES:
+        return jsonify({'error': 'Unauthorized'}), 403
+    data      = request.get_json() or {}
+    ay_ids    = data.get('ay_ids', [])
+    sem_types = data.get('sem_types', [])
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False)
+        groups = _room_exp_groups(rows)
+        return jsonify({'count': len(rows), 'rooms': len(groups)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/rooms/schedule-export', methods=['POST'])
+def room_schedule_export():
+    if session.get('role') not in _ROOM_ROLES:
+        return jsonify({'error': 'Unauthorized'}), 403
+    data      = request.get_json() or {}
+    ay_ids    = data.get('ay_ids', [])
+    sem_types = data.get('sem_types', [])
+    formats   = [f.lower() for f in data.get('formats', ['pdf'])]
+    filename  = (data.get('filename', '') or 'room_schedule_export').strip()
+    for ext in ('.pdf', '.docx', '.xlsx', '.zip'):
+        if filename.lower().endswith(ext):
+            filename = filename[:-len(ext)]
+
+    conn = get_db_connection()
+    cur  = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False)
+        groups = _room_exp_groups(rows)
+
+        sem_map   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+        uniq_sems = sorted({r['SemesterType'] for r in rows if r.get('SemesterType')})
+        sem_label = ' & '.join(sem_map.get(s, s) for s in uniq_sems) if uniq_sems else 'All Semesters'
+        uniq_ays  = sorted({r['AcademicYear'] for r in rows if r.get('AcademicYear')})
+        ay_label  = uniq_ays[0] if len(uniq_ays) == 1 else ('Multiple Academic Years' if len(uniq_ays) > 1 else '')
+
+        mime_map = {
+            'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+            'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+            'pdf':  ('application/pdf', '.pdf'),
+        }
+        gen_map = {
+            'xlsx': _room_gen_xlsx_calendar,
+            'docx': _room_gen_docx_calendar,
+            'pdf':  _room_gen_pdf_calendar,
+        }
+
+        if len(formats) == 1:
+            fmt = formats[0]
+            if fmt not in mime_map:
+                return jsonify({'error': f'Unknown format: {fmt}'}), 400
+            out = gen_map[fmt](groups, sem_label, ay_label)
+            mime, ext = mime_map[fmt]
+            return Response(out, mimetype=mime,
+                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+        else:
+            import zipfile
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for fmt in formats:
+                    if fmt in gen_map:
+                        out = gen_map[fmt](groups, sem_label, ay_label)
+                        zf.writestr(filename + mime_map[fmt][1], out)
+            buf.seek(0)
+            return Response(buf.read(), mimetype='application/zip',
+                            headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
 # ── End Room Export Routes ────────────────────────────────────────────────────
 @app.route('/admin/curriculum')
@@ -20834,7 +22712,7 @@ def api_sections_by_program():
             _heal_conn = get_db_connection()
             _heal_cur  = _heal_conn.cursor(cursor_factory=RealDictCursor)
             try:
-                _auto_setup_program_yearlevels(_heal_cur, prog_filter=program)
+                _auto_setup_program_yearlevels(_heal_cur, prog_filter=program, extra_ay_id=(ay or None))
 
                 # Second repair: _auto_setup_program_yearlevels only auto-creates a default
                 # section when a program_yearlevel row has NONE at all. It doesn't help when

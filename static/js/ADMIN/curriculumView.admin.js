@@ -83,27 +83,21 @@ function _viewExpCSV(curricula, filename) {
 function _viewExpPDF(curricula, filename) {
     if (!window.jspdf) { alert('PDF library not loaded. Please try a different format.'); return; }
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const W = 297;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210;
+    const COL_W = [26, 20, 18, 62, 14, 14, 18, 18];
     curricula.forEach((curr, cidx) => {
         if (cidx > 0) doc.addPage();
-        doc.setFillColor(128, 0, 0); doc.rect(0, 0, W, 34, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
-        doc.text(`${curr.curriculum_code}  —  ${curr.program_name}`, W / 2, 13, { align: 'center' });
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-        doc.text(`Curriculum Year: ${curr.curriculum_year}`, W / 2, 22, { align: 'center' });
-        doc.setFontSize(8);
-        doc.text('Generated: ' + new Date().toLocaleString(), W / 2, 30, { align: 'center' });
         doc.setTextColor(0, 0, 0);
-        let startY = 36;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+        doc.text(`${(curr.program_name || '').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year})`, W / 2, 15, { align: 'center' });
+        let startY = 24;
         curr.year_levels.forEach(yl => {
             yl.semesters.forEach(sem => {
-                if (startY > 192) { doc.addPage(); startY = 10; }
-                doc.setFillColor(55, 55, 55); doc.rect(10, startY, W - 20, 7, 'F');
-                doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-                doc.text(`${yl.label.toUpperCase()}  ·  ${sem.label}`, 14, startY + 5);
-                doc.setTextColor(0, 0, 0); startY += 7;
+                if (startY > 260) { doc.addPage(); startY = 15; }
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+                doc.text(`${yl.label.toUpperCase()}  —  ${sem.label}`, 10, startY + 5);
+                startY += 8;
                 doc.autoTable({
                     columns: [
                         { header: 'Subject Code',    dataKey: 'subject_code'   },
@@ -116,18 +110,18 @@ function _viewExpPDF(curricula, filename) {
                         { header: 'Tuition Hrs',     dataKey: 'tuition_hours'  },
                     ],
                     body: sem.subjects, startY,
-                    styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak' },
-                    headStyles: { fillColor: [128, 0, 0], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-                    alternateRowStyles: { fillColor: [253, 245, 245] },
-                    tableWidth: W - 20,
+                    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
+                    headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 7.5, lineColor: [0, 0, 0], lineWidth: 0.2 },
+                    alternateRowStyles: { fillColor: [255, 255, 255] },
+                    tableWidth: COL_W.reduce((a, b) => a + b, 0), margin: { left: 10, right: 10 },
                     columnStyles: {
-                        0: { cellWidth: 32 }, 1: { cellWidth: 26 }, 2: { cellWidth: 20 }, 3: { cellWidth: 126 },
-                        4: { cellWidth: 16, halign: 'center' }, 5: { cellWidth: 16, halign: 'center' },
-                        6: { cellWidth: 22, halign: 'center' }, 7: { cellWidth: 19, halign: 'center' },
+                        0: { cellWidth: COL_W[0] }, 1: { cellWidth: COL_W[1] }, 2: { cellWidth: COL_W[2] }, 3: { cellWidth: COL_W[3] },
+                        4: { cellWidth: COL_W[4], halign: 'center' }, 5: { cellWidth: COL_W[5], halign: 'center' },
+                        6: { cellWidth: COL_W[6], halign: 'center' }, 7: { cellWidth: COL_W[7], halign: 'center' },
                     },
                     foot: [['', '', '', 'TOTAL UNITS', '', '', (sem.total_units || 0), (sem.total_tuition || 0)]],
-                    footStyles: { fillColor: [240, 230, 230], fontStyle: 'bold', fontSize: 8, textColor: [80, 0, 0] },
-                    showFoot: 'lastPage', margin: { left: 10, right: 10 },
+                    footStyles: { fillColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.2 },
+                    showFoot: 'lastPage',
                 });
                 startY = doc.lastAutoTable.finalY + 4;
             });
@@ -136,7 +130,7 @@ function _viewExpPDF(curricula, filename) {
     const total = doc.internal.getNumberOfPages();
     for (let i = 1; i <= total; i++) {
         doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${total}`, 287, 206, { align: 'right' });
+        doc.text(`Page ${i} of ${total}`, W - 10, 290, { align: 'right' });
     }
     doc.save(filename + '.pdf');
 }
