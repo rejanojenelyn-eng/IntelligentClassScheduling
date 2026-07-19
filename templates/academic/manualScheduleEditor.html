@@ -939,11 +939,11 @@
                     <div class="fl-info-bar">
                         <span class="fl-info-pill">EMPLOYEE TYPE: <strong id="fl-emp-type">—</strong></span>
                         <span class="fl-info-sep">|</span>
-                        <span class="fl-info-pill">ALLOWED UNITS: <strong id="fl-max-units">—</strong></span>
+                        <span class="fl-info-pill">ALLOWED HOURS: <strong id="fl-max-units">—</strong></span>
                         <span class="fl-info-sep">|</span>
-                        <span class="fl-info-pill">ASSIGNED UNITS: <strong id="fl-total-units">—</strong></span>
+                        <span class="fl-info-pill">ASSIGNED HOURS: <strong id="fl-total-units">—</strong></span>
                         <span class="fl-info-sep">|</span>
-                        <span class="fl-info-pill">AVAILABLE UNITS: <strong id="fl-avail-units">—</strong></span>
+                        <span class="fl-info-pill">AVAILABLE HOURS: <strong id="fl-avail-units">—</strong></span>
                     </div>
                 </div>
 
@@ -963,7 +963,7 @@
                         <div class="fl-table-wrap">
                             <table class="fl-table">
                                 <thead><tr>
-                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>HOURS</th>
                                     <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                                 </tr></thead>
                                 <tbody id="fl-regular-body">
@@ -977,7 +977,7 @@
                         <div class="fl-table-wrap">
                             <table class="fl-table">
                                 <thead><tr>
-                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>HOURS</th>
                                     <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                                 </tr></thead>
                                 <tbody id="fl-parttime-body">
@@ -1204,7 +1204,7 @@
                     <div class="fac-stats-metrics">
                         <div class="fac-metric-box fac-metric-max">
                             <div class="fac-metric-val" id="fac-metric-max">-</div>
-                            <div class="fac-metric-lbl">Max Units</div>
+                            <div class="fac-metric-lbl">Max Hours</div>
                         </div>
                         <div class="fac-metric-box fac-metric-assigned">
                             <div class="fac-metric-val" id="fac-metric-assigned">-</div>
@@ -1850,13 +1850,15 @@ function _readCurrentSubjectSlices() {
     return slices;
 }
 
-/* Checks whether `subjectUnits` fits in the faculty's CORRECT load category
-   (Regular / Part-Time / TS), not the overall total — mirrors the same
+/* Checks whether the subject being assigned fits in the faculty's CORRECT load
+   category (Regular / Part-Time / TS), not the overall total — mirrors the same
    day-type classification and cap-then-spill overflow the FACULTY LOAD tab
-   itself uses (_computeFacultyLoadBuckets), so this gate and that display can
-   never disagree about what's allowed. Returns null when the subject's
-   day/time isn't known yet (nothing to classify) — the caller should fall
-   back to the flat overall check in that case. */
+   itself uses (faculty_load.py, server-side), so this gate and that display can
+   never disagree about what's allowed. The "demand" is the subject's REAL
+   scheduled hours from its currently-filled time slices (not credit units) —
+   the same actual-hours convention used everywhere else now. Returns null when
+   the subject's day/time isn't known yet (nothing to classify) — the caller
+   should fall back to the flat overall check in that case. */
 async function _checkFacultyBucketCapacity(empNum, ayId, sem, subjectUnits) {
     const slices = _readCurrentSubjectSlices();
 
@@ -1866,23 +1868,24 @@ async function _checkFacultyBucketCapacity(empNum, ayId, sem, subjectUnits) {
         data = await res.json();
     } catch { return null; }
     if (!data || !data.success) return null;
-    const buckets = _computeFacultyLoadBuckets(data);
+    const buckets = data.buckets || {};
 
     let regNeed = 0, ptNeed = 0;
+    if (!slices.length) {
+        return null;   // day/time not chosen yet — nothing to classify against
+    }
+    let regHrs = 0, ptHrs = 0;
+    slices.forEach(sl => { if (_flIsRegSlice(sl)) regHrs += sl.hrs; else ptHrs += sl.hrs; });
+    const totalHrs = regHrs + ptHrs;
+    if (totalHrs <= 0) return null;
     if (buckets.isPartTime) {
         // PT faculty have no day-type-based bucket split — every session is Part-Time
         // Load demand first, full stop (overflow becomes TS), matching how their
-        // existing load is bucketed in _computeFacultyLoadBuckets.
-        ptNeed = subjectUnits;
-    } else if (slices.length) {
-        let regHrs = 0, ptHrs = 0;
-        slices.forEach(sl => { if (_flIsRegSlice(sl)) regHrs += sl.hrs; else ptHrs += sl.hrs; });
-        const totalHrs = regHrs + ptHrs;
-        if (totalHrs <= 0) return null;
-        regNeed = +(subjectUnits * (regHrs / totalHrs)).toFixed(2);
-        ptNeed  = +(subjectUnits * (ptHrs  / totalHrs)).toFixed(2);
+        // existing load is bucketed server-side.
+        ptNeed = +totalHrs.toFixed(2);
     } else {
-        return null;   // Regular/designee faculty but day/time not chosen yet
+        regNeed = +regHrs.toFixed(2);
+        ptNeed  = +ptHrs.toFixed(2);
     }
 
     const regAvail = Math.max(0, buckets.regMax - buckets.regUsed);
@@ -1917,20 +1920,21 @@ function _flBuildLoadExceededMessage(check, subjectUnits, currentSubj, facName) 
     }
     const rowsHtml = rows.map(r => `
         <div style="background: #f8f9fa; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom:8px;">
-            <strong>${r.label} — Max:</strong> ${r.max} units &nbsp;|&nbsp;
-            <strong>Assigned:</strong> ${r.used} units &nbsp;|&nbsp;
-            <strong style="color: #d35400;">Remaining:</strong> ${r.avail} units<br>
-            <span style="color:#555;">Portion of ${currentSubj} needing this category: ${r.need} units</span>
+            <strong>${r.label} — Max:</strong> ${r.max} hrs &nbsp;|&nbsp;
+            <strong>Assigned:</strong> ${r.used} hrs &nbsp;|&nbsp;
+            <strong style="color: #d35400;">Remaining:</strong> ${r.avail} hrs<br>
+            <span style="color:#555;">Portion of ${currentSubj} needing this category: ${r.need} hrs</span>
         </div>`).join('');
     const tsNote = check.totalShort > 0
-        ? `<br><em>Even counting Teaching Substitution overflow (${check.tsAvail} units remaining), the faculty is short by ${check.totalShort} unit(s).</em>`
+        ? `<br><em>Even counting Teaching Substitution overflow (${check.tsAvail} hrs remaining), the faculty is short by ${check.totalShort} hr(s).</em>`
         : '';
+    const neededHrs = (check.regNeed + check.ptNeed).toFixed(2);
     return `
         <div style="font-size: 0.85rem; line-height: 1.6; color: #333;">
             Cannot assign <strong>${facName}</strong>.<br><br>
             ${rowsHtml}
-            <strong style="color: #c0392b;">Required Units for ${currentSubj}:</strong> ${subjectUnits} units<br><br>
-            <em>The faculty does not have enough remaining units in this load category.${tsNote} Please choose another faculty or remove some existing assignments first.</em>
+            <strong style="color: #c0392b;">Required Hours for ${currentSubj}:</strong> ${neededHrs} hrs<br><br>
+            <em>The faculty does not have enough remaining hours in this load category.${tsNote} Please choose another faculty or remove some existing assignments first.</em>
         </div>`;
 }
 
@@ -1944,16 +1948,21 @@ window.onFacultySelect = async function(empNum) {
 
         const meta = _subjectMeta[currentSubj] || {};
         const subjectUnits = parseFloat(meta.units ?? (_subjInfo ? _subjInfo.creditunits : 0));
+        // Nominal hours (catalog lecture+lab hours) — used as the fallback "demand" when
+        // this subject's own day/time isn't chosen yet (see fallback branch below), same
+        // convention used everywhere else when real per-slice hours aren't available.
+        const subjectHrs = parseFloat(meta.total_hours ?? (_subjInfo ? _subjInfo.total_hours : 0)) || subjectUnits;
 
-        if (subjectUnits > 0) {
+        if (subjectHrs > 0) {
             const ay = document.getElementById('sel_ay').value;
             const sem = document.getElementById('sel_sem').value;
 
             // In-session pending additions (other subjects placed but not yet saved to
-            // DB) for this same faculty — each classified by ITS OWN day/time so it
-            // lands in the correct bucket too, not just added as a flat overall number.
-            let pendingUnits = 0, pendingRegUnits = 0, pendingPtUnits = 0;
-            const seenSubjects = new Set();
+            // DB) for this same faculty — each classified by ITS OWN day/time and
+            // credited with its OWN real scheduled hours (not deduped by subject: unlike
+            // credit units, real per-slice hours are genuinely additive, same as the
+            // server-side live-hours computation).
+            let pendingHrs = 0, pendingRegHrs = 0, pendingPtHrs = 0;
             if (typeof pendingManualSchedule !== 'undefined') {
                 for (const c of pendingManualSchedule) {
                     if (String(c.faculty_id) !== String(empNum)) continue;
@@ -1961,18 +1970,15 @@ window.onFacultySelect = async function(empNum) {
                     if (c.fromExisting) continue;
                     if (c.subject_code === currentSubj) continue;
 
-                    if (seenSubjects.has(c.subject_code)) continue;
-                    seenSubjects.add(c.subject_code);
-
-                    const uMeta = _subjectMeta[c.subject_code];
-                    const u = uMeta ? parseFloat(uMeta.units || 0) : 0;
-                    pendingUnits += u;
-                    const cDay = c.day || (c.days_list && c.days_list[0]) || '';
-                    const cEnd = _flParseHM(c.end_time || '');
-                    if (cDay && cEnd) {
-                        if (_flIsRegSlice({ days: cDay, time_code: `00${String(cEnd.h).padStart(2,'0')}` })) pendingRegUnits += u;
-                        else pendingPtUnits += u;
-                    }
+                    const cDay   = c.day || (c.days_list && c.days_list[0]) || '';
+                    const cStart = _flParseHM(c.start_time || '');
+                    const cEnd   = _flParseHM(c.end_time || '');
+                    if (!cDay || !cStart || !cEnd) continue;
+                    const hrs = (cEnd.h + cEnd.m / 60) - (cStart.h + cStart.m / 60);
+                    if (hrs <= 0) continue;
+                    pendingHrs += hrs;
+                    if (_flIsRegSlice({ days: cDay, time_code: `00${String(cEnd.h).padStart(2,'0')}` })) pendingRegHrs += hrs;
+                    else pendingPtHrs += hrs;
                 }
             }
 
@@ -1985,8 +1991,8 @@ window.onFacultySelect = async function(empNum) {
                 // amount with this session's own pending additions before judging fit,
                 // so a subject placed earlier in the same session (not yet saved) still
                 // counts against the correct category.
-                const regAvail = Math.max(0, check.regAvail - pendingRegUnits);
-                const ptAvail  = Math.max(0, check.ptAvail  - pendingPtUnits);
+                const regAvail = Math.max(0, check.regAvail - pendingRegHrs);
+                const ptAvail  = Math.max(0, check.ptAvail  - pendingPtHrs);
                 const regShort = Math.max(0, check.regNeed - regAvail);
                 const ptShort  = Math.max(0, check.ptNeed  - ptAvail);
                 const totalShort = +(regShort + ptShort).toFixed(2);
@@ -2000,23 +2006,24 @@ window.onFacultySelect = async function(empNum) {
             } else {
                 // Fallback: subject's day/time isn't chosen yet, so nothing can be
                 // bucket-classified — fall back to the flat overall check exactly as
-                // this gate always worked before.
+                // this gate always worked before (_facLoadData is hours now, from
+                // /api/manual/faculty_load).
                 const totalAssigned = _facLoadData.scheduled_units
-                                      + (_facLoadData.pending_units || 0) + pendingUnits;
+                                      + (_facLoadData.pending_units || 0) + pendingHrs;
                 const totalRemaining = Math.max(0, _facLoadData.total_units - totalAssigned);
-                if (subjectUnits > totalRemaining) {
+                if (subjectHrs > totalRemaining) {
                     blocked = true;
                     errorMsg = `
                         <div style="font-size: 0.85rem; line-height: 1.6; color: #333;">
                             Cannot assign <strong>${facName}</strong>.<br><br>
                             <div style="background: #f8f9fa; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                <strong>Max Units:</strong> ${_facLoadData.total_units} units<br>
-                                <strong>Assigned Units:</strong> ${totalAssigned} units<br>
-                                <strong style="color: #d35400;">Remaining Units:</strong> ${totalRemaining} units<br>
+                                <strong>Max Hours:</strong> ${_facLoadData.total_units} hrs<br>
+                                <strong>Assigned Hours:</strong> ${totalAssigned} hrs<br>
+                                <strong style="color: #d35400;">Remaining Hours:</strong> ${totalRemaining} hrs<br>
                             </div>
                             <br>
-                            <strong style="color: #c0392b;">Required Units for ${currentSubj}:</strong> ${subjectUnits} units<br><br>
-                            <em>The faculty does not have enough remaining units (day/time not yet set, so this is checked against the overall total). Please choose another faculty or remove some existing assignments first.</em>
+                            <strong style="color: #c0392b;">Required Hours for ${currentSubj}:</strong> ${subjectHrs} hrs<br><br>
+                            <em>The faculty does not have enough remaining hours (day/time not yet set, so this is checked against the overall total). Please choose another faculty or remove some existing assignments first.</em>
                         </div>
                     `;
                 }
@@ -4263,6 +4270,9 @@ async function _updateFacultyUnitDisplay(empNum) {
             const _facSem = document.getElementById('sel_sem').value;
 
             // --- In-memory pending sessions (placed but not yet saved to DB) ---
+            // Load is HOURS now (faculty_load.py) — use each subject's nominal catalog
+            // hours (total_hours), not credit units, matching data.total_units/
+            // scheduled_units which already carry hours from /api/manual/faculty_load.
             let _pendingExtraUnits = 0;
             const _pendingSubjsSeen = new Set();
             if (typeof pendingManualSchedule !== 'undefined' && typeof _subjectMeta !== 'undefined') {
@@ -4274,7 +4284,7 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (_pendingSubjsSeen.has(_pendKey)) continue;
                     _pendingSubjsSeen.add(_pendKey);
                     const uMeta = _subjectMeta[c.subject_code];
-                    _pendingExtraUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
+                    _pendingExtraUnits += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
                 }
             }
 
@@ -4292,7 +4302,7 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (_dbSessionCodes.has(psCode)) continue;    // already in scheduled sessions
                     if (_serverPendingCodes.has(psCode)) continue;
                     _serverPendingCodes.add(psCode);
-                    _serverPendingUnits += parseFloat(ps.creditunits || 0);
+                    _serverPendingUnits += parseFloat(ps.hrs ?? ps.creditunits ?? 0);
                 }
             }
 
@@ -4309,7 +4319,7 @@ async function _updateFacultyUnitDisplay(empNum) {
                     if (_serverPendingCodes.has(uc)) continue;
                     if (_dbSessionCodes2.has(uc)) continue;
                     const uMeta = _subjectMeta[subjCode];
-                    _localExtraUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
+                    _localExtraUnits += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
                 }
             }
 
@@ -4339,9 +4349,9 @@ async function _updateFacultyUnitDisplay(empNum) {
                 // Use the server-computed available_units which already includes pending_units
                 const _overload = _effectiveAssigned > data.total_units;
                 if (_overload) {
-                    document.getElementById('fac-alert-total').textContent = data.total_units + 'u';
+                    document.getElementById('fac-alert-total').textContent = data.total_units + 'h';
                     document.getElementById('fac-alert-avail').textContent =
-                        Math.max(0, data.total_units - _effectiveAssigned) + 'u';
+                        Math.max(0, data.total_units - _effectiveAssigned) + 'h';
                     alertEl.style.display = 'block';
                 } else {
                     alertEl.style.display = 'none';
@@ -7772,141 +7782,10 @@ const _FL_WKDAYS = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday'])
 function _flEndHr(s) { return parseInt((s.time_code || '').slice(2)) || 0; }
 function _flIsRegSlice(s) { return _FL_WKDAYS.has(s.days || '') && _flEndHr(s) <= 16; }
 
-// Merge multi-day sessions for the same subject+section into one row. Keying by
-// subjectcode alone would collapse a faculty's separate teaching assignments when
-// the same subject code is taught in two different sections (e.g. COMP 002 in both
-// BSIT-1 and DIT-1) — each is a distinct assignment and must stay its own row.
-function _flGroupSessions(arr) {
-    const map = new Map();
-    arr.forEach(s => {
-        const key = `${s.subjectcode}|${s.year_section}`;
-        const h     = parseFloat(s.hrs) || 0;
-        const isReg = _flIsRegSlice(s);
-        if (!map.has(key)) {
-            map.set(key, {
-                // `units` is left untouched everywhere below — it's the real credited
-                // unit count and is always what gets displayed. `calcUnits` is the
-                // (possibly prorated) value used for bucket totals/cap math only.
-                // `_days`/`_times` (and reg/pt variants) are parallel arrays — each
-                // day's OWN time_range travels with it.
-                ...s, _days: [s.days], _times: [s.time_range], hrs: h, calcUnits: parseFloat(s.units) || 0,
-                _regHrs: isReg ? h : 0, _ptHrs: isReg ? 0 : h,
-                _regDays: isReg && s.days ? [s.days] : [], _regTimes: isReg && s.time_range ? [s.time_range] : [],
-                _ptDays:  !isReg && s.days ? [s.days] : [], _ptTimes:  !isReg && s.time_range ? [s.time_range] : [],
-            });
-        } else {
-            const ex = map.get(key);
-            if (s.days) { ex._days.push(s.days); ex._times.push(s.time_range); }
-            if (isReg) { if (s.days) { ex._regDays.push(s.days); ex._regTimes.push(s.time_range); } }
-            else       { if (s.days) { ex._ptDays.push(s.days);  ex._ptTimes.push(s.time_range); } }
-            // Each row is a distinct time slice — sum real durations rather than
-            // keeping only the first, so units stay counted once per assignment
-            // while hours reflect the full scheduled time.
-            ex.hrs += h;
-            if (isReg) ex._regHrs += h; else ex._ptHrs += h;
-        }
-    });
-    return Array.from(map.values()).map(s => ({ ...s, days: s._days.join(', '), time_range: s._times.join(', ') }));
-}
-
-function _flSumUnits(arr) { return arr.reduce((t, s) => t + (parseFloat(s.calcUnits ?? s.units) || 0), 0); }
-function _flSumHrs(arr)   { return arr.reduce((t, s) => t + (parseFloat(s.hrs) || 0), 0); }
-
-// Cap-then-spill: the bucket is filled up to its max, and any remaining capacity is
-// used automatically — a session that only partly fits gets SPLIT (the portion that
-// still fits stays in this bucket, only the excess overflows into TS) rather than
-// dumping the whole session into TS just because it doesn't fit in one piece.
-function _flCapSpill(list, max) {
-    let running = 0;
-    const kept = [], spilled = [];
-    for (const s of list) {
-        const u = parseFloat(s.calcUnits ?? s.units) || 0;
-        const remaining = +(max - running).toFixed(2);
-        if (remaining <= 0) {
-            spilled.push(s);
-        } else if (u <= remaining) {
-            running += u;
-            kept.push(s);
-        } else {
-            const hrs  = parseFloat(s.hrs) || 0;
-            const frac = u > 0 ? remaining / u : 0;
-            running = max;
-            kept.push({ ...s, calcUnits: remaining, hrs: +(hrs * frac).toFixed(2), _split: true });
-            spilled.push({ ...s, calcUnits: +(u - remaining).toFixed(2), hrs: +(hrs * (1 - frac)).toFixed(2), _split: true });
-        }
-    }
-    return { kept, spilled };
-}
-
-/* Pure computation (no DOM access) — given the raw /api/faculty/teaching_assignments
-   response, returns each bucket's max/used units+hours and its classified session
-   rows. This is the single source of truth for "how much Regular/PT/TS load does
-   this faculty already have" — both the FACULTY LOAD tab and the assignment-time
-   validation gate call this so they can never disagree. */
-function _computeFacultyLoadBuckets(data) {
-    const empType    = (data.faculty.employee_type || '').toLowerCase();
-    const isPartTime = empType.includes('part') && !empType.includes('design');
-    // PT and TS always come from the Faculty Hours config for the faculty's own
-    // employeetype (Designee has its own such row) — only Regular Load Units is ever
-    // overridden, and only by the selected Designation's own regular load.
-    // designation.nightteachingservice/desig_night_service is a separate "nights/week on
-    // night office duty" constraint, never a PT units figure — must not be read here.
-    const tsMax  = parseInt(data.faculty.teach_sub || 0);
-    const ptMax  = parseInt(data.faculty.pt_load   || 0);
-    // A designation ALWAYS overrides the plain employeetype Regular limit when present —
-    // mirrors the backend's _has_desig branching exactly (app.py). The old `reg_load ||
-    // desig_reg_load` fallback picked the wrong one for any designee whose plain
-    // employeetype.regularload happened to be non-zero (the common case), showing e.g.
-    // "Max 9" for a designee whose real designation-based cap is 3.
-    const hasDesig = data.faculty.designationid !== null && data.faculty.designationid !== undefined;
-    const regMax = hasDesig ? parseInt(data.faculty.desig_reg_load || 0) : parseInt(data.faculty.reg_load || 0);
-
-    let groupedReg, groupedPt, tsSessions;
-    if (isPartTime) {
-        // Part-time faculty have no separate "regular daytime duty" bucket to classify
-        // by day/time — every session they teach is Part-Time Load first, full stop.
-        // Only once ptMax is exceeded does the overflow become TS.
-        const allSessions = _flGroupSessions(data.sessions);
-        const ptSpill = _flCapSpill(allSessions, ptMax);
-        groupedPt  = ptSpill.kept;
-        groupedReg = ptSpill.spilled;
-        tsSessions = [];
-    } else {
-        // Group every session FIRST (one row per subject+section, units counted once)
-        // — only THEN classify by day/time, splitting a single mixed assignment
-        // proportionally by hour-share rather than duplicating its whole unit count
-        // into both buckets.
-        const allGrouped = _flGroupSessions(data.sessions);
-        groupedReg = [];
-        groupedPt  = [];
-        allGrouped.forEach(g => {
-            const totalHrs = g._regHrs + g._ptHrs;
-            const u = parseFloat(g.units) || 0;
-            if (g._ptHrs <= 0) {
-                groupedReg.push(g);
-            } else if (g._regHrs <= 0) {
-                groupedPt.push(g);
-            } else {
-                const fracReg = totalHrs > 0 ? g._regHrs / totalHrs : 0;
-                groupedReg.push({ ...g, calcUnits: +(u * fracReg).toFixed(2), hrs: g._regHrs,
-                                  days: g._regDays.join(', '), time_range: g._regTimes.join(', '), _split: true });
-                groupedPt.push({ ...g, calcUnits: +(u * (1 - fracReg)).toFixed(2), hrs: g._ptHrs,
-                                 days: g._ptDays.join(', '), time_range: g._ptTimes.join(', '), _split: true });
-            }
-        });
-        const regSpill = _flCapSpill(groupedReg, regMax);
-        const ptSpill  = _flCapSpill(groupedPt, ptMax);
-        groupedReg = regSpill.kept;
-        groupedPt  = ptSpill.kept;
-        tsSessions = [...regSpill.spilled, ...ptSpill.spilled];
-    }
-
-    return {
-        isPartTime, regMax, ptMax, tsMax, groupedReg, groupedPt, tsSessions,
-        regUsed: _flSumUnits(groupedReg), ptUsed: _flSumUnits(groupedPt), tsUsed: _flSumUnits(tsSessions),
-        regHrs:  _flSumHrs(groupedReg),   ptHrs:  _flSumHrs(groupedPt),   tsHrs:  _flSumHrs(tsSessions),
-    };
-}
+// Bucket computation (grouping, cap-then-spill, Regular/PT/TS classification) now lives
+// server-side only (faculty_load.py) — /api/faculty/teaching_assignments returns a ready
+// `buckets` object. This removes the old client-side algorithm duplicate entirely so the
+// FACULTY LOAD tab, the assignment-time validation gate, and the GA can never drift.
 
 async function selectFlFaculty(empNum, name) {
     document.getElementById('flFacText').textContent = name || empNum;
@@ -7924,15 +7803,17 @@ async function selectFlFaculty(empNum, name) {
         const data = await res.json();
         if (!data.success) { _flShowMsg('Error: ' + (data.error || 'Unknown')); return; }
 
-        const _buckets = _computeFacultyLoadBuckets(data);
-        const { isPartTime, regMax, ptMax, tsMax, groupedReg, groupedPt, tsSessions } = _buckets;
+        // Buckets are now computed server-side (faculty_load.py) — the single source of
+        // truth shared with the assignment-time validation gate, Reassign panel, and the
+        // GA. This function only renders what the API already returns.
+        const _buckets = data.buckets || {};
+        const { isPartTime, regMax, ptMax, tsMax, groupedReg, groupedPt, tsSessions,
+                 regUsed, ptUsed, tsUsed } = _buckets;
 
         document.getElementById('fl-emp-type').textContent    = data.faculty.employee_type || '—';
-        document.getElementById('fl-max-units').textContent   = data.max_units ?? '—';
-        const _totalHrs = parseFloat(data.total_teaching_hours || 0);
-        document.getElementById('fl-total-units').textContent =
-            `${data.assigned_units || '0'}${_totalHrs > 0 ? ` (${_totalHrs} hrs)` : ''}`;
-        document.getElementById('fl-avail-units').textContent = data.available_units ?? '—';
+        document.getElementById('fl-max-units').textContent   = (data.max_units ?? '—') + (typeof data.max_units === 'number' ? ' hrs' : '');
+        document.getElementById('fl-total-units').textContent = (data.assigned_units ?? '0') + ' hrs';
+        document.getElementById('fl-avail-units').textContent = (data.available_units ?? '—') + (typeof data.available_units === 'number' ? ' hrs' : '');
 
         // Relabel sections based on employee type:
         // Part-time faculty have no regular load — their daytime sessions are TS (Teaching Substitution).
@@ -7969,7 +7850,7 @@ async function selectFlFaculty(empNum, name) {
                         <div class="fl-table-wrap">
                             <table class="fl-table">
                                 <thead><tr>
-                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>HOURS</th>
                                     <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
                                 </tr></thead>
                                 <tbody id="fl-ts-body"><tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr></tbody>
@@ -7986,10 +7867,10 @@ async function selectFlFaculty(empNum, name) {
 
         const cols = s => `
             <td>${s.subjectcode||'—'}${s._split
-                ? ' <span title="This session\'s units are split across buckets — the portion that still fits here is counted, the rest overflows to TS." style="font-size:0.7em;color:#b8860b;font-weight:700;">(split)</span>'
+                ? ' <span title="This session\'s hours are split across buckets — the portion that still fits here is counted, the rest overflows to TS." style="font-size:0.7em;color:#b8860b;font-weight:700;">(split)</span>'
                 : ''}</td>
             <td>${s.subjectname||'—'}</td>
-            <td>${s.units||'—'}</td>
+            <td>${s.hrs ?? '—'}</td>
             <td>${s.year_section||'—'}</td>
             <td>${s.time_range||'—'}</td>
             <td>${s.days||'—'}</td>
@@ -8006,11 +7887,10 @@ async function selectFlFaculty(empNum, name) {
         pt.innerHTML  = groupedPt.length
             ? groupedPt.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : '<tr><td colspan="7" class="fl-no-data">—</td></tr>';
-        const { regUsed, ptUsed, tsUsed, regHrs, ptHrs, tsHrs } = _buckets;
         const regPfx  = (document.getElementById('fl-reg-total-label')?.dataset.prefix) || 'TOTAL REGULAR LOAD: ';
         const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
-        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} units (${regHrs} hrs)</strong>`;
-        document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} units (${ptHrs} hrs)</strong>`;
+        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} hrs</strong>`;
+        document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} hrs</strong>`;
 
         if (!isPartTime) {
             const tsBody      = document.getElementById('fl-ts-body');
@@ -8020,7 +7900,7 @@ async function selectFlFaculty(empNum, name) {
                     ? tsSessions.map(s=>`<tr>${cols(s)}</tr>`).join('')
                     : '<tr><td colspan="7" class="fl-no-data">No TS sessions</td></tr>';
             }
-            if (tsTotalLbl) tsTotalLbl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>${tsUsed} units (${tsHrs} hrs)</strong>`;
+            if (tsTotalLbl) tsTotalLbl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>${tsUsed} hrs</strong>`;
         }
 
         // Pending assignments — subjects reserved via "Assign Faculty" but not yet scheduled.

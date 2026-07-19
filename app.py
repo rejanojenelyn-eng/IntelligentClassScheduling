@@ -14,6 +14,7 @@ from pdf_curriculum_parser import parse_curriculum_pdf
 from docx_curriculum_parser import parse_curriculum_docx
 from pdf_faculty_parser import parse_faculty_pdf
 from docx_faculty_parser import parse_faculty_docx
+import faculty_load
 
 # One-time idempotent migration: ensure schedule_version.source column exists
 _source_col_ensured = False
@@ -9658,6 +9659,7 @@ def api_get_faculty_schedule():
                    sc.employeenumber,
                    TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
                    TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
+                   ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
                    TO_CHAR(sem.semstartdate, 'MM/DD/YYYY') AS effectivity
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
@@ -9961,50 +9963,16 @@ def api_dss_suggest():
         """)
         all_faculty = [dict(r) for r in cur.fetchall()]
 
-        # 2b. Batch-fetch assigned units per faculty for this AY/semester
+        # 2b. Batch-fetch real scheduled hours per faculty for this AY/semester
         fac_loads = {}
         if ay_id and sem:
-            cur.execute("""
-                SELECT d.employeenumber,
-                       COALESCE(SUM(d.creditunits), 0) AS assigned_units
-                FROM (
-                    SELECT DISTINCT sc.employeenumber, cs.subjectcode, cs.creditunits
-                    FROM schedule_version sv
-                    JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
-                    JOIN curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                    JOIN semester s            ON sc.semesterid  = s.semesterid
-                    WHERE s.academicyearid = %s AND s.semestertype = %s
-                      AND sv.status IN ('Published', 'Draft')
-                ) AS d
-                GROUP BY d.employeenumber
-            """, (ay_id, sem))
-            for r in cur.fetchall():
-                fac_loads[r['employeenumber']] = int(r['assigned_units'] or 0)
+            fac_loads = faculty_load.get_faculty_hours_batch(cur, ay_id, sem)
 
         def _fac_item(f, **extra):
-            # Classify by the normalized employeetype link (`typename`, already defaults to
-            # 'Regular' when unlinked), never the free-text `employeestatus` column — the two
-            # can drift out of sync (e.g. employeestatus left at 'Part-Time' after a faculty
-            # was reclassified to a Regular employeetype), and employeestatus is what's
-            # actually stale in that case. typename is also what the UI displays as
-            # "Employee Type", so this keeps the displayed label and the load math consistent.
-            typename  = (f.get('typename') or '').lower()
-            has_desig = f.get('designationid') is not None
-            # PT and TS always come from the Faculty Hours config for the faculty's own
-            # employeetype (Designee has its own such row) — only Regular Load Units is
-            # ever overridden, and only by the selected Designation's own regular load.
-            # designation.nightteachingservice is a SEPARATE constraint (how many nights/
-            # week a designee is on night OFFICE duty, capping evening teaching
-            # availability — see _check_designee_night_limit) and must never be read as a
-            # PT units figure.
-            pt_load   = int(f.get('parttimeload') or 0)
-            teach_sub = int(f.get('teachingsubstitution') or 0)
-            if has_desig:
-                reg_load = int(f.get('designation_regular_load') or 0)
-            elif 'part' in typename:
-                reg_load = 0
-            else:
-                reg_load = int(f.get('regularload') or 0)
+            # Cap lookup via faculty_load (shared with the GA and every other load
+            # surface) — regularload/parttimeload/teachingsubstitution/regularloadunit
+            # are HOUR caps now, not credit units.
+            reg_load, pt_load, teach_sub = faculty_load.get_faculty_caps(f)
             max_u = reg_load + pt_load + teach_sub
             assigned = fac_loads.get(f['employeenumber'], 0) if (ay_id and sem) else None
             item = {
@@ -10511,57 +10479,21 @@ def _api_manual_faculty_load_impl():
     """, (emp_num,), one=True)
     if not row:
         return jsonify({'success': False})
-    # Classify by the normalized employeetype link, never the free-text employeestatus
-    # column — the two can drift out of sync (e.g. employeestatus left at 'Part-Time'
-    # after a faculty was reclassified to a Regular employeetype). Fall back to
-    # employeestatus only when there's no employeetype link at all.
-    _type_label = (row['typename'] or row['employeestatus'] or '').lower()
-    has_desig = row['designationid'] is not None
-    # PT and TS always come from the Faculty Hours config for the faculty's own
-    # employeetype (Designee has its own such row) — only Regular Load Units is ever
-    # overridden, and only by the selected Designation's own regular load.
-    # designation.nightteachingservice is a separate "nights/week on night office duty"
-    # constraint, not a units figure — never read it as PT load.
-    pt_load   = int(row['parttimeload'] or 0)
-    teach_sub = int(row['teachingsubstitution'] or 0)
-    if has_desig:
-        reg_load = int(row['designation_regular_load'] or 0)
-    elif 'part' in _type_label:
-        reg_load = 0
-    else:
-        reg_load = int(row['regularload'] or 0)
+    # Cap lookup via faculty_load (shared with the GA and every other load surface) —
+    # regularload/parttimeload/teachingsubstitution/regularloadunit are HOUR caps now.
+    reg_load, pt_load, teach_sub = faculty_load.get_faculty_caps(row)
     max_load = reg_load + pt_load + teach_sub
-    scheduled = 0
+    scheduled = 0.0
     if ay_id and sem:
         try:
-            # Draft-preferred: for each subject+section pick the latest version, preferring
-            # Draft over Published. This prevents double-counting when a faculty is reassigned —
-            # the old Published (old faculty) is superseded by the new Draft (new faculty).
-            _status_filter = "'Published'" if scheduler_mode == 'local' else "'Draft', 'Published'"
-            _draft_priority = "" if scheduler_mode == 'local' else "CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END,"
-            sched = query_db(f"""
-                SELECT COALESCE(SUM(load_units), 0) AS sched_units
-                FROM (
-                    SELECT DISTINCT ON (cs.subjectcode, sg.sectionid)
-                           COALESCE(cs.creditunits, 0) AS load_units
-                    FROM schedule_version sv
-                    JOIN schedule sg ON sv.scheduleid = sg.scheduleid
-                    JOIN curriculumsubject cs ON sg.curriculumsubjectid = cs.curriculumsubjectid
-                    JOIN semester s ON sg.semesterid = s.semesterid
-                    WHERE sg.employeenumber = %s
-                      AND s.academicyearid = %s
-                      AND s.semestertype = %s
-                      AND sv.status IN ({_status_filter})
-                    ORDER BY cs.subjectcode, sg.sectionid,
-                             {_draft_priority}
-                             sv.version_number DESC
-                ) AS d
-            """, (emp_num, ay_id, sem), one=True)
-            if sched:
-                scheduled = int(sched['sched_units'] or 0)
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            scheduled, _ = faculty_load.get_faculty_scheduled_hours(
+                cur, emp_num, ay_id, sem, published_only=(scheduler_mode == 'local'))
+            cur.close(); conn.close()
         except Exception as _e:
             import traceback; traceback.print_exc()
-            scheduled = 0
+            scheduled = 0.0
     available = max(0, max_load - scheduled)
 
     # HC7 — count weekday night sessions
@@ -10615,9 +10547,12 @@ def _api_manual_faculty_load_impl():
             assigned_subjects = []
 
     # Subjects reserved via "Assign Faculty" but not yet saved as schedule sessions.
-    # These are cross-program reservations stored in subject_faculty_assignment.
+    # These are cross-program reservations stored in subject_faculty_assignment. No
+    # day/time exists yet, so they're credited with the subject's nominal catalog hours
+    # (tuitionhours/lecturehours+laboratoryhours) — the same fallback used elsewhere for
+    # not-yet-scheduled reservations — rather than real scheduled hours, which don't exist yet.
     pending_subjects = []
-    pending_units    = 0
+    pending_hrs      = 0.0
     if ay_id and sem:
         try:
             _ensure_faculty_assignment_table_exists = lambda cur: None  # table ensured at write time
@@ -10633,7 +10568,8 @@ def _api_manual_faculty_load_impl():
                            MAX(sfa.programcode) AS programcode,
                            MAX(sfa.yearlevel)   AS yearlevel,
                            COALESCE(MAX(cs.subjectname), MAX(sfa.subjectcode)) AS subjectname,
-                           COALESCE(MAX(cs.creditunits), 0) AS creditunits
+                           COALESCE(MAX(cs.creditunits), 0) AS creditunits,
+                           COALESCE(MAX(COALESCE(cs.tuitionhours, cs.lecturehours+cs.laboratoryhours, 0)), 0) AS hrs
                     FROM public.subject_faculty_assignment sfa
                     LEFT JOIN curriculumsubject cs
                            ON UPPER(cs.subjectcode) = UPPER(sfa.subjectcode)
@@ -10645,26 +10581,27 @@ def _api_manual_faculty_load_impl():
                     code = (pr['subjectcode'] or '').upper()
                     if code in _sched_codes:
                         continue   # already counted in schedule sessions
-                    units_val = int(pr['creditunits'] or 0)
+                    hrs_val = float(pr['hrs'] or 0)
                     pending_subjects.append({
                         'subjectcode':  pr['subjectcode'],
                         'subjectname':  pr['subjectname'],
                         'programcode':  pr['programcode'],
                         'yearlevel':    pr['yearlevel'],
-                        'creditunits':  units_val,
+                        'creditunits':  int(pr['creditunits'] or 0),
+                        'hrs':          hrs_val,
                         'is_pending':   True,
                     })
-                    pending_units += units_val
+                    pending_hrs += hrs_val
         except Exception:
             pending_subjects = []
-            pending_units    = 0
+            pending_hrs      = 0.0
 
-    total_assigned = scheduled + pending_units
+    total_assigned = scheduled + pending_hrs
     available      = max(0, max_load - total_assigned)
 
     return jsonify({'success': True, 'total_units': max_load,
                     'available_units': available, 'scheduled_units': scheduled,
-                    'pending_units': pending_units, 'pending_subjects': pending_subjects,
+                    'pending_units': pending_hrs, 'pending_subjects': pending_subjects,
                     'night_classes': night_classes,
                     'assigned_subjects': assigned_subjects})
 
@@ -17545,7 +17482,7 @@ def reports_data():
                        et.typename AS "Employee Type",
                        COALESCE(s.specializationname,'—') AS "Specialization",
                        COALESCE(d.designationname,'—') AS "Designation",
-                       COALESCE(et.regularload::text,'—') AS "Max Load (Units)",
+                       COALESCE(et.regularload::text,'—') AS "Max Load (Hrs)",
                        f.employeestatus AS "Status"
                 FROM faculty f
                 LEFT JOIN employeetype et  ON f.employeetypeid   = et.employeetypeid
@@ -18027,7 +17964,7 @@ def _fetch_report_data(report_type, params, cur):
                 et.typename                        AS "Employee Type",
                 COALESCE(s.specializationname,'—') AS "Specialization",
                 COALESCE(d.designationname,'—')    AS "Designation",
-                COALESCE(et.regularload::text,'—') AS "Max Load (Units)",
+                COALESCE(et.regularload::text,'—') AS "Max Load (Hrs)",
                 f.employeestatus                   AS "Status",
                 f.email                            AS "Email"
             FROM faculty f
@@ -20104,13 +20041,9 @@ def _load_faculty_map(force_refresh: bool = False):
     faculty_map = {}
     for row in (rows or []):
         fnum = row['employeenumber']
-        has_desig = row['designationid'] is not None
-        # Part-Time Load Units always come from the faculty's own employeetype (Designee
-        # has its own Faculty Hours row) — nightteachingservice is a separate "nights/week
-        # on night office duty" constraint, not a units figure. Only Regular Load Units is
-        # ever overridden, and only by the selected Designation's own regular load.
-        eff_regular  = row['designation_regular_load'] if (has_desig and row['designation_regular_load']) else row['regularload']
-        eff_parttime = row['parttimeload']
+        # Cap lookup via faculty_load (shared with the GA and every other load surface) —
+        # regularload/parttimeload/teachingsubstitution/regularloadunit are HOUR caps now.
+        eff_regular, eff_parttime, eff_ts = faculty_load.get_faculty_caps(row)
         faculty_map[fnum] = {
             'employeenumber': fnum, 'fullname': row['fullname'],
             'employeestatus': row['employeestatus'], 'designationid': row['designationid'],
@@ -20118,7 +20051,7 @@ def _load_faculty_map(force_refresh: bool = False):
             'specializationname': row.get('specializationname') or '',
             'employeetype': {
                 'regularload': eff_regular, 'parttimeload': eff_parttime,
-                'teachingsubstitution': int(row['teachingsubstitution'] or 0),
+                'teachingsubstitution': eff_ts,
                 'regular_start': row['regular_start'] or time(7, 30),
                 'regular_end': row['regular_end'] or time(16, 30),
                 'parttime_start': row['parttime_start'], 'parttime_end': row['parttime_end'],
@@ -20143,11 +20076,14 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
 
     # schedule_list has one entry per DAY/time-slice (confirmAndPlace gives each confirmed
     # slice its own days_list of one), so a subject split across multiple sessions (e.g. a
-    # Mon+Wed lecture, or a lecture+lab pair) appears as multiple entries here. Dedupe to one
-    # per (faculty, subject, section) BEFORE summing, and resolve each subject's real credit
-    # units from curriculumsubject rather than trusting the payload's 'units' field, which
-    # actually carries total TEACHING HOURS (see confirmAndPlace's newClass.units) — comparing
-    # hours against a credit-unit-based max load silently inflated the total.
+    # Mon+Wed lecture, or a lecture+lab pair) appears as multiple entries here, each carrying
+    # the payload's 'units' field set to the SUBJECT'S full nominal hours (see confirmAndPlace's
+    # newClass.units), not that slice's own duration — summing it per entry would triple-count
+    # a 3-slice split. Dedupe to one per (faculty, subject, section) BEFORE crediting, and
+    # credit each with the subject's nominal catalog hours (tuitionhours/lecturehours+
+    # laboratoryhours) resolved straight from curriculumsubject — not real per-slice clock time,
+    # since this cross-program check runs on a not-yet-saved payload and the safer, proven
+    # dedup pattern already here avoids adding a new time-string-parsing dependency.
     seen_submitted = set()
     for cls in schedule_list:
         fid = cls.get('faculty_id') or cls.get('employeenumber')
@@ -20171,47 +20107,45 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
 
         subj_codes = list({s for (_fid, s, _sect) in seen_submitted})
         cur.execute("""
-            SELECT UPPER(subjectcode) AS code, MAX(COALESCE(creditunits, 0)) AS units
+            SELECT UPPER(subjectcode) AS code,
+                   MAX(COALESCE(tuitionhours, lecturehours+laboratoryhours, 0)) AS hrs
             FROM public.curriculumsubject
             WHERE UPPER(subjectcode) = ANY(%s)
             GROUP BY UPPER(subjectcode)
         """, (subj_codes,))
-        credit_map = {r['code']: int(r['units'] or 0) for r in (cur.fetchall() or [])}
+        hours_map = {r['code']: float(r['hrs'] or 0) for r in (cur.fetchall() or [])}
 
-        submitted_units: dict = _dd(int)
+        submitted_hrs: dict = _dd(float)
         for (fid, subj, _sect) in seen_submitted:
-            submitted_units[fid] += credit_map.get(subj, 0)
-        submitted_units = {k: v for k, v in submitted_units.items() if v > 0}
-        if not submitted_units:
+            submitted_hrs[fid] += hours_map.get(subj, 0)
+        submitted_hrs = {k: v for k, v in submitted_hrs.items() if v > 0}
+        if not submitted_hrs:
             cur.close(); conn.close()
             return []
 
         excl_prog = (exclude_program or '').upper()
         excl_yl   = int(exclude_year_level or 0)
-        # Sum units already committed in OTHER sections (exclude the one being saved) — one
-        # row per real (faculty, subject, section) teaching assignment, not one per raw
-        # schedule_version row (a subject split across multiple sessions produces multiple
-        # schedule_version rows, one per slice, which must not each add its full credit units).
+        # Sum real scheduled hours already committed in OTHER sections (exclude the one
+        # being saved), by semesterid directly (this call site only has sem_id on hand,
+        # not the ay_id/semestertype pair faculty_load's batch helper expects).
         cur.execute("""
-            SELECT employeenumber AS faculty_id, COALESCE(SUM(creditunits), 0) AS committed_units
-            FROM (
-                SELECT DISTINCT ON (sc.employeenumber, cs.subjectcode, sc.sectionid)
-                    sc.employeenumber, COALESCE(cs.creditunits, 0) AS creditunits
-                FROM schedule_version sv
-                JOIN schedule sc          ON sv.scheduleid         = sc.scheduleid
-                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
-                WHERE sc.semesterid = %s
-                  AND sv.status IN ('Published', 'Draft')
-                  AND sc.employeenumber = ANY(%s)
-                  AND cs.creditunits > 0
-                  AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)
-                ORDER BY sc.employeenumber, cs.subjectcode, sc.sectionid,
-                         CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END, sv.version_number DESC
-            ) d
-            GROUP BY employeenumber
-        """, (sem_id, list(submitted_units.keys()), excl_prog, excl_yl))
-        existing_loads = {r['faculty_id']: int(r['committed_units'] or 0)
+            SELECT sc.employeenumber AS faculty_id,
+                   COALESCE(SUM(ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2)), 0)
+                       AS committed_hrs
+            FROM schedule_version sv
+            JOIN schedule sc          ON sv.scheduleid         = sc.scheduleid
+            JOIN schedule_sessions ss ON ss.versionid           = sv.versionid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
+            LEFT JOIN timeslot ts_s   ON ss.starttimeid          = ts_s.timeid
+            LEFT JOIN timeslot ts_e   ON ss.endtimeid            = ts_e.timeid
+            WHERE sc.semesterid = %s
+              AND sv.status IN ('Published', 'Draft')
+              AND sc.employeenumber = ANY(%s)
+              AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)
+            GROUP BY sc.employeenumber
+        """, (sem_id, list(submitted_hrs.keys()), excl_prog, excl_yl))
+        existing_loads = {r['faculty_id']: float(r['committed_hrs'] or 0)
                           for r in (cur.fetchall() or [])}
         cur.close()
     except Exception:
@@ -20221,7 +20155,7 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
             conn.close()
 
     violations = []
-    for fid, new_units in submitted_units.items():
+    for fid, new_units in submitted_hrs.items():
         fac = faculty_map.get(fid, {})
         if not fac:
             continue
@@ -21033,14 +20967,32 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
             for row in cur.fetchall():
                 fac_limits[row['employeenumber']] = row
 
-        fac_reg_u = _dd(int)
-        fac_pt_u  = _dd(int)
+        # max_regular/max_pt/ts_hrs above are read straight from regularloadunit/regularload/
+        # parttimeload/teachingsubstitution — already HOUR caps now (faculty_load.py convention),
+        # no change needed there. `s.get('units', ...)` per schedule_data entry historically meant
+        # credit units; prefer an hours-like field when the caller supplies one (several already
+        # do — e.g. lecturehours+laboratoryhours), falling back to 'units' for callers that don't.
+        def _sched_hrs(s):
+            for k in ('hrs', 'hours', 'total_hours'):
+                v = s.get(k)
+                if v not in (None, ''):
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        pass
+            lh, lbh = s.get('lec_hours'), s.get('lab_hours')
+            if lh is not None or lbh is not None:
+                return float(lh or 0) + float(lbh or 0)
+            return float(s.get('units', 0) or 0)
+
+        fac_reg_u = _dd(float)
+        fac_pt_u  = _dd(float)
         seen_reg  = set()
         seen_pt   = set()
         for s in schedule_data:
             fid   = s.get('faculty_id')
-            units = int(s.get('units', 0) or 0)
-            if not fid or not units: continue
+            hrs   = _sched_hrs(s)
+            if not fid or not hrs: continue
             code = (s.get('subject_code') or '').upper()
             lim  = fac_limits.get(fid, {})
             reg_raw     = lim.get('regular_end')
@@ -21052,20 +21004,20 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
                 key = (fid, code)
                 if key not in seen_reg:
                     seen_reg.add(key)
-                    fac_reg_u[fid] += units
+                    fac_reg_u[fid] += hrs
             else:
                 key = (fid, code)
                 if key not in seen_pt:
                     seen_pt.add(key)
-                    fac_pt_u[fid] += units
+                    fac_pt_u[fid] += hrs
 
         load_viol = 0
         all_fids  = set(fac_reg_u) | set(fac_pt_u)
         for fid in all_fids:
             lim     = fac_limits.get(fid, {})
-            max_reg = int(lim.get('max_regular') or 99)
-            max_pt  = int(lim.get('max_pt') or 99)
-            ts_hrs  = int(lim.get('ts_hrs') or 0)
+            max_reg = float(lim.get('max_regular') or 99)
+            max_pt  = float(lim.get('max_pt') or 99)
+            ts_hrs  = float(lim.get('ts_hrs') or 0)
             if (fac_reg_u[fid] > max_reg and fac_reg_u[fid] - max_reg > ts_hrs) or \
                (fac_pt_u[fid]  > max_pt  and fac_pt_u[fid]  - max_pt  > ts_hrs):
                 load_viol += 1
@@ -21809,32 +21761,23 @@ def api_retrieve_previous_schedule():
             if csem:
                 cur_sem_id = csem['semesterid']
 
-        # Tally units each retrieved faculty would bring
+        # Tally nominal hours each retrieved faculty would bring — no real day/time is
+        # committed yet at this preview stage, so use catalog lecture+lab hours (same
+        # nominal-hours convention used for other not-yet-scheduled reservations), not
+        # credit units.
         from collections import defaultdict as _dd2
-        fac_units_retrieved: dict = _dd2(int)
+        fac_units_retrieved: dict = _dd2(float)
         for row in rows:
             fid = row.get('faculty_id')
-            cu  = int(row.get('credit_units') or 0)
-            if fid and cu > 0:
-                fac_units_retrieved[fid] += cu
+            hrs = float(row.get('lec_hours') or 0) + float(row.get('lab_hours') or 0)
+            if fid and hrs > 0:
+                fac_units_retrieved[fid] += hrs
 
-        # Query what those faculty are already committed to in the current term
+        # Query what those faculty are already committed to in the current term, via the
+        # shared live-hours query (faculty_load.py) — real actual scheduled hours.
         current_committed: dict = {}
-        if cur_sem_id and fac_units_retrieved:
-            cur.execute("""
-                SELECT sc.employeenumber AS fid,
-                       COALESCE(SUM(COALESCE(cs.creditunits, 0)), 0) AS committed
-                FROM   schedule_version sv
-                JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
-                JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                WHERE  sc.semesterid = %s
-                  AND  sv.status IN ('Published', 'Draft')
-                  AND  sc.employeenumber = ANY(%s)
-                  AND  cs.creditunits > 0
-                GROUP  BY sc.employeenumber
-            """, (cur_sem_id, list(fac_units_retrieved.keys())))
-            current_committed = {r['fid']: int(r['committed'] or 0)
-                                 for r in (cur.fetchall() or [])}
+        if cur_sem_id and fac_units_retrieved and acad_year and term:
+            current_committed = faculty_load.get_faculty_hours_batch(cur, acad_year, term)
 
         cur.close(); conn.close()
 
@@ -21909,7 +21852,7 @@ def api_retrieve_previous_schedule():
                     + (et.get('teachingsubstitution') or 0))
             already = current_committed.get(fid, 0)
             overload_notices.append(
-                f"{name} already has {already}/{maxt} units this term — replaced with TBA."
+                f"{name} already has {already:.1f}/{maxt:.1f} hours this term — replaced with TBA."
             )
 
         return jsonify({
@@ -22673,26 +22616,10 @@ def api_faculty_teaching_assignments():
             cur.close(); conn.close()
             return jsonify({'success': False, 'error': 'Faculty not found'}), 404
 
-        # Mirror the same max-load logic used by /api/manual/faculty_load. Classify by
-        # `employee_type` (typename, falling back to employeestatus only when unlinked —
-        # see its COALESCE above), never employeestatus directly: the two can drift out
-        # of sync (e.g. employeestatus left at 'Part-Time' after a faculty was
-        # reclassified to a Regular employeetype), and employeestatus is what's stale.
-        _status    = (fac['employee_type'] or '').lower()
-        _has_desig = fac['designationid'] is not None
-        # PT and TS always come from the Faculty Hours config for the faculty's own
-        # employeetype (Designee has its own such row) — only Regular Load Units is ever
-        # overridden, and only by the selected Designation's own regular load.
-        # designation.nightteachingservice is a separate "nights/week on night office
-        # duty" constraint (see _check_designee_night_limit), never a PT units figure.
-        _pt        = int(fac['pt_load'] or 0)
-        _teach_sub = int(fac['teach_sub'] or 0)
-        if _has_desig:
-            _reg  = int(fac['desig_reg_load'] or 0)
-        elif 'part' in _status:
-            _reg  = 0
-        else:
-            _reg  = int(fac['reg_load'] or 0)
+        # Cap lookup now via faculty_load (single source of truth, shared with the GA and
+        # every other Manual Editor load surface) — regularload/parttimeload/
+        # teachingsubstitution/regularloadunit are reinterpreted as HOUR caps, not units.
+        _reg, _pt, _teach_sub = faculty_load.get_faculty_caps(fac)
         max_units = _reg + _pt + _teach_sub
         cur.execute("""
             -- Resolved status-group per (subject, section): a single assignment can be
@@ -22979,16 +22906,28 @@ def api_faculty_teaching_assignments():
 
         total_assigned  = assigned + pending_units
         total_hrs       = assigned_hrs + pending_hrs
+
+        # Regular/PT/TS bucket breakdown, computed from real scheduled hours — the single
+        # source of truth reused by the Manual Editor's FACULTY LOAD tab and the assignment-
+        # time validation gate (faculty_load.py). Pending "Assign Faculty" reservations have
+        # no day/time yet, so they can't be bucket-classified (same known gap as before);
+        # only `sessions` (real schedule rows) go into the buckets.
+        buckets = faculty_load.compute_load_buckets(sessions, fac)
+
         cur.close(); conn.close()
         return jsonify({
             'success': True,
             'faculty': dict(fac),
             'sessions': sessions,
             'pending_sessions': pending_sessions,
-            'assigned_units': total_assigned,
+            # Field names kept for backward compatibility with existing consumers, but the
+            # values are now HOURS (not credit units) — the faculty's load is deducted by
+            # actual scheduled time.
+            'assigned_units': total_hrs,
             'max_units': max_units,
-            'available_units': max(0, max_units - total_assigned),
-            'total_teaching_hours': total_hrs
+            'available_units': max(0, max_units - total_hrs),
+            'total_teaching_hours': total_hrs,
+            'buckets': buckets,
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

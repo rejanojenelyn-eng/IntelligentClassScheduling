@@ -146,8 +146,9 @@ function renderTables() {
     const regular = _sessions.filter(s => WEEKDAYS_SET.has(s.daydesc) && s.endtimeid <= REGULAR_END_SLOT);
     const pt      = _sessions.filter(s => !WEEKDAYS_SET.has(s.daydesc) || s.endtimeid > REGULAR_END_SLOT);
 
-    const totalReg = regular.reduce((sum, s) => sum + (parseFloat(s.creditunits) || 0), 0);
-    const totalPT  = pt.reduce((sum, s) => sum + (parseFloat(s.creditunits) || 0), 0);
+    // Load is measured in actual scheduled HOURS now (faculty_load.py), not credit units.
+    const totalReg = regular.reduce((sum, s) => sum + (parseFloat(s.hrs) || 0), 0);
+    const totalPT  = pt.reduce((sum, s) => sum + (parseFloat(s.hrs) || 0), 0);
     const totalAll = totalReg + totalPT;
 
     document.getElementById('total-regular-units').textContent = totalReg || '—';
@@ -159,7 +160,7 @@ function renderTables() {
         return `<tr>
             <td style="font-weight:800;color:#630100;">${row.subjectcode}</td>
             <td>${row.subjectname}</td>
-            <td>${row.creditunits || '—'}</td>
+            <td>${row.hrs ?? '—'}</td>
             <td>${ys || '—'}</td>
             <td>${row.time_range || ''}</td>
             <td>${row.daydesc}</td>
@@ -185,7 +186,7 @@ function openDetail(sess) {
     document.getElementById('det-time').textContent    = sess.time_range;
     document.getElementById('det-room').textContent    = sess.roomname || 'TBA';
     document.getElementById('det-section').textContent = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '—');
-    document.getElementById('det-units').textContent   = sess.creditunits;
+    document.getElementById('det-units').textContent   = sess.hrs;
     document.getElementById('det-status').innerHTML    =
         sess.status === 'Published'
             ? '<span class="badge-pub">Published</span>'

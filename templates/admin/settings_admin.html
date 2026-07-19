@@ -162,9 +162,9 @@
           <thead>
             <tr>
               <th style="text-align:left; padding-left:20px;">EMPLOYEE TYPE</th>
-              <th>REGULAR LOAD</th>
-              <th>PART-TIME LOAD</th>
-              <th>TEACHING SUBSTITUTION</th>
+              <th>REGULAR LOAD (HRS)</th>
+              <th>PART-TIME LOAD (HRS)</th>
+              <th>TEACHING SUBSTITUTION (HRS)</th>
               <th>REGULAR HOURS</th>
               <th>PART-TIME HOURS</th>
               <th>RESTRICT PT HOURS</th>
@@ -221,7 +221,7 @@
           <thead>
             <tr>
               <th style="text-align:left; padding-left:20px;">DESIGNATION</th>
-              <th>REGULAR LOAD UNITS</th>
+              <th>REGULAR LOAD (HRS)</th>
               <th>PT/NIGHT TEACHING SERVICE</th>
               <th>REGULAR HOURS</th>
               <th class="col-action"></th>
@@ -985,15 +985,15 @@
 
         <div class="mg-3" style="margin-bottom:18px;">
           <div class="mf">
-            <label>REGULAR LOAD LIMIT</label>
+            <label>REGULAR LOAD LIMIT (HRS)</label>
             <input type="number" name="reg_load" id="modal_et_reg" class="m-input" min="0">
           </div>
           <div class="mf">
-            <label>PART-TIME LOAD LIMIT</label>
+            <label>PART-TIME LOAD LIMIT (HRS)</label>
             <input type="number" name="pt_load" id="modal_et_pt" class="m-input" min="0">
           </div>
           <div class="mf">
-            <label>SUBSTITUTION</label>
+            <label>SUBSTITUTION (HRS)</label>
             <input type="number" name="sub_load" id="modal_et_sub" class="m-input" min="0">
           </div>
         </div>
@@ -1068,7 +1068,7 @@
 
         <div class="mg-2" style="margin-bottom:18px;">
           <div class="mf">
-            <label>REGULAR LOAD UNITS</label>
+            <label>REGULAR LOAD (HRS)</label>
             <input type="number" name="reg_load" id="modal_des_reg" class="m-input" min="0" required
                    onchange="updateDesigHours()">
           </div>
@@ -1121,7 +1121,7 @@
 
         <div class="mg-2" style="margin-bottom:18px;">
           <div class="mf">
-            <label>REGULAR LOAD UNITS LIMIT</label>
+            <label>REGULAR LOAD LIMIT (HRS)</label>
             <input type="number" name="reg_load" id="add_des_reg" class="m-input" min="0" required
                    onchange="updateAddDesigHours()">
           </div>

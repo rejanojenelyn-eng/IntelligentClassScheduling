@@ -171,12 +171,12 @@ document.addEventListener('DOMContentLoaded', () => {
             curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
             try {
                 const params = new URLSearchParams({ program: prog, year_level: yl });
-                if (ay) params.set('acad_year', ay);
-                const res  = await fetch(`/api/curriculum-by-year?${params}`);
+                if (ay) params.set('ay_id', ay);
+                const res  = await fetch(`/api/get_curriculum?${params}`);
                 const data = await res.json();
-                if (data.curriculum) {
-                    curriculum.value = data.curriculum;
-                    curriculumText.textContent = `CY ${data.curriculum}`;
+                if (data.success && data.curriculum_year) {
+                    curriculum.value = data.curriculum_year;
+                    curriculumText.textContent = `CY ${data.curriculum_year}`;
                 } else {
                     curriculumText.textContent = "No curriculum found";
                     curriculum.value = "";

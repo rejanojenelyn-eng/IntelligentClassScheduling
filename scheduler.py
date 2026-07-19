@@ -35,6 +35,7 @@ import copy
 from datetime import time
 from collections import defaultdict
 from database import get_db_connection, query_db, load_scheduler_config
+import faculty_load
 
 
 # ─────────────────────────────────────────────────────────────
@@ -230,8 +231,9 @@ def _exclude_fully_booked_rooms(rooms: list, published_room_slots: dict) -> list
     return available if available else rooms   # never leave the list empty
 
 
-def _faculty_is_at_max_load(faculty: dict, committed_units: int) -> bool:
-    """Return True if a faculty member has already reached their maximum teaching load."""
+def _faculty_is_at_max_load(faculty: dict, committed_hours: float) -> bool:
+    """Return True if a faculty member has already reached their maximum teaching load
+    (load is measured in actual/nominal HOURS now, not credit units — see faculty_load.py)."""
     if not faculty:
         return False
     et       = faculty.get('employeetype', {})
@@ -239,7 +241,7 @@ def _faculty_is_at_max_load(faculty: dict, committed_units: int) -> bool:
     max_pt   = et.get('parttimeload') or 0
     ts_sub   = et.get('teachingsubstitution') or 0
     max_total = max_reg + max_pt + ts_sub
-    return committed_units >= max_total
+    return committed_hours >= max_total
 
 
 def minutes(t_obj):
@@ -701,89 +703,82 @@ class CSPValidator:
 
     def _check_load_limits(self, schedule, faculty_map, existing_load: dict = None):
         """
-        existing_load: units already committed by each faculty in OTHER sections/programs
-            this term (from fetch_current_faculty_loads).  Added to the intra-schedule
-            units so the check matches the total load visible in the Manual Editor.
+        existing_load: HOURS already committed by each faculty in OTHER sections/programs
+            this term (from fetch_current_faculty_loads — real scheduled hours). Added to
+            the intra-schedule hours so the check matches the total load visible in the
+            Manual Editor (faculty_load.py is the shared source of truth for both).
         """
         violations = []
-        regular_units = defaultdict(int)
-        pt_units      = defaultdict(int)
+        regular_hrs = defaultdict(float)
+        pt_hrs      = defaultdict(float)
         _cross = existing_load or {}
-
-        # Track (faculty, subject) pairs already counted to avoid double-counting
-        # subjects that span multiple time slices.
-        seen_regular = set()
-        seen_pt      = set()
 
         for cls in schedule:
             fnum = cls.get('faculty_id')
             if not fnum or fnum not in faculty_map:
                 continue
-            fac   = faculty_map[fnum]
-            et    = fac.get('employeetype', {})
-            units = cls.get('units', 0)
-            if units == 0:
-                continue  # lab part carries 0 units (counted in lecture part)
-
-            subj = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
+            fac = faculty_map[fnum]
+            et  = fac.get('employeetype', {})
+            # Real elapsed hours for this gene, now that a day/time has been chosen (see
+            # duration_hrs in _build_individual) — unlike the old credit-units model, BOTH
+            # the lecture AND lab parts of a subject carry their own real hours and must be
+            # summed independently; no per-subject dedup needed since each gene is a
+            # genuinely distinct time commitment.
+            hrs = cls.get('duration_hrs', 0) or 0
+            if hrs == 0:
+                continue
 
             regular_end = et.get('regular_end') or time(16, 30)
             is_regular  = cls['day'] in WEEKDAYS and cls['end_time'] <= regular_end
             if is_regular:
-                key = (fnum, subj)
-                if key not in seen_regular:
-                    seen_regular.add(key)
-                    regular_units[fnum] += units
+                regular_hrs[fnum] += hrs
             else:
-                key = (fnum, subj)
-                if key not in seen_pt:
-                    seen_pt.add(key)
-                    pt_units[fnum] += units
+                pt_hrs[fnum] += hrs
 
-        for fnum, units in regular_units.items():
-            # Add cross-section committed units so the check matches the Manual Editor total
-            units += _cross.get(fnum, 0)
+        for fnum, hrs in regular_hrs.items():
+            # Add cross-section committed hours so the check matches the Manual Editor total
+            hrs += _cross.get(fnum, 0)
             et         = faculty_map[fnum].get('employeetype', {})
             emp_status = faculty_map[fnum].get('employeestatus', '')
-            ts_hours   = int(et.get('teachingsubstitution', 0) or 0)
+            ts_hours   = float(et.get('teachingsubstitution', 0) or 0)
             is_pt_fac  = 'part' in emp_status.lower()
             if is_pt_fac:
                 # Part-time faculty have no regular load; daytime sessions are TS sessions.
                 max_reg = ts_hours if ts_hours else 0
             else:
                 max_reg = et.get('regularload') or 99
-            if units > max_reg:
-                excess = units - max_reg
+            if hrs > max_reg:
+                excess = hrs - max_reg
                 fac_name = (faculty_map[fnum].get('fullname') or fnum)
                 if is_pt_fac:
                     violations.append({
                         'rule': 'HC8',
                         'subject': 'multiple',
-                        'detail': f'{fac_name} Teaching Substitution load {units} units exceeds TS limit of {max_reg} units.'
+                        'detail': f'{fac_name} Teaching Substitution load {hrs:.1f} hrs exceeds TS limit of {max_reg:.1f} hrs.'
                     })
                 else:
                     if excess > ts_hours:
                         violations.append({
                             'rule': 'HC8',
                             'subject': 'multiple',
-                            'detail': f'{fac_name} regular load {units} units exceeds limit {max_reg}'
-                                      + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                            'detail': f'{fac_name} regular load {hrs:.1f} hrs exceeds limit {max_reg:.1f}'
+                                      + (f' (TS {ts_hours:.1f}h available, short {excess - ts_hours:.1f}h)' if ts_hours else '')
                         })
 
-        for fnum, units in pt_units.items():
-            units += _cross.get(fnum, 0)
+        for fnum, hrs in pt_hrs.items():
+            hrs += _cross.get(fnum, 0)
             et     = faculty_map[fnum].get('employeetype', {})
             max_pt = et.get('parttimeload') or 99
-            if units > max_pt:
-                ts_hours = et.get('teachingsubstitution', 0) or 0
-                excess   = units - max_pt
+            if hrs > max_pt:
+                ts_hours = float(et.get('teachingsubstitution', 0) or 0)
+                excess   = hrs - max_pt
                 fac_name = (faculty_map[fnum].get('fullname') or fnum)
                 if excess > ts_hours:
                     violations.append({
                         'rule': 'HC8',
                         'subject': 'multiple',
-                        'detail': f'{fac_name} PT load {units} units exceeds limit {max_pt}'
-                                  + (f' (TS {ts_hours}h available, short {excess - ts_hours}h)' if ts_hours else '')
+                        'detail': f'{fac_name} PT load {hrs:.1f} hrs exceeds limit {max_pt:.1f}'
+                                  + (f' (TS {ts_hours:.1f}h available, short {excess - ts_hours:.1f}h)' if ts_hours else '')
                     })
 
         return violations
@@ -1155,7 +1150,7 @@ class IntelligentScheduler:
     def fetch_data(self, program, year_level, term, curriculum_year):
         subjects_query = """
             SELECT cs.subjectcode, cs.subjectname, cs.lecturehours, cs.laboratoryhours,
-                   cs.creditunits, c.programcode AS offeringcode
+                   cs.creditunits, cs.tuitionhours, c.programcode AS offeringcode
             FROM curriculumsubject cs
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
             WHERE c.programcode  = %s
@@ -1193,9 +1188,12 @@ class IntelligentScheduler:
         faculty_list = []
         for row in (faculty_rows or []):
             fnum = row['employeenumber']
-            has_desig    = row['designationid'] is not None
-            eff_regular  = row['designation_regular_load'] if (has_desig and row['designation_regular_load']) else row['regularload']
-            eff_parttime = (row['nightteachingservice'] or 0) if has_desig else row['parttimeload']
+            # Cap lookup via faculty_load (shared with app.py so the GA and Manual Editor
+            # can't drift) — regularload/parttimeload/teachingsubstitution/regularloadunit
+            # are HOUR caps now, not credit units. This also fixes a pre-existing bug where
+            # a designee's PT cap was read from nightteachingservice (a "nights on night
+            # office duty" count) instead of the faculty's own employeetype.parttimeload.
+            eff_regular, eff_parttime, eff_ts = faculty_load.get_faculty_caps(row)
             fac = {
                 'employeenumber':   fnum,
                 'fullname':         row['fullname'],
@@ -1206,7 +1204,7 @@ class IntelligentScheduler:
                 'employeetype': {
                     'regularload':          eff_regular,
                     'parttimeload':         eff_parttime,
-                    'teachingsubstitution': row['teachingsubstitution'],
+                    'teachingsubstitution': eff_ts,
                     'regular_start':        row['regular_start'] or time(7, 30),
                     'regular_end':          row['regular_end']   or time(16, 30),
                     'parttime_start':       row['parttime_start'],
@@ -1688,9 +1686,10 @@ class IntelligentScheduler:
                                     exclude_program: str = '',
                                     exclude_year_level: int = None) -> dict:
         """
-        #9: Return {faculty_id: total_units_already_committed} for the given
-        term across ALL programs/sections that have Published or Draft schedules.
-        This allows the builder to exclude faculty who have already hit their load cap.
+        #9: Return {faculty_id: total_hours_already_committed} for the given term across
+        ALL programs/sections that have Published or Draft schedules — REAL scheduled
+        hours via the shared live-hours query (faculty_load.py), not credit units. This
+        allows the builder to exclude faculty who have already hit their load cap.
 
         exclude_program + exclude_year_level: skip sessions for the section currently
         being regenerated.  Those records (Draft from a previous run, or the Published
@@ -1700,32 +1699,20 @@ class IntelligentScheduler:
         if not term or not acad_year_id:
             return {}
 
-        excl_prog = (exclude_program or '').strip().upper()
-        excl_yl   = exclude_year_level
-
-        excl_clause = ''
-        params: list = [acad_year_id, term]
-        if excl_prog and excl_yl is not None:
-            excl_clause = 'AND NOT (UPPER(c.programcode) = %s AND cs.yearlevel = %s)'
-            params.extend([excl_prog, excl_yl])
-
-        rows = query_db(f"""
-            SELECT sc.employeenumber AS faculty_id,
-                   SUM(COALESCE(cs.creditunits, 0)) AS committed_units
-            FROM schedule_version sv
-            JOIN schedule sc          ON sv.scheduleid          = sc.scheduleid
-            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
-            JOIN semester sem         ON sc.semesterid          = sem.semesterid
-            WHERE sem.academicyearid         = %s
-              AND UPPER(sem.semestertype)    = UPPER(%s)
-              AND sv.status                 IN ('Published', 'Draft')
-              AND sc.employeenumber         IS NOT NULL
-              AND cs.creditunits             > 0
-              {excl_clause}
-            GROUP BY sc.employeenumber
-        """, tuple(params))
-        return {r['faculty_id']: int(r['committed_units'] or 0) for r in (rows or [])}
+        conn = get_db_connection()
+        if conn is None:
+            return {}
+        try:
+            import psycopg2.extras
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            loads = faculty_load.get_faculty_hours_batch(
+                cur, acad_year_id, term,
+                exclude_program=(exclude_program or '').strip().upper() or None,
+                exclude_year_level=exclude_year_level)
+            cur.close()
+            return loads
+        finally:
+            conn.close()
 
     def fetch_historical_schedule(self, program: str, year_level: int, term: str,
                                   curriculum_year: str) -> list:
@@ -1827,6 +1814,11 @@ class IntelligentScheduler:
             entry['time']  = (f"{format_time_12h(entry['start_time'])} – "
                               f"{format_time_12h(entry['end_time'])}")
             entry['hours'] = str(entry['lec_hours'] + entry['lab_hours'])
+            # Real elapsed hours (one meeting's duration × days/week it meets) — same
+            # convention as _build_individual, so this retrieved schedule gets HC8-checked
+            # against ACTUAL scheduled hours like every other path, not credit units.
+            entry['duration_hrs'] = round(
+                duration_hours(entry['start_time'], entry['end_time']) * max(1, len(dl)), 2)
             result.append(entry)
         return result
 
@@ -1898,10 +1890,16 @@ class IntelligentScheduler:
         historical_faculty = historical_faculty or {}
         preferences        = preferences        or {}
         subject_history    = subject_history    or {}
-        # #9: pre-loaded committed units from other sections/programs for this term
+        # #9: pre-loaded committed HOURS from other sections/programs for this term
+        # (faculty_load.get_faculty_hours_batch — real scheduled hours, not credit units)
         _existing_load     = dict(existing_load or {})
-        # Track units being assigned within this individual so load compounds correctly
-        _sched_units: dict = defaultdict(int)
+        # Track nominal hours being assigned within this individual so load compounds
+        # correctly. No real day/time exists yet at this point in gene construction, so
+        # this uses each subject's NOMINAL catalog hours (tuitionhours/lecturehours+
+        # laboratoryhours via faculty_load.get_subject_nominal_hours) as a stand-in —
+        # the post-hoc CSP validator re-checks against each gene's REAL elapsed hours
+        # once a day/time has actually been chosen (see duration_hrs below).
+        _sched_units: dict = defaultdict(float)
 
         # HC7: Track night PT class count per designee faculty so the builder never
         # exceeds their cap (6 minus night office-service duties) during placement,
@@ -1953,6 +1951,9 @@ class IntelligentScheduler:
             lec_hrs      = sub.get('lecturehours', 0)
             lab_hrs      = sub.get('laboratoryhours', 0)
             credit_units = sub.get('creditunits', 3)
+            # Nominal hours for load-capacity purposes only (no real day/time chosen yet
+            # at this point) — see faculty_load.get_subject_nominal_hours.
+            nominal_hrs  = faculty_load.get_subject_nominal_hours(sub) or credit_units
             is_nstp_ou   = any(sub['subjectcode'].upper().startswith(p)
                                for p in SUNDAY_ALLOWED_PREFIXES)
 
@@ -1974,20 +1975,20 @@ class IntelligentScheduler:
                 qualified_faculty = faculty_list  # fallback when no match found
 
             # #9: Further filter to faculty who still have load capacity for this subject.
-            def _has_load_capacity(fac, units):
-                if not units:
-                    return True  # lab parts have 0 units — no limit check needed
+            # `hrs` is the subject's NOMINAL hours (no real day/time chosen yet).
+            def _has_load_capacity(fac, hrs):
+                if not hrs:
+                    return True  # lab parts have 0 hours here — no limit check needed
                 fid = fac['employeenumber']
                 et  = fac.get('employeetype', {})
-                has_desig = fac.get('designationid') is not None
                 max_reg   = et.get('regularload') or 99
                 max_pt    = et.get('parttimeload') or 0
                 ts_sub    = et.get('teachingsubstitution') or 0
                 max_total = max_reg + max_pt + ts_sub
                 committed = _existing_load.get(fid, 0) + _sched_units.get(fid, 0)
-                return (committed + units) <= max_total
+                return (committed + hrs) <= max_total
 
-            with_capacity = [f for f in qualified_faculty if _has_load_capacity(f, sub.get('creditunits', 3))]
+            with_capacity = [f for f in qualified_faculty if _has_load_capacity(f, nominal_hrs)]
             if with_capacity:
                 qualified_faculty = with_capacity
             # HC8 fallback: if every qualified faculty member has exhausted their load,
@@ -2016,34 +2017,33 @@ class IntelligentScheduler:
                 cross_fnum = None
 
             chosen_fac = None
-            _cu = sub.get('creditunits', 3)
 
             # P1 — same subject + same program + same year level (historical > published > draft)
             if (pref_fnum and pref_fnum in faculty_map
-                    and _has_load_capacity(faculty_map[pref_fnum], _cu)
+                    and _has_load_capacity(faculty_map[pref_fnum], nominal_hrs)
                     and random.random() < 0.95):
                 chosen_fac = faculty_map[pref_fnum]
             # P2a — same subject + same program + same term (any year level)
             elif (hist_fnum and hist_fnum in faculty_map
-                    and _has_load_capacity(faculty_map[hist_fnum], _cu)
+                    and _has_load_capacity(faculty_map[hist_fnum], nominal_hrs)
                     and random.random() < 0.90):
                 chosen_fac = faculty_map[hist_fnum]
             # P2b — same subject + same program (any year level, any term)
             elif (wide_fnum and wide_fnum in faculty_map
-                    and _has_load_capacity(faculty_map[wide_fnum], _cu)
+                    and _has_load_capacity(faculty_map[wide_fnum], nominal_hrs)
                     and random.random() < 0.85):
                 chosen_fac = faculty_map[wide_fnum]
             # P3 — same subject in any program
             elif (cross_fnum and cross_fnum in faculty_map
-                    and _has_load_capacity(faculty_map[cross_fnum], _cu)
+                    and _has_load_capacity(faculty_map[cross_fnum], nominal_hrs)
                     and random.random() < 0.78):
                 chosen_fac = faculty_map[cross_fnum]
             # P4 — any qualified faculty member (specialization-filtered, load-checked)
             if chosen_fac is None:
                 chosen_fac = random.choice(qualified_faculty)
-            # #9: Track units committed within this schedule build
-            if _cu > 0:
-                _sched_units[chosen_fac['employeenumber']] += _cu
+            # #9: Track nominal hours committed within this schedule build
+            if nominal_hrs > 0:
+                _sched_units[chosen_fac['employeenumber']] += nominal_hrs
 
             # ── Determine parts (lecture only / lab only / both) ──
             # (class_type, target_hrs, is_lab_part, units_for_load)
@@ -2212,6 +2212,10 @@ class IntelligentScheduler:
                           chosen_room['roomid'])
 
                 hrs_str = str(lec_hrs + lab_hrs)
+                # Real elapsed hours for THIS part, now that a day/time has actually been
+                # chosen — one meeting's duration × how many days/week it meets. This is
+                # what post-hoc load validation (HC8) and SC5 fitness use now, not `units`.
+                duration_hrs = round(duration_hours(start_t, end_t) * len(days_list), 2)
 
                 individual.append({
                     'subject_code':      sub['subjectcode'],
@@ -2219,6 +2223,7 @@ class IntelligentScheduler:
                     'lec_hours':         lec_hrs if class_type == 'Lecture' else 0,
                     'lab_hours':         lab_hrs if class_type == 'Lab'     else 0,
                     'units':             units,
+                    'duration_hrs':      duration_hrs,
                     'course':            sub['offeringcode'],
                     'class_type':        class_type,
                     'total_subject_hrs': lec_hrs + lab_hrs,
@@ -2634,8 +2639,8 @@ class IntelligentScheduler:
             fac = faculty_map.get(fnum, {})
             et  = fac.get('employeetype', {})
 
-            day_counts     = defaultdict(int)
-            total_pt_units = 0
+            day_counts    = defaultdict(float)
+            total_pt_hrs  = 0
             sat_count = 0
             sun_count = 0
 
@@ -2647,11 +2652,12 @@ class IntelligentScheduler:
                 if not is_daytime_block(cls['start_time'], cls['end_time']):
                     score -= 20
 
-                day_counts[cls['day']] += cls.get('units', 0)
+                _hrs = cls.get('duration_hrs', 0) or 0
+                day_counts[cls['day']] += _hrs
 
                 reg_end = et.get('regular_end') or time(16, 30)
                 if cls['day'] in WEEKDAYS and cls['end_time'] > reg_end:
-                    total_pt_units += cls.get('units', 0)
+                    total_pt_hrs += _hrs
 
                 if cls['day'] == 'Saturday':
                     sat_count += 1
@@ -2674,7 +2680,7 @@ class IntelligentScheduler:
 
             max_pt = et.get('parttimeload') or 0
             if max_pt:
-                score -= abs(total_pt_units - max_pt) * 10
+                score -= abs(total_pt_hrs - max_pt) * 10
 
             if abs(sat_count - sun_count) > 1:
                 score -= 10

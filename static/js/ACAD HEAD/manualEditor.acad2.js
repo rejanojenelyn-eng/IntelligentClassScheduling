@@ -1660,33 +1660,38 @@ async function confirmAndPlace() {
     }
 
     // ── HC8: Maximum teaching load ──
+    // Load is measured in actual/nominal HOURS now (faculty_load.py), not credit units.
+    // _facLoadData.total_units/scheduled_units already carry hours (from
+    // /api/manual/faculty_load); subjectHrs/pendingHrs use each subject's nominal
+    // catalog hours (total_hours), matching the fallback convention used elsewhere when
+    // real per-slice duration isn't the thing being measured here.
     if (_facInfo && _facLoadData) {
-        const subjectUnits = _subjInfo ? (_subjInfo.creditunits || 0) :
-                             ((_subjectMeta && _subjectMeta[subjSel.value]) ? parseFloat(_subjectMeta[subjSel.value].units || 0) : 0);
-        let pendingUnits = 0;
+        const subjectHrs = _subjInfo ? (_subjInfo.total_hours || 0) :
+                             ((_subjectMeta && _subjectMeta[subjSel.value]) ? parseFloat(_subjectMeta[subjSel.value].total_hours || 0) : 0);
+        let pendingHrs = 0;
         for (const c of pendingManualSchedule) {
             if (String(c.faculty_id) !== String(facVal)) continue;
             if (c.ay !== ay || c.sem !== sem) continue;
             if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
             const uMeta = _subjectMeta && _subjectMeta[c.subject_code];
-            pendingUnits += uMeta ? parseFloat(uMeta.units || 0) : 0;
+            pendingHrs += uMeta ? parseFloat(uMeta.total_hours || 0) : 0;
         }
-        const scheduledUnits = _facLoadData.scheduled_units || 0;
-        const totalAfter     = scheduledUnits + pendingUnits + subjectUnits;
-        const maxLoad        = _facLoadData.total_units || 0;
+        const scheduledHrs = _facLoadData.scheduled_units || 0;
+        const totalAfter   = scheduledHrs + pendingHrs + subjectHrs;
+        const maxLoad      = _facLoadData.total_units || 0;
         if (maxLoad > 0 && totalAfter > maxLoad) {
             if (_sm() === 'local') {
                 // Local mode: warn, allow controlled override
                 const proceed = await showConfirmModal(
-                    `[Local Override] ${facName}'s load would reach ${totalAfter}/${maxLoad} units. ` +
+                    `[Local Override] ${facName}'s load would reach ${totalAfter.toFixed(1)}/${maxLoad} hrs. ` +
                     `Local Scheduler allows this override. Proceed?`,
                     'HC Override — Maximum Load'
                 );
                 if (!proceed) return;
             } else {
                 await showValidationModal('Maximum Load Exceeded',
-                    `This assignment would bring ${facName}'s total load to ${totalAfter} unit${totalAfter !== 1 ? 's' : ''}, ` +
-                    `exceeding the allowed maximum of ${maxLoad} units.`);
+                    `This assignment would bring ${facName}'s total load to ${totalAfter.toFixed(1)} hr${totalAfter !== 1 ? 's' : ''}, ` +
+                    `exceeding the allowed maximum of ${maxLoad} hrs.`);
                 return;
             }
         }
