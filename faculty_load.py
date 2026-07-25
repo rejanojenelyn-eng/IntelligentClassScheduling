@@ -126,14 +126,26 @@ def get_faculty_caps(faculty_row):
     desig_reg_load, typename/employee_type/employeestatus). Returns (reg_max, pt_max, ts_max)
     in HOURS — same lookup rule as before (designation overrides Regular only; PT/TS always
     come from the faculty's own employeetype; a designation's nightteachingservice is a
-    separate "nights on duty" cap, never load)."""
+    separate "nights on duty" cap, never load).
+
+    Designee TS transfer (July 2026): a designation's Regular Load Hours REPLACES the
+    faculty's plain employeetype Regular Load (e.g. Designee default 9 -> Academic Head 6),
+    but the faculty's TOTAL allowable hours must stay whatever their own employeetype's
+    Regular+PT+TS already sums to (e.g. Designee 9+12+19=40) — never a hardcoded 40, always
+    derived from their own employeetype row so it keeps working if admin changes it. Any
+    hours a designation REMOVES from Regular are added onto TS (and any hours a designation
+    ADDS to Regular beyond the default are removed from TS) so Regular+PT+TS is invariant;
+    PT is never touched by this transfer.
+    """
     g = faculty_row.get
     has_desig = g('designationid') is not None
     typename = (g('typename') or g('employee_type') or g('employeestatus') or '').lower()
     pt_max = float(g('parttimeload') or g('pt_load') or 0)
     ts_max = float(g('teachingsubstitution') or g('teach_sub') or 0)
     if has_desig:
+        default_reg_max = float(g('regularload') or g('reg_load') or 0)
         reg_max = float(g('designation_regular_load') or g('desig_reg_load') or 0)
+        ts_max += (default_reg_max - reg_max)
     elif 'part' in typename:
         reg_max = 0.0
     else:

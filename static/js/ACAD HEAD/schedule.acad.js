@@ -449,18 +449,36 @@ function renderTable(sessions) {
     const yl       = ylSel  ? ylSel.value   : '';
     const courseLabel = progCode && yl ? `${progCode} ${yl}` : (progCode || '-');
 
+    // Group by identical (Time, Room) FIRST: multiple days sharing the exact
+    // same time and room (e.g. lecture on Tue AND Fri, same slot, same room)
+    // collapse into one time/room slot with their days combined ('TUE/FRI'),
+    // instead of repeating the identical time string once per day. A session
+    // whose time or room differs from the rest never merges with them and gets
+    // its own slot (e.g. a lecture and lab on the SAME day but different hours
+    // — SAT 10:30-12:00 then SAT 12:30-2:00 — stay as two Time entries). Day/s,
+    // however, is the deduplicated set of days across ALL slots: repeating a
+    // day once per differently-timed slot on that same day ('SAT/SAT') would
+    // misleadingly read as two different days. Slots are ordered by (weekday,
+    // start time) — collecting/sorting days, times and rooms as three
+    // independent lists (as this used to do) both duplicates identical time
+    // ranges and decouples which time/room belongs to which day once a subject
+    // has 3+ distinct meeting slots.
     const grouped = {};
     sessions.forEach(sess => {
         const key = `${sess.subjectcode}||${sess.instructor}`;
-        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [] };
-        if (sess.daydesc) {
-            const ab = dayAbbr(sess.daydesc);
-            if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
+        if (!grouped[key]) grouped[key] = { ...sess, byTimeRoom: new Map(), trOrder: [] };
+        const day  = sess.daydesc ? dayAbbr(sess.daydesc) : '';
+        const time = sess.start_time ? `${fmtTime(sess.start_time)} - ${fmtTime(sess.end_time)}` : '';
+        const room = sess.roomname && sess.roomname !== 'TBA' ? sess.roomname : '';
+        if (!day && !time && !room) return;
+        const g = grouped[key];
+        const trKey = `${time}||${room}`;
+        if (!g.byTimeRoom.has(trKey)) {
+            g.byTimeRoom.set(trKey, { time, room, days: [], startMin: timeStrToMins(sess.start_time) ?? 9999 });
+            g.trOrder.push(trKey);
         }
-        if (sess.start_time) {
-            const t = `${fmtTime(sess.start_time)} - ${fmtTime(sess.end_time)}`;
-            if (!grouped[key].timesArr.includes(t)) grouped[key].timesArr.push(t);
-        }
+        const slot = g.byTimeRoom.get(trKey);
+        if (day && !slot.days.includes(day)) slot.days.push(day);
     });
 
     const groupedRows = Object.values(grouped);
@@ -468,11 +486,25 @@ function renderTable(sessions) {
         const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';
-        const daysDisplay  = sess.daysArr.length  ? _sortDays(sess.daysArr).join('/') : '<span style="color:#aaa;">—</span>';
-        const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
-        const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
-            ? sess.roomname
-            : '<span style="color:#aaa;font-style:italic;">TBA</span>';
+        const slots = sess.trOrder.map(k => sess.byTimeRoom.get(k));
+        const dayRank = new Map();  // day abbr -> weekday rank, for the global Day/s dedup below
+        slots.forEach(s => {
+            s.days = _sortDays(s.days);
+            s.rank = s.days.length ? (_DAY_SORT_ORDER[s.days[0]] ?? 99) : 99;
+            s.days.forEach(d => { if (!dayRank.has(d)) dayRank.set(d, _DAY_SORT_ORDER[d] ?? 99); });
+        });
+        slots.sort((a, b) => a.rank - b.rank || a.startMin - b.startMin);
+        const daysDisplay = dayRank.size
+            ? [...dayRank.keys()].sort((a, b) => dayRank.get(a) - dayRank.get(b)).join('/')
+            : '<span style="color:#aaa;">—</span>';
+        const timeDisplay = slots.some(s => s.time)
+            ? slots.filter(s => s.time).map(s => s.time).join(' / ')
+            : '<span style="color:#aaa;">—</span>';
+        const roomSeq = slots.filter(s => s.room).map(s => s.room);
+        const distinctRooms = [...new Set(roomSeq)];
+        const roomDisplay = distinctRooms.length === 0
+            ? '<span style="color:#aaa;font-style:italic;">TBA</span>'
+            : (distinctRooms.length === 1 ? distinctRooms[0] : roomSeq.join(' / '));
         return `<tr>
             <td class="td-instructor">${instrDisplay}</td>
             <td class="td-code">${sess.subjectcode || '—'}</td>

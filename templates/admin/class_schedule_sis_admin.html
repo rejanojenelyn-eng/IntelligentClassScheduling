@@ -4,35 +4,41 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
     <style>
-        /* ── Main schedule table (Table View) ── */
-        .schedule-table { width:100%; border-collapse:collapse; font-size:0.8rem; table-layout:fixed; }
+        /* ── Main schedule table (Table View) ──
+           No fixed table-layout and no nowrap/ellipsis on data cells: a merged
+           offering can carry several sessions ('MON/THU/SAT' with three distinct
+           time ranges), so Time/Days/Room/Description wrap onto multiple lines
+           instead of clipping. min-width keeps columns from being squeezed
+           unreadably on narrow screens — the wrapper scrolls horizontally
+           instead of hiding content. */
+        .schedule-table { width:100%; min-width:1180px; border-collapse:collapse; font-size:0.8rem; }
         .schedule-table thead { background:#2c0000; color:#fff; position:sticky; top:0; z-index:2; }
-        .schedule-table th { padding:8px 7px; font-weight:700; font-size:0.67rem; letter-spacing:.4px; text-transform:uppercase; text-align:center; border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; overflow:hidden; }
+        .schedule-table th { padding:8px 7px; font-weight:700; font-size:0.67rem; letter-spacing:.4px; text-transform:uppercase; text-align:center; border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; }
         .schedule-table th:first-child { text-align:left; padding-left:14px; }
         .schedule-table th:nth-child(3) { text-align:left; padding-left:10px; }
         .schedule-table th:last-child   { border-right:none; }
-        .schedule-table th:nth-child(1)  { width:15%; } .schedule-table th:nth-child(2)  { width:8%;  }
-        .schedule-table th:nth-child(3)  { width:20%; } .schedule-table th:nth-child(4)  { width:5%;  }
-        .schedule-table th:nth-child(5)  { width:5%;  } .schedule-table th:nth-child(6)  { width:6%;  }
-        .schedule-table th:nth-child(7)  { width:7%;  } .schedule-table th:nth-child(8)  { width:13%; }
-        .schedule-table th:nth-child(9)  { width:5%;  } .schedule-table th:nth-child(10) { width:6%;  }
-        .schedule-table th:nth-child(11) { width:10%; }
+        .schedule-table th:nth-child(1)  { width:13%; } .schedule-table th:nth-child(2)  { width:7%;  }
+        .schedule-table th:nth-child(3)  { width:16%; } .schedule-table th:nth-child(4)  { width:4%;  }
+        .schedule-table th:nth-child(5)  { width:4%;  } .schedule-table th:nth-child(6)  { width:5%;  }
+        .schedule-table th:nth-child(7)  { width:6%;  } .schedule-table th:nth-child(8)  { width:18%; }
+        .schedule-table th:nth-child(9)  { width:4%;  } .schedule-table th:nth-child(10) { width:10%; }
+        .schedule-table th:nth-child(11) { width:13%; }
         .schedule-table tbody tr { border-bottom:1px solid #f0e8e8; transition:background .12s; }
         .schedule-table tbody tr:nth-child(odd)  { background:#fff; }
         .schedule-table tbody tr:nth-child(even) { background:#fdf5f5; }
         .schedule-table tbody tr:hover { background:#f8eaea !important; }
-        .schedule-table td { padding:7px 7px; color:#333; font-size:0.79rem; text-align:center; border-right:1px solid #f0e8e8; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .schedule-table td { padding:7px 7px; color:#333; font-size:0.79rem; text-align:center; border-right:1px solid #f0e8e8; vertical-align:middle; white-space:normal; word-break:break-word; }
         .schedule-table td:last-child { border-right:none; }
-        .schedule-table td.td-instructor { text-align:left; padding-left:14px; font-weight:600; color:#1a0000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .schedule-table td.td-instructor { text-align:left; padding-left:14px; font-weight:600; color:#1a0000; }
         .schedule-table td.td-code    { font-weight:800; color:#630100; font-size:.82rem; letter-spacing:.2px; }
-        .schedule-table td.td-desc    { text-align:left; padding-left:10px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .schedule-table td.td-desc    { text-align:left; padding-left:10px; font-weight:500; }
         .schedule-table td.td-units   { font-weight:800; color:#630100; }
         .schedule-table td.td-days    { font-weight:700; color:#630100; font-size:.78rem; }
-        .schedule-table td.td-time    { white-space:nowrap; font-size:.77rem; font-weight:600; }
+        .schedule-table td.td-time    { font-size:.77rem; font-weight:600; }
         .schedule-table td.td-room    { font-weight:600; }
         .empty-row td { text-align:center; padding:40px 20px; }
         .empty-msg { font-size:13px; color:#aaa; display:flex; align-items:center; justify-content:center; gap:8px; }
-        #tableViewWrapper.table-wrapper { background:#fff; overflow:hidden; }
+        #tableViewWrapper.table-wrapper { background:#fff; overflow-x:auto; }
         .timetable-grid td.time-cell { padding:0; font-size:0.72rem; font-weight:900; white-space:nowrap; }
         .schedule-grid-card { background:#fff; border:1px solid #e0c8c8; border-radius:10px; overflow:hidden; box-shadow:0 2px 8px rgba(122,0,0,.13); margin-top:4px; }
         .grid-card-header { background:linear-gradient(135deg,#7a0000 0%,#5c0000 100%); border-radius:0; }

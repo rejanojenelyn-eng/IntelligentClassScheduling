@@ -3485,8 +3485,22 @@ def _sch_merge_session_rows(rows):
     """A single subject offering can have several schedule_sessions rows (one
     per meeting day/time/room — e.g. lecture on Mon/Thu in one room, lab on Sat
     in another). Collapse those into one row per offering instead of repeating
-    the whole row per session, combining the distinct days (e.g. 'Mon/Thu') and,
-    when they differ, times and rooms."""
+    the whole row per session.
+
+    Sessions are grouped by identical (Time, Room) FIRST: multiple days that
+    share the exact same time and room (e.g. lecture on Tue AND Fri, same slot,
+    same room) collapse into one time/room slot with their days combined
+    ('TUE/FRI'), instead of repeating the identical time string once per day.
+    A session whose time or room differs from the rest never merges with them
+    and gets its own separate Time + Room slot (e.g. a lecture and lab on the
+    SAME day but different hours — 'SAT' 10:30-12:00 then 'SAT' 12:30-2:00 —
+    stay as two Time entries). Day/s, however, is the deduplicated set of days
+    across ALL slots: repeating a day once per differently-timed slot on that
+    same day (e.g. 'SAT/SAT') would misleadingly read as two different days.
+    Slots are ordered by (weekday, start time) — grouping/sorting days, times
+    and rooms as three independent lists (as this used to do) both duplicates
+    identical time ranges and decouples which time/room belongs to which day
+    once a subject has 3+ distinct meeting slots."""
     groups = {}
     order  = []
     for r in rows:
@@ -3495,27 +3509,45 @@ def _sch_merge_session_rows(rows):
                r.get('Program'), r.get('YearLevel'), r.get('SectionID'), r.get('Section'),
                r.get('AcademicYear'), r.get('SemesterType'))
         if key not in groups:
-            groups[key] = {'base': r, 'days': [], 'times': [], 'rooms': []}
+            groups[key] = {'base': r, 'by_time_room': {}, 'tr_order': []}
             order.append(key)
         g = groups[key]
-        day = (r.get('Day/s') or '').strip()
-        if day and day not in g['days']:
-            g['days'].append(day)
+        day  = (r.get('Day/s') or '').strip()
         time = (r.get('Time') or '').strip()
-        if time and time not in g['times']:
-            g['times'].append(time)
         room = (r.get('Room') or '').strip()
-        if room and room not in g['rooms']:
-            g['rooms'].append(room)
+        if not (day or time or room):
+            continue
+        tr_key = (time, room)
+        if tr_key not in g['by_time_room']:
+            g['by_time_room'][tr_key] = []
+            g['tr_order'].append(tr_key)
+        if day and day not in g['by_time_room'][tr_key]:
+            g['by_time_room'][tr_key].append(day)
 
     merged = []
     for key in order:
         g = groups[key]
         base = dict(g['base'])
-        days_sorted = sorted(g['days'], key=lambda d: _SCH_WEEKDAY_ORDER.get(d.strip().upper(), 99))
-        base['Day/s'] = '/'.join(_SCH_WEEKDAY_ABBR.get(d.strip().upper(), d.strip()) for d in days_sorted)
-        base['Time']  = ' / '.join(g['times'])
-        base['Room']  = ' / '.join(g['rooms'])
+        slots = []
+        day_rank = {}  # day abbr -> weekday rank, for the global Day/s dedup below
+        for tr_key in g['tr_order']:
+            time, room = tr_key
+            days_sorted = sorted(g['by_time_room'][tr_key],
+                                  key=lambda d: _SCH_WEEKDAY_ORDER.get(d.strip().upper(), 99))
+            rank = min((_SCH_WEEKDAY_ORDER.get(d.strip().upper(), 99) for d in days_sorted), default=99)
+            for d in days_sorted:
+                abbr = _SCH_WEEKDAY_ABBR.get(d.strip().upper(), d.strip())
+                day_rank.setdefault(abbr, _SCH_WEEKDAY_ORDER.get(d.strip().upper(), 99))
+            parsed = _sch_parse_time_range(time)
+            start_min = parsed[0] if parsed else 9999
+            slots.append({'time': time, 'room': room, 'rank': rank, 'start_min': start_min})
+        slots.sort(key=lambda s: (s['rank'], s['start_min']))
+
+        base['Day/s'] = '/'.join(sorted(day_rank, key=lambda a: day_rank[a]))
+        base['Time']  = ' / '.join(s['time'] for s in slots if s['time'])
+        room_seq = [s['room'] for s in slots if s['room']]
+        distinct_rooms = list(dict.fromkeys(room_seq))
+        base['Room'] = distinct_rooms[0] if len(distinct_rooms) <= 1 else ' / '.join(room_seq)
         merged.append(base)
     return merged
 
@@ -4043,8 +4075,13 @@ _SCH_OFF_YL_LBL  = {1: 'FIRST YEAR', 2: 'SECOND YEAR', 3: 'THIRD YEAR', 4: 'FOUR
 # Column widths (cm) for the PDF/DOCX portrait table — Subject Description gets
 # the lion's share; the short numeric/code columns are trimmed to fit an A4
 # portrait page (usable width ~19cm with 1cm margins; kept a bit under that
-# so rounding never pushes the table past the page edge).
-_SCH_OFF_COL_CM = [2.6, 1.5, 5.6, 0.9, 0.9, 1.0, 1.4, 0.8, 1.0, 2.0, 1.1]
+# so rounding never pushes the table past the page edge). Day/s, Time and Room
+# are widened since a merged offering can list several sessions (e.g.
+# 'MON/THU/SAT' with three distinct time ranges) — cells wrap onto multiple
+# lines (see Paragraph usage in _sch_gen_pdf / native Word wrap in
+# _sch_gen_docx) rather than clipping, so these just need enough room to keep
+# wrapped text readable, not to fit everything on one line.
+_SCH_OFF_COL_CM = [2.2, 1.5, 4.9, 0.9, 0.9, 1.0, 1.4, 0.8, 1.3, 2.6, 1.4]
 
 
 def _sch_official_row(r):
@@ -4127,8 +4164,12 @@ def _sch_gen_xlsx(rows, groups, sem_label='All Semesters', ay_label='', prog_nam
     # Instructor, Subject Code, Subject Description, Lec., Lab., Credit Units,
     # Course, Hours, Day/s, Time, Room — Subject Description widened, the
     # short numeric/code columns narrowed, to cut wrapping and page count.
-    COL_W    = [20, 12, 48, 7, 7, 8, 9, 6, 8, 18, 11]
+    # Day/s, Time and Room are wide enough for a typical merged multi-session
+    # offering; row height is still estimated per-row below since a subject
+    # with 3+ distinct sessions can still exceed one line.
+    COL_W    = [20, 12, 44, 7, 7, 8, 9, 6, 11, 24, 14]
     NUM_COLS = (4, 5, 6, 8)
+    WRAP_COLS = (3, 9, 10, 11)  # Subject Description, Day/s, Time, Room
 
     title = _sch_official_title(sem_label, ay_label)
     rn = 1
@@ -4166,11 +4207,20 @@ def _sch_gen_xlsx(rows, groups, sem_label='All Semesters', ay_label='', prog_nam
                 ws.row_dimensions[rn].height = 26; rn += 1
 
                 for r in sec_rows:
-                    for ci, v in enumerate(_sch_official_row(r), 1):
+                    vals = _sch_official_row(r)
+                    # Row height is fixed per-row in openpyxl (Excel won't auto-grow it for
+                    # wrapped text once set), so a merged offering with several sessions
+                    # ('MON/THU/SAT' / three time ranges) needs its height estimated from
+                    # the longest wrapped column, or the extra lines get visually clipped.
+                    max_lines = 1
+                    for ci, v in enumerate(vals, 1):
                         c = ws.cell(rn, ci, v); c.border = brd; c.font = data_font
                         c.alignment = center if ci in NUM_COLS else Alignment(
                             vertical='center', horizontal='left' if ci in (1, 3) else 'center', wrap_text=True)
-                    ws.row_dimensions[rn].height = 15; rn += 1
+                        if ci in WRAP_COLS:
+                            n = len(str(v)) if v not in (None, '') else 0
+                            max_lines = max(max_lines, -(-n // max(COL_W[ci - 1], 1)))
+                    ws.row_dimensions[rn].height = max(15, max_lines * 12); rn += 1
 
                 lec, lab, units, hrs = _sch_official_totals(sec_rows)
                 ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=3)
@@ -4318,6 +4368,7 @@ def _sch_gen_pdf(rows, groups, sem_label='All Semesters', ay_label='', prog_name
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from xml.sax.saxutils import escape as _xml_escape
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -4335,6 +4386,21 @@ def _sch_gen_pdf(rows, groups, sem_label='All Semesters', ay_label='', prog_name
     h3 = ParagraphStyle('H3', parent=styles['Heading3'], textColor=BLACK, fontSize=10, spaceAfter=2, alignment=TA_LEFT)
     h4 = ParagraphStyle('H4', parent=styles['Normal'], textColor=BLACK, fontSize=9, spaceAfter=2,
                          alignment=TA_LEFT, fontName='Helvetica-BoldOblique')
+
+    # Data cells are Paragraphs (not plain strings) so long merged Day/s ('MON/
+    # THU/SAT'), Time ('10:00 AM - 12:00 PM / 10:00 AM - 11:30 AM / ...') and
+    # Room values wrap onto multiple lines and grow the row height instead of
+    # overflowing/clipping — a plain string in a reportlab Table cell doesn't wrap.
+    cell_l = ParagraphStyle('CellL', parent=styles['Normal'], fontName='Helvetica', fontSize=6.5, leading=8, textColor=BLACK, alignment=TA_LEFT)
+    cell_c = ParagraphStyle('CellC', parent=cell_l, alignment=TA_CENTER)
+    hdr_c  = ParagraphStyle('HdrC',  parent=cell_c, fontName='Helvetica-Bold')
+    tot_c  = ParagraphStyle('TotC',  parent=cell_c, fontName='Helvetica-Bold')
+    tot_l  = ParagraphStyle('TotL',  parent=cell_l, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    CENTER_COLS = {3, 4, 5, 7}  # Lec., Lab., Credit Units, Hours
+
+    def _pc(v, center):
+        text = _xml_escape(str(v)) if v not in (None, '') else '&nbsp;'
+        return Paragraph(text, cell_c if center else cell_l)
 
     COL_W = [w*cm for w in _SCH_OFF_COL_CM]
     title = _sch_official_title(sem_label, ay_label)
@@ -4361,27 +4427,25 @@ def _sch_gen_pdf(rows, groups, sem_label='All Semesters', ay_label='', prog_name
                 if sec_label:
                     story.append(Paragraph(f'Section: {sec_label}', h4))
 
-                tbl_data = [_SCH_OFF_HEADERS]
+                tbl_data = [[Paragraph(_xml_escape(h), hdr_c) for h in _SCH_OFF_HEADERS]]
                 for r in sec_rows:
-                    tbl_data.append([str(v) for v in _sch_official_row(r)])
+                    vals = _sch_official_row(r)
+                    tbl_data.append([_pc(v, ci in CENTER_COLS) for ci, v in enumerate(vals)])
 
                 lec, lab, units, hrs = _sch_official_totals(sec_rows)
-                tbl_data.append(['TOTAL', '', '', str(lec), str(lab), str(units), '', str(hrs), '', '', ''])
+                tbl_data.append([
+                    Paragraph('TOTAL', tot_l), Paragraph('', tot_l), Paragraph('', tot_l),
+                    Paragraph(str(lec), tot_c), Paragraph(str(lab), tot_c), Paragraph(str(units), tot_c),
+                    Paragraph('', tot_c), Paragraph(str(hrs), tot_c),
+                    Paragraph('', tot_c), Paragraph('', tot_c), Paragraph('', tot_c),
+                ])
                 last_row = len(tbl_data) - 1
 
                 tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
                 tbl.setStyle(TableStyle([
-                    ('FONTNAME',       (0,0),  (-1,0),  'Helvetica-Bold'),
-                    ('FONTSIZE',       (0,0),  (-1,-1), 6.5),
-                    ('FONTNAME',       (0,1),  (-1,-1), 'Helvetica'),
-                    ('ALIGN',          (0,0),  (-1,0),  'CENTER'),
-                    ('ALIGN',          (3,1),  (5,-1),  'CENTER'),
-                    ('ALIGN',          (7,1),  (7,-1),  'CENTER'),
                     ('VALIGN',         (0,0),  (-1,-1), 'MIDDLE'),
                     ('GRID',           (0,0),  (-1,-1), 0.5, BLACK),
                     ('SPAN',           (0,last_row), (2,last_row)),
-                    ('FONTNAME',       (0,last_row), (-1,last_row), 'Helvetica-Bold'),
-                    ('ALIGN',          (0,last_row), (0,last_row), 'CENTER'),
                     ('LEFTPADDING',    (0,0),  (-1,-1), 2),
                     ('RIGHTPADDING',   (0,0),  (-1,-1), 2),
                     ('TOPPADDING',     (0,0),  (-1,-1), 2),
@@ -10424,12 +10488,13 @@ def api_manual_faculty_info():
         return t.strftime('%H:%M') if hasattr(t, 'strftime') else str(t)[:5]
     has_desig = row['designationid'] is not None
     status    = (row['employeestatus'] or '').lower()
-    # Part-Time Load Units always come from the faculty's own employeetype (Designee has
-    # its own Faculty Hours row) — designation.nightteachingservice is a separate "nights
-    # per week on night office duty" constraint, not a units figure. Only Regular Load
-    # Units is ever overridden, and only by the selected Designation's own regular load.
-    eff_regular  = row['designation_load'] if (has_desig and row['designation_load']) else row['regularload']
-    eff_parttime = row['parttimeload']
+    # Cap lookup via faculty_load (designee TS-transfer aware — see get_faculty_caps).
+    eff_regular, eff_parttime, _eff_ts = faculty_load.get_faculty_caps({
+        'designationid': row['designationid'],
+        'regularload': row['regularload'], 'parttimeload': row['parttimeload'],
+        'designation_regular_load': row['designation_load'],
+        'typename': row['typename'], 'employeestatus': row['employeestatus'],
+    })
     return jsonify({
         'success':            True,
         'typename':           row['typename'],
@@ -17388,17 +17453,18 @@ def reports_data():
                 cs.laboratoryhours AS "Lab",
                 cs.creditunits AS "Units",
                 sec.sectionname AS "Course",
-                string_agg(DISTINCT
+                string_agg(
                     CASE ss.daydesc
                         WHEN 'Monday' THEN 'MON' WHEN 'Tuesday' THEN 'TUE'
                         WHEN 'Wednesday' THEN 'WED' WHEN 'Thursday' THEN 'THU'
                         WHEN 'Friday' THEN 'FRI' WHEN 'Saturday' THEN 'SAT'
-                        WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END, '/') AS "Days",
+                        WHEN 'Sunday' THEN 'SUN' ELSE ss.daydesc END,
+                    '/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Days",
                 string_agg(
                     to_char(ts_s.timevalue::interval,'HH12:MI AM') || ' – ' ||
                     to_char(ts_e.timevalue::interval,'HH12:MI AM'),
-                    '/' ORDER BY ts_s.timevalue) AS "Time",
-                string_agg(COALESCE(r.roomname,'TBA'), '/') AS "Room"
+                    '/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Time",
+                string_agg(COALESCE(r.roomname,'TBA'), '/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Room"
             FROM schedule_version sv
             JOIN schedule sg               ON sv.scheduleid          = sg.scheduleid
             JOIN curriculumsubject cs       ON sg.curriculumsubjectid = cs.curriculumsubjectid
@@ -18086,7 +18152,7 @@ def _fetch_report_data(report_type, params, cur):
                 cs.laboratoryhours           AS "Lab",
                 cs.creditunits               AS "Units",
                 sec.sectionname               AS "Course",
-                string_agg(DISTINCT
+                string_agg(
                     CASE ss.daydesc
                         WHEN 'Monday'    THEN 'MON'
                         WHEN 'Tuesday'   THEN 'TUE'
@@ -18095,12 +18161,13 @@ def _fetch_report_data(report_type, params, cur):
                         WHEN 'Friday'    THEN 'FRI'
                         WHEN 'Saturday'  THEN 'SAT'
                         WHEN 'Sunday'    THEN 'SUN'
-                        ELSE ss.daydesc END, '/') AS "Days",
+                        ELSE ss.daydesc END,
+                    '/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Days",
                 string_agg(
                     to_char(ts_s.timevalue::interval,'HH12:MI AM')||' – '||
                     to_char(ts_e.timevalue::interval,'HH12:MI AM'),
-                    '/' ORDER BY ts_s.timevalue) AS "Time",
-                string_agg(COALESCE(r.roomname,'TBA'),'/') AS "Room",
+                    '/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Time",
+                string_agg(COALESCE(r.roomname,'TBA'),'/' ORDER BY ts_s.timevalue, ss.sessionid) AS "Room",
                 sem.semestertype               AS "Semester",
                 ay.yearstart||'–'||ay.yearend  AS "A.Y."
             FROM schedule_version sv
@@ -20026,7 +20093,8 @@ def _load_faculty_map(force_refresh: bool = False):
 
     rows = query_db("""
         SELECT f.employeenumber, CONCAT(f.lastname, ', ', f.firstname) AS fullname,
-               f.employeestatus, f.designationid, et.regularload, et.parttimeload,
+               f.employeestatus, f.designationid, COALESCE(et.typename, '') AS typename,
+               et.regularload, et.parttimeload,
                COALESCE(et.teachingsubstitution, 0) AS teachingsubstitution,
                et.regular_start, et.regular_end, et.parttime_start, et.parttime_end,
                COALESCE(et.restrict_pt_hours, TRUE) AS restrict_pt_hours,
@@ -20075,27 +20143,39 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
     from collections import defaultdict as _dd
 
     # schedule_list has one entry per DAY/time-slice (confirmAndPlace gives each confirmed
-    # slice its own days_list of one), so a subject split across multiple sessions (e.g. a
-    # Mon+Wed lecture, or a lecture+lab pair) appears as multiple entries here, each carrying
-    # the payload's 'units' field set to the SUBJECT'S full nominal hours (see confirmAndPlace's
-    # newClass.units), not that slice's own duration — summing it per entry would triple-count
-    # a 3-slice split. Dedupe to one per (faculty, subject, section) BEFORE crediting, and
-    # credit each with the subject's nominal catalog hours (tuitionhours/lecturehours+
-    # laboratoryhours) resolved straight from curriculumsubject — not real per-slice clock time,
-    # since this cross-program check runs on a not-yet-saved payload and the safer, proven
-    # dedup pattern already here avoids adding a new time-string-parsing dependency.
-    seen_submitted = set()
+    # slice its own days_list of one). Credit each entry with its OWN real start/end duration
+    # and just sum them per faculty — this matches faculty_load.py's FACULTY_SESSIONS_SQL
+    # (which sums each schedule_sessions row's real elapsed time), so this cross-program
+    # gate agrees with the assign-time gate and the Faculty Load tab. Previously this summed
+    # the subject's catalog nominal hours (tuitionhours/lecturehours+laboratoryhours) deduped
+    # per (faculty, subject, section) instead of real clock time, which could disagree with
+    # the real-hours total the user already saw as valid while assigning (July 2026 bug).
+    submitted_hrs: dict = _dd(float)
     for cls in schedule_list:
         fid = cls.get('faculty_id') or cls.get('employeenumber')
         if str(fid or '').strip().upper() == 'TBA':
             continue  # TBA has no faculty to load-check
-        subj = (cls.get('subject_code') or cls.get('subjectcode') or '').strip().upper()
-        sect = cls.get('section_id') or cls.get('sectionid') or ''
-        if not fid or not subj:
+        if not fid:
             continue
-        seen_submitted.add((fid, subj, sect))
+        start, end = cls.get('start_time'), cls.get('end_time')
+        # _rehydrate_schedule (called earlier by the /approve path, mutating these dicts
+        # in place since they're shared references from the same request.json payload)
+        # may have already converted these from strings to datetime.time objects — accept
+        # either shape rather than assuming raw JSON strings.
+        if isinstance(start, str):
+            start = _parse_time_str(start)
+        if isinstance(end, str):
+            end = _parse_time_str(end)
+        if not start or not end:
+            continue
+        hrs = ((end.hour * 3600 + end.minute * 60 + end.second)
+               - (start.hour * 3600 + start.minute * 60 + start.second)) / 3600.0
+        if hrs <= 0:
+            continue
+        submitted_hrs[fid] += hrs
 
-    if not seen_submitted:
+    submitted_hrs = {k: round(v, 2) for k, v in submitted_hrs.items() if v > 0}
+    if not submitted_hrs:
         return []
 
     conn = None
@@ -20104,24 +20184,6 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
         if conn is None:
             return []
         cur  = conn.cursor(cursor_factory=RealDictCursor)
-
-        subj_codes = list({s for (_fid, s, _sect) in seen_submitted})
-        cur.execute("""
-            SELECT UPPER(subjectcode) AS code,
-                   MAX(COALESCE(tuitionhours, lecturehours+laboratoryhours, 0)) AS hrs
-            FROM public.curriculumsubject
-            WHERE UPPER(subjectcode) = ANY(%s)
-            GROUP BY UPPER(subjectcode)
-        """, (subj_codes,))
-        hours_map = {r['code']: float(r['hrs'] or 0) for r in (cur.fetchall() or [])}
-
-        submitted_hrs: dict = _dd(float)
-        for (fid, subj, _sect) in seen_submitted:
-            submitted_hrs[fid] += hours_map.get(subj, 0)
-        submitted_hrs = {k: v for k, v in submitted_hrs.items() if v > 0}
-        if not submitted_hrs:
-            cur.close(); conn.close()
-            return []
 
         excl_prog = (exclude_program or '').upper()
         excl_yl   = int(exclude_year_level or 0)
@@ -20954,10 +21016,9 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
         fac_limits = {}
         if faculty_ids:
             cur.execute("""
-                SELECT f.employeenumber,
-                       COALESCE(d.regularloadunit, et.regularload, 99)      AS max_regular,
-                       COALESCE(et.parttimeload, 99)                        AS max_pt,
-                       COALESCE(et.teachingsubstitution, 0)                  AS ts_hrs,
+                SELECT f.employeenumber, f.designationid,
+                       et.regularload, et.parttimeload, et.teachingsubstitution,
+                       d.regularloadunit AS designation_regular_load,
                        et.regular_end
                 FROM   faculty f
                 JOIN   employeetype et ON f.employeetypeid = et.employeetypeid
@@ -20965,7 +21026,16 @@ def _compute_schedule_accuracy(schedule_data, program, year_level, term):
                 WHERE  f.employeenumber = ANY(%s)
             """, (faculty_ids,))
             for row in cur.fetchall():
-                fac_limits[row['employeenumber']] = row
+                # Cap lookup via faculty_load (designee TS-transfer aware — see
+                # get_faculty_caps) instead of the old inline COALESCE(designation, plain, 99).
+                # 99 fallback only when the employeetype has nothing configured at all.
+                _reg, _pt, _ts = faculty_load.get_faculty_caps(row)
+                fac_limits[row['employeenumber']] = {
+                    'max_regular': _reg if row['regularload'] or row['designation_regular_load'] else 99,
+                    'max_pt': _pt if row['parttimeload'] is not None else 99,
+                    'ts_hrs': _ts,
+                    'regular_end': row['regular_end'],
+                }
 
         # max_regular/max_pt/ts_hrs above are read straight from regularloadunit/regularload/
         # parttimeload/teachingsubstitution — already HOUR caps now (faculty_load.py convention),
@@ -21966,7 +22036,7 @@ def api_save_draft():
         if _load_viols:
             cur.close(); conn.close()
             _load_msg = '; '.join(
-                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} units "
+                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} hrs "
                 f"(+{v['overload_by']} over limit)"
                 for v in _load_viols
             )
@@ -22224,6 +22294,50 @@ def api_validate_schedule():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _sync_mergedclass_for_semester(cur, sem_id):
+    """Recompute public.mergedclass for this semester from the current Published
+    schedule — a merged class is >1 distinct section sharing the same subject,
+    faculty, day and time slot (room deliberately excluded: one merged class can
+    span multiple venues, e.g. NSTP overflow rooms — see scheduler.py's
+    fetch_admin_faculty_prefs, which reads this table as the GA's top-priority
+    faculty override). Full replace so stale merges (faculty reassigned, a
+    section pulled out) don't linger.
+    """
+    cur.execute("""
+        SELECT cs.subjectcode, s.employeenumber,
+               array_agg(DISTINCT sec.sectionname ORDER BY sec.sectionname) AS section_names,
+               array_agg(DISTINCT s.curriculumsubjectid) AS curriculumsubjectids
+        FROM public.schedule s
+        JOIN public.schedule_version sv  ON sv.scheduleid = s.scheduleid
+        JOIN public.schedule_sessions ss ON ss.versionid  = sv.versionid
+        JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+        JOIN public.sections sec         ON sec.sectionid = s.sectionid
+        WHERE sv.status = 'Published' AND s.semesterid = %s AND s.employeenumber IS NOT NULL
+        GROUP BY cs.subjectcode, s.employeenumber, ss.daydesc, ss.starttimeid, ss.endtimeid
+        HAVING count(DISTINCT s.sectionid) > 1
+    """, (sem_id,))
+
+    # Collapse groups that differ only by day (e.g. a class meeting Tue+Fri) —
+    # mergedclass has no day/time column, one row per curriculumsubjectid is enough.
+    seen = {}
+    for g in (cur.fetchall() or []):
+        key = (g['subjectcode'], g['employeenumber'], tuple(sorted(g['curriculumsubjectids'])))
+        seen.setdefault(key, g)
+
+    rows = []
+    for (subjectcode, emp, csids), g in seen.items():
+        classname = f"{subjectcode} - Merged ({'/'.join(g['section_names'])})"
+        rows.extend((csid, sem_id, emp, classname) for csid in csids)
+
+    cur.execute("DELETE FROM public.mergedclass WHERE semesterid = %s", (sem_id,))
+    if rows:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO public.mergedclass
+                (curriculumsubjectid, semesterid, employeenumber, classname, isactive)
+            VALUES %s
+        """, [(csid, semid, emp, cname, True) for (csid, semid, emp, cname) in rows])
+
+
 @app.route('/api/schedule/approve', methods=['POST'])
 def api_approve_schedule():
     try:
@@ -22275,7 +22389,7 @@ def api_approve_schedule():
         if _load_viols_approve:
             cur.close(); conn.close()
             _load_msg_a = '; '.join(
-                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} units "
+                f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} hrs "
                 f"(+{v['overload_by']} over limit)"
                 for v in _load_viols_approve
             )
@@ -22494,6 +22608,11 @@ def api_approve_schedule():
         complete_snapshot = other_sessions + published_baseline + sched_data
         _insert_batch(cur, complete_snapshot, sem_id, 'Published', max_v + 1, program, year_level,
                       section_id=_ctx_section_id)
+
+        # Merged classes span multiple programs (e.g. shared NSTP sections), so this
+        # resyncs mergedclass for the WHOLE semester from Published data, not just the
+        # program/section just approved — see _sync_mergedclass_for_semester.
+        _sync_mergedclass_for_semester(cur, sem_id)
 
         # Auto-cleanup: remove ONLY the exact slots that were just published from the active Draft.
         # Use slot-level keys (subject+day+time), NOT subject codes — a subject can have multiple

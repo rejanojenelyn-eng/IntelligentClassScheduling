@@ -1981,8 +1981,60 @@ window._dropSession = async function(sessDataEncoded, event) {
         : Promise.resolve(window.confirm('Are you sure? This action cannot be undone.')));
     if (!ok2) return;
 
+    // A subject's schedule can be split across multiple schedule_version rows (e.g. a
+    // lecture slot in one room and a lab slot in another). Room View's grid only shows
+    // pills for the currently selected room, so a sibling row in a different room stays
+    // invisible and undeleted here — it then trips the save-time "section already has
+    // this subject" conflict check, forcing a second trip through Program View just to
+    // find and delete it. Look up siblings via the same subject-scoped endpoint the
+    // ts-row panel uses (not room-filtered) and offer to remove them together.
+    let _siblingVids = [];
+    let _siblingRoomIds = [];
+    if (sd.subjectcode && !_isMergedPill) {
+        try {
+            const _sAy   = document.getElementById('sel_ay')?.value   || '';
+            const _sSem  = document.getElementById('sel_sem')?.value  || '';
+            const _sProg = document.getElementById('sel_prog')?.value || '';
+            const _sYl   = document.getElementById('sel_year')?.value || '';
+            const _sSect = document.getElementById('sel_section')?.value || '';
+            if (_sAy && _sSem) {
+                const _sibUrl = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(sd.subjectcode)}`
+                    + `&ay_id=${encodeURIComponent(_sAy)}&semester=${encodeURIComponent(_sSem)}`
+                    + `&program=${encodeURIComponent(_sProg)}&year_level=${encodeURIComponent(_sYl)}`
+                    + `&section_id=${encodeURIComponent(_sSect)}`;
+                const _sibResp = await fetch(_sibUrl).then(r => r.json());
+                if (_sibResp.success) {
+                    const _seen = new Set();
+                    (_sibResp.sessions || []).forEach(s => {
+                        const vid = s.versionid;
+                        if (!vid) return;
+                        if (String(vid) === String(sd.versionid)) return;
+                        if (window._deletedVersionIds?.has(String(vid))) return;
+                        if (!_seen.has(String(vid))) _siblingRoomIds.push(s.roomid || null);
+                        _seen.add(String(vid));
+                    });
+                    _siblingVids = Array.from(_seen);
+                }
+            }
+        } catch(e) { /* non-fatal — proceed with single-session delete */ }
+    }
+
+    let _deleteSiblingsToo = false;
+    if (_siblingVids.length > 0) {
+        _deleteSiblingsToo = await (typeof showConfirmModal === 'function'
+            ? showConfirmModal(
+                `${sd.subjectcode} has ${_siblingVids.length} other schedule session(s) for this section `
+                + `(possibly in a different room) that won't show up in this view. Leaving them behind will `
+                + `block saving. Delete those too along with this one?`,
+                'Delete Related Sessions'
+              )
+            : Promise.resolve(window.confirm(`Also delete ${_siblingVids.length} related session(s) for ${sd.subjectcode}?`)));
+    }
+
     // Determine which versionids to delete
-    const _vidsToDelete = _deleteAllVids ? _allVids : (sd.versionid ? [sd.versionid] : []);
+    const _vidsToDelete = _deleteAllVids
+        ? _allVids
+        : (sd.versionid ? [sd.versionid, ...(_deleteSiblingsToo ? _siblingVids : [])] : []);
 
     // Call DELETE API for each versionid
     if (_vidsToDelete.length > 0) {
@@ -2065,13 +2117,15 @@ window._dropSession = async function(sessDataEncoded, event) {
     // renderGrid, which Program View never calls — so deleting a pill there left the freed
     // room/slot still showing as occupied/conflicting until a full page reload. Invalidate
     // it directly here so a resolved conflict clears immediately regardless of active view.
-    const _freedRoomId = sd.room_id || currentRoom;
-    if (_freedRoomId && _freedRoomId !== 'TBA') {
-        const _frAy  = formAyFilter();
-        const _frSem = formSemFilter();
+    const _freedRoomIds = new Set([sd.room_id || currentRoom]);
+    if (_deleteSiblingsToo) _siblingRoomIds.forEach(rid => { if (rid) _freedRoomIds.add(String(rid)); });
+    const _frAy  = formAyFilter();
+    const _frSem = formSemFilter();
+    _freedRoomIds.forEach(_freedRoomId => {
+        if (!_freedRoomId || _freedRoomId === 'TBA') return;
         if (typeof window._roomDbCache !== 'undefined') delete window._roomDbCache[`${_freedRoomId}|${_frAy}|${_frSem}`];
         if (typeof _prefetchRoomOccupancy === 'function') _prefetchRoomOccupancy(_freedRoomId, _frAy, _frSem).catch(() => {});
-    }
+    });
     if (typeof window._roomsByDayCache !== 'undefined') window._roomsByDayCache = {};
     document.querySelectorAll('.ts-row').forEach(row => {
         const rId = parseInt(row.id.replace('ts-row-', ''));
