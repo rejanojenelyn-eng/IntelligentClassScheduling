@@ -18,6 +18,9 @@
             <button class="btn-top btn-add-new" onclick="openAddModal()">
                 <i class="fas fa-user-plus"></i> ADD NEW FACULTY
             </button>
+            <button class="btn-top btn-view-archive" onclick="openFacSubExportModal()">
+                <i class="fas fa-chalkboard-teacher"></i> ASSIGNMENT EXPORT
+            </button>
             <a href="{{ url_for('admin_archived_employees') }}" class="btn-top btn-view-archive">
                 <i class="fas fa-archive"></i> VIEW ARCHIVE
             </a>
@@ -113,9 +116,6 @@
             <button class="btn-secondary" onclick="openImportTypeModal()">
                 <i class="fas fa-file-import"></i> IMPORT
             </button>
-            <button class="btn-secondary" onclick="openFacSubExportModal()">
-                <i class="fas fa-chalkboard-teacher"></i> SUBJECT/FACULTY ASSIGNMENT EXPORT
-            </button>
         </div>
     </div>
 
@@ -143,7 +143,7 @@
             </thead>
             <tbody>
                 {% for emp in employees %}
-                <tr>
+                <tr data-emp="{{ emp | tojson | forceescape }}">
                     <td style="text-align:center;"><input type="checkbox" class="row-check custom-checkbox" value="{{ emp.employeenumber }}"></td>
                     
                     <td class="emp-name">
@@ -250,8 +250,9 @@
             <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
         <form id="editEmployeeForm" action="{{ url_for('admin_edit_employee') }}" method="POST">
+            <input type="hidden" id="edit_emp_num_original" name="original_employee_number">
             <div class="form-grid">
-                <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" readonly></div>
+                <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>
                 <div class="form-group"><label>MIDDLE NAME (OPTIONAL)</label><input type="text" id="edit_m_name" name="middle_name"></div>
                 <div class="form-group"><label>LAST NAME</label><input type="text" id="edit_l_name" name="last_name" required></div>

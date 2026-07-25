@@ -2,13 +2,34 @@
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+{% if class_schedule_mode %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
+{% endif %}
+{% if room_schedule_mode %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_grid.css') }}">
+{% endif %}
+{% if assignment_mode %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+{% endif %}
+{% if faculty_mode or curriculum_mode or rooms_mode %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+{% endif %}
+{% if curriculum_mode %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+{% endif %}
 <style>
 /* ══════════════════════════════════════
    REPORT PREVIEW PAGE
 ══════════════════════════════════════ */
 .rpt-preview-wrap { padding: 0 0 40px 0; font-family: Arial, sans-serif; }
 
-.rpt-prev-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
+.rpt-letterhead { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1px; padding: 14px 0 10px; margin-bottom: 6px; border-bottom: 2px solid #630100; }
+.rpt-letterhead img { width: 46px; height: 46px; margin-bottom: 4px; }
+.rpt-letterhead .lh-line1 { font-weight: 800; font-size: .92rem; color: #2c0000; }
+.rpt-letterhead .lh-line2 { font-size: .8rem; color: #2c0000; }
+
+.rpt-prev-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; margin-top: 18px; }
 .rpt-prev-title { font-size: 1.35rem; font-weight: 900; color: #2c0000; text-transform: uppercase; letter-spacing: .5px; margin: 0; }
 .rpt-prev-subtitle { font-size: .79rem; color: #888; margin-top: 3px; }
 
@@ -40,6 +61,9 @@
 
 .rpt-section-hdr { background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; padding: 11px 18px; font-size: .84rem; font-weight: 800; letter-spacing: .3px; border-radius: 8px 8px 0 0; margin-top: 20px; }
 .rpt-section-hdr:first-child { margin-top: 0; }
+.rpt-curr-yl-hdr { font-size: .8rem; font-weight: 800; color: #2c0000; margin: 14px 0 4px; text-transform: uppercase; }
+.rpt-curr-sem-hdr { font-size: .74rem; font-weight: 700; color: #630100; margin: 6px 0 4px; text-decoration: underline; }
+.rpt-table tbody tr.rpt-total-row { background: #f0e0e0 !important; font-weight: 800; color: #2c0000; }
 
 .rpt-no-data { text-align: center; padding: 60px 24px; color: #aaa; }
 .rpt-no-data i { font-size: 2.5rem; margin-bottom: 12px; display: block; }
@@ -109,6 +133,13 @@
 
 {% block content %}
 <div class="rpt-preview-wrap">
+    <!-- PUP Letterhead: mirrors the header every exported document now carries -->
+    <div class="rpt-letterhead">
+        <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+        <div class="lh-line1">Polytechnic University of the Philippines</div>
+        <div class="lh-line2">Lopez, Quezon Campus</div>
+    </div>
+
     <!-- Page Header -->
     <div class="rpt-prev-header">
         <div class="rpt-prev-title-group">
@@ -118,7 +149,7 @@
             </div>
         </div>
         <div class="rpt-prev-actions">
-            <a href="{{ back_url|default('/reports') }}" class="rpt-btn-back">
+            <a href="{% if session.get('role') == 'Admin' %}/admin/reports{% else %}/reports{% endif %}" class="rpt-btn-back">
                 <i class="fas fa-arrow-left"></i> Back to Reports
             </a>
             {% if row_count > 0 %}
@@ -138,8 +169,228 @@
     </div>
     {% endif %}
 
-    <!-- ── GROUPED SECTIONS (room_schedule, assignments, offerings) ── -->
-    {% if sections %}
+    <!-- ── CLASS SCHEDULE (WYSIWYG calendar/table panels, one per Program/Year Level/AY/Semester combo) ── -->
+    {% if class_schedule_mode %}
+        {% if panels %}
+        {% for panel in panels %}
+        <div class="rpt-section-hdr">{{ panel.program_name }} — Year {{ panel.yearlevel }} ({{ panel.sem_label }}, A.Y. {{ panel.ay_label }})</div>
+        <div class="schedule-grid-card" style="margin-bottom:24px;">
+            {% if layout == 'calendar' %}
+            <div class="timetable-wrapper" id="gridWrapper_{{ panel.id }}" style="position: relative;">
+                <table class="timetable-grid" id="mainTimetable_{{ panel.id }}">
+                    <thead>
+                        <tr>
+                            <th class="time-header">TIME</th>
+                            <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
+                            <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
+                                        '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
+                                        '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
+                        {% for t in times %}
+                        <tr>
+                            <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="table-wrapper">
+                <table class="schedule-table" id="offeringsTable_{{ panel.id }}">
+                    <thead>
+                        <tr>
+                            <th>INSTRUCTOR</th><th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th>
+                            <th>LEC HRS</th><th>LAB HRS</th><th>CREDIT UNITS</th><th>COURSE</th>
+                            <th>TIME</th><th>HOURS</th><th>DAYS</th><th>ROOM</th>
+                        </tr>
+                    </thead>
+                    <tbody id="offeringsTableBody_{{ panel.id }}"></tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="rpt-no-data">
+            <i class="fas fa-inbox"></i>
+            <p>No records found for the selected filters.</p>
+        </div>
+        {% endif %}
+
+    <!-- ── ROOM SCHEDULE (WYSIWYG per-room weekly calendar panels) ── -->
+    {% elif room_schedule_mode %}
+        {% if panels %}
+        {% for panel in panels %}
+        <div class="rpt-section-hdr">{{ panel.room_name }} — {{ panel.sem_label }}, A.Y. {{ panel.ay_label }}</div>
+        <div class="rpt-table-wrapper" style="margin-bottom:24px;">
+            <div class="frs-grid-outer">
+                <div class="frs-grid" id="frsGrid_{{ panel.id }}"></div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="rpt-no-data">
+            <i class="fas fa-inbox"></i>
+            <p>No records found for the selected filters.</p>
+        </div>
+        {% endif %}
+
+    <!-- ── CURRICULUM LIST (identical structure to _build_curriculum_docx/xlsx) ── -->
+    {% elif curriculum_mode %}
+        {% if curricula %}
+        {% for curr in curricula %}
+        <div class="rpt-section-hdr">{{ curr.program_name }} — {{ curr.curriculum_code }} (CY {{ curr.curriculum_year }})</div>
+        {% for yl in curr.year_levels %}
+        <div class="rpt-curr-yl-hdr">{{ yl.label }}</div>
+        {% for sem in yl.semesters %}
+        <div class="rpt-curr-sem-hdr">{{ sem.label }}</div>
+        <div class="rpt-table-wrapper" style="margin-bottom:16px;">
+            <div class="rpt-table-scroll">
+                <table class="rpt-table">
+                    <thead>
+                        <tr>
+                            <th>Subject Code</th><th>Prereq</th><th>Co-req</th><th>Description</th>
+                            <th>Lec Hrs</th><th>Lab Hrs</th><th>Credited Units</th><th>Tuition Hrs</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in sem.subjects %}
+                        <tr>
+                            <td>{{ s.subject_code }}</td><td>{{ s.prerequisite }}</td><td>{{ s.corequisite }}</td>
+                            <td>{{ s.subject_name }}</td><td>{{ s.lecture_hours }}</td><td>{{ s.lab_hours }}</td>
+                            <td>{{ s.credit_units }}</td><td>{{ s.tuition_hours }}</td>
+                        </tr>
+                        {% endfor %}
+                        <tr class="rpt-total-row">
+                            <td colspan="6">TOTAL UNITS</td><td>{{ sem.total_units }}</td><td>{{ sem.total_tuition }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+        {% endfor %}
+        {% endfor %}
+        {% else %}
+        <div class="rpt-no-data">
+            <i class="fas fa-inbox"></i>
+            <p>No records found for the selected filters.</p>
+        </div>
+        {% endif %}
+
+    <!-- ── ROOM AND BUILDING LIST (identical structure to _build_rooms_docx/xlsx) ── -->
+    {% elif rooms_mode %}
+        {% if buildings %}
+        {% for bldg in buildings %}
+        <div class="rpt-section-hdr">{{ bldg.buildingname }} — Lecture: {{ bldg.total_lecture }} | Laboratory: {{ bldg.total_lab }} | Total: {{ bldg.total_lecture + bldg.total_lab }}</div>
+        <div class="rpt-table-wrapper" style="margin-bottom:24px;">
+            <div class="rpt-table-scroll">
+                <table class="rpt-table">
+                    <thead>
+                        <tr><th>Room Number</th><th>Room Type</th><th>Capacity</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in bldg.rooms %}
+                        <tr><td>{{ r.roomname }}</td><td>{{ r.roomtype }}</td><td>{{ r.roomcapacity }}</td></tr>
+                        {% endfor %}
+                        <tr class="rpt-total-row">
+                            <td colspan="3">TOTAL ROOMS: {{ bldg.total_lecture + bldg.total_lab }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="rpt-no-data">
+            <i class="fas fa-inbox"></i>
+            <p>No records found for the selected filters.</p>
+        </div>
+        {% endif %}
+
+    <!-- ── TEACHING ASSIGNMENT (identical layout to the Faculty Load panel in
+         Manual Scheduling — .fl-* classes reused from manualSchedule.css) ── -->
+    {% elif assignment_mode %}
+        {% if snapshot %}
+        <div class="fl-info-bar" style="margin-bottom:14px;">
+            <span class="fl-info-pill">EMPLOYEE TYPE: <strong>{{ snapshot.faculty.employee_type }}</strong></span>
+            <span class="fl-info-sep">|</span>
+            <span class="fl-info-pill">TOTAL UNITS: <strong>{{ snapshot.max_units }}{% if snapshot.total_hours and snapshot.total_hours > 0 %} ({{ snapshot.total_hours }} hrs){% endif %}</strong></span>
+            <span class="fl-info-sep">|</span>
+            <span class="fl-info-pill">AVAILABLE UNITS: <strong>{{ snapshot.available_units }}</strong></span>
+        </div>
+        <h2 class="fl-main-title">{{ snapshot.faculty.fullname }} ({{ snapshot.faculty.employeenumber }})</h2>
+
+        {% for sec in snapshot.sections %}
+        <h3 class="fl-section-sub"{% if not loop.first %} style="margin-top:16px;"{% endif %}>{{ sec.label }}</h3>
+        <div class="fl-table-wrap">
+            <table class="fl-table">
+                <thead><tr>
+                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
+                </tr></thead>
+                <tbody>
+                    {% if sec.rows %}
+                    {% for s in sec.rows %}
+                    <tr>
+                        <td>{{ s.subjectcode or '—' }}</td>
+                        <td>{{ s.subjectname or '—' }}</td>
+                        <td>{{ s.units or '—' }}</td>
+                        <td>{{ s.year_section or '—' }}</td>
+                        <td>{{ s.time_range or '—' }}</td>
+                        <td>{{ s.days or '—' }}</td>
+                        <td>{{ s.room or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="7" class="fl-no-data">{{ sec.no_data_msg }}</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        <div class="fl-total-line">{{ sec.total_label }} (max {{ sec.max }}): <strong>{{ sec.total_units }} units ({{ sec.total_hrs }} hrs)</strong></div>
+        {% endfor %}
+
+        {% if snapshot.pending_rows %}
+        <h3 class="fl-section-sub" style="margin-top:16px;background:#fff3cd;color:#856404;border-color:#ffe082;">
+            PENDING ASSIGNMENTS <span style="font-weight:400;">(assigned, no schedule yet)</span>
+        </h3>
+        <div class="fl-table-wrap">
+            <table class="fl-table">
+                <thead><tr>
+                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
+                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
+                </tr></thead>
+                <tbody>
+                    {% for s in snapshot.pending_rows %}
+                    <tr style="background:#fffde7;">
+                        <td>{{ s.subjectcode or '—' }}</td>
+                        <td>{{ s.subjectname or '—' }}</td>
+                        <td>{{ s.units or '—' }}</td>
+                        <td>{{ s.year_section or '—' }}</td>
+                        <td style="color:#999;font-style:italic;">{{ s.time_range or '—' }}</td>
+                        <td>{{ s.days or '—' }}</td>
+                        <td>{{ s.room or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="fl-total-line">TOTAL PENDING LOAD: <strong>{{ snapshot.pending_units }} units</strong></div>
+        {% endif %}
+        {% else %}
+        <div class="rpt-no-data">
+            <i class="fas fa-inbox"></i>
+            <p>Select an Academic Year, Semester, and Faculty to generate this report.</p>
+        </div>
+        {% endif %}
+
+    <!-- ── GROUPED SECTIONS (offerings) ── -->
+    {% elif sections %}
         {% for sec in sections %}
         <div class="rpt-section-hdr">{{ sec.title }}</div>
         <div class="rpt-table-wrapper">
@@ -293,6 +544,12 @@
     </div>
 </div>
 
+{% if class_schedule_mode %}
+<script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
+{% endif %}
+{% if room_schedule_mode %}
+<script src="{{ url_for('static', filename='js/ACAD HEAD/room_schedule.acad.js') }}"></script>
+{% endif %}
 <script>
 // Safely grab the report type
 const RPT_TYPE = "{{ report_type }}";
@@ -303,10 +560,63 @@ const RPT_EXPORT_URL = window.location.pathname.includes('/admin')
     : '/reports/export/' + RPT_TYPE;
 
 // Automatically grab all the filters directly from the browser URL!
+// Keys that are repeatable (class_schedule's multi-select filters) must stay
+// arrays, or only the last selected value would survive into the export POST.
+const RPT_MULTI_KEYS = ['ay_ids', 'sem_types', 'programs', 'year_levels'];
 const RPT_PARAMS = {};
-new URLSearchParams(window.location.search).forEach((value, key) => {
-    RPT_PARAMS[key] = value;
+{
+    const _usp = new URLSearchParams(window.location.search);
+    new Set(_usp.keys()).forEach(key => {
+        RPT_PARAMS[key] = RPT_MULTI_KEYS.includes(key) ? _usp.getAll(key) : _usp.get(key);
+    });
+}
+
+{% if class_schedule_mode %}
+// ── Render each Class Schedule panel through the SAME renderCalendar()/renderTable()
+// functions the live Class Schedule page uses, guaranteeing WYSIWYG parity. ──
+const CS_PANELS = {{ panels | tojson }};
+const CS_LAYOUT = "{{ layout }}";
+window.addEventListener('load', () => {
+    CS_PANELS.forEach(p => {
+        if (CS_LAYOUT === 'calendar') {
+            renderCalendar(p.sessions, { wrapperId: 'gridWrapper_' + p.id, tableId: 'mainTimetable_' + p.id });
+        } else {
+            renderTable(p.sessions, { tbodyId: 'offeringsTableBody_' + p.id, courseLabel: p.program + ' ' + p.yearlevel });
+        }
+    });
 });
+{% endif %}
+
+{% if room_schedule_mode %}
+// ── Render each Room Schedule panel through the SAME _buildGrid()/_renderRoomCalendar()
+// functions the live Room Schedule page uses, guaranteeing WYSIWYG parity. ──
+const RS_PANELS = {{ panels | tojson }};
+window.addEventListener('load', () => {
+    RS_PANELS.forEach(p => {
+        _buildGrid('frsGrid_' + p.id);
+        _renderRoomCalendar(p.sessions, 'frsGrid_' + p.id);
+    });
+});
+{% endif %}
+
+{% if faculty_mode %}
+// ── Faculty List report: reuses the exact data shape / export routes from
+// Faculty Management (employee.admin.js / employee.acad.js). ──
+const RPT_EMPLOYEES = {{ employees_json | tojson }};
+const RPT_AY_LABEL   = {{ ay_label | tojson }};
+{% endif %}
+
+{% if curriculum_mode %}
+// ── Curriculum List report: reuses the exact data shape / export routes from
+// the Curriculum module's own "Export Curriculum" feature (curriculum.admin.js). ──
+const RPT_CURRICULA = {{ curricula | tojson }};
+{% endif %}
+
+{% if rooms_mode %}
+// ── Room & Building List report: reuses the exact data shape / export routes from
+// the Rooms module's own "Export" feature (rooms.admin.js). ──
+const RPT_BUILDINGS = {{ buildings | tojson }};
+{% endif %}
 
 let _rptSelFmts = new Set();
 
@@ -343,10 +653,450 @@ function _validateExportBtn() {
     document.getElementById('rptExpConfirmBtn').disabled = _rptSelFmts.size === 0;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Faculty List — ported from static/js/ADMIN/employee.admin.js so the export
+// output is byte-identical to Faculty Management's own Export feature.
+// ═══════════════════════════════════════════════════════════════════════════
+{% if faculty_mode %}
+const _rptFacColumns = [
+    { header: '#',               dataKey: 'no',             field: null },
+    { header: 'Employee Number', dataKey: 'emp_num',        field: 'emp_num' },
+    { header: 'Last Name',       dataKey: 'last_name',      field: 'last_name' },
+    { header: 'First Name',      dataKey: 'first_name',     field: 'first_name' },
+    { header: 'Middle Name',     dataKey: 'middle_name',    field: 'middle_name' },
+    { header: 'Email',           dataKey: 'email',          field: 'email' },
+    { header: 'Contact Number',  dataKey: 'contact',        field: 'contact' },
+    { header: 'Specialization',  dataKey: 'specialization', field: 'specialization' },
+    { header: 'Employee Type',   dataKey: 'emp_type',       field: 'emp_type' },
+    { header: 'Employee Status', dataKey: 'status',         field: 'status' },
+    { header: 'Designation',     dataKey: 'designation',    field: 'designation' },
+];
+
+function _rptFacLoadImageAsDataURL(url) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = reject;
+        img.src = url;
+    });
+}
+
+function _rptFacCSV(data, filename) {
+    const now = new Date().toLocaleString();
+    const cols = _rptFacColumns.filter(c => c.field);
+    const headers = cols.map(c => c.header);
+    const dataRows = data.map(e => cols.map(c => e[c.dataKey]));
+    const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [
+        `"Polytechnic University of the Philippines"`,
+        `"Lopez, Quezon Campus"`,
+        `"FACULTY INFORMATION REPORT"`,
+        `"Academic Year: ${RPT_AY_LABEL}"`,
+        `"Date Generated: ${now}"`,
+        `"Total: ${data.length} employee(s)"`,
+        '',
+        headers.map(q).join(','),
+        ...dataRows.map(r => r.map(q).join(',')),
+    ];
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+function _rptFacPayload(data) {
+    return {
+        employees: data,
+        title: 'FACULTY INFORMATION REPORT',
+        subtitle1: 'Polytechnic University of the Philippines',
+        subtitle2: 'Lopez, Quezon Campus',
+        ay_label: RPT_AY_LABEL,
+        timestamp: 'Date Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
+    };
+}
+
+async function _rptFacXLSX(data, filename) {
+    const res = await fetch('/admin/employee/export/xlsx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_rptFacPayload(data)),
+    });
+    if (!res.ok) throw new Error(await res.text() || 'Server error generating XLSX');
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptFacPDF(data, filename) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const now = new Date();
+    const pageWidth  = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const cx = pageWidth / 2;
+
+    try {
+        const logo = await _rptFacLoadImageAsDataURL('/static/img/pup-logo.png');
+        doc.addImage(logo, 'PNG', 12, 7, 20, 20);
+    } catch (e) { /* logo optional */ }
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('Polytechnic University of the Philippines', cx, 13, { align: 'center' });
+    doc.setFontSize(11);
+    doc.text('Lopez, Quezon Campus', cx, 19, { align: 'center' });
+    doc.setFontSize(14);
+    doc.text('FACULTY INFORMATION REPORT', cx, 27, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(`Academic Year: ${RPT_AY_LABEL}`, cx, 33, { align: 'center' });
+    doc.text(`Date Generated: ${now.toLocaleString()}`, cx, 38, { align: 'center' });
+    doc.setDrawColor(128, 0, 0); doc.setLineWidth(0.6);
+    doc.line(10, 41, pageWidth - 10, 41);
+
+    const columns = _rptFacColumns;
+    const body = data.map((e, i) => ({ no: i + 1, ...e }));
+
+    doc.autoTable({
+        columns, body, startY: 45,
+        styles: { fontSize: 7.5, cellPadding: 2.2, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.15, textColor: [0, 0, 0] },
+        headStyles: { fillColor: [128, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.15 },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        margin: { left: 8, right: 8 },
+        columnStyles: {
+            no:             { cellWidth: 7,  halign: 'center' },
+            emp_num:        { cellWidth: 20 },
+            last_name:      { cellWidth: 24 },
+            first_name:     { cellWidth: 22 },
+            middle_name:    { cellWidth: 20 },
+            email:          { cellWidth: 40 },
+            contact:        { cellWidth: 20 },
+            specialization: { cellWidth: 28 },
+            emp_type:       { cellWidth: 18 },
+            status:         { cellWidth: 18 },
+            designation:    { cellWidth: 24 },
+        },
+    });
+
+    const total = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+        doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 6, { align: 'right' });
+    }
+    doc.save(filename + '.pdf');
+}
+
+async function _rptFacDOCX(data, filename) {
+    const res = await fetch('/admin/employee/export/docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_rptFacPayload(data)),
+    });
+    if (!res.ok) throw new Error(await res.text() || 'Server error generating DOCX');
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.docx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptFacExport(formats, filename) {
+    const data = RPT_EMPLOYEES;
+    if (!data.length) throw new Error('There are no employees to export.');
+    const errors = [];
+    for (const fmt of formats) {
+        try {
+            if (fmt === 'csv')  _rptFacCSV(data, filename);
+            if (fmt === 'xlsx') await _rptFacXLSX(data, filename);
+            if (fmt === 'pdf')  await _rptFacPDF(data, filename);
+            if (fmt === 'docx') await _rptFacDOCX(data, filename);
+            await new Promise(r => setTimeout(r, 400));
+        } catch (e) {
+            errors.push(fmt.toUpperCase() + ': ' + e.message);
+        }
+    }
+    if (errors.length) throw new Error(errors.join('; '));
+}
+{% endif %}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Curriculum List — ported from static/js/ADMIN/curriculum.admin.js so the
+// export output is byte-identical to the Curriculum module's own Export feature.
+// ═══════════════════════════════════════════════════════════════════════════
+{% if curriculum_mode %}
+function _rptCurrCSVBlob(curricula) {
+    const now = new Date().toLocaleString();
+    const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [`"Curriculum Export"`, `"Generated: ${now}"`, `"Total Curricula: ${curricula.length}"`, ''];
+    curricula.forEach(curr => {
+        lines.push(q(`Program: ${curr.program_name}`));
+        lines.push(q(`Curriculum: ${curr.curriculum_code} — C.Y ${curr.curriculum_year}`));
+        lines.push('');
+        curr.year_levels.forEach(yl => {
+            yl.semesters.forEach(sem => {
+                lines.push(q(`${yl.label} — ${sem.label}`));
+                lines.push(['Subject Code','Prereq','Co-req','Description','Lec Hrs','Lab Hrs','Credited Units','Tuition Hrs'].map(q).join(','));
+                sem.subjects.forEach(s => {
+                    lines.push([s.subject_code,s.prerequisite,s.corequisite,s.subject_name,s.lecture_hours,s.lab_hours,s.credit_units,s.tuition_hours].map(q).join(','));
+                });
+                lines.push(['','','',q('TOTAL UNITS'),'','',(sem.total_units||0),(sem.total_tuition||0)].join(','));
+                lines.push('');
+            });
+        });
+        lines.push('', '');
+    });
+    return new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+}
+
+async function _rptCurrXLSXBlob(curricula) {
+    const res = await fetch('/admin/curriculum/export/xlsx', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
+    });
+    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
+    return await res.blob();
+}
+
+function _rptCurrPDFBlob(curricula) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const W   = 297;
+    curricula.forEach((curr, cidx) => {
+        if (cidx > 0) doc.addPage();
+        doc.setFillColor(128, 0, 0); doc.rect(0, 0, W, 34, 'F');
+        doc.setTextColor(255,255,255);
+        doc.setFont('helvetica','bold'); doc.setFontSize(15);
+        doc.text(`${curr.curriculum_code}  —  ${curr.program_name}`, W/2, 13, { align:'center' });
+        doc.setFont('helvetica','normal'); doc.setFontSize(10);
+        doc.text(`Curriculum Year: ${curr.curriculum_year}`, W/2, 22, { align:'center' });
+        doc.setFontSize(8);
+        doc.text('Generated: ' + new Date().toLocaleString(), W/2, 30, { align:'center' });
+        doc.setTextColor(0,0,0);
+        let startY = 36;
+        curr.year_levels.forEach(yl => {
+            yl.semesters.forEach(sem => {
+                if (startY > 192) { doc.addPage(); startY = 10; }
+                doc.setFillColor(55,55,55); doc.rect(10, startY, W-20, 7, 'F');
+                doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
+                doc.text(`${yl.label.toUpperCase()}  ·  ${sem.label}`, 14, startY+5);
+                doc.setTextColor(0,0,0); startY += 7;
+                doc.autoTable({
+                    columns: [
+                        { header:'Subject Code',   dataKey:'subject_code'  },
+                        { header:'Prereq',         dataKey:'prerequisite'  },
+                        { header:'Co-req',         dataKey:'corequisite'   },
+                        { header:'Description',    dataKey:'subject_name'  },
+                        { header:'Lec Hrs',        dataKey:'lecture_hours' },
+                        { header:'Lab Hrs',        dataKey:'lab_hours'     },
+                        { header:'Credited Units', dataKey:'credit_units'  },
+                        { header:'Tuition Hrs',    dataKey:'tuition_hours' },
+                    ],
+                    body: sem.subjects, startY,
+                    styles: { fontSize:7.5, cellPadding:2, overflow:'linebreak' },
+                    headStyles: { fillColor:[128,0,0], textColor:255, fontStyle:'bold', fontSize:8 },
+                    alternateRowStyles: { fillColor:[253,245,245] },
+                    tableWidth: W - 20,
+                    columnStyles: {
+                        0:{ cellWidth:32 }, 1:{ cellWidth:26 }, 2:{ cellWidth:20 },
+                        3:{ cellWidth:126 },
+                        4:{ cellWidth:16,halign:'center' }, 5:{ cellWidth:16,halign:'center' },
+                        6:{ cellWidth:22,halign:'center' }, 7:{ cellWidth:19,halign:'center' },
+                    },
+                    foot: [['','','','TOTAL UNITS','','',(sem.total_units||0),(sem.total_tuition||0)]],
+                    footStyles: { fillColor:[240,230,230], fontStyle:'bold', fontSize:8, textColor:[80,0,0] },
+                    showFoot: 'lastPage', margin: { left:10, right:10 },
+                });
+                startY = doc.lastAutoTable.finalY + 4;
+            });
+        });
+    });
+    const total = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+        doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150);
+        doc.text(`Page ${i} of ${total}`, 287, 206, { align:'right' });
+    }
+    return doc.output('blob');
+}
+
+async function _rptCurrDOCXBlob(curricula) {
+    const res = await fetch('/admin/curriculum/export/docx', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
+    });
+    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'DOCX failed'));
+    return await res.blob();
+}
+
+function _rptTriggerDownload(blob, filename) {
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptCurrExport(formats, filename) {
+    const curricula = RPT_CURRICULA;
+    if (!curricula.length) throw new Error('No curricula to export.');
+    const useZip = curricula.length > 1 || formats.length > 1;
+    const errors = [];
+
+    if (!useZip) {
+        const fmt = formats[0];
+        try {
+            let blob;
+            if (fmt === 'csv')  blob = _rptCurrCSVBlob(curricula);
+            if (fmt === 'xlsx') blob = await _rptCurrXLSXBlob(curricula);
+            if (fmt === 'pdf')  blob = _rptCurrPDFBlob(curricula);
+            if (fmt === 'docx') blob = await _rptCurrDOCXBlob(curricula);
+            if (blob) _rptTriggerDownload(blob, filename + '.' + fmt);
+        } catch (e) {
+            errors.push(fmt.toUpperCase() + ': ' + e.message);
+        }
+    } else {
+        const zip = new JSZip();
+        for (const curr of curricula) {
+            const safeCode = (curr.program_code || curr.curriculum_code || 'CURR').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const safeYear = (curr.curriculum_year || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+            const currFile = `${safeCode}_CY${safeYear}`;
+            for (const fmt of formats) {
+                try {
+                    let blob;
+                    if (fmt === 'csv')  blob = _rptCurrCSVBlob([curr]);
+                    if (fmt === 'xlsx') blob = await _rptCurrXLSXBlob([curr]);
+                    if (fmt === 'pdf')  blob = _rptCurrPDFBlob([curr]);
+                    if (fmt === 'docx') blob = await _rptCurrDOCXBlob([curr]);
+                    if (blob) zip.file(`${currFile}.${fmt}`, blob);
+                } catch (e) {
+                    errors.push(`${curr.program_name} ${fmt.toUpperCase()}: ` + e.message);
+                }
+                await new Promise(r => setTimeout(r, 150));
+            }
+        }
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        _rptTriggerDownload(zipBlob, filename + '.zip');
+    }
+    if (errors.length) throw new Error(errors.join('; '));
+}
+{% endif %}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Room & Building List — ported from static/js/ADMIN/rooms.admin.js so the
+// export output is byte-identical to the Rooms module's own Export feature.
+// ═══════════════════════════════════════════════════════════════════════════
+{% if rooms_mode %}
+function _rptRoomCSV(buildings, filename) {
+    const now = new Date().toLocaleString();
+    const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [q('PUP LOPEZ CAMPUS — ROOMS AND BUILDINGS'), q(`Generated: ${now}`), ''];
+    buildings.forEach(bldg => {
+        lines.push(q(`Building: ${bldg.buildingname}`));
+        lines.push(['Room Number', 'Room Type', 'Capacity'].map(q).join(','));
+        (bldg.rooms || []).forEach(r => { lines.push([r.roomname, r.roomtype, r.roomcapacity].map(q).join(',')); });
+        lines.push([q('TOTAL ROOMS'), q(''), (bldg.rooms || []).length].join(','));
+        lines.push('');
+    });
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptRoomXLSX(buildings, filename) {
+    const res = await fetch('/admin/rooms/export/xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildings, timestamp: 'Generated: ' + new Date().toLocaleString() }) });
+    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptRoomPDF(buildings, filename) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210, M = 10, CW = 190, HDR_H = 24, PAGE_H = 297;
+    const now = new Date().toLocaleString();
+    function drawBanner() {
+        doc.setTextColor(0,0,0); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+        doc.text('PUP LOPEZ CAMPUS', W/2, 11, { align:'center' });
+        doc.setFont('helvetica','normal'); doc.setFontSize(10);
+        doc.text('ROOMS AND BUILDINGS', W/2, 18, { align:'center' });
+        doc.setFontSize(7.5); doc.text('Generated: '+now, W/2, 24, { align:'center' });
+    }
+    drawBanner(); let y = HDR_H + 5;
+    buildings.forEach((bldg, idx) => {
+        const rooms = bldg.rooms || [];
+        const minNeeded = 8 + 9 + Math.min(rooms.length,3)*8 + 8 + 5;
+        if (idx > 0) { if (y + minNeeded > PAGE_H - 10) { doc.addPage(); drawBanner(); y = HDR_H+5; } else { y += 5; } }
+        doc.setTextColor(0,0,0); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+        doc.text(bldg.buildingname.toUpperCase(), M, y+4);
+        doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+        doc.text(`Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`, W-M, y+4, { align:'right' });
+        y += 7;
+        doc.autoTable({
+            columns: [{ header:'Room Number',dataKey:'roomname' },{ header:'Room Type',dataKey:'roomtype' },{ header:'Capacity',dataKey:'roomcapacity' }],
+            body: rooms.map(r => ({ ...r })), startY: y,
+            styles:{ fontSize:8.5, cellPadding:2.5, lineColor:[0,0,0], lineWidth:0.2, textColor:[0,0,0] },
+            headStyles:{ fillColor:[255,255,255], textColor:[0,0,0], fontStyle:'bold', fontSize:9, lineColor:[0,0,0], lineWidth:0.2 },
+            alternateRowStyles:{ fillColor:[255,255,255] },
+            columnStyles:{ 0:{ cellWidth:114 }, 1:{ cellWidth:50,halign:'center' }, 2:{ cellWidth:26,halign:'center' } },
+            tableWidth: CW, foot:[['TOTAL ROOMS','',rooms.length]],
+            footStyles:{ fillColor:[255,255,255], fontStyle:'bold', fontSize:9, textColor:[0,0,0], lineColor:[0,0,0], lineWidth:0.2 },
+            showFoot:'lastPage', margin:{ top:HDR_H+4, left:M, right:M },
+            didDrawPage: (d) => { if (d.pageNumber>1) { drawBanner(); } },
+        });
+        y = doc.lastAutoTable.finalY + 3;
+    });
+    const total = doc.internal.getNumberOfPages();
+    for (let i=1;i<=total;i++) { doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150); doc.text(`Page ${i} of ${total}`, W-M, PAGE_H-4, { align:'right' }); }
+    doc.save(filename+'.pdf');
+}
+
+async function _rptRoomDOCX(buildings, filename) {
+    const res = await fetch('/admin/rooms/export/docx', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ buildings, timestamp:'Generated: '+new Date().toLocaleString() }) });
+    if (!res.ok) throw new Error('Server error: '+(await res.text()||'DOCX failed'));
+    const blob = await res.blob();
+    const a = Object.assign(document.createElement('a'), { href:URL.createObjectURL(blob), download:filename+'.docx' });
+    a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function _rptRoomExport(formats, filename) {
+    const buildings = RPT_BUILDINGS;
+    if (!buildings.length) throw new Error('No buildings to export.');
+    const errors = [];
+    for (const fmt of formats) {
+        try {
+            if (fmt==='csv')  _rptRoomCSV(buildings, filename);
+            if (fmt==='xlsx') await _rptRoomXLSX(buildings, filename);
+            if (fmt==='pdf')  await _rptRoomPDF(buildings, filename);
+            if (fmt==='docx') await _rptRoomDOCX(buildings, filename);
+        } catch(e) { errors.push(`${fmt.toUpperCase()}: ${e.message}`); }
+    }
+    if (errors.length) throw new Error(errors.join('; '));
+}
+{% endif %}
+
+async function _rptGenericExport(formats, baseName) {
+    const resp = await fetch(RPT_EXPORT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
+    });
+
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || resp.statusText);
+    }
+
+    const blob = await resp.blob();
+    const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = baseName + ext; a.click();
+    URL.revokeObjectURL(url);
+}
+
 async function doExport() {
     const formats  = [..._rptSelFmts];
     let baseName = document.getElementById('rptExpFilename').value.trim() || 'report_export';
-    
+
     if (document.getElementById('rptExpDatetimeToggle').checked) {
         const now = new Date();
         const pad = (n) => n.toString().padStart(2, '0');
@@ -361,27 +1111,18 @@ async function doExport() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting…';
 
     try {
-        const resp = await fetch(RPT_EXPORT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
-        });
-
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            alert('Export failed: ' + (err.error || resp.statusText));
-            return;
+        if (RPT_TYPE === 'faculty') {
+            await _rptFacExport(formats, baseName);
+        } else if (RPT_TYPE === 'curriculum') {
+            await _rptCurrExport(formats, baseName);
+        } else if (RPT_TYPE === 'rooms') {
+            await _rptRoomExport(formats, baseName);
+        } else {
+            await _rptGenericExport(formats, baseName);
         }
-
-        const blob = await resp.blob();
-        const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement('a');
-        a.href = url; a.download = baseName + ext; a.click();
-        URL.revokeObjectURL(url);
         closeExportModal();
     } catch(e) {
-        alert('Network error: ' + e.message);
+        alert('Export failed: ' + e.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-download"></i> Export';

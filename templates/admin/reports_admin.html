@@ -2,6 +2,9 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/reports.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
 <style>
     /* Synchronization with Academic Head styles */
     .rpt-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 9999; align-items: center; justify-content: center; padding: 16px; }
@@ -21,6 +24,18 @@
     .rpt-btn-cancel { padding: 9px 22px; border: 1.5px solid #ccc; border-radius: 8px; background: #fff; cursor: pointer; font-weight: 600; }
     .rpt-btn-preview { padding: 9px 24px; border: none; border-radius: 8px; background: #800000; color: #fff; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; }
     .hidden { display: none !important; }
+
+    /* Class Schedule — multi-select checkbox filters + layout choice */
+    .rpt-cb-group { margin-bottom: 16px; }
+    .rpt-cb-group-title { font-size: .72rem; font-weight: 800; text-transform: uppercase; color: #800000; margin-bottom: 8px; }
+    .rpt-cb-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 130px; overflow-y: auto; padding: 6px; border: 1.5px solid #eee; border-radius: 8px; }
+    .rpt-cb-item { display: flex; align-items: center; gap: 6px; font-size: .78rem; padding: 5px 10px; background: #fafafa; border-radius: 6px; cursor: pointer; }
+    .rpt-cb-item input { cursor: pointer; }
+    .rpt-layout-row { display: flex; gap: 12px; }
+    .rpt-layout-card { flex: 1; border: 2px solid #eee; border-radius: 8px; padding: 14px; text-align: center; cursor: pointer; font-size: .82rem; font-weight: 600; color: #555; transition: 0.15s; }
+    .rpt-layout-card i { display: block; font-size: 1.3rem; margin-bottom: 6px; color: #999; }
+    .rpt-layout-card.selected { border-color: #800000; background: #fff0f0; color: #800000; }
+    .rpt-layout-card.selected i { color: #800000; }
 </style>
 {% endblock %}
 
@@ -31,6 +46,13 @@
     </div>
 
     <div class="reports-grid">
+        <!-- Class Schedule -->
+        <div class="report-card card-green" onclick="openReportModal('class_schedule')">
+            <i class="fas fa-chalkboard-teacher card-icon"></i>
+            <h2>CLASS<br>SCHEDULE</h2>
+            <button type="button" class="btn-generate">GENERATE</button>
+        </div>
+
         <!-- Room Schedule -->
         <div class="report-card card-orange" onclick="openReportModal('room_schedule')">
             <i class="fas fa-door-open card-icon"></i>
@@ -46,14 +68,14 @@
         </div>
 
         <!-- Curriculum List -->
-        <div class="report-card card-yellow" onclick="openReportModal('curriculum')">
+        <div class="report-card card-yellow" onclick="openRptCurrSelModal()">
             <i class="fas fa-book card-icon"></i>
             <h2>CURRICULUM<br>LIST</h2>
             <button type="button" class="btn-generate">GENERATE</button>
         </div>
 
         <!-- Room & Building -->
-        <div class="report-card card-purple" onclick="openReportModal('rooms')">
+        <div class="report-card card-purple" onclick="openRptRoomSelModal()">
             <i class="fas fa-building card-icon"></i>
             <h2>ROOM AND<br>BUILDING LIST</h2>
             <button type="button" class="btn-generate">GENERATE</button>
@@ -70,6 +92,13 @@
         <div class="report-card card-red" onclick="openReportModal('offerings')">
             <i class="fas fa-list card-icon"></i>
             <h2>SUBJECT<br>OFFERINGS</h2>
+            <button type="button" class="btn-generate">GENERATE</button>
+        </div>
+
+        <!-- Program List -->
+        <div class="report-card card-blue" onclick="openReportModal('programs')">
+            <i class="fas fa-graduation-cap card-icon"></i>
+            <h2>PROGRAM<br>LIST</h2>
             <button type="button" class="btn-generate">GENERATE</button>
         </div>
     </div>
@@ -137,28 +166,6 @@
                 </div>
 
                 <div class="rpt-field-row">
-                    <!-- Building -->
-                    <div class="rpt-field hidden" id="sgBuilding">
-                        <label>Building</label>
-                        <select id="rptBuilding">
-                            <option value="All">All Buildings</option>
-                            {% for b in buildings %}
-                            <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <!-- Room Type -->
-                    <div class="rpt-field hidden" id="sgRoomType">
-                        <label>Room Type</label>
-                        <select id="rptRoomType">
-                            <option value="All">All Types</option>
-                            <option value="Lecture">Lecture</option>
-                            <option value="Laboratory">Laboratory</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="rpt-field-row">
                     <!-- Faculty Type -->
                     <div class="rpt-field hidden" id="sgFacultyType">
                         <label>Faculty Type</label>
@@ -168,6 +175,185 @@
                             <option value="{{ et.employeetypeid }}">{{ et.typename }}</option>
                             {% endfor %}
                         </select>
+                    </div>
+                    <!-- Specialization -->
+                    <div class="rpt-field hidden" id="sgSpecialization">
+                        <label>Specialization</label>
+                        <select id="rptSpecialization">
+                            <option value="All">All Specializations</option>
+                            {% for s in specializations %}
+                            <option value="{{ s.specializationid }}">{{ s.specializationname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="rpt-field-row">
+                    <!-- Designation -->
+                    <div class="rpt-field hidden" id="sgDesignation">
+                        <label>Designation</label>
+                        <select id="rptDesignation">
+                            <option value="All">All Designations</option>
+                            {% for d in designations %}
+                            <option value="{{ d.designationid }}">{{ d.designationname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <!-- Status: options swapped per-type in JS (Faculty statuses vs Active/Inactive) -->
+                    <div class="rpt-field hidden" id="sgStatus">
+                        <label>Status</label>
+                        <select id="rptStatus">
+                            <option value="All">All</option>
+                        </select>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Class Schedule: multi-select bulk filters + narrowing + layout -->
+            <div id="sectionClassSchedule" class="hidden">
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Academic Year — select at least one</div>
+                    <div class="rpt-cb-list">
+                        {% for ay in ay_list %}
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-ay-cb" value="{{ ay.academicyearid }}"> A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Semester — select at least one</div>
+                    <div class="rpt-cb-list">
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-sem-cb" value="A"> 1st Semester</label>
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-sem-cb" value="B"> 2nd Semester</label>
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-sem-cb" value="C"> Summer</label>
+                    </div>
+                </div>
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Program — leave empty for all</div>
+                    <div class="rpt-cb-list">
+                        {% for p in programs %}
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-prog-cb" value="{{ p.programcode }}"> {{ p.programname }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Year Level — leave empty for all</div>
+                    <div class="rpt-cb-list">
+                        {% for y in range(1,6) %}
+                        <label class="rpt-cb-item"><input type="checkbox" class="cs-yl-cb" value="{{ y }}"> Year {{ y }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field"><label>Section (optional)</label><select id="rptCsSection"><option value="">All Sections</option></select></div>
+                    <div class="rpt-field"><label>Faculty (optional)</label>
+                        <select id="rptCsFaculty">
+                            <option value="">All Faculty</option>
+                            {% for f in faculty %}
+                            <option value="{{ f.employeenumber }}">{{ f.fullname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field"><label>Room (optional)</label>
+                        <select id="rptCsRoom">
+                            <option value="">All Rooms</option>
+                            {% for r in rooms %}
+                            <option value="{{ r.roomid }}">{{ r.roomname }} ({{ r.buildingname }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">View Layout</div>
+                    <div class="rpt-layout-row">
+                        <div class="rpt-layout-card selected" data-layout="table" onclick="_csSelectLayout(this)"><i class="fas fa-table"></i>Table View</div>
+                        <div class="rpt-layout-card" data-layout="calendar" onclick="_csSelectLayout(this)"><i class="fas fa-calendar-alt"></i>Calendar View</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Room Schedule: multi-select bulk filters + narrowing (calendar-only, matches the Rooms module's own Room Schedule Export) -->
+            <div id="sectionRoomSchedule" class="hidden">
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Academic Year — select at least one</div>
+                    <div class="rpt-cb-list">
+                        {% for ay in ay_list %}
+                        <label class="rpt-cb-item"><input type="checkbox" class="rs-ay-cb" value="{{ ay.academicyearid }}"> A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="rpt-cb-group">
+                    <div class="rpt-cb-group-title">Semester — select at least one</div>
+                    <div class="rpt-cb-list">
+                        <label class="rpt-cb-item"><input type="checkbox" class="rs-sem-cb" value="A"> 1st Semester</label>
+                        <label class="rpt-cb-item"><input type="checkbox" class="rs-sem-cb" value="B"> 2nd Semester</label>
+                        <label class="rpt-cb-item"><input type="checkbox" class="rs-sem-cb" value="C"> Summer</label>
+                    </div>
+                </div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field"><label>Building (optional)</label>
+                        <select id="rptRsBuilding">
+                            <option value="">All Buildings</option>
+                            {% for b in buildings %}
+                            <option value="{{ b.buildingid }}">{{ b.buildingname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="rpt-field"><label>Room Type (optional)</label>
+                        <select id="rptRsRoomType">
+                            <option value="">All Types</option>
+                            <option value="Lecture">Lecture</option>
+                            <option value="Laboratory">Laboratory</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field"><label>Room (optional)</label>
+                        <select id="rptRsRoom">
+                            <option value="">All Rooms</option>
+                            {% for r in rooms %}
+                            <option value="{{ r.roomid }}">{{ r.roomname }} ({{ r.buildingname }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Teaching Assignment: AY + Semester + searchable Faculty, all required
+                 (reuses the .fl-fac-* searchable dropdown from the Faculty Load panel) -->
+            <div id="sectionAssignment" class="hidden">
+                <div class="rpt-field-row">
+                    <div class="rpt-field">
+                        <label>Academic Year <span style="color:#c00;">*</span></label>
+                        <select id="rptTaAy">
+                            <option value="">— Select —</option>
+                            {% for ay in ay_list %}
+                            <option value="{{ ay.academicyearid }}">A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="rpt-field">
+                        <label>Semester <span style="color:#c00;">*</span></label>
+                        <select id="rptTaSem">
+                            <option value="">— Select —</option>
+                            <option value="A">1st Semester</option>
+                            <option value="B">2nd Semester</option>
+                            <option value="C">Summer</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="rpt-field-row">
+                    <div class="rpt-field">
+                        <label>Faculty <span style="color:#c00;">*</span></label>
+                        <div class="fl-fac-wrap" style="width:100%;">
+                            <div class="fl-fac-trigger" id="rptTaFacTrigger" onclick="toggleTaFacMenu(event)" style="width:100%;box-sizing:border-box;">
+                                <span id="rptTaFacText">— Select Faculty —</span>
+                                <i class="fas fa-chevron-down" style="font-size:0.6rem;opacity:0.7;"></i>
+                            </div>
+                            <div id="rptTaFacMenu" class="fl-fac-menu" style="width:100%;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -182,12 +368,438 @@
     </div>
 </div>
 
+<!-- CURRICULUM LIST REPORT — SELECTOR MODAL (Step-1 UI reused verbatim from the
+     Curriculum module's own "Export Curriculum" modal / .curr-exp-* CSS classes) -->
+<div id="rptCurrSelModal" class="curr-exp-overlay" style="display:none;" onclick="if(event.target===this)closeRptCurrSelModal()">
+    <div class="curr-exp-dialog">
+        <div class="curr-exp-header">
+            <div class="curr-exp-header-icon"><i class="fas fa-book"></i></div>
+            <div>
+                <h2>Curriculum List Report</h2>
+                <p>Select which curricula to include in the report</p>
+            </div>
+            <button class="curr-exp-close" onclick="closeRptCurrSelModal()">&#215;</button>
+        </div>
+        <div class="curr-exp-body">
+            <div class="curr-exp-section">
+                <div class="curr-exp-section-title"><span class="curr-exp-step-num">1</span><span>Select Curricula</span></div>
+                <div class="curr-exp-search-wrap">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="rptCurrSelSearch" placeholder="Search programs or curriculum codes..." oninput="_rptCurrSelFilter()">
+                </div>
+                <div class="curr-exp-sel-all-row">
+                    <label class="curr-exp-sel-all-label">
+                        <input type="checkbox" id="rptCurrSelAll" class="curr-exp-prog-cb" onchange="_rptCurrSelToggleAll(this.checked)">
+                        <span>Select All Curricula</span>
+                    </label>
+                    <span class="curr-exp-sel-count" id="rptCurrSelCount">0 selected</span>
+                </div>
+                <div class="curr-exp-list" id="rptCurrSelList">
+                    <div class="curr-exp-list-loading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading curricula...</div>
+                </div>
+            </div>
+        </div>
+        <div class="curr-exp-footer">
+            <div class="curr-exp-footer-info" id="rptCurrSelFooterInfo"></div>
+            <button class="curr-exp-cancel" onclick="closeRptCurrSelModal()">Cancel</button>
+            <button class="curr-exp-confirm" id="rptCurrSelContinueBtn" onclick="_rptCurrSelContinue()">
+                <i class="fas fa-arrow-right"></i>
+                <span>Continue to Preview</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ROOM & BUILDING LIST REPORT — SELECTOR MODAL (Step-1 UI reused verbatim from
+     the Rooms module's own "Export" modal / .room-exp-* CSS classes) -->
+<div id="rptRoomSelModal" class="room-exp-overlay" style="display:none;">
+    <div class="room-exp-dialog">
+        <div class="room-exp-header">
+            <div class="room-exp-header-icon"><i class="fas fa-building"></i></div>
+            <div class="room-exp-header-text">
+                <div class="room-exp-header-title">Room &amp; Building List Report</div>
+                <div class="room-exp-header-sub">Select which buildings to include in the report</div>
+            </div>
+            <button class="room-exp-close-btn" onclick="closeRptRoomSelModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="room-exp-body">
+            <div>
+                <div class="room-exp-section-label"><i class="fas fa-building"></i>&nbsp;Select Buildings</div>
+                <div class="room-exp-bldg-toolbar">
+                    <input type="text" class="room-exp-search" id="rptRoomSelSearch"
+                        placeholder="Search buildings..." oninput="_rptRoomSelFilter()">
+                    <label class="room-exp-sel-all-wrap">
+                        <input type="checkbox" id="rptRoomSelAll" onchange="_rptRoomSelToggleAll(this.checked)">
+                        Select All
+                    </label>
+                </div>
+                <div class="room-exp-bldg-list" id="rptRoomSelList">
+                    <div class="room-exp-bldg-empty">Loading buildings...</div>
+                </div>
+                <div style="margin-top:6px;font-size:.75rem;color:#555;">
+                    <span id="rptRoomSelCount" style="font-weight:700;color:#800000;">0</span> building(s) &nbsp;&middot;&nbsp;
+                    <span id="rptRoomSelRoomCount" style="font-weight:700;color:#800000;">0</span> rooms
+                </div>
+            </div>
+        </div>
+        <div class="room-exp-footer">
+            <span class="room-exp-footer-info" id="rptRoomSelFooterInfo"></span>
+            <div class="room-exp-footer-btns">
+                <button class="room-exp-cancel-btn" onclick="closeRptRoomSelModal()">Cancel</button>
+                <button class="room-exp-confirm-btn" id="rptRoomSelContinueBtn" onclick="_rptRoomSelContinue()">
+                    <i class="fas fa-arrow-right"></i> Continue to Preview
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+    const RPT_FAC_STATUSES = {{ statuses | tojson | safe }};
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Teaching Assignment report — searchable faculty dropdown, reusing the
+    // exact .fl-fac-* / .dss-search-* markup and interaction pattern from the
+    // Faculty Load panel in Manual Scheduling (manualScheduleEditor.html).
+    // ═══════════════════════════════════════════════════════════════════════
+    const RPT_ALL_FACULTY = [
+        {% for f in faculty %}
+        { id: "{{ f.employeenumber }}", name: "{{ f.fullname|replace('"','\\"') }}" },
+        {% endfor %}
+    ];
+    let _rptTaSelectedFacId   = null;
+    let _rptTaFacMenuBuilt    = false;
+
+    function _initTaFacultyMenu() {
+        if (_rptTaFacMenuBuilt) return;
+        _rptTaFacMenuBuilt = true;
+        const menu = document.getElementById('rptTaFacMenu');
+        if (!menu) return;
+
+        const src = [...RPT_ALL_FACULTY].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        menu.innerHTML = '';
+
+        const searchBox = document.createElement('div');
+        searchBox.className = 'dss-search-box';
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'dss-search-input';
+        searchInput.placeholder = 'Ex., Dela Cruz, Juan';
+        searchInput.autocomplete = 'off';
+        searchInput.addEventListener('input', function() {
+            const q = this.value.toLowerCase();
+            menu.querySelectorAll('.fl-fac-opt[data-name]').forEach(opt => {
+                opt.style.display = opt.dataset.name.includes(q) ? '' : 'none';
+            });
+        });
+        searchBox.appendChild(searchInput);
+        menu.appendChild(searchBox);
+
+        if (!src.length) {
+            menu.insertAdjacentHTML('beforeend', '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty available</div>');
+            return;
+        }
+
+        menu.insertAdjacentHTML('beforeend', src.map(f =>
+            `<div class="fl-fac-opt" data-name="${(f.name || f.id || '').toLowerCase().replace(/"/g,'&quot;')}" onclick="selectTaFaculty('${(f.id||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
+                ${f.name || f.id || '—'}
+            </div>`
+        ).join(''));
+    }
+
+    function toggleTaFacMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('rptTaFacMenu');
+        const opening = !menu.classList.contains('fl-fac-open');
+        menu.classList.toggle('fl-fac-open', opening);
+        if (opening) {
+            const searchInput = menu.querySelector('.dss-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                menu.querySelectorAll('.fl-fac-opt[data-name]').forEach(opt => opt.style.display = '');
+                setTimeout(() => searchInput.focus(), 40);
+            }
+        }
+    }
+
+    function selectTaFaculty(empNum, name) {
+        _rptTaSelectedFacId = empNum;
+        document.getElementById('rptTaFacText').textContent = name || empNum;
+        document.getElementById('rptTaFacMenu').classList.remove('fl-fac-open');
+    }
+
+    document.addEventListener('click', (e) => {
+        const wrap = document.getElementById('rptTaFacTrigger')?.closest('.fl-fac-wrap');
+        if (wrap && wrap.contains(e.target)) return;
+        document.getElementById('rptTaFacMenu')?.classList.remove('fl-fac-open');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Curriculum List report — selection-only modal, sourced from the same
+    // /admin/curriculum/export/list endpoint the Curriculum module itself uses.
+    // ═══════════════════════════════════════════════════════════════════════
+    const _RPT_CURR_LIST_ROUTE = '/admin/curriculum/export/list';
+    let _rptCurrSelPrograms = [];
+    let _rptCurrSelIds = new Set();
+    let _rptCurrSelLoaded = false;
+
+    function openRptCurrSelModal() {
+        document.getElementById('rptCurrSelModal').style.display = 'flex';
+        if (!_rptCurrSelLoaded) {
+            _loadRptCurrSelList();
+        } else {
+            _renderRptCurrSelList();
+            _updateRptCurrSelFooter();
+        }
+    }
+    function closeRptCurrSelModal() { document.getElementById('rptCurrSelModal').style.display = 'none'; }
+
+    async function _loadRptCurrSelList() {
+        const listEl = document.getElementById('rptCurrSelList');
+        listEl.innerHTML = '<div class="curr-exp-list-loading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading curricula...</div>';
+        try {
+            const res = await fetch(_RPT_CURR_LIST_ROUTE);
+            if (!res.ok) throw new Error('Server error');
+            _rptCurrSelPrograms = await res.json();
+            _rptCurrSelLoaded = true;
+            _rptCurrSelPrograms.forEach(p => p.curricula.forEach(c => _rptCurrSelIds.add(c.curriculum_id)));
+            _renderRptCurrSelList();
+            _updateRptCurrSelFooter();
+        } catch (e) {
+            listEl.innerHTML = `<div class="curr-exp-list-empty"><i class="fas fa-exclamation-triangle" style="color:#c00;margin-right:6px;"></i>Failed to load: ${e.message}</div>`;
+        }
+    }
+
+    function _renderRptCurrSelList() {
+        const query  = (document.getElementById('rptCurrSelSearch')?.value || '').toLowerCase().trim();
+        const listEl = document.getElementById('rptCurrSelList');
+        if (!_rptCurrSelPrograms.length) {
+            listEl.innerHTML = '<div class="curr-exp-list-empty">No curricula found.</div>';
+            return;
+        }
+        let html = ''; let anyVisible = false;
+        _rptCurrSelPrograms.forEach(prog => {
+            const matched = prog.curricula.filter(c =>
+                !query ||
+                c.curriculum_code.toLowerCase().includes(query) ||
+                c.curriculum_year.toLowerCase().includes(query) ||
+                prog.program_name.toLowerCase().includes(query) ||
+                prog.program_code.toLowerCase().includes(query)
+            );
+            if (!matched.length) return;
+            anyVisible = true;
+            const selCount = matched.filter(c => _rptCurrSelIds.has(c.curriculum_id)).length;
+            const allSel   = selCount === matched.length;
+            const someSel  = selCount > 0 && !allSel;
+            html += `
+            <div class="curr-exp-prog-group" id="rpg_${prog.program_code}">
+              <div class="curr-exp-prog-header" onclick="_rptCurrSelToggleCollapse('${prog.program_code}')">
+                <i class="fas fa-chevron-down curr-exp-prog-toggle" id="rpg_tog_${prog.program_code}"></i>
+                <input type="checkbox" class="curr-exp-prog-cb" id="rpgcb_${prog.program_code}"
+                  ${allSel ? 'checked' : ''} ${someSel ? 'data-indet="1"' : ''}
+                  onclick="event.stopPropagation();_rptCurrSelToggleProg('${prog.program_code}',this.checked)"
+                  title="Select all ${prog.program_name}">
+                <span class="curr-exp-prog-name">${prog.program_name}</span>
+                <span class="curr-exp-prog-code">${prog.program_code}</span>
+                <span class="curr-exp-prog-count">${selCount}/${matched.length}</span>
+              </div>
+              <div class="curr-exp-prog-items" id="rpg_items_${prog.program_code}">`;
+            matched.forEach(c => {
+                const isSel = _rptCurrSelIds.has(c.curriculum_id);
+                html += `
+                <div class="curr-exp-curr-item${isSel ? ' selected' : ''}" id="rci_${c.curriculum_id}"
+                     onclick="_rptCurrSelToggleItem(${c.curriculum_id},'${prog.program_code}')">
+                  <input type="checkbox" class="curr-exp-curr-cb" id="rcb_${c.curriculum_id}"
+                    ${isSel ? 'checked' : ''}
+                    onclick="event.stopPropagation();_rptCurrSelToggleItem(${c.curriculum_id},'${prog.program_code}')">
+                  <span class="curr-exp-curr-label">Curriculum Year ${c.curriculum_year}</span>
+                  <span class="curr-exp-curr-code">${prog.program_code}</span>
+                </div>`;
+            });
+            html += `</div></div>`;
+        });
+        if (!anyVisible) {
+            listEl.innerHTML = '<div class="curr-exp-list-empty">No curricula match your search.</div>';
+            return;
+        }
+        listEl.innerHTML = html;
+        _rptCurrSelPrograms.forEach(prog => {
+            const cb = document.getElementById(`rpgcb_${prog.program_code}`);
+            if (cb && cb.dataset.indet === '1') cb.indeterminate = true;
+        });
+        _updateRptCurrSelCount();
+    }
+
+    function _rptCurrSelToggleCollapse(progCode) {
+        const grp = document.getElementById(`rpg_${progCode}`);
+        const tog = document.getElementById(`rpg_tog_${progCode}`);
+        if (!grp) return;
+        grp.classList.toggle('collapsed');
+        if (tog) tog.style.transform = grp.classList.contains('collapsed') ? 'rotate(-90deg)' : '';
+    }
+    function _rptCurrSelToggleItem(id, progCode) {
+        _rptCurrSelIds.has(id) ? _rptCurrSelIds.delete(id) : _rptCurrSelIds.add(id);
+        const itemEl = document.getElementById(`rci_${id}`);
+        const cbEl   = document.getElementById(`rcb_${id}`);
+        if (itemEl) itemEl.classList.toggle('selected', _rptCurrSelIds.has(id));
+        if (cbEl)   cbEl.checked = _rptCurrSelIds.has(id);
+        _rptCurrSelUpdateProgCb(progCode);
+        _updateRptCurrSelCount();
+        _updateRptCurrSelFooter();
+    }
+    function _rptCurrSelToggleProg(progCode, checked) {
+        const prog = _rptCurrSelPrograms.find(p => p.program_code === progCode);
+        if (!prog) return;
+        prog.curricula.forEach(c => checked ? _rptCurrSelIds.add(c.curriculum_id) : _rptCurrSelIds.delete(c.curriculum_id));
+        _renderRptCurrSelList(); _updateRptCurrSelFooter();
+    }
+    function _rptCurrSelToggleAll(checked) {
+        _rptCurrSelPrograms.forEach(prog =>
+            prog.curricula.forEach(c => checked ? _rptCurrSelIds.add(c.curriculum_id) : _rptCurrSelIds.delete(c.curriculum_id))
+        );
+        _renderRptCurrSelList(); _updateRptCurrSelFooter();
+    }
+    function _rptCurrSelFilter() { _renderRptCurrSelList(); }
+    function _rptCurrSelUpdateProgCb(progCode) {
+        const prog = _rptCurrSelPrograms.find(p => p.program_code === progCode);
+        const cb   = document.getElementById(`rpgcb_${progCode}`);
+        if (!prog || !cb) return;
+        const n = prog.curricula.filter(c => _rptCurrSelIds.has(c.curriculum_id)).length;
+        cb.checked       = n === prog.curricula.length;
+        cb.indeterminate = n > 0 && n < prog.curricula.length;
+    }
+    function _updateRptCurrSelCount() {
+        const countEl = document.getElementById('rptCurrSelCount');
+        const n = _rptCurrSelIds.size;
+        if (countEl) countEl.textContent = `${n} selected`;
+        const allCb = document.getElementById('rptCurrSelAll');
+        if (allCb) {
+            const total = _rptCurrSelPrograms.reduce((s, p) => s + p.curricula.length, 0);
+            allCb.checked       = n === total && total > 0;
+            allCb.indeterminate = n > 0 && n < total;
+        }
+    }
+    function _updateRptCurrSelFooter() {
+        const n = _rptCurrSelIds.size;
+        const info = document.getElementById('rptCurrSelFooterInfo');
+        if (info) info.textContent = n > 0 ? `${n} curriculum${n === 1 ? '' : 'a'} selected` : '';
+        const btn = document.getElementById('rptCurrSelContinueBtn');
+        if (btn) btn.disabled = n === 0;
+    }
+    function _rptCurrSelContinue() {
+        if (_rptCurrSelIds.size === 0) { alert('Please select at least one curriculum.'); return; }
+        const params = new URLSearchParams();
+        _rptCurrSelIds.forEach(id => params.append('curriculum_ids', id));
+        window.location.href = `/reports/preview/curriculum?${params.toString()}`;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Room & Building List report — selection-only modal, sourced from the same
+    // /admin/rooms/export/list endpoint the Rooms module itself uses.
+    // ═══════════════════════════════════════════════════════════════════════
+    const _RPT_ROOM_LIST_ROUTE = '/admin/rooms/export/list';
+    let _rptRoomSelBuildings = [];
+    let _rptRoomSelIds = new Set();
+    let _rptRoomSelLoaded = false;
+
+    function openRptRoomSelModal() {
+        document.getElementById('rptRoomSelModal').style.display = 'flex';
+        if (!_rptRoomSelLoaded) {
+            _loadRptRoomSelList();
+        } else {
+            _renderRptRoomSelList();
+            _updateRptRoomSelFooter();
+        }
+    }
+    function closeRptRoomSelModal() { document.getElementById('rptRoomSelModal').style.display = 'none'; }
+
+    async function _loadRptRoomSelList() {
+        try {
+            const res = await fetch(_RPT_ROOM_LIST_ROUTE);
+            if (!res.ok) throw new Error('Failed to load buildings');
+            _rptRoomSelBuildings = await res.json();
+            _rptRoomSelLoaded = true;
+            _rptRoomSelBuildings.forEach(b => _rptRoomSelIds.add(b.buildingid));
+            _renderRptRoomSelList();
+            _updateRptRoomSelFooter();
+        } catch (e) {
+            const el = document.getElementById('rptRoomSelList');
+            if (el) el.innerHTML = `<div class="room-exp-bldg-empty">Error loading buildings: ${e.message}</div>`;
+        }
+    }
+    function _rptRoomSelFilter() { _renderRptRoomSelList(); }
+    function _renderRptRoomSelList() {
+        const search = (document.getElementById('rptRoomSelSearch')?.value || '').toUpperCase();
+        const listEl = document.getElementById('rptRoomSelList');
+        if (!listEl) return;
+        const matched = _rptRoomSelBuildings.filter(b => !search || b.buildingname.toUpperCase().includes(search));
+        if (!matched.length) {
+            listEl.innerHTML = '<div class="room-exp-bldg-empty">No buildings match your search.</div>';
+            return;
+        }
+        listEl.innerHTML = matched.map(b => {
+            const isSel = _rptRoomSelIds.has(b.buildingid);
+            return `<div class="room-exp-bldg-item${isSel ? ' selected' : ''}" id="rrb_${b.buildingid}"
+                 onclick="_rptRoomSelToggle(${b.buildingid})">
+              <input type="checkbox" ${isSel ? 'checked' : ''}
+                onclick="event.stopPropagation();_rptRoomSelToggle(${b.buildingid})">
+              <span class="room-exp-bldg-name">${b.buildingname}</span>
+              <span class="room-exp-bldg-count">${b.room_count} room${b.room_count !== 1 ? 's' : ''}</span>
+            </div>`;
+        }).join('');
+        _updateRptRoomSelCount();
+    }
+    function _rptRoomSelToggle(id) {
+        _rptRoomSelIds.has(id) ? _rptRoomSelIds.delete(id) : _rptRoomSelIds.add(id);
+        _renderRptRoomSelList(); _updateRptRoomSelFooter();
+    }
+    function _rptRoomSelToggleAll(checked) {
+        _rptRoomSelBuildings.forEach(b => checked ? _rptRoomSelIds.add(b.buildingid) : _rptRoomSelIds.delete(b.buildingid));
+        _renderRptRoomSelList(); _updateRptRoomSelFooter();
+    }
+    function _updateRptRoomSelCount() {
+        const n = _rptRoomSelIds.size;
+        const allCb = document.getElementById('rptRoomSelAll');
+        if (allCb) {
+            const total = _rptRoomSelBuildings.length;
+            allCb.checked       = n === total && total > 0;
+            allCb.indeterminate = n > 0 && n < total;
+        }
+        const roomCount = _rptRoomSelBuildings
+            .filter(b => _rptRoomSelIds.has(b.buildingid))
+            .reduce((s, b) => s + (b.room_count || 0), 0);
+        const selEl = document.getElementById('rptRoomSelCount');     if (selEl) selEl.textContent = n;
+        const rcEl  = document.getElementById('rptRoomSelRoomCount'); if (rcEl)  rcEl.textContent  = roomCount;
+    }
+    function _updateRptRoomSelFooter() {
+        const n = _rptRoomSelIds.size;
+        const info = document.getElementById('rptRoomSelFooterInfo');
+        if (info) info.textContent = n > 0 ? `${n} building${n === 1 ? '' : 's'} selected` : '';
+        const btn = document.getElementById('rptRoomSelContinueBtn');
+        if (btn) btn.disabled = n === 0;
+    }
+    function _rptRoomSelContinue() {
+        if (_rptRoomSelIds.size === 0) { alert('Please select at least one building.'); return; }
+        const params = new URLSearchParams();
+        _rptRoomSelIds.forEach(id => params.append('building_ids', id));
+        window.location.href = `/reports/preview/rooms?${params.toString()}`;
+    }
+
+    function _rptPopulateStatus(kind) {
+        const sel = document.getElementById('rptStatus');
+        if (kind === 'faculty') {
+            sel.innerHTML = '<option value="All">All Statuses</option>' +
+                RPT_FAC_STATUSES.map(s => `<option value="${s.employeestatus}">${s.employeestatus}</option>`).join('');
+        } else {
+            sel.innerHTML = '<option value="All">All</option><option value="Active">Active</option><option value="Inactive">Inactive</option>';
+        }
+    }
+
     function openReportModal(type) {
         const modal = document.getElementById('reportModal');
         const rptTypeInput = document.getElementById('rptType');
         const title = document.getElementById('modalTitle');
-        
+
         rptTypeInput.value = type;
         modal.classList.add('open');
 
@@ -195,33 +807,53 @@
         document.querySelectorAll('.rpt-field').forEach(el => {
             if (el.id !== 'grpAY' && el.id !== 'grpSem') el.classList.add('hidden');
         });
+        // grpAY/grpSem are exempt from the blanket reset above (so their own hidden
+        // state can be toggled independently by a type like 'curriculum'), but that
+        // means a leftover hidden grpAY from a previous open must be cleared here.
+        document.getElementById('grpAY').classList.remove('hidden');
+        document.getElementById('grpSem').classList.remove('hidden');
+        document.getElementById('sectionPeriod').classList.remove('hidden');
+
+        document.getElementById('sectionClassSchedule').classList.add('hidden');
+        document.getElementById('sectionRoomSchedule').classList.add('hidden');
+        document.getElementById('sectionAssignment').classList.add('hidden');
 
         // Mapping report types to visible filters
-        if (type === 'room_schedule') {
+        if (type === 'class_schedule') {
+            title.innerText = "Class Schedule Filters";
+            document.getElementById('sectionPeriod').classList.add('hidden');
+            document.getElementById('sectionClassSchedule').classList.remove('hidden');
+            _csSelectedLayout = 'table';
+            document.querySelectorAll('.rpt-layout-card').forEach(c => c.classList.toggle('selected', c.dataset.layout === 'table'));
+            document.querySelectorAll('.cs-ay-cb, .cs-prog-cb, .cs-yl-cb').forEach(cb => cb.addEventListener('change', _csRefreshSections));
+            _csRefreshSections();
+        } else if (type === 'room_schedule') {
             title.innerText = "Room Schedule Filters";
-            document.getElementById('sgBuilding').classList.remove('hidden');
-            document.getElementById('sgRoomType').classList.remove('hidden');
+            document.getElementById('sectionPeriod').classList.add('hidden');
+            document.getElementById('sectionRoomSchedule').classList.remove('hidden');
         } else if (type === 'faculty') {
             title.innerText = "Faculty List Filters";
             document.getElementById('sgFacultyType').classList.remove('hidden');
+            document.getElementById('sgSpecialization').classList.remove('hidden');
+            document.getElementById('sgDesignation').classList.remove('hidden');
+            document.getElementById('sgStatus').classList.remove('hidden');
+            _rptPopulateStatus('faculty');
             // Hide AY/Sem for generic faculty list
-            document.getElementById('sectionPeriod').classList.add('hidden');
-        } else if (type === 'curriculum') {
-            title.innerText = "Curriculum Filters";
-            document.getElementById('sgProgram').classList.remove('hidden');
-            document.getElementById('sectionPeriod').classList.add('hidden');
-        } else if (type === 'rooms') {
-            title.innerText = "Room List Filters";
-            document.getElementById('sgBuilding').classList.remove('hidden');
-            document.getElementById('sgRoomType').classList.remove('hidden');
             document.getElementById('sectionPeriod').classList.add('hidden');
         } else if (type === 'assignments') {
             title.innerText = "Teaching Assignment Filters";
-            document.getElementById('sgProgram').classList.remove('hidden');
+            document.getElementById('sectionPeriod').classList.add('hidden');
+            document.getElementById('sectionAssignment').classList.remove('hidden');
+            _initTaFacultyMenu();
         } else if (type === 'offerings') {
             title.innerText = "Subject Offerings Filters";
             document.getElementById('sgProgram').classList.remove('hidden');
             document.getElementById('sgYearLevel').classList.remove('hidden');
+        } else if (type === 'programs') {
+            title.innerText = "Program List Filters";
+            document.getElementById('sgStatus').classList.remove('hidden');
+            _rptPopulateStatus('activeInactive');
+            document.getElementById('sectionPeriod').classList.add('hidden');
         }
     }
 
@@ -230,9 +862,91 @@
         document.getElementById('sectionPeriod').classList.remove('hidden');
     }
 
+    let _csSelectedLayout = 'table';
+    function _csSelectLayout(el) {
+        document.querySelectorAll('.rpt-layout-card').forEach(c => c.classList.remove('selected'));
+        el.classList.add('selected');
+        _csSelectedLayout = el.dataset.layout;
+    }
+
+    let _csSectionsAbort = null;
+    async function _csRefreshSections() {
+        const sectionSel = document.getElementById('rptCsSection');
+        if (!sectionSel) return;
+        const ayIds = [...document.querySelectorAll('.cs-ay-cb:checked')].map(c => c.value);
+        const progs = [...document.querySelectorAll('.cs-prog-cb:checked')].map(c => c.value);
+        const yls   = [...document.querySelectorAll('.cs-yl-cb:checked')].map(c => c.value);
+        const params = new URLSearchParams();
+        ayIds.forEach(v => params.append('ay_ids', v));
+        progs.forEach(v => params.append('programs', v));
+        yls.forEach(v => params.append('year_levels', v));
+
+        if (_csSectionsAbort) _csSectionsAbort.abort();
+        _csSectionsAbort = new AbortController();
+        const prevVal = sectionSel.value;
+        try {
+            const res = await fetch(`/reports/class_schedule/sections?${params.toString()}`, { signal: _csSectionsAbort.signal });
+            const data = await res.json();
+            sectionSel.innerHTML = '<option value="">All Sections</option>' +
+                (data.sections || []).map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+            if ([...sectionSel.options].some(o => o.value === prevVal)) sectionSel.value = prevVal;
+        } catch (e) { /* aborted or network error -- keep current list */ }
+    }
+
     function applyFilter() {
         const type = document.getElementById('rptType').value;
-        
+
+        if (type === 'class_schedule') {
+            const ayIds = [...document.querySelectorAll('.cs-ay-cb:checked')].map(c => c.value);
+            const sems  = [...document.querySelectorAll('.cs-sem-cb:checked')].map(c => c.value);
+            if (!ayIds.length || !sems.length) {
+                alert('Please select at least one Academic Year and one Semester.');
+                return;
+            }
+            const progs = [...document.querySelectorAll('.cs-prog-cb:checked')].map(c => c.value);
+            const yls   = [...document.querySelectorAll('.cs-yl-cb:checked')].map(c => c.value);
+            const params = new URLSearchParams();
+            ayIds.forEach(v => params.append('ay_ids', v));
+            sems.forEach(v => params.append('sem_types', v));
+            progs.forEach(v => params.append('programs', v));
+            yls.forEach(v => params.append('year_levels', v));
+            const section = document.getElementById('rptCsSection').value; if (section) params.set('section', section);
+            const facVal  = document.getElementById('rptCsFaculty').value; if (facVal) params.set('faculty', facVal);
+            const roomVal = document.getElementById('rptCsRoom').value;    if (roomVal) params.set('room', roomVal);
+            params.set('layout', _csSelectedLayout);
+            window.location.href = `/reports/preview/class_schedule?${params.toString()}`;
+            return;
+        }
+
+        if (type === 'room_schedule') {
+            const ayIds = [...document.querySelectorAll('.rs-ay-cb:checked')].map(c => c.value);
+            const sems  = [...document.querySelectorAll('.rs-sem-cb:checked')].map(c => c.value);
+            if (!ayIds.length || !sems.length) {
+                alert('Please select at least one Academic Year and one Semester.');
+                return;
+            }
+            const params = new URLSearchParams();
+            ayIds.forEach(v => params.append('ay_ids', v));
+            sems.forEach(v => params.append('sem_types', v));
+            const bldgVal = document.getElementById('rptRsBuilding').value; if (bldgVal) params.set('building', bldgVal);
+            const rtVal   = document.getElementById('rptRsRoomType').value; if (rtVal) params.set('room_type', rtVal);
+            const roomVal = document.getElementById('rptRsRoom').value;     if (roomVal) params.set('room', roomVal);
+            window.location.href = `/reports/preview/room_schedule?${params.toString()}`;
+            return;
+        }
+
+        if (type === 'assignments') {
+            const ay  = document.getElementById('rptTaAy').value;
+            const sem = document.getElementById('rptTaSem').value;
+            if (!ay || !sem || !_rptTaSelectedFacId) {
+                alert('Please select Academic Year, Semester, and Faculty.');
+                return;
+            }
+            const params = new URLSearchParams({ ay, sem, faculty: _rptTaSelectedFacId });
+            window.location.href = `/reports/preview/assignments?${params.toString()}`;
+            return;
+        }
+
         // Use absolute paths starting with '/' to avoid "Not Found" 404 errors
         const params = new URLSearchParams({
             ay:       document.getElementById('rptAY').value,
@@ -243,6 +957,17 @@
             rt:       document.getElementById('rptRoomType').value,
             emp_type: document.getElementById('rptFacultyType').value
         });
+        const _gv2 = id => { const el = document.getElementById(id); return el ? el.value : 'All'; };
+        const status   = _gv2('rptStatus');
+        const spec     = _gv2('rptSpecialization');
+        const desig    = _gv2('rptDesignation');
+        const curr     = _gv2('rptCurriculum');
+        const curryear = _gv2('rptCurrYear');
+        if (status   && status   !== 'All') params.set('status', status);
+        if (spec     && spec     !== 'All') params.set('spec', spec);
+        if (desig    && desig    !== 'All') params.set('desig', desig);
+        if (curr     && curr     !== 'All') params.set('curr', curr);
+        if (curryear && curryear !== 'All') params.set('curryear', curryear);
 
         window.location.href = `/reports/preview/${type}?${params.toString()}`;
     }

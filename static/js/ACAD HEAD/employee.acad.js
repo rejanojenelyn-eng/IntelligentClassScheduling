@@ -610,6 +610,30 @@ document.getElementById('confirmBulkArchiveBtn').addEventListener('click', funct
     }).catch(() => { alert('Network error.'); this.disabled = false; this.textContent = 'ARCHIVE ALL'; });
 });
 
+function openEditFromEl(el) {
+    const emp = JSON.parse(el.dataset.emp);
+    openEditModal(emp.employeenumber, emp.firstname, emp.middlename || '', emp.lastname,
+                  emp.email, emp.contactnumber, emp.specializationid,
+                  emp.employeetypeid, emp.designationid || '', emp.employeestatus);
+}
+
+function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
+    document.getElementById("edit_emp_num_original").value = empNum;
+    document.getElementById("edit_emp_num").value = empNum;
+    document.getElementById("edit_f_name").value = fName;
+    document.getElementById("edit_m_name").value = mName;
+    document.getElementById("edit_l_name").value = lName;
+    document.getElementById("edit_email").value = email;
+    document.getElementById("edit_contact").value = contact;
+    document.getElementById("edit_spec").value = specId;
+    document.getElementById("edit_type").value = typeId;
+    document.getElementById("edit_designation").value = desigId;
+    document.getElementById("edit_status").value = status;
+    toggleDesignation('edit');
+    document.getElementById("editEmployeeModal").style.display = "block";
+}
+function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
+
 function toggleDesignation(modalType) {
     const typeSelect = document.getElementById(`${modalType}_type`);
     const designationSelect = document.getElementById(`${modalType}_designation`);
@@ -678,6 +702,43 @@ function sortTable() {
 
 // ── EXPORT ENGINE ────────────────────────────────────────────────────────────
 const _EMP_DOCX_ROUTE = '/employee/export/docx';
+const _EMP_XLSX_ROUTE = '/employee/export/xlsx';
+
+const _EMP_REPORT_COLUMNS = [
+    { header: '#',               dataKey: 'no',             field: null,             csv: false },
+    { header: 'Employee Number', dataKey: 'emp_num',        field: 'employeenumber' },
+    { header: 'Last Name',       dataKey: 'last_name',      field: 'lastname' },
+    { header: 'First Name',      dataKey: 'first_name',     field: 'firstname' },
+    { header: 'Middle Name',     dataKey: 'middle_name',    field: 'middlename' },
+    { header: 'Email',           dataKey: 'email',          field: 'email' },
+    { header: 'Contact Number',  dataKey: 'contact',        field: 'contactnumber' },
+    { header: 'Specialization',  dataKey: 'specialization', field: 'specializationname' },
+    { header: 'Employee Type',   dataKey: 'emp_type',       field: 'typename' },
+    { header: 'Employee Status', dataKey: 'status',         field: 'employeestatus' },
+    { header: 'Designation',     dataKey: 'designation',    field: 'designationname' },
+];
+
+function _empActiveAyLabel() {
+    if (typeof ACAD_ACTIVE_AY_ID === 'undefined' || !ACAD_ACTIVE_AY_ID) return 'N/A';
+    const m = /^AY(\d{2})(\d{2})$/.exec(ACAD_ACTIVE_AY_ID);
+    if (!m) return 'N/A';
+    const semLabel = { A: '1st Semester', B: '2nd Semester', C: 'Summer' }[ACAD_ACTIVE_SEM] || '';
+    return `20${m[1]}-20${m[2]}${semLabel ? ' (' + semLabel + ')' : ''}`;
+}
+
+function _loadImageAsDataURL(url) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = reject;
+        img.src = url;
+    });
+}
 
 function _getExportRows() {
     const table = document.querySelector('.employee-table');
@@ -688,16 +749,14 @@ function _getExportRows() {
 }
 
 function _rowsToEmpData(rows) {
-    // Acad head table has no Contact column (8 cells)
-    return rows.map(row => ({
-        emp_num: row.cells[1]?.innerText.trim() || '',
-        name:    row.querySelector('.emp-name')?.innerText.trim()   || '',
-        spec:    row.querySelector('.emp-spec')?.innerText.trim()   || '',
-        email:   row.cells[4]?.innerText.trim() || '',
-        contact: '',
-        type:    row.querySelector('.emp-type')?.innerText.trim()   || '',
-        status:  row.querySelector('.emp-status')?.innerText.trim() || '',
-    }));
+    return rows.map(row => {
+        const emp = JSON.parse(row.dataset.emp || '{}');
+        const out = {};
+        for (const col of _EMP_REPORT_COLUMNS) {
+            if (col.field) out[col.dataKey] = emp[col.field] || '';
+        }
+        return out;
+    });
 }
 
 function _buildExportFilename() {
@@ -766,12 +825,16 @@ function closeExportToast() { document.getElementById('exportToast').style.displ
 
 function _exportCSV(data, filename) {
     const now = new Date().toLocaleString();
-    const headers = ['Employee Number', 'Employee Name', 'Specialization', 'Email', 'Employment Type', 'Status'];
-    const dataRows = data.map(e => [e.emp_num, e.name, e.spec, e.email, e.type, e.status]);
-    const q = v => `"${String(v).replace(/"/g, '""')}"`;
+    const cols = _EMP_REPORT_COLUMNS.filter(c => c.field);
+    const headers = cols.map(c => c.header);
+    const dataRows = data.map(e => cols.map(c => e[c.dataKey]));
+    const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [
-        `"Employee Records"`,
-        `"Generated: ${now}"`,
+        `"Polytechnic University of the Philippines"`,
+        `"Lopez, Quezon Campus"`,
+        `"FACULTY INFORMATION REPORT"`,
+        `"Academic Year: ${_empActiveAyLabel()}"`,
+        `"Date Generated: ${now}"`,
         `"Total: ${data.length} employee(s)"`,
         '',
         headers.map(q).join(','),
@@ -782,16 +845,22 @@ function _exportCSV(data, filename) {
     a.click(); URL.revokeObjectURL(a.href);
 }
 
-async function _exportXLSX(data, filename) {
-    const payload = {
+function _empReportPayload(data) {
+    return {
         employees: data,
-        title: 'Employee Records',
-        timestamp: 'Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
+        title: 'FACULTY INFORMATION REPORT',
+        subtitle1: 'Polytechnic University of the Philippines',
+        subtitle2: 'Lopez, Quezon Campus',
+        ay_label: _empActiveAyLabel(),
+        timestamp: 'Date Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
     };
-    const res = await fetch('/employee/export/xlsx', {
+}
+
+async function _exportXLSX(data, filename) {
+    const res = await fetch(_EMP_XLSX_ROUTE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(_empReportPayload(data)),
     });
     if (!res.ok) throw new Error(await res.text() || 'Server error generating XLSX');
     const blob = await res.blob();
@@ -803,50 +872,66 @@ async function _exportPDF(data, filename) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const now = new Date();
+    const pageWidth  = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const cx = pageWidth / 2;
+
+    try {
+        const logo = await _loadImageAsDataURL('/static/img/pup-logo.png');
+        doc.addImage(logo, 'PNG', 12, 7, 20, 20);
+    } catch (e) { /* logo optional */ }
 
     doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
-    doc.text('Employee Records', 148.5, 14, { align: 'center' });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('Polytechnic University of the Philippines', cx, 13, { align: 'center' });
+    doc.setFontSize(11);
+    doc.text('Lopez, Quezon Campus', cx, 19, { align: 'center' });
+    doc.setFontSize(14);
+    doc.text('FACULTY INFORMATION REPORT', cx, 27, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text('Generated: ' + now.toLocaleString(), 148.5, 21, { align: 'center' });
+    doc.text(`Academic Year: ${_empActiveAyLabel()}`, cx, 33, { align: 'center' });
+    doc.text(`Date Generated: ${now.toLocaleString()}`, cx, 38, { align: 'center' });
+    doc.setDrawColor(128, 0, 0); doc.setLineWidth(0.6);
+    doc.line(10, 41, pageWidth - 10, 41);
+
+    const columns = _EMP_REPORT_COLUMNS;
+    const body = data.map((e, i) => ({ no: i + 1, ...e }));
 
     doc.autoTable({
-        columns: [
-            { header: '#',               dataKey: 'no'      },
-            { header: 'Employee Number', dataKey: 'emp_num' },
-            { header: 'Employee Name',   dataKey: 'name'    },
-            { header: 'Specialization',  dataKey: 'spec'    },
-            { header: 'Email',           dataKey: 'email'   },
-            { header: 'Type',            dataKey: 'type'    },
-            { header: 'Status',          dataKey: 'status'  },
-        ],
-        body: data.map((e, i) => ({ no: i + 1, emp_num: e.emp_num, name: e.name, spec: e.spec, email: e.email, type: e.type, status: e.status })),
-        startY: 27,
-        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
-        headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: [255, 255, 255] },
-        margin: { left: 10, right: 10 },
+        columns, body, startY: 45,
+        styles: { fontSize: 7.5, cellPadding: 2.2, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.15, textColor: [0, 0, 0] },
+        headStyles: { fillColor: [128, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.15 },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        margin: { left: 8, right: 8 },
+        columnStyles: {
+            no:             { cellWidth: 7,  halign: 'center' },
+            emp_num:        { cellWidth: 20 },
+            last_name:      { cellWidth: 24 },
+            first_name:     { cellWidth: 22 },
+            middle_name:    { cellWidth: 20 },
+            email:          { cellWidth: 40 },
+            contact:        { cellWidth: 20 },
+            specialization: { cellWidth: 28 },
+            emp_type:       { cellWidth: 18 },
+            status:         { cellWidth: 18 },
+            designation:    { cellWidth: 24 },
+        },
     });
 
     const total = doc.internal.getNumberOfPages();
     for (let i = 1; i <= total; i++) {
         doc.setPage(i);
         doc.setFontSize(8); doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${total}`, 287, 205, { align: 'right' });
+        doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 6, { align: 'right' });
     }
     doc.save(filename + '.pdf');
 }
 
 async function _exportDOCX(data, filename) {
-    const payload = {
-        employees: data,
-        title: 'Employee Records',
-        timestamp: 'Generated: ' + new Date().toLocaleString(),
-    };
     const res = await fetch(_EMP_DOCX_ROUTE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(_empReportPayload(data)),
     });
     if (!res.ok) throw new Error(await res.text() || 'Server error generating DOCX');
     const blob = await res.blob();

@@ -20,11 +20,13 @@ function _sortDays(arr) {
 })();
 
 /* ---- Schedule List filters ---- */
-const _initEl  = document.getElementById('schedule-init-data');
-const SEM_DATA  = JSON.parse(_initEl.dataset.sems);
-const TODAY_STR = _initEl.dataset.today;
-const ACTIVE_AY = _initEl.dataset.activeAy;
-const ACTIVE_SEM = _initEl.dataset.activeSem;
+// Reused (read-only) on the Reports module's Class Schedule preview, which has
+// no #schedule-init-data element -- guard so it's inert there instead of throwing.
+const _initEl   = document.getElementById('schedule-init-data');
+const SEM_DATA   = _initEl ? JSON.parse(_initEl.dataset.sems) : [];
+const TODAY_STR  = _initEl ? _initEl.dataset.today     : '';
+const ACTIVE_AY  = _initEl ? _initEl.dataset.activeAy  : '';
+const ACTIVE_SEM = _initEl ? _initEl.dataset.activeSem : '';
 
 const SEM_LABELS = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
 
@@ -75,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
     _initProgSearchDropdown();
 
     // Populate instructor dropdown from init data
-    const _facultyJson = _initEl.dataset.faculty;
+    const _facultyJson = _initEl ? _initEl.dataset.faculty : null;
     if (_facultyJson) {
         try {
             const _facultyList = JSON.parse(_facultyJson);
@@ -350,9 +352,9 @@ function renderCurrentView(sessions) {
 }
 
 /* ---- Calendar render ---- */
-function renderCalendar(sessions) {
-    const wrapper = document.getElementById('gridWrapper');
-    const table   = document.getElementById('mainTimetable');
+function renderCalendar(sessions, opts = {}) {
+    const wrapper = document.getElementById(opts.wrapperId || 'gridWrapper');
+    const table   = document.getElementById(opts.tableId   || 'mainTimetable');
     wrapper.querySelectorAll('.schedule-pill, .historical-pill, .cal-no-data').forEach(p => p.remove());
 
     if (!sessions || sessions.length === 0) {
@@ -376,7 +378,7 @@ function renderCalendar(sessions) {
     const timeCol = table.querySelector('.time-cell');
     const thead = table.querySelector('thead');
     if (!firstCell || firstCell.offsetWidth === 0 || firstCell.offsetHeight === 0) {
-        requestAnimationFrame(() => renderCalendar(sessions)); return;
+        requestAnimationFrame(() => renderCalendar(sessions, opts)); return;
     }
 
     const colWidth = firstCell.offsetWidth;
@@ -436,18 +438,21 @@ function renderCalendar(sessions) {
 }
 
 /* ---- Table render ---- */
-function renderTable(sessions) {
-    const tbody = document.getElementById('offeringsTableBody');
+function renderTable(sessions, opts = {}) {
+    const tbody = document.getElementById(opts.tbodyId || 'offeringsTableBody');
     if (!sessions || sessions.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-times" style="margin-right:6px;"></i>No schedule data found for the selected filters.</span></td></tr>';
         return;
     }
 
-    const progSel = document.getElementById('view_prog');
-    const ylSel   = document.getElementById('view_yl');
-    const progCode = progSel ? progSel.value : '';
-    const yl       = ylSel  ? ylSel.value   : '';
-    const courseLabel = progCode && yl ? `${progCode} ${yl}` : (progCode || '-');
+    let courseLabel = opts.courseLabel;
+    if (courseLabel === undefined) {
+        const progSel = document.getElementById('view_prog');
+        const ylSel   = document.getElementById('view_yl');
+        const progCode = progSel ? progSel.value : '';
+        const yl       = ylSel  ? ylSel.value   : '';
+        courseLabel = progCode && yl ? `${progCode} ${yl}` : (progCode || '-');
+    }
 
     const grouped = {};
     sessions.forEach(sess => {
@@ -862,6 +867,9 @@ function _showOverlayToast(msg) {
 
 /* ---- Init ---- */
 window.onload = function () {
+    // Reused (read-only) on the Reports module's Class Schedule preview, which
+    // has none of this page's own filter-bar markup -- inert there.
+    if (!document.getElementById('schedule-init-data')) return;
     document.getElementById('calendarViewWrapper').style.display = 'block';
     document.getElementById('tableViewWrapper').style.display    = 'none';
     updateYearLevels();

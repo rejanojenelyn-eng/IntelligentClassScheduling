@@ -23,11 +23,16 @@ let _activeBldg = null;
 let _activeRoom = null;
 let _floorFilter = '';
 
+// Reused (read-only) on the Reports module's Room Schedule preview, which has
+// no #frs-init-data element -- guard so it's inert there instead of throwing.
 const _initEl = document.getElementById('frs-init-data');
-_buildings    = JSON.parse(_initEl.dataset.buildings || '[]');
-_rooms        = JSON.parse(_initEl.dataset.rooms     || '[]');
+if (_initEl) {
+    _buildings = JSON.parse(_initEl.dataset.buildings || '[]');
+    _rooms     = JSON.parse(_initEl.dataset.rooms     || '[]');
+}
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (!document.getElementById('frs-init-data')) return;
     _buildBldgTabs();
     _buildAvailBuildingFilter();
     _buildGrid();
@@ -160,8 +165,8 @@ async function frsSelectRoom(rid, rname, bid) {
 /* ═══════════════════════════════════════════
    GRID BUILD + RENDER
 ═══════════════════════════════════════════ */
-function _buildGrid() {
-    const grid = document.getElementById('frsGrid');
+function _buildGrid(targetId = 'frsGrid') {
+    const grid = document.getElementById(targetId);
     grid.innerHTML = '';
     ['TIME', 'MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'].forEach(d => {
         const h = document.createElement('div');
@@ -184,12 +189,16 @@ function _buildGrid() {
     }
 }
 
-function _clearGrid() {
-    document.querySelectorAll('.frs-pill').forEach(p => p.remove());
+function _clearGrid(targetId = 'frsGrid') {
+    const grid = document.getElementById(targetId);
+    if (!grid) return;
+    grid.querySelectorAll('.frs-pill').forEach(p => p.remove());
 }
 
-function _renderRoomCalendar(sessions) {
-    _clearGrid();
+function _renderRoomCalendar(sessions, targetId = 'frsGrid') {
+    _clearGrid(targetId);
+    const grid = document.getElementById(targetId);
+    if (!grid) return;
     sessions.forEach(s => {
         const day = _normalizeDay(s.daydesc);
         if (!day) return;
@@ -200,7 +209,7 @@ function _renderRoomCalendar(sessions) {
         const visStart   = Math.max(startM, FRS_GRID_START);
         const visEnd     = Math.min(endM, FRS_GRID_END);
         const anchorSlot = Math.floor((visStart - FRS_GRID_START) / 30) * 30 + FRS_GRID_START;
-        const cell = document.querySelector(`.frs-day-col-cell[data-day="${day}"][data-slot="${anchorSlot}"]`);
+        const cell = grid.querySelector(`.frs-day-col-cell[data-day="${day}"][data-slot="${anchorSlot}"]`);
         if (!cell) return;
         const offsetPx = (visStart - anchorSlot) * (FRS_SLOT_H / 30);
         const heightPx = Math.max((visEnd - visStart) * (FRS_SLOT_H / 30), 20);
@@ -227,6 +236,9 @@ function _renderRoomCalendar(sessions) {
 
 /* ─── Schedule Detail Modal ─── */
 function frsShowDetail(s) {
+    // Reused (read-only) on the Reports module's Room Schedule preview, which
+    // has no detail-modal markup -- inert there instead of throwing on click.
+    if (!document.getElementById('frsDetailOverlay')) return;
     const startLabel = _minsToLabel(_timeidToMins(s.starttimeid) || FRS_GRID_START);
     const endLabel   = _minsToLabel(_timeidToMins(s.endtimeid)   || FRS_GRID_START);
     const timeRange  = `${startLabel} – ${endLabel}`;
