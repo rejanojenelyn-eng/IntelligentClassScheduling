@@ -22295,47 +22295,79 @@ def api_validate_schedule():
 
 
 def _sync_mergedclass_for_semester(cur, sem_id):
-    """Recompute public.mergedclass for this semester from the current Published
-    schedule — a merged class is >1 distinct section sharing the same subject,
-    faculty, day and time slot (room deliberately excluded: one merged class can
-    span multiple venues, e.g. NSTP overflow rooms — see scheduler.py's
-    fetch_admin_faculty_prefs, which reads this table as the GA's top-priority
-    faculty override). Full replace so stale merges (faculty reassigned, a
-    section pulled out) don't linger.
+    """Recompute public.mergedclass + public.mergedclass_sections for this semester
+    from the current Published schedule — a merged class is >1 distinct section
+    sharing the same subject, faculty, day and time slot (room deliberately
+    excluded: one merged class can span multiple venues, e.g. NSTP overflow rooms
+    — see scheduler.py's fetch_admin_faculty_prefs, which reads mergedclass as the
+    GA's top-priority faculty override). Full replace so stale merges (faculty
+    reassigned, a section pulled out) don't linger; deleting a mergedclass row
+    cascades to its mergedclass_sections rows (FK ON DELETE CASCADE).
+
+    mergedclass is keyed by curriculumsubjectid (one per participating program's
+    curriculum, since a shared subject like NSTP has a separate curriculumsubject
+    row per program), so a single merge group produces one mergedclass row per
+    distinct curriculumsubjectid involved. mergedclass_sections then links each of
+    those rows to the actual section(s) — under that curriculumsubjectid — that
+    are part of the merge (a curriculumsubjectid can cover >1 section, e.g. two
+    sections of the same program/year sharing one curriculum row).
     """
     cur.execute("""
-        SELECT cs.subjectcode, s.employeenumber,
-               array_agg(DISTINCT sec.sectionname ORDER BY sec.sectionname) AS section_names,
-               array_agg(DISTINCT s.curriculumsubjectid) AS curriculumsubjectids
+        SELECT cs.subjectcode, s.employeenumber, s.curriculumsubjectid, s.sectionid,
+               ss.daydesc, ss.starttimeid, ss.endtimeid
         FROM public.schedule s
         JOIN public.schedule_version sv  ON sv.scheduleid = s.scheduleid
         JOIN public.schedule_sessions ss ON ss.versionid  = sv.versionid
         JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
-        JOIN public.sections sec         ON sec.sectionid = s.sectionid
         WHERE sv.status = 'Published' AND s.semesterid = %s AND s.employeenumber IS NOT NULL
-        GROUP BY cs.subjectcode, s.employeenumber, ss.daydesc, ss.starttimeid, ss.endtimeid
-        HAVING count(DISTINCT s.sectionid) > 1
     """, (sem_id,))
+    all_rows = cur.fetchall() or []
 
-    # Collapse groups that differ only by day (e.g. a class meeting Tue+Fri) —
-    # mergedclass has no day/time column, one row per curriculumsubjectid is enough.
-    seen = {}
-    for g in (cur.fetchall() or []):
-        key = (g['subjectcode'], g['employeenumber'], tuple(sorted(g['curriculumsubjectids'])))
-        seen.setdefault(key, g)
+    # Slot = the exact meeting this section attended (subject + faculty + day + time).
+    # >1 distinct section on the same slot means they attended together — a merge.
+    slot_sections = {}
+    for r in all_rows:
+        slot_key = (r['subjectcode'], r['employeenumber'], r['daydesc'], r['starttimeid'], r['endtimeid'])
+        slot_sections.setdefault(slot_key, set()).add(r['sectionid'])
 
-    rows = []
-    for (subjectcode, emp, csids), g in seen.items():
-        classname = f"{subjectcode} - Merged ({'/'.join(g['section_names'])})"
-        rows.extend((csid, sem_id, emp, classname) for csid in csids)
+    # Collapse groups that differ only by day (e.g. a class meeting Tue+Fri) by
+    # keying on the actual section set, not the slot — mergedclass has no day/time column.
+    merge_groups = {}   # (subjectcode, employeenumber, frozenset(sectionids)) -> True
+    for (subjectcode, emp, _day, _st, _et), sectionids in slot_sections.items():
+        if len(sectionids) > 1:
+            merge_groups[(subjectcode, emp, frozenset(sectionids))] = True
+
+    # sectionid -> (curriculumsubjectid, sectionname) for the merged subject, and
+    # curriculumsubjectid -> sectionname list, used to build the admin-facing classname.
+    cur.execute("SELECT sectionid, sectionname FROM public.sections")
+    sectionname_by_id = {r['sectionid']: r['sectionname'] for r in (cur.fetchall() or [])}
+    csid_by_subj_sect = {(r['subjectcode'], r['sectionid']): r['curriculumsubjectid'] for r in all_rows}
 
     cur.execute("DELETE FROM public.mergedclass WHERE semesterid = %s", (sem_id,))
-    if rows:
-        psycopg2.extras.execute_values(cur, """
-            INSERT INTO public.mergedclass
-                (curriculumsubjectid, semesterid, employeenumber, classname, isactive)
-            VALUES %s
-        """, [(csid, semid, emp, cname, True) for (csid, semid, emp, cname) in rows])
+
+    for (subjectcode, emp, sectionids) in merge_groups.keys():
+        sectionids = sorted(sectionids, key=lambda sid: sectionname_by_id.get(sid, ''))
+        all_names = [sectionname_by_id.get(sid, '?') for sid in sectionids]
+        classname = f"{subjectcode} - Merged ({'/'.join(all_names)})"
+
+        by_csid = {}
+        for sid in sectionids:
+            csid = csid_by_subj_sect.get((subjectcode, sid))
+            if csid:
+                by_csid.setdefault(csid, []).append(sid)
+
+        for csid, sids_for_csid in by_csid.items():
+            cur.execute("""
+                INSERT INTO public.mergedclass
+                    (curriculumsubjectid, semesterid, employeenumber, classname, isactive)
+                VALUES (%s, %s, %s, %s, TRUE)
+                RETURNING mergedclassid
+            """, (csid, sem_id, emp, classname))
+            new_id = cur.fetchone()['mergedclassid']
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO public.mergedclass_sections (mergedclassid, sectionid)
+                VALUES %s
+            """, [(new_id, sid) for sid in sids_for_csid])
 
 
 @app.route('/api/schedule/approve', methods=['POST'])

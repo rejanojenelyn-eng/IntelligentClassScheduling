@@ -177,24 +177,6 @@
         text-transform:uppercase; cursor:pointer; transition:all 0.18s; text-align:center; }
     .validation-btn:hover { background:#630100; color:white; }
 
-    /* ── Leave Confirmation Modal ── */
-    .leave-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4);
-        backdrop-filter:blur(3px); z-index:99999; align-items:center; justify-content:center; }
-    .leave-overlay.active { display:flex; }
-    .leave-box { background:#ffffff; border-radius:14px; padding:30px; max-width:400px; width:90%;
-        text-align:center; box-shadow:0 15px 40px rgba(0,0,0,0.3);
-        animation:conflictPop 0.22s cubic-bezier(0.34,1.56,0.64,1); border-top:5px solid #f39c12; }
-    .leave-icon { font-size:3rem; color:#f39c12; margin-bottom:15px; }
-    .leave-title { color:#333; font-size:1.3rem; font-weight:900; margin:0 0 10px; }
-    .leave-message { color:#666; font-size:0.9rem; line-height:1.5; margin:0 0 25px; }
-    .leave-buttons { display:flex; gap:15px; justify-content:center; }
-    .leave-btn-cancel { flex:1; padding:10px; border:2px solid #bdc3c7; color:#7f8c8d; background:white;
-        border-radius:6px; font-weight:800; cursor:pointer; transition:all 0.2s; }
-    .leave-btn-cancel:hover { background:#f1f2f6; color:#2c3e50; border-color:#95a5a6; }
-    .leave-btn-confirm { flex:1; padding:10px; border:2px solid #c0392b; color:white; background:#c0392b;
-        border-radius:6px; font-weight:800; cursor:pointer; transition:all 0.2s; }
-    .leave-btn-confirm:hover { background:#e74c3c; border-color:#e74c3c; }
-
     /* ── General Confirm Modal ── */
     .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45);
         backdrop-filter:blur(3px); z-index:10003; align-items:center; justify-content:center; }
@@ -547,19 +529,6 @@
         <div class="confirm-buttons">
             <button class="confirm-btn-cancel" id="confirmBtnCancel">Cancel</button>
             <button class="confirm-btn-ok" id="confirmBtnOk">OK</button>
-        </div>
-    </div>
-</div>
-
-<!-- ── Leave Warning Modal ── -->
-<div id="leaveModal" class="leave-overlay">
-    <div class="leave-box">
-        <div class="leave-icon"><i class="fas fa-exclamation-triangle"></i></div>
-        <h2 class="leave-title">Unsaved Changes</h2>
-        <p class="leave-message">You have unsaved changes (schedule entries or unconfirmed faculty assignments). Are you sure you want to leave this page without saving?</p>
-        <div class="leave-buttons">
-            <button class="leave-btn-cancel" onclick="closeLeaveModal()">Stay on Page</button>
-            <button class="leave-btn-confirm" onclick="confirmLeave()">Leave Anyway</button>
         </div>
     </div>
 </div>

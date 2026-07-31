@@ -618,7 +618,6 @@ async function editExistingSession(idx) {
     await window.handlePillClick(encodeURIComponent(JSON.stringify(sess)));
 }
 
-let pendingLeaveUrl = null;
 window.isLeavingIntentionally = false;
 
 function hasUnsavedChanges() {
@@ -626,32 +625,6 @@ function hasUnsavedChanges() {
     // isPreview (tentative UI state), and fromGenerator (unsaved transfer from the generator,
     // shown as a visual reference but not yet edited by the user).
     return pendingManualSchedule.some(s => !s.fromExisting && !s.isPreview && !s.fromGenerator) || !!window._pendingFacultyAssignment;
-}
-
-document.addEventListener('click', function(e) {
-    if (window.isLeavingIntentionally) return;
-    const link = e.target.closest('a');
-    if (link && link.href && !link.target && !link.href.startsWith('javascript:')) {
-        if (hasUnsavedChanges()) {
-            e.preventDefault();
-            showLeaveModal(link.href);
-        }
-    }
-});
-
-function showLeaveModal(url) {
-    pendingLeaveUrl = url;
-    document.getElementById('leaveModal').classList.add('active');
-}
-
-function closeLeaveModal() {
-    document.getElementById('leaveModal').classList.remove('active');
-    pendingLeaveUrl = null;
-}
-
-function confirmLeave() {
-    window.isLeavingIntentionally = true;
-    window.location.href = pendingLeaveUrl;
 }
 
 window.addEventListener('beforeunload', function (e) {
