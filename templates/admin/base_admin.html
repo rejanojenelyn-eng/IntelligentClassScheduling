@@ -147,7 +147,7 @@
                             </li>
                         </ul>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_reports' }}">
+                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_reports', 'report_preview', 'report_export'] }}">
                         <a href="{{ url_for('admin_reports') }}" class="nav-link">
                             <i class="fas fa-file-lines"></i><span class="nav-label">Reports</span>
                         </a>
@@ -155,6 +155,11 @@
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_user_management' }}">
                         <a href="{{ url_for('admin_user_management') }}" class="nav-link">
                             <i class="fas fa-user-shield"></i><span class="nav-label">User Management </span>
+                        </a>
+                    </li>
+                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_program_management' }}">
+                        <a href="{{ url_for('admin_program_management') }}" class="nav-link">
+                            <i class="fas fa-graduation-cap"></i><span class="nav-label">Program Management</span>
                         </a>
                     </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_settings' }}">
@@ -193,23 +198,31 @@
             </div>
         </div>
     </div>
-    <div id="flashContainer" class="flash-container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
+    <!-- ══════════════════════════════════════════
+         FLASHED MESSAGE POPUP (server-rendered flash() → redirect flows).
+         Same .notif-overlay component that showAlertPopup() uses for
+         AJAX-driven notices, so both look the same everywhere. -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div id="flashNotifOverlay" class="notif-overlay" onclick="this.remove()">
         {% for category, message in messages %}
-        <div class="flash-toast {{ category }}">
-            <div class="toast-icon">
+        <div class="notif-popup" onclick="event.stopPropagation()">
+            <div class="notif-icon notif-{% if category in ['success','warning','info'] %}{{ category }}{% else %}error{% endif %}">
                 <i class="fas {% if category == 'error' %}fa-exclamation-circle{% elif category == 'warning' %}fa-exclamation-triangle{% elif category == 'info' %}fa-info-circle{% else %}fa-check-circle{% endif %}"></i>
             </div>
-            <div class="toast-content">
-                <p>{{ message }}</p>
+            <div class="notif-body">
+                <div class="notif-title">{% if category == 'success' %}Success{% elif category == 'warning' %}Warning{% elif category == 'info' %}Notice{% else %}Error{% endif %}</div>
+                <div class="notif-message">{{ message }}</div>
             </div>
-            <span class="toast-close" onclick="this.parentElement.style.display='none'">&times;</span>
+            <button class="notif-close-btn" type="button" onclick="document.getElementById('flashNotifOverlay').remove()">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
         {% endfor %}
-        {% endif %}
-        {% endwith %}
     </div>
+    <script>setTimeout(() => document.getElementById('flashNotifOverlay')?.remove(), 6000);</script>
+    {% endif %}
+    {% endwith %}
 
     <!-- Profile / Email / Password Panels -->
     <div id="profilePanel" class="up-panel" style="display:none;">
@@ -225,13 +238,15 @@
                     <i class="fas fa-user" id="profilePhotoIcon"></i>
                     <img id="profilePhotoImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
                 </div>
-                <label class="up-change-photo-btn" for="profilePhotoInput"><i class="fas fa-upload"></i> Change Photo</label>
+                <label class="up-change-photo-btn" id="pfChangePhotoBtn" for="profilePhotoInput"><i class="fas fa-upload"></i> Change Photo</label>
                 <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
                 <div class="up-photo-hint">JPG, PNG up to 2MB</div>
             </div>
             <div class="up-form">
                 <div class="up-field"><label>Employee ID</label><input type="text" id="pfEmpId" class="up-input" readonly></div>
-                <div class="up-field"><label>Full Name</label><input type="text" id="pfFullName" class="up-input" readonly></div>
+                <div class="up-field"><label>First Name</label><input type="text" id="pfFirstName" class="up-input" readonly></div>
+                <div class="up-field"><label>Middle Name</label><input type="text" id="pfMiddleName" class="up-input" readonly></div>
+                <div class="up-field"><label>Surname</label><input type="text" id="pfSurname" class="up-input" readonly></div>
                 <div class="up-field" id="pfDesignationSection"><label>Designation</label><select id="pfDesignation" class="up-select"></select></div>
                 <div class="up-field" id="pfSpecializationSection"><label>Specialization</label><select id="pfSpecialization" class="up-select"></select></div>
                 <div class="up-field" id="pfStatusSection"><label>Employment Status</label>
@@ -240,9 +255,9 @@
             </div>
             <div class="up-panel-ft">
                 <button class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
-                <button class="up-btn-save" onclick="saveProfile()">Save Changes</button>
+                <button class="up-btn-save" id="pfSaveBtn" onclick="saveProfile()">Save Changes</button>
             </div>
-            <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span>Changes will be reflected across the system.</span></div>
+            <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
         </div>
     </div>
 
@@ -254,12 +269,15 @@
             </div>
             <h2 class="up-panel-title">Change Password</h2>
             <p class="up-panel-sub">Update your account password.</p>
-            <div class="up-form">
+            <!-- Scoped in its own <form> so Chrome's password-manager association stays
+                 confined to these 3 fields instead of bleeding onto unrelated plain-text
+                 inputs elsewhere on the page (which has no other <form> wrapping them). -->
+            <form class="up-form" autocomplete="off" onsubmit="return false;">
                 <div class="up-field"><label>Current Password</label><input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password"></div>
                 <div class="up-field"><label>New Password</label><input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters" autocomplete="new-password"></div>
                 <div class="up-field"><label>Confirm New Password</label><input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password"></div>
                 <div id="pwError" class="up-error" style="display:none;"></div>
-            </div>
+            </form>
             <div class="up-panel-ft">
                 <button class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
                 <button class="up-btn-save" onclick="savePassword()">Update Password</button>

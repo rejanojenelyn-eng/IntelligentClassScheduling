@@ -8,11 +8,28 @@ const allRooms   = JSON.parse(_initData.dataset.rooms);
 const allFaculty = JSON.parse(_initData.dataset.faculty);
 const LAB_CONSTRAINT_ENABLED  = _initData.dataset.labConstraint !== 'false';
 const WEEKEND_ENABLED         = _initData.dataset.weekendEnabled !== 'false';
-const WEEKEND_DAY_SCOPE       = _initData.dataset.weekendDay     || 'sunday_only';
+// Any admin-picked day combination (Settings -> Restricted-Day Subject Requirement),
+// not just Sunday/weekends — server sends it pre-parsed as a JSON array.
+const WEEKEND_DAY_SCOPE       = (() => {
+    try {
+        const arr = JSON.parse(_initData.dataset.weekendDay || '["Sunday"]');
+        return Array.isArray(arr) && arr.length ? arr : ['Sunday'];
+    } catch { return ['Sunday']; }
+})();
 const WEEKEND_SUBJECT_SCOPE   = _initData.dataset.weekendSubject || 'nstp_only';
 const SPEC_CONSTRAINT_ENABLED = _initData.dataset.specEnabled    !== 'false';
 const MERGE_ENABLED           = _initData.dataset.mergeEnabled   !== 'false';
 const MERGE_SCOPE             = _initData.dataset.mergeScope      || 'nstp_only';
+// Explicit subject list from Settings -> Class Merging Policy -> Merge Scope's searchable
+// picker. null when nothing has been added yet, so _getMergeMode falls back to MERGE_SCOPE's
+// legacy nstp_only/non_nstp/all_subjects preset behavior (mirrors _parse_merge_scope_subjects
+// in app.py / scheduler.py — keep these in sync).
+const MERGE_SCOPE_SUBJECTS    = (() => {
+    try {
+        const arr = JSON.parse(_initData.dataset.mergeScopeSubjects || '[]');
+        return (Array.isArray(arr) && arr.length) ? new Set(arr.map(c => String(c).toUpperCase())) : null;
+    } catch { return null; }
+})();
 // Read at file-load time from the data attribute — never depends on inline script order
 const _IS_LOCAL_MODE          = (_initData.dataset.schedulerMode || '') === 'local';
 
@@ -41,10 +58,27 @@ let _curriculumModeLocked = false;
 //   'flexible' — NSTP/OU: same subject is enough; different faculty allowed (large combined session)
 //   'strict'   — non-NSTP: same subject AND same faculty required
 //   'none'     — merging not permitted for this subject under current policy
+// Mirrors database.code_in_merge_scope() — the Merge Scope picker groups every
+// NSTP/OU curriculum variant (NSTP001, NSTP 10013, ...) under one synthetic 'NSTP'
+// entry (see api_list_all_subjects), so a plain Set.has() would only ever match that
+// literal placeholder and never a real scheduled code. Expand it here too.
+function _codeInMergeScope(upperCode, scopeSet) {
+    if (scopeSet.has(upperCode)) return true;
+    if (scopeSet.has('NSTP') && (upperCode.startsWith('NSTP') || upperCode.startsWith('OU'))) return true;
+    return false;
+}
+
 function _getMergeMode(subjectCode) {
     if (!MERGE_ENABLED) return 'none';
     const upper  = (subjectCode || '').toUpperCase();
     const isNstp = upper.startsWith('NSTP') || upper.startsWith('OU');
+    // New behavior: an explicit subject list configured in Settings -> Class Merging
+    // Policy -> Merge Scope always wins once the admin has added at least one subject.
+    if (MERGE_SCOPE_SUBJECTS) {
+        if (!_codeInMergeScope(upper, MERGE_SCOPE_SUBJECTS)) return 'none';
+        return isNstp ? 'flexible' : 'strict';
+    }
+    // Legacy fallback — nothing picked yet, keep the old preset behavior.
     if (MERGE_SCOPE === 'nstp_only')    return isNstp  ? 'flexible' : 'none';
     if (MERGE_SCOPE === 'non_nstp')     return !isNstp ? 'strict'   : 'none';
     if (MERGE_SCOPE === 'all_subjects') return isNstp  ? 'flexible' : 'strict';
@@ -119,19 +153,38 @@ function setSplitMode(mode) {
     if (window._splitChoiceResolve) { window._splitChoiceResolve(mode); window._splitChoiceResolve = null; }
 }
 
+const _ALL_DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+/* Adds/removes whichever day(s) are currently reserved (Settings -> Restricted-Day
+   Subject Requirement) from the header day <select> based on whether the active
+   subject is exempt (NSTP/OU) — was Sunday-only, now any admin-picked day(s). */
 function updateSundayOption() {
-    const daySelect = document.getElementById('sel_day');
-    const isAllowed = _subjInfo && _subjInfo.is_sunday_allowed;
-    const existing  = Array.from(daySelect.options).find(o => o.value === 'Sunday' || o.textContent === 'Sunday');
-    if (isAllowed && !existing) {
-        const opt = document.createElement('option');
-        opt.value = 'Sunday';
-        opt.textContent = 'Sunday';
-        daySelect.appendChild(opt);
-    } else if (!isAllowed && existing) {
-        if (daySelect.value === existing.value) daySelect.value = '';
-        existing.remove();
-    }
+    const daySelect  = document.getElementById('sel_day');
+    const restricted = (_subjInfo && Array.isArray(_subjInfo.restricted_days)) ? _subjInfo.restricted_days : [];
+    const isAllowed  = _subjInfo && _subjInfo.is_restricted_ok;
+    restricted.forEach(day => {
+        const existing = Array.from(daySelect.options).find(o => o.value === day || o.textContent === day);
+        if (isAllowed && !existing) {
+            const opt = document.createElement('option');
+            opt.value = day;
+            opt.textContent = day;
+            daySelect.appendChild(opt);
+        } else if (!isAllowed && existing) {
+            if (daySelect.value === existing.value) daySelect.value = '';
+            existing.remove();
+        }
+    });
+    // Any previously-restricted day that's no longer in the current restricted list
+    // (e.g. the admin changed it from Friday back to Sunday) must be restored.
+    _ALL_DAY_NAMES.filter(d => !restricted.includes(d)).forEach(day => {
+        const existing = Array.from(daySelect.options).find(o => o.value === day || o.textContent === day);
+        if (!existing) {
+            const opt = document.createElement('option');
+            opt.value = day;
+            opt.textContent = day;
+            daySelect.appendChild(opt);
+        }
+    });
 }
 
 function getScheduledHoursForSubject() {
@@ -543,9 +596,10 @@ async function onDayChange() {
     note.className = 'constraint-note';
     note.textContent = '';
 
-    if (day === 'Sunday' && _subjInfo && !_subjInfo.is_sunday_allowed) {
+    const _restrictedDays = (_subjInfo && Array.isArray(_subjInfo.restricted_days)) ? _subjInfo.restricted_days : [];
+    if (_restrictedDays.includes(day) && _subjInfo && !_subjInfo.is_restricted_ok) {
         note.className = 'constraint-note error';
-        note.textContent = '⛔ Sunday is only allowed for OU and NSTP subjects.';
+        note.textContent = `⛔ ${day} is only allowed for OU and NSTP subjects.`;
     }
 
     await updateTimeDropdowns();
@@ -873,7 +927,7 @@ async function renderProgramTimetable() {
     if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&_t=${Date.now()}`;
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok) return;
         const raw = await resp.json();
@@ -894,6 +948,13 @@ async function renderProgramTimetable() {
         (raw || []).forEach(s => {
             // Generator schedule replaces the old DB schedule for any subject it covers.
             if (_genSubjectCodes.has(s.subjectcode)) return;
+            // Same hiddenDbSchedules check renderGrid (Room View) applies — a raw row whose
+            // pendingManualSchedule mirror is being actively edited (fromExisting=true) stays
+            // hidden here too, so its moved/edited local copy (added below) doesn't render
+            // twice — once at its old DB position and once at its new one.
+            if (s.versionid && hiddenDbSchedules.has(`v:${s.versionid}`)) return;
+            const _sIdx = timeStrToSlotIdx(s.start_time);
+            if (hiddenDbSchedules.has(`${s.subjectcode}_${s.daydesc}_${_sIdx}`)) return;
             const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
             const existing = sessByKey.get(key);
             // Prefer Published over Draft for the same slot; otherwise keep first seen
@@ -917,6 +978,44 @@ async function renderProgramTimetable() {
                 temp_id:      _ge.temp_id,
                 room_id:      _ge.room_id,
                 faculty_id:   _ge.faculty_id,
+            });
+        }
+
+        // Also surface every OTHER local, not-yet-saved pendingManualSchedule entry for this
+        // program/year/section (new slices being added, or an existing slice whose day/time/
+        // room/faculty was just edited) — Room View's renderGrid already does this per-room via
+        // its own pendingManualSchedule merge, which is why edits show up live there but not
+        // here. Without this, a change only appears in Program View after Save + a full refetch.
+        const _localEntries = (pendingManualSchedule || []).filter(e =>
+            !e.fromGenerator &&
+            e.ay === ay && e.sem === sem &&
+            (e.course || '') === prog &&
+            String(e.year_level || '') === String(yl) &&
+            (!e.section_id || String(e.section_id) === String(_pvSectId)) &&
+            e.day && e.start_time && e.end_time
+        );
+        for (const _le of _localEntries) {
+            const _key = `${_le.subject_code}|${_le.day}|${_le.start_time}`;
+            sessByKey.set(_key, {
+                subjectcode:  _le.subject_code,
+                subjectname:  _le.subject_name || _le.subject_code,
+                instructor:   _le.instructor   || 'TBA',
+                employee_number: _le.faculty_id || '',
+                roomname:     _le.room || 'TBA',
+                room_id:      _le.room_id,
+                daydesc:      _le.day,
+                start_time:   _le.start_time,
+                end_time:     _le.end_time,
+                starttimeid:  getTimeSlotIndex(_le.start_time),
+                endtimeid:    getTimeSlotIndex(_le.end_time),
+                status:       _le.status || 'Draft',
+                temp_id:      _le.temp_id,
+                versionid:    _le.versionid || null,
+                faculty_id:   _le.faculty_id,
+                programcode:  _le.course || prog,
+                year_level:   _le.year_level || yl,
+                section_id:   _le.section_id || _pvSectId,
+                isPreview:    _le.isPreview || false,
             });
         }
 
@@ -944,7 +1043,9 @@ function _renderProgPills(sessions, prog, yl) {
     const timeCol   = table.querySelector('.time-col');
     const thead     = table.querySelector('thead');
 
-    if (!firstCell || firstCell.offsetWidth === 0) {
+    // Also wait for header/row height, not just column width — see the matching guard in
+    // renderGrid for why a too-early read here clips pills under the header on first render.
+    if (!firstCell || !thead || firstCell.offsetWidth === 0 || firstCell.offsetHeight === 0 || thead.offsetHeight === 0) {
         // Defer until the grid is laid out; abort if a newer render has been requested
         requestAnimationFrame(() => {
             if (token !== _progPillsToken) return;
@@ -1108,22 +1209,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (initProg || initAy) await triggerCascade(true);
     if (initMode === 'program') switchMode('program');
 
-    // Auto-select section when arriving from "Edit to Manual Editor" on a draft card.
-    // Skip when from_generator=1 — the template DOMContentLoaded handler already called
-    // _loadSectionOptions() and selectBcSect(). A second _loadSectionOptions() call here
-    // would invoke _resetRightPanel() which clears generator entries from pendingManualSchedule.
-    const _isFromGenerator = (_initData.dataset.fromGenerator === '1');
-    if (initSect && initProg && initYl && !_isFromGenerator) {
-        try {
-            if (typeof _loadSectionOptions === 'function') await _loadSectionOptions();
-            const _p = new URLSearchParams({ program: initProg, yearLevel: initYl });
-            if (initAy) _p.set('ay', initAy);
-            const r = await fetch(`/api/sections-by-program?${_p}`);
-            const d = await r.json();
-            const match = (d.sections || []).find(s => String(s.id) === String(initSect));
-            if (match && typeof selectBcSect === 'function') selectBcSect(match.id, match.name);
-        } catch(e) { /* silently ignore */ }
-    }
+    // Section auto-select for "Edit to Manual Editor" (and the generator transfer) is
+    // handled entirely by the template's own DOMContentLoaded handler further down this
+    // same page (manualScheduleEditor.html), which runs after this one and does the exact
+    // same _loadSectionOptions() + selectBcSect() sequence unconditionally whenever
+    // initSect/initSectName are present — not just for from_generator=1.
+    //
+    // This used to duplicate that work here too (skipped only when from_generator=1), but
+    // both blocks calling _loadSectionOptions() around the same time is a real race:
+    // _loadSectionOptions() aborts any in-flight call via AbortController, so whichever
+    // call started first gets its fetch cancelled — its "sel_section" dropdown never
+    // actually gets populated with real <option>s. If that aborted call's chain still went
+    // on to call selectBcSect(initSect, ...) (it does — the abort is silent, not a
+    // rejection), setting .value on a <select> with no matching option is a silent no-op:
+    // Program and Year Level end up correctly selected (those are set directly, no fetch
+    // involved) but Section stays stuck on "-Select Section-" and nothing else loads.
+    // Removed here entirely so only the one, later, correctly-ordered call runs.
 });
 
 function toggleProgMenu(event) {
@@ -1224,6 +1325,15 @@ async function triggerDSSLogic() {
     }
     _skipExistingCheck = false;
 
+    // Several awaits have already run above (subject_info, fetchExistingDays,
+    // updateTimeDropdowns, the existing_sessions check) — if the user clicked a different
+    // subject while any of those were in flight, subjCode (captured at entry) no longer
+    // matches what's on screen. Everything from here on (generator pre-fill, DSS
+    // recommendations) writes to the shared faculty/time-slot DOM with no other guard, so
+    // continuing would overwrite whatever subject the user has since switched to — most
+    // visibly, stamping this stale subject's faculty into the new one's picker.
+    if (document.getElementById('sel_subj').value !== subjCode) return;
+
     // When generator entries exist for this subject, load them as pre-filled slice rows so the
     // user can review and edit before saving as Draft. confirmAllSlots removes non-fromExisting
     // entries for the current subject before processing, so there is no double-counting.
@@ -1267,9 +1377,14 @@ async function triggerDSSLogic() {
     }
 
     try {
-        const _ay  = document.getElementById('sel_ay').value;
-        const _sem = document.getElementById('sel_sem').value;
-        const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(_ay)}&sem=${encodeURIComponent(_sem)}`).then(r => r.json());
+        const _ay   = document.getElementById('sel_ay').value;
+        const _sem  = document.getElementById('sel_sem').value;
+        // Program + Year Level so room recommendations (backend) can prioritize rooms
+        // historically used for THIS program/year level's offering of the subject, not
+        // just any room the subject code has ever used across every program.
+        const _prog = document.getElementById('sel_prog')?.value || '';
+        const _yl   = document.getElementById('sel_year')?.value || '';
+        const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(_ay)}&sem=${encodeURIComponent(_sem)}&program=${encodeURIComponent(_prog)}&year_level=${encodeURIComponent(_yl)}`).then(r => r.json());
         if (!data.success) { initDSSMenus(); return; }
 
         console.log('[DSS] recommended faculty:', data.faculty.recommended.map(f => `${f.name} (src:${f._src||'?'}, hist:"${f._hist_name||''}", count:${f.count||0})`));
@@ -1556,21 +1671,18 @@ async function confirmAndPlace() {
         }
     }
 
-    if (dayVal === 'Sunday' && _subjInfo && !_subjInfo.is_sunday_allowed) {
-        await showValidationModal('Sunday Restriction',
-            `Only NSTP and OU subjects may be scheduled on Sunday. "${subjSel.value}" is not allowed on Sunday.`);
-        return;
-    }
-
-    // ── HC4: Saturday restriction (when "All Weekends" + NSTP-only is configured) ──
-    if (dayVal === 'Saturday' && WEEKEND_ENABLED && WEEKEND_DAY_SCOPE === 'all_weekends' && WEEKEND_SUBJECT_SCOPE === 'nstp_only') {
+    // ── HC4: Restricted-Day Subject Requirement — any admin-picked day(s), not just
+    // Sunday/weekends (see Settings). _subjInfo.restricted_days is the reserved day list;
+    // is_restricted_ok says whether THIS subject (NSTP/OU) is exempt on those day(s). ──
+    const _restrictedDays = (_subjInfo && Array.isArray(_subjInfo.restricted_days)) ? _subjInfo.restricted_days : [];
+    if (WEEKEND_ENABLED && _restrictedDays.includes(dayVal) && _subjInfo && !_subjInfo.is_restricted_ok) {
         const subjCode = (subjSel.value || '').toUpperCase();
         const isNstpOu = subjCode.startsWith('NSTP') || subjCode.startsWith('OU');
         if (!isNstpOu) {
-            await showValidationModal('Saturday Restriction',
-                `"${subjSel.value}" cannot be scheduled on Saturday. ` +
-                `The current Weekend Restriction setting only allows NSTP/OU subjects on weekends. ` +
-                `Please choose a weekday, or update the Weekend Restriction in Settings.`);
+            await showValidationModal('Day Restriction',
+                `"${subjSel.value}" cannot be scheduled on ${dayVal}. ` +
+                `Only NSTP/OU subjects are allowed on ${_restrictedDays.join('/')}. ` +
+                `Please choose a different day, or update the Restricted-Day Subject Requirement in Settings.`);
             return;
         }
     }
@@ -2205,6 +2317,24 @@ document.getElementById('btnManualApprove').addEventListener('click', () => wind
 // used by the faculty-reassignment flow so a reassignment on an already-Published subject
 // goes live immediately instead of sitting as an unapproved Draft (see _triggerSaveDraft).
 window._runManualApprove = async function(opts = {}) {
+    // Guard against double-invocation. The button is only disabled further down (once the
+    // publish slice-selection modal has already been resolved), so a fast double-click — or
+    // the button click firing while an auto-mode call from faculty reassignment is still in
+    // flight — used to spawn two concurrent runs that both read/mutate the same
+    // pendingManualSchedule array and the shared sel_day/sel_start_time/etc. globals and DOM
+    // ts-rows at once. That race corrupted shared state: slices silently went missing from
+    // what got published, and re-approving afterward showed progressively fewer slices,
+    // recoverable only with a full page reload.
+    if (window._approveInFlight) return false;
+    window._approveInFlight = true;
+    try {
+        return await window._runManualApproveImpl(opts);
+    } finally {
+        window._approveInFlight = false;
+    }
+};
+
+window._runManualApproveImpl = async function(opts = {}) {
     const auto = !!opts.auto;
     const ay   = formAyFilter();
     const sem  = formSemFilter();
@@ -2217,29 +2347,74 @@ window._runManualApprove = async function(opts = {}) {
         return;
     }
 
-    // Scope to the currently selected subject only — fromExisting sessions are
-    // already in the DB (Published/Draft) and must not be re-published here.
+    // Scope to the currently selected subject only. A fromExisting entry that is already
+    // Published must not be re-submitted here — but one that is fromExisting and still Draft
+    // (loaded back into slices after an earlier Save as Draft, or after this same subject's
+    // last Approve run) has NEVER been published and must still be included, or it silently
+    // drops out of what gets approved whenever at least one other, genuinely-new slice for the
+    // same subject also exists — the user then sees only the newest slice in the publish
+    // modal, with earlier Draft slices missing, until a separate Save as Draft round-trips
+    // them through the DB and back in (mirrors the correct filter _triggerSaveDraft uses).
     const currentSubj = document.getElementById('sel_subj').value;
     let contextDrafts = pendingManualSchedule.filter(c =>
-        c.ay === ay && c.sem === sem && !c.isPreview && !c.fromExisting &&
+        c.ay === ay && c.sem === sem && !c.isPreview &&
+        !(c.fromExisting && (c.status || '').toLowerCase() === 'published') &&
         (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
     );
 
-    if (contextDrafts.length === 0) {
+    let _usedDbFallbackDrafts = false;
+    // "Publish all" mode (currentSubj === '') must always reconcile against the DB, not
+    // only when the in-memory list is completely empty — pendingManualSchedule commonly
+    // holds just whichever subject is currently open in the editor (e.g. the last one
+    // clicked), while every OTHER subject's Draft sessions live only in the DB, having
+    // already been persisted and cleared from memory by an earlier Save as Draft. Skipping
+    // the DB fetch just because that one subject's entry was present silently limited
+    // "Approve All" to a single subject.
+    if (contextDrafts.length === 0 || !currentSubj) {
         // Try loading saved Draft sessions from DB (scoped to current subject)
         try {
             const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
             const dbData = await dbResp.json();
             if (dbData.success && dbData.sessions && dbData.sessions.length > 0) {
-                contextDrafts = currentSubj
-                    ? dbData.sessions.filter(s => (s.subject_code || s.subjectcode) === currentSubj)
-                    : dbData.sessions;
+                if (currentSubj) {
+                    // dbData.sessions covers the whole program/year, not just this subject —
+                    // e.g. ELED 311 already has a DB Draft, making this non-empty, even though
+                    // THIS subject (a freshly-typed, never-before-saved one) has nothing in the
+                    // DB yet. Only treat the DB as authoritative for this subject if it actually
+                    // has a matching row; otherwise leave contextDrafts/_usedDbFallbackDrafts
+                    // untouched so the unconfirmedRows promotion below still gets a chance to
+                    // pick up that freshly-typed, not-yet-confirmed slice from the DOM. Setting
+                    // _usedDbFallbackDrafts unconditionally here used to skip that promotion and
+                    // report a false "Nothing to Publish" for exactly this case.
+                    const _subjDbDrafts = dbData.sessions.filter(s => (s.subject_code || s.subjectcode) === currentSubj);
+                    if (_subjDbDrafts.length > 0) {
+                        contextDrafts = _subjDbDrafts;
+                        _usedDbFallbackDrafts = true;
+                    }
+                } else {
+                    // Merge: DB sessions plus any in-memory entries the DB doesn't have yet
+                    // (e.g. a slice just added but not yet saved), matched by
+                    // subject+day+start so an already-persisted slice isn't duplicated.
+                    const _dbKeys = new Set(dbData.sessions.map(s =>
+                        `${s.subject_code || s.subjectcode}_${s.day || s.daydesc}_${s.start_time}`));
+                    const _extraLocal = contextDrafts.filter(c =>
+                        !_dbKeys.has(`${c.subject_code || c.subjectcode}_${c.day || c.daydesc}_${c.start_time}`));
+                    contextDrafts = [...dbData.sessions, ..._extraLocal];
+                    _usedDbFallbackDrafts = true;
+                }
             }
         } catch(e) {}
     }
 
-    if (contextDrafts.length === 0) {
-        // Direct publish: collect from filled UI time slices (no draft save required)
+    // Any UI slice row that is filled in but has no matching entry in contextDrafts yet
+    // (matched by day+start+end) still needs to be "confirmed" via confirmAndPlace() before
+    // it can be published. This used to only run when contextDrafts started out completely
+    // empty, so a subject with a mix of already-confirmed slices and one freshly-added slice
+    // (which sits only as an isPreview mirror — deliberately excluded from contextDrafts
+    // above) silently dropped that newest slice from what got published. Skipped when
+    // contextDrafts came from the DB-drafts fallback just above — those rows are already
+    // loaded into the editor as fromExisting slices, not freshly-typed ones needing promotion.
+    if (!_usedDbFallbackDrafts) {
         const filledRows = Array.from(document.querySelectorAll('.ts-row')).filter(row => {
             const day   = row.querySelector('.ts-day-sel')?.value || '';
             const start = row.querySelector('.ts-start-hidden')?.value || '';
@@ -2248,65 +2423,77 @@ window._runManualApprove = async function(opts = {}) {
             return day && start && end && room;
         });
 
-        if (!filledRows.length) {
+        if (contextDrafts.length === 0 && !filledRows.length) {
             await showValidationModal('Nothing to Publish', 'No sessions are scheduled for the selected context. Fill in time slices or save a draft first.');
             return;
         }
 
-        // Snapshot before processing slices — roll back on any failure so no partial data lingers.
-        const _pmBeforeLoop = [...pendingManualSchedule];
-
-        for (const row of filledRows) {
-            const day    = row.querySelector('.ts-day-sel').value;
-            const start  = row.querySelector('.ts-start-hidden').value;
-            const end    = row.querySelector('.ts-end-hidden').value;
-            const roomId = row.querySelector('.ts-room-hidden').value;
-            const roomName = (typeof allRooms !== 'undefined' && allRooms.find(r => String(r.id) === String(roomId))?.name)
-                          || row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
-
-            // Read existingJson (if any) for DB conflict exclusion in confirmAndPlace.
-            let _sessData = null;
-            try { if (row.dataset.existingJson) _sessData = JSON.parse(row.dataset.existingJson); } catch(e) {}
-
-            // Remove any matching pending entry (e.g. fromExisting loaded from DB) before
-            // confirmAndPlace so it isn't double-counted in scheduledAlready.
-            const _sc   = document.getElementById('sel_subj').value;
-            const _ayV  = document.getElementById('sel_ay').value;
-            const _semV = document.getElementById('sel_sem').value;
-            const _dup  = pendingManualSchedule.find(c =>
-                (c.subject_code || c.subjectcode) === _sc && c.ay === _ayV && c.sem === _semV &&
+        const unconfirmedRows = filledRows.filter(row => {
+            const day   = row.querySelector('.ts-day-sel')?.value || '';
+            const start = row.querySelector('.ts-start-hidden')?.value || '';
+            const end   = row.querySelector('.ts-end-hidden')?.value  || '';
+            return !contextDrafts.some(c =>
                 (c.day || c.daydesc) === day && c.start_time === start && c.end_time === end
             );
-            if (_dup) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
+        });
 
-            document.getElementById('sel_day').value = day;
-            if (typeof _injectTimeOpt === 'function') { _injectTimeOpt('sel_start_time', start); _injectTimeOpt('sel_end_time', end); }
-            document.getElementById('sel_room').value = roomId;
-            document.getElementById('room_display_name').value = roomName;
-            if (typeof allRooms !== 'undefined') _roomInfo = allRooms.find(r => String(r.id) === String(roomId)) || null;
-            // Use sessData so confirmAndPlace can exclude this DB session from conflict checks.
-            // For newly added rows (no existingJson), null is correct — they're not in the DB yet.
-            window.currentEditSession = _sessData;
+        if (unconfirmedRows.length > 0) {
+            // Snapshot before processing slices — roll back on any failure so no partial data lingers.
+            const _pmBeforeLoop = [...pendingManualSchedule];
 
-            const prevLen = pendingManualSchedule.length;
-            await confirmAndPlace();
-            if (pendingManualSchedule.length <= prevLen) {
-                // Validation failed — roll back everything added in this loop so a
-                // partial failure cannot be silently published on the next attempt.
-                pendingManualSchedule = _pmBeforeLoop;
-                return;
+            for (const row of unconfirmedRows) {
+                const day    = row.querySelector('.ts-day-sel').value;
+                const start  = row.querySelector('.ts-start-hidden').value;
+                const end    = row.querySelector('.ts-end-hidden').value;
+                const roomId = row.querySelector('.ts-room-hidden').value;
+                const roomName = (typeof allRooms !== 'undefined' && allRooms.find(r => String(r.id) === String(roomId))?.name)
+                              || row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
+
+                // Read existingJson (if any) for DB conflict exclusion in confirmAndPlace.
+                let _sessData = null;
+                try { if (row.dataset.existingJson) _sessData = JSON.parse(row.dataset.existingJson); } catch(e) {}
+
+                // Remove any matching pending entry (e.g. fromExisting loaded from DB) before
+                // confirmAndPlace so it isn't double-counted in scheduledAlready.
+                const _sc   = document.getElementById('sel_subj').value;
+                const _ayV  = document.getElementById('sel_ay').value;
+                const _semV = document.getElementById('sel_sem').value;
+                const _dup  = pendingManualSchedule.find(c =>
+                    (c.subject_code || c.subjectcode) === _sc && c.ay === _ayV && c.sem === _semV &&
+                    (c.day || c.daydesc) === day && c.start_time === start && c.end_time === end
+                );
+                if (_dup) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
+
+                document.getElementById('sel_day').value = day;
+                if (typeof _injectTimeOpt === 'function') { _injectTimeOpt('sel_start_time', start); _injectTimeOpt('sel_end_time', end); }
+                document.getElementById('sel_room').value = roomId;
+                document.getElementById('room_display_name').value = roomName;
+                if (typeof allRooms !== 'undefined') _roomInfo = allRooms.find(r => String(r.id) === String(roomId)) || null;
+                // Use sessData so confirmAndPlace can exclude this DB session from conflict checks.
+                // For newly added rows (no existingJson), null is correct — they're not in the DB yet.
+                window.currentEditSession = _sessData;
+
+                const prevLen = pendingManualSchedule.length;
+                await confirmAndPlace();
+                if (pendingManualSchedule.length <= prevLen) {
+                    // Validation failed — roll back everything added in this loop so a
+                    // partial failure cannot be silently published on the next attempt.
+                    pendingManualSchedule = _pmBeforeLoop;
+                    return;
+                }
             }
+            // Re-derive contextDrafts now that the unconfirmed rows have been promoted.
+            // Scope to currentSubj here too, matching the other contextDrafts assignments
+            // above. Without this, Room View — which now keeps other subjects' pendingManualSchedule
+            // entries around instead of purging them on switch — pulls in already-Published
+            // subjects' sessions as well, submitting them alongside the one actually being approved
+            // and triggering a false "replace published schedule" confirmation for subjects that
+            // were never touched in this action.
+            contextDrafts = pendingManualSchedule.filter(c =>
+                c.ay === ay && c.sem === sem &&
+                (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
+            );
         }
-        // Scope to currentSubj here too, matching the other two contextDrafts assignments
-        // above. Without this, Room View — which now keeps other subjects' pendingManualSchedule
-        // entries around instead of purging them on switch — pulls in already-Published
-        // subjects' sessions as well, submitting them alongside the one actually being approved
-        // and triggering a false "replace published schedule" confirmation for subjects that
-        // were never touched in this action.
-        contextDrafts = pendingManualSchedule.filter(c =>
-            c.ay === ay && c.sem === sem &&
-            (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
-        );
     }
 
     if (contextDrafts.length === 0) {
@@ -2315,14 +2502,19 @@ window._runManualApprove = async function(opts = {}) {
     }
 
     // Show publish slice-selection modal
-    const publishCandidates = contextDrafts.map(c => ({
-        subject:  c.subject_code || c.subjectcode || '—',
-        day:      c.day || c.daydesc || '—',
-        start:    c.start_time || (c.time ? c.time.split(' - ')[0] : '') || '—',
-        end:      c.end_time   || (c.time ? c.time.split(' - ')[1] : '') || '—',
-        roomName: c.room || c.roomname || 'TBA',
-        _raw:     c
-    }));
+    const publishCandidates = contextDrafts.map(c => {
+        const _pcCode = c.subject_code || c.subjectcode || '—';
+        return {
+            subject:     _pcCode,
+            subjectName: (typeof _subjectMeta !== 'undefined' && _subjectMeta[_pcCode]?.name)
+                || c.subject_name || c.subjectname || '',
+            day:      c.day || c.daydesc || '—',
+            start:    c.start_time || (c.time ? c.time.split(' - ')[0] : '') || '—',
+            end:      c.end_time   || (c.time ? c.time.split(' - ')[1] : '') || '—',
+            roomName: c.room || c.roomname || 'TBA',
+            _raw:     c
+        };
+    });
 
     // Auto mode (e.g. faculty reassignment on an already-Published subject) publishes
     // everything just saved without making the user pick slices again.
@@ -2334,6 +2526,13 @@ window._runManualApprove = async function(opts = {}) {
     const _approveSecId = document.getElementById('sel_section')?.value || '';
     const context = { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay, sectionId: _approveSecId };
 
+    // Captured right before the publish request — used after the network round trip and
+    // the "Schedule Published" confirmation (which the user must dismiss) to detect whether
+    // they've since switched to a different subject. Deliberately NOT the same as the
+    // `currentSubj` used above to scope contextDrafts (that one is blank in "publish all"
+    // mode) — this tracks whichever subject's panel is actually on screen right now, so it
+    // stays correct in both single-subject and publish-all flows.
+    const _uiSubjAtApproveStart = document.getElementById('sel_subj').value;
 
     const btn = document.getElementById('btnManualApprove');
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
@@ -2358,7 +2557,14 @@ window._runManualApprove = async function(opts = {}) {
                 if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
                 else hiddenDbSchedules.clear();
                 const currentSubj2 = document.getElementById('sel_subj').value;
-                if (currentSubj2) {
+                if (currentSubj2 !== _uiSubjAtApproveStart) {
+                    // The user switched to a different subject while the publish request and
+                    // the confirmation modal above were pending — that subject's panel was
+                    // already correctly loaded by _onSubjectClick. Refreshing here from data
+                    // scoped to the subject that was actually just published would clobber it
+                    // with stale leftovers (e.g. the faculty box still showing the published
+                    // subject's faculty on top of a freshly-opened, unrelated subject).
+                } else if (currentSubj2) {
                     try {
                         // Use existing_sessions (returns both Draft and Published with correct statuses)
                         // so the editor immediately shows the correct Published/remaining-Draft state.
@@ -2389,7 +2595,9 @@ window._runManualApprove = async function(opts = {}) {
                 return true;
             } else if (data.violations && data.violations.length) {
                 let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
-                data.violations.forEach(v => errorMsg += `• ${v.detail}\n`);
+                // Formal "type" label (e.g. "Conflict: Faculty Schedule") ahead of the
+                // plain-language detail, so each item names what kind of problem it is.
+                data.violations.forEach(v => errorMsg += `• ${v.type || 'Conflict: Schedule'} — ${v.detail}\n`);
                 await showValidationModal('Constraint Violations', errorMsg);
                 return false;
             } else if (data.needs_confirmation) {
@@ -2432,7 +2640,16 @@ function getTimeSlotIndex(timeStr) {
 }
 
 async function renderGrid(roomId, ayFilter = '', semFilter = '') {
-    if (currentMode === 'program') return;
+    if (currentMode === 'program') {
+        // Program View has its own timetable renderer (reads section/program context
+        // straight from the DOM, not from roomId/ayFilter/semFilter). Every call site in
+        // this file calls renderGrid(...) after a pending-schedule mutation to refresh
+        // "whichever grid is on screen" — this used to silently no-op here, which is why
+        // real-time edits reflected instantly in Room View but never in Program View until
+        // a full Save + refetch. Delegate so both views repaint from the same trigger.
+        if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
+        return;
+    }
     const gridToken = ++_gridRenderToken;
 
     const wrapper = document.getElementById('gridWrapper');
@@ -2527,11 +2744,17 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             const key = _mm === 'strict'
                 ? `${s.subjectcode}|${s.daydesc}|${s.starttimeid}|${s.employee_number || ''}`
                 : _mm === 'none'
-                    // Merging disabled for this subject — never group with anything else,
-                    // even another session that happens to share subject+day+time (shouldn't
-                    // normally coexist under 'none', but imported/generated data can still
-                    // produce it, and each must stay its own independently visible pill).
-                    ? `${s.subjectcode}|${s.daydesc}|${s.starttimeid}|nomerge|${s.versionid || s.temp_id || s.section_id || s.sectionid || Math.random()}`
+                    // Merging disabled for this subject — never group with a DIFFERENT section's
+                    // booking of it, even one that happens to share subject+day+time (two
+                    // sections can legitimately have separate classes of the same subject at the
+                    // same slot, in different rooms with different instructors). Room + instructor
+                    // is what actually distinguishes those, not versionid/temp_id — a raw DB row
+                    // and its own local pendingManualSchedule mirror (or two mirrors created for
+                    // the same underlying booking) have no versionid, no shared temp_id, and used
+                    // to fall through to Math.random(), which guaranteed they'd NEVER be
+                    // recognized as the same booking and rendered as duplicate overlapping pills
+                    // for a single real session.
+                    ? `${s.subjectcode}|${s.daydesc}|${s.starttimeid}|nomerge|${s.roomname || ''}|${s.employee_number || ''}`
                     : `${s.subjectcode}|${s.daydesc}|${s.starttimeid}`;
             if (!slotMap.has(key)) slotMap.set(key, []);
             slotMap.get(key).push(s);
@@ -2600,7 +2823,14 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         const timeCol = table.querySelector('.time-col');
         const thead = table.querySelector('thead');
 
-        if (!firstCell || firstCell.offsetWidth === 0) {
+        // Bail and retry next frame until the table has actually been laid out — checking only
+        // column WIDTH let this through while the header (thead) hadn't been measured yet (e.g.
+        // the very first render right after the grid is inserted into the DOM). topOffset would
+        // then read too small, so every pill's `top` was computed against a too-short header and
+        // rendered a few pixels too high — visually clipped/overlapped by the real header once it
+        // finished laying out. Row height (used for every pill's height/top math) needs the same
+        // guard.
+        if (!firstCell || !thead || firstCell.offsetWidth === 0 || firstCell.offsetHeight === 0 || thead.offsetHeight === 0) {
             requestAnimationFrame(() => {
                 if (currentMode === 'program' || gridToken !== _gridRenderToken) return;
                 renderGrid(roomId, ayFilter, semFilter);
@@ -2958,24 +3188,27 @@ async function selectRoom(roomId, roomName) {
 const colorPalette = ['#16a085', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#f39c12', '#d35400', '#c0392b'];
 
 // Local scheduler: 16 distinct colors cycled sequentially (not hash-based)
-// so education subjects with similar prefixes never share a color
+// so education subjects with similar prefixes never share a color.
+// Kept in the same warm orange family as the Local Scheduler theme (#e4812d/#ff934e)
+// instead of the cool blues/greens/purples used before, so pills blend with the rest
+// of the local-mode UI while still staying visually distinct from each other.
 const localColorPalette = [
-    '#5b9fd4',  // calm blue
-    '#68b07e',  // sage green
-    '#e07a50',  // terracotta
-    '#4ba9a9',  // teal
-    '#d4a84b',  // warm amber
-    '#9b72bf',  // soft violet
-    '#c96b6b',  // muted rose
-    '#5aab8f',  // sea green
-    '#7b8ecf',  // periwinkle
-    '#c47d3e',  // warm bronze
-    '#5d9e6a',  // forest green
-    '#be6f9e',  // dusty mauve
-    '#4e9ec4',  // steel blue
-    '#e8864a',  // soft orange
-    '#7fb07a',  // leaf green
-    '#d47fa0',  // pastel pink
+    '#e4812d',  // brand orange
+    '#af601a',  // burnt sienna
+    '#ff934e',  // brand light orange
+    '#935116',  // coffee brown
+    '#d68910',  // deep gold
+    '#c0392b',  // warm red
+    '#eb984e',  // light apricot
+    '#a04000',  // dark rust
+    '#dc7633',  // clay orange
+    '#7e5109',  // olive brown
+    '#f5b041',  // golden yellow-orange
+    '#ba4a00',  // deep orange-red
+    '#e59866',  // dusty peach
+    '#873600',  // deep brown-orange
+    '#f0b27a',  // pale tan-orange
+    '#6e2c00',  // deep mahogany
 ];
 // Sequential color map for local scheduler — each unique subject code gets its own
 // palette slot in the order it first appears, guaranteeing maximum variety
@@ -3040,6 +3273,7 @@ async function _showFirstViolation(violations) {
     function _renderViol(idx) {
         const v      = violations[idx];
         const rule   = v.rule    || '';
+        const type   = v.type    || (rule ? `Conflict: ${rule}` : '');
         const subj   = v.subject || '';
         const detail = v.detail  || '';
 
@@ -3047,9 +3281,12 @@ async function _showFirstViolation(violations) {
             ? `<p style="font-size:12px;color:#888;margin:0 0 10px;">Issue ${idx + 1} of ${total} — fix all issues to save successfully.</p>`
             : '';
 
-        const badge = rule
+        // Formal type label (e.g. "Conflict: Faculty Schedule") instead of the raw
+        // internal rule code (e.g. "HC10"), so the badge names the KIND of problem
+        // in plain language, not an opaque constraint ID.
+        const badge = type
             ? `<span style="display:inline-block;background:#7b1a1a;color:#fff;font-size:10px;font-weight:700;` +
-              `letter-spacing:0.5px;padding:2px 7px;border-radius:4px;margin-bottom:6px;">${rule}</span> `
+              `letter-spacing:0.5px;padding:2px 7px;border-radius:4px;margin-bottom:6px;">${type}</span> `
             : '';
 
         const subjLine = subj

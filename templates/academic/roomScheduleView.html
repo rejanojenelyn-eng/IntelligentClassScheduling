@@ -20,6 +20,18 @@
         margin: 0;
         text-transform: uppercase;
     }
+    .frs-active-term-badge {
+        font-size: .8rem;
+        font-weight: 700;
+        color: #800000;
+        background: #fbeaea;
+        border: 1px solid #e5b8b8;
+        border-radius: 20px;
+        padding: 6px 14px;
+        text-transform: uppercase;
+        letter-spacing: .3px;
+        white-space: nowrap;
+    }
 
     /* ── Main tabs ── */
     .frs-main-tabs {
@@ -259,6 +271,43 @@
         background: #fff;
         box-sizing: border-box;
     }
+    /* Custom-styled searchable combo (Building / Room Number) — a native <datalist>
+       renders the browser's own unstyled popup, which looks completely out of place
+       here, so this draws its own dropdown instead. */
+    .frs-combo { position: relative; }
+    .frs-combo-input[readonly] { cursor: pointer; }
+    .frs-combo-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        max-height: 220px;
+        overflow-y: auto;
+        background: #fff;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        box-shadow: 0 6px 18px rgba(0,0,0,.18);
+        z-index: 500;
+        display: none;
+    }
+    .frs-combo-menu.open { display: block; }
+    .frs-combo-option {
+        padding: 7px 10px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #800000;
+        cursor: pointer;
+        border-bottom: 1px solid #f4f4f4;
+    }
+    .frs-combo-option:last-child { border-bottom: none; }
+    .frs-combo-option:hover { background: #FFF3F3; }
+    .frs-combo-empty {
+        padding: 10px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #999;
+        text-align: center;
+    }
     .frs-avail-results { flex: 1; }
     .frs-avail-results-header {
         background: #FFF9ED;
@@ -364,6 +413,7 @@
     <!-- Page header -->
     <div class="frs-header-row">
         <h1 class="frs-page-title">ROOM SCHEDULE</h1>
+        <span class="frs-active-term-badge">{{ current_ay_label }} &middot; {{ current_sem_label }}</span>
     </div>
 
     <!-- Main tabs -->
@@ -422,11 +472,21 @@
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
-                        <input type="time" id="frsAvailStart" value="" onchange="frsFindAvailable()">
+                        <div class="frs-combo" id="frsStartCombo">
+                            <input type="text" id="frsAvailStartTxt" class="frs-combo-input" readonly
+                                   placeholder="Start time…" onclick="_frsComboFilter('frsStartCombo')">
+                            <input type="hidden" id="frsAvailStart" value="">
+                            <div class="frs-combo-menu" id="frsStartComboMenu"></div>
+                        </div>
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
-                        <input type="time" id="frsAvailEnd" value="" onchange="frsFindAvailable()">
+                        <div class="frs-combo" id="frsEndCombo">
+                            <input type="text" id="frsAvailEndTxt" class="frs-combo-input" readonly
+                                   placeholder="End time…" onclick="_frsComboFilter('frsEndCombo')">
+                            <input type="hidden" id="frsAvailEnd" value="">
+                            <div class="frs-combo-menu" id="frsEndComboMenu"></div>
+                        </div>
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Room Type</label>
@@ -438,15 +498,21 @@
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Building</label>
-                        <select id="frsAvailBuilding" onchange="frsFindAvailable()">
-                            <option value="">ALL</option>
-                        </select>
+                        <div class="frs-combo" id="frsBuildingCombo">
+                            <input type="text" id="frsAvailBuilding" class="frs-combo-input"
+                                   placeholder="All buildings" autocomplete="off"
+                                   oninput="frsBuildingChanged()" onfocus="_frsComboFilter('frsBuildingCombo')">
+                            <div class="frs-combo-menu" id="frsBuildingComboMenu"></div>
+                        </div>
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Room Number</label>
-                        <select id="frsAvailRoomNum" onchange="frsFindAvailable()">
-                            <option value="">SELECT</option>
-                        </select>
+                        <div class="frs-combo" id="frsRoomNumCombo">
+                            <input type="text" id="frsAvailRoomNum" class="frs-combo-input"
+                                   placeholder="All rooms" autocomplete="off"
+                                   oninput="frsRoomNumTyped()" onfocus="_frsComboFilter('frsRoomNumCombo')">
+                            <div class="frs-combo-menu" id="frsRoomNumComboMenu"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -512,6 +578,8 @@
 <div id="frs-init-data"
      data-buildings="{{ buildings_json | e }}"
      data-rooms="{{ rooms_json | e }}"
+     data-active-ay-id="{{ active_ay_id }}"
+     data-active-sem="{{ active_sem }}"
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/room_schedule.acad.js') }}"></script>

@@ -145,6 +145,7 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'hc_program_restrict_enabled': 1,
     'hc_publish_gate_enabled':     1,
     'hc_faculty_spec_enabled':     1,
+    'hc_capacity_enabled':         1,   # HC_CAPACITY — no-op until section/room class-size data exists
     'hc_merge_enabled':            1,   # Class Merging Policy toggle
     # ── HC configurable params (stored as JSON strings) ─────
     'hc_merge_scope':              'nstp_only',  # nstp_only | non_nstp | all_subjects
@@ -163,7 +164,43 @@ _SCHEDULER_CONFIG_DEFAULTS = {
 
 # Keys whose DB values should stay as strings (not converted to float)
 _STRING_KEYS = {'hc_day_pairs', 'hc_time_slots', 'hc_weekend_subject', 'hc_weekend_day', 'hc_merge_scope',
-                'hc_merge_section_pairs'}
+                'hc_merge_section_pairs', 'hc_merge_scope_subjects'}
+
+
+def parse_merge_scope_subjects(raw):
+    """Parse the hc_merge_scope_subjects scheduler_config value (JSON array of subject
+    codes, set via Settings -> Class Merging Policy -> Merge Scope's searchable picker).
+    Returns a set of uppercase subject codes, or None when nothing has been configured
+    yet (empty/missing/unparseable) so callers know to fall back to the legacy
+    nstp_only/non_nstp/all_subjects preset behavior instead of matching an empty set.
+    Shared by app.py and scheduler.py so both enforce the exact same scope."""
+    if not raw:
+        return None
+    try:
+        parsed = _json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    return {str(c).upper() for c in parsed}
+
+
+def code_in_merge_scope(code, scope_subjects):
+    """Membership test for the Merge Scope picker's stored subject set. The picker
+    (see api_list_all_subjects in app.py) deliberately offers NSTP/OU as ONE grouped
+    'NSTP' entry rather than every real curriculum variant (NSTP001, NSTP 10013, ...),
+    matching the same grouping the Merge Load Policy feature already uses. So a plain
+    `code in scope_subjects` would only ever match the literal string 'NSTP' — which
+    never actually appears as a real scheduled subject code — and silently break
+    merging for every real NSTP/OU session. Expand that one placeholder here instead
+    of teaching the picker to enumerate every variant."""
+    code_u = (code or '').upper()
+    if code_u in scope_subjects:
+        return True
+    if 'NSTP' in scope_subjects and code_u.startswith(('NSTP', 'OU')):
+        return True
+    return False
+
 
 def load_scheduler_config() -> dict:
     """Return scheduler config from DB, merged with defaults.

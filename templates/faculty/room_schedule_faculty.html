@@ -295,6 +295,43 @@
         background: #fff;
         box-sizing: border-box;
     }
+    /* Custom-styled searchable combo (Building / Room Number) — a native <datalist>
+       renders the browser's own unstyled popup, which looks completely out of place
+       here, so this draws its own dropdown instead. */
+    .frs-combo { position: relative; }
+    .frs-combo-input[readonly] { cursor: pointer; }
+    .frs-combo-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        max-height: 220px;
+        overflow-y: auto;
+        background: #fff;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        box-shadow: 0 6px 18px rgba(0,0,0,.18);
+        z-index: 500;
+        display: none;
+    }
+    .frs-combo-menu.open { display: block; }
+    .frs-combo-option {
+        padding: 7px 10px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #800000;
+        cursor: pointer;
+        border-bottom: 1px solid #f4f4f4;
+    }
+    .frs-combo-option:last-child { border-bottom: none; }
+    .frs-combo-option:hover { background: #FFF3F3; }
+    .frs-combo-empty {
+        padding: 10px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #999;
+        text-align: center;
+    }
 
     /* Results */
     .frs-avail-results { flex: 1; }
@@ -658,16 +695,22 @@
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
-                        <select id="frsAvailStart" onchange="frsFindAvailable()">
-                            <option value="">-- Start Time --</option>
-                        </select>
+                        <div class="frs-combo" id="frsStartCombo">
+                            <input type="text" id="frsAvailStartTxt" class="frs-combo-input" readonly
+                                   placeholder="Start time…" onclick="_frsComboFilter('frsStartCombo')">
+                            <input type="hidden" id="frsAvailStart" value="">
+                            <div class="frs-combo-menu" id="frsStartComboMenu"></div>
+                        </div>
                     </div>
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
-                        <select id="frsAvailEnd" onchange="frsFindAvailable()">
-                            <option value="">-- End Time --</option>
-                        </select>
+                        <div class="frs-combo" id="frsEndCombo">
+                            <input type="text" id="frsAvailEndTxt" class="frs-combo-input" readonly
+                                   placeholder="End time…" onclick="_frsComboFilter('frsEndCombo')">
+                            <input type="hidden" id="frsAvailEnd" value="">
+                            <div class="frs-combo-menu" id="frsEndComboMenu"></div>
+                        </div>
                     </div>
 
                     <div class="frs-avail-filter-group">
@@ -681,16 +724,22 @@
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Building</label>
-                        <select id="frsAvailBuilding" onchange="frsFindAvailable()">
-                            <option value="">ALL</option>
-                        </select>
+                        <div class="frs-combo" id="frsBuildingCombo">
+                            <input type="text" id="frsAvailBuilding" class="frs-combo-input"
+                                   placeholder="All buildings" autocomplete="off"
+                                   oninput="frsBuildingChanged()" onfocus="_frsComboFilter('frsBuildingCombo')">
+                            <div class="frs-combo-menu" id="frsBuildingComboMenu"></div>
+                        </div>
                     </div>
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Room Number</label>
-                        <select id="frsAvailRoomNum" onchange="frsFindAvailable()">
-                            <option value="">SELECT</option>
-                        </select>
+                        <div class="frs-combo" id="frsRoomNumCombo">
+                            <input type="text" id="frsAvailRoomNum" class="frs-combo-input"
+                                   placeholder="All rooms" autocomplete="off"
+                                   oninput="frsRoomNumTyped()" onfocus="_frsComboFilter('frsRoomNumCombo')">
+                            <div class="frs-combo-menu" id="frsRoomNumComboMenu"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1846,27 +1895,12 @@ function _setSelectVal(id, val) {
     });
 });
 
-/* Populate filter time dropdowns with same slots as request form */
-function _populateFilterTimeSelects() {
-    ['frsAvailStart', 'frsAvailEnd'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        const placeholder = sel.options[0];
-        sel.innerHTML = '';
-        sel.appendChild(placeholder);
-        _REQ_SLOTS.forEach(t => {
-            const o = document.createElement('option');
-            o.value = t;
-            o.textContent = t;
-            sel.appendChild(o);
-        });
-    });
-}
-
 /* Init on DOMContentLoaded */
 document.addEventListener('DOMContentLoaded', () => {
     _populateTimeSelects();
-    _populateFilterTimeSelects();
+    // frsAvailStart/frsAvailEnd (Available Rooms filter) used to be <select>s populated
+    // here — they're now the .frs-combo pickers in room_schedule.faculty.js, which build
+    // their own option list on demand (_frsTimeOptions), so nothing to populate up front.
     _reqInitFacultyData();
     // Prevent past date selection for make-up class
     const today = new Date().toISOString().split('T')[0];

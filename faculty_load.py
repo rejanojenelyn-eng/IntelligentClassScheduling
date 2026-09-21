@@ -13,6 +13,13 @@ change) — the same columns that used to mean "credit units" now mean "hours".
 
 WEEKDAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'}
 
+# Display order for day/time lists (Faculty Load tab, TS panel, etc.) — sessions
+# arrive from FACULTY_SESSIONS_SQL ordered by clock time, not weekday, so a
+# Thursday slice that starts earlier than a Monday one would otherwise print
+# "Thursday, Monday, Saturday" instead of "Monday, Thursday, Saturday".
+DAY_ORDER = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+             'Friday': 4, 'Saturday': 5, 'Sunday': 6}
+
 # Live query: for a single faculty, every currently-active scheduled time slice
 # (Draft-preferred per subject+section, per the BOOL_OR status-group rule — see
 # project_faculty_load_calc memory) with its REAL elapsed hours computed from the
@@ -43,8 +50,17 @@ FACULTY_SESSIONS_SQL = """
         cs.subjectname,
         COALESCE(cs.creditunits,0) AS units,
         ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
-        COALESCE(pyl.programcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
-            || ' ' || COALESCE(sec.sectionname,'') AS year_section,
+        -- Section names already embed program+year (e.g. "BSIT1") for most sections, so
+        -- prefixing with programcode-yearlevel again would print "BSIT-1 BSIT1". Only
+        -- prefix when the section name doesn't already start with the program code.
+        CASE
+            WHEN sec.sectionname IS NULL OR sec.sectionname = ''
+                THEN COALESCE(pyl.programcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
+            WHEN sec.sectionname ILIKE (COALESCE(pyl.programcode,'') || '%%')
+                THEN sec.sectionname
+            ELSE COALESCE(pyl.programcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
+                     || ' ' || sec.sectionname
+        END AS year_section,
         sec.sectionid,
         TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
         LPAD(EXTRACT(HOUR FROM ts_s.timevalue)::text,2,'0') ||
@@ -99,13 +115,29 @@ _BATCH_HOURS_SQL_TMPL = """
 """
 
 
-def classify_slice(day, end_hour):
-    """Regular = weekday, ends at/before 4 PM. Everything else (evenings, Sat/Sun) is PT."""
+def classify_slice(day, end_hour, start_hour=None):
+    """Regular = weekday, ends at/before 4 PM, and not a 7:30-9:00 AM PT/TS morning
+    slice. Everything else (evenings, Sat/Sun, and the AM PT/TS window) is PT.
+
+    The AM PT/TS window (Aug 2026 policy — see scheduler.py AM_PT_START/AM_PT_END)
+    means a Regular faculty's early 7:30-9:00 AM class is PT/TS load, never Regular
+    load, even though it falls on a weekday before noon; `start_hour` lets callers
+    that have it flag that case. Hour-granularity only (matches the rest of this
+    function), so `start_hour` is only used to catch the whole-hour-floor case.
+    """
     try:
         end_hour = int(end_hour)
     except (TypeError, ValueError):
         end_hour = 0
-    return 'regular' if (day in WEEKDAYS and end_hour <= 16) else 'pt'
+    if day not in WEEKDAYS:
+        return 'pt'
+    if start_hour is not None:
+        try:
+            if int(start_hour) < 9 and end_hour <= 9:
+                return 'pt'
+        except (TypeError, ValueError):
+            pass
+    return 'regular' if end_hour <= 16 else 'pt'
 
 
 def _time_code_end_hour(time_code):
@@ -115,8 +147,15 @@ def _time_code_end_hour(time_code):
         return 0
 
 
+def _time_code_start_hour(time_code):
+    try:
+        return int(str(time_code or '')[:2])
+    except ValueError:
+        return 0
+
+
 def is_reg_slice(days, time_code):
-    return classify_slice(days, _time_code_end_hour(time_code)) == 'regular'
+    return classify_slice(days, _time_code_end_hour(time_code), _time_code_start_hour(time_code)) == 'regular'
 
 
 def get_faculty_caps(faculty_row):
@@ -238,8 +277,11 @@ def group_assignments(sessions):
     result = []
     for key in order:
         g = groups[key]
-        g['days'] = ', '.join(g['_days'])
-        g['time_range'] = ', '.join(g['_times'])
+        # Keep each day paired with its own time range while reordering Mon->Sun,
+        # regardless of the clock-time order the SQL rows arrived in.
+        pairs = sorted(zip(g['_days'], g['_times']), key=lambda p: DAY_ORDER.get(p[0], 7))
+        g['days'] = ', '.join(p[0] for p in pairs)
+        g['time_range'] = ', '.join(p[1] for p in pairs)
         result.append(g)
     return result
 

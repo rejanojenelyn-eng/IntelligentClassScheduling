@@ -405,23 +405,29 @@ function _currPDFBlob(curricula) {
     const W   = 297;
     curricula.forEach((curr, cidx) => {
         if (cidx > 0) doc.addPage();
-        doc.setFillColor(128, 0, 0); doc.rect(0, 0, W, 34, 'F');
-        doc.setTextColor(255,255,255);
-        doc.setFont('helvetica','bold'); doc.setFontSize(15);
-        doc.text(`${curr.curriculum_code}  —  ${curr.program_name}`, W/2, 13, { align:'center' });
-        doc.setFont('helvetica','normal'); doc.setFontSize(10);
-        doc.text(`Curriculum Year: ${curr.curriculum_year}`, W/2, 22, { align:'center' });
-        doc.setFontSize(8);
-        doc.text('Generated: ' + new Date().toLocaleString(), W/2, 30, { align:'center' });
+        // Plain black-on-white academic letterhead — no color banner, matching
+        // the official PUP SIS curriculum printout look this export mirrors.
         doc.setTextColor(0,0,0);
-        let startY = 36;
+        doc.setFont('helvetica','normal'); doc.setFontSize(9);
+        doc.text('Polytechnic University of the Philippines', 10, 12);
+        doc.setFont('helvetica','bold'); doc.setFontSize(14);
+        doc.text(`${(curr.program_name||'').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year||''})`, W/2, 21, { align:'center' });
+        let startY = 29;
         curr.year_levels.forEach(yl => {
             yl.semesters.forEach(sem => {
-                if (startY > 192) { doc.addPage(); startY = 10; }
-                doc.setFillColor(55,55,55); doc.rect(10, startY, W-20, 7, 'F');
-                doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
-                doc.text(`${yl.label.toUpperCase()}  ·  ${sem.label}`, 14, startY+5);
-                doc.setTextColor(0,0,0); startY += 7;
+                if (startY > 184) { doc.addPage(); startY = 14; }
+                // Year level / semester — plain bold underlined text, no filled
+                // bar, each on its own line (matches the reference printout).
+                doc.setFont('helvetica','bold'); doc.setFontSize(11);
+                const ylLabel = yl.label.toUpperCase();
+                doc.text(ylLabel, 10, startY);
+                doc.setLineWidth(0.3);
+                doc.line(10, startY + 0.8, 10 + doc.getTextWidth(ylLabel), startY + 0.8);
+                startY += 6;
+                doc.setFontSize(9.5);
+                doc.text(sem.label, 10, startY);
+                doc.line(10, startY + 0.7, 10 + doc.getTextWidth(sem.label), startY + 0.7);
+                startY += 4;
                 doc.autoTable({
                     columns: [
                         { header:'Subject Code',   dataKey:'subject_code'  },
@@ -434,9 +440,9 @@ function _currPDFBlob(curricula) {
                         { header:'Tuition Hrs',    dataKey:'tuition_hours' },
                     ],
                     body: sem.subjects, startY,
-                    styles: { fontSize:7.5, cellPadding:2, overflow:'linebreak' },
-                    headStyles: { fillColor:[128,0,0], textColor:255, fontStyle:'bold', fontSize:8 },
-                    alternateRowStyles: { fillColor:[253,245,245] },
+                    theme: 'grid',
+                    styles: { fontSize:7.5, cellPadding:2, overflow:'linebreak', textColor:[0,0,0], lineColor:[0,0,0], lineWidth:0.15 },
+                    headStyles: { fillColor:[255,255,255], textColor:[0,0,0], fontStyle:'bold', fontSize:8, halign:'center' },
                     tableWidth: W - 20,
                     columnStyles: {
                         0:{ cellWidth:32 }, 1:{ cellWidth:26 }, 2:{ cellWidth:20 },
@@ -445,10 +451,10 @@ function _currPDFBlob(curricula) {
                         6:{ cellWidth:22,halign:'center' }, 7:{ cellWidth:19,halign:'center' },
                     },
                     foot: [['','','','TOTAL UNITS','','',(sem.total_units||0),(sem.total_tuition||0)]],
-                    footStyles: { fillColor:[240,230,230], fontStyle:'bold', fontSize:8, textColor:[80,0,0] },
+                    footStyles: { fillColor:[255,255,255], textColor:[0,0,0], fontStyle:'bold', fontSize:8, halign:'center' },
                     showFoot: 'lastPage', margin: { left:10, right:10 },
                 });
-                startY = doc.lastAutoTable.finalY + 4;
+                startY = doc.lastAutoTable.finalY + 5;
             });
         });
     });
@@ -1584,13 +1590,16 @@ async function confirmPdfImport() {
     const btn = document.querySelector('#pdfConfirmForm .btn-confirm');
     if (btn) btn.disabled = true;
 
-    const currType = _pdfHasBridging ? 'Bridging' : 'Regular';
+    // Stored/compared value uses the ASDBv11 enum-style codes; currTypeLabel
+    // is the human-readable form shown in the duplicate-curriculum message.
+    const currType      = _pdfHasBridging ? 'WITH_BRIDGING' : 'REGULAR';
+    const currTypeLabel = _pdfHasBridging ? 'Bridging' : 'Regular';
     try {
         const res  = await fetch(`/admin/curriculum/check-duplicate?program_code=${encodeURIComponent(_pdfProgCode)}&curriculum_year=${encodeURIComponent(_pdfCurrYear)}&curriculum_type=${encodeURIComponent(currType)}`);
         const data = await res.json();
         if (data.exists) {
             const msg = document.getElementById('duplicateCurrMsg');
-            if (msg) msg.textContent = `A ${currType} curriculum for ${_pdfProgCode} C.Y ${_pdfCurrYear} already exists in the system.`;
+            if (msg) msg.textContent = `A ${currTypeLabel} curriculum for ${_pdfProgCode} C.Y ${_pdfCurrYear} already exists in the system.`;
             document.getElementById('duplicateCurrModal').style.display = 'flex';
             _confirmImportInFlight = false;
             if (btn) btn.disabled = false;

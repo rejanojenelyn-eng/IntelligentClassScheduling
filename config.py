@@ -2,7 +2,7 @@ import os
 
 class Config:
     
-    DB_NAME = "ASDBv10"
+    DB_NAME = "ASDBv11"
     DB_USER = "postgres"
     DB_PASS = "050105"
     DB_HOST = "localhost"

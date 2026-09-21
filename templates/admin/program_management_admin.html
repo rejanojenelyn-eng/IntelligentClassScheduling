@@ -1,0 +1,532 @@
+{% extends "admin/base_admin.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="settings-container" id="settingsWrapper">
+
+  <div class="settings-header">
+    <h1>PROGRAM MANAGEMENT</h1>
+  </div>
+
+  <!-- Embed JSON data for JS consumption -->
+  <script id="pm-data" type="application/json">
+    {
+      "programs":    {{ programs_mgmt       | tojson }},
+      "sections":    {{ sections_mgmt       | tojson }},
+      "yearlevels":  {{ prog_yearlevel_mgmt | tojson }},
+      "active_ay_id": {{ selected_mgmt_ay | tojson }}
+    }
+  </script>
+
+  {% if mgmt_ay_options or mgmt_sem_options %}
+  <div class="pm-ay-selector" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+    <label style="font-size:.72rem;font-weight:700;color:#888;">MANAGING PROGRAM FOR:</label>
+    {% if mgmt_ay_options|length > 1 %}
+    <select class="pmd-filter-sel" id="pmMgmtAySelect" onchange="_switchMgmtAy(this.value)">
+      {% for opt in mgmt_ay_options %}
+      <option value="{{ opt.id }}" {{ 'selected' if opt.id == selected_mgmt_ay else '' }}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+    {% elif mgmt_ay_options %}
+    <span class="pm-ay-static">{{ mgmt_ay_options[0].label }}</span>
+    {% endif %}
+
+    {% if mgmt_sem_options %}
+    <span class="pm-ay-sep"></span>
+    {% if mgmt_sem_options|length > 1 %}
+    <select class="pmd-filter-sel" id="pmMgmtSemSelect" onchange="_switchMgmtSem(this.value)" title="Display only — sections are not semester-specific.">
+      {% for opt in mgmt_sem_options %}
+      <option value="{{ opt.id }}" {{ 'selected' if opt.id == selected_mgmt_sem else '' }}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <span class="pm-ay-static">{{ mgmt_sem_options[0].label }}</span>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Main two-panel layout -->
+  <div class="pm-layout">
+
+    <!-- ── Left: Program List ──────────────────── -->
+    <div class="pm-left">
+      <div class="pm-list-head">
+        <span class="pm-list-title">ACADEMIC PROGRAMS</span>
+        <button class="pm-add-btn" onclick="openSModal('modalAddProgram')" title="Add Program">
+          <i class="fas fa-plus"></i>
+        </button>
+      </div>
+      <div class="pm-search-wrap">
+        <i class="fas fa-search pm-search-icon"></i>
+        <input type="text" class="pm-search" id="pmSearch" placeholder="Search programs…" oninput="filterProgramList()">
+      </div>
+      <div class="pm-list" id="pmList">
+        {% for p in programs_mgmt %}
+        <div class="pm-list-item" data-code="{{ p.programcode }}" onclick="selectProgram('{{ p.programcode }}')">
+          <div class="pm-item-code">{{ p.programcode }}</div>
+          <div class="pm-item-name">{{ p.programname }}</div>
+          <div class="pm-item-meta">
+            <span class="pm-offers-label">{{ p.numyearlevel | int }} year level{{ 's' if (p.numyearlevel | int) != 1 else '' }}</span>
+            <span class="pm-item-status {{ 'pm-item-active' if p.isactive else 'pm-item-inactive' }}"><span class="pm-dot-sm"></span> {{ 'Active' if p.isactive else 'Inactive' }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- ── Right: Program Detail ───────────────── -->
+    <div class="pm-right" id="pmDetail">
+
+      <!-- Empty state -->
+      <div class="pm-empty" id="pmEmpty">
+        <i class="fas fa-graduation-cap"></i>
+        <p>Select a program from the list to view details.</p>
+      </div>
+
+      <!-- Detail content -->
+      <div id="pmDetailContent" style="display:none;">
+
+        <!-- Program Header + Stats -->
+        <div class="pmd-header">
+          <div class="pmd-hd-left">
+            <h2 class="pmd-prog-title">
+              <span id="pdCode"></span> &mdash; <span id="pdName"></span>
+            </h2>
+            <div class="pmd-badge-row">
+              <span class="pmd-code-chip" id="pdCodeBadge"></span>
+              <span class="pmd-status-badge pmd-status-active" id="pdStatusBadge">
+                <span class="pmd-dot"></span> Active
+              </span>
+            </div>
+          </div>
+          <div class="pmd-stats">
+            <div class="pmd-stat-box">
+              <i class="fas fa-layer-group pmd-stat-icon"></i>
+              <div>
+                <div class="pmd-stat-val" id="pdStatActiveYL">—</div>
+                <div class="pmd-stat-lbl">Active Year Levels</div>
+              </div>
+            </div>
+            <div class="pmd-stat-box">
+              <i class="fas fa-graduation-cap pmd-stat-icon"></i>
+              <div>
+                <div class="pmd-stat-val" id="pdStatYearLevels">—</div>
+                <div class="pmd-stat-lbl">Total Year Levels</div>
+              </div>
+            </div>
+            <div class="pmd-stat-box">
+              <i class="fas fa-users pmd-stat-icon"></i>
+              <div>
+                <div class="pmd-stat-val" id="pdStatSections">—</div>
+                <div class="pmd-stat-lbl">Active Sections</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1. Program Information -->
+        <div class="pmd-section">
+          <div class="pmd-section-hd pmd-collapsible" onclick="togglePmdSection('pmdInfo','pmdInfoChevron')">
+            <span class="pmd-section-title">Program Information</span>
+            <i class="fas fa-chevron-up pmd-chevron" id="pmdInfoChevron"></i>
+          </div>
+          <div class="pmd-section-body" id="pmdInfo">
+            <div class="pmd-info-scroll">
+              <style>
+                .pmd-info-table th:last-child { width: 140px; }
+                #pmdInfoBody td:last-child { vertical-align:middle; padding:8px 16px 8px 10px; }
+                #pmdInfoBody td:last-child button { display:flex; align-items:center; justify-content:center; width:130px; margin-left:auto; margin-bottom:6px; box-sizing:border-box; }
+                #pmdInfoBody td:last-child button:last-child { margin-bottom:0; }
+              </style>
+              <table class="pmd-info-table">
+                <thead>
+                  <tr>
+                    <th>Program Code</th>
+                    <th>Program Name</th>
+                    <th>Program Type</th>
+                    <th>Number of Year Levels</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="pmdInfoBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Year Level Management -->
+        <div class="pmd-section">
+          <div class="pmd-section-hd">
+            <div class="pmd-section-hd-left">
+              <span class="pmd-section-title">Year Level Management</span>
+            </div>
+          </div>
+          <div class="pmd-section-body">
+            <!-- Scoped in its own <form autocomplete="off"> so this table's inline-edit
+                 inputs (Section Prefix / No. of Sections) sit in a form boundary with no
+                 password fields in it — keeps Chrome's password-manager suggestions from
+                 bleeding onto these unrelated fields (see base_admin.html #passwordPanel). -->
+            <form autocomplete="off" onsubmit="return false;">
+              <table class="pmd-data-table">
+                <thead>
+                  <tr>
+                    <th>Year Level</th>
+                    <th>Status</th>
+                    <th>No. of Sections</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="pmdYearLevelsBody"></tbody>
+              </table>
+            </form>
+          </div>
+        </div>
+
+        <!-- 3. Sections -->
+        <div class="pmd-section">
+          <div class="pmd-section-hd">
+            <div class="pmd-section-hd-left">
+              <span class="pmd-section-title" id="pmdSectionsTitle">Sections</span>
+              {% if selected_mgmt_ay %}
+              <span style="font-size:.72rem;color:#888;margin-left:8px;font-weight:600;">
+                {{ selected_mgmt_ay }}
+              </span>
+              {% endif %}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select class="pmd-filter-sel" id="pmdSecYLFilter" onchange="_renderSectionsPage(1)">
+                <option value="">All Year Levels</option>
+              </select>
+              <select class="pmd-filter-sel" id="pmdSecFilter" onchange="_renderSectionsPage(1)">
+                <option value="">All Status</option>
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </select>
+              <button class="pmd-add-btn" onclick="openAddSection()">
+                <i class="fas fa-plus"></i> ADD SECTION
+              </button>
+            </div>
+          </div>
+          <div class="pmd-section-body">
+            <table class="pmd-data-table">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>Year Level</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="pmdSectionsBody"></tbody>
+            </table>
+            <div class="pmd-pagination" id="pmdSecPagination"></div>
+          </div>
+        </div>
+
+      </div><!-- /pmDetailContent -->
+    </div><!-- /pm-right -->
+
+  </div><!-- /pm-layout -->
+
+</div><!-- /settingsWrapper -->
+
+<!-- ── MODAL: Add Program ───────────────────────────── -->
+<div id="modalAddProgram" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>ADD NEW PROGRAM</h2>
+      <button class="modal-x" onclick="closeSModal('modalAddProgram')"><i class="fas fa-times"></i></button>
+    </div>
+    <form id="formAddProgram" action="{{ url_for('settings_add_program') }}" method="POST" onsubmit="return false;">
+      <div class="s-modal-body">
+        <div class="mg-2">
+          <div class="mf">
+            <label>PROGRAM CODE</label>
+            <input type="text" name="program_code" class="m-input" placeholder="e.g. BSIT" required style="text-transform:uppercase;">
+          </div>
+          <div class="mf">
+            <label>YEAR LEVELS</label>
+            <input type="number" name="num_year_level" class="m-input" value="4" min="1" max="6" required>
+          </div>
+          <div class="mf span2">
+            <label>PROGRAM NAME</label>
+            <input type="text" name="program_name" class="m-input" placeholder="e.g. Bachelor of Science in Information Technology" required>
+          </div>
+          <div class="mf span2">
+            <label>PROGRAM TYPE</label>
+            <select name="program_type" class="m-input">
+              <option value="Undergraduate">Undergraduate</option>
+              <option value="Diploma">Diploma</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddProgram')">CANCEL</button>
+        <button type="button" class="btn-ms" id="btnAddProgramSubmit" onclick="_submitAddProgram()">ADD PROGRAM</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Program ──────────────────────────── -->
+<div id="modalEditProgram" class="s-modal">
+  <div class="s-modal-box w-md">
+    <div class="s-modal-hd">
+      <h2>EDIT PROGRAM — <span id="editProgCode"></span></h2>
+      <button class="modal-x" onclick="closeSModal('modalEditProgram')"><i class="fas fa-times"></i></button>
+    </div>
+
+    <!-- Shown instead of the form when the program already has schedule(s) on file -->
+    <div id="editProgLockedNotice" style="display:none;">
+      <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
+        <i class="fas fa-lock"></i>
+        <div>
+          <span class="lock-warn-title">EDITING LOCKED</span>
+          <span class="lock-warn-sub">This program already has schedule(s) on file.</span>
+        </div>
+      </div>
+      <div class="s-modal-body">
+        <p class="lock-warn-body">
+          Program Name, Type, and Year Levels can't be changed while <strong id="editProgLockedCode"></strong>
+          has any schedule (Draft or Published) attached — changing them could break those already-scheduled
+          sections. Remove or archive its schedule(s) first if this program really needs to be edited.
+        </p>
+        <div class="lock-warn-actions">
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalEditProgram')">
+            <i class="fas fa-times"></i> Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <form id="formEditProgram" action="{{ url_for('settings_edit_program') }}" method="POST" onsubmit="return false;">
+      <input type="hidden" name="program_code" id="editProgCodeInput">
+      <div class="s-modal-body">
+        <div class="mg-2">
+          <div class="mf span2">
+            <label>PROGRAM NAME</label>
+            <input type="text" name="program_name" id="editProgName" class="m-input" required>
+          </div>
+          <div class="mf">
+            <label>PROGRAM TYPE</label>
+            <select name="program_type" id="editProgType" class="m-input">
+              <option value="Undergraduate">Undergraduate</option>
+              <option value="Diploma">Diploma</option>
+            </select>
+          </div>
+          <div class="mf">
+            <label>YEAR LEVELS</label>
+            <input type="number" name="num_year_level" id="editProgYrs" class="m-input" min="1" max="6" required>
+          </div>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditProgram')">CANCEL</button>
+        <button type="button" class="btn-ms" onclick="_confirmSaveProgramEdit()">SAVE PROGRAM</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Confirm Save Program Edit ─────────────── -->
+<div id="modalConfirmEditProgram" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#1b5e20,#2e7d32);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">CONFIRM CHANGES</span>
+        <span class="lock-warn-sub">Save these program details?</span>
+      </div>
+    </div>
+    <div class="s-modal-body">
+      <p class="lock-warn-body" id="confirmEditProgramBody"></p>
+      <div class="lock-warn-actions">
+        <button type="button" class="btn-lock-view" id="btnConfirmEditProgram" style="background:#e8f5e9; color:#1b5e20; border-color:#a5d6a7;" onclick="_doSaveProgramEdit()">
+          <i class="fas fa-check"></i> Confirm &amp; Save
+        </button>
+        <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalConfirmEditProgram')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: Add Section ───────────────────────────── -->
+<div id="modalAddSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2>ADD SECTION — <span id="addSecProgLabel"></span></h2>
+      <button class="modal-x" onclick="closeSModal('modalAddSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <form action="{{ url_for('settings_add_section') }}" method="POST">
+      <input type="hidden" name="program_code" id="addSecProgCode">
+      <input type="hidden" name="ay_id" value="{{ selected_mgmt_ay or '' }}">
+      <div class="s-modal-body">
+        <div class="mf" style="margin-bottom:4px;">
+          <label style="font-size:.75rem;color:#888;">YEAR LEVEL</label>
+          <select name="year_level" id="addSecYearLevel" class="m-input" required onchange="_fillSuggestedSectionName()">
+            <!-- populated by openAddSection() -->
+          </select>
+        </div>
+        <div class="mf">
+          <label>SECTION NAME</label>
+          <input type="text" name="section_name" id="addSecName" class="m-input" placeholder="e.g. BSIT-1" required style="text-transform:uppercase;">
+        </div>
+        <div id="addSecError" style="display:none;margin-top:8px;">
+          <span style="color:#c0392b;font-size:.82rem;" id="addSecErrorMsg"></span>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalAddSection')">CANCEL</button>
+        <button type="submit" class="btn-ms">ADD SECTION</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Delete Program Confirm ───────────────── -->
+<div id="modalDeleteProgram" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#b71c1c,#7f0000);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">DEACTIVATE PROGRAM</span>
+        <span class="lock-warn-sub" id="delProgLabel">This cannot be easily undone.</span>
+      </div>
+    </div>
+    <form action="{{ url_for('settings_delete_program') }}" method="POST">
+      <input type="hidden" name="program_code" id="delProgCode">
+      <div class="s-modal-body">
+        <p class="lock-warn-body">The program will be marked as <strong>inactive</strong> and removed from scheduling. Existing curricula and subjects are preserved.</p>
+        <div class="lock-warn-actions">
+          <button type="submit" class="btn-lock-view" style="background:#fce4e4; color:#c0392b; border-color:#f5c6c6;">
+            <i class="fas fa-trash"></i> Deactivate
+          </button>
+          <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteProgram')">
+            <i class="fas fa-times"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Activate Program Confirm ─────────────── -->
+<div id="modalActivateProgram" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#1b5e20,#2e7d32);">
+      <i class="fas fa-power-off"></i>
+      <div>
+        <span class="lock-warn-title">ACTIVATE PROGRAM</span>
+        <span class="lock-warn-sub" id="actProgLabel">This will make the program active again.</span>
+      </div>
+    </div>
+    <input type="hidden" id="actProgCode">
+    <div class="s-modal-body">
+      <p class="lock-warn-body">The program will be marked as <strong>active</strong> and will be available for scheduling and curriculum management.</p>
+      <div class="lock-warn-actions">
+        <button type="button" class="btn-lock-view" style="background:#e8f5e9; color:#1b5e20; border-color:#a5d6a7;" onclick="doActivateProgram()">
+          <i class="fas fa-power-off"></i> Activate
+        </button>
+        <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalActivateProgram')">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: Confirm Reduce Sections ────────────────── -->
+<div id="modalReduceSections" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="lock-warn-banner" style="background: linear-gradient(135deg,#e65100,#bf360c);">
+      <i class="fas fa-exclamation-triangle"></i>
+      <div>
+        <span class="lock-warn-title">REDUCE SECTIONS</span>
+        <span class="lock-warn-sub" id="reduceSecLabel">This will remove section(s).</span>
+      </div>
+    </div>
+    <div class="s-modal-body">
+      <p class="lock-warn-body" id="reduceSecBody"></p>
+      <div class="lock-warn-actions">
+        <button type="button" class="btn-lock-view" style="background:#fff3e0; color:#bf360c; border-color:#ffcc80;" onclick="_confirmReduceSections()">
+          <i class="fas fa-check"></i> Continue
+        </button>
+        <button type="button" class="btn-lock-cancel" onclick="_cancelReduceSections()">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: Edit Section Name ─────────────────────── -->
+<div id="modalEditSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2><i class="fas fa-pencil-alt" style="margin-right:8px;font-size:1rem;"></i>Edit Section</h2>
+      <button class="modal-x" onclick="closeSModal('modalEditSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <form id="formEditSection">
+      <input type="hidden" id="editSecId">
+      <input type="hidden" id="editSecPylId">
+      <div class="s-modal-body">
+        <div class="mf">
+          <label>Section Name <span style="color:#c0392b;">*</span></label>
+          <input type="text" id="editSecName" class="m-input" required placeholder="Enter section name">
+        </div>
+        <div id="editSecErrorWrap" style="display:none;margin-top:8px;">
+          <span style="color:#c0392b;font-size:.82rem;" id="editSecError"></span>
+        </div>
+      </div>
+      <div class="m-divider" style="margin:0 26px;"></div>
+      <div class="s-modal-ft">
+        <button type="button" class="btn-mc" onclick="closeSModal('modalEditSection')">Cancel</button>
+        <button type="submit" class="btn-ms">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: Delete Section ─────────────────────────── -->
+<div id="modalDeleteSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2><i class="fas fa-trash" style="margin-right:8px;font-size:1rem;"></i>Delete Section</h2>
+      <button class="modal-x" onclick="closeSModal('modalDeleteSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="s-modal-body">
+      <div class="pmd-del-info-box">
+        <span class="pmd-del-info-label">Section: </span>
+        <span class="pmd-del-info-code" id="delSecName"></span>
+      </div>
+      <p style="font-size:.85rem;color:#555;margin-top:12px;">
+        Are you sure you want to delete this section? Sections that already have schedule records can't be deleted —
+        deactivate them instead via Year Level Management.
+      </p>
+      <div id="delSecErrorWrap" style="display:none;margin-top:12px;">
+        <div class="lock-warn-box"><span class="lock-warn-sub" id="delSecError"></span></div>
+      </div>
+    </div>
+    <div class="m-divider" style="margin:0 26px;"></div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalDeleteSection')">Cancel</button>
+      <button type="button" class="btn-ms btn-ms-danger" id="btnConfirmSecDelete" onclick="_confirmDeleteSection()">
+        <i class="fas fa-trash"></i> Delete
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}"></script>
+{% endblock %}

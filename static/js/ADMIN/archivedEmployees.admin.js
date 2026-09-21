@@ -199,7 +199,7 @@ function closeExportToast() { document.getElementById('exportToast').style.displ
 // ── Format exporters ──────────────────────────────────────────────────────────
 function _exportCSV(data, filename) {
     const now = new Date().toLocaleString();
-    const headers = ['Employee Name', 'Specialization', 'Email', 'Contact', 'Employment Type', 'Status', 'Date Archived'];
+    const headers = ['Faculty Name', 'Specialization', 'Email', 'Contact', 'Employment Type', 'Status', 'Date Archived'];
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [
         `"Archived Employee Records"`,
@@ -244,7 +244,7 @@ async function _exportPDF(data, filename) {
     doc.autoTable({
         columns: [
             { header: '#',              dataKey: 'no'           },
-            { header: 'Employee Name',  dataKey: 'name'         },
+            { header: 'Faculty Name',  dataKey: 'name'         },
             { header: 'Specialization', dataKey: 'spec'         },
             { header: 'Email',          dataKey: 'email'        },
             { header: 'Contact',        dataKey: 'contact'      },

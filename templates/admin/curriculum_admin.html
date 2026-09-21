@@ -126,7 +126,7 @@
                 <div class="curr-prog-body">
                     {% for c in prog_currs %}
                     <div class="curr-syllabi-row">
-                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }}){% if c.curriculumtype == 'Bridging' %} - BRIDGING{% endif %}</span>
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }}){% if c.curriculumtype == 'WITH_BRIDGING' %} - BRIDGING{% endif %}</span>
                         <div class="curr-syllabi-actions">
                             <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
                             <button class="btn-del-curr" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}','{{ c.curriculumyear }}')">
@@ -249,7 +249,7 @@
             <h2><i class="fas fa-file-csv"></i> Import via CSV</h2>
             <span class="close-btn" onclick="closeImportModal()">&times;</span>
         </div>
-        <form id="advancedImportForm" action="/admin/curriculum/import" method="POST" enctype="multipart/form-data">
+        <form id="advancedImportForm" action="/admin/curriculum/import" method="POST" enctype="multipart/form-data" onsubmit="return false;">
             <input type="hidden" name="col_0" id="h_col_0" value="cc">
             <input type="hidden" name="col_1" id="h_col_1" value="yl">
             <input type="hidden" name="col_2" id="h_col_2" value="sem">
@@ -420,7 +420,7 @@
             <h2><i class="fas fa-file-excel"></i> Import via Excel (.xlsx)</h2>
             <span class="close-btn" onclick="closeXlsxImportModal()">&times;</span>
         </div>
-        <form id="xlsxImportForm" action="/admin/curriculum/import/xlsx" method="POST" enctype="multipart/form-data">
+        <form id="xlsxImportForm" action="/admin/curriculum/import/xlsx" method="POST" enctype="multipart/form-data" onsubmit="return false;">
             <input type="hidden" name="col_0" id="x_col_0" value="cc"><input type="hidden" name="col_1" id="x_col_1" value="yl">
             <input type="hidden" name="col_2" id="x_col_2" value="sem"><input type="hidden" name="col_3" id="x_col_3" value="sc">
             <input type="hidden" name="col_4" id="x_col_4" value="pre"><input type="hidden" name="col_5" id="x_col_5" value="co">

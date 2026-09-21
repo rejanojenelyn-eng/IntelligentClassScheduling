@@ -845,6 +845,12 @@
 /* Schedule pills */
 .schedule-pill {
     position: absolute !important;
+    /* Must stay BELOW .timetable thead th's z-index:20 (position: sticky) below -- a sticky
+       header is supposed to stay on top as content scrolls underneath it. Pills used to sit
+       above it (z-index:21), so once a pill scrolled up to the header's screen position it
+       fully covered the day names (MONDAY, TUESDAY, ...) instead of scrolling politely
+       under them. :hover still raises a pill above the header (z-index:25) so its full
+       content is reachable on demand, without permanently hiding the header labels. */
     z-index: 10;
     border-radius: 4px;
     padding: 5px;
@@ -862,7 +868,7 @@
     border: 1px solid rgba(255,255,255,0.4);
     cursor: pointer;
 }
-.schedule-pill:hover { transform: scale(1.02); z-index: 20; }
+.schedule-pill:hover { transform: scale(1.02); z-index: 25; }
 
 .pill-subject { font-size: 0.72rem; font-weight: 900; margin-bottom: 2px; text-transform: uppercase; }
 
@@ -1207,27 +1213,70 @@
 .ts-row {
     background: #f8f9fa;
     border: 1px solid #e5e5e5;
-    border-radius: 5px;
-    padding: 8px;
+    border-radius: 10px;
+    padding: 10px 12px;
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
-    
+
     /* --- FIX: Pinalitan ng 'visible' para lumabas ang dropdown menu --- */
-    overflow: visible; 
-    
+    overflow: visible;
+
     flex-shrink: 0 !important;
 }
 
+/* ── Card header: "SLICE N · STATUS" on the left, copy/remove icons on the right ── */
+.ts-card-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+/* ── One labeled field: icon + (label above input) ── */
+.ts-field-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+.ts-field-icon {
+    flex: 0 0 16px;
+    display: flex;
+    justify-content: center;
+    margin-top: 3px;
+    color: #6b7280;
+    font-size: 0.8rem;
+}
+.ts-field-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+/* Overrides the older standalone .ts-room-field rule (kept below for the
+   pre-existing room+building layout elsewhere) so the room field takes the
+   full row width here instead of the old fixed 54%. */
+.ts-field-row .ts-room-field {
+    flex: 1;
+}
+
+.ts-time-dash {
+    flex-shrink: 0;
+    color: #9aa0a6;
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding-top: 4px;
+}
+
 .ts-label {
-    font-size: 0.57rem;
+    font-size: 0.58rem;
     font-weight: 900;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    color: #888;
-    margin-bottom: 2px;
+    color: #6b7280;
+    margin-bottom: 3px;
 }
 
 .ts-sel-wrap {
@@ -1280,6 +1329,7 @@
 
 .ts-time-pair {
     display: flex;
+    align-items: center;
     gap: 6px;
 }
 
@@ -1319,78 +1369,90 @@
 
 
 /* ═══════════════════════════════════════════════════════════════
-   LOCAL SCHEDULER MODE  (purple: #8c52ff #c8acff | blue: #1c60d5 #003693)
+   LOCAL SCHEDULER MODE  (orange: #e4812d #ff934e)
    Added via .local-mode class on .schedule-container
    ═══════════════════════════════════════════════════════════════ */
 
 /* Header bar accent */
-.local-mode .editor-header-bar { border-left-color: #8c52ff; }
-.local-mode .editor-hdr-mode   { color: #8c52ff; }
+.local-mode .editor-header-bar { border-left-color: #e4812d; }
+.local-mode .editor-hdr-mode   { color: #e4812d; }
 
 /* Mode toggle active button */
-.local-mode #btnModeLocal.sched-mode-active  { background: #8c52ff !important; }
+.local-mode #btnModeLocal.sched-mode-active  {
+    background: #ffffff !important;
+    color: #e4812d !important;
+    border: 2px solid #e4812d !important;
+}
 .local-mode #btnModeOfficial.sched-mode-active { background: #630100 !important; }
 
 /* Nav tabs */
-.local-mode .mnav-active              { color: #1c60d5; border-bottom-color: #1c60d5; }
-.local-mode .mnav-tab:hover           { color: #8c52ff; }
-.local-mode .mnav-icon                { color: #1c60d5; }
-.local-mode .mnav-icon:hover          { background: #f0eaff; }
+.local-mode .mnav-active              { color: #e4812d; border-bottom-color: #e4812d; }
+.local-mode .mnav-tab:hover           { color: #e4812d; }
+.local-mode .mnav-icon                { color: #e4812d; }
+.local-mode .mnav-icon:hover          { background: #fff0e0; }
 
 /* Building tabs */
 .local-mode .bldg-tab {
-    border-color: #8c52ff;
-    color: #3a1a8a;
+    border-color: #e4812d;
+    color: #a8570f;
 }
-.local-mode .bldg-tab:hover { background: #f0eaff; border-color: #8c52ff; color: #5a2bc0; }
+.local-mode .bldg-tab:hover { background: #fff0e0; border-color: #e4812d; color: #a8570f; }
 .local-mode .bldg-tab.active {
-    background: #003693;
-    border-color: #1c60d5;
-    box-shadow: 0 2px 6px rgba(0,54,147,0.3);
+    background: #e4812d;
+    border-color: #ff934e;
+    box-shadow: 0 2px 6px rgba(228,129,45,0.3);
 }
-.local-mode .bldg-tab.active:hover { background: #1c60d5; }
+.local-mode .bldg-tab.active:hover { background: #ff934e; }
 
 /* Room dropdown trigger */
-.local-mode .dss-select-trigger            { background: #1c60d5; }
-.local-mode .dss-select-trigger:hover      { background: #003693; }
-.local-mode .dss-search-input:focus        { border-color: #8c52ff; }
+.local-mode .dss-select-trigger            { background: #ff934e; }
+.local-mode .dss-select-trigger:hover      { background: #e4812d; }
+.local-mode .dss-search-input:focus        { border-color: #e4812d; }
 
 /* Right panel title icon */
 .local-mode .right-title-icon {
-    background: linear-gradient(135deg, #8c52ff 0%, #1c60d5 100%);
+    background: linear-gradient(135deg, #e4812d 0%, #ff934e 100%);
     color: white;
 }
 
 /* Right panel divider */
 .local-mode .editor-right-panel-new::after {
-    background: linear-gradient(90deg, #8c52ff, #1c60d5);
+    background: linear-gradient(90deg, #e4812d, #ff934e);
 }
-.local-mode .editor-right-panel-new .rp-divider { background: #c8acff; }
+.local-mode .editor-right-panel-new .rp-divider { background: #ffc999; }
 
 /* Time slot cards */
 .local-mode .ts-row {
-    background: #f3eeff;
-    border-color: #c8acff;
+    background: #fff3e8;
+    border-color: #ffc999;
 }
-.local-mode .ts-label  { color: #5a2bc0; }
-.local-mode .ts-sel:focus { border-color: #8c52ff; }
+.local-mode .ts-label  { color: #a8570f; }
+.local-mode .ts-sel:focus { border-color: #e4812d; }
 
 /* + Add time slot button */
 .local-mode .btn-add-ts {
-    border-color: #8c52ff;
-    color: #8c52ff;
+    border-color: #e4812d;
+    color: #e4812d;
 }
-.local-mode .btn-add-ts:hover { background: #8c52ff; color: white; }
+.local-mode .btn-add-ts:hover { background: #e4812d; color: white; }
 
 /* Time allotment header */
-.local-mode .time-allot-hdr { color: #3a1a8a; }
+.local-mode .time-allot-hdr { color: #a8570f; }
 
 /* Save buttons in local mode */
 .local-mode .btn-save-outlined {
-    color: #1c60d5;
-    border-color: #1c60d5;
+    color: #e4812d;
+    border-color: #e4812d;
 }
-.local-mode .btn-save-outlined:hover { background: #1c60d5; color: white; }
+.local-mode .btn-save-outlined:hover { background: #e4812d; color: white; }
+
+/* Curriculum guide subject list — blend the SELECTED item with the orange theme; leave
+   every other item's code neutral so the list isn't wall-to-wall orange (hard to read
+   against the already-orange header + type/status tags) */
+.local-mode .subj-item:hover           { border-color: #e4812d; background: #fff6ee; }
+.local-mode .subj-item-active          { border-color: #e4812d; background: #e4812d; }
+.local-mode .subj-item-active:hover    { background: #ff934e; }
+.local-mode .subj-item-code            { color: #444; }
 
 
 /* ── Rooms sidebar (hidden, kept for JS compat) ── */
@@ -1482,15 +1544,12 @@
 .ts-ss-sect-hdr.ts-ss-sect-opt { background: #e65100; border-bottom-color: #bf360c; }
 
 /* Duplicate button — full-width at bottom of slice */
-/* ── Top-right Slice Actions (Duplicate & Remove) ── */
+/* ── Slice Actions (Duplicate & Remove) — sit in .ts-card-hdr next to the slice label ── */
 .ts-top-actions {
-    position: absolute;
-    top: 6px;
-    right: 8px;
     display: flex;
     gap: 10px;
     align-items: center;
-    z-index: 5;
+    flex-shrink: 0;
 }
 
 .ts-action-icon {
@@ -1532,12 +1591,12 @@
 }
 .ts-save-slice-btn:hover { background: #7a0100; }
 .ts-save-slice-btn:disabled { background: #aaa; cursor: not-allowed; }
-.ts-row.ts-existing { border-left: 3px solid #2e7d32; background: #f6fff8; }
-.ts-row.ts-saved    { border-left: 3px solid #1565c0; background: #e8f0fe; }
+.ts-row.ts-existing { border-left: 4px solid #2e7d32; background: #f6fff8; }
+.ts-row.ts-saved    { border-left: 4px solid #1565c0; background: #e8f0fe; }
 .ts-row { cursor: pointer; }
 .ts-row.ts-row-active {
     border: 2px solid #8b1a1a !important;
-    border-radius: 6px;
+    border-radius: 10px;
     box-shadow: 0 0 0 3px rgba(139,26,26,0.10);
     background: rgba(139,26,26,0.03) !important;
 }
@@ -1550,9 +1609,9 @@
     vertical-align: middle;
 }
 .ts-row-num {
-    font-size: 0.55rem; font-weight: 900; color: #bbb;
-    letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 1px;
-    display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
+    font-size: 0.68rem; font-weight: 900; color: #374151;
+    letter-spacing: 0.5px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
 }
 
 /* ── DSS search ── */
@@ -2073,11 +2132,11 @@
 }
 
 /* ── Local Scheduler overrides: Program/Year dropdowns + Curriculum Guide header ── */
-.local-mode .cg-header                          { background: #1565c0; }
-.local-mode .lp-filter-btn                      { border-left-color: #1565c0; }
-.local-mode .lp-filter-btn:hover                { background: #e3f2fd; border-left-color: #0d47a1; box-shadow: 0 2px 6px rgba(21,101,192,0.12); }
-.local-mode .lp-filter-caret                    { color: #1565c0; }
-.local-mode .lp-filter-field .bc-option:hover   { background: #e3f2fd; color: #0d47a1; }
+.local-mode .cg-header                          { background: #ff934e; }
+.local-mode .lp-filter-btn                      { border-left-color: #ff934e; }
+.local-mode .lp-filter-btn:hover                { background: #fff3e8; border-left-color: #e4812d; box-shadow: 0 2px 6px rgba(228,129,45,0.12); }
+.local-mode .lp-filter-caret                    { color: #ff934e; }
+.local-mode .lp-filter-field .bc-option:hover   { background: #fff3e8; color: #e4812d; }
 .cg-title {
     font-size: 0.62rem;
     font-weight: 900;
@@ -2237,11 +2296,11 @@
 /* ── Slice status tags inside the ts-row-num label ── */
 .slice-status-tag {
     display: inline-block;
-    font-size: 0.52rem;
+    font-size: 0.6rem;
     font-weight: 900;
-    letter-spacing: 0.5px;
-    padding: 1px 5px;
-    border-radius: 3px;
+    letter-spacing: 0.4px;
+    padding: 3px 10px;
+    border-radius: 20px;
     vertical-align: middle;
     text-transform: uppercase;
 }

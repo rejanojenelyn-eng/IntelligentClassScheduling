@@ -138,7 +138,7 @@
         <div class="cs-filter-row">
             <div class="cs-filter-unit">
                 <label>ACAD YEAR</label>
-                <select id="view_ay" onchange="refreshOfferings()">
+                <select id="view_ay" onchange="updateSections(); refreshOfferings()">
                     <option value="">Select Academic Year</option>
                     {% for ay in acad_years %}
                     <option value="{{ ay.academicyearid }}"
@@ -150,7 +150,7 @@
             </div>
             <div class="cs-filter-unit">
                 <label>SEMESTER</label>
-                <select id="view_sem" onchange="refreshOfferings()">
+                <select id="view_sem" onchange="updateSections(); refreshOfferings()">
                     <option value="A" {% if active_sem_type == 'A' %}selected{% endif %}>1ST SEMESTER</option>
                     <option value="B" {% if active_sem_type == 'B' %}selected{% endif %}>2ND SEMESTER</option>
                     <option value="C" {% if active_sem_type == 'C' %}selected{% endif %}>SUMMER</option>
@@ -171,7 +171,7 @@
                         <div class="prog-search-list" id="progList"></div>
                     </div>
                 </div>
-                <select id="view_prog" onchange="updateYearLevels(); refreshOfferings()" style="display:none;">
+                <select id="view_prog" onchange="updateYearLevels(); updateSections(); refreshOfferings()" style="display:none;">
                     <option value="">SELECT</option>
                     {% for p in programs %}
                     <option value="{{ p.programcode }}">{{ p.programname }}</option>
@@ -180,13 +180,18 @@
             </div>
             <div class="cs-filter-unit">
                 <label>YEAR LEVEL</label>
-                <select id="view_yl" onchange="refreshOfferings()">
+                <select id="view_yl" onchange="updateSections(); refreshOfferings()">
                     <option value="">SELECT</option>
                     <option value="1">1ST YEAR</option>
                     <option value="2">2ND YEAR</option>
                     <option value="3">3RD YEAR</option>
                     <option value="4">4TH YEAR</option>
                     <option value="5">5TH YEAR</option>
+                </select>
+            </div>
+            <div class="cs-filter-unit">
+                <label>SECTION</label>
+                <select id="view_section" onchange="onSectionChange()">
                 </select>
             </div>
             <div class="cs-filter-unit cs-filter-instructor">
@@ -208,6 +213,9 @@
                 </button>
             </div>
             <div class="right-controls-row">
+                <button class="cs-action-btn" onclick="openSchedImport()">
+                    <i class="fas fa-file-import"></i> IMPORT SCHEDULE
+                </button>
                 <button class="cs-action-btn" id="btn-export-schedule" onclick="openSchedExport()">
                     <i class="fas fa-file-export"></i> EXPORT SCHEDULE
                 </button>
@@ -277,6 +285,7 @@
      data-today="{{ today }}"
      data-active-ay="{{ active_ay }}"
      data-active-sem="{{ active_sem_type }}"
+     data-faculty="{{ faculty_json | forceescape }}"
      hidden></div>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
 
@@ -666,4 +675,6 @@
     }
 })();
 </script>
+
+{% include "_schedule_import_wizard.html" %}
 {% endblock %}

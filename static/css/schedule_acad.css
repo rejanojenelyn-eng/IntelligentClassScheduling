@@ -1100,7 +1100,13 @@
     font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
-    min-width: 100px;
+    /* Fixed (not min-) width so the box doesn't resize to fit whichever option
+       text happens to be selected — a native <select> otherwise auto-sizes to
+       its selected option, which shifted every filter after it on each change. */
+    width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     box-sizing: border-box;
     transition: background 0.15s, border-color 0.15s;
 }
@@ -1116,8 +1122,17 @@
     color: white;
 }
 
-.cs-filter-program select { min-width: 420px; }
-.cs-filter-instructor select { min-width: 160px; }
+/* Per-filter widths — wide enough for their longest option text so the fixed
+   width above never needs to clip normal values (SECTION/INSTRUCTOR can still
+   be genuinely long, hence the ellipsis fallback). */
+#view_ay         { width: 120px; }
+#view_sem        { width: 150px; }
+#view_yl         { width: 110px; }
+#view_section    { width: 150px; }
+#view_instructor { width: 220px; }
+
+.cs-filter-program select { width: 420px; }
+.cs-filter-instructor select { width: 220px; }
 
 /* ── Custom searchable PROGRAM dropdown (shared by Faculty / Academic Head /
    Admin Class Schedule (SIS) filter bars — mirrors Schedule Generation's) ── */

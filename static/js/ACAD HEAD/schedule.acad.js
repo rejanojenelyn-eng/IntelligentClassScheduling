@@ -167,13 +167,6 @@ function _syncProgDropdownDisplay() {
     triggerText.title = fullText;
 }
 
-/* ---- Notification dismiss ---- */
-function closeNotif() {
-    const el = document.getElementById('notif-overlay');
-    if (el) { el.classList.add('notif-fade-out'); setTimeout(() => el.remove(), 300); }
-}
-setTimeout(closeNotif, 6000);
-
 /* ---- Modal ---- */
 function openImportModal()  { document.getElementById('importScheduleModal').style.display = 'flex'; }
 function closeImportModal() { document.getElementById('importScheduleModal').style.display = 'none'; }
@@ -202,11 +195,14 @@ function updateYearLevels() {
     const sel  = document.getElementById('view_yl');
     const cur  = parseInt(sel.value);
     sel.innerHTML = '';
+    const blank = document.createElement('option');
+    blank.value = ''; blank.text = 'SELECT';
+    sel.appendChild(blank);
     const labels = ['1ST YEAR','2ND YEAR','3RD YEAR','4TH YEAR','5TH YEAR'];
     for (let i = 1; i <= max; i++) {
         const opt = document.createElement('option');
         opt.value = i; opt.text = labels[i-1];
-        if (i === Math.min(cur, max)) opt.selected = true;
+        if (i === cur) opt.selected = true;
         sel.appendChild(opt);
     }
 }
@@ -553,13 +549,13 @@ async function refreshOfferings() {
 
     // Require AY + (instructor OR a specific section selected)
     // When program is set but no section chosen (SELECT), do not auto-load — too many sections at once.
-    const needsSection = pSel.value && !section && !empNum;
+    const needsSection = !!secSel && pSel.value && !section && !empNum;
     if ((!pSel.value && !empNum) || !ay || needsSection) {
         const msg = needsSection
             ? 'SELECT A SECTION TO VIEW SCHEDULE'
             : 'SELECT FILTERS TO VIEW SCHEDULE';
         document.getElementById('gridLabel').innerText = msg;
-        document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select a section to view its schedule.</td></tr>';
+        document.getElementById('offeringsTableBody').innerHTML = '<tr><td colspan="11">No data loaded. Select filters to view the schedule.</td></tr>';
         document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
         window._lastSessions = [];
         return;
