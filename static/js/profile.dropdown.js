@@ -93,8 +93,10 @@ async function openProfilePanel() {
     }
 
     const d = _profileData || {};
-    document.getElementById('pfEmpId').value    = d.emp_num  || '—';
-    document.getElementById('pfFullName').value = d.fullname || d.role || '—';
+    document.getElementById('pfEmpId').value = d.emp_num || '—';
+    document.getElementById('pfFirstName').value  = d.firstname  || '—';
+    document.getElementById('pfMiddleName').value = d.middlename || '—';
+    document.getElementById('pfSurname').value    = d.lastname   || '—';
 
     /* Photo */
     const photoImg  = document.getElementById('profilePhotoImg');
@@ -145,6 +147,44 @@ async function openProfilePanel() {
         // If the DB value doesn't match any option (e.g. blank/unrecognized), fall back
         // to the first real option instead of leaving the select on nothing.
         if (!statusSel.value) statusSel.value = 'Permanent';
+    }
+
+    _applyProfileEditLock(d.profile_editable !== false);
+}
+
+/* Profile Settings (Designation/Specialization/Employment Status/Photo) is temporarily
+   locked for every role while the feature is reworked — see _PROFILE_SELF_EDIT_ENABLED
+   in app.py, which api_user_me reflects here as profile_editable. Employee ID and the
+   name fields are always read-only regardless (they come from HR/import data, not
+   self-edit). Re-enabling the backend flag alone won't restore the UI — this still
+   needs to see profile_editable: true from the API. */
+function _applyProfileEditLock(editable) {
+    ['pfDesignation', 'pfSpecialization', 'pfStatus'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (sel) sel.disabled = !editable;
+    });
+
+    const photoBtn   = document.getElementById('pfChangePhotoBtn');
+    const photoInput = document.getElementById('profilePhotoInput');
+    if (photoInput) photoInput.disabled = !editable;
+    if (photoBtn) {
+        photoBtn.classList.toggle('disabled', !editable);
+        photoBtn.style.pointerEvents = editable ? '' : 'none';
+        photoBtn.style.opacity       = editable ? '' : '0.5';
+    }
+
+    const saveBtn = document.getElementById('pfSaveBtn');
+    if (saveBtn) {
+        saveBtn.disabled = !editable;
+        saveBtn.style.opacity = editable ? '' : '0.5';
+        saveBtn.style.cursor  = editable ? '' : 'not-allowed';
+    }
+
+    const notice = document.getElementById('pfNotice');
+    if (notice) {
+        notice.textContent = editable
+            ? 'Changes will be reflected across the system.'
+            : 'Profile editing is temporarily unavailable — this section is being reworked.';
     }
 }
 

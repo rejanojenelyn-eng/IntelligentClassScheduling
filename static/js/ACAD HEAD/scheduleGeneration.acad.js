@@ -13,6 +13,30 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentScheduleData = [];
     let currentBatchId      = null;
     let canPublish          = false;
+    // The single shared evaluation result object — same object backs the panel UI,
+    // row-conflict highlighting, exports, and Approve-button gating.
+    let currentEvaluation   = null;
+    // True from the moment a Generate/Regenerate/Retrieve result is on screen
+    // until it's saved as Draft, Published, or handed off to Manual Editor —
+    // guards both switching filters mid-page and leaving/closing the tab.
+    let _hasUnsavedGenerated  = false;
+    let _leavingIntentionally = false;
+
+    // ── Selective regeneration: which rows are checked, and which of their
+    // fields are marked "preserve" (see renderTable() and btnRegenerate below).
+    // Matches the ORIGINAL table grouping (subject + faculty) rather than
+    // splitting a subject's Lecture/Lab into separate rows, so a subject
+    // taught by one instructor still shows as one row with one checkbox —
+    // that checkbox's selected/preserve state is shared by every underlying
+    // gene (Lecture and/or Lab) it represents when the "Re-generate selected"
+    // payload is built. Trade-off: if a regenerate changes the instructor for
+    // a subject that was left unchecked, its key changes too, so a *previous*
+    // selection on that subject (if any) won't carry forward — acceptable,
+    // since an unchecked row is meant to stay untouched anyway.
+    const rowSelectionState = new Map(); // rowKey -> { selected, preserve: {faculty, room, schedule} }
+    function rowKeyOf(cls) {
+        return (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
+    }
 
     const acadYear      = document.getElementById('acadYear');
     const term          = document.getElementById('term');
@@ -32,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalendarView  = document.getElementById('btnCalendarView');
     const btnTableView     = document.getElementById('btnTableView');
     const sortSelect       = document.getElementById('sortSelect');
+    const btnSelectIncomplete = document.getElementById('btnSelectIncomplete');
 
     // ── Custom searchable program dropdown ───────────────────────────────────
     const genProgWrapper     = document.getElementById('genProgWrapper');
@@ -143,6 +168,52 @@ document.addEventListener('DOMContentLoaded', () => {
         checkFormValidity();
     }
 
+    // ── Unsaved-generated-schedule guard ─────────────────────────────────────
+    // Switching AY/Term/Program/Year Level/Section after a Generate/Regenerate
+    // abandons the on-screen (unsaved) result, so confirm first — same idea as
+    // the "Unsaved Changes" prompt in Manual Editor when switching subjects.
+    // Registered before the real change handlers below so, for the same
+    // element, this one runs first and can stopImmediatePropagation() them
+    // when the user cancels.
+    function _syncProgramTriggerText(val) {
+        if (!genProgTriggerText) return;
+        const selOpt = program.querySelector(`option[value="${CSS.escape(val || '')}"]`);
+        const progName = selOpt ? (selOpt.dataset.name || selOpt.textContent.split('–')[1]?.trim() || '') : '';
+        genProgTriggerText.textContent = val ? (progName ? `${val} – ${progName}` : val) : '-SELECT PROGRAM-';
+    }
+
+    const _guardedFilters = [acadYear, term, program, yearLevel, sectionFilter];
+    const _prevFilterValue = new Map(_guardedFilters.map(el => [el, el.value]));
+
+    _guardedFilters.forEach(el => {
+        el.addEventListener('change', function(e) {
+            const newValue = el.value;
+            if (!_hasUnsavedGenerated) {
+                _prevFilterValue.set(el, newValue);
+                return;
+            }
+            const oldValue = _prevFilterValue.get(el) || '';
+            if (newValue === oldValue) return;
+
+            e.stopImmediatePropagation();
+            el.value = oldValue;
+            if (el === program) _syncProgramTriggerText(oldValue);
+
+            showInfo(
+                'Unsaved Changes',
+                'You have an unsaved generated schedule.<br>Switch selection and discard it?',
+                'confirm'
+            ).then(ok => {
+                if (!ok) return;
+                _discardUnsavedGenerated();
+                _prevFilterValue.set(el, newValue);
+                el.value = newValue;
+                if (el === program) _syncProgramTriggerText(newValue);
+                el.dispatchEvent(new Event('change'));
+            });
+        });
+    });
+
     program.addEventListener('change', async function() {
         const programValue = this.value;
         if (!programValue) {
@@ -241,11 +312,13 @@ document.addEventListener('DOMContentLoaded', () => {
         currentScheduleData = [];
         currentBatchId      = null;
         canPublish          = false;
+        currentEvaluation   = null;
+        rowSelectionState.clear();
         try { localStorage.removeItem(_LS_KEY); } catch(e) {}
 
         document.getElementById('scheduleTableBody').innerHTML = `
             <tr class="table-empty-row">
-                <td colspan="11">
+                <td colspan="12">
                     <i class="fas fa-calendar-plus"></i>
                     Select filters above and click Generate Schedule to begin
                 </td>
@@ -272,17 +345,19 @@ document.addEventListener('DOMContentLoaded', () => {
         btnApprove.disabled      = true;
         btnGenerate.disabled     = true;
 
-        // Reset accuracy widget
-        const pctEl       = document.getElementById('accuracyPct');
-        const iconEl      = document.getElementById('accuracyIcon');
-        const circleEl    = document.getElementById('accuracyCircle');
-        const breakdownEl = document.getElementById('accuracyBreakdown');
-        const descEl      = document.getElementById('accuracyDesc');
-        if (pctEl)       pctEl.textContent = '—';
-        if (iconEl)      iconEl.className  = 'fas fa-chart-bar';
-        if (circleEl)    { circleEl.style.borderColor = ''; }
+        // Reset schedule evaluation panel
+        const pctEl        = document.getElementById('evalScorePct');
+        const cspBadge     = document.getElementById('evalCspBadge');
+        const cspIcon      = document.getElementById('evalCspIcon');
+        const cspText      = document.getElementById('evalCspText');
+        const approvalEl   = document.getElementById('evalApprovalBadge');
+        const breakdownEl  = document.getElementById('evalBreakdown');
+        if (pctEl)      { pctEl.textContent = '—'; pctEl.className = 'eval-score-pct'; }
+        if (cspBadge)   cspBadge.className = 'eval-csp-badge status-pending';
+        if (cspIcon)    cspIcon.className  = 'fas fa-circle-notch';
+        if (cspText)    cspText.textContent = 'Generate a schedule to evaluate it';
+        if (approvalEl) approvalEl.classList.add('hidden');
         if (breakdownEl) { breakdownEl.innerHTML = ''; breakdownEl.classList.remove('visible'); }
-        if (descEl)      descEl.textContent = 'Generate a schedule to see how well it satisfies all scheduling rules and constraints.';
     }
 
     function _saveStateToStorage() {
@@ -391,7 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnExport.disabled       = false;
             btnApprove.disabled      = !canPublish;
 
-            updateAccuracyWidget(currentScheduleData, getContext());
+            updateEvaluationWidget(currentScheduleData, getContext());
         } catch(e) {}
     }
 
@@ -415,16 +490,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 btnRegenerate.disabled   = false;
                 btnSaveDraft.disabled    = false;
+                btnSaveDraft.innerHTML   = '<i class="fas fa-save"></i> Save as Draft';
                 btnManualEditor.disabled = false;
                 btnExport.disabled       = false;
-                btnApprove.disabled      = true;
+                btnApprove.disabled      = true; // re-validated below once the evaluation loads
 
-                updateAccuracyWidget(currentScheduleData, getContext());
+                updateEvaluationWidget(currentScheduleData, getContext());
             }
         } catch(_e) {}
     }
 
-    function showInfo(title, message, type = 'info') {
+    // opts.confirmLabel/opts.cancelLabel let a caller relabel the two buttons
+    // (e.g. "View Partial Schedule" / "Discard Results" for type 'partial')
+    // without touching any existing call site — both default to the original
+    // "OK"/"Cancel" text so every prior showInfo(...) call keeps working as-is.
+    function showInfo(title, message, type = 'info', opts = {}) {
         return new Promise(resolve => {
             const modal    = document.getElementById('infoModal');
             const icon     = document.getElementById('infoModalIcon');
@@ -435,6 +515,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             titleEl.textContent = title;
             msgEl.innerHTML     = message;
+            confirmBtn.textContent = opts.confirmLabel || 'OK';
+            cancelBtn.textContent  = opts.cancelLabel  || 'Cancel';
 
             icon.className = 'info-modal-icon';
             if (type === 'success') {
@@ -443,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (type === 'error') {
                 icon.innerHTML = '<i class="fas fa-times-circle"></i>';
                 icon.classList.add('error');
-            } else if (type === 'confirm') {
+            } else if (type === 'confirm' || type === 'partial') {
                 icon.innerHTML = '<i class="fas fa-question-circle"></i>';
                 icon.classList.add('warning');
             } else {
@@ -452,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             modal.classList.remove('hidden');
 
-            if (type === 'confirm') {
+            if (type === 'confirm' || type === 'partial') {
                 cancelBtn.classList.remove('hidden');
                 confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
                 cancelBtn.onclick  = () => { modal.classList.add('hidden'); resolve(false); };
@@ -487,18 +569,27 @@ document.addEventListener('DOMContentLoaded', () => {
         let stepIndex = 0;
 
         const interval = setInterval(() => {
-            // Fast progress to 88%, then slow creep up to 99% so the bar never freezes
-            if (progress < 88) {
+            // This bar is a fake animation (the actual /api/schedule/generate call is one
+            // request with no real progress to report), only meant to reassure the user
+            // something is happening — it always caps at 99% and completeProgress() snaps it
+            // to 100% once the real response arrives. It used to jump to 88% fast and then
+            // crawl the last 11 points at 1/60th the speed (~0.125%/tick, 35+ seconds to
+            // creep from 88% to 99%) — that dead-slow stretch is exactly what read as "the
+            // generation gets slower past 90%", even on a fast, ordinary generation. Pushing
+            // the fast phase further (to 95%) and roughly doubling the crawl rate keeps the
+            // same "don't finish before the real work does" safety margin for a genuinely
+            // slow generation, while cutting the felt stall from ~35s down to ~6s.
+            if (progress < 95) {
                 progress += Math.random() * 15;
             } else {
-                progress += Math.random() * 0.25;
+                progress += Math.random() * 0.5;
             }
             if (progress > 99) progress = 99;
 
             document.getElementById('progressBarFill').style.width = progress + '%';
             document.getElementById('progressLabel').textContent = Math.floor(progress) + '%';
 
-            if (stepIndex < steps.length && progress > (stepIndex + 1) * (88 / steps.length)) {
+            if (stepIndex < steps.length && progress > (stepIndex + 1) * (95 / steps.length)) {
                 document.getElementById('loadingStep').textContent = steps[stepIndex];
                 stepIndex++;
             }
@@ -518,15 +609,26 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderTable(scheduleArray, sortBy = 'default') {
         const tbody = document.getElementById('scheduleTableBody');
         if (!scheduleArray.length) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="11"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> No classes scheduled yet</span></td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="12"><span class="empty-msg"><i class="fas fa-calendar-plus"></i> No classes scheduled yet</span></td></tr>';
+            _updatePreserveCaption();
+            _syncSelectAllCheckbox();
             return;
         }
 
+        // Row-conflict highlighting reads the shared evaluation object's violationsBySubject —
+        // same object that drives the evaluation panel and Approve gating.
+        const violBySubject = (currentEvaluation && currentEvaluation.violationsBySubject) || {};
+
         const groups = {};
         scheduleArray.forEach(cls => {
-            const key = (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
+            // Same subject+faculty grouping as before this feature — a subject's
+            // Lecture and Lab parts still merge into one row/checkbox when taught
+            // by the same instructor (see rowKeyOf() above for the shared-state
+            // trade-off this implies for selective regeneration).
+            const key = rowKeyOf(cls);
             if (!groups[key]) {
                 groups[key] = {
+                    rowKey:       key,
                     instructor:   cls.instructor || '-',
                     subject_code: cls.subject_code || '-',
                     description:  cls.subject_name || cls.description || cls.subjectname || '-',
@@ -537,11 +639,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     times:        [],
                     days_set:     [],
                     rooms:        [],
+                    incomplete:        false,
+                    incompleteReasons: [],
                 };
             }
             const g = groups[key];
             g.lec_hours += (cls.lec_hours || cls.lecturehours || 0);
             g.lab_hours += (cls.lab_hours || cls.laboratoryhours || 0);
+
+            // Partial-generation support (architecture spec section 6): a gene
+            // the backend stripped down to an unresolved component (or that
+            // never resolved at all) carries incomplete/incomplete_reason —
+            // surfaced here as a distinct row state from a plain CSP conflict.
+            if (cls.incomplete) {
+                g.incomplete = true;
+                (cls.incomplete_reason || []).forEach(r => {
+                    if (!g.incompleteReasons.includes(r)) g.incompleteReasons.push(r);
+                });
+            }
 
             const t = cls.time || '';
             if (t && !g.times.includes(t)) g.times.push(t);
@@ -561,21 +676,134 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (sortBy === 'za') entries.sort((a, b) => b.subject_code.localeCompare(a.subject_code));
         else if (sortBy === 'time') entries.sort((a, b) => (a.times[0] || '').localeCompare(b.times[0] || ''));
 
-        tbody.innerHTML = entries.map((g) => `
-            <tr>
-                <td class="td-instructor">${g.instructor}</td>
+        tbody.innerHTML = entries.map((g) => {
+            const state = rowSelectionState.get(g.rowKey);
+            const sel   = !!(state && state.selected);
+            const pres  = (state && state.preserve) || {};
+            // Only a checked (selected-for-regeneration) row shows its per-field
+            // "preserve this value" checkboxes — an unchecked row is already
+            // fully preserved as a whole, so field-level checkboxes on it would
+            // be meaningless.
+            const preserveBox = (field) => sel ? `
+                <label class="preserve-select-wrap" title="Preserve this value during regeneration">
+                    <input type="checkbox" class="preserve-select" data-row-key="${g.rowKey}" data-field="${field}" ${pres[field] ? 'checked' : ''}>
+                    Preserve
+                </label>` : '';
+            // Value + its "Preserve" checkbox sit side by side on one line
+            // (not stacked) via .cell-with-preserve — see scheduleGeneration.css.
+            const cellWithPreserve = (valueHtml, field) => `
+                <div class="cell-with-preserve">
+                    <span>${valueHtml}</span>${preserveBox(field)}
+                </div>`;
+
+            const violations  = violBySubject[g.subject_code] || [];
+            const hasConflict  = violations.length > 0;
+            const conflictTip  = hasConflict
+                ? violations.map(v => (typeof v === 'string') ? v : (v.detail || v.rule || 'Conflict detected')).join(' | ')
+                : '';
+            // role="img" + aria-label + title makes this reachable by keyboard (tabindex),
+            // not just mouse hover, per the panel's accessibility requirement.
+            const conflictFlag = hasConflict ? `
+                <span class="row-conflict-flag" role="img" tabindex="0" aria-label="Conflict: ${conflictTip.replace(/"/g, '&quot;')}" title="${conflictTip.replace(/"/g, '&quot;')}">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </span>` : '';
+
+            const incompleteTip = g.incompleteReasons.join(' | ') || 'This component could not be resolved.';
+            const incompleteFlag = g.incomplete ? `
+                <span class="row-incomplete-flag" role="img" tabindex="0" aria-label="Incomplete: ${incompleteTip.replace(/"/g, '&quot;')}" title="${incompleteTip.replace(/"/g, '&quot;')}">
+                    <i class="fas fa-circle-question"></i>
+                </span>` : '';
+
+            return `
+            <tr class="${hasConflict ? 'row-conflict' : ''} ${g.incomplete ? 'row-incomplete' : ''}">
+                <td class="td-check"><input type="checkbox" class="row-select" data-row-key="${g.rowKey}" ${sel ? 'checked' : ''}></td>
+                <td class="td-instructor">${conflictFlag}${incompleteFlag}${cellWithPreserve(g.instructor, 'faculty')}</td>
                 <td class="td-code">${g.subject_code}</td>
                 <td class="td-desc">${g.description}</td>
                 <td class="td-num">${g.lec_hours}</td>
                 <td class="td-num">${g.lab_hours}</td>
                 <td class="td-num">${g.credit_units}</td>
                 <td class="td-course">${g.course}</td>
-                <td class="td-time">${g.times.map(t => `<span class="time-line">${t}</span>`).join('')}</td>
+                <td class="td-time">${cellWithPreserve(g.times.map(t => `<span class="time-line">${t}</span>`).join(''), 'schedule')}</td>
                 <td class="td-num">${g.lec_hours + g.lab_hours}</td>
                 <td class="td-days">${_sortDays(g.days_set).join(' / ')}</td>
-                <td class="td-room">${g.rooms.join('<br>')}</td>
-            </tr>
-        `).join('');
+                <td class="td-room">${cellWithPreserve(g.rooms.join('<br>'), 'room')}</td>
+            </tr>`;
+        }).join('');
+
+        _updatePreserveCaption();
+        _syncSelectAllCheckbox();
+    }
+
+    // ── Selective regeneration: checkbox wiring ───────────────────────────────
+    // Delegated on the tbody (registered once) since renderTable() rebuilds
+    // innerHTML on every render, which would otherwise drop per-checkbox
+    // listeners. Re-rendering the whole table on every checkbox change is
+    // cheap here (a schedule table is small) and keeps the caption/select-all
+    // checkbox trivially in sync with rowSelectionState.
+    function _anyRowSelected() {
+        return [...rowSelectionState.values()].some(s => s.selected);
+    }
+
+    function _updatePreserveCaption() {
+        const anySelected = _anyRowSelected();
+        const caption = document.getElementById('preserveCaption');
+        if (caption) caption.classList.toggle('hidden', !anySelected);
+        _updateRegenerateButtonLabel();
+    }
+
+    // The button only reads "Re-generate selected" once at least one row is
+    // checked — otherwise it reads plain "Re-generate" (full regenerate,
+    // exactly what clicking it does when nothing is selected).
+    function _updateRegenerateButtonLabel() {
+        if (!btnRegenerate || _generating) return; // don't clobber the "Regenerating..." label mid-request
+        btnRegenerate.innerHTML = _anyRowSelected()
+            ? '<i class="fas fa-sync-alt"></i> Re-generate selected'
+            : '<i class="fas fa-sync-alt"></i> Re-generate';
+    }
+
+    function _syncSelectAllCheckbox() {
+        const chk = document.getElementById('chkSelectAllRows');
+        if (!chk) return;
+        const keys = [...new Set(currentScheduleData.map(rowKeyOf))];
+        chk.checked = keys.length > 0 && keys.every(k => {
+            const s = rowSelectionState.get(k);
+            return s && s.selected;
+        });
+    }
+
+    document.getElementById('scheduleTableBody').addEventListener('change', (e) => {
+        const t = e.target;
+        if (t.classList.contains('row-select')) {
+            const key   = t.dataset.rowKey;
+            const state = rowSelectionState.get(key) || { selected: false, preserve: {} };
+            state.selected = t.checked;
+            if (!state.selected) state.preserve = {}; // unchecking a row clears its field-level preserves too
+            rowSelectionState.set(key, state);
+            renderTable(currentScheduleData, sortSelect.value);
+        } else if (t.classList.contains('preserve-select')) {
+            const key   = t.dataset.rowKey;
+            const field = t.dataset.field;
+            const state = rowSelectionState.get(key) || { selected: true, preserve: {} };
+            state.preserve[field] = t.checked;
+            rowSelectionState.set(key, state);
+            renderTable(currentScheduleData, sortSelect.value);
+        }
+    });
+
+    const chkSelectAllRows = document.getElementById('chkSelectAllRows');
+    if (chkSelectAllRows) {
+        chkSelectAllRows.addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            const keys = new Set(currentScheduleData.map(rowKeyOf));
+            keys.forEach(key => {
+                const state = rowSelectionState.get(key) || { selected: false, preserve: {} };
+                state.selected = checked;
+                if (!checked) state.preserve = {};
+                rowSelectionState.set(key, state);
+            });
+            renderTable(currentScheduleData, sortSelect.value);
+        });
     }
 
     const CAL_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
@@ -731,9 +959,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const ctx = getContext();
         const termName    = term.options[term.selectedIndex]?.text || ctx.term;
         const sectionText = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
-        const sectionPart = (sectionText && sectionText !== 'SELECT') ? ` - ${sectionText}` : '';
+        const sectionPart = (sectionText && sectionText !== 'SELECT') ? ` — ${sectionText}` : '';
+        // Context strip format: [PROGRAM] — YEAR [YEAR LEVEL] — [SECTION] | [SEMESTER] | AY [ACADEMIC YEAR]
         document.getElementById('tableTitle').innerHTML =
-            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} - Year ${ctx.yearLevel || '?'}${sectionPart} | ${termName} | ${ctx.acadYear || 'AY'}`;
+            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} — YEAR ${ctx.yearLevel || '?'}${sectionPart} | ${termName} | AY ${ctx.acadYear || '—'}`;
     }
 
     function applyScheduleResult(data, isRetrieve) {
@@ -743,7 +972,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const internalConflicts = data.conflict_count       || 0;
         const crossConflicts    = data.cross_conflict_count || 0;
         const totalConflicts    = internalConflicts + crossConflicts;
-        canPublish = totalConflicts === 0;
+
+        // The evaluation object (when the generate response carries one) is the
+        // authoritative source for Approve gating — a high weighted score never
+        // overrides a CSP failure. Set it before renderTable() so row-conflict
+        // highlighting reflects this result on the very first paint.
+        currentEvaluation = data.evaluation || null;
+        canPublish = currentEvaluation
+            ? !!currentEvaluation.eligibleForApproval
+            : (totalConflicts === 0);
 
         renderTable(currentScheduleData, sortSelect.value);
         updateTitleBar();
@@ -755,6 +992,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         btnRegenerate.disabled   = false;
         btnSaveDraft.disabled    = false;
+        // Reset the label too — a prior generation's "Saved as Draft" state (see
+        // btnSaveDraft's success handler) must not linger onto this new, unsaved result.
+        btnSaveDraft.innerHTML   = '<i class="fas fa-save"></i> Save as Draft';
         btnManualEditor.disabled = false;
         btnExport.disabled       = false;
         btnApprove.disabled      = !canPublish;
@@ -779,7 +1019,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (allViolations.length > 0) {
                     allViolations.forEach(v => {
                         const li = document.createElement('li');
-                        li.textContent = v.detail || v.subject || 'Conflict detected.';
+                        // Formal type label (e.g. "Conflict: Room Schedule") ahead of the
+                        // plain-language detail, so each line names the kind of conflict.
+                        const _typeLabel = v.type || (v.rule ? `Conflict: ${v.rule}` : '');
+                        const _body      = v.detail || v.subject || 'Conflict detected.';
+                        li.textContent = _typeLabel ? `${_typeLabel} — ${_body}` : _body;
                         conflictDetailList.appendChild(li);
                     });
                     conflictDetailList.style.display = 'block';
@@ -791,6 +1035,25 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             document.getElementById('conflictBanner').classList.add('hidden');
             if (conflictDetailList) conflictDetailList.style.display = 'none';
+        }
+
+        // Partial-generation support (architecture spec section 6/8): surface
+        // how many components are still unresolved and offer a one-click way to
+        // select them all for targeted regeneration (via the existing per-row
+        // checkbox + "Re-generate Selected" flow — this is a selection helper,
+        // not a "Regenerate All" button).
+        const incompleteBanner = document.getElementById('incompleteBanner');
+        const incompleteCount  = data.incomplete_count || 0;
+        if (incompleteBanner) {
+            if (incompleteCount > 0) {
+                document.getElementById('incompleteText').textContent =
+                    `${incompleteCount} component${incompleteCount === 1 ? '' : 's'} could not be resolved ` +
+                    `within the generation limit (completion ${data.completion_rate != null ? data.completion_rate : '?'}%). ` +
+                    `Select the incomplete rows and use "Re-generate Selected" to try again.`;
+                incompleteBanner.classList.remove('hidden');
+            } else {
+                incompleteBanner.classList.add('hidden');
+            }
         }
 
         const toast = document.getElementById('successToast');
@@ -806,95 +1069,152 @@ document.addEventListener('DOMContentLoaded', () => {
         toast.classList.remove('hidden');
         setTimeout(() => toast.classList.add('hidden'), 4000);
 
-        if (data && data.accuracy_data && data.accuracy_data.success) {
-            _renderAccuracyResult(data.accuracy_data);
+        if (currentEvaluation) {
+            _renderEvaluationResult(currentEvaluation);
         } else {
-            updateAccuracyWidget(currentScheduleData, getContext());
+            updateEvaluationWidget(currentScheduleData, getContext());
         }
     }
 
-    function _renderAccuracyResult(data) {
-        const circleEl    = document.getElementById('accuracyCircle');
-        const pctEl       = document.getElementById('accuracyPct');
-        const descEl      = document.getElementById('accuracyDesc');
-        const labelEl     = document.getElementById('accuracyLabelEl');
-        const iconEl      = document.getElementById('accuracyIcon');
-        const breakdownEl = document.getElementById('accuracyBreakdown');
+    // Score-band coloring, shared by the overall score and every criterion row.
+    // Green = full/high compliance, Amber = partial, Red = failed/invalid.
+    function _evalBand(pct) {
+        return pct >= 85 ? 'eval-good' : pct >= 60 ? 'eval-warn' : 'eval-bad';
+    }
+
+    // Criterion metadata: label + which band-coloring to use. "hist" criteria use the
+    // purple historical-match token instead of the plain good/warn/bad traffic-light scale.
+    const _EVAL_CATEGORIES = [
+        { key: 'conflictValidation',   heading: 'CONFLICT VALIDATION',    criteria: [
+            { key: 'facultyConflictFree', label: 'Faculty Conflict-Free' },
+            { key: 'roomConflictFree',    label: 'Room Conflict-Free' },
+            { key: 'sectionConflictFree', label: 'Section Conflict-Free' },
+        ]},
+        { key: 'constraintCompliance', heading: 'CONSTRAINT COMPLIANCE',  criteria: [
+            { key: 'facultyAssignmentSuitability', label: 'Faculty Assignment Suitability' },
+            { key: 'roomTypeSuitability',           label: 'Room Type Suitability' },
+            { key: 'subjectDayCompliance',          label: 'Subject-Day Compliance' },
+            { key: 'schedulePairingDistribution',   label: 'Schedule Pairing & Distribution' },
+            { key: 'facultyLoadCompliance',         label: 'Faculty Load Compliance' },
+        ]},
+        { key: 'recommendationQuality', heading: 'RECOMMENDATION QUALITY', hist: true, criteria: [
+            { key: 'historicalFacultyMatch', label: 'Historical Faculty Match' },
+            { key: 'historicalRoomMatch',    label: 'Historical Room Match' },
+            { key: 'historicalScheduleMatch', label: 'Historical Schedule Match' },
+        ]},
+    ];
+
+    // Renders the shared evaluation result object into the Schedule Evaluation panel.
+    // This same object also drives row-conflict highlighting (renderTable) and
+    // Approve-button gating (applyScheduleResult) — one source of truth throughout.
+    function _renderEvaluationResult(data) {
+        const pctEl       = document.getElementById('evalScorePct');
+        const cspBadge     = document.getElementById('evalCspBadge');
+        const cspIcon      = document.getElementById('evalCspIcon');
+        const cspText      = document.getElementById('evalCspText');
+        const approvalEl   = document.getElementById('evalApprovalBadge');
+        const breakdownEl  = document.getElementById('evalBreakdown');
         if (!pctEl) return;
 
-        if (data && data.success) {
-            const pct   = data.accuracy || 0;
-            const color = pct >= 85 ? '#16a34a' : pct >= 60 ? '#d97706' : '#dc2626';
-            const icon  = pct >= 85 ? 'fas fa-check' : pct >= 60 ? 'fas fa-chart-bar' : 'fas fa-exclamation';
+        if (data && data.success === false) {
+            pctEl.textContent = 'N/A';
+            pctEl.className   = 'eval-score-pct';
+            if (cspBadge) cspBadge.className = 'eval-csp-badge status-pending';
+            if (cspIcon)  cspIcon.className  = 'fas fa-question';
+            if (cspText)  cspText.textContent = data.error || 'Could not evaluate this schedule.';
+            if (approvalEl) approvalEl.classList.add('hidden');
+            if (breakdownEl) { breakdownEl.innerHTML = ''; breakdownEl.classList.remove('visible'); }
+            return;
+        }
 
-            pctEl.textContent          = pct + '%';
-            iconEl.className           = icon;
-            circleEl.style.borderColor = color;
-            pctEl.style.color          = color;
-            if (labelEl) labelEl.style.color = color;
+        const overall     = Math.round(data.overallScore || 0);
+        const cspPassed    = !!data.cspPassed;
+        const violationCnt = data.hardViolationCount || 0;
+        const eligible      = !!data.eligibleForApproval;
 
-            const noHist = !data.hist_total;
-            if (descEl) {
-                descEl.textContent = noHist
-                    ? 'No historical data — score reflects constraint compliance only.'
-                    : `${data.matched_faculty || 0} of ${data.hist_total || 0} subjects match historical faculty.`;
-            }
+        pctEl.textContent = overall + '%';
+        pctEl.className   = 'eval-score-pct ' + _evalBand(overall);
 
-            if (breakdownEl && Array.isArray(data.breakdown)) {
-                const GROUPS = [
-                    { heading: 'Conflict Validation',    keys: ['faculty_conflict','room_conflict','section_conflict'] },
-                    { heading: 'Constraint Compliance',  keys: ['faculty_qual','lab_compliance','weekend','day_pairing','load_compliance'] },
-                    { heading: 'Recommendation Quality', keys: ['hist_faculty','hist_room','hist_time'] },
-                ];
-                const byKey = {};
-                data.breakdown.forEach(b => { byKey[b.key] = b; });
-                function itemColor(sc) { return sc >= 85 ? '#16a34a' : sc >= 60 ? '#d97706' : '#dc2626'; }
-                let html = '';
-                GROUPS.forEach((grp, gi) => {
-                    if (gi > 0) html += '<hr class="acc-divider">';
-                    html += `<div class="acc-section-label">${grp.heading}</div>`;
-                    grp.keys.forEach(key => {
-                        const item = byKey[key];
-                        if (!item) return;
-                        const sc = item.score;
-                        const bc = itemColor(sc);
-                        html += `<div class="acc-item">
-                          <div class="acc-item-header">
-                            <span class="acc-item-label" title="${item.label}">${item.label}</span>
-                            <span class="acc-item-score" style="color:${bc}">${sc}%</span>
+        // CSP pass/fail is independent of the weighted score — never let a high
+        // score visually imply approval eligibility on its own.
+        if (cspBadge) cspBadge.className = 'eval-csp-badge ' + (cspPassed ? 'status-pass' : 'status-fail');
+        if (cspIcon)  cspIcon.className  = cspPassed ? 'fas fa-check-circle' : 'fas fa-times-circle';
+        if (cspText)  cspText.textContent = cspPassed
+            ? `CSP PASSED · 0 HARD-CONSTRAINT VIOLATIONS`
+            : `CSP FAILED · ${violationCnt} HARD-CONSTRAINT VIOLATION${violationCnt === 1 ? '' : 'S'}`;
+
+        if (approvalEl) approvalEl.classList.toggle('hidden', !eligible);
+
+        // Partial-generation support (architecture spec section 12): completion
+        // rate + incomplete count, shown ahead of the category breakdown. A
+        // schedule can be 100% hard-constraint-compliant among what completed
+        // and still be < 100% complete — completionRate/incompleteCount and
+        // eligibleForApproval are deliberately separate signals (see this
+        // function's own module docstring and _compute_schedule_evaluation's).
+        const completionEl = document.getElementById('evalCompletionText');
+        if (completionEl) {
+            const rate = (data.completionRate != null) ? Math.round(data.completionRate) : 100;
+            const inc  = data.incompleteCount || 0;
+            completionEl.textContent = inc > 0
+                ? `COMPLETION ${rate}% · ${inc} COMPONENT${inc === 1 ? '' : 'S'} INCOMPLETE`
+                : `COMPLETION ${rate}%`;
+            completionEl.className = 'eval-completion-text ' + (inc > 0 ? 'eval-warn' : 'eval-good');
+        }
+
+        if (breakdownEl && data.categories) {
+            let html = '';
+            _EVAL_CATEGORIES.forEach(catDef => {
+                const cat = data.categories[catDef.key];
+                if (!cat) return;
+                html += `<div class="eval-cat-label">${catDef.heading} · ${cat.weight}%</div>`;
+                catDef.criteria.forEach(cDef => {
+                    const sc = cat.criteria ? cat.criteria[cDef.key] : undefined;
+                    if (sc === undefined || sc === null) return;
+                    // 'N/A' (architecture spec section 12): no usable historical case —
+                    // never rendered as 0% or a fabricated percentage/bar.
+                    if (sc === 'N/A') {
+                        html += `<div class="eval-item">
+                          <div class="eval-item-header">
+                            <span class="eval-item-label" title="${cDef.label}">${cDef.label}</span>
+                            <span class="eval-item-score eval-na">N/A</span>
                           </div>
-                          <div class="acc-bar-track">
-                            <div class="acc-bar-fill" style="width:${sc}%;background:${bc}"></div>
-                          </div>
+                          <div class="eval-bar-track"><div class="eval-bar-fill eval-na" style="width:0%"></div></div>
                         </div>`;
-                    });
+                        return;
+                    }
+                    const scRounded = Math.round(sc);
+                    const band = catDef.hist ? 'eval-hist' : _evalBand(scRounded);
+                    html += `<div class="eval-item">
+                      <div class="eval-item-header">
+                        <span class="eval-item-label" title="${cDef.label}">${cDef.label}</span>
+                        <span class="eval-item-score ${band}">${scRounded}%</span>
+                      </div>
+                      <div class="eval-bar-track">
+                        <div class="eval-bar-fill ${band}" style="width:${scRounded}%"></div>
+                      </div>
+                    </div>`;
                 });
-                breakdownEl.innerHTML = html;
-                breakdownEl.classList.add('visible');
-            }
-        } else {
-            pctEl.textContent          = 'N/A';
-            iconEl.className           = 'fas fa-question';
-            circleEl.style.borderColor = '#aaa';
-            pctEl.style.color          = '#aaa';
-            if (labelEl) labelEl.style.color = '#aaa';
-            if (descEl)  descEl.textContent  = (data && data.error) || 'Could not calculate accuracy.';
+            });
+            breakdownEl.innerHTML = html;
+            breakdownEl.classList.add('visible');
         }
     }
 
-    async function updateAccuracyWidget(scheduleData, ctx) {
-        const pctEl       = document.getElementById('accuracyPct');
-        const iconEl      = document.getElementById('accuracyIcon');
-        const circleEl    = document.getElementById('accuracyCircle');
-        const labelEl     = document.getElementById('accuracyLabelEl');
-        const breakdownEl = document.getElementById('accuracyBreakdown');
+    // Fallback path — used when the generate/retrieve response didn't already carry
+    // an evaluation object (e.g. restored from localStorage / loaded from a saved draft).
+    async function updateEvaluationWidget(scheduleData, ctx) {
+        const pctEl       = document.getElementById('evalScorePct');
+        const cspBadge     = document.getElementById('evalCspBadge');
+        const cspIcon      = document.getElementById('evalCspIcon');
+        const cspText      = document.getElementById('evalCspText');
+        const breakdownEl  = document.getElementById('evalBreakdown');
         if (!pctEl) return;
 
-        pctEl.textContent          = '...';
-        iconEl.className           = 'fas fa-spinner fa-spin';
-        circleEl.style.borderColor = '#aaa';
-        pctEl.style.color          = '#aaa';
-        if (labelEl)     labelEl.style.color = '#aaa';
+        pctEl.textContent = '...';
+        pctEl.className   = 'eval-score-pct';
+        if (cspBadge) cspBadge.className = 'eval-csp-badge status-pending';
+        if (cspIcon)  cspIcon.className  = 'fas fa-spinner fa-spin';
+        if (cspText)  cspText.textContent = 'Evaluating schedule...';
         if (breakdownEl) { breakdownEl.innerHTML = ''; breakdownEl.classList.remove('visible'); }
 
         try {
@@ -909,15 +1229,106 @@ document.addEventListener('DOMContentLoaded', () => {
                 }),
             });
             const data = await res.json();
-            _renderAccuracyResult(data);
+            currentEvaluation = (data && data.success !== false) ? data : null;
+            // Re-validate Approve gating and row highlighting now that the real
+            // evaluation is in — this is the "re-validate before approving" path.
+            canPublish = currentEvaluation ? !!currentEvaluation.eligibleForApproval : false;
+            btnApprove.disabled = !canPublish;
+            renderTable(currentScheduleData, sortSelect.value);
+            _renderEvaluationResult(data);
         } catch (e) {
-            if (pctEl)    pctEl.textContent          = 'N/A';
-            if (iconEl)   iconEl.className            = 'fas fa-question';
-            if (circleEl) circleEl.style.borderColor  = '#aaa';
-            if (pctEl)    pctEl.style.color           = '#aaa';
-            const descEl = document.getElementById('accuracyDesc');
-            if (descEl)   descEl.textContent           = 'Accuracy calculation unavailable.';
+            if (pctEl)   pctEl.textContent = 'N/A';
+            if (cspBadge) cspBadge.className = 'eval-csp-badge status-pending';
+            if (cspIcon)  cspIcon.className  = 'fas fa-question';
+            if (cspText)  cspText.textContent = 'Evaluation unavailable.';
         }
+    }
+
+    // Partial-generation support (architecture spec section 6/7): branches on
+    // result_status instead of a bare success boolean, shared by both the full
+    // Generate and the selective Regenerate handlers below. Falls back to the
+    // old COMPLETE_VALID/GENERATION_ERROR inference for a response from a
+    // server that hasn't been updated (defensive, should never actually hit
+    // that branch against this build's own backend).
+    async function _handleGenerationResult(data, isRegenerate) {
+        const status = data.result_status || (data.success ? 'COMPLETE_VALID' : 'GENERATION_ERROR');
+
+        if (status === 'COMPLETE_VALID') {
+            applyScheduleResult(data, false);
+            return;
+        }
+
+        if (status === 'PARTIAL_VALID') {
+            // Snapshot what's currently on screen so "Discard Results" can put it
+            // back exactly — Discard must never touch a previously saved Draft,
+            // and a generate/regenerate response is never auto-persisted (Save as
+            // Draft is a separate explicit action), so restoring these in-memory
+            // values is sufficient to return to "the prior Generation-tab state".
+            const priorScheduleData = currentScheduleData;
+            const priorBatchId      = currentBatchId;
+            const priorEvaluation   = currentEvaluation;
+
+            const viewPartial = await showInfo(
+                'Schedule Partially Generated',
+                'The system preserved all valid assignments but could not complete some ' +
+                'schedule entries within the generation limit. Review the partial schedule ' +
+                'and regenerate the incomplete or selected components.',
+                'partial',
+                { confirmLabel: 'View Partial Schedule', cancelLabel: 'Discard Results' }
+            );
+
+            if (viewPartial) {
+                // Stays in the Generation tab (no redirect to Manual Editor), renders
+                // every valid assignment with incomplete rows flagged (renderTable's
+                // .row-incomplete handling above) and wires the existing per-row
+                // checkbox + Regenerate flow as the targeted-regeneration affordance.
+                applyScheduleResult(data, false);
+                const n = data.incomplete_count || 0;
+                await showInfo(
+                    'Incomplete Components',
+                    `${n} component${n === 1 ? '' : 's'} could not be resolved — look for the amber ` +
+                    `<i class="fas fa-circle-question"></i> marker in the Faculty column. Check the row(s) ` +
+                    `you want to try again and use "Re-generate Selected", or use Generate Schedule to ` +
+                    `retry the whole section.`,
+                    'info'
+                );
+            } else {
+                currentScheduleData = priorScheduleData;
+                currentBatchId      = priorBatchId;
+                currentEvaluation   = priorEvaluation;
+                renderTable(currentScheduleData, sortSelect.value);
+                updateTitleBar();
+            }
+            return;
+        }
+
+        // INVALID_RESULT / GENERATION_ERROR — the only cases that still use the
+        // plain failure dialog. INVALID_RESULT additionally names which
+        // component(s) remain invalid, since CSP prevalidation should make this
+        // rare/transient rather than the normal incomplete-schedule outcome.
+        const extra = (status === 'INVALID_RESULT' && Array.isArray(data.violations) && data.violations.length)
+            ? '<br><br>' + data.violations.map(v => v.detail || v.rule || '').filter(Boolean).join('<br>')
+            : '';
+        await showInfo(
+            isRegenerate ? 'Regeneration Failed' : 'Generation Failed',
+            (data.error || 'Could not generate schedule.') + extra,
+            'error'
+        );
+    }
+
+    if (btnSelectIncomplete) {
+        btnSelectIncomplete.addEventListener('click', () => {
+            // Check every incomplete row and preserve NOTHING on it (empty
+            // preserve set == full regeneration of that row), matching the
+            // existing "checked row is locked only on ticked fields" semantics.
+            currentScheduleData.forEach(cls => {
+                if (cls.incomplete) {
+                    rowSelectionState.set(rowKeyOf(cls), { selected: true, preserve: {} });
+                }
+            });
+            renderTable(currentScheduleData, sortSelect.value);
+            _updateRegenerateButtonLabel();
+        });
     }
 
     btnGenerate.addEventListener('click', async () => {
@@ -931,6 +1342,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Clear any previous saved state — a fresh generate replaces it
         try { localStorage.removeItem(_LS_KEY); } catch(e) {}
+        rowSelectionState.clear(); // a full regenerate replaces every row — stale selections would misapply to the new table
 
         const isRetrieve = useHistorical.checked;
         _generating = true;
@@ -1007,12 +1419,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 _generateController = null;
                 const data = await res.json();
                 completeProgress();
-
-                if (data.success) {
-                    applyScheduleResult(data, false);
-                } else {
-                    await showInfo('Generation Failed', data.error || 'Could not generate schedule.', 'error');
-                }
+                await _handleGenerationResult(data, false);
             }
         } catch (e) {
             if (e.name === 'AbortError') return; // user hit Cancel — button already reset by cancel handler
@@ -1029,7 +1436,99 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    btnRegenerate.addEventListener('click', () => { btnGenerate.click(); });
+    // Copies a gene's own fields for the locked_sessions payload below. No
+    // start_time/end_time here — _serialize_class (server-side) strips raw
+    // time objects before they ever reach the client, so only the display
+    // strings (time/days) + days_list/day travel back; _rehydrate_schedule
+    // (server-side, reused for this payload too) already knows how to parse
+    // start_time/end_time back out of the 'time' string.
+    function _pluckGeneFields(cls) {
+        const keys = ['subject_code', 'class_type', 'course', 'description', 'lec_hours', 'lab_hours',
+                      'units', 'duration_hrs', 'total_subject_hrs', 'faculty_id', 'instructor',
+                      'room_id', 'room', 'room_type', 'days_list', 'day', 'time', 'days',
+                      'incomplete', 'incomplete_reason'];
+        const out = {};
+        keys.forEach(k => { if (cls[k] !== undefined) out[k] = cls[k]; });
+        return out;
+    }
+
+    btnRegenerate.addEventListener('click', async () => {
+        const selectedKeys = [...rowSelectionState.entries()].filter(([, v]) => v.selected).map(([k]) => k);
+        if (selectedKeys.length === 0) { btnGenerate.click(); return; } // nothing checked → same as full generate
+
+        if (_generating) return; // #13: prevent double-generation
+        const ctx = getContext();
+        if (!ctx.acadYear || !ctx.term || !ctx.program || !ctx.yearLevel) {
+            await showInfo('Missing Fields', 'Please select all required fields before generating.', 'error');
+            return;
+        }
+
+        // Build the lock list: an unchecked row is fully preserved (faculty +
+        // room + schedule all locked, exactly as it currently is); a checked
+        // row is locked only on the fields whose own "Preserve" box is ticked.
+        const locked_sessions = [];
+        currentScheduleData.forEach(cls => {
+            const key     = rowKeyOf(cls);
+            const state   = rowSelectionState.get(key);
+            const preserve = (state && state.selected)
+                ? (state.preserve || {})
+                : { faculty: true, room: true, schedule: true };
+            if (preserve.faculty || preserve.room || preserve.schedule) {
+                locked_sessions.push({
+                    row_key: key,
+                    lock: { faculty: !!preserve.faculty, room: !!preserve.room, schedule: !!preserve.schedule },
+                    ..._pluckGeneFields(cls),
+                });
+            }
+        });
+
+        _generating = true;
+        btnRegenerate.disabled  = true;
+        btnRegenerate.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Regenerating...';
+        document.querySelector('#loadingModal h2').textContent = 'REGENERATING SELECTED';
+        document.querySelector('#loadingModal .loading-subtitle').textContent =
+            'Preserving locked rows & fields, regenerating the rest...';
+        showLoading();
+
+        try {
+            _generateController = new AbortController();
+            const res = await fetch('/api/schedule/generate', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    program:    ctx.program,
+                    yearLevel:  ctx.yearLevel,
+                    term:       ctx.term,
+                    curriculum: curriculum.value,
+                    section:    ctx.section,
+                    acadYear:   ctx.acadYear,
+                    locked_sessions,
+                }),
+                signal: _generateController.signal,
+            });
+            _generateController = null;
+            const data = await res.json();
+            completeProgress();
+
+            // Note: rowSelectionState is deliberately NOT cleared here (whether the
+            // result is complete, partial, or discarded), so checked rows/preserved
+            // fields stay visibly checked and the user can immediately chain
+            // another selective/targeted regenerate.
+            await _handleGenerationResult(data, true);
+        } catch (e) {
+            if (e.name === 'AbortError') return; // user hit Cancel — button already reset by cancel handler
+            completeProgress();
+            await showInfo('Error', 'Connection error. Please try again.', 'error');
+        } finally {
+            _generateController = null;
+            _generating = false; // #13: release lock
+            btnRegenerate.disabled  = false;
+            _updateRegenerateButtonLabel(); // "Re-generate selected" vs plain "Re-generate", based on current selection
+            document.querySelector('#loadingModal h2').textContent = 'GENERATING SCHEDULE';
+            document.querySelector('#loadingModal .loading-subtitle').textContent =
+                'Detecting conflicts & applying constraints...';
+        }
+    });
 
     const btnCancelGenerate = document.getElementById('btnCancelGenerate');
     if (btnCancelGenerate) {
@@ -1184,17 +1683,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     `Schedule saved as <strong>Draft V${data.draft_version}</strong>.<br>You can edit it later from <em>View Drafts</em>.`,
                     'success'
                 );
-                // #1: Reset page to clean state after a successful draft save.
-                _resetPageState();
-                return; // skip finally re-enable since _resetPageState handles it
+                // The generated schedule stays on screen after saving — just a
+                // confirmation, not a full page reset. Same behavior Approve already
+                // has (see _submitApproval above). Selecting a different Program to
+                // generate for still clears/replaces this normally via Generate Schedule.
+                btnSaveDraft.disabled  = true;
+                btnSaveDraft.innerHTML = '<i class="fas fa-check-circle"></i> Saved as Draft';
+                return; // skip finally re-enable below — button intentionally stays "Saved"
             } else {
                 // #11: Load violations get a dedicated message listing each faculty
                 const lvs = data.load_violations || [];
                 if (lvs.length) {
                     const details = lvs.map(v =>
-                        `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
                     ).join('<br>');
-                    await showInfo('Faculty Load Exceeded',
+                    await showInfo('Conflict: Faculty Load',
                         'Cannot save draft — the following faculty exceed their load limit '
                         + 'across all assigned sections this term:<br><br>' + details,
                         'error');
@@ -1372,9 +1875,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const lvs = data.load_violations || [];
                 if (lvs.length) {
                     const details = lvs.map(v =>
-                        `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
                     ).join('<br>');
-                    await showInfo('Faculty Load Exceeded',
+                    await showInfo('Conflict: Faculty Load',
                         'Cannot approve — the following faculty exceed their load limit '
                         + 'across all assigned sections this term:<br><br>' + details,
                         'error');
@@ -1427,6 +1930,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 btnRegenerate.disabled   = false;
                 btnSaveDraft.disabled    = false;
+                btnSaveDraft.innerHTML   = '<i class="fas fa-save"></i> Save as Draft';
                 btnManualEditor.disabled = false;
                 btnExport.disabled       = false;
                 btnApprove.disabled      = true;

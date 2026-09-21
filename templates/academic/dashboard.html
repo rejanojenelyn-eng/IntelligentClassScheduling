@@ -3,6 +3,7 @@
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_acad.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -59,9 +60,46 @@
         <a href="{{ url_for('requests_view') }}" class="btn-action outline">
             <i class="fas fa-clipboard-list"></i> MANAGE REQUESTS
         </a>
+        <a href="{{ url_for('curriculum') }}" class="btn-action outline">
+            <i class="fas fa-book"></i> MANAGE CURRICULUM
+        </a>
         <a href="{{ url_for('reports') }}" class="btn-action outline">
             <i class="fas fa-file-export"></i> EXPORT REPORTS
         </a>
+    </div>
+
+    <!-- Schedule Analytics Section -->
+    <h2 class="section-title"><i class="fas fa-chart-column"></i> SCHEDULE ANALYTICS</h2>
+    <div class="analytics-grid">
+        <div class="analytics-card" ondblclick="openAnalyticsDetail('completion')" title="Double-click to see the breakdown by program">
+            <div class="analytics-card-label">Schedule Completion</div>
+            <div class="donut-wrap">
+                <div class="donut" style="--pct:{{ analytics.completion.percent }};">
+                    <span class="donut-value">{{ analytics.completion.percent }}%</span>
+                </div>
+            </div>
+            <div class="analytics-caption">{{ analytics.completion.scheduled }} out of {{ analytics.completion.total }} classes scheduled</div>
+        </div>
+
+        <div class="analytics-card" ondblclick="openAnalyticsDetail('local')" title="Double-click to see the official vs. local breakdown">
+            <div class="analytics-card-label">Local Schedule Status</div>
+            <div class="analytics-caption" style="margin:18px 0 8px;">{{ analytics.local_status.local_count }} out of {{ analytics.local_status.total_scheduled }} classes have local schedules</div>
+            <div class="stacked-bar">
+                <div class="stacked-bar-official" style="width:{{ analytics.local_status.official_pct }}%;"></div>
+                <div class="stacked-bar-local" style="width:{{ analytics.local_status.local_pct }}%;"></div>
+            </div>
+            <div class="stacked-bar-legend">
+                <span><i class="legend-dot official"></i>official ({{ analytics.local_status.official_pct }}%)</span>
+                <span><i class="legend-dot local"></i>local ({{ analytics.local_status.local_pct }}%)</span>
+            </div>
+        </div>
+
+        <div class="analytics-card" ondblclick="openAnalyticsDetail('rooms')" title="Double-click to see the breakdown by room type">
+            <div class="analytics-card-label">Room Utilization</div>
+            <div style="position:relative;height:150px;">
+                <canvas id="roomUtilChart"></canvas>
+            </div>
+        </div>
     </div>
 
     <!-- Tables Grid Area -->
@@ -268,6 +306,35 @@
     </div>
 </div>
 
+<!-- Modal for Analytics Card Drill-Down (double-click) -->
+<div id="analyticsModal" class="dashboard-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="analyticsModalTitle">Details</h2>
+            <span class="close-modal" onclick="closeAnalyticsModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="analyticsFilterWrap" class="analytics-filter-bar" style="display:none;">
+                <div class="toolbar-group">
+                    <span class="toolbar-label">PROGRAM</span>
+                    <select id="analyticsProgramFilter" class="analytics-select"></select>
+                </div>
+                <div class="toolbar-group">
+                    <span class="toolbar-label">YEAR LEVEL</span>
+                    <select id="analyticsYearFilter" class="analytics-select"></select>
+                </div>
+            </div>
+            <table class="modal-table" id="analyticsTable">
+                <thead id="analyticsTableHead"></thead>
+                <tbody id="analyticsTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+const ANALYTICS_DATA = {{ analytics | tojson }};
+</script>
 <script>
 /* ── Request Detail Modal ── */
 function openReqDetail(card) {
@@ -389,12 +456,149 @@ function closeKpiModal() {
     document.getElementById('kpiModal').style.display = "none";
 }
 
+/* ── Analytics Drill-Down Modal ── */
+function ordinal(n) {
+    n = parseInt(n, 10);
+    if (n === 1) return '1st';
+    if (n === 2) return '2nd';
+    if (n === 3) return '3rd';
+    return n + 'th';
+}
+
+function renderCompletionRows() {
+    const head = document.getElementById('analyticsTableHead');
+    const body = document.getElementById('analyticsTableBody');
+    const programFilter = document.getElementById('analyticsProgramFilter').value;
+    const yearFilter = document.getElementById('analyticsYearFilter').value;
+
+    let rows = ANALYTICS_DATA.completion.by_program || [];
+    if (programFilter && programFilter !== 'ALL') {
+        rows = rows.filter(r => r.programcode === programFilter);
+    }
+    if (yearFilter && yearFilter !== 'ALL') {
+        rows = rows.filter(r => String(r.yearlevel) === String(yearFilter));
+    }
+    // Programs together, year levels ascending, sections ascending within each year level.
+    rows = [...rows].sort((a, b) =>
+        a.programcode.localeCompare(b.programcode) ||
+        (a.yearlevel - b.yearlevel) ||
+        String(a.sectionname || '').localeCompare(String(b.sectionname || ''))
+    );
+
+    // Only surface the Section column when it's actually needed to explain the numbers
+    // (a year level with a single section doesn't need it spelled out).
+    const showSection = rows.some(r => r.sectioncount > 1);
+    head.innerHTML = `<tr><th>Program</th><th>Year Level</th>${showSection ? '<th>Section</th>' : ''}<th>Scheduled</th><th>Total</th><th>Completion</th></tr>`;
+
+    if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="${showSection ? 6 : 5}" style="text-align:center;">No records found.</td></tr>`;
+        return;
+    }
+    body.innerHTML = rows.map(r => {
+        const cls = r.percent >= 80 ? 'high' : (r.percent >= 50 ? 'mid' : 'low');
+        return `<tr>
+            <td class="prog-bold">${r.programcode}</td>
+            <td>${ordinal(r.yearlevel)} Year</td>
+            ${showSection ? `<td>${r.sectionname}</td>` : ''}
+            <td>${r.scheduled}</td>
+            <td>${r.total}</td>
+            <td><span class="pct-pill ${cls}">${r.percent}%</span></td>
+        </tr>`;
+    }).join('');
+}
+
+function openAnalyticsDetail(type) {
+    const modal = document.getElementById('analyticsModal');
+    const title = document.getElementById('analyticsModalTitle');
+    const filterWrap = document.getElementById('analyticsFilterWrap');
+    const yearSelect = document.getElementById('analyticsYearFilter');
+    const head = document.getElementById('analyticsTableHead');
+    const body = document.getElementById('analyticsTableBody');
+
+    if (type === 'completion') {
+        title.innerText = "Schedule Completion by Program";
+        filterWrap.style.display = "flex";
+
+        const byProgram = ANALYTICS_DATA.completion.by_program || [];
+        const programSelect = document.getElementById('analyticsProgramFilter');
+        const programs = [...new Set(byProgram.map(r => r.programcode))].sort();
+        programSelect.innerHTML = `<option value="ALL">ALL PROGRAMS</option>` +
+            programs.map(p => `<option value="${p}">${p}</option>`).join('');
+        programSelect.value = 'ALL';
+
+        const yls = [...new Set(byProgram.map(r => r.yearlevel))].sort((a, b) => a - b);
+        yearSelect.innerHTML = `<option value="ALL">ALL YEAR LEVELS</option>` +
+            yls.map(y => `<option value="${y}">${ordinal(y)} Year</option>`).join('');
+        yearSelect.value = 'ALL';
+
+        renderCompletionRows();
+    } else if (type === 'local') {
+        title.innerText = "Official vs. Local Schedule Breakdown";
+        filterWrap.style.display = "none";
+        const d = ANALYTICS_DATA.local_status;
+        head.innerHTML = `<tr><th>Source</th><th>Classes</th><th>Share</th></tr>`;
+        body.innerHTML = `
+            <tr><td class="prog-bold">Official</td><td>${d.official_count}</td><td>${d.official_pct}%</td></tr>
+            <tr><td class="prog-bold">Local</td><td>${d.local_count}</td><td>${d.local_pct}%</td></tr>
+        `;
+    } else if (type === 'rooms') {
+        title.innerText = "Room Utilization by Type";
+        filterWrap.style.display = "none";
+        head.innerHTML = `<tr><th>Room Type</th><th>Occupied</th><th>Available</th><th>Total</th></tr>`;
+        const rows = ANALYTICS_DATA.room_utilization || [];
+        body.innerHTML = rows.length ? rows.map(r => `
+            <tr><td class="prog-bold">${r.roomtype}</td><td>${r.occupied}</td><td>${r.available}</td><td>${r.total}</td></tr>
+        `).join('') : `<tr><td colspan="4" style="text-align:center;">No room data.</td></tr>`;
+    }
+
+    modal.style.display = "flex";
+}
+
+function closeAnalyticsModal() {
+    document.getElementById('analyticsModal').style.display = "none";
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const programSelect = document.getElementById('analyticsProgramFilter');
+    const yearSelect = document.getElementById('analyticsYearFilter');
+    if (programSelect) programSelect.addEventListener('change', () => renderCompletionRows());
+    if (yearSelect) yearSelect.addEventListener('change', () => renderCompletionRows());
+
+    const ctx = document.getElementById('roomUtilChart');
+    if (ctx && window.Chart) {
+        const ru = ANALYTICS_DATA.room_utilization || [];
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ru.map(r => r.roomtype),
+                datasets: [
+                    { label: 'Occupied', data: ru.map(r => r.occupied), backgroundColor: '#800000', borderRadius: 4, maxBarThickness: 40 },
+                    { label: 'Available', data: ru.map(r => r.available), backgroundColor: '#3fa34d', borderRadius: 4, maxBarThickness: 40 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10, weight: '600' } } }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } },
+                    x: { ticks: { font: { size: 10, weight: '700' } } }
+                }
+            }
+        });
+    }
+});
+
 // Close modals on backdrop click
 window.onclick = function(event) {
     const kpi = document.getElementById('kpiModal');
     if (event.target == kpi) kpi.style.display = "none";
     const rdm = document.getElementById('reqDetailModal');
     if (event.target == rdm) rdm.style.display = "none";
+    const am = document.getElementById('analyticsModal');
+    if (event.target == am) am.style.display = "none";
 }
 </script>
 {% endblock %}

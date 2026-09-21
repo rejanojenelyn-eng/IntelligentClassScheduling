@@ -27,7 +27,8 @@ function _buildDraftCard(d) {
     const yr        = d.yearlevel    || '—';
     const sect      = d.sectionname  || '';
     const sectId    = d.sectionid    || '';
-    const label     = sect ? `${prog} ${sect}` : `${prog} – Year ${yr}`;
+    const sectHasProg = sect && prog && sect.toUpperCase().startsWith(prog.toUpperCase());
+    const label     = sect ? (sectHasProg ? sect : `${prog} ${sect}`) : `${prog} – Year ${yr}`;
     const source    = d.source || 'official';
     const isLocal   = source === 'local';
 
@@ -41,7 +42,20 @@ function _buildDraftCard(d) {
         + `&ay=${encodeURIComponent(d.acadyear||'')}`
         + `&sem=${encodeURIComponent(d.term||'')}`
         + `&scheduler=${source}`
-        + (sectId ? `&sect=${encodeURIComponent(sectId)}` : '');
+        // Both sect (id) and sect_name are required together for the Manual Editor to
+        // auto-select the section and load its data — sect_name alone was missing here,
+        // which silently left the Section dropdown unselected.
+        //
+        // Kept as a plain URL string (real "&" separators) here — this value also needs to
+        // work as an actual query string, not just HTML markup. The "&" -> "&amp;" escape
+        // happens only where this gets embedded into the card's HTML below, since embedding
+        // "&sect_name=..." unescaped in an href="..." attribute is its own bug: "&sect"
+        // (without a semicolon) is a legacy HTML named entity for "§", so the browser's own
+        // HTML parser silently rewrote "...&sect=1515&sect_name=BSARCH-1" into
+        // "...&sect=1515§_name=BSARCH-1" before the link was ever clicked — Manual Editor
+        // then never received real sect/sect_name params at all, however correct its own
+        // handling of them was.
+        + (sectId ? `&sect=${encodeURIComponent(sectId)}&sect_name=${encodeURIComponent(sect||'')}` : '');
 
     return `
     <div class="draft-card" data-vid="${d.versionid}" data-source="${source}">
@@ -65,7 +79,7 @@ function _buildDraftCard(d) {
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
                 <i class="fas fa-eye"></i> View
             </a>
-            <a href="${editorUrl}" class="btn-dc btn-dc-edit-editor">
+            <a href="${editorUrl.replace(/&/g, '&amp;')}" class="btn-dc btn-dc-edit-editor">
                 <i class="fas fa-edit"></i> Edit to Manual Editor
             </a>
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">

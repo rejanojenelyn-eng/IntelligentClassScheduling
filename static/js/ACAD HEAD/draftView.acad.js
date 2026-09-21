@@ -210,14 +210,27 @@ function _sortDaysStr(daysStr) {
         }
     };
 
-    window.goManual = function() {
+    // Builds the Manual Editor URL for this draft's program/year/section, in PROGRAM VIEW
+    // (mode=program). Shared by "Edit to Manual Editor" and the post-approve redirect below.
+    function _buildManualEditorProgramUrl() {
         const ctx  = draftContext;
         const prog = encodeURIComponent(ctx.program   || '');
         const yl   = encodeURIComponent(ctx.yearLevel || '');
         const ay   = encodeURIComponent(ctx.acadYear  || '');
         const sem  = encodeURIComponent(ctx.term      || '');
         const src  = ctx.source === 'local' ? 'local' : 'official';
-        window.location.href = `${MANUAL_EDITOR_URL}?mode=program&prog=${prog}&yl=${yl}&ay=${ay}&sem=${sem}&scheduler=${src}`;
+        let url = `${MANUAL_EDITOR_URL}?mode=program&prog=${prog}&yl=${yl}&ay=${ay}&sem=${sem}&scheduler=${src}`;
+        // Section must be threaded through — the Manual Editor only auto-loads data once
+        // both sect (id) and sect_name are present; without it the Section dropdown is
+        // left unselected and nothing renders (see project_schedule_versioning memory).
+        if (ctx.sectionId) {
+            url += `&sect=${encodeURIComponent(ctx.sectionId)}&sect_name=${encodeURIComponent(ctx.sectionName || '')}`;
+        }
+        return url;
+    }
+
+    window.goManual = function() {
+        window.location.href = _buildManualEditorProgramUrl();
     };
 
     window.approveDraft = function() {
@@ -329,12 +342,18 @@ function _sortDaysStr(daysStr) {
             if (data.success) {
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Published';
                 await _dvConfirm(`${selectedData.length} session${selectedData.length !== 1 ? 's' : ''} published successfully!`, 'Schedule Published');
-                window.location.reload();
+                // This draft no longer exists as a draft once approved — reloading this same
+                // page would just show an empty schedule. Go straight to the Manual Editor's
+                // Program View instead, where the now-published schedule is visible.
+                window.location.href = _buildManualEditorProgramUrl();
+                return;
             } else {
                 let msg = data.error || 'Unknown error';
                 if (data.violations && data.violations.length) {
+                    // Formal type label (e.g. "Conflict: Faculty Schedule") instead of the
+                    // raw internal rule code (e.g. "HC10").
                     msg = `Cannot publish — ${data.violations.length} constraint violation(s):\n\n` +
-                          data.violations.map(v => `• [${v.rule}] ${v.subject}: ${v.detail}`).join('\n') +
+                          data.violations.map(v => `• ${v.type || (v.rule ? `Conflict: ${v.rule}` : 'Conflict')} — ${v.subject}: ${v.detail}`).join('\n') +
                           '\n\nOpen the Manual Editor to fix these before approving.';
                 }
                 await _dvConfirm(msg, 'Publish Failed');

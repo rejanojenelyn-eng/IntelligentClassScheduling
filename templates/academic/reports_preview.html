@@ -1,35 +1,14 @@
-{% extends "academic/base.html" %}
+{% extends base_template %}
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-{% if class_schedule_mode %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
-{% endif %}
-{% if room_schedule_mode %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_grid.css') }}">
-{% endif %}
-{% if assignment_mode %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
-{% endif %}
-{% if faculty_mode or curriculum_mode or rooms_mode %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-{% endif %}
-{% if curriculum_mode %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-{% endif %}
 <style>
 /* ══════════════════════════════════════
    REPORT PREVIEW PAGE
 ══════════════════════════════════════ */
 .rpt-preview-wrap { padding: 0 0 40px 0; font-family: Arial, sans-serif; }
 
-.rpt-letterhead { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1px; padding: 14px 0 10px; margin-bottom: 6px; border-bottom: 2px solid #630100; }
-.rpt-letterhead img { width: 46px; height: 46px; margin-bottom: 4px; }
-.rpt-letterhead .lh-line1 { font-weight: 800; font-size: .92rem; color: #2c0000; }
-.rpt-letterhead .lh-line2 { font-size: .8rem; color: #2c0000; }
-
-.rpt-prev-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; margin-top: 18px; }
+.rpt-prev-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
 .rpt-prev-title { font-size: 1.35rem; font-weight: 900; color: #2c0000; text-transform: uppercase; letter-spacing: .5px; margin: 0; }
 .rpt-prev-subtitle { font-size: .79rem; color: #888; margin-top: 3px; }
 
@@ -59,15 +38,149 @@
 .rpt-table tbody td { padding: 9px 12px; color: #333; vertical-align: middle; border-right: 1px solid #f5eded; }
 .rpt-table tbody td:last-child { border-right: none; }
 
+/* ══════════════════════════════════════════════════
+   FACULTY LIST — clean white-background table variant.
+   The other flat-table reports (rooms/curriculum/programs) keep the maroon
+   sticky header above; Faculty List instead uses a plain white, print-ready
+   "official document" look — fixed column widths (via <colgroup>) sized so
+   long values like Specialization/Designation wrap cleanly instead of
+   truncating or overlapping neighboring columns.
+══════════════════════════════════════════════════ */
+.rpt-table-wrapper-clean { background: #fff; border: 1px solid #ddd; box-shadow: none; }
+.rpt-table-clean { table-layout: fixed; font-size: .84rem; }
+.rpt-table-clean thead { background: #f7f7f7; color: #222; box-shadow: inset 0 -2px 0 #800000; }
+.rpt-table-clean thead th {
+    color: #222; font-size: .72rem; letter-spacing: .3px;
+    border-right: 1px solid #e2e2e2; white-space: normal; word-break: break-word;
+}
+.rpt-table-clean thead th:last-child { border-right: none; }
+.rpt-table-clean tbody tr { background: #fff; border-bottom: 1px solid #e6e6e6; }
+.rpt-table-clean tbody tr:nth-child(even) { background: #fff; }
+.rpt-table-clean tbody tr:hover { background: #f7f7f7 !important; }
+.rpt-table-clean tbody td {
+    color: #333; border-right: 1px solid #eee;
+    white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+    line-height: 1.4;
+}
+.rpt-table-clean tbody td:last-child { border-right: none; }
+
 .rpt-section-hdr { background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; padding: 11px 18px; font-size: .84rem; font-weight: 800; letter-spacing: .3px; border-radius: 8px 8px 0 0; margin-top: 20px; }
 .rpt-section-hdr:first-child { margin-top: 0; }
-.rpt-curr-yl-hdr { font-size: .8rem; font-weight: 800; color: #2c0000; margin: 14px 0 4px; text-transform: uppercase; }
-.rpt-curr-sem-hdr { font-size: .74rem; font-weight: 700; color: #630100; margin: 6px 0 4px; text-decoration: underline; }
-.rpt-table tbody tr.rpt-total-row { background: #f0e0e0 !important; font-weight: 800; color: #2c0000; }
 
 .rpt-no-data { text-align: center; padding: 60px 24px; color: #aaa; }
 .rpt-no-data i { font-size: 2.5rem; margin-bottom: 12px; display: block; }
 .rpt-no-data p { font-size: .9rem; margin: 0; }
+
+/* ══════════════════════════════════════
+   CLASS SCHEDULE (SIS) / ROOM SCHEDULE — official "SUBJECT OFFERINGS" sheet
+   layout, redesigned to read as the actual exported spreadsheet (bordered
+   grid, plain black-on-white cells, bold headers/totals) rather than a
+   colored web-app table — same columns/grouping/totals as
+   _sch_gen_xlsx/docx/pdf (and the Room Schedule report's equivalents), so
+   Preview and the downloaded file always match.
+══════════════════════════════════════ */
+.sis-sheet {
+    background: #fff; border: 1px solid #b9b9b9; border-radius: 4px;
+    padding: 18px 20px 22px; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    font-family: Calibri, 'Segoe UI', Arial, sans-serif; color: #000;
+}
+.sis-letterhead {
+    border: 1px solid #7a7a7a; border-radius: 6px; overflow: hidden;
+    margin-bottom: 22px; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+.sis-logo-row {
+    display: flex; justify-content: center; align-items: center;
+    background: #fff; padding: 12px 10px 4px;
+}
+.sis-logo-row img {
+    height: 52px; width: 52px; object-fit: contain;
+}
+.sis-title  {
+    text-align: center; font-weight: 800; font-size: .98rem; color: #630100;
+    text-transform: uppercase; letter-spacing: .3px; background: #fff;
+    padding: 2px 12px 12px;
+}
+.sis-campus {
+    text-align: center; font-weight: 700; font-size: .9rem; color: #fff;
+    background: linear-gradient(135deg, #7a0100, #4b0a0a);
+    letter-spacing: .6px; padding: 9px 10px;
+}
+.sis-prog-hdr {
+    background: #fff; color: #000; border: 1px solid #7a7a7a;
+    padding: 8px 14px; font-size: .88rem; font-weight: 700; text-align: center;
+    text-transform: uppercase; margin-top: 22px;
+}
+.sis-prog-hdr:first-of-type { margin-top: 0; }
+.sis-yl-hdr  { font-weight: 700; font-size: .82rem; color: #000; text-transform: uppercase; padding: 10px 2px 2px; }
+.sis-sec-hdr { font-weight: 600; font-style: italic; font-size: .8rem; color: #000; padding: 0 2px 6px; }
+
+/* Room Schedule — each Building gets its own light-gray band so it stands
+   out from the room sub-headers underneath it without competing with the
+   maroon letterhead above. */
+.room-bldg-hdr {
+    background: #e4e4e4; color: #222; border: 1px solid #b9b9b9;
+    padding: 8px 14px; font-size: .88rem; font-weight: 700; text-align: center;
+    text-transform: uppercase; letter-spacing: .3px; margin-top: 22px; border-radius: 3px;
+}
+.room-bldg-hdr:first-of-type { margin-top: 0; }
+
+/* Curriculum List — Curriculum Code sits one level below the Program band
+   (italic, no fill, a thin left rule) so the two grouping levels are never
+   mistaken for each other. */
+.curr-code-hdr {
+    color: #630100; font-weight: 700; font-style: italic; font-size: .84rem;
+    padding: 8px 4px 4px 12px; border-left: 3px solid #630100; margin-top: 14px;
+}
+.curr-total-row td { background: #f2f2f2 !important; font-weight: 700; color: #000; border-top: 1.5px solid #999; }
+.curr-total-label { text-align: right; }
+.curr-no-subject { text-align: center; color: #888; font-style: italic; }
+.curr-num-cell { text-align: center; }
+
+/* One period = one Academic Year + Semester combination, each with its own
+   full letterhead (logo/title/campus banner) — separated clearly when more
+   than one is selected, and forced onto its own page when printed. */
+.sis-period + .sis-period { margin-top: 34px; padding-top: 28px; border-top: 3px double #7a7a7a; page-break-before: always; }
+
+/* Table layout — plain bordered spreadsheet grid, matching the exported XLSX.
+   table-layout:fixed + an explicit <colgroup> (same widths on every table,
+   see the colgroup markup below) keeps every column the same width across
+   every section/program/period — a plain auto-layout table would otherwise
+   size each column independently per table based on that table's own
+   content, so the same column drifted to a different width from one
+   section to the next. */
+.schedule-table { width:100%; min-width:1080px; table-layout:fixed; border-collapse:collapse; font-size:.8rem; background:#fff; }
+.schedule-table thead th {
+    background:#f2f2f2; color:#000; padding:7px 8px; font-weight:700; font-size:.75rem;
+    text-align:center; border:1px solid #7a7a7a; white-space:nowrap;
+}
+.schedule-table tbody td {
+    padding:6px 8px; color:#000; font-size:.79rem; text-align:center;
+    border:1px solid #b9b9b9; vertical-align:middle; white-space:normal; word-break:break-word; background:#fff;
+}
+.schedule-table tbody tr:hover td { background:#fbfbe8; }
+.schedule-table td.td-instructor { text-align:left; font-weight:400; }
+.schedule-table td.td-code    { font-weight:400; letter-spacing:0; }
+.schedule-table td.td-desc    { text-align:left; }
+.schedule-table td.td-units,
+.schedule-table td.td-days,
+.schedule-table td.td-time,
+.schedule-table td.td-room    { font-weight:400; }
+.schedule-table tr.sis-total-row td { background:#f2f2f2 !important; font-weight:700; color:#000; }
+.sis-sheet .rpt-table-wrapper { border:none; box-shadow:none; border-radius:0; margin-bottom:16px; background:transparent; }
+
+/* Calendar layout — weekly timetable grid, mirroring the merged-cell layout
+   of _sch_gen_xlsx_calendar / _sch_gen_docx_calendar / _sch_gen_pdf_calendar */
+.sis-cal-table { width:100%; min-width:820px; border-collapse:collapse; table-layout:fixed; font-size:.68rem; }
+.sis-cal-table th { background:#2c0000; color:#fff; padding:6px 4px; font-size:.66rem; font-weight:800; text-align:center; border:1px solid rgba(255,255,255,.15); }
+.sis-cal-table th.cal-time-hdr { width:9%; }
+.sis-cal-table td { border:1px solid #f0e8e8; padding:2px; vertical-align:middle; text-align:center; }
+.sis-cal-table td.cal-time-cell { font-weight:800; color:#630100; background:#fdf5f5; font-size:.64rem; white-space:nowrap; }
+.sis-cal-table tr.cal-gap-row td.cal-time-cell { background:#f5f5f5; }
+.sis-cal-table td.cal-class-cell { background:#fff0f0; font-weight:600; color:#2c0000; line-height:1.25; }
+.sis-cal-table td.cal-class-cell .cal-line { white-space:normal; word-break:break-word; }
+.sis-cal-table td.cal-empty-cell { background:#fff; }
+.sis-unscheduled { font-size:.76rem; color:#888; margin:6px 0 18px; padding:8px 12px; background:#fafafa; border-radius:6px; }
+.sis-unscheduled ul { margin:4px 0 0; padding-left:18px; }
 
 /* ══════════════════════════════════════
    NEW UNIFORM EXPORT MODAL
@@ -133,13 +246,6 @@
 
 {% block content %}
 <div class="rpt-preview-wrap">
-    <!-- PUP Letterhead: mirrors the header every exported document now carries -->
-    <div class="rpt-letterhead">
-        <img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
-        <div class="lh-line1">Polytechnic University of the Philippines</div>
-        <div class="lh-line2">Lopez, Quezon Campus</div>
-    </div>
-
     <!-- Page Header -->
     <div class="rpt-prev-header">
         <div class="rpt-prev-title-group">
@@ -149,7 +255,7 @@
             </div>
         </div>
         <div class="rpt-prev-actions">
-            <a href="{% if session.get('role') == 'Admin' %}/admin/reports{% else %}/reports{% endif %}" class="rpt-btn-back">
+            <a href="{{ back_url|default('/reports') }}" class="rpt-btn-back">
                 <i class="fas fa-arrow-left"></i> Back to Reports
             </a>
             {% if row_count > 0 %}
@@ -169,227 +275,196 @@
     </div>
     {% endif %}
 
-    <!-- ── CLASS SCHEDULE (WYSIWYG calendar/table panels, one per Program/Year Level/AY/Semester combo) ── -->
-    {% if class_schedule_mode %}
-        {% if panels %}
-        {% for panel in panels %}
-        <div class="rpt-section-hdr">{{ panel.program_name }} — Year {{ panel.yearlevel }} ({{ panel.sem_label }}, A.Y. {{ panel.ay_label }})</div>
-        <div class="schedule-grid-card" style="margin-bottom:24px;">
-            {% if layout == 'calendar' %}
-            <div class="timetable-wrapper" id="gridWrapper_{{ panel.id }}" style="position: relative;">
-                <table class="timetable-grid" id="mainTimetable_{{ panel.id }}">
-                    <thead>
-                        <tr>
-                            <th class="time-header">TIME</th>
-                            <th>MONDAY</th><th>TUESDAY</th><th>WEDNESDAY</th>
-                            <th>THURSDAY</th><th>FRIDAY</th><th>SATURDAY</th><th>SUNDAY</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% set times = ['7:30','8:00','8:30','9:00','9:30','10:00','10:30','11:00','11:30','12:00',
-                                        '12:30','1:00','1:30','2:00','2:30','3:00','3:30','4:00','4:30','5:00',
-                                        '5:30','6:00','6:30','7:00','7:30','8:00','8:30','9:00'] %}
-                        {% for t in times %}
-                        <tr>
-                            <td class="time-cell">{% set hr = t.split(':')[0]|int %}{{ t }}{{ 'PM' if (hr < 7 or hr == 12 or (hr >= 7 and loop.index > 20)) else 'AM' }}</td>
-                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    <!-- ── CLASS SCHEDULE (SIS) — official "SUBJECT OFFERINGS" layout, the exact
+         same structure/columns as the Class Schedule SIS tab's Export Schedule
+         output (table layout: _sch_gen_xlsx/docx/pdf; calendar layout: their
+         *_calendar counterparts). Never falls through to the generic table
+         below — this is its own report design end to end. ── -->
+    {% if report_type == 'class_schedule' and sch_periods %}
+    {% for period in sch_periods %}
+    <div class="sis-sheet sis-period">
+    <!-- Letterhead: logo (same file, static/img/pup-logo.png, as every export
+         format below it — swap that one file to replace the logo later),
+         title (names exactly this period's own semester + academic year,
+         never an aggregate across multiple selected semesters/years), and
+         campus banner, all as one bordered card. -->
+    <div class="sis-letterhead">
+        <div class="sis-logo-row"><img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Lopez Campus"></div>
+        <div class="sis-title">{{ period.title }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+    </div>
+
+    {% if sch_layout == 'calendar' %}
+        {% for prog in period.calendar_view %}
+        <div class="sis-prog-hdr">{{ prog.label }}</div>
+        {% for yl in prog.year_levels %}
+            <div class="sis-yl-hdr">{{ yl.label }}</div>
+            <div class="rpt-table-wrapper">
+                <div class="rpt-table-scroll">
+                    <table class="sis-cal-table">
+                        <thead>
+                            <tr>
+                                <th class="cal-time-hdr">TIME</th>
+                                {% for d in day_col_headers %}<th>{{ d }}</th>{% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for grow in yl.grid_rows %}
+                            <tr{% if grow.is_gap %} class="cal-gap-row"{% endif %}>
+                                {% for cell in grow.cells %}
+                                    {% if cell.kind == 'time' %}
+                                    <td class="cal-time-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}>{{ cell.text }}</td>
+                                    {% elif cell.kind == 'class' %}
+                                    <td class="cal-class-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}{% if cell.colspan and cell.colspan > 1 %} colspan="{{ cell.colspan }}"{% endif %}>{% for line in cell.lines %}<div class="cal-line">{{ line }}</div>{% endfor %}</td>
+                                    {% else %}
+                                    <td class="cal-empty-cell"></td>
+                                    {% endif %}
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            {% else %}
-            <div class="table-wrapper">
-                <table class="schedule-table" id="offeringsTable_{{ panel.id }}">
-                    <thead>
-                        <tr>
-                            <th>INSTRUCTOR</th><th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th>
-                            <th>LEC HRS</th><th>LAB HRS</th><th>CREDIT UNITS</th><th>COURSE</th>
-                            <th>TIME</th><th>HOURS</th><th>DAYS</th><th>ROOM</th>
-                        </tr>
-                    </thead>
-                    <tbody id="offeringsTableBody_{{ panel.id }}"></tbody>
-                </table>
+            {% if yl.unscheduled %}
+            <div class="sis-unscheduled">
+                <strong>Unscheduled / TBA:</strong>
+                <ul>{% for u in yl.unscheduled %}<li>{{ u }}</li>{% endfor %}</ul>
             </div>
             {% endif %}
-        </div>
         {% endfor %}
-        {% else %}
-        <div class="rpt-no-data">
-            <i class="fas fa-inbox"></i>
-            <p>No records found for the selected filters.</p>
-        </div>
-        {% endif %}
+        {% endfor %}
+    {% else %}
+        {% for prog in period.table_view %}
+        <div class="sis-prog-hdr">{{ prog.label }}</div>
+        {% for yl in prog.year_levels %}
+            <div class="sis-yl-hdr">{{ yl.label }}</div>
+            {% for sec in yl.sections %}
+                {% if sec.label %}<div class="sis-sec-hdr">Section: {{ sec.label }}</div>{% endif %}
+                <div class="rpt-table-wrapper">
+                    <div class="rpt-table-scroll">
+                        <table class="schedule-table">
+                            <colgroup>
+                                <col style="width:12%"><col style="width:8%"><col style="width:26%">
+                                <col style="width:5%"><col style="width:5%"><col style="width:5%">
+                                <col style="width:7%"><col style="width:4%"><col style="width:7%">
+                                <col style="width:14%"><col style="width:7%">
+                            </colgroup>
+                            <thead>
+                                <tr>{% for h in sch_off_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+                            </thead>
+                            <tbody>
+                                {% for row in sec.rows %}
+                                <tr>
+                                    {% for cell in row %}
+                                    <td class="{{ ['td-instructor','td-code','td-desc','','','td-units','','','td-days','td-time','td-room'][loop.index0] }}">{{ cell }}</td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                                <tr class="sis-total-row">
+                                    <td colspan="3">TOTAL</td>
+                                    <td>{{ sec.totals.lec }}</td>
+                                    <td>{{ sec.totals.lab }}</td>
+                                    <td class="td-units">{{ sec.totals.units }}</td>
+                                    <td></td>
+                                    <td>{{ sec.totals.hours }}</td>
+                                    <td></td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            {% endfor %}
+        {% endfor %}
+        {% endfor %}
+    {% endif %}
+    </div>
+    {% endfor %}
 
-    <!-- ── ROOM SCHEDULE (WYSIWYG per-room weekly calendar panels) ── -->
-    {% elif room_schedule_mode %}
-        {% if panels %}
-        {% for panel in panels %}
-        <div class="rpt-section-hdr">{{ panel.room_name }} — {{ panel.sem_label }}, A.Y. {{ panel.ay_label }}</div>
-        <div class="rpt-table-wrapper" style="margin-bottom:24px;">
-            <div class="frs-grid-outer">
-                <div class="frs-grid" id="frsGrid_{{ panel.id }}"></div>
+    <!-- ── ROOM SCHEDULE — official Building → Room grouped layout, the same
+         report design principle as Class Schedule above (one table/calendar
+         per room, grouped under its building), matching what gets exported. ── -->
+    {% elif report_type == 'room_schedule' and (room_view or room_calendar_view) %}
+    <div class="sis-sheet">
+    <div class="sis-title">{{ room_title }}</div>
+    <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+
+    {% if room_layout == 'calendar' %}
+        {% for bldg in room_calendar_view %}
+        <div class="room-bldg-hdr">Building: {{ bldg.label }}</div>
+        {% for room in bldg.rooms %}
+            <div class="sis-yl-hdr">Room: {{ room.label }}{% if room.type %} — {{ room.type }}{% endif %}</div>
+            <div class="rpt-table-wrapper">
+                <div class="rpt-table-scroll">
+                    <table class="sis-cal-table">
+                        <thead>
+                            <tr>
+                                <th class="cal-time-hdr">TIME</th>
+                                {% for d in day_col_headers %}<th>{{ d }}</th>{% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for grow in room.grid_rows %}
+                            <tr{% if grow.is_gap %} class="cal-gap-row"{% endif %}>
+                                {% for cell in grow.cells %}
+                                    {% if cell.kind == 'time' %}
+                                    <td class="cal-time-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}>{{ cell.text }}</td>
+                                    {% elif cell.kind == 'class' %}
+                                    <td class="cal-class-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}{% if cell.colspan and cell.colspan > 1 %} colspan="{{ cell.colspan }}"{% endif %}>{% for line in cell.lines %}<div class="cal-line">{{ line }}</div>{% endfor %}</td>
+                                    {% else %}
+                                    <td class="cal-empty-cell"></td>
+                                    {% endif %}
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
-        {% endfor %}
-        {% else %}
-        <div class="rpt-no-data">
-            <i class="fas fa-inbox"></i>
-            <p>No records found for the selected filters.</p>
-        </div>
-        {% endif %}
-
-    <!-- ── CURRICULUM LIST (identical structure to _build_curriculum_docx/xlsx) ── -->
-    {% elif curriculum_mode %}
-        {% if curricula %}
-        {% for curr in curricula %}
-        <div class="rpt-section-hdr">{{ curr.program_name }} — {{ curr.curriculum_code }} (CY {{ curr.curriculum_year }})</div>
-        {% for yl in curr.year_levels %}
-        <div class="rpt-curr-yl-hdr">{{ yl.label }}</div>
-        {% for sem in yl.semesters %}
-        <div class="rpt-curr-sem-hdr">{{ sem.label }}</div>
-        <div class="rpt-table-wrapper" style="margin-bottom:16px;">
-            <div class="rpt-table-scroll">
-                <table class="rpt-table">
-                    <thead>
-                        <tr>
-                            <th>Subject Code</th><th>Prereq</th><th>Co-req</th><th>Description</th>
-                            <th>Lec Hrs</th><th>Lab Hrs</th><th>Credited Units</th><th>Tuition Hrs</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for s in sem.subjects %}
-                        <tr>
-                            <td>{{ s.subject_code }}</td><td>{{ s.prerequisite }}</td><td>{{ s.corequisite }}</td>
-                            <td>{{ s.subject_name }}</td><td>{{ s.lecture_hours }}</td><td>{{ s.lab_hours }}</td>
-                            <td>{{ s.credit_units }}</td><td>{{ s.tuition_hours }}</td>
-                        </tr>
-                        {% endfor %}
-                        <tr class="rpt-total-row">
-                            <td colspan="6">TOTAL UNITS</td><td>{{ sem.total_units }}</td><td>{{ sem.total_tuition }}</td>
-                        </tr>
-                    </tbody>
-                </table>
+            {% if room.unscheduled %}
+            <div class="sis-unscheduled">
+                <strong>Unscheduled / TBA:</strong>
+                <ul>{% for u in room.unscheduled %}<li>{{ u }}</li>{% endfor %}</ul>
             </div>
-        </div>
+            {% endif %}
         {% endfor %}
         {% endfor %}
-        {% endfor %}
-        {% else %}
-        <div class="rpt-no-data">
-            <i class="fas fa-inbox"></i>
-            <p>No records found for the selected filters.</p>
-        </div>
-        {% endif %}
-
-    <!-- ── ROOM AND BUILDING LIST (identical structure to _build_rooms_docx/xlsx) ── -->
-    {% elif rooms_mode %}
-        {% if buildings %}
-        {% for bldg in buildings %}
-        <div class="rpt-section-hdr">{{ bldg.buildingname }} — Lecture: {{ bldg.total_lecture }} | Laboratory: {{ bldg.total_lab }} | Total: {{ bldg.total_lecture + bldg.total_lab }}</div>
-        <div class="rpt-table-wrapper" style="margin-bottom:24px;">
-            <div class="rpt-table-scroll">
-                <table class="rpt-table">
-                    <thead>
-                        <tr><th>Room Number</th><th>Room Type</th><th>Capacity</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for r in bldg.rooms %}
-                        <tr><td>{{ r.roomname }}</td><td>{{ r.roomtype }}</td><td>{{ r.roomcapacity }}</td></tr>
-                        {% endfor %}
-                        <tr class="rpt-total-row">
-                            <td colspan="3">TOTAL ROOMS: {{ bldg.total_lecture + bldg.total_lab }}</td>
-                        </tr>
-                    </tbody>
-                </table>
+    {% else %}
+        {% for bldg in room_view %}
+        <div class="room-bldg-hdr">Building: {{ bldg.label }}</div>
+        {% for room in bldg.rooms %}
+            <div class="sis-yl-hdr">Room: {{ room.label }}{% if room.type %} — {{ room.type }}{% endif %}</div>
+            <div class="rpt-table-wrapper">
+                <div class="rpt-table-scroll">
+                    <table class="schedule-table">
+                        <colgroup>
+                            <col style="width:8%"><col style="width:14%"><col style="width:10%">
+                            <col style="width:24%"><col style="width:8%"><col style="width:6%">
+                            <col style="width:16%"><col style="width:8%"><col style="width:6%">
+                        </colgroup>
+                        <thead>
+                            <tr>{% for h in room_off_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+                        </thead>
+                        <tbody>
+                            {% for row in room.rows %}
+                            <tr>
+                                {% for cell in row %}
+                                <td class="{{ ['td-days','td-time','td-code','td-desc','','','','',''][loop.index0] }}">{{ cell }}</td>
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
         {% endfor %}
-        {% else %}
-        <div class="rpt-no-data">
-            <i class="fas fa-inbox"></i>
-            <p>No records found for the selected filters.</p>
-        </div>
-        {% endif %}
-
-    <!-- ── TEACHING ASSIGNMENT (identical layout to the Faculty Load panel in
-         Manual Scheduling — .fl-* classes reused from manualSchedule.css) ── -->
-    {% elif assignment_mode %}
-        {% if snapshot %}
-        <div class="fl-info-bar" style="margin-bottom:14px;">
-            <span class="fl-info-pill">EMPLOYEE TYPE: <strong>{{ snapshot.faculty.employee_type }}</strong></span>
-            <span class="fl-info-sep">|</span>
-            <span class="fl-info-pill">TOTAL UNITS: <strong>{{ snapshot.max_units }}{% if snapshot.total_hours and snapshot.total_hours > 0 %} ({{ snapshot.total_hours }} hrs){% endif %}</strong></span>
-            <span class="fl-info-sep">|</span>
-            <span class="fl-info-pill">AVAILABLE UNITS: <strong>{{ snapshot.available_units }}</strong></span>
-        </div>
-        <h2 class="fl-main-title">{{ snapshot.faculty.fullname }} ({{ snapshot.faculty.employeenumber }})</h2>
-
-        {% for sec in snapshot.sections %}
-        <h3 class="fl-section-sub"{% if not loop.first %} style="margin-top:16px;"{% endif %}>{{ sec.label }}</h3>
-        <div class="fl-table-wrap">
-            <table class="fl-table">
-                <thead><tr>
-                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
-                </tr></thead>
-                <tbody>
-                    {% if sec.rows %}
-                    {% for s in sec.rows %}
-                    <tr>
-                        <td>{{ s.subjectcode or '—' }}</td>
-                        <td>{{ s.subjectname or '—' }}</td>
-                        <td>{{ s.units or '—' }}</td>
-                        <td>{{ s.year_section or '—' }}</td>
-                        <td>{{ s.time_range or '—' }}</td>
-                        <td>{{ s.days or '—' }}</td>
-                        <td>{{ s.room or '—' }}</td>
-                    </tr>
-                    {% endfor %}
-                    {% else %}
-                    <tr><td colspan="7" class="fl-no-data">{{ sec.no_data_msg }}</td></tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-        <div class="fl-total-line">{{ sec.total_label }} (max {{ sec.max }}): <strong>{{ sec.total_units }} units ({{ sec.total_hrs }} hrs)</strong></div>
         {% endfor %}
+    {% endif %}
+    </div>
 
-        {% if snapshot.pending_rows %}
-        <h3 class="fl-section-sub" style="margin-top:16px;background:#fff3cd;color:#856404;border-color:#ffe082;">
-            PENDING ASSIGNMENTS <span style="font-weight:400;">(assigned, no schedule yet)</span>
-        </h3>
-        <div class="fl-table-wrap">
-            <table class="fl-table">
-                <thead><tr>
-                    <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>UNITS</th>
-                    <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th>
-                </tr></thead>
-                <tbody>
-                    {% for s in snapshot.pending_rows %}
-                    <tr style="background:#fffde7;">
-                        <td>{{ s.subjectcode or '—' }}</td>
-                        <td>{{ s.subjectname or '—' }}</td>
-                        <td>{{ s.units or '—' }}</td>
-                        <td>{{ s.year_section or '—' }}</td>
-                        <td style="color:#999;font-style:italic;">{{ s.time_range or '—' }}</td>
-                        <td>{{ s.days or '—' }}</td>
-                        <td>{{ s.room or '—' }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        <div class="fl-total-line">TOTAL PENDING LOAD: <strong>{{ snapshot.pending_units }} units</strong></div>
-        {% endif %}
-        {% else %}
-        <div class="rpt-no-data">
-            <i class="fas fa-inbox"></i>
-            <p>Select an Academic Year, Semester, and Faculty to generate this report.</p>
-        </div>
-        {% endif %}
-
-    <!-- ── GROUPED SECTIONS (offerings) ── -->
+    <!-- ── GROUPED SECTIONS (assignments, offerings) ── -->
     {% elif sections %}
         {% for sec in sections %}
         <div class="rpt-section-hdr">{{ sec.title }}</div>
@@ -417,11 +492,154 @@
         </div>
         {% endfor %}
 
-    <!-- ── SINGLE TABLE (faculty, rooms, curriculum, class_schedule, programs) ── -->
+    <!-- ── CURRICULUM LIST — official Program → Curriculum Code → Year Level →
+         Semester grouped layout, mirroring the exported XLSX/DOCX/PDF exactly
+         (_curr_report_context / _curr_report_gen_*) instead of the old flat
+         one-row-per-subject table that repeated Program/Curriculum Code on
+         every row. ── -->
+    {% elif report_type == 'curriculum' and curr_groups %}
+    <div class="sis-sheet">
+    <div class="sis-letterhead">
+        <div class="sis-logo-row"><img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Lopez Campus"></div>
+        <div class="sis-title">{{ title|upper }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+    </div>
+    {% for prog in curr_groups %}
+        <div class="room-bldg-hdr">Program: {{ prog.label }} ({{ prog.programcode }})</div>
+        {% for curr in prog.curricula %}
+            <div class="curr-code-hdr">Curriculum Code: {{ curr.code }}{% if curr.year %} &mdash; C.Y. {{ curr.year }}{% endif %}</div>
+            {% for yl in curr.year_levels %}
+                <div class="sis-yl-hdr">{{ yl.label }}</div>
+                {% for sem in yl.semesters %}
+                    <div class="sis-sec-hdr">{{ sem.label }}</div>
+                    <div class="rpt-table-wrapper rpt-table-wrapper-clean">
+                        <div class="rpt-table-scroll">
+                            <table class="rpt-table rpt-table-clean">
+                                <colgroup>
+                                    <col style="width:11%"> <col style="width:12%"> <col style="width:12%">
+                                    <col style="width:32%"> <col style="width:8%">  <col style="width:8%">
+                                    <col style="width:8%">  <col style="width:9%">
+                                </colgroup>
+                                <thead>
+                                    <tr>{% for h in curr_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in sem.rows %}
+                                    <tr>
+                                        {% for cell in row %}
+                                        <td class="{{ 'curr-num-cell' if loop.index0 in (4,5,6,7) }}">{{ cell if cell|string|trim else '—' }}</td>
+                                        {% endfor %}
+                                    </tr>
+                                    {% endfor %}
+                                    {% if sem.rows %}
+                                    <tr class="curr-total-row">
+                                        <td colspan="3"></td>
+                                        <td class="curr-total-label">TOTAL UNITS</td>
+                                        <td class="curr-num-cell">{{ sem.totals.lec }}</td>
+                                        <td class="curr-num-cell">{{ sem.totals.lab }}</td>
+                                        <td class="curr-num-cell">{{ sem.totals.units }}</td>
+                                        <td class="curr-num-cell">{{ sem.totals.tuition }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="8" class="curr-no-subject">No subject</td></tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% endfor %}
+        {% endfor %}
+    {% endfor %}
+    </div>
+
+    <!-- ── ROOM AND BUILDING LIST — official Building → Room grouped layout,
+         mirroring the exported XLSX/DOCX/PDF exactly (_bldg_report_context /
+         _bldg_report_gen_*) instead of the old flat one-row-per-room table
+         with no letterhead and no visual separation between buildings. ── -->
+    {% elif report_type == 'rooms' and bldg_groups %}
+    <div class="sis-sheet">
+    <div class="sis-letterhead">
+        <div class="sis-logo-row"><img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Lopez Campus"></div>
+        <div class="sis-title">{{ title|upper }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+    </div>
+    {% for b in bldg_groups %}
+        <div class="room-bldg-hdr">Building: {{ b.label }}</div>
+        <div class="rpt-table-wrapper rpt-table-wrapper-clean">
+            <div class="rpt-table-scroll">
+                <table class="rpt-table rpt-table-clean">
+                    <colgroup>
+                        <col style="width:40%"><col style="width:28%">
+                        <col style="width:16%"><col style="width:16%">
+                    </colgroup>
+                    <thead>
+                        <tr>{% for h in bldg_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+                    </thead>
+                    <tbody>
+                        {% for row in b.rows %}
+                        <tr>
+                            {% for cell in row %}
+                            <td class="{{ 'curr-num-cell' if loop.index0 == 2 }}">{{ cell if cell|string|trim else '—' }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                        {% if not b.rows %}
+                        <tr><td colspan="4" class="curr-no-subject">No rooms</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+
+    <!-- ── SINGLE TABLE (faculty, rooms, curriculum, programs) ──
+         Faculty List and Program List get the same clean white-background
+         variant (.rpt-table-clean, plus a tuned <colgroup>, plus the same
+         letterhead every other report uses) instead of the maroon sticky
+         header the remaining flat-table reports use — see the CSS block
+         above for why: a plain white official-document look, sized so long
+         values never truncate. -->
     {% elif columns %}
-    <div class="rpt-table-wrapper">
+    {% set clean_variant = report_type in ('faculty', 'programs') %}
+    {% if clean_variant %}
+    <div class="sis-sheet">
+    <!-- Same letterhead card as every other report: logo, report title,
+         maroon campus banner — one file (static/img/pup-logo.png) reused
+         everywhere, and mirrored in every export format below. -->
+    <div class="sis-letterhead">
+        <div class="sis-logo-row"><img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Lopez Campus"></div>
+        <div class="sis-title">{{ title|upper }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+    </div>
+    {% endif %}
+    <div class="rpt-table-wrapper{{ ' rpt-table-wrapper-clean' if clean_variant }}">
         <div class="rpt-table-scroll">
-            <table class="rpt-table">
+            <table class="rpt-table{{ ' rpt-table-clean' if clean_variant }}">
+                {% if report_type == 'faculty' %}
+                <colgroup>
+                    <col style="width:8%">   {# EmployeeNumber #}
+                    <col style="width:10%">  {# LastName #}
+                    <col style="width:10%">  {# FirstName #}
+                    <col style="width:8%">   {# MiddleName #}
+                    <col style="width:16%">  {# Email #}
+                    <col style="width:10%">  {# Contact Number #}
+                    <col style="width:16%">  {# Specialization #}
+                    <col style="width:8%">   {# EmployeeType #}
+                    <col style="width:8%">   {# EmployeeStatus #}
+                    <col style="width:6%">   {# Designation #}
+                </colgroup>
+                {% elif report_type == 'programs' %}
+                <colgroup>
+                    <col style="width:14%">  {# Program Code #}
+                    <col style="width:38%">  {# Program Name #}
+                    <col style="width:16%">  {# Type #}
+                    <col style="width:12%">  {# Year Levels #}
+                    <col style="width:10%">  {# Curricula #}
+                    <col style="width:10%">  {# Status #}
+                </colgroup>
+                {% endif %}
                 <thead>
                     <tr>
                         {% for col in columns %}
@@ -433,7 +651,11 @@
                     {% for row in rows %}
                     <tr>
                         {% for cell in row %}
-                        <td>{{ cell }}</td>
+                        {# Blank fields (e.g. no Specialization/Designation/Contact on file) render as
+                           an em-dash here for readability — the underlying exported value stays a
+                           real empty string so a re-import via Faculty Management doesn't mistake
+                           "—" for an actual Specialization/Designation name. #}
+                        <td>{{ cell if cell|string|trim else '—' }}</td>
                         {% endfor %}
                     </tr>
                     {% endfor %}
@@ -441,6 +663,9 @@
             </table>
         </div>
     </div>
+    {% if clean_variant %}
+    </div>
+    {% endif %}
 
     {% else %}
     <!-- No data -->
@@ -544,79 +769,28 @@
     </div>
 </div>
 
-{% if class_schedule_mode %}
-<script src="{{ url_for('static', filename='js/ACAD HEAD/schedule.acad.js') }}"></script>
-{% endif %}
-{% if room_schedule_mode %}
-<script src="{{ url_for('static', filename='js/ACAD HEAD/room_schedule.acad.js') }}"></script>
-{% endif %}
 <script>
 // Safely grab the report type
 const RPT_TYPE = "{{ report_type }}";
 
 // Automatically figure out the Export URL based on if user is Admin or Acad Head
-const RPT_EXPORT_URL = window.location.pathname.includes('/admin') 
-    ? '/admin/reports/export/' + RPT_TYPE 
+const RPT_EXPORT_URL = window.location.pathname.includes('/admin')
+    ? '/admin/reports/export/' + RPT_TYPE
     : '/reports/export/' + RPT_TYPE;
 
-// Automatically grab all the filters directly from the browser URL!
-// Keys that are repeatable (class_schedule's multi-select filters) must stay
-// arrays, or only the last selected value would survive into the export POST.
-const RPT_MULTI_KEYS = ['ay_ids', 'sem_types', 'programs', 'year_levels'];
+// Automatically grab all the filters directly from the browser URL. A repeated
+// key (ay_ids, sem_types, programs, year_levels, curriculum_ids, building_ids —
+// the class_schedule/room_schedule checkbox filters and the curriculum/rooms
+// selector modals) is forwarded as an array so the export route sees every
+// selected value, not just the last one Object-literal assignment would keep.
 const RPT_PARAMS = {};
 {
-    const _usp = new URLSearchParams(window.location.search);
-    new Set(_usp.keys()).forEach(key => {
-        RPT_PARAMS[key] = RPT_MULTI_KEYS.includes(key) ? _usp.getAll(key) : _usp.get(key);
+    const _sp = new URLSearchParams(window.location.search);
+    [...new Set(_sp.keys())].forEach(key => {
+        const vals = _sp.getAll(key);
+        RPT_PARAMS[key] = vals.length > 1 ? vals : vals[0];
     });
 }
-
-{% if class_schedule_mode %}
-// ── Render each Class Schedule panel through the SAME renderCalendar()/renderTable()
-// functions the live Class Schedule page uses, guaranteeing WYSIWYG parity. ──
-const CS_PANELS = {{ panels | tojson }};
-const CS_LAYOUT = "{{ layout }}";
-window.addEventListener('load', () => {
-    CS_PANELS.forEach(p => {
-        if (CS_LAYOUT === 'calendar') {
-            renderCalendar(p.sessions, { wrapperId: 'gridWrapper_' + p.id, tableId: 'mainTimetable_' + p.id });
-        } else {
-            renderTable(p.sessions, { tbodyId: 'offeringsTableBody_' + p.id, courseLabel: p.program + ' ' + p.yearlevel });
-        }
-    });
-});
-{% endif %}
-
-{% if room_schedule_mode %}
-// ── Render each Room Schedule panel through the SAME _buildGrid()/_renderRoomCalendar()
-// functions the live Room Schedule page uses, guaranteeing WYSIWYG parity. ──
-const RS_PANELS = {{ panels | tojson }};
-window.addEventListener('load', () => {
-    RS_PANELS.forEach(p => {
-        _buildGrid('frsGrid_' + p.id);
-        _renderRoomCalendar(p.sessions, 'frsGrid_' + p.id);
-    });
-});
-{% endif %}
-
-{% if faculty_mode %}
-// ── Faculty List report: reuses the exact data shape / export routes from
-// Faculty Management (employee.admin.js / employee.acad.js). ──
-const RPT_EMPLOYEES = {{ employees_json | tojson }};
-const RPT_AY_LABEL   = {{ ay_label | tojson }};
-{% endif %}
-
-{% if curriculum_mode %}
-// ── Curriculum List report: reuses the exact data shape / export routes from
-// the Curriculum module's own "Export Curriculum" feature (curriculum.admin.js). ──
-const RPT_CURRICULA = {{ curricula | tojson }};
-{% endif %}
-
-{% if rooms_mode %}
-// ── Room & Building List report: reuses the exact data shape / export routes from
-// the Rooms module's own "Export" feature (rooms.admin.js). ──
-const RPT_BUILDINGS = {{ buildings | tojson }};
-{% endif %}
 
 let _rptSelFmts = new Set();
 
@@ -653,446 +827,6 @@ function _validateExportBtn() {
     document.getElementById('rptExpConfirmBtn').disabled = _rptSelFmts.size === 0;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Faculty List — ported from static/js/ADMIN/employee.admin.js so the export
-// output is byte-identical to Faculty Management's own Export feature.
-// ═══════════════════════════════════════════════════════════════════════════
-{% if faculty_mode %}
-const _rptFacColumns = [
-    { header: '#',               dataKey: 'no',             field: null },
-    { header: 'Employee Number', dataKey: 'emp_num',        field: 'emp_num' },
-    { header: 'Last Name',       dataKey: 'last_name',      field: 'last_name' },
-    { header: 'First Name',      dataKey: 'first_name',     field: 'first_name' },
-    { header: 'Middle Name',     dataKey: 'middle_name',    field: 'middle_name' },
-    { header: 'Email',           dataKey: 'email',          field: 'email' },
-    { header: 'Contact Number',  dataKey: 'contact',        field: 'contact' },
-    { header: 'Specialization',  dataKey: 'specialization', field: 'specialization' },
-    { header: 'Employee Type',   dataKey: 'emp_type',       field: 'emp_type' },
-    { header: 'Employee Status', dataKey: 'status',         field: 'status' },
-    { header: 'Designation',     dataKey: 'designation',    field: 'designation' },
-];
-
-function _rptFacLoadImageAsDataURL(url) {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
-            canvas.getContext('2d').drawImage(img, 0, 0);
-            resolve(canvas.toDataURL('image/png'));
-        };
-        img.onerror = reject;
-        img.src = url;
-    });
-}
-
-function _rptFacCSV(data, filename) {
-    const now = new Date().toLocaleString();
-    const cols = _rptFacColumns.filter(c => c.field);
-    const headers = cols.map(c => c.header);
-    const dataRows = data.map(e => cols.map(c => e[c.dataKey]));
-    const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [
-        `"Polytechnic University of the Philippines"`,
-        `"Lopez, Quezon Campus"`,
-        `"FACULTY INFORMATION REPORT"`,
-        `"Academic Year: ${RPT_AY_LABEL}"`,
-        `"Date Generated: ${now}"`,
-        `"Total: ${data.length} employee(s)"`,
-        '',
-        headers.map(q).join(','),
-        ...dataRows.map(r => r.map(q).join(',')),
-    ];
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-function _rptFacPayload(data) {
-    return {
-        employees: data,
-        title: 'FACULTY INFORMATION REPORT',
-        subtitle1: 'Polytechnic University of the Philippines',
-        subtitle2: 'Lopez, Quezon Campus',
-        ay_label: RPT_AY_LABEL,
-        timestamp: 'Date Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
-    };
-}
-
-async function _rptFacXLSX(data, filename) {
-    const res = await fetch('/admin/employee/export/xlsx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_rptFacPayload(data)),
-    });
-    if (!res.ok) throw new Error(await res.text() || 'Server error generating XLSX');
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptFacPDF(data, filename) {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const now = new Date();
-    const pageWidth  = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const cx = pageWidth / 2;
-
-    try {
-        const logo = await _rptFacLoadImageAsDataURL('/static/img/pup-logo.png');
-        doc.addImage(logo, 'PNG', 12, 7, 20, 20);
-    } catch (e) { /* logo optional */ }
-
-    doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('Polytechnic University of the Philippines', cx, 13, { align: 'center' });
-    doc.setFontSize(11);
-    doc.text('Lopez, Quezon Campus', cx, 19, { align: 'center' });
-    doc.setFontSize(14);
-    doc.text('FACULTY INFORMATION REPORT', cx, 27, { align: 'center' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text(`Academic Year: ${RPT_AY_LABEL}`, cx, 33, { align: 'center' });
-    doc.text(`Date Generated: ${now.toLocaleString()}`, cx, 38, { align: 'center' });
-    doc.setDrawColor(128, 0, 0); doc.setLineWidth(0.6);
-    doc.line(10, 41, pageWidth - 10, 41);
-
-    const columns = _rptFacColumns;
-    const body = data.map((e, i) => ({ no: i + 1, ...e }));
-
-    doc.autoTable({
-        columns, body, startY: 45,
-        styles: { fontSize: 7.5, cellPadding: 2.2, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.15, textColor: [0, 0, 0] },
-        headStyles: { fillColor: [128, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.15 },
-        alternateRowStyles: { fillColor: [248, 248, 248] },
-        margin: { left: 8, right: 8 },
-        columnStyles: {
-            no:             { cellWidth: 7,  halign: 'center' },
-            emp_num:        { cellWidth: 20 },
-            last_name:      { cellWidth: 24 },
-            first_name:     { cellWidth: 22 },
-            middle_name:    { cellWidth: 20 },
-            email:          { cellWidth: 40 },
-            contact:        { cellWidth: 20 },
-            specialization: { cellWidth: 28 },
-            emp_type:       { cellWidth: 18 },
-            status:         { cellWidth: 18 },
-            designation:    { cellWidth: 24 },
-        },
-    });
-
-    const total = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= total; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8); doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 6, { align: 'right' });
-    }
-    doc.save(filename + '.pdf');
-}
-
-async function _rptFacDOCX(data, filename) {
-    const res = await fetch('/admin/employee/export/docx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_rptFacPayload(data)),
-    });
-    if (!res.ok) throw new Error(await res.text() || 'Server error generating DOCX');
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.docx' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptFacExport(formats, filename) {
-    const data = RPT_EMPLOYEES;
-    if (!data.length) throw new Error('There are no employees to export.');
-    const errors = [];
-    for (const fmt of formats) {
-        try {
-            if (fmt === 'csv')  _rptFacCSV(data, filename);
-            if (fmt === 'xlsx') await _rptFacXLSX(data, filename);
-            if (fmt === 'pdf')  await _rptFacPDF(data, filename);
-            if (fmt === 'docx') await _rptFacDOCX(data, filename);
-            await new Promise(r => setTimeout(r, 400));
-        } catch (e) {
-            errors.push(fmt.toUpperCase() + ': ' + e.message);
-        }
-    }
-    if (errors.length) throw new Error(errors.join('; '));
-}
-{% endif %}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Curriculum List — ported from static/js/ADMIN/curriculum.admin.js so the
-// export output is byte-identical to the Curriculum module's own Export feature.
-// ═══════════════════════════════════════════════════════════════════════════
-{% if curriculum_mode %}
-function _rptCurrCSVBlob(curricula) {
-    const now = new Date().toLocaleString();
-    const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [`"Curriculum Export"`, `"Generated: ${now}"`, `"Total Curricula: ${curricula.length}"`, ''];
-    curricula.forEach(curr => {
-        lines.push(q(`Program: ${curr.program_name}`));
-        lines.push(q(`Curriculum: ${curr.curriculum_code} — C.Y ${curr.curriculum_year}`));
-        lines.push('');
-        curr.year_levels.forEach(yl => {
-            yl.semesters.forEach(sem => {
-                lines.push(q(`${yl.label} — ${sem.label}`));
-                lines.push(['Subject Code','Prereq','Co-req','Description','Lec Hrs','Lab Hrs','Credited Units','Tuition Hrs'].map(q).join(','));
-                sem.subjects.forEach(s => {
-                    lines.push([s.subject_code,s.prerequisite,s.corequisite,s.subject_name,s.lecture_hours,s.lab_hours,s.credit_units,s.tuition_hours].map(q).join(','));
-                });
-                lines.push(['','','',q('TOTAL UNITS'),'','',(sem.total_units||0),(sem.total_tuition||0)].join(','));
-                lines.push('');
-            });
-        });
-        lines.push('', '');
-    });
-    return new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-}
-
-async function _rptCurrXLSXBlob(curricula) {
-    const res = await fetch('/admin/curriculum/export/xlsx', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
-    });
-    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
-    return await res.blob();
-}
-
-function _rptCurrPDFBlob(curricula) {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const W   = 297;
-    curricula.forEach((curr, cidx) => {
-        if (cidx > 0) doc.addPage();
-        doc.setFillColor(128, 0, 0); doc.rect(0, 0, W, 34, 'F');
-        doc.setTextColor(255,255,255);
-        doc.setFont('helvetica','bold'); doc.setFontSize(15);
-        doc.text(`${curr.curriculum_code}  —  ${curr.program_name}`, W/2, 13, { align:'center' });
-        doc.setFont('helvetica','normal'); doc.setFontSize(10);
-        doc.text(`Curriculum Year: ${curr.curriculum_year}`, W/2, 22, { align:'center' });
-        doc.setFontSize(8);
-        doc.text('Generated: ' + new Date().toLocaleString(), W/2, 30, { align:'center' });
-        doc.setTextColor(0,0,0);
-        let startY = 36;
-        curr.year_levels.forEach(yl => {
-            yl.semesters.forEach(sem => {
-                if (startY > 192) { doc.addPage(); startY = 10; }
-                doc.setFillColor(55,55,55); doc.rect(10, startY, W-20, 7, 'F');
-                doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
-                doc.text(`${yl.label.toUpperCase()}  ·  ${sem.label}`, 14, startY+5);
-                doc.setTextColor(0,0,0); startY += 7;
-                doc.autoTable({
-                    columns: [
-                        { header:'Subject Code',   dataKey:'subject_code'  },
-                        { header:'Prereq',         dataKey:'prerequisite'  },
-                        { header:'Co-req',         dataKey:'corequisite'   },
-                        { header:'Description',    dataKey:'subject_name'  },
-                        { header:'Lec Hrs',        dataKey:'lecture_hours' },
-                        { header:'Lab Hrs',        dataKey:'lab_hours'     },
-                        { header:'Credited Units', dataKey:'credit_units'  },
-                        { header:'Tuition Hrs',    dataKey:'tuition_hours' },
-                    ],
-                    body: sem.subjects, startY,
-                    styles: { fontSize:7.5, cellPadding:2, overflow:'linebreak' },
-                    headStyles: { fillColor:[128,0,0], textColor:255, fontStyle:'bold', fontSize:8 },
-                    alternateRowStyles: { fillColor:[253,245,245] },
-                    tableWidth: W - 20,
-                    columnStyles: {
-                        0:{ cellWidth:32 }, 1:{ cellWidth:26 }, 2:{ cellWidth:20 },
-                        3:{ cellWidth:126 },
-                        4:{ cellWidth:16,halign:'center' }, 5:{ cellWidth:16,halign:'center' },
-                        6:{ cellWidth:22,halign:'center' }, 7:{ cellWidth:19,halign:'center' },
-                    },
-                    foot: [['','','','TOTAL UNITS','','',(sem.total_units||0),(sem.total_tuition||0)]],
-                    footStyles: { fillColor:[240,230,230], fontStyle:'bold', fontSize:8, textColor:[80,0,0] },
-                    showFoot: 'lastPage', margin: { left:10, right:10 },
-                });
-                startY = doc.lastAutoTable.finalY + 4;
-            });
-        });
-    });
-    const total = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= total; i++) {
-        doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150);
-        doc.text(`Page ${i} of ${total}`, 287, 206, { align:'right' });
-    }
-    return doc.output('blob');
-}
-
-async function _rptCurrDOCXBlob(curricula) {
-    const res = await fetch('/admin/curriculum/export/docx', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ curricula, title: 'Curriculum Export', timestamp: 'Generated: ' + new Date().toLocaleString() }),
-    });
-    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'DOCX failed'));
-    return await res.blob();
-}
-
-function _rptTriggerDownload(blob, filename) {
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptCurrExport(formats, filename) {
-    const curricula = RPT_CURRICULA;
-    if (!curricula.length) throw new Error('No curricula to export.');
-    const useZip = curricula.length > 1 || formats.length > 1;
-    const errors = [];
-
-    if (!useZip) {
-        const fmt = formats[0];
-        try {
-            let blob;
-            if (fmt === 'csv')  blob = _rptCurrCSVBlob(curricula);
-            if (fmt === 'xlsx') blob = await _rptCurrXLSXBlob(curricula);
-            if (fmt === 'pdf')  blob = _rptCurrPDFBlob(curricula);
-            if (fmt === 'docx') blob = await _rptCurrDOCXBlob(curricula);
-            if (blob) _rptTriggerDownload(blob, filename + '.' + fmt);
-        } catch (e) {
-            errors.push(fmt.toUpperCase() + ': ' + e.message);
-        }
-    } else {
-        const zip = new JSZip();
-        for (const curr of curricula) {
-            const safeCode = (curr.program_code || curr.curriculum_code || 'CURR').replace(/[^a-zA-Z0-9_-]/g, '_');
-            const safeYear = (curr.curriculum_year || '').replace(/[^a-zA-Z0-9_-]/g, '-');
-            const currFile = `${safeCode}_CY${safeYear}`;
-            for (const fmt of formats) {
-                try {
-                    let blob;
-                    if (fmt === 'csv')  blob = _rptCurrCSVBlob([curr]);
-                    if (fmt === 'xlsx') blob = await _rptCurrXLSXBlob([curr]);
-                    if (fmt === 'pdf')  blob = _rptCurrPDFBlob([curr]);
-                    if (fmt === 'docx') blob = await _rptCurrDOCXBlob([curr]);
-                    if (blob) zip.file(`${currFile}.${fmt}`, blob);
-                } catch (e) {
-                    errors.push(`${curr.program_name} ${fmt.toUpperCase()}: ` + e.message);
-                }
-                await new Promise(r => setTimeout(r, 150));
-            }
-        }
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        _rptTriggerDownload(zipBlob, filename + '.zip');
-    }
-    if (errors.length) throw new Error(errors.join('; '));
-}
-{% endif %}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Room & Building List — ported from static/js/ADMIN/rooms.admin.js so the
-// export output is byte-identical to the Rooms module's own Export feature.
-// ═══════════════════════════════════════════════════════════════════════════
-{% if rooms_mode %}
-function _rptRoomCSV(buildings, filename) {
-    const now = new Date().toLocaleString();
-    const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [q('PUP LOPEZ CAMPUS — ROOMS AND BUILDINGS'), q(`Generated: ${now}`), ''];
-    buildings.forEach(bldg => {
-        lines.push(q(`Building: ${bldg.buildingname}`));
-        lines.push(['Room Number', 'Room Type', 'Capacity'].map(q).join(','));
-        (bldg.rooms || []).forEach(r => { lines.push([r.roomname, r.roomtype, r.roomcapacity].map(q).join(',')); });
-        lines.push([q('TOTAL ROOMS'), q(''), (bldg.rooms || []).length].join(','));
-        lines.push('');
-    });
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptRoomXLSX(buildings, filename) {
-    const res = await fetch('/admin/rooms/export/xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildings, timestamp: 'Generated: ' + new Date().toLocaleString() }) });
-    if (!res.ok) throw new Error('Server error: ' + (await res.text() || 'XLSX failed'));
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.xlsx' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptRoomPDF(buildings, filename) {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const W = 210, M = 10, CW = 190, HDR_H = 24, PAGE_H = 297;
-    const now = new Date().toLocaleString();
-    function drawBanner() {
-        doc.setTextColor(0,0,0); doc.setFont('helvetica','bold'); doc.setFontSize(13);
-        doc.text('PUP LOPEZ CAMPUS', W/2, 11, { align:'center' });
-        doc.setFont('helvetica','normal'); doc.setFontSize(10);
-        doc.text('ROOMS AND BUILDINGS', W/2, 18, { align:'center' });
-        doc.setFontSize(7.5); doc.text('Generated: '+now, W/2, 24, { align:'center' });
-    }
-    drawBanner(); let y = HDR_H + 5;
-    buildings.forEach((bldg, idx) => {
-        const rooms = bldg.rooms || [];
-        const minNeeded = 8 + 9 + Math.min(rooms.length,3)*8 + 8 + 5;
-        if (idx > 0) { if (y + minNeeded > PAGE_H - 10) { doc.addPage(); drawBanner(); y = HDR_H+5; } else { y += 5; } }
-        doc.setTextColor(0,0,0); doc.setFont('helvetica','bold'); doc.setFontSize(9);
-        doc.text(bldg.buildingname.toUpperCase(), M, y+4);
-        doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
-        doc.text(`Lecture: ${bldg.total_lecture}  |  Lab: ${bldg.total_lab}  |  Total: ${rooms.length}`, W-M, y+4, { align:'right' });
-        y += 7;
-        doc.autoTable({
-            columns: [{ header:'Room Number',dataKey:'roomname' },{ header:'Room Type',dataKey:'roomtype' },{ header:'Capacity',dataKey:'roomcapacity' }],
-            body: rooms.map(r => ({ ...r })), startY: y,
-            styles:{ fontSize:8.5, cellPadding:2.5, lineColor:[0,0,0], lineWidth:0.2, textColor:[0,0,0] },
-            headStyles:{ fillColor:[255,255,255], textColor:[0,0,0], fontStyle:'bold', fontSize:9, lineColor:[0,0,0], lineWidth:0.2 },
-            alternateRowStyles:{ fillColor:[255,255,255] },
-            columnStyles:{ 0:{ cellWidth:114 }, 1:{ cellWidth:50,halign:'center' }, 2:{ cellWidth:26,halign:'center' } },
-            tableWidth: CW, foot:[['TOTAL ROOMS','',rooms.length]],
-            footStyles:{ fillColor:[255,255,255], fontStyle:'bold', fontSize:9, textColor:[0,0,0], lineColor:[0,0,0], lineWidth:0.2 },
-            showFoot:'lastPage', margin:{ top:HDR_H+4, left:M, right:M },
-            didDrawPage: (d) => { if (d.pageNumber>1) { drawBanner(); } },
-        });
-        y = doc.lastAutoTable.finalY + 3;
-    });
-    const total = doc.internal.getNumberOfPages();
-    for (let i=1;i<=total;i++) { doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150,150,150); doc.text(`Page ${i} of ${total}`, W-M, PAGE_H-4, { align:'right' }); }
-    doc.save(filename+'.pdf');
-}
-
-async function _rptRoomDOCX(buildings, filename) {
-    const res = await fetch('/admin/rooms/export/docx', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ buildings, timestamp:'Generated: '+new Date().toLocaleString() }) });
-    if (!res.ok) throw new Error('Server error: '+(await res.text()||'DOCX failed'));
-    const blob = await res.blob();
-    const a = Object.assign(document.createElement('a'), { href:URL.createObjectURL(blob), download:filename+'.docx' });
-    a.click(); URL.revokeObjectURL(a.href);
-}
-
-async function _rptRoomExport(formats, filename) {
-    const buildings = RPT_BUILDINGS;
-    if (!buildings.length) throw new Error('No buildings to export.');
-    const errors = [];
-    for (const fmt of formats) {
-        try {
-            if (fmt==='csv')  _rptRoomCSV(buildings, filename);
-            if (fmt==='xlsx') await _rptRoomXLSX(buildings, filename);
-            if (fmt==='pdf')  await _rptRoomPDF(buildings, filename);
-            if (fmt==='docx') await _rptRoomDOCX(buildings, filename);
-        } catch(e) { errors.push(`${fmt.toUpperCase()}: ${e.message}`); }
-    }
-    if (errors.length) throw new Error(errors.join('; '));
-}
-{% endif %}
-
-async function _rptGenericExport(formats, baseName) {
-    const resp = await fetch(RPT_EXPORT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
-    });
-
-    if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || resp.statusText);
-    }
-
-    const blob = await resp.blob();
-    const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = baseName + ext; a.click();
-    URL.revokeObjectURL(url);
-}
-
 async function doExport() {
     const formats  = [..._rptSelFmts];
     let baseName = document.getElementById('rptExpFilename').value.trim() || 'report_export';
@@ -1111,18 +845,27 @@ async function doExport() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting…';
 
     try {
-        if (RPT_TYPE === 'faculty') {
-            await _rptFacExport(formats, baseName);
-        } else if (RPT_TYPE === 'curriculum') {
-            await _rptCurrExport(formats, baseName);
-        } else if (RPT_TYPE === 'rooms') {
-            await _rptRoomExport(formats, baseName);
-        } else {
-            await _rptGenericExport(formats, baseName);
+        const resp = await fetch(RPT_EXPORT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert('Export failed: ' + (err.error || resp.statusText));
+            return;
         }
+
+        const blob = await resp.blob();
+        const ext  = formats.length > 1 ? '.zip' : '.' + formats[0];
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url; a.download = baseName + ext; a.click();
+        URL.revokeObjectURL(url);
         closeExportModal();
     } catch(e) {
-        alert('Export failed: ' + e.message);
+        alert('Network error: ' + e.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-download"></i> Export';

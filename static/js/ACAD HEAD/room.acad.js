@@ -35,39 +35,40 @@ function _rmToast(type, title, msg) {
 }
 
 // ── Sidebar filter ────────────────────────────────────────────────────────────
-let _activeSidebarBldg = '';
+// NOTE: buildings are tracked by ID (not name) everywhere below so that renaming
+// or adding a building never desyncs the filter from what's on screen.
+let _activeSidebarBldgId = '';
 
-function filterBySidebar(buildingName) {
-    _activeSidebarBldg = buildingName.toUpperCase();
+function filterBySidebar(buildingId) {
+    _activeSidebarBldgId = buildingId === '' || buildingId == null ? '' : String(buildingId);
     document.querySelectorAll('.btn-building').forEach(b => b.classList.remove('active'));
-    const target = buildingName === ''
+    const target = _activeSidebarBldgId === ''
         ? document.getElementById('bldgBtnAll')
-        : document.querySelector(`.btn-building[data-bldg-name="${buildingName}"]`);
+        : document.querySelector(`.btn-building[data-bldg-id="${_activeSidebarBldgId}"]`);
     if (target) target.classList.add('active');
     document.getElementById('filterBuilding').value = '';
     _applyRoomFilter();
 }
 
 function filterRoomTable() {
-    _activeSidebarBldg = '';
+    _activeSidebarBldgId = '';
     document.querySelectorAll('.btn-building').forEach(b => b.classList.remove('active'));
     document.getElementById('bldgBtnAll')?.classList.add('active');
     _applyRoomFilter();
 }
 
 function _applyRoomFilter() {
-    const search   = (document.getElementById('searchRoom')?.value    || '').toUpperCase();
-    const bldgSel  = (document.getElementById('filterBuilding')?.value || '').toUpperCase();
-    const typeSel  = (document.getElementById('filterType')?.value     || '').toUpperCase();
-    const bldgFilter = bldgSel !== '' ? bldgSel : _activeSidebarBldg;
+    const search     = (document.getElementById('searchRoom')?.value    || '').toUpperCase();
+    const bldgSel    =  document.getElementById('filterBuilding')?.value || '';
+    const typeSel    = (document.getElementById('filterType')?.value     || '').toUpperCase();
+    const bldgFilter = bldgSel !== '' ? bldgSel : _activeSidebarBldgId;
 
     document.querySelectorAll('#roomTable tbody tr').forEach(tr => {
         const name = (tr.querySelector('.td-room-name')?.textContent || '').toUpperCase();
         const type = (tr.querySelector('.td-room-type')?.textContent || '').toUpperCase();
-        const bldg = (tr.querySelector('.td-building')?.textContent  || '').toUpperCase();
         const show = name.includes(search)
             && (typeSel    === '' || type === typeSel)
-            && (bldgFilter === '' || bldg === bldgFilter);
+            && (bldgFilter === '' || tr.dataset.buildingId === bldgFilter);
         tr.style.display = show ? '' : 'none';
     });
 }
@@ -266,7 +267,7 @@ function _domAddBuildingBtn(id, name) {
     btn.dataset.bldgId   = id;
     btn.dataset.bldgName = name;
     btn.textContent      = name;
-    btn.onclick          = () => filterBySidebar(name);
+    btn.onclick          = () => filterBySidebar(id);
     btn.setAttribute('oncontextmenu', `showBuildingMenu(event,${id},'${name.replace(/'/g,"\\'")}');return false;`);
     scroll.appendChild(btn);
 }
@@ -276,7 +277,7 @@ function _domUpdateBuildingName(id, newName) {
     if (btn) {
         btn.textContent      = newName;
         btn.dataset.bldgName = newName;
-        btn.onclick          = () => filterBySidebar(newName);
+        btn.onclick          = () => filterBySidebar(id);
         btn.setAttribute('oncontextmenu', `showBuildingMenu(event,${id},'${newName.replace(/'/g,"\\'")}');return false;`);
     }
     document.querySelectorAll(`select option[value="${id}"]`).forEach(o => o.textContent = newName);

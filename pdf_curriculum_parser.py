@@ -262,9 +262,24 @@ def _detect_col_map(header_rows):
     """
     Merge up to 3 header rows column-by-column, then map field → column index.
     This handles tables whose headers span two rows (e.g. 'Hours' over 'Lec Lab').
+
+    Rows that are actually a TOTAL/summary footer, or that already contain a
+    subject-code-shaped value, are excluded from the merge first. A genuine
+    (possibly multi-line) header row never contains either — but when a table
+    is split across a page break, a "TOTAL UNITS" footer row can end up
+    sitting directly next to the next section's real header row within the
+    3-row scan window. Merging its text in is harmless most of the time, but
+    "TOTAL UNITS" contains the word "units", which can hijack the Credited
+    Units column pattern onto the TOTAL row's column (e.g. the subject-code
+    column) before the scan ever reaches the real Credited Units column,
+    silently zeroing every unit value for the rest of that table.
     """
     if not header_rows:
         return {}
+    header_rows = [
+        row for row in header_rows
+        if not _is_skip_row(row) and not any(_looks_like_code(_clean(c)) for c in row)
+    ] or header_rows
     n_cols = max((len(r) for r in header_rows[:3]), default=0)
     merged = []
     for j in range(n_cols):
@@ -779,6 +794,27 @@ def _process_table(table, init_year, init_sem, override_col_map=None, fallback_c
                 and sc_clean not in _NON_CODE_UPPER
             )
             if not is_short_alpha:
+                # A garbled "code" with no accompanying hour/unit data anywhere in the
+                # row is not a new subject — it's almost always a stray fragment of a
+                # description that wraps onto its own line (e.g. "...Financial
+                # Accounting and\nReporting" lands the lone word "Reporting" in the
+                # code-column position). Treat it like a codeless continuation row —
+                # fold it into the previous subject instead of flagging it as a
+                # surprising unrecognized code.
+                has_nums = any(
+                    _parse_int(gcell(k)) > 0
+                    for k in ('u', 'lc', 'lb', 'th') if k in col_map
+                )
+                if not has_nums:
+                    # Fold into the previous subject when one exists in this same
+                    # table/page pass; otherwise there's nothing meaningful to do
+                    # with an isolated, numberless fragment except drop it quietly.
+                    if subjects and 'sn' in col_map and not dy and not ds:
+                        cont_desc = gcell('sn') or sc_clean
+                        subjects[-1]['sn'] = (
+                            subjects[-1]['sn'] + ' ' + cont_desc
+                        ).strip()[:200]
+                    continue
                 skipped_rows.append({'cells': [sc_clean], 'reason': f'unrecognized subject-code format: {sc_clean!r}'})
                 continue
 
@@ -1009,3 +1045,4 @@ def parse_curriculum_pdf(file_bytes, override_col_map=None):
         'skipped_rows':  meaningful_skipped,
         'raw_text':      raw_text[:3000],
     }
+

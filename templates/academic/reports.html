@@ -1,10 +1,15 @@
 {% extends "academic/base.html" %}
 
+
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
+<!-- Subject/Faculty Assignment Export modal, moved here from Faculty Management
+     (Reports > Teaching Assignment now surfaces it) — reuses its exact markup
+     and styling verbatim. -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/employee.css') }}">
 <style>
 /* ══════════════════════════════════════════════════
    REPORT PAGE LAYOUT & CARDS
@@ -12,9 +17,11 @@
 .page-header { margin-bottom: 30px; }
 .page-header h1 { font-size: 32px; font-weight: 800; color: #800000; margin: 0; text-transform: uppercase; }
 
+
 .reports-grid { display: flex; flex-wrap: wrap; gap: 25px; justify-content: center; padding-top: 10px; }
 .report-card { background: #fff; border-radius: 12px; width: 300px; height: 180px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; border: 1px solid #f0f0f0; }
 .report-card:hover { transform: translateY(-5px); }
+
 
 .card-green { box-shadow: 0 10px 30px rgba(40, 167, 69, 0.12); }
 .card-orange { box-shadow: 0 10px 30px rgba(253, 126, 20, 0.12); }
@@ -23,6 +30,7 @@
 .card-purple { box-shadow: 0 10px 30px rgba(111, 66, 193, 0.12); }
 .card-pink { box-shadow: 0 10px 30px rgba(232, 62, 140, 0.12); }
 .card-red { box-shadow: 0 10px 30px rgba(220, 53, 69, 0.12); }
+
 
 .card-icon { position: absolute; top: 15px; right: 18px; font-size: 18px; }
 .card-green .card-icon { color: #28a745; }
@@ -33,10 +41,13 @@
 .card-pink .card-icon { color: #e83e8c; }
 .card-red .card-icon { color: #dc3545; }
 
+
 .report-card h2 { color: #800000; font-size: 22px; font-weight: 800; text-align: center; margin: 0 0 20px 0; letter-spacing: 0.5px; }
+
 
 .btn-generate { background-color: #888888; color: #ffffff; border: none; border-radius: 20px; padding: 6px 24px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; pointer-events: none; transition: all 0.3s ease; }
 .report-card:hover .btn-generate { background-color: #800000; transform: scale(1.05); box-shadow: 0 4px 10px rgba(128, 0, 0, 0.3); }
+
 
 /* ══════════════════════════════════════════════════
    REPORT FILTER MODAL
@@ -44,8 +55,10 @@
 .rpt-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.60); z-index: 1400; align-items: center; justify-content: center; padding: 16px; font-family: Arial, sans-serif; }
 .rpt-overlay.open { display: flex !important; }
 
+
 .rpt-dialog { background: #fff; border-radius: 14px; width: min(540px, 96vw); max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 16px 56px rgba(0,0,0,.38); animation: rpt-pop .2s ease-out; }
 @keyframes rpt-pop { from { transform: scale(.93); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
 
 .rpt-hdr { background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; }
 .rpt-hdr-left { display: flex; align-items: center; gap: 14px; }
@@ -55,6 +68,7 @@
 .rpt-hdr-close { background: none; border: none; color: rgba(255,255,255,.75); font-size: 1.2rem; cursor: pointer; padding: 6px 10px; border-radius: 7px; transition: 0.2s; }
 .rpt-hdr-close:hover { background: rgba(255,255,255,.15); color: #fff; }
 
+
 .rpt-body { padding: 24px; overflow-y: auto; flex: 1; }
 .rpt-section-lbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; color: #630100; border-left: 3px solid #630100; padding-left: 8px; margin-bottom: 14px; }
 .rpt-field-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -63,11 +77,13 @@
 .rpt-field select { padding: 9px 11px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: .86rem; background: #fafafa; color: #333; outline: none; transition: 0.2s; width: 100%; }
 .rpt-field select:focus { border-color: #630100; box-shadow: 0 0 0 3px rgba(99,1,0,.1); background: #fff; }
 
+
 .rpt-footer { padding: 16px 24px; border-top: 1px solid #f0e8e8; display: flex; justify-content: flex-end; gap: 10px; background: #fafafa; }
 .rpt-btn-cancel { padding: 9px 22px; border: 1.5px solid #ccc; border-radius: 8px; background: #fff; color: #555; font-size: .86rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
 .rpt-btn-cancel:hover { background: #f5f5f5; border-color: #aaa; }
 .rpt-btn-preview { padding: 9px 24px; border: none; border-radius: 8px; background: linear-gradient(135deg, #630100, #4b0a0a); color: #fff; font-size: .86rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
 .rpt-btn-preview:hover { opacity: .9; transform: translateY(-1px); }
+
 
 /* ══════════════════════════════════════════════════
    CLASS SCHEDULE — multi-select checkbox filters + layout choice
@@ -85,10 +101,12 @@
 </style>
 {% endblock %}
 
+
 {% block content %}
 <div class="page-header">
     <h1>GENERATE REPORTS</h1>
 </div>
+
 
 <div class="reports-grid">
     <div class="report-card card-green" onclick="openReportModal('class_schedule')">
@@ -97,11 +115,13 @@
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
 
+
     <div class="report-card card-orange" onclick="openReportModal('room_schedule')">
         <i class="fas fa-door-open card-icon"></i>
         <h2>ROOM<br>SCHEDULE</h2>
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
+
 
     <div class="report-card card-blue" onclick="openReportModal('faculty')">
         <i class="fas fa-users card-icon"></i>
@@ -109,11 +129,13 @@
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
 
+
     <div class="report-card card-yellow" onclick="openRptCurrSelModal()">
         <i class="fas fa-book card-icon"></i>
         <h2>CURRICULUM<br>LIST</h2>
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
+
 
     <div class="report-card card-purple" onclick="openRptRoomSelModal()">
         <i class="fas fa-building card-icon"></i>
@@ -121,11 +143,13 @@
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
 
-    <div class="report-card card-pink" onclick="openReportModal('assignments')">
+
+    <div class="report-card card-pink" onclick="openFacSubExportModal()">
         <i class="fas fa-user-tie card-icon"></i>
         <h2>TEACHING<br>ASSIGNMENT</h2>
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
+
 
     <div class="report-card card-red" onclick="openReportModal('programs')">
         <i class="fas fa-graduation-cap card-icon"></i>
@@ -133,6 +157,7 @@
         <button type="button" class="btn-generate">GENERATE</button>
     </div>
 </div>
+
 
 <!-- FILTER MODAL -->
 <div id="rptFilterModal" class="rpt-overlay" onclick="if(event.target===this)closeReportModal()">
@@ -154,6 +179,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- CURRICULUM LIST REPORT — SELECTOR MODAL (Step-1 UI reused verbatim from the
      Curriculum module's own "Export Curriculum" modal / .curr-exp-* CSS classes) -->
@@ -196,6 +222,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- ROOM & BUILDING LIST REPORT — SELECTOR MODAL (Step-1 UI reused verbatim from
      the Rooms module's own "Export" modal / .room-exp-* CSS classes) -->
@@ -241,6 +268,154 @@
     </div>
 </div>
 
+
+<!-- SUBJECT/FACULTY ASSIGNMENT EXPORT MODAL — moved here verbatim from
+     Faculty Management; Reports > Teaching Assignment's "Generate" button
+     opens this instead of the plain single-faculty filter modal. -->
+<div id="facSubExportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeFacSubExportModal()">
+    <div class="emp-export-dialog">
+        <div class="emp-export-header">
+            <div class="emp-export-header-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+            <div>
+                <h2>Subject/Faculty Assignment Export</h2>
+                <p>Select Academic Year, Semester, and Faculty Type(s) below</p>
+            </div>
+            <button class="emp-export-close" onclick="closeFacSubExportModal()">&#215;</button>
+        </div>
+        <div class="emp-export-summary">
+            <div class="emp-export-summary-icon"><i class="fas fa-list-alt"></i></div>
+            <div>
+                <span class="emp-export-count" id="facSubCount">0</span>
+                <span class="emp-export-count-label">Assignments to Export</span>
+            </div>
+            <div class="emp-export-summary-info" id="facSubScopeLabel">Select filters to begin</div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Academic Year</span>
+            </div>
+            <div class="emp-cb-list" id="facSubAyList">
+                {% for ay in ay_list %}
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-ay-cb" value="{{ ay.academicyearid }}" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>AY {{ ay.yearstart }}-{{ ay.yearend }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Semester</span>
+            </div>
+            <div class="emp-cb-list">
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="A" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>1st Semester</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="B" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>2nd Semester</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-sem-cb" value="C" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Summer</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Faculty Type</span>
+                <button class="emp-export-select-all" id="facSubTypeAllBtn" onclick="_toggleFacSubAllTypes()">All</button>
+            </div>
+            <div class="emp-cb-list">
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Designee" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Designee</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Part-time" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Part-Time</span>
+                </div>
+                <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
+                    <input type="checkbox" class="fse-type-cb" value="Regular" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+                    <span>Regular</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Export Format</span>
+                <button class="emp-export-select-all" id="facSubFmtAllBtn" onclick="_toggleFacSubAllFmts()">Select All</button>
+            </div>
+            <div class="emp-export-format-grid">
+                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
+                    <div class="emp-format-name">CSV</div>
+                    <div class="emp-format-desc">Comma separated values</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
+                    <div class="emp-format-name">Excel (XLSX)</div>
+                    <div class="emp-format-desc">Microsoft Excel workbook</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
+                    <div class="emp-format-name">PDF</div>
+                    <div class="emp-format-desc">Portable document format</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="_toggleFacSubFmtCard(this)">
+                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
+                    <div class="emp-format-name">Word (DOCX)</div>
+                    <div class="emp-format-desc">Microsoft Word document</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+            </div>
+            <div class="emp-export-format-error" id="facSubFmtError" style="display:none;">
+                Please select at least one export format.
+            </div>
+        </div>
+
+        <div class="emp-export-section">
+            <label class="emp-export-label">Export Filename</label>
+            <div class="emp-filename-input-wrapper">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="facSubFilenameInput" class="emp-filename-input" value="Faculty_Subject_Assignment" placeholder="Enter filename...">
+            </div>
+        </div>
+
+        <div class="emp-export-footer">
+            <button class="emp-export-cancel" onclick="closeFacSubExportModal()">Cancel</button>
+            <button class="emp-export-confirm" id="facSubConfirmBtn" onclick="executeFacSubExport()" disabled>
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="facSubExportLoadingOverlay" style="display:none;" class="emp-export-loading">
+    <div class="emp-export-loading-card">
+        <div class="emp-export-spinner"></div>
+        <div class="emp-export-loading-text" id="facSubExportLoadingText">Preparing export...</div>
+        <div class="emp-export-loading-sub" id="facSubExportLoadingSubText">Please wait</div>
+    </div>
+</div>
+<div id="facSubExportToast" class="emp-export-toast" style="display:none;">
+    <div class="emp-export-toast-icon" id="facSubExportToastIcon"></div>
+    <div class="emp-export-toast-body">
+        <div class="emp-export-toast-title" id="facSubExportToastTitle"></div>
+        <div class="emp-export-toast-msg" id="facSubExportToastMsg"></div>
+    </div>
+    <button class="emp-export-toast-close" onclick="document.getElementById('facSubExportToast').style.display='none'">&#215;</button>
+</div>
+
+
 <script>
 // JSON DATA INJECTION (crucial for dropdowns to work)
 const RPT_DATA = {
@@ -258,6 +433,7 @@ const RPT_DATA = {
     curriculum_years: {{ curriculum_years | tojson | safe }}
 };
 
+
 const REPORT_META = {
     class_schedule: { icon: 'fas fa-chalkboard-teacher', title: 'Class Schedule', sub: 'Filter by academic period, program, and section' },
     room_schedule:  { icon: 'fas fa-door-open', title: 'Room Schedule', sub: 'Filter by building and room' },
@@ -268,16 +444,20 @@ const REPORT_META = {
     programs:       { icon: 'fas fa-graduation-cap', title: 'Program List', sub: 'Filter by status' }
 };
 
+
 let _currentReportType = null;
+
 
 function openReportModal(reportType) {
     _currentReportType = reportType;
     const meta = REPORT_META[reportType] || {};
 
+
     document.getElementById('rptHdrIcon').innerHTML = `<i class="${meta.icon}"></i>`;
     document.getElementById('rptHdrTitle').textContent = meta.title;
     document.getElementById('rptHdrSub').textContent   = meta.sub;
     document.getElementById('rptBodyContent').innerHTML = _buildFilterHTML(reportType);
+
 
     if (reportType === 'curriculum') {
         document.getElementById('rptProg')?.addEventListener('change', _updateCurriculaOptions);
@@ -288,6 +468,9 @@ function openReportModal(reportType) {
         document.querySelectorAll('.cs-ay-cb, .cs-prog-cb, .cs-yl-cb').forEach(cb => cb.addEventListener('change', _csRefreshSections));
         _csRefreshSections();
     }
+    if (reportType === 'room_schedule') {
+        _rsSelectedLayout = 'table';
+    }
     if (reportType === 'assignments') {
         _rptTaSelectedFacId = null;
         _buildTaFacultyMenu();
@@ -295,18 +478,22 @@ function openReportModal(reportType) {
     document.getElementById('rptFilterModal').classList.add('open');
 }
 
+
 function closeReportModal() {
     document.getElementById('rptFilterModal').classList.remove('open');
     _currentReportType = null;
 }
+
 
 function _sel(id, label, options, defaultLabel = 'All') {
     const opts = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
     return `<div class="rpt-field"><label>${label}</label><select id="${id}"><option value="All">${defaultLabel}</option>${opts}</select></div>`;
 }
 
+
 function _buildFilterHTML(type) {
     const { ay_list, programs, curricula, emp_types, specializations, statuses, buildings, room_types, faculty, rooms, designations, curriculum_years } = RPT_DATA;
+
 
     const ayOpts   = (ay_list || []).map(a => ({ value: a.academicyearid, label: `A.Y. ${a.yearstart}–${a.yearend}` }));
     const progOpts = (programs || []).map(p => ({ value: p.programcode, label: p.programname }));
@@ -323,7 +510,9 @@ function _buildFilterHTML(type) {
     const cyOpts   = (curriculum_years || []).map(c => ({ value: c.curriculumyear, label: c.curriculumyear }));
     const activeStOpts = [{ value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }];
 
+
     let html = '<div class="rpt-section-lbl">Filter Options</div>';
+
 
     if (type === 'class_schedule') {
         const cb = (cls, val, label) => `<label class="rpt-cb-item"><input type="checkbox" class="${cls}" value="${val}"> ${label}</label>`;
@@ -375,10 +564,33 @@ function _buildFilterHTML(type) {
             </div>
             <div class="rpt-field-row">
                 <div class="rpt-field"><label>Room (optional)</label><select id="rptRsRoom"><option value="">All Rooms</option>${roomOpts.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select></div>
+            </div>
+            <div class="rpt-cb-group">
+                <div class="rpt-cb-group-title">View Layout</div>
+                <div class="rpt-layout-row">
+                    <div class="rpt-layout-card selected" data-layout="table" onclick="_rsSelectLayout(this)"><i class="fas fa-table"></i>Table View</div>
+                    <div class="rpt-layout-card" data-layout="calendar" onclick="_rsSelectLayout(this)"><i class="fas fa-calendar-alt"></i>Calendar View</div>
+                </div>
             </div>`;
     } else if (type === 'faculty') {
-        html += `<div class="rpt-field-row">${_sel('rptEmpType', 'Employee Type', etOpts, 'All Types')} ${_sel('rptStatus', 'Status', stOpts, 'All Statuses')}</div>
-                 <div class="rpt-field-row">${_sel('rptSpec', 'Specialization', spOpts, 'All Specializations')} ${_sel('rptDesig', 'Designation', dgOpts, 'All Designations')}</div>`;
+        const cb = (cls, val, label) => `<label class="rpt-cb-item"><input type="checkbox" class="${cls}" value="${val}"> ${label}</label>`;
+        html += `
+            <div class="rpt-cb-group">
+                <div class="rpt-cb-group-title">Employee Type — leave empty for all</div>
+                <div class="rpt-cb-list">${etOpts.map(o => cb('fac-et-cb', o.value, o.label)).join('')}</div>
+            </div>
+            <div class="rpt-cb-group">
+                <div class="rpt-cb-group-title">Status — leave empty for all (Archived hidden unless selected)</div>
+                <div class="rpt-cb-list">${stOpts.map(o => cb('fac-st-cb', o.value, o.label)).join('')}</div>
+            </div>
+            <div class="rpt-cb-group">
+                <div class="rpt-cb-group-title">Specialization — leave empty for all</div>
+                <div class="rpt-cb-list">${spOpts.map(o => cb('fac-sp-cb', o.value, o.label)).join('')}</div>
+            </div>
+            <div class="rpt-cb-group">
+                <div class="rpt-cb-group-title">Designation — leave empty for all</div>
+                <div class="rpt-cb-list">${dgOpts.map(o => cb('fac-dg-cb', o.value, o.label)).join('')}</div>
+            </div>`;
     } else if (type === 'assignments') {
         html += `
             <div class="rpt-field-row">
@@ -407,6 +619,7 @@ function _buildFilterHTML(type) {
     return html;
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════
 // Teaching Assignment report — searchable faculty dropdown, reusing the
 // exact .fl-fac-* / .dss-search-* markup and interaction pattern from the
@@ -414,14 +627,17 @@ function _buildFilterHTML(type) {
 // ═══════════════════════════════════════════════════════════════════════
 let _rptTaSelectedFacId = null;
 
+
 function _buildTaFacultyMenu() {
     const menu = document.getElementById('rptTaFacMenu');
     if (!menu) return;
+
 
     const src = [...(RPT_DATA.faculty || [])]
         .map(f => ({ id: f.employeenumber, name: f.fullname }))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     menu.innerHTML = '';
+
 
     const searchBox = document.createElement('div');
     searchBox.className = 'dss-search-box';
@@ -439,10 +655,12 @@ function _buildTaFacultyMenu() {
     searchBox.appendChild(searchInput);
     menu.appendChild(searchBox);
 
+
     if (!src.length) {
         menu.insertAdjacentHTML('beforeend', '<div class="fl-fac-opt" style="color:#aaa;cursor:default;">No faculty available</div>');
         return;
     }
+
 
     menu.insertAdjacentHTML('beforeend', src.map(f =>
         `<div class="fl-fac-opt" data-name="${(f.name || f.id || '').toLowerCase().replace(/"/g,'&quot;')}" onclick="selectTaFaculty('${(f.id||'').toString().replace(/'/g,"\\'")}','${(f.name||'').replace(/'/g,"\\'")}')">
@@ -450,6 +668,7 @@ function _buildTaFacultyMenu() {
         </div>`
     ).join(''));
 }
+
 
 function toggleTaFacMenu(e) {
     e.stopPropagation();
@@ -466,11 +685,13 @@ function toggleTaFacMenu(e) {
     }
 }
 
+
 function selectTaFaculty(empNum, name) {
     _rptTaSelectedFacId = empNum;
     document.getElementById('rptTaFacText').textContent = name || empNum;
     document.getElementById('rptTaFacMenu').classList.remove('fl-fac-open');
 }
+
 
 document.addEventListener('click', (e) => {
     const wrap = document.getElementById('rptTaFacTrigger')?.closest('.fl-fac-wrap');
@@ -478,12 +699,22 @@ document.addEventListener('click', (e) => {
     document.getElementById('rptTaFacMenu')?.classList.remove('fl-fac-open');
 });
 
+
 let _csSelectedLayout = 'table';
 function _csSelectLayout(el) {
     document.querySelectorAll('.rpt-layout-card').forEach(c => c.classList.remove('selected'));
     el.classList.add('selected');
     _csSelectedLayout = el.dataset.layout;
 }
+
+
+let _rsSelectedLayout = 'table';
+function _rsSelectLayout(el) {
+    el.closest('.rpt-layout-row').querySelectorAll('.rpt-layout-card').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    _rsSelectedLayout = el.dataset.layout;
+}
+
 
 let _csSectionsAbort = null;
 async function _csRefreshSections() {
@@ -497,6 +728,7 @@ async function _csRefreshSections() {
     progs.forEach(v => params.append('programs', v));
     yls.forEach(v => params.append('year_levels', v));
 
+
     if (_csSectionsAbort) _csSectionsAbort.abort();
     _csSectionsAbort = new AbortController();
     const prevVal = sectionSel.value;
@@ -509,6 +741,7 @@ async function _csRefreshSections() {
     } catch (e) { /* aborted or network error -- keep current list */ }
 }
 
+
 function _updateCurriculaOptions() {
     const progVal = document.getElementById('rptProg')?.value || 'All';
     const currSel = document.getElementById('rptCurr');
@@ -517,11 +750,14 @@ function _updateCurriculaOptions() {
     currSel.innerHTML = '<option value="All">All Curricula</option>' + filtered.map(c => `<option value="${c.curriculumid}">${c.curriculumcode}</option>`).join('');
 }
 
+
 function _gv(id) { const el = document.getElementById(id); return el ? el.value : 'All'; }
+
 
 function previewReport() {
     if (!_currentReportType) return;
     const type = _currentReportType;
+
 
     if (type === 'class_schedule') {
         const ayIds = [...document.querySelectorAll('.cs-ay-cb:checked')].map(c => c.value);
@@ -545,6 +781,7 @@ function previewReport() {
         return;
     }
 
+
     if (type === 'room_schedule') {
         const ayIds = [...document.querySelectorAll('.rs-ay-cb:checked')].map(c => c.value);
         const sems  = [...document.querySelectorAll('.rs-sem-cb:checked')].map(c => c.value);
@@ -558,9 +795,11 @@ function previewReport() {
         const bldgVal = _gv('rptRsBuilding'); if (bldgVal && bldgVal !== 'All') params.set('building', bldgVal);
         const rtVal   = _gv('rptRsRoomType'); if (rtVal && rtVal !== 'All') params.set('room_type', rtVal);
         const roomVal = _gv('rptRsRoom');     if (roomVal && roomVal !== 'All') params.set('room', roomVal);
+        params.set('layout', _rsSelectedLayout);
         window.location.href = `/reports/preview/room_schedule?${params.toString()}`;
         return;
     }
+
 
     if (type === 'assignments') {
         const ay  = _gv('rptTaAy');
@@ -574,12 +813,30 @@ function previewReport() {
         return;
     }
 
+
+    if (type === 'faculty') {
+        const empTypes  = [...document.querySelectorAll('.fac-et-cb:checked')].map(c => c.value);
+        const statuses  = [...document.querySelectorAll('.fac-st-cb:checked')].map(c => c.value);
+        const specs     = [...document.querySelectorAll('.fac-sp-cb:checked')].map(c => c.value);
+        const desigs    = [...document.querySelectorAll('.fac-dg-cb:checked')].map(c => c.value);
+        const params = new URLSearchParams();
+        empTypes.forEach(v => params.append('emp_types', v));
+        statuses.forEach(v => params.append('statuses', v));
+        specs.forEach(v => params.append('specs', v));
+        desigs.forEach(v => params.append('desigs', v));
+        const basePath = window.location.pathname.includes('/admin') ? '/admin/reports/preview' : '/reports/preview';
+        window.location.href = `${basePath}/faculty?${params.toString()}`;
+        return;
+    }
+
+
     const params = new URLSearchParams();
 
+
     const map = {
-        faculty:        ['rptEmpType:emp_type', 'rptStatus:status', 'rptSpec:spec', 'rptDesig:desig'],
         programs:       ['rptStatus:status'],
     };
+
 
     (map[type] || []).forEach(pair => {
         const [elId, paramKey] = pair.split(':');
@@ -587,11 +844,14 @@ function previewReport() {
         if (val && val !== 'All') params.set(paramKey, val);
     });
 
+
     const basePath = window.location.pathname.includes('/admin') ? '/admin/reports/preview' : '/reports/preview';
+
 
     // GUARANTEES IT OPENS IN THE SAME TAB
     window.location.href = `${basePath}/${type}?${params.toString()}`;
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // Curriculum List report — selection-only modal, sourced from the same
@@ -601,6 +861,7 @@ const _RPT_CURR_LIST_ROUTE = '/admin/curriculum/export/list';
 let _rptCurrSelPrograms = [];
 let _rptCurrSelIds = new Set();
 let _rptCurrSelLoaded = false;
+
 
 function openRptCurrSelModal() {
     document.getElementById('rptCurrSelModal').style.display = 'flex';
@@ -612,6 +873,7 @@ function openRptCurrSelModal() {
     }
 }
 function closeRptCurrSelModal() { document.getElementById('rptCurrSelModal').style.display = 'none'; }
+
 
 async function _loadRptCurrSelList() {
     const listEl = document.getElementById('rptCurrSelList');
@@ -628,6 +890,7 @@ async function _loadRptCurrSelList() {
         listEl.innerHTML = `<div class="curr-exp-list-empty"><i class="fas fa-exclamation-triangle" style="color:#c00;margin-right:6px;"></i>Failed to load: ${e.message}</div>`;
     }
 }
+
 
 function _renderRptCurrSelList() {
     const query  = (document.getElementById('rptCurrSelSearch')?.value || '').toLowerCase().trim();
@@ -688,6 +951,7 @@ function _renderRptCurrSelList() {
     });
     _updateRptCurrSelCount();
 }
+
 
 function _rptCurrSelToggleCollapse(progCode) {
     const grp = document.getElementById(`rpg_${progCode}`);
@@ -752,6 +1016,7 @@ function _rptCurrSelContinue() {
     window.location.href = `/reports/preview/curriculum?${params.toString()}`;
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════
 // Room & Building List report — selection-only modal, sourced from the same
 // /admin/rooms/export/list endpoint the Rooms module itself uses.
@@ -760,6 +1025,7 @@ const _RPT_ROOM_LIST_ROUTE = '/admin/rooms/export/list';
 let _rptRoomSelBuildings = [];
 let _rptRoomSelIds = new Set();
 let _rptRoomSelLoaded = false;
+
 
 function openRptRoomSelModal() {
     document.getElementById('rptRoomSelModal').style.display = 'flex';
@@ -771,6 +1037,7 @@ function openRptRoomSelModal() {
     }
 }
 function closeRptRoomSelModal() { document.getElementById('rptRoomSelModal').style.display = 'none'; }
+
 
 async function _loadRptRoomSelList() {
     try {
@@ -842,6 +1109,173 @@ function _rptRoomSelContinue() {
     const params = new URLSearchParams();
     _rptRoomSelIds.forEach(id => params.append('building_ids', id));
     window.location.href = `/reports/preview/rooms?${params.toString()}`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SUBJECT/FACULTY ASSIGNMENT EXPORT — moved here verbatim from
+   Faculty Management (same backend routes, same modal markup).
+   Reports > Teaching Assignment's "Generate" opens this modal.
+═══════════════════════════════════════════════════════════ */
+const _FACSUB_COUNT_ROUTE  = '/admin/faculty/subject-export/count';
+const _FACSUB_EXPORT_ROUTE = '/admin/faculty/subject-export';
+let _facSubCountTmr = null;
+let _facSubLastFacultyCount = 0;
+
+function openFacSubExportModal() {
+    _facSubLastFacultyCount = 0;
+    document.querySelectorAll('#facSubExportModal .fse-ay-cb, #facSubExportModal .fse-sem-cb, #facSubExportModal .fse-type-cb').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#facSubExportModal .emp-cb-item').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('#facSubExportModal .emp-export-format-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById('facSubFilenameInput').value = 'Faculty_Subject_Assignment';
+    document.getElementById('facSubCount').textContent = '0';
+    document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
+    document.getElementById('facSubFmtError').style.display = 'none';
+    document.getElementById('facSubConfirmBtn').disabled = true;
+    document.getElementById('facSubTypeAllBtn').textContent = 'All';
+    document.getElementById('facSubFmtAllBtn').textContent = 'Select All';
+    document.getElementById('facSubExportModal').style.display = 'flex';
+}
+function closeFacSubExportModal() {
+    document.getElementById('facSubExportModal').style.display = 'none';
+}
+
+function _toggleFacSubCb(itemEl) {
+    const cb = itemEl.querySelector('input[type=checkbox]');
+    cb.checked = !cb.checked;
+    _onFacSubCbChange(cb);
+}
+function _onFacSubCbChange(cb) {
+    cb.closest('.emp-cb-item').classList.toggle('selected', cb.checked);
+    _syncFacSubTypeAllBtn();
+    _updateFacSubFooter();
+    clearTimeout(_facSubCountTmr);
+    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
+}
+
+function _toggleFacSubAllTypes() {
+    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
+    const allSel = Array.from(cbs).every(cb => cb.checked);
+    cbs.forEach(cb => { cb.checked = !allSel; cb.closest('.emp-cb-item').classList.toggle('selected', !allSel); });
+    _syncFacSubTypeAllBtn();
+    _updateFacSubFooter();
+    clearTimeout(_facSubCountTmr);
+    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
+}
+function _syncFacSubTypeAllBtn() {
+    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
+    const allSel = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
+    document.getElementById('facSubTypeAllBtn').textContent = allSel ? 'Clear' : 'All';
+}
+
+function _toggleFacSubFmtCard(el) {
+    el.classList.toggle('selected');
+    const all    = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
+    const allSel = Array.from(all).every(c => c.classList.contains('selected'));
+    document.getElementById('facSubFmtAllBtn').textContent = allSel ? 'Deselect All' : 'Select All';
+    _updateFacSubFooter();
+}
+function _toggleFacSubAllFmts() {
+    const cards  = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
+    const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
+    cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
+    document.getElementById('facSubFmtAllBtn').textContent = !allSel ? 'Deselect All' : 'Select All';
+    _updateFacSubFooter();
+}
+
+function _facSubFilters() {
+    return {
+        ay_ids:        Array.from(document.querySelectorAll('#facSubExportModal .fse-ay-cb:checked')).map(c => c.value),
+        sem_types:     Array.from(document.querySelectorAll('#facSubExportModal .fse-sem-cb:checked')).map(c => c.value),
+        faculty_types: Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value),
+    };
+}
+
+async function _fetchFacSubCount() {
+    const f = _facSubFilters();
+    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
+        document.getElementById('facSubCount').textContent = '0';
+        _facSubLastFacultyCount = 0;
+        document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
+        _updateFacSubFooter();
+        return;
+    }
+    try {
+        const res  = await fetch(_FACSUB_COUNT_ROUTE, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(f) });
+        const data = await res.json();
+        if (data.error) { document.getElementById('facSubScopeLabel').textContent = 'Error: ' + data.error; return; }
+        document.getElementById('facSubCount').textContent = data.count || 0;
+        const nFac = data.faculty || 0;
+        _facSubLastFacultyCount = nFac;
+        document.getElementById('facSubScopeLabel').textContent = nFac
+            ? `${nFac} faculty member${nFac === 1 ? '' : 's'} (${data.count || 0} assignment${(data.count || 0) === 1 ? '' : 's'})`
+            : 'No faculty match the selected type(s).';
+    } catch (e) {
+        document.getElementById('facSubScopeLabel').textContent = 'Network error — check server connection.';
+    }
+    _updateFacSubFooter();
+}
+
+function _updateFacSubFooter() {
+    const f    = _facSubFilters();
+    const fmts = document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected');
+    const hasFilters = f.ay_ids.length > 0 && f.sem_types.length > 0 && f.faculty_types.length > 0;
+    const ok = hasFilters && fmts.length > 0 && _facSubLastFacultyCount > 0;
+    document.getElementById('facSubConfirmBtn').disabled = !ok;
+}
+
+function _showFacSubExportLoading(text, sub) {
+    document.getElementById('facSubExportLoadingText').textContent = text || 'Exporting...';
+    document.getElementById('facSubExportLoadingSubText').textContent = sub || 'Please wait';
+    document.getElementById('facSubExportLoadingOverlay').style.display = 'flex';
+}
+function _hideFacSubExportLoading() { document.getElementById('facSubExportLoadingOverlay').style.display = 'none'; }
+function _showFacSubExportToast(type, title, msg) {
+    const toast = document.getElementById('facSubExportToast');
+    toast.className = `emp-export-toast ${type}`;
+    document.getElementById('facSubExportToastIcon').innerHTML = type === 'success'
+        ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
+    document.getElementById('facSubExportToastTitle').textContent = title;
+    document.getElementById('facSubExportToastMsg').textContent   = msg;
+    toast.style.display = 'flex';
+    setTimeout(() => { toast.style.display = 'none'; }, 5000);
+}
+
+async function executeFacSubExport() {
+    const f      = _facSubFilters();
+    const fmts   = Array.from(document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected')).map(c => c.dataset.format);
+    const fmtErr = document.getElementById('facSubFmtError');
+    if (!fmts.length) { fmtErr.style.display = 'block'; return; }
+    fmtErr.style.display = 'none';
+    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
+        _showFacSubExportToast('error', 'Missing Selection', 'Select at least one Academic Year, Semester, and Faculty Type.');
+        return;
+    }
+    const filename = (document.getElementById('facSubFilenameInput').value || 'Faculty_Subject_Assignment').trim().replace(/[\/\\:*?"<>|]/g, '_');
+    const btn = document.getElementById('facSubConfirmBtn');
+    btn.disabled = true;
+    closeFacSubExportModal();
+    _showFacSubExportLoading('Generating Export', 'Building faculty/subject assignment report...');
+
+    try {
+        const resp = await fetch(_FACSUB_EXPORT_ROUTE, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ...f, formats: fmts, filename }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || resp.statusText);
+        }
+        const blob = await resp.blob();
+        const ext  = fmts.length > 1 ? '.zip' : '.' + fmts[0];
+        const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + ext });
+        a.click(); URL.revokeObjectURL(a.href);
+        _showFacSubExportToast('success', 'Export Complete', 'Faculty/subject assignment export downloaded.');
+    } catch (e) {
+        _showFacSubExportToast('error', 'Export Failed', e.message);
+    } finally {
+        _hideFacSubExportLoading();
+        btn.disabled = false;
+    }
 }
 </script>
 {% endblock %}

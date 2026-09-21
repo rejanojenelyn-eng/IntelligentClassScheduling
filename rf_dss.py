@@ -1,4 +1,5 @@
 import re as _re
+import time as _time
 
 from database import get_db_connection
 from psycopg2.extras import RealDictCursor
@@ -63,6 +64,72 @@ def _parse_inst_name(raw: str):
     return (last, fi)
 
 
+def _fac_first_match(fac_fn, hist_fi):
+    """Bidirectional first-name/initial match, e.g. "JOSE"~"JOSEPH",
+    "MA."~"MARIA". fac_fn/hist_fi are already lowercased, stripped tokens."""
+    if not fac_fn or not hist_fi:
+        return False
+    if len(hist_fi) > 1 and len(fac_fn) > 1:
+        return hist_fi == fac_fn or fac_fn.startswith(hist_fi) or hist_fi.startswith(fac_fn)
+    return hist_fi[0] == fac_fn[0]
+
+
+def _match_one_name(raw_name, by_last):
+    """Resolve one raw instructor-name string against `by_last` (a dict of
+    lowercase last_name -> list of faculty rows, each carrying at least
+    'empnum', 'first_name'). Shared core used by both _build_name_to_empnum
+    (RF training, historical_data-driven) and resolve_faculty_names
+    (Historical Data Import, file-driven) so the two never disagree.
+
+    Returns (status, empnum, candidates):
+      'matched'       - empnum set, candidates=[the matched faculty row]
+      'ambiguous'     - empnum=None, candidates=the plausible faculty rows
+      'no_candidates' - empnum=None, candidates=[] (last name parsed fine,
+                        but no Faculty record shares it)
+      'unparseable'   - empnum=None, candidates=[] (raw_name had no usable
+                        last name at all, e.g. blank)
+    """
+    last, fi = _parse_inst_name(raw_name)
+    if not last:
+        return ('unparseable', None, [])
+
+    candidates = by_last.get(last, [])
+    if not candidates:
+        return ('no_candidates', None, [])
+
+    if len(candidates) == 1:
+        fac = candidates[0]
+        if fi and fac['first_name'] and not _fac_first_match(fi, fac['first_name']):
+            return ('ambiguous', None, [fac])
+        return ('matched', fac['empnum'], [fac])
+
+    # Multiple faculty share this surname — use first name/initial to pick one.
+    if not fi:
+        return ('ambiguous', None, candidates)
+    matches = [f for f in candidates if _fac_first_match(fi, f['first_name'])]
+    if len(matches) == 1:
+        return ('matched', matches[0]['empnum'], matches)
+    return ('ambiguous', None, matches or candidates)
+
+
+def _faculty_by_last_name(cur):
+    """Fetch active faculty grouped by lowercase last name, for _match_one_name."""
+    cur.execute("""
+        SELECT CAST(EmployeeNumber AS TEXT)          AS empnum,
+               LOWER(TRIM(LastName))                AS last_name,
+               LOWER(TRIM(COALESCE(FirstName, ''))) AS first_name,
+               TRIM(LastName)                        AS last_name_disp,
+               TRIM(COALESCE(FirstName, ''))         AS first_name_disp
+        FROM Faculty
+        WHERE EmployeeStatus != 'Archived'
+    """)
+    faculty = cur.fetchall() or []
+    by_last = {}
+    for f in faculty:
+        by_last.setdefault(f['last_name'], []).append(f)
+    return by_last
+
+
 def _build_name_to_empnum(cur):
     """
     Map UPPER(historical_data."Instructor") → str(employee_number).
@@ -77,18 +144,7 @@ def _build_name_to_empnum(cur):
 
     Returns (name_to_empnum: dict, ambiguous_names: set).
     """
-    cur.execute("""
-        SELECT CAST(EmployeeNumber AS TEXT)              AS empnum,
-               LOWER(TRIM(LastName))                    AS last_name,
-               LOWER(TRIM(COALESCE(FirstName, '')))     AS first_name
-        FROM Faculty
-        WHERE EmployeeStatus != 'Archived'
-    """)
-    faculty = cur.fetchall() or []
-
-    by_last = {}
-    for f in faculty:
-        by_last.setdefault(f['last_name'], []).append(f)
+    by_last = _faculty_by_last_name(cur)
 
     cur.execute("""
         SELECT DISTINCT UPPER(TRIM("Instructor")) AS inst_key,
@@ -104,59 +160,67 @@ def _build_name_to_empnum(cur):
     ambiguous      = set()
 
     for row in rows:
-        key        = row['inst_key']
+        key = row['inst_key']
         # If the stored employee number is already in historical_data, use it directly.
         if row.get('employeenumber'):
             name_to_empnum[key] = str(row['employeenumber'])
             continue
-        last, fi   = _parse_inst_name(row['inst_raw'])
 
-        if not last:
+        status, empnum, _cands = _match_one_name(row['inst_raw'], by_last)
+        if status == 'matched':
+            name_to_empnum[key] = empnum
+        elif status in ('ambiguous', 'unparseable'):
             ambiguous.add(key)
-            continue
-
-        candidates = by_last.get(last, [])
-        if not candidates:
-            # No Faculty record with that surname — cannot resolve
-            continue
-
-        if len(candidates) == 1:
-            fac = candidates[0]
-            # Verify first name if we have one and the Faculty record has a first name.
-            # Bidirectional prefix for multi-char names mirrors the app.py matching rule.
-            if fi and fac['first_name']:
-                fac_fn = fac['first_name']
-                if len(fi) > 1 and len(fac_fn) > 1:
-                    first_ok = (fi == fac_fn or fac_fn.startswith(fi) or fi.startswith(fac_fn))
-                else:
-                    first_ok = (fi[0] == fac_fn[0])
-                if not first_ok:
-                    ambiguous.add(key)
-                    continue
-            name_to_empnum[key] = fac['empnum']
-        else:
-            # Multiple faculty share this surname — use first name to pick one.
-            if not fi:
-                ambiguous.add(key)
-                continue
-
-            def _first_match(fac_fn, hist_fi):
-                if not fac_fn:
-                    return False
-                if len(hist_fi) > 1 and len(fac_fn) > 1:
-                    # Bidirectional prefix: covers "JOSE"→"JOSEPH", "MA."→"MARIA", etc.
-                    return (hist_fi == fac_fn or
-                            fac_fn.startswith(hist_fi) or
-                            hist_fi.startswith(fac_fn))
-                return hist_fi[0] == fac_fn[0]
-
-            matches = [f for f in candidates if _first_match(f['first_name'], fi)]
-            if len(matches) == 1:
-                name_to_empnum[key] = matches[0]['empnum']
-            else:
-                ambiguous.add(key)   # still ambiguous after first-name check
+        # 'no_candidates' -> excluded from both, same as the original code's
+        # bare `continue` (no Faculty record shares that surname at all).
 
     return name_to_empnum, ambiguous
+
+
+def resolve_faculty_names(cur, raw_names):
+    """Resolve a batch of raw instructor-name strings (as they appear in an
+    uploaded schedule file) against the faculty table, for the Historical
+    Data Import feature. One DB round-trip regardless of how many names are
+    passed in.
+
+    Returns {raw_name: {'status', 'employeenumber', 'name', 'candidates'}}
+      'matched'   - resolved unambiguously; employeenumber/name are set.
+      'ambiguous' - more than one plausible Faculty record; 'candidates' is
+                    [{'employeenumber','name'}, ...] for the caller to ask
+                    the user to pick from (or add a new Faculty instead).
+      'new'       - no existing Faculty record plausibly matches (including
+                    an unparseable/blank name) — caller should offer to
+                    create one.
+    """
+    by_last = _faculty_by_last_name(cur)
+
+    def _disp(fac):
+        last  = (fac.get('last_name_disp')  or '').strip()
+        first = (fac.get('first_name_disp') or '').strip()
+        name  = f"{last}, {first}".strip(', ') if (last or first) else fac['empnum']
+        return {'employeenumber': fac['empnum'], 'name': name}
+
+    out = {}
+    for raw_name in raw_names or []:
+        status, empnum, candidates = _match_one_name(raw_name, by_last)
+        if status == 'matched':
+            fac = candidates[0] if candidates else None
+            out[raw_name] = {
+                'status': 'matched',
+                'employeenumber': empnum,
+                'name': _disp(fac)['name'] if fac else None,
+                'candidates': [],
+            }
+        elif status == 'ambiguous':
+            out[raw_name] = {
+                'status': 'ambiguous', 'employeenumber': None, 'name': None,
+                'candidates': [_disp(f) for f in candidates],
+            }
+        else:  # 'no_candidates' or 'unparseable'
+            out[raw_name] = {
+                'status': 'new', 'employeenumber': None, 'name': None, 'candidates': [],
+            }
+    return out
 
 
 # ── Module-level cache ────────────────────────────────────────────────────────
@@ -172,15 +236,30 @@ _rf_fac_name_stats  = {}
 _rf_ambiguous_names = set()
 _rf_room_stats      = {}
 
+# Wall-clock time of the last successful training run (see train_rf_dss).
+_rf_trained_at      = 0.0
+
+# How long a trained model stays in cache before the next /api/dss/suggest
+# call triggers a retrain. Keeps Manual Editor recommendations from silently
+# going stale for the lifetime of the server process after new historical
+# data is imported or new schedules are published, without requiring every
+# write path that touches historical_data/schedule to remember to call
+# reset_rf_cache() explicitly.
+RF_CACHE_TTL_SECONDS = 15 * 60
+
 
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train_rf_dss():
-    """Build RF regressors from historical_data. Lazy-trained; cached after first call."""
+    """Build RF regressors from historical_data. Lazy-trained; cached for
+    RF_CACHE_TTL_SECONDS after each successful run (see module docstring)."""
     global _rf_fac_model, _rf_room_model
     global _rf_fac_stats, _rf_fac_name_stats, _rf_ambiguous_names, _rf_room_stats
+    global _rf_trained_at
 
-    if not SKLEARN_OK or _rf_fac_model is not None:
+    if not SKLEARN_OK:
+        return
+    if _rf_fac_model is not None and (_time.time() - _rf_trained_at) < RF_CACHE_TTL_SECONDS:
         return
 
     conn = get_db_connection()
@@ -575,6 +654,12 @@ def train_rf_dss():
             _rf_room_model.fit(X_r, y_r)
         _rf_room_stats = rstats
 
+        # Only stamp success once every step above has completed — a partial
+        # failure below leaves _rf_trained_at at its old value, so the next
+        # call retries immediately instead of waiting out a TTL on a
+        # possibly-stale or partially-trained model.
+        _rf_trained_at = _time.time()
+
     except Exception:
         pass
     finally:
@@ -586,12 +671,14 @@ def reset_rf_cache():
     """Discard trained models so the next request triggers a full retrain."""
     global _rf_fac_model, _rf_room_model
     global _rf_fac_stats, _rf_fac_name_stats, _rf_ambiguous_names, _rf_room_stats
+    global _rf_trained_at
     _rf_fac_model       = None
     _rf_room_model      = None
     _rf_fac_stats       = {}
     _rf_fac_name_stats  = {}
     _rf_ambiguous_names = set()
     _rf_room_stats      = {}
+    _rf_trained_at      = 0.0
 
 
 # ── Inference & Explainability ────────────────────────────────────────────────

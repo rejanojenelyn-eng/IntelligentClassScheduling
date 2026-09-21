@@ -1003,65 +1003,77 @@ body {
 .btn-confirm-logout { background: var(--maroon); color: white; }
 .btn-confirm-logout:hover { background: var(--maroon-mid); }
 
+/* Flash notices now render as the centered .notif-overlay popup below
+   (see base_admin.html / academic/base.html) instead of a corner toast. */
+
 /* ═══════════════════════════════════════════════════════
-   FLASH TOASTS
+   ALERT POPUP — centered notification (icon + title + message).
+   Canonical alert style shared by Admin and Academic Head pages
+   (via style.css, loaded in both base layouts) — used for AJAX-driven
+   success/error notices so they look the same everywhere (e.g. the
+   "Import Successful/Failed" popup on Class Schedule (SIS) import).
+   Trigger via showAlertPopup(type, message) — see base.admin.js /
+   base.acad.js.
    ═══════════════════════════════════════════════════════ */
-.flash-container {
+.notif-overlay {
     position: fixed;
-    top: 18px;
-    right: 18px;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
     z-index: 9999;
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    pointer-events: none;
-}
-
-.flash-toast {
-    background: white;
-    min-width: 300px;
-    max-width: 380px;
-    padding: 14px 18px;
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-    display: flex;
     align-items: center;
-    gap: 14px;
-    border-left: 5px solid var(--maroon);
-    animation: slideIn .35s ease-out forwards;
-    transition: opacity .45s, transform .45s;
-    pointer-events: auto;
+    justify-content: center;
+    animation: notifFadeIn 0.25s ease;
 }
+.notif-overlay.notif-fade-out { animation: notifFadeOut 0.3s ease forwards; }
+@keyframes notifFadeIn  { from { opacity:0; } to { opacity:1; } }
+@keyframes notifFadeOut { from { opacity:1; } to { opacity:0; } }
 
-.flash-toast.error   { border-left-color: var(--danger); }
-.flash-toast.success { border-left-color: var(--success); }
-.flash-toast.warning { border-left-color: var(--warning); }
-.flash-toast.info    { border-left-color: var(--info); }
-
-@keyframes slideIn {
-    from { transform: translateX(110%); opacity: 0; }
-    to   { transform: translateX(0);   opacity: 1; }
+.notif-popup {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    padding: 28px 32px 24px;
+    max-width: 480px;
+    width: 90%;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    position: relative;
+    animation: notifSlideUp 0.25s ease;
 }
+@keyframes notifSlideUp { from { transform: translateY(24px); opacity:0; } to { transform: translateY(0); opacity:1; } }
 
-.toast-icon { font-size: 1.35rem; flex-shrink: 0; }
-.flash-toast.error   .toast-icon { color: var(--danger); }
-.flash-toast.success .toast-icon { color: var(--success); }
-.flash-toast.warning .toast-icon { color: var(--warning); }
-.flash-toast.info    .toast-icon { color: var(--info); }
+.notif-icon { font-size: 2.2rem; line-height: 1; flex-shrink: 0; margin-top: 2px; }
+.notif-icon.notif-success { color: #27ae60; }
+.notif-icon.notif-error   { color: #e74c3c; }
+.notif-icon.notif-warning { color: #e67e22; }
+.notif-icon.notif-info    { color: #2980b9; }
 
-.toast-content p {
-    margin: 0;
-    font-size: .88rem;
-    font-weight: 600;
-    color: var(--text);
-}
-
-.toast-close {
-    margin-left: auto;
-    cursor: pointer;
+.notif-body { flex: 1; }
+.notif-title {
     font-size: 1.1rem;
-    color: var(--text-muted);
-    flex-shrink: 0;
+    font-weight: 900;
+    color: #2c3e50;
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
 }
-
-.toast-close:hover { color: var(--text-secondary); }
+.notif-message {
+    font-size: 0.87rem;
+    color: #555;
+    line-height: 1.5;
+    white-space: pre-line;
+}
+.notif-close-btn {
+    position: absolute;
+    top: 12px; right: 14px;
+    background: none;
+    border: none;
+    font-size: 1rem;
+    color: #aaa;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.notif-close-btn:hover { color: var(--maroon); background: rgba(99,1,0,0.08); }

@@ -67,7 +67,7 @@
                 <button class="btn-building"
                     data-bldg-id="{{ bldg.buildingid }}"
                     data-bldg-name="{{ bldg.buildingname }}"
-                    onclick="filterBySidebar('{{ bldg.buildingname }}')"
+                    onclick="filterBySidebar({{ bldg.buildingid }})"
                     oncontextmenu="showBuildingMenu(event, {{ bldg.buildingid }}, '{{ bldg.buildingname }}')">
                     {{ bldg.buildingname }}
                 </button>
@@ -93,7 +93,7 @@
                             <select id="filterBuilding" onchange="filterRoomTable()">
                                 <option value="">All Buildings</option>
                                 {% for bldg in buildings %}
-                                <option value="{{ bldg.buildingname }}">{{ bldg.buildingname }}</option>
+                                <option value="{{ bldg.buildingid }}">{{ bldg.buildingname }}</option>
                                 {% endfor %}
                             </select>
                         </div>

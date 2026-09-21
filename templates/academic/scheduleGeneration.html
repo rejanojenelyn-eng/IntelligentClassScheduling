@@ -132,12 +132,16 @@
 
                 <!-- Criteria header / table title -->
                 <div class="criteria-header" id="tableTitle">WAITING FOR SELECTION...</div>
+                <div class="preserve-caption hidden" id="preserveCaption">
+                    <i class="fas fa-info-circle"></i> Only checked rows will be regenerated — check Instructor, Time/Days, or Room within a row to preserve that value instead.
+                </div>
 
                 <!-- Table View -->
                 <div id="tableViewContainer">
                     <table class="offerings-list-table">
                         <thead>
                             <tr>
+                                <th class="col-check"><input type="checkbox" id="chkSelectAllRows" title="Select all rows to regenerate"></th>
                                 <th class="col-instructor">INSTRUCTOR</th>
                                 <th class="col-code">SUBJECT<br>CODE</th>
                                 <th class="col-desc">SUBJECT DESCRIPTION</th>
@@ -153,7 +157,7 @@
                         </thead>
                         <tbody id="scheduleTableBody">
                             <tr class="table-empty-row">
-                                <td colspan="11">
+                                <td colspan="12">
                                     <i class="fas fa-calendar-plus"></i>
                                     Select filters above and click Generate Schedule to begin
                                 </td>
@@ -206,6 +210,22 @@
                     </div>
                 </div>
 
+                <!-- Incomplete Components Banner (partial-generation results) -->
+                <div id="incompleteBanner" class="conflict-banner hidden" style="background:#fff6e0;border-color:#b8860b;color:#7a5c00;">
+                    <div style="display:flex;align-items:flex-start;gap:8px;width:100%;">
+                        <i class="fas fa-circle-question" style="margin-top:3px;flex-shrink:0;"></i>
+                        <div style="flex:1;">
+                            <span id="incompleteText">Some components could not be resolved.</span>
+                        </div>
+                        <button id="btnSelectIncomplete" type="button" class="outline-btn" style="flex-shrink:0;">
+                            Select All Incomplete
+                        </button>
+                        <button onclick="document.getElementById('incompleteBanner').classList.add('hidden')" style="flex-shrink:0;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Action Buttons -->
                 <div id="actionButtons">
                     <div class="left-actions">
@@ -236,21 +256,29 @@
             </button>
             <div class="checkbox-wrapper">
                 <input type="checkbox" id="useHistorical" name="useHistorical">
-                <label for="useHistorical">Retrieve previous schedule</label>
+                <label for="useHistorical">Load exact previous published schedule</label>
             </div>
 
-            <!-- Accuracy Widget -->
-            <div class="accuracy-widget">
-                <div class="accuracy-row" id="accuracyRow">
-                    <div class="accuracy-icon" id="accuracyCircle">
-                        <i class="fas fa-chart-bar" id="accuracyIcon"></i>
-                    </div>
-                    <div class="accuracy-pct" id="accuracyPct">—</div>
+            <!-- Schedule Evaluation Panel -->
+            <div class="eval-widget" id="evalWidget">
+                <div class="eval-title"><i class="fas fa-clipboard-check"></i> SCHEDULE EVALUATION</div>
+
+                <div class="eval-score-pct" id="evalScorePct">—</div>
+                <div class="eval-score-label" id="evalScoreLabel">OVERALL EVALUATION SCORE</div>
+
+                <div class="eval-csp-badge status-pending" id="evalCspBadge">
+                    <i class="fas fa-circle-notch" id="evalCspIcon"></i>
+                    <span id="evalCspText">Generate a schedule to evaluate it</span>
                 </div>
-                <div class="accuracy-label" id="accuracyLabelEl">ACCURACY RATE</div>
-                <p class="accuracy-desc" id="accuracyDesc">Generate a schedule to see how well it satisfies all scheduling rules and constraints.</p>
-                <!-- Breakdown panel — populated by JS after generation -->
-                <div class="accuracy-breakdown" id="accuracyBreakdown"></div>
+                <div class="eval-approval-badge hidden" id="evalApprovalBadge" role="status">
+                    <i class="fas fa-check-circle"></i>
+                    <span id="evalApprovalText">ELIGIBLE FOR APPROVAL</span>
+                </div>
+                <!-- Partial-generation support (architecture spec section 12) -->
+                <div class="eval-completion-text" id="evalCompletionText"></div>
+
+                <!-- Breakdown — populated by JS after generation -->
+                <div class="eval-breakdown" id="evalBreakdown"></div>
             </div>
         </div><!-- /.gen-sidebar -->
 

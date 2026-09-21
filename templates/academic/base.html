@@ -163,17 +163,18 @@
                     </li>
 
                     <!-- Schedule Dropdown -->
-                    <li class="nav-item-dropdown {{ 'open' if 'schedule' in request.path }}">
-                        <div class="nav-link-wrapper {{ 'active' if 'schedule' in request.path }}"
+                    {% set schedule_active = request.path.startswith('/schedule') or request.path == url_for('schedule_generation_view') %}
+                    <li class="nav-item-dropdown {{ 'open' if schedule_active }}">
+                        <div class="nav-link-wrapper {{ 'active' if schedule_active }}"
                             onclick="toggleDropdown(event, 'scheduleSubMenu', 'scheduleArrow')">
                             <span class="nav-link-main">
                                 <i class="fas fa-calendar-alt"></i>
                                 <span class="nav-label">Schedule</span>
                             </span>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if 'schedule' in request.path }}"
+                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if schedule_active }}"
                                 id="scheduleArrow"></i>
                         </div>
-                        <ul class="sub-menu {{ 'show-submenu' if 'schedule' in request.path }}" id="scheduleSubMenu">
+                        <ul class="sub-menu {{ 'show-submenu' if schedule_active }}" id="scheduleSubMenu">
                             <li>
                                 <a href="{{ url_for('schedule_generation_view') }}"
                                     class="sub-menu-link {{ 'active' if request.path == url_for('schedule_generation_view') }}">
@@ -216,7 +217,7 @@
                     </li>
 
                     <!-- Reports -->
-                    <li class="nav-item {{ 'active' if request.path == '/reports' }}">
+                    <li class="nav-item {{ 'active' if request.path == '/reports' or request.path.startswith('/reports/') }}">
                         <a href="/reports" class="nav-link">
                             <i class="fas fa-file-alt"></i>
                             <span class="nav-label">Reports</span>
@@ -260,6 +261,33 @@
     </div>
 
     <!-- ══════════════════════════════════════════
+         FLASHED MESSAGE POPUP (server-rendered flash() → redirect flows,
+         e.g. single-employee archive). Same .notif-overlay component that
+         showAlertPopup() uses for AJAX-driven notices, so both look the same.
+    ══════════════════════════════════════════ -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div id="flashNotifOverlay" class="notif-overlay" onclick="this.remove()">
+        {% for category, message in messages %}
+        <div class="notif-popup" onclick="event.stopPropagation()">
+            <div class="notif-icon notif-{% if category in ['success','warning','info'] %}{{ category }}{% else %}error{% endif %}">
+                <i class="fas {% if category == 'error' %}fa-exclamation-circle{% elif category == 'warning' %}fa-exclamation-triangle{% elif category == 'info' %}fa-info-circle{% else %}fa-check-circle{% endif %}"></i>
+            </div>
+            <div class="notif-body">
+                <div class="notif-title">{% if category == 'success' %}Success{% elif category == 'warning' %}Warning{% elif category == 'info' %}Notice{% else %}Error{% endif %}</div>
+                <div class="notif-message">{{ message }}</div>
+            </div>
+            <button class="notif-close-btn" type="button" onclick="document.getElementById('flashNotifOverlay').remove()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+    <script>setTimeout(() => document.getElementById('flashNotifOverlay')?.remove(), 6000);</script>
+    {% endif %}
+    {% endwith %}
+
+    <!-- ══════════════════════════════════════════
          PROFILE SETTINGS PANEL
     ══════════════════════════════════════════ -->
     <div id="profilePanel" class="up-panel" style="display:none;">
@@ -276,7 +304,7 @@
                     <i class="fas fa-user" id="profilePhotoIcon"></i>
                     <img id="profilePhotoImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
                 </div>
-                <label class="up-change-photo-btn" for="profilePhotoInput">
+                <label class="up-change-photo-btn" id="pfChangePhotoBtn" for="profilePhotoInput">
                     <i class="fas fa-upload"></i> Change Photo
                 </label>
                 <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
@@ -289,8 +317,16 @@
                     <input type="text" id="pfEmpId" class="up-input" readonly>
                 </div>
                 <div class="up-field">
-                    <label>Full Name</label>
-                    <input type="text" id="pfFullName" class="up-input" readonly>
+                    <label>First Name</label>
+                    <input type="text" id="pfFirstName" class="up-input" readonly>
+                </div>
+                <div class="up-field">
+                    <label>Middle Name</label>
+                    <input type="text" id="pfMiddleName" class="up-input" readonly>
+                </div>
+                <div class="up-field">
+                    <label>Surname</label>
+                    <input type="text" id="pfSurname" class="up-input" readonly>
                 </div>
                 <div class="up-field" id="pfDesignationSection">
                     <label>Designation</label>
@@ -312,12 +348,12 @@
 
             <div class="up-panel-ft">
                 <button class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
-                <button class="up-btn-save" onclick="saveProfile()">Save Changes</button>
+                <button class="up-btn-save" id="pfSaveBtn" onclick="saveProfile()">Save Changes</button>
             </div>
 
             <div class="up-panel-notice">
                 <i class="fas fa-info-circle"></i>
-                <span>Changes to your profile information will be reflected across the system.</span>
+                <span id="pfNotice">Changes to your profile information will be reflected across the system.</span>
             </div>
         </div>
     </div>

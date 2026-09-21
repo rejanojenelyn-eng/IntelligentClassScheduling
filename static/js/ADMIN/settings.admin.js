@@ -45,6 +45,26 @@ function closeSModal(id) {
 function openModal(id)  { openSModal(id); }
 function closeModal(id) { closeSModal(id); }
 
+/* ── Generic delete/remove confirmation ────────────────────
+   Replaces the browser's native confirm() popup for every small inline
+   delete on this page with the app's own styled modal. Pass what to show
+   and a callback to run only if the admin actually confirms. */
+let _gcPendingCallback = null;
+function _confirmAction({ title = 'REMOVE ITEM', sub = '', body = '', confirmLabel = 'Remove' } = {}, onConfirm) {
+  document.getElementById('gcTitle').textContent          = title;
+  document.getElementById('gcSub').textContent             = sub;
+  document.getElementById('gcBody').textContent             = body;
+  document.getElementById('gcConfirmLabel').textContent    = confirmLabel;
+  _gcPendingCallback = onConfirm;
+  openSModal('modalGenericConfirm');
+}
+function _doGenericConfirm() {
+  const cb = _gcPendingCallback;
+  _gcPendingCallback = null;
+  closeSModal('modalGenericConfirm');
+  if (cb) cb();
+}
+
 /* Close on overlay click */
 document.querySelectorAll('.s-modal').forEach(m => {
   m.addEventListener('click', e => { if (e.target === m) closeSModal(m.id); });
@@ -301,7 +321,12 @@ document.getElementById('ay_tag_display')?.addEventListener('change', function()
   document.getElementById('ay_year_end').value   = y2;
 });
 
-/* Returns an error string if the semester duration is less than 15 weeks, else null. */
+/* Returns an error string if the semester duration falls outside the configured
+   min/max span (Settings → Hard Constraints → Semester Span Limits), else null.
+   Summer is a short term by design and has its own, separately-configured bounds
+   (default ~1 month) rather than the two regular semesters' (default 15 weeks).
+   Reads live from _hcState — same page, populated by initHCToggles() before this
+   modal can be opened — so the modal always reflects whatever's currently saved. */
 function _checkSemDuration(startId, endId, label) {
   const s = document.getElementById(startId)?.value;
   const e = document.getElementById(endId)?.value;
@@ -309,9 +334,19 @@ function _checkSemDuration(startId, endId, label) {
   const start = new Date(s), end = new Date(e);
   if (isNaN(start) || isNaN(end)) return null;
   if (end <= start) return `${label}: end date must be after start date.`;
-  // Difference in whole weeks
-  const weeks = Math.floor((end - start) / (7 * 24 * 60 * 60 * 1000));
-  if (weeks < 15) return `${label}: must span at least 15 weeks.`;
+
+  const spanEnabled = ('hc_sem_span_enabled' in _hcState) ? (Number(_hcState.hc_sem_span_enabled) !== 0) : true;
+  if (!spanEnabled) return null;
+
+  const isSummer = label === 'Summer';
+  const minWeeks = Number(isSummer ? (_hcState.hc_sem_summer_min_weeks ?? 4)  : (_hcState.hc_sem_reg_min_weeks ?? 15));
+  const maxRaw   = isSummer ? _hcState.hc_sem_summer_max_weeks : _hcState.hc_sem_reg_max_weeks;
+  const maxWeeks = (maxRaw !== undefined && maxRaw !== null && maxRaw !== '') ? Number(maxRaw) : null;
+
+  const days  = Math.floor((end - start) / (24 * 60 * 60 * 1000));
+  const weeks = days / 7;
+  if (minWeeks > 0 && weeks < minWeeks) return `${label}: must span at least ${minWeeks} week${minWeeks === 1 ? '' : 's'}.`;
+  if (maxWeeks && weeks > maxWeeks)     return `${label}: must not span more than ${maxWeeks} week${maxWeeks === 1 ? '' : 's'}.`;
   return null;
 }
 
@@ -588,6 +623,7 @@ const TOGGLE_MAP = [
   { id:'tog-lab',         key:'hc_lab_session_enabled'   },
   { id:'tog-faculty-spec',key:'hc_faculty_spec_enabled'  },
   { id:'tog-merge',       key:'hc_merge_enabled'         },
+  { id:'tog-sem-span',    key:'hc_sem_span_enabled'      },
 ];
 
 /* In-memory cache so saves batch nicely */
@@ -666,8 +702,56 @@ function _applyMergeBodyState(enabled) {
   if (!body) return;
   body.style.opacity      = enabled ? '1'        : '0.4';
   body.style.pointerEvents = enabled ? 'auto'    : 'none';
-  const scopeSel = document.getElementById('param-merge-scope');
-  if (scopeSel) scopeSel.disabled = !enabled;
+}
+
+/* ── Restricted-Day picker — was a fixed "Sunday Only" / "All Weekends" select;
+   now any combination of day(s) can be reserved for the subject restriction above.
+   Stored as a JSON array of day names under hc_weekend_day (same pattern as
+   hc_merge_scope_subjects / hc_merge_section_pairs). Old installs may still have
+   the legacy 'sunday_only' / 'all_weekends' string — interpreted the same way
+   they always behaved so existing configs keep working unchanged. ── */
+function _parseWeekendDays(raw) {
+  if (!raw) return ['Sunday'];               // legacy default
+  if (raw === 'sunday_only')  return ['Sunday'];
+  if (raw === 'all_weekends') return ['Saturday', 'Sunday'];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr : ['Sunday'];
+  } catch { return ['Sunday']; }
+}
+
+function _renderWeekendDayChips(activeDays) {
+  const picker = document.getElementById('paramWeekendDayPicker');
+  if (!picker) return;
+  picker.querySelectorAll('.day-chip').forEach(chip =>
+    chip.classList.toggle('active', activeDays.includes(chip.dataset.day)));
+}
+
+function _toggleWeekendDayChip(chip) {
+  chip.classList.toggle('active');
+  const picker = chip.closest('.day-chip-picker');
+  let days = Array.from(picker.querySelectorAll('.day-chip.active')).map(c => c.dataset.day);
+  if (!days.length) {
+    // At least one day must stay selected — the constraint is meaningless with none.
+    chip.classList.add('active');
+    days = [chip.dataset.day];
+  }
+  saveConstraintParam('weekend_day', JSON.stringify(days));
+}
+
+/* Semester Span toggle — also shows/dims its min/max week fields.
+   When off, the Add/Edit Academic Year modal skips span validation entirely
+   (see _checkSemDuration), same as any other disabled hard constraint. */
+function saveSemSpanConstraint(checked) {
+  _hcState['hc_sem_span_enabled'] = checked ? 1 : 0;
+  _scheduleHCSave();
+  _applySemSpanBodyState(checked);
+}
+function _applySemSpanBodyState(enabled) {
+  const body = document.getElementById('sem-span-body');
+  if (!body) return;
+  body.style.opacity       = enabled ? '1'    : '0.4';
+  body.style.pointerEvents = enabled ? 'auto' : 'none';
 }
 
 async function initHCToggles() {
@@ -680,18 +764,125 @@ async function initHCToggles() {
     el.checked = (key in data) ? (Number(data[key]) !== 0) : true;
   });
 
-  /* Weekend params */
+  /* Weekend/day-restriction params */
   const ws = document.getElementById('param-weekend-subj');
-  const wd = document.getElementById('param-weekend-day');
   if (ws && data.hc_weekend_subject) ws.value = data.hc_weekend_subject;
-  if (wd && data.hc_weekend_day)     wd.value = data.hc_weekend_day;
+  _renderWeekendDayChips(_parseWeekendDays(data.hc_weekend_day));
 
   /* Merge params */
   const mergeEnabled = ('hc_merge_enabled' in data) ? (Number(data.hc_merge_enabled) !== 0) : true;
-  const ms = document.getElementById('param-merge-scope');
-  if (ms && data.hc_merge_scope) ms.value = data.hc_merge_scope;
   _applyMergeBodyState(mergeEnabled);
+
+  /* Semester Span params — defaults match the built-in fallback the Academic Year
+     modal already enforces (15wk regular / 4wk~1mo summer) so this card just shows
+     what's already in effect; max fields default to blank (no upper limit) since
+     that check didn't exist before this card was added. */
+  const semSpanEnabled = ('hc_sem_span_enabled' in data) ? (Number(data.hc_sem_span_enabled) !== 0) : true;
+  _applySemSpanBodyState(semSpanEnabled);
+  const srMin = document.getElementById('param-sem-reg-min');
+  const srMax = document.getElementById('param-sem-reg-max');
+  const ssMin = document.getElementById('param-sem-summer-min');
+  const ssMax = document.getElementById('param-sem-summer-max');
+  if (srMin) srMin.value = data.hc_sem_reg_min_weeks    ?? 15;
+  if (srMax) srMax.value = data.hc_sem_reg_max_weeks    ?? '';
+  if (ssMin) ssMin.value = data.hc_sem_summer_min_weeks ?? 4;
+  if (ssMax) ssMax.value = data.hc_sem_summer_max_weeks ?? '';
 }
+
+/* ── Merge Scope — searchable subject multi-select ───────────────────
+   Replaces the old fixed nstp_only/non_nstp/all_subjects dropdown: the admin
+   can now search and add ANY subject as eligible for class merging. Stored as
+   a JSON array of subject codes under hc_merge_scope_subjects (same pattern
+   as hc_day_pairs / hc_merge_section_pairs). Leaving it empty preserves the
+   legacy "NSTP subjects only" default — see app.py/scheduler.py _merge_in_scope. */
+let _msScopeCodes = [];
+
+function _msLoadScopeFromState() {
+  try {
+    const raw = _hcState.hc_merge_scope_subjects;
+    const arr = raw ? JSON.parse(raw) : [];
+    _msScopeCodes = Array.isArray(arr) ? arr.map(c => String(c).toUpperCase()) : [];
+  } catch { _msScopeCodes = []; }
+}
+
+function _msSaveScope() {
+  _hcState.hc_merge_scope_subjects = JSON.stringify(_msScopeCodes);
+  _scheduleHCSave();
+}
+
+async function initMergeScopePicker() {
+  if (!document.getElementById('msScopePicker')) return;
+  await _getMlpSubjects();
+  _msLoadScopeFromState();
+  _msRenderScopeChips();
+}
+
+function _msSubjectLabel(code) {
+  const s = (_MLP_SUBJECTS || []).find(x => x.subjectcode === code);
+  return s ? `${s.subjectcode} — ${s.subjectname}` : code;
+}
+
+function _msRenderScopeChips() {
+  const wrap = document.getElementById('msScopeChips');
+  if (!wrap) return;
+  if (!_msScopeCodes.length) {
+    wrap.innerHTML = '<span class="ms-scope-chips-empty">No subjects added yet — falls back to NSTP subjects only.</span>';
+    return;
+  }
+  wrap.innerHTML = _msScopeCodes.map(code => `
+    <span class="ms-scope-chip" data-code="${escHtml(code)}">
+      ${escHtml(_msSubjectLabel(code))}
+      <button type="button" class="ms-chip-del" title="Remove" onclick="_msRemoveScopeSubject('${escHtml(code)}')"><i class="fas fa-times"></i></button>
+    </span>`).join('');
+}
+
+function _msRenderSuggestions(query) {
+  const box = document.getElementById('msScopeSuggest');
+  if (!box) return;
+  const q    = (query || '').trim().toLowerCase();
+  const pool = (_MLP_SUBJECTS || []).filter(s => !_msScopeCodes.includes(s.subjectcode));
+  const filtered = !q ? pool
+    : pool.filter(s => s.subjectcode.toLowerCase().includes(q) || (s.subjectname || '').toLowerCase().includes(q));
+  const top = filtered.slice(0, 30);
+  box.innerHTML = top.length
+    ? top.map(s => `<div class="pair-sec-option" data-code="${escHtml(s.subjectcode)}">${escHtml(s.subjectcode)} — ${escHtml(s.subjectname)}</div>`).join('')
+    : '<div class="pair-sec-empty">No matching subjects.</div>';
+  box.classList.add('open');
+}
+
+function _msAddScopeSubject(code) {
+  if (!code || _msScopeCodes.includes(code)) return;
+  _msScopeCodes.push(code);
+  _msSaveScope();
+  _msRenderScopeChips();
+  const input = document.getElementById('msScopeSearchInput');
+  if (input) { input.value = ''; input.focus(); }
+  document.getElementById('msScopeSuggest')?.classList.remove('open');
+}
+
+function _msRemoveScopeSubject(code) {
+  const label = _msSubjectLabel(code);
+  _confirmAction({
+    title: 'REMOVE FROM MERGE SCOPE',
+    sub: label,
+    body: `Remove "${label}" from the merge scope? It will no longer be eligible for class merging until re-added.`,
+    confirmLabel: 'Remove',
+  }, () => {
+    _msScopeCodes = _msScopeCodes.filter(c => c !== code);
+    _msSaveScope();
+    _msRenderScopeChips();
+  });
+}
+
+document.addEventListener('click', e => {
+  if (e.target.closest('#msScopeSuggest .pair-sec-option')) {
+    _msAddScopeSubject(e.target.closest('.pair-sec-option').dataset.code);
+    return;
+  }
+  if (!e.target.closest('.ms-scope-search-wrap')) {
+    document.getElementById('msScopeSuggest')?.classList.remove('open');
+  }
+});
 
 /* ── Day Pairs ──────────────────────────────────────────── */
 function loadPairsFromState() {
@@ -723,10 +914,22 @@ function renderPair(pair, container) {
     <select class="pair-day-sel" onchange="savePairs()">
       ${DAYS.map(d => `<option${d===pair.to?' selected':''}>${d}</option>`).join('')}
     </select>
-    <button type="button" class="btn-del" onclick="this.closest('.pair-row').remove(); savePairs();">
+    <button type="button" class="btn-del" onclick="_deleteDayPairRow(this)">
       <i class="fas fa-trash-alt"></i>
     </button>`;
   container.appendChild(row);
+}
+
+function _deleteDayPairRow(btn) {
+  const row  = btn.closest('.pair-row');
+  const sels = row.querySelectorAll('.pair-day-sel');
+  const label = sels.length === 2 ? `${sels[0].value} ↔ ${sels[1].value}` : '';
+  _confirmAction({
+    title: 'REMOVE DAY PAIRING',
+    sub: label,
+    body: 'This takes effect immediately — classes will no longer align across these two days.',
+    confirmLabel: 'Remove',
+  }, () => { row.remove(); savePairs(); });
 }
 
 function initDayPairs() {
@@ -740,6 +943,387 @@ function addDayPair() {
   const c = document.getElementById('day-pairs-container');
   renderPair({ from:'Monday', to:'Thursday' }, c);
   savePairs();
+}
+
+/* ── Merge Class — Allowed Section Pairings ──────────────── */
+/* Section "value" is a stable "PROGRAMCODE-SECTIONNAME" label — matched against
+   schedule rows at merge-validation time, independent of any one academic year's
+   sectionid so a configured pairing keeps working after sections are recreated
+   for a new AY. */
+function _getMergeSectionOptions() {
+  const raw = document.getElementById('merge-sections-data');
+  if (!raw) return [];
+  let sections;
+  try { sections = JSON.parse(raw.textContent); } catch { return []; }
+  if (!Array.isArray(sections)) return [];
+  const seen = new Map();
+  sections.forEach(s => {
+    const prog = (s.programcode || '').toUpperCase();
+    const name = s.sectionname || '';
+    if (!prog || !name) return;
+    const value = `${prog}-${name}`;
+    if (seen.has(value)) return;
+    seen.set(value, { value, label: `${value}${s.yearlevel ? ' (Year ' + s.yearlevel + ')' : ''}` });
+  });
+  return Array.from(seen.values()).sort((a, b) => a.value.localeCompare(b.value));
+}
+
+function loadSectionPairsFromState() {
+  try {
+    const raw = _hcState.hc_merge_section_pairs;
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return arr.map(p => ({ from: p[0], to: p[1] }));
+  } catch { return null; }
+}
+
+function saveSectionPairs() {
+  const data = [];
+  document.querySelectorAll('#merge-section-pairs-container .pair-row').forEach(row => {
+    const wrappers = row.querySelectorAll('.pair-sec-wrapper');
+    if (wrappers.length !== 2) return;
+    const a = wrappers[0].dataset.value, b = wrappers[1].dataset.value;
+    if (a && b && a !== b) data.push([a, b]);
+  });
+  _hcState.hc_merge_section_pairs = JSON.stringify(data);
+  _scheduleHCSave();
+}
+
+/* Searchable section picker — type-to-filter instead of scrolling a huge
+   native <select>. Each instance tracks its own value on wrapperEl.dataset.value
+   and fires 'pairsecchange' (bubbling) so the owning row can re-validate. */
+function _buildPairSecPicker(selectedValue, options) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pair-sec-wrapper';
+  wrap.dataset.value = selectedValue || '';
+  const selOpt = options.find(o => o.value === selectedValue);
+  // A saved pair can reference a section that no longer exists among the current AY's
+  // options (renamed, moved to a different AY, etc.) — flag that clearly instead of
+  // silently echoing the raw stored value, which looked identical to a real section name
+  // and made it seem like nothing could be picked (the dropdown itself still lists every
+  // real current option; only the initial label/highlight was misleading).
+  const isStale = !!selectedValue && !selOpt;
+  if (isStale) wrap.classList.add('stale');
+  const initialLabel = selOpt ? selOpt.label
+    : (selectedValue ? `⚠ Not in current list — click to reselect (was: ${selectedValue})` : 'Select section');
+  wrap.innerHTML = `
+    <div class="pair-sec-trigger" ${isStale ? 'title="This section is no longer in the current list — pick a valid one."' : ''}>
+      <span class="pair-sec-trigger-text">${escHtml(initialLabel)}</span>
+      <i class="fas fa-chevron-down"></i>
+    </div>
+    <div class="pair-sec-menu">
+      <div class="pair-sec-search-box">
+        <input type="text" class="pair-sec-search-input" placeholder="Search section…" autocomplete="off">
+      </div>
+      <div class="pair-sec-list"></div>
+    </div>`;
+
+  const list   = wrap.querySelector('.pair-sec-list');
+  const search = wrap.querySelector('.pair-sec-search-input');
+
+  function renderList(q) {
+    const query = (q || '').trim().toLowerCase();
+    const filtered = !query ? options
+      : options.filter(o => o.label.toLowerCase().includes(query) || o.value.toLowerCase().includes(query));
+    list.innerHTML = filtered.length
+      ? filtered.map(o => `<div class="pair-sec-option${o.value===wrap.dataset.value?' active':''}" data-value="${escHtml(o.value)}">${escHtml(o.label)}</div>`).join('')
+      : '<div class="pair-sec-empty">No sections found.</div>';
+  }
+  renderList('');
+
+  wrap.querySelector('.pair-sec-trigger').addEventListener('click', e => {
+    e.stopPropagation();
+    const isOpen = wrap.classList.contains('open');
+    document.querySelectorAll('.pair-sec-wrapper.open').forEach(w => w.classList.remove('open'));
+    if (!isOpen) { wrap.classList.add('open'); search.value = ''; renderList(''); search.focus(); }
+  });
+  search.addEventListener('click', e => e.stopPropagation());
+  search.addEventListener('input', () => renderList(search.value));
+  list.addEventListener('click', e => {
+    const opt = e.target.closest('.pair-sec-option');
+    if (!opt) return;
+    const val = opt.dataset.value;
+    wrap.dataset.value = val;
+    wrap.querySelector('.pair-sec-trigger-text').textContent =
+      (options.find(o => o.value === val) || {}).label || val;
+    wrap.classList.remove('open', 'stale');   // picking a real option always clears the stale flag
+    wrap.querySelector('.pair-sec-trigger').removeAttribute('title');
+    wrap.dispatchEvent(new CustomEvent('pairsecchange', { bubbles: true }));
+  });
+  return wrap;
+}
+
+/* Close any open section picker when clicking elsewhere on the page. */
+document.addEventListener('click', e => {
+  if (!e.target.closest('.pair-sec-wrapper')) {
+    document.querySelectorAll('.pair-sec-wrapper.open').forEach(w => w.classList.remove('open'));
+  }
+});
+
+function _onPairSecChange(fromPicker, toPicker) {
+  const a = fromPicker.dataset.value, b = toPicker.dataset.value;
+  const same = a && b && a === b;
+  fromPicker.classList.toggle('invalid', !!same);
+  toPicker.classList.toggle('invalid', !!same);
+  if (same) {
+    _showToast('error', "A section can't be paired with itself — pick two different sections.");
+    return;
+  }
+  saveSectionPairs();
+}
+
+function renderSectionPair(pair, container, options) {
+  const opts = options || _getMergeSectionOptions();
+  const row = document.createElement('div');
+  row.className = 'pair-row';
+
+  const fromPicker = _buildPairSecPicker(pair.from, opts);
+  const toPicker    = _buildPairSecPicker(pair.to, opts);
+
+  const badge = document.createElement('span');
+  badge.className = 'pair-badge';
+  badge.textContent = 'paired to';
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'btn-del';
+  delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
+  delBtn.onclick = () => _confirmDeleteSectionPair(row);
+
+  row.appendChild(fromPicker);
+  row.appendChild(badge);
+  row.appendChild(toPicker);
+  row.appendChild(delBtn);
+  container.appendChild(row);
+
+  if (pair.from && pair.to && pair.from === pair.to) {
+    fromPicker.classList.add('invalid');
+    toPicker.classList.add('invalid');
+  }
+
+  row.addEventListener('pairsecchange', () => _onPairSecChange(fromPicker, toPicker));
+}
+
+/* Deleting a configured pairing can silently turn an existing merged class
+   into a "room conflict" the next time the schedule is validated, so this
+   always confirms first rather than removing on a single click. */
+let _pendingPairRow = null;
+function _confirmDeleteSectionPair(row) {
+  _pendingPairRow = row;
+  const wrappers = row.querySelectorAll('.pair-sec-wrapper');
+  const aLabel = wrappers[0]?.querySelector('.pair-sec-trigger-text')?.textContent || '—';
+  const bLabel = wrappers[1]?.querySelector('.pair-sec-trigger-text')?.textContent || '—';
+  const lbl = document.getElementById('delPairLabel');
+  if (lbl) lbl.textContent = `${aLabel} ↔ ${bLabel}`;
+  openSModal('modalDeleteSectionPair');
+}
+function _doDeleteSectionPair() {
+  if (_pendingPairRow) { _pendingPairRow.remove(); saveSectionPairs(); }
+  _pendingPairRow = null;
+  closeSModal('modalDeleteSectionPair');
+}
+
+function initSectionPairs() {
+  const container = document.getElementById('merge-section-pairs-container');
+  if (!container) return;
+  const options = _getMergeSectionOptions();
+  const pairs = loadSectionPairsFromState() || [];
+  pairs.forEach(p => renderSectionPair(p, container, options));
+}
+
+function addSectionPair() {
+  const c = document.getElementById('merge-section-pairs-container');
+  const options = _getMergeSectionOptions();
+  if (!options.length) { _showToast('error', 'No sections available to pair. Add sections under Program Management first.'); return; }
+  const second = options.find(o => o.value !== options[0].value) || options[0];
+  renderSectionPair({ from: options[0].value, to: second.value }, c, options);
+  saveSectionPairs();
+}
+
+/* ── Merged Class Faculty Load Policy ────────────────────── */
+let _MLP_SUBJECTS = null;   // [{subjectcode, subjectname}] — fetched once, cached
+let _MLP_POLICIES = [];     // current rule list from the server
+
+async function _getMlpSubjects() {
+  if (_MLP_SUBJECTS) return _MLP_SUBJECTS;
+  try {
+    const res  = await fetch('/api/subjects/all');
+    const data = await res.json();
+    _MLP_SUBJECTS = Array.isArray(data.subjects) ? data.subjects : [];
+  } catch { _MLP_SUBJECTS = []; }
+  return _MLP_SUBJECTS;
+}
+
+async function loadMergeLoadPolicies() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  try {
+    const res  = await fetch('/admin/settings/merge_load_policies');
+    const data = await res.json();
+    _MLP_POLICIES = data.success ? (data.policies || []) : [];
+  } catch { _MLP_POLICIES = []; }
+  await _getMlpSubjects();
+  _renderMergeLoadPolicyTable();
+}
+
+function _renderMergeLoadPolicyTable() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  if (!_MLP_POLICIES.length) {
+    body.innerHTML = '<tr><td colspan="5" class="mlp-empty">No rules configured — merged classes use the subject\'s real units/duration by default.</td></tr>';
+    return;
+  }
+  body.innerHTML = _MLP_POLICIES.map(p => _mlpReadRowHtml(p)).join('');
+}
+
+function _mlpReadRowHtml(p) {
+  return `
+    <tr data-policyid="${p.policyid}">
+        <td>${escHtml(p.subjectcode)}${p.subjectname ? `<span class="mlp-sub-name">${escHtml(p.subjectname)}</span>` : ''}</td>
+        <td>${p.min_sections}–${p.max_sections} sections</td>
+        <td>${p.creditunits ?? '—'}</td>
+        <td>${p.tuitionhours ?? '—'}</td>
+        <td class="mlp-actions">
+            <button class="mlp-edit" title="Edit" onclick="editMergeLoadPolicyRow(${p.policyid})"><i class="fas fa-pen"></i></button>
+            <button class="mlp-del" title="Delete" onclick="deleteMergeLoadPolicyRow(${p.policyid})"><i class="fas fa-trash-alt"></i></button>
+        </td>
+    </tr>`;
+}
+
+function _mlpSubjectOptionsHtml(selected) {
+  const subs = _MLP_SUBJECTS || [];
+  if (!subs.length) return `<option value="${selected||''}">${selected||'—'}</option>`;
+  let html = subs.map(s =>
+    `<option value="${s.subjectcode}"${s.subjectcode===selected?' selected':''}>${escHtml(s.subjectcode)}${s.subjectname ? ' — ' + escHtml(s.subjectname) : ''}</option>`
+  ).join('');
+  // A saved rule's subject can drop out of the current list (removed from curriculum, or
+  // folded into the NSTP "all variants" grouping) — without this, the <select> would just
+  // silently land on whatever's alphabetically first instead of the rule's real subject,
+  // with no indication anything changed. Surface it as its own selected option instead.
+  if (selected && !subs.some(s => s.subjectcode === selected)) {
+    html = `<option value="${escHtml(selected)}" selected>⚠ ${escHtml(selected)} (not in current list — reselect)</option>` + html;
+  }
+  return html;
+}
+
+/* Credited units / tuition hours are read-only previews only — always derived
+   server-side from the subject's own record, never editable here. */
+function _mlpEditRowHtml(p) {
+  const id = p.policyid ?? '';
+  return `
+    <tr data-policyid="${id}" data-editing="1">
+        <td><select class="mlp-input mlp-f-subject" onchange="_mlpRefreshPreview(this)">${_mlpSubjectOptionsHtml(p.subjectcode)}</select></td>
+        <td>
+            <div class="mlp-range-inputs">
+                <input type="number" class="mlp-input mlp-f-min" min="2" value="${p.min_sections ?? 2}">
+                <span>–</span>
+                <input type="number" class="mlp-input mlp-f-max" min="2" value="${p.max_sections ?? 2}">
+            </div>
+        </td>
+        <td class="mlp-preview-units">${p.creditunits ?? '…'}</td>
+        <td class="mlp-preview-hours">${p.tuitionhours ?? '…'}</td>
+        <td class="mlp-actions">
+            <button class="mlp-save" title="Save" onclick="saveMergeLoadPolicyRow(${id ? id : 'null'}, this)"><i class="fas fa-check"></i></button>
+            <button class="mlp-cancel" title="Cancel" onclick="cancelMergeLoadPolicyRow(${id ? id : 'null'}, this)"><i class="fas fa-times"></i></button>
+        </td>
+    </tr>`;
+}
+
+/* Live-preview the credited units/tuition hours that will apply once the selected
+   subject in an edit row is changed — purely informational, computed client-side from
+   the same _MLP_SUBJECTS list is not possible (creditunits/hours aren't in that list),
+   so this re-fetches the authoritative value from the server for just that subject. */
+async function _mlpRefreshPreview(selectEl) {
+  const row = selectEl.closest('tr');
+  const unitsCell = row.querySelector('.mlp-preview-units');
+  const hoursCell = row.querySelector('.mlp-preview-hours');
+  unitsCell.textContent = '…'; hoursCell.textContent = '…';
+  try {
+    const res  = await fetch(`/admin/settings/merge_load_policies/subject_preview?subjectcode=${encodeURIComponent(selectEl.value)}`);
+    const data = await res.json();
+    unitsCell.textContent = data.creditunits ?? '—';
+    hoursCell.textContent = data.tuitionhours ?? '—';
+  } catch {
+    unitsCell.textContent = '—'; hoursCell.textContent = '—';
+  }
+}
+
+async function addMergeLoadPolicyRow() {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body) return;
+  await _getMlpSubjects();
+  if (!(_MLP_SUBJECTS && _MLP_SUBJECTS.length)) {
+    _showToast('error', 'No subjects found. Import a curriculum first.');
+    return;
+  }
+  if (body.querySelector('[data-editing="1"]')) return;   // one edit at a time
+  if (body.querySelector('.mlp-empty')) body.innerHTML = '';
+  body.insertAdjacentHTML('afterbegin', _mlpEditRowHtml({
+    subjectcode: _MLP_SUBJECTS[0].subjectcode, min_sections: 2, max_sections: 2,
+  }));
+  const firstRow = body.querySelector('tr[data-editing="1"]');
+  if (firstRow) _mlpRefreshPreview(firstRow.querySelector('.mlp-f-subject'));
+}
+
+function editMergeLoadPolicyRow(policyid) {
+  const body = document.getElementById('mergeLoadPolicyBody');
+  if (!body || body.querySelector('[data-editing="1"]')) return;
+  const p = _MLP_POLICIES.find(x => x.policyid === policyid);
+  if (!p) return;
+  const row = body.querySelector(`tr[data-policyid="${policyid}"]`);
+  if (row) row.outerHTML = _mlpEditRowHtml(p);
+}
+
+function cancelMergeLoadPolicyRow(policyid, btn) {
+  const row = btn.closest('tr');
+  const existing = _MLP_POLICIES.find(x => x.policyid === policyid);
+  if (existing) {
+    row.outerHTML = _mlpReadRowHtml(existing);
+  } else {
+    row.remove();
+    if (!_MLP_POLICIES.length) _renderMergeLoadPolicyTable();
+  }
+}
+
+async function saveMergeLoadPolicyRow(policyid, btn) {
+  const row = btn.closest('tr');
+  const payload = {
+    subjectcode:  row.querySelector('.mlp-f-subject').value,
+    min_sections: row.querySelector('.mlp-f-min').value,
+    max_sections: row.querySelector('.mlp-f-max').value,
+  };
+  const url    = policyid ? `/admin/settings/merge_load_policies/${policyid}` : '/admin/settings/merge_load_policies';
+  const method = policyid ? 'PUT' : 'POST';
+  try {
+    const res  = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) { _showToast('error', data.error || 'Could not save rule.'); return; }
+    _showToast('success', policyid ? 'Rule updated.' : 'Rule added.');
+    await loadMergeLoadPolicies();
+  } catch {
+    _showToast('error', 'Network error — could not save rule.');
+  }
+}
+
+async function deleteMergeLoadPolicyRow(policyid) {
+  const p     = (_MLP_POLICIES || []).find(x => x.policyid === policyid);
+  const label = p ? `${p.subjectcode}${p.subjectname ? ' — ' + p.subjectname : ''}` : '';
+  _confirmAction({
+    title: 'DELETE LOAD POLICY RULE',
+    sub: label,
+    body: 'Merged classes for this subject will fall back to its real credited units and the shared session\'s actual duration once this rule is gone.',
+    confirmLabel: 'Delete',
+  }, async () => {
+    try {
+      const res  = await fetch(`/admin/settings/merge_load_policies/${policyid}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) { _showToast('error', data.error || 'Could not delete rule.'); return; }
+      _showToast('success', 'Rule deleted.');
+      await loadMergeLoadPolicies();
+    } catch {
+      _showToast('error', 'Network error — could not delete rule.');
+    }
+  });
 }
 
 /* ── Time Slots ─────────────────────────────────────────── */
@@ -775,7 +1359,13 @@ function renderSlot(slot, container) {
   const sep    = document.createElement('span');   sep.className  = 'slot-sep'; sep.textContent = 'to';
   const tSel   = document.createElement('select'); tSel.className = 'slot-sel'; tSel.addEventListener('change', saveSlots); buildTimeSelect(tSel, slot.to);
   const del    = document.createElement('button'); del.type = 'button'; del.className = 'btn-del'; del.innerHTML = '<i class="fas fa-times"></i>';
-  del.addEventListener('click', () => { row.remove(); saveSlots(); });
+  del.addEventListener('click', () => {
+    _confirmAction({
+      title: 'REMOVE TIME SLOT',
+      body: 'This takes effect immediately.',
+      confirmLabel: 'Remove',
+    }, () => { row.remove(); saveSlots(); });
+  });
   row.appendChild(fSel); row.appendChild(sep); row.appendChild(tSel); row.appendChild(del);
   container.appendChild(row);
 }
@@ -861,6 +1451,23 @@ function exportLogs() {
 
 let PM_DATA     = { programs: [], sections: [], yearlevels: [] };
 let PM_SELECTED = null;
+
+// Reloads Settings with the Program Management panel scoped to a different AY
+// (Current or Next). Selected tab/program survive via localStorage (see below).
+function _switchMgmtAy(ayId) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('mgmt_ay', ayId);
+  window.location.href = url.toString();
+}
+
+// Reloads Settings with the Program Management panel scoped to a different semester
+// of the selected AY. Display-only today — sections/year-levels are not semester-scoped
+// in the schema, so this doesn't change which programs/sections/year-levels are shown.
+function _switchMgmtSem(semType) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('mgmt_sem', semType);
+  window.location.href = url.toString();
+}
 
 function initProgramPanel() {
   const raw = document.getElementById('pm-data');
@@ -975,7 +1582,9 @@ function _renderProgInfo(prog) {
       <td>${prog.numyearlevel || '—'}</td>
       <td>${sBadge}</td>
       <td class="pmd-info-actions-cell">
-        <button class="pmd-btn-edit" onclick="openEditProgram()"><i class="fas fa-edit"></i> Edit Program</button>
+        <button class="pmd-btn-edit" onclick="openEditProgram()" title="${prog.has_schedule ? 'Locked — this program already has schedule(s) on file' : ''}">
+          <i class="fas ${prog.has_schedule ? 'fa-lock' : 'fa-edit'}"></i> Edit Program
+        </button>
         ${prog.isactive
           ? `<button class="pmd-btn-deactivate" onclick="confirmDeleteProgram()"><i class="fas fa-power-off"></i> Deactivate</button>`
           : `<button class="pmd-btn-edit" onclick="confirmActivateProgram()"><i class="fas fa-power-off"></i> Activate</button>`}
@@ -1000,24 +1609,17 @@ function _renderYearLevelsGrid(prog) {
   ylRows.forEach(y => { ylMap[y.yearlevel] = y; });
 
   if (numYL === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="pmd-empty-row">No year levels configured for this program.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="pmd-empty-row">No year levels configured for this program.</td></tr>`;
     return;
   }
-
-  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
   tbody.innerHTML = Array.from({length: numYL}, (_, i) => {
     const yl       = i + 1;
     const row      = ylMap[yl];
     const isActive = row ? Boolean(row.isactive) : false;
     const secCount = _secCountForYL(prog.programcode, yl);
-    const savedFmt = row?.section_naming_format || '';
     const pylId    = row?.programyearlevelid ?? 'null';
-    const defPfx   = escHtml(prog.programcode + yl);
-    /* build inline preview for initial render */
-    const pfx      = savedFmt || (prog.programcode + yl);
     const n        = Math.max(1, secCount);
-    const initPrev = [pfx, ...Array.from({length: n - 1}, (_, j) => pfx + LETTERS[j])].join(', ');
     return `
     <tr class="pyl-edit-row" id="pylRow_${yl}">
       <td><strong>${_ordinalYear(yl)}</strong></td>
@@ -1037,17 +1639,8 @@ function _renderYearLevelsGrid(prog) {
       <td>
         <input type="number" id="pylNumSec_${yl}" class="pyl-inline-input"
           value="${n}" min="1" max="26" style="width:60px;"
-          oninput="_pylPreview(${yl})">
-      </td>
-      <td>
-        <input type="text" id="pylPrefix_${yl}" class="pyl-inline-input"
-          value="${savedFmt}" placeholder="${defPfx}"
-          style="width:100px;text-transform:uppercase;"
-          oninput="_pylPreview(${yl})"
-          data-default="${defPfx}">
-      </td>
-      <td class="pyl-preview-cell">
-        <span id="pylPreview_${yl}" class="pyl-preview-text">${escHtml(initPrev)}</span>
+          autocomplete="off" data-lpignore="true" data-form-type="other"
+          readonly onfocus="this.removeAttribute('readonly');">
       </td>
       <td style="white-space:nowrap;">
         <button class="pmd-edit-btn pyl-save-btn" id="pylSaveBtn_${yl}"
@@ -1067,40 +1660,67 @@ function _pylStatusChange(yl) {
   lbl.style.color = cb.checked ? '#2e7d32' : '#c62828';
 }
 
-function _pylPreview(yl) {
-  const pfxEl = document.getElementById(`pylPrefix_${yl}`);
-  const numEl = document.getElementById(`pylNumSec_${yl}`);
-  const prvEl = document.getElementById(`pylPreview_${yl}`);
-  if (!pfxEl || !numEl || !prvEl) return;
-  const defPfx = pfxEl.getAttribute('data-default') || '';
-  const pfx    = (pfxEl.value || '').trim().toUpperCase() || defPfx;
-  const n      = Math.max(1, parseInt(numEl.value) || 1);
-  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const names  = [pfx, ...Array.from({length: n - 1}, (_, i) => pfx + LETTERS[i])];
-  prvEl.textContent = names.join(', ');
+let _PENDING_PYL_SAVE = null; // { pylId, yl, progCode } — set while modalReduceSections is open
+
+function _savePylRow(pylId, yl, progCode) {
+  if (pylId === null || pylId === 'null') {
+    _showToast('error', `Year ${yl} is not configured in the database yet. Re-save the program to generate it.`);
+    return;
+  }
+
+  const active   = document.getElementById(`pylActive_${yl}`)?.checked ?? false;
+  const numSecEl = document.getElementById(`pylNumSec_${yl}`);
+  const numSec   = parseInt(numSecEl?.value, 10);
+
+  // No. of Sections must be a real positive count — 0/negative/blank means "no
+  // sections", which isn't a valid state for an active year level.
+  if (active && (!Number.isInteger(numSec) || numSec < 1)) {
+    _showToast('error', 'Number of sections must be at least 1.');
+    numSecEl?.focus();
+    return;
+  }
+
+  // Shrinking the count removes/deactivates the extra section(s) — always
+  // surface that before it happens, since it isn't obviously reversible.
+  const currentCount = _secCountForYL(progCode, yl);
+  if (active && numSec < currentCount) {
+    const diff = currentCount - numSec;
+    document.getElementById('reduceSecLabel').textContent = `${_ordinalYear(yl)}: ${currentCount} → ${numSec} section(s)`;
+    document.getElementById('reduceSecBody').textContent =
+      `Saving ${numSec} will remove ${diff} section(s) beyond the new count. Any of them that already have a ` +
+      `schedule will be deactivated instead of deleted. Continue?`;
+    _PENDING_PYL_SAVE = { pylId, yl, progCode };
+    openSModal('modalReduceSections');
+    return;
+  }
+
+  _doSavePylRow(pylId, yl, active, numSec);
 }
 
-async function _savePylRow(pylId, yl, progCode) {
+function _cancelReduceSections() {
+  _PENDING_PYL_SAVE = null;
+  closeSModal('modalReduceSections');
+}
+
+function _confirmReduceSections() {
+  if (!_PENDING_PYL_SAVE) return;
+  const { pylId, yl } = _PENDING_PYL_SAVE;
+  _PENDING_PYL_SAVE = null;
+  closeSModal('modalReduceSections');
+  const active = document.getElementById(`pylActive_${yl}`)?.checked ?? false;
+  const numSec = parseInt(document.getElementById(`pylNumSec_${yl}`)?.value, 10);
+  _doSavePylRow(pylId, yl, active, numSec);
+}
+
+async function _doSavePylRow(pylId, yl, active, numSec) {
   const btn  = document.getElementById(`pylSaveBtn_${yl}`);
   const orig = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
 
-  if (pylId === null || pylId === 'null') {
-    _showToast('error', `Year ${yl} is not configured in the database yet. Re-save the program to generate it.`);
-    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
-    return;
-  }
-
-  const active = document.getElementById(`pylActive_${yl}`)?.checked ?? false;
-  const numSec = document.getElementById(`pylNumSec_${yl}`)?.value  || '1';
-  const pfxEl  = document.getElementById(`pylPrefix_${yl}`);
-  const fmt    = (pfxEl?.value || '').trim().toUpperCase();
-
   const fd = new FormData();
-  fd.append('pyl_id',               pylId);
-  fd.append('isactive',             active ? 'true' : 'false');
-  fd.append('num_sections',         numSec);
-  fd.append('section_naming_format', fmt);
+  fd.append('pyl_id',       pylId);
+  fd.append('isactive',     active ? 'true' : 'false');
+  fd.append('num_sections', String(Number.isInteger(numSec) ? numSec : 0));
 
   try {
     const resp = await fetch('/admin/settings/program/yearlevel/update', {
@@ -1112,9 +1732,8 @@ async function _savePylRow(pylId, yl, progCode) {
       /* Update yearlevels cache */
       const ylRow = (PM_DATA.yearlevels || []).find(y => y.programyearlevelid === Number(pylId));
       if (ylRow) {
-        ylRow.isactive              = data.isactive;
-        ylRow.active_section_count  = data.active_section_count;
-        ylRow.section_naming_format = data.section_naming_format || '';
+        ylRow.isactive             = data.isactive;
+        ylRow.active_section_count = data.active_section_count;
       }
       /* Sync sections cache for this pyl */
       const newSecs = data.sections || [];
@@ -1141,8 +1760,11 @@ async function _savePylRow(pylId, yl, progCode) {
       _renderYearLevelsGrid(prog);
       _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
       _renderSectionsPage(1);
+      const cascadeNote = data.cascaded_future_ay_count
+        ? ` (also deactivated in ${data.cascaded_future_ay_count} future academic year${data.cascaded_future_ay_count === 1 ? '' : 's'} already on file; past years were left untouched)`
+        : '';
       _showToast('success',
-        `${_ordinalYear(yl)} saved — ${data.active_section_count} section(s)${data.isactive ? ', Active' : ', Inactive'}.`);
+        `${_ordinalYear(yl)} saved — ${data.active_section_count} section(s)${data.isactive ? ', Active' : ', Inactive'}.${cascadeNote}`);
     } else {
       _showToast('error', data.error || 'Failed to save year level.');
       if (btn) { btn.disabled = false; btn.innerHTML = orig; }
@@ -1231,6 +1853,36 @@ function _renderSectionsPage(page) {
 }
 
 /* ── Program CRUD ───────────────────────────────────── */
+
+/* Add Program stays open with whatever was typed on error (e.g. duplicate code/name) —
+   only a successful add reloads the page. */
+async function _submitAddProgram() {
+  const form = document.getElementById('formAddProgram');
+  if (!form.reportValidity()) return;
+
+  const btn  = document.getElementById('btnAddProgramSubmit');
+  const orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding…';
+
+  try {
+    const resp = await fetch(form.action, {
+      method: 'POST', body: new FormData(form),
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const data = await resp.json();
+    if (data.success) {
+      showAlertPopup('success', data.message || 'Program added.');
+      setTimeout(() => window.location.reload(), 900);
+    } else {
+      showAlertPopup('error', data.error || 'Could not add program.');
+    }
+  } catch (err) {
+    showAlertPopup('error', 'Network error: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
+
 function openEditProgram() {
   const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
   if (!prog) return;
@@ -1239,7 +1891,73 @@ function openEditProgram() {
   document.getElementById('editProgName').value          = prog.programname;
   document.getElementById('editProgType').value          = prog.programtype || 'Undergraduate';
   document.getElementById('editProgYrs').value           = prog.numyearlevel || 4;
+
+  // Locked entirely once the program has any schedule on file (see settings_edit_program's
+  // own hard block server-side — this just avoids the round trip / shows why upfront).
+  const locked = !!prog.has_schedule;
+  document.getElementById('editProgLockedNotice').style.display = locked ? '' : 'none';
+  document.getElementById('formEditProgram').style.display      = locked ? 'none' : '';
+  if (locked) document.getElementById('editProgLockedCode').textContent = prog.programcode;
+
   openSModal('modalEditProgram');
+}
+
+/* Builds a confirmation summary (what's actually changing) before Edit Program submits —
+   editing this always requires an explicit confirm, not just clicking Save once. */
+function _confirmSaveProgramEdit() {
+  const prog = PM_DATA.programs.find(p => p.programcode === PM_SELECTED);
+  if (!prog) return;
+  // .submit() further down bypasses native required-field validation (unlike a real submit
+  // click), so enforce it here first — same UX (red outline + browser tooltip) either way.
+  const form = document.getElementById('formEditProgram');
+  if (!form.reportValidity()) return;
+  const newName = document.getElementById('editProgName').value.trim();
+  const newType = document.getElementById('editProgType').value;
+  const newYrs  = document.getElementById('editProgYrs').value;
+
+  const changes = [];
+  if (newName && newName !== prog.programname) changes.push(`Name: "${prog.programname}" → "${newName}"`);
+  if (newType !== (prog.programtype || 'Undergraduate')) changes.push(`Type: ${prog.programtype || 'Undergraduate'} → ${newType}`);
+  if (String(newYrs) !== String(prog.numyearlevel || 4)) changes.push(`Year Levels: ${prog.numyearlevel || 4} → ${newYrs}`);
+
+  const body = document.getElementById('confirmEditProgramBody');
+  if (changes.length) {
+    body.innerHTML = `You're about to change <strong>${prog.programcode}</strong>:<br>` +
+      changes.map(c => `• ${c}`).join('<br>') +
+      (changes.some(c => c.startsWith('Name:'))
+        ? '<br><br>Past schedules/reports already on file will keep showing the old name they were created under.'
+        : '');
+  } else {
+    body.textContent = `No fields were changed for ${prog.programcode}. Save anyway?`;
+  }
+  openSModal('modalConfirmEditProgram');
+}
+
+async function _doSaveProgramEdit() {
+  closeSModal('modalConfirmEditProgram');
+  const btn  = document.getElementById('btnConfirmEditProgram');
+  const orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+
+  try {
+    const form = document.getElementById('formEditProgram');
+    const resp = await fetch(form.action, {
+      method: 'POST', body: new FormData(form),
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const data = await resp.json();
+    if (data.success) {
+      showAlertPopup('success', data.message || 'Program updated.');
+      setTimeout(() => window.location.reload(), 900);
+    } else {
+      // Stay open with whatever was typed — just surface why it failed, no reload/reset.
+      showAlertPopup('error', data.error || 'Could not update program.');
+    }
+  } catch (err) {
+    showAlertPopup('error', 'Network error: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.innerHTML = orig;
+  }
 }
 
 function confirmDeleteProgram() {
@@ -1289,9 +2007,33 @@ function openAddSection() {
     ylSel.value = '1';
   }
 
-  if (document.getElementById('addSecName')) document.getElementById('addSecName').value = '';
+  _fillSuggestedSectionName();
   if (document.getElementById('addSecError')) document.getElementById('addSecError').style.display = 'none';
   openSModal('modalAddSection');
+}
+
+/* Next free "{ProgramCode}-{YearLevel}[-N]" name for the year level currently
+   selected in the Add Section modal — mirrors the bulk auto-naming the backend
+   uses for "No. of Sections" (see settings_update_program_yearlevel). Just a
+   prefilled default: the field stays fully editable before submit. */
+function _suggestSectionName(progCode, yl) {
+  const base = `${progCode}-${yl}`;
+  const taken = new Set(
+    (PM_DATA.sections || [])
+      .filter(s => s.programcode === progCode && Number(s.yearlevel) === Number(yl))
+      .map(s => (s.sectionname || '').toUpperCase())
+  );
+  if (!taken.has(base)) return base;
+  let i = 1;
+  while (taken.has(`${base}-${i}`)) i++;
+  return `${base}-${i}`;
+}
+
+function _fillSuggestedSectionName() {
+  const nameEl = document.getElementById('addSecName');
+  const ylSel  = document.getElementById('addSecYearLevel');
+  if (!nameEl || !ylSel || !PM_SELECTED) return;
+  nameEl.value = _suggestSectionName(PM_SELECTED, ylSel.value);
 }
 
 /* ── Edit section modal ─────────────────────────────── */
@@ -1429,24 +2171,11 @@ function _syncProgramStatusBadge(progCode, isActive) {
   }
 }
 
-/* ── Toast notification ─────────────────────────────── */
-function _showToast(type, msg) {
-  let wrap = document.getElementById('pmToastWrap');
-  if (!wrap) {
-    wrap = document.createElement('div');
-    wrap.id = 'pmToastWrap';
-    wrap.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
-    document.body.appendChild(wrap);
-  }
-  const t  = document.createElement('div');
-  const bg = type === 'success' ? '#2e7d32' : '#c62828';
-  t.style.cssText = `background:${bg};color:#fff;padding:12px 20px;border-radius:8px;font-size:.85rem;font-weight:600;
-    box-shadow:0 4px 12px rgba(0,0,0,.25);max-width:340px;opacity:0;transition:opacity .25s;`;
-  t.textContent = msg;
-  wrap.appendChild(t);
-  requestAnimationFrame(() => { t.style.opacity = '1'; });
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 4000);
-}
+/* ── Notification popup ───────────────────────────────────────────────
+   Delegates to the shared showAlertPopup() (base.admin.js / style.css) so
+   Program Management alerts use the exact same centered popup as every
+   other admin page instead of a page-local duplicate. */
+function _showToast(type, msg) { showAlertPopup(type, msg); }
 
 /* ── Init ───────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1455,8 +2184,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   markTableActionsLocked();
   await initHCToggles();
+  initMergeScopePicker();
   initDayPairs();
   initTimeSlots();
+  initSectionPairs();
+  loadMergeLoadPolicies();
   initProgramPanel();
 
   /* Wire AJAX submit for Edit Section rename form */

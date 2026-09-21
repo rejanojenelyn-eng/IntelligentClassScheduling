@@ -300,23 +300,118 @@ function _timeidToMins(timeid) {
 /* ═══════════════════════════════════════════
    AVAILABLE ROOMS
 ═══════════════════════════════════════════ */
-function _buildAvailBuildingFilter() {
-    const bSel = document.getElementById('frsAvailBuilding');
-    _buildings.forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b.id;
-        opt.textContent = b.name;
-        bSel.appendChild(opt);
-    });
+/* Building and Room Number are typeable, custom-styled searchable combos (a text
+   input + our own dropdown list) rather than plain <select>s, so faculty can type to
+   filter instead of scrolling a long list. A native <input list=...>+<datalist> was
+   tried first but renders the browser's own unstyled popup — completely out of place
+   next to the rest of this page — so this draws its own menu instead (see .frs-combo
+   CSS). Room Number's option list is rebuilt every time the Building field resolves to
+   a different building (see frsBuildingChanged/_rebuildAvailRoomNumOptions) so it only
+   ever offers rooms that actually belong to whichever building is currently typed in —
+   not every room in every building. */
+let _frsRoomNumOptions = [];   // current allowed room names — reset per selected building
 
-    // Room-number filter: populated from all rooms
-    const rSel = document.getElementById('frsAvailRoomNum');
-    _rooms.forEach(r => {
-        const opt = document.createElement('option');
-        opt.value = r.name;
-        opt.textContent = r.name;
-        rSel.appendChild(opt);
-    });
+/* Every combo's options() returns [{label, value}, ...] — label is what's shown/typed/
+   filtered on, value is what actually gets used (identical to label for Building/Room
+   Number, but a 24h "HH:MM" for Start/End Time versus their "7:30 AM"-style label —
+   same visible-input/hidden-value split the Manual Editor's own time pickers use).
+   Start/End Time were previously plain <select>s that nothing ever populated with
+   options — this both fixes that and matches the Manual Editor's picker design. */
+const _frsCombos = {
+    frsBuildingCombo: { inputId: 'frsAvailBuilding',    menuId: 'frsBuildingComboMenu', options: () => _buildings.map(b => ({ label: b.name, value: b.name })) },
+    frsRoomNumCombo:  { inputId: 'frsAvailRoomNum',     menuId: 'frsRoomNumComboMenu',  options: () => _frsRoomNumOptions.map(n => ({ label: n, value: n })) },
+    frsStartCombo:    { inputId: 'frsAvailStartTxt',    menuId: 'frsStartComboMenu',    hiddenId: 'frsAvailStart', options: () => _frsTimeOptions() },
+    frsEndCombo:      { inputId: 'frsAvailEndTxt',      menuId: 'frsEndComboMenu',      hiddenId: 'frsAvailEnd',   options: () => _frsTimeOptions() },
+};
+
+/* 30-min slots across the same grid the room-schedule calendar itself uses (7:30 AM–
+   9:00 PM), formatted the same way results already are (_fmt12h). */
+function _frsTimeOptions() {
+    const out = [];
+    for (let mins = FRS_GRID_START; mins <= FRS_GRID_END; mins += 30) {
+        const value = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+        out.push({ label: _fmt12h(value), value });
+    }
+    return out;
+}
+
+function _frsComboFilter(comboKey) {
+    const cfg   = _frsCombos[comboKey];
+    const input = document.getElementById(cfg.inputId);
+    const menu  = document.getElementById(cfg.menuId);
+    // Time combos are read-only (click-to-open, like the Manual Editor's) — always
+    // show the full list rather than filtering on a value that's never typed into.
+    const q     = cfg.hiddenId ? '' : (input.value || '').trim().toLowerCase();
+    const all   = cfg.options();
+    const filtered = !q ? all : all.filter(o => o.label.toLowerCase().includes(q));
+    menu.innerHTML = filtered.length
+        ? filtered.slice(0, 50).map(o => `<div class="frs-combo-option" data-val="${_esc(o.value)}">${_esc(o.label)}</div>`).join('')
+        : '<div class="frs-combo-empty">No matches</div>';
+    menu.classList.add('open');
+}
+
+document.addEventListener('click', (e) => {
+    const optEl = e.target.closest('.frs-combo-option');
+    if (optEl) {
+        const wrap    = optEl.closest('.frs-combo');
+        const cfg     = _frsCombos[wrap.id];
+        const chosen  = cfg.options().find(o => o.value === optEl.dataset.val);
+        document.getElementById(cfg.inputId).value = chosen ? chosen.label : optEl.dataset.val;
+        if (cfg.hiddenId) document.getElementById(cfg.hiddenId).value = optEl.dataset.val;
+        document.getElementById(cfg.menuId).classList.remove('open');
+        if (wrap.id === 'frsBuildingCombo') frsBuildingChanged();
+        else if (wrap.id === 'frsRoomNumCombo') frsRoomNumTyped();
+        else frsFindAvailable();
+        return;
+    }
+    if (!e.target.closest('.frs-combo')) {
+        document.querySelectorAll('.frs-combo-menu.open').forEach(m => m.classList.remove('open'));
+    }
+});
+
+function _buildAvailBuildingFilter() {
+    _rebuildAvailRoomNumOptions(null);
+}
+
+/* Resolves the Building input's typed text to a building id via an exact,
+   case-insensitive name match. Returns null when it doesn't match anything yet
+   (still typing, blank, or a typo) — callers treat that as "all buildings". */
+function _resolveAvailBuildingId() {
+    const typed = (document.getElementById('frsAvailBuilding').value || '').trim().toLowerCase();
+    if (!typed) return null;
+    const match = _buildings.find(b => b.name.toLowerCase() === typed);
+    return match ? match.id : null;
+}
+
+function _rebuildAvailRoomNumOptions(bid) {
+    const scoped = bid ? _rooms.filter(r => String(r.bid) === String(bid)) : _rooms;
+    _frsRoomNumOptions = scoped.map(r => r.name);
+    // A previously-typed room number that no longer belongs to the newly-selected
+    // building would silently filter everything out — clear it instead.
+    const roomInput = document.getElementById('frsAvailRoomNum');
+    const curRoom = (roomInput.value || '').trim();
+    if (curRoom && !scoped.some(r => r.name.toLowerCase() === curRoom.toLowerCase())) {
+        roomInput.value = '';
+    }
+}
+
+/* Typing now fires on every keystroke (oninput) rather than only on blur/select
+   (onchange) — debounce so typing a full name doesn't fire a fetch per character. */
+let _frsAvailTypingTimer = null;
+function _frsFindAvailableDebounced() {
+    clearTimeout(_frsAvailTypingTimer);
+    _frsAvailTypingTimer = setTimeout(frsFindAvailable, 300);
+}
+
+function frsBuildingChanged() {
+    _frsComboFilter('frsBuildingCombo');
+    _rebuildAvailRoomNumOptions(_resolveAvailBuildingId());
+    _frsFindAvailableDebounced();
+}
+
+function frsRoomNumTyped() {
+    _frsComboFilter('frsRoomNumCombo');
+    _frsFindAvailableDebounced();
 }
 
 /* Auto-fill day-of-week when a date is selected */
@@ -336,7 +431,7 @@ async function frsFindAvailable() {
     const start = document.getElementById('frsAvailStart').value;
     const end   = document.getElementById('frsAvailEnd').value;
     const type  = document.getElementById('frsAvailType').value;
-    const bid   = document.getElementById('frsAvailBuilding').value;
+    const bid   = _resolveAvailBuildingId();
     const rnum  = document.getElementById('frsAvailRoomNum').value;
     const selDate = document.getElementById('frsAvailDate') ? document.getElementById('frsAvailDate').value : '';
 

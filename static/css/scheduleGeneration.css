@@ -12,10 +12,12 @@
     --gray-100:     #f8f8f8;
     --gray-200:     #eeeeee;
     --gray-400:     #aaaaaa;
+    --gray-600:     #666666;
     --gray-700:     #555555;
     --success:      #16a34a;
     --warning:      #d97706;
     --danger:       #dc2626;
+    --purple:       #7c3aed;
     --shadow-sm:    0 2px 6px rgba(128,0,0,.10);
     --shadow-md:    0 4px 16px rgba(128,0,0,.16);
     --shadow-lg:    0 8px 32px rgba(0,0,0,.20);
@@ -135,146 +137,209 @@
     cursor: pointer;
 }
 
-/* ── ACCURACY WIDGET ── */
-.accuracy-widget {
+/* ── SCHEDULE EVALUATION PANEL ── */
+.eval-widget {
     background: var(--white);
     border: 1.5px solid var(--gray-200);
     border-radius: var(--radius-lg);
-    padding: 20px 16px 16px;
+    padding: 14px 16px 16px;
     margin-top: 4px;
 }
 
-.accuracy-row {
+.eval-title {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--maroon);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin-bottom: 8px;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--gray-200);
 }
 
-.accuracy-icon {
-    width: 54px;
-    height: 54px;
-    border-radius: 50%;
-    border: 3px solid var(--success);
+.eval-score-pct {
+    font-size: 40px;
+    font-weight: 800;
+    color: var(--gray-400);
+    line-height: 1;
+    text-align: center;
+}
+
+.eval-score-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    color: var(--gray-400);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+/* CSP result + approval eligibility badges — status is CSP's, not the score's */
+.eval-csp-badge, .eval-approval-badge {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--success);
-    font-size: 22px;
-    flex-shrink: 0;
-}
-
-.accuracy-pct {
-    font-size: 44px;
-    font-weight: 800;
-    color: var(--success);
-    line-height: 1;
-}
-
-.accuracy-label {
-    font-size: 11px;
-    font-weight: 800;
-    color: var(--success);
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    margin-bottom: 8px;
+    gap: 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 6px 8px;
+    border-radius: var(--radius);
+    margin-bottom: 6px;
     text-align: center;
 }
+.eval-csp-badge.status-pending  { background: var(--gray-100); color: var(--gray-600); }
+.eval-csp-badge.status-pass     { background: #eafaf0; color: var(--success); }
+.eval-csp-badge.status-fail     { background: #fdecec; color: var(--danger); }
+.eval-approval-badge            { background: #eafaf0; color: var(--success); }
+.eval-approval-badge.hidden     { display: none; }
 
-.accuracy-desc {
-    font-size: 10px;
-    color: var(--gray-400);
-    text-align: center;
-    margin: 0;
-    line-height: 1.5;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-}
-
-/* ── ACCURACY BREAKDOWN ── */
-.accuracy-breakdown {
+/* ── EVALUATION BREAKDOWN ── */
+.eval-breakdown {
     margin-top: 12px;
     padding-top: 10px;
     border-top: 1px solid var(--gray-200);
     display: none;
 }
 
-.accuracy-breakdown.visible {
+.eval-breakdown.visible {
     display: block;
 }
 
-.acc-section-label {
-    font-size: 8.5px;
+.eval-cat-label {
+    font-size: 9.5px;
     font-weight: 800;
-    color: var(--gray-400);
-    letter-spacing: 0.7px;
+    color: var(--gray-700);
+    letter-spacing: 0.5px;
     text-transform: uppercase;
+    margin: 10px 0 8px;
+}
+.eval-cat-label:first-child { margin-top: 0; }
+
+.eval-item {
     margin-bottom: 8px;
-    text-align: center;
 }
 
-.acc-item {
-    margin-bottom: 8px;
-}
-
-.acc-item-header {
+.eval-item-header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     margin-bottom: 3px;
-    gap: 4px;
+    gap: 6px;
 }
 
-.acc-item-label {
-    font-size: 9px;
+.eval-item-label {
+    font-size: 9.5px;
     font-weight: 700;
     color: var(--gray-600);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
 }
 
-.acc-item-right {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
+.eval-item-score {
+    font-size: 10px;
+    font-weight: 800;
+    min-width: 30px;
+    text-align: right;
     flex-shrink: 0;
 }
 
-.acc-item-score {
-    font-size: 10px;
-    font-weight: 800;
-    min-width: 28px;
-    text-align: right;
-}
-
-.acc-item-weight {
-    font-size: 8px;
-    color: var(--gray-400);
-    font-weight: 600;
-}
-
-.acc-bar-track {
+.eval-bar-track {
     height: 5px;
     background: var(--gray-200);
     border-radius: 4px;
     overflow: hidden;
 }
 
-.acc-bar-fill {
+.eval-bar-fill {
     height: 100%;
     border-radius: 4px;
     transition: width 0.5s ease;
 }
 
-.acc-divider {
+/* Color tokens — reused for score text + bar fill together */
+.eval-good  { color: var(--success) !important; }
+.eval-warn  { color: var(--warning) !important; }
+.eval-bad   { color: var(--danger)  !important; }
+.eval-hist  { color: var(--purple)  !important; }
+.eval-bar-fill.eval-good { background: var(--success); }
+.eval-bar-fill.eval-warn { background: var(--warning); }
+.eval-bar-fill.eval-bad  { background: var(--danger); }
+.eval-bar-fill.eval-hist { background: var(--purple); }
+.eval-na    { color: var(--gray-400, #9ca3af) !important; }
+.eval-bar-fill.eval-na   { background: var(--gray-200, #e5e7eb); }
+
+/* Partial-generation completion line (architecture spec section 12) */
+.eval-completion-text {
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    margin: 4px 0 2px;
+    letter-spacing: 0.02em;
+}
+.eval-completion-text:empty { display: none; }
+.eval-completion-text.eval-good { color: var(--success); }
+.eval-completion-text.eval-warn { color: var(--warning); }
+
+.eval-divider {
     border: none;
     border-top: 1px dashed var(--gray-200);
     margin: 8px 0;
+}
+
+/* ── Conflict row highlighting (Schedule Table) ── */
+.offerings-list-table tbody tr.row-conflict {
+    background: #fdecec !important;
+}
+.offerings-list-table tbody tr.row-conflict:hover {
+    background: #fbdada !important;
+}
+.row-conflict-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+    color: var(--danger);
+    cursor: help;
+    border-radius: 50%;
+}
+.row-conflict-flag:focus-visible {
+    outline: 2px solid var(--danger);
+    outline-offset: 2px;
+}
+
+/* ── Incomplete row highlighting (partial-generation results) ── */
+/* Amber, not red — an incomplete component is unresolved, not a rule
+   violation; keeps it visually distinct from .row-conflict. */
+.offerings-list-table tbody tr.row-incomplete {
+    background: #fff6e0 !important;
+}
+.offerings-list-table tbody tr.row-incomplete:hover {
+    background: #ffedc2 !important;
+}
+.row-incomplete-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+    color: #b8860b;
+    cursor: help;
+    border-radius: 50%;
+}
+.row-incomplete-flag:focus-visible {
+    outline: 2px solid #b8860b;
+    outline-offset: 2px;
 }
 
 /* ── OUTLINE / ACTIVE BUTTONS ── */
@@ -808,6 +873,45 @@
 .offerings-list-table td.td-days { font-weight: 700; color: #800000; text-align: center; line-height: 1.6; }
 .offerings-list-table td.td-room { text-align: center; font-size: 11px; }
 
+/* ── SELECTIVE REGENERATION: row + per-field preserve checkboxes ── */
+.offerings-list-table .col-check { width: 4%; }
+.offerings-list-table td.td-check { text-align: center; }
+.offerings-list-table .row-select { width: 15px; height: 15px; cursor: pointer; }
+/* Value and its "Preserve" checkbox sit side by side on one line, not stacked. */
+.offerings-list-table .cell-with-preserve {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.offerings-list-table .preserve-select-wrap {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    color: #800000;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.offerings-list-table .preserve-select-wrap input {
+    width: 12px;
+    height: 12px;
+    cursor: pointer;
+}
+.preserve-caption {
+    font-size: 11px;
+    color: #800000;
+    font-weight: 600;
+    margin: -4px 0 10px 2px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.preserve-caption.hidden { display: none; }
+
 /* ── TABLE EMPTY ROW ── */
 .table-empty-row td {
     text-align: center;
@@ -1100,7 +1204,10 @@
     .gen-body-split { flex-direction: column; }
     .gen-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; gap: 10px; }
     #btnGenerate { flex: 1; min-width: 180px; }
-    .accuracy-widget { flex: 1; min-width: 200px; }
+    .eval-widget {
+    flex: 1;
+    min-width: 200px;
+}
     #generateScheduleForm { flex-wrap: wrap; }
 }
 

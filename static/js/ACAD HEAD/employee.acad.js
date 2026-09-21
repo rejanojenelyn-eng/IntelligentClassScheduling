@@ -310,7 +310,14 @@ function _renderEmpReviewModal(data) {
     const warnings   = data.warnings   || [];
     const rawText    = data.raw_text   || '';
     const banner     = document.getElementById('empReviewBanner');
+    const confirmBtn = document.getElementById('empReviewConfirmBtn');
     const badgeClass = confidence >= 75 ? 'conf-high' : confidence >= 40 ? 'conf-medium' : 'conf-low';
+    // data.valid === false means the file doesn't look like an Employee List
+    // at all (e.g. a Class Schedule export whose title/section rows got
+    // blindly mapped onto Employee Number/Last Name/... via the "no header
+    // row found" positional fallback) — block the import outright rather
+    // than let a misleadingly-normal-looking confidence score through.
+    const invalid = data.valid === false;
 
     let warnHtml = warnings.length
         ? '<ul class="pdf-warn-list">' + warnings.map(w => `<li>${w}</li>`).join('') + '</ul>'
@@ -330,11 +337,22 @@ function _renderEmpReviewModal(data) {
         </div>`;
     }
 
+    const invalidHtml = invalid ? `<div class="pdf-scanned-warn">
+        <i class="fas fa-ban"></i>
+        This doesn't look like a Faculty List file — importing is disabled. Click Back,
+        then export from <strong>Reports &gt; Faculty List</strong> and try again.
+    </div>` : '';
+
     banner.innerHTML = `
         <div class="pdf-conf-row">
             <span class="conf-badge ${badgeClass}">Extraction Confidence: ${confidence}%</span>
             ${confidence < 75 ? '<span class="conf-note">Please review the data below before importing.</span>' : ''}
-        </div>${warnHtml}${rawHtml}`;
+        </div>${invalidHtml}${warnHtml}${rawHtml}`;
+
+    if (confirmBtn) {
+        confirmBtn.disabled = invalid;
+        confirmBtn.title = invalid ? "Import disabled — this file doesn't look like a Faculty List" : '';
+    }
 
     _rebuildEmpReviewTable();
     document.getElementById('empReviewModal').style.display = 'flex';
@@ -568,7 +586,7 @@ function _submitImport(employees) {
 
 function _showImportAlert(msg) {
     const banner = document.getElementById('empReviewBanner');
-    if (!banner) { alert(msg); return; }
+    if (!banner) { showAlertPopup('error', msg); return; }
     const el = document.createElement('div');
     el.className = 'pdf-analyze-error';
     el.style.marginTop = '8px';
@@ -605,34 +623,20 @@ document.getElementById('confirmBulkArchiveBtn').addEventListener('click', funct
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employee_ids: _archiveIdsForBulk }),
     }).then(r => r.json()).then(data => {
-        if (data.success) window.location.reload();
-        else { alert(data.error || 'Error archiving employees.'); this.disabled = false; this.textContent = 'ARCHIVE ALL'; }
-    }).catch(() => { alert('Network error.'); this.disabled = false; this.textContent = 'ARCHIVE ALL'; });
+        closeBulkArchiveModal();
+        if (data.success) {
+            showAlertPopup('success', data.success);
+            setTimeout(() => window.location.reload(), 1200);
+        } else {
+            showAlertPopup('error', data.error || 'Could not archive the selected employee(s).');
+            this.disabled = false; this.textContent = 'ARCHIVE ALL';
+        }
+    }).catch(() => {
+        closeBulkArchiveModal();
+        showAlertPopup('error', 'Network error — could not reach the server. Please try again.');
+        this.disabled = false; this.textContent = 'ARCHIVE ALL';
+    });
 });
-
-function openEditFromEl(el) {
-    const emp = JSON.parse(el.dataset.emp);
-    openEditModal(emp.employeenumber, emp.firstname, emp.middlename || '', emp.lastname,
-                  emp.email, emp.contactnumber, emp.specializationid,
-                  emp.employeetypeid, emp.designationid || '', emp.employeestatus);
-}
-
-function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
-    document.getElementById("edit_emp_num_original").value = empNum;
-    document.getElementById("edit_emp_num").value = empNum;
-    document.getElementById("edit_f_name").value = fName;
-    document.getElementById("edit_m_name").value = mName;
-    document.getElementById("edit_l_name").value = lName;
-    document.getElementById("edit_email").value = email;
-    document.getElementById("edit_contact").value = contact;
-    document.getElementById("edit_spec").value = specId;
-    document.getElementById("edit_type").value = typeId;
-    document.getElementById("edit_designation").value = desigId;
-    document.getElementById("edit_status").value = status;
-    toggleDesignation('edit');
-    document.getElementById("editEmployeeModal").style.display = "block";
-}
-function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
 
 function toggleDesignation(modalType) {
     const typeSelect = document.getElementById(`${modalType}_type`);
@@ -702,43 +706,6 @@ function sortTable() {
 
 // ── EXPORT ENGINE ────────────────────────────────────────────────────────────
 const _EMP_DOCX_ROUTE = '/employee/export/docx';
-const _EMP_XLSX_ROUTE = '/employee/export/xlsx';
-
-const _EMP_REPORT_COLUMNS = [
-    { header: '#',               dataKey: 'no',             field: null,             csv: false },
-    { header: 'Employee Number', dataKey: 'emp_num',        field: 'employeenumber' },
-    { header: 'Last Name',       dataKey: 'last_name',      field: 'lastname' },
-    { header: 'First Name',      dataKey: 'first_name',     field: 'firstname' },
-    { header: 'Middle Name',     dataKey: 'middle_name',    field: 'middlename' },
-    { header: 'Email',           dataKey: 'email',          field: 'email' },
-    { header: 'Contact Number',  dataKey: 'contact',        field: 'contactnumber' },
-    { header: 'Specialization',  dataKey: 'specialization', field: 'specializationname' },
-    { header: 'Employee Type',   dataKey: 'emp_type',       field: 'typename' },
-    { header: 'Employee Status', dataKey: 'status',         field: 'employeestatus' },
-    { header: 'Designation',     dataKey: 'designation',    field: 'designationname' },
-];
-
-function _empActiveAyLabel() {
-    if (typeof ACAD_ACTIVE_AY_ID === 'undefined' || !ACAD_ACTIVE_AY_ID) return 'N/A';
-    const m = /^AY(\d{2})(\d{2})$/.exec(ACAD_ACTIVE_AY_ID);
-    if (!m) return 'N/A';
-    const semLabel = { A: '1st Semester', B: '2nd Semester', C: 'Summer' }[ACAD_ACTIVE_SEM] || '';
-    return `20${m[1]}-20${m[2]}${semLabel ? ' (' + semLabel + ')' : ''}`;
-}
-
-function _loadImageAsDataURL(url) {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
-            canvas.getContext('2d').drawImage(img, 0, 0);
-            resolve(canvas.toDataURL('image/png'));
-        };
-        img.onerror = reject;
-        img.src = url;
-    });
-}
 
 function _getExportRows() {
     const table = document.querySelector('.employee-table');
@@ -748,14 +715,35 @@ function _getExportRows() {
     return Array.from(table.querySelectorAll('tbody tr')).filter(r => r.style.display !== 'none');
 }
 
+// Required export column order/names — matches Reports > Faculty List exactly
+// so a file exported from either place looks the same and re-imports cleanly
+// via Faculty Management > Import.
+const _EMP_EXPORT_HEADERS = ['EmployeeNumber', 'LastName', 'FirstName', 'MiddleName', 'Email',
+                              'Contact Number', 'Specialization', 'EmployeeType', 'EmployeeStatus', 'Designation'];
+const _EMP_EXPORT_KEYS    = ['EmployeeNumber', 'LastName', 'FirstName', 'MiddleName', 'Email',
+                              'ContactNumber', 'Specialization', 'EmployeeType', 'EmployeeStatus', 'Designation'];
+
 function _rowsToEmpData(rows) {
+    // Pulled from each row's data-emp attribute (the raw Faculty query row,
+    // JSON-serialized server-side) rather than scraped from the visible
+    // <td> text — the table only *displays* a combined "Lastname, Firstname"
+    // cell and has no Middle Name / Designation column at all, so scraping
+    // cells alone could never recover those fields.
     return rows.map(row => {
-        const emp = JSON.parse(row.dataset.emp || '{}');
-        const out = {};
-        for (const col of _EMP_REPORT_COLUMNS) {
-            if (col.field) out[col.dataKey] = emp[col.field] || '';
-        }
-        return out;
+        let emp = {};
+        try { emp = JSON.parse(row.dataset.emp || '{}'); } catch (e) {}
+        return {
+            EmployeeNumber: emp.employeenumber || row.querySelector('.row-check')?.value.trim() || '',
+            LastName:       emp.lastname || '',
+            FirstName:      emp.firstname || '',
+            MiddleName:     emp.middlename || '',
+            Email:          emp.email || '',
+            ContactNumber:  emp.contactnumber || '',
+            Specialization: emp.specializationname || '',
+            EmployeeType:   emp.typename || '',
+            EmployeeStatus: emp.employeestatus || '',
+            Designation:    emp.designationname || '',
+        };
     });
 }
 
@@ -823,44 +811,52 @@ function _showExportToast(type, title, msg) {
 }
 function closeExportToast() { document.getElementById('exportToast').style.display = 'none'; }
 
+// Same letterhead — logo, title, maroon campus banner — as Reports > Faculty
+// List's preview and export. jsPDF needs the logo as image data rather than
+// a URL, so it's fetched once and cached as a data: URI.
+let _pupLogoDataUrl = null;
+async function _getPupLogoDataUrl() {
+    if (_pupLogoDataUrl !== null) return _pupLogoDataUrl || null;
+    try {
+        const res  = await fetch('/static/img/pup-logo.png');
+        const blob = await res.blob();
+        _pupLogoDataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload  = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (e) { _pupLogoDataUrl = ''; }
+    return _pupLogoDataUrl || null;
+}
+
 function _exportCSV(data, filename) {
     const now = new Date().toLocaleString();
-    const cols = _EMP_REPORT_COLUMNS.filter(c => c.field);
-    const headers = cols.map(c => c.header);
-    const dataRows = data.map(e => cols.map(c => e[c.dataKey]));
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [
-        `"Polytechnic University of the Philippines"`,
-        `"Lopez, Quezon Campus"`,
-        `"FACULTY INFORMATION REPORT"`,
-        `"Academic Year: ${_empActiveAyLabel()}"`,
-        `"Date Generated: ${now}"`,
+        `"EMPLOYEE LIST"`,
+        `"LOPEZ, QUEZON CAMPUS"`,
+        `"Generated: ${now}"`,
         `"Total: ${data.length} employee(s)"`,
         '',
-        headers.map(q).join(','),
-        ...dataRows.map(r => r.map(q).join(',')),
+        _EMP_EXPORT_HEADERS.map(q).join(','),
+        ...data.map(e => _EMP_EXPORT_KEYS.map(k => q(e[k])).join(',')),
     ];
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + '.csv' });
     a.click(); URL.revokeObjectURL(a.href);
 }
 
-function _empReportPayload(data) {
-    return {
-        employees: data,
-        title: 'FACULTY INFORMATION REPORT',
-        subtitle1: 'Polytechnic University of the Philippines',
-        subtitle2: 'Lopez, Quezon Campus',
-        ay_label: _empActiveAyLabel(),
-        timestamp: 'Date Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
-    };
-}
-
 async function _exportXLSX(data, filename) {
-    const res = await fetch(_EMP_XLSX_ROUTE, {
+    const payload = {
+        employees: data,
+        title: 'Employee List',
+        timestamp: 'Generated: ' + new Date().toLocaleString() + '  |  Total: ' + data.length + ' employee(s)',
+    };
+    const res = await fetch('/employee/export/xlsx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_empReportPayload(data)),
+        body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text() || 'Server error generating XLSX');
     const blob = await res.blob();
@@ -871,67 +867,59 @@ async function _exportXLSX(data, filename) {
 async function _exportPDF(data, filename) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const W = 297;
     const now = new Date();
-    const pageWidth  = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const cx = pageWidth / 2;
 
-    try {
-        const logo = await _loadImageAsDataURL('/static/img/pup-logo.png');
-        doc.addImage(logo, 'PNG', 12, 7, 20, 20);
-    } catch (e) { /* logo optional */ }
+    const logoData = await _getPupLogoDataUrl();
+    let y = 8;
+    if (logoData) {
+        try { doc.addImage(logoData, 'PNG', W / 2 - 7, y, 14, 14); y += 16; } catch (e) { /* skip logo if it fails to decode */ }
+    }
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+    doc.text('EMPLOYEE LIST', W / 2, y, { align: 'center' }); y += 8;
+
+    doc.setFillColor(122, 1, 0);
+    doc.rect(10, y, W - 20, 7, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('LOPEZ, QUEZON CAMPUS', W / 2, y + 5, { align: 'center' }); y += 11;
 
     doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('Polytechnic University of the Philippines', cx, 13, { align: 'center' });
-    doc.setFontSize(11);
-    doc.text('Lopez, Quezon Campus', cx, 19, { align: 'center' });
-    doc.setFontSize(14);
-    doc.text('FACULTY INFORMATION REPORT', cx, 27, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text(`Academic Year: ${_empActiveAyLabel()}`, cx, 33, { align: 'center' });
-    doc.text(`Date Generated: ${now.toLocaleString()}`, cx, 38, { align: 'center' });
-    doc.setDrawColor(128, 0, 0); doc.setLineWidth(0.6);
-    doc.line(10, 41, pageWidth - 10, 41);
-
-    const columns = _EMP_REPORT_COLUMNS;
-    const body = data.map((e, i) => ({ no: i + 1, ...e }));
+    doc.text('Generated: ' + now.toLocaleString(), W / 2, y, { align: 'center' }); y += 6;
 
     doc.autoTable({
-        columns, body, startY: 45,
-        styles: { fontSize: 7.5, cellPadding: 2.2, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.15, textColor: [0, 0, 0] },
-        headStyles: { fillColor: [128, 0, 0], textColor: [255, 255, 255], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.15 },
-        alternateRowStyles: { fillColor: [248, 248, 248] },
-        margin: { left: 8, right: 8 },
-        columnStyles: {
-            no:             { cellWidth: 7,  halign: 'center' },
-            emp_num:        { cellWidth: 20 },
-            last_name:      { cellWidth: 24 },
-            first_name:     { cellWidth: 22 },
-            middle_name:    { cellWidth: 20 },
-            email:          { cellWidth: 40 },
-            contact:        { cellWidth: 20 },
-            specialization: { cellWidth: 28 },
-            emp_type:       { cellWidth: 18 },
-            status:         { cellWidth: 18 },
-            designation:    { cellWidth: 24 },
-        },
+        columns: _EMP_EXPORT_HEADERS.map((h, i) => ({ header: h, dataKey: _EMP_EXPORT_KEYS[i] })),
+        body: data,
+        startY: y,
+        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
+        // Same clean white-background look as Reports > Faculty List (pale-gray
+        // header, dark text, no maroon fill, no zebra-striped rows).
+        headStyles: { fillColor: [247, 247, 247], textColor: [34, 34, 34], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
+        margin: { left: 10, right: 10 },
     });
 
     const total = doc.internal.getNumberOfPages();
     for (let i = 1; i <= total; i++) {
         doc.setPage(i);
         doc.setFontSize(8); doc.setTextColor(150, 150, 150);
-        doc.text(`Page ${i} of ${total}`, pageWidth - 10, pageHeight - 6, { align: 'right' });
+        doc.text(`Page ${i} of ${total}`, 287, 205, { align: 'right' });
     }
     doc.save(filename + '.pdf');
 }
 
 async function _exportDOCX(data, filename) {
+    const payload = {
+        employees: data,
+        title: 'Employee List',
+        timestamp: 'Generated: ' + new Date().toLocaleString(),
+    };
     const res = await fetch(_EMP_DOCX_ROUTE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_empReportPayload(data)),
+        body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text() || 'Server error generating DOCX');
     const blob = await res.blob();
@@ -1131,153 +1119,5 @@ async function _loadFacultyLoad(empNum) {
     }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SUBJECT/FACULTY ASSIGNMENT EXPORT
-═══════════════════════════════════════════════════════════ */
-const _FACSUB_COUNT_ROUTE  = '/admin/faculty/subject-export/count';
-const _FACSUB_EXPORT_ROUTE = '/admin/faculty/subject-export';
-let _facSubCountTmr = null;
-let _facSubLastFacultyCount = 0;
-
-function openFacSubExportModal() {
-    _facSubLastFacultyCount = 0;
-    document.querySelectorAll('#facSubExportModal .fse-ay-cb, #facSubExportModal .fse-sem-cb, #facSubExportModal .fse-type-cb').forEach(cb => cb.checked = false);
-    document.querySelectorAll('#facSubExportModal .emp-cb-item').forEach(el => el.classList.remove('selected'));
-    document.querySelectorAll('#facSubExportModal .emp-export-format-card').forEach(c => c.classList.remove('selected'));
-    document.getElementById('facSubFilenameInput').value = 'Faculty_Subject_Assignment';
-    document.getElementById('facSubCount').textContent = '0';
-    document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
-    document.getElementById('facSubFmtError').style.display = 'none';
-    document.getElementById('facSubConfirmBtn').disabled = true;
-    document.getElementById('facSubTypeAllBtn').textContent = 'All';
-    document.getElementById('facSubFmtAllBtn').textContent = 'Select All';
-    document.getElementById('facSubExportModal').style.display = 'flex';
-}
-function closeFacSubExportModal() {
-    document.getElementById('facSubExportModal').style.display = 'none';
-}
-
-function _toggleFacSubCb(itemEl) {
-    const cb = itemEl.querySelector('input[type=checkbox]');
-    cb.checked = !cb.checked;
-    _onFacSubCbChange(cb);
-}
-function _onFacSubCbChange(cb) {
-    cb.closest('.emp-cb-item').classList.toggle('selected', cb.checked);
-    _syncFacSubTypeAllBtn();
-    _updateFacSubFooter();
-    clearTimeout(_facSubCountTmr);
-    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
-}
-
-function _toggleFacSubAllTypes() {
-    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
-    const allSel = Array.from(cbs).every(cb => cb.checked);
-    cbs.forEach(cb => { cb.checked = !allSel; cb.closest('.emp-cb-item').classList.toggle('selected', !allSel); });
-    _syncFacSubTypeAllBtn();
-    _updateFacSubFooter();
-    clearTimeout(_facSubCountTmr);
-    _facSubCountTmr = setTimeout(_fetchFacSubCount, 400);
-}
-function _syncFacSubTypeAllBtn() {
-    const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
-    const allSel = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
-    document.getElementById('facSubTypeAllBtn').textContent = allSel ? 'Clear' : 'All';
-}
-
-function _toggleFacSubFmtCard(el) {
-    el.classList.toggle('selected');
-    const all    = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
-    const allSel = Array.from(all).every(c => c.classList.contains('selected'));
-    document.getElementById('facSubFmtAllBtn').textContent = allSel ? 'Deselect All' : 'Select All';
-    _updateFacSubFooter();
-}
-function _toggleFacSubAllFmts() {
-    const cards  = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
-    const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
-    cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
-    document.getElementById('facSubFmtAllBtn').textContent = !allSel ? 'Deselect All' : 'Select All';
-    _updateFacSubFooter();
-}
-
-function _facSubFilters() {
-    return {
-        ay_ids:        Array.from(document.querySelectorAll('#facSubExportModal .fse-ay-cb:checked')).map(c => c.value),
-        sem_types:     Array.from(document.querySelectorAll('#facSubExportModal .fse-sem-cb:checked')).map(c => c.value),
-        faculty_types: Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value),
-    };
-}
-
-async function _fetchFacSubCount() {
-    const f = _facSubFilters();
-    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
-        document.getElementById('facSubCount').textContent = '0';
-        _facSubLastFacultyCount = 0;
-        document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
-        _updateFacSubFooter();
-        return;
-    }
-    try {
-        const res  = await fetch(_FACSUB_COUNT_ROUTE, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(f) });
-        const data = await res.json();
-        if (data.error) { document.getElementById('facSubScopeLabel').textContent = 'Error: ' + data.error; return; }
-        document.getElementById('facSubCount').textContent = data.count || 0;
-        const nFac = data.faculty || 0;
-        _facSubLastFacultyCount = nFac;
-        // All roster faculty are always included (even with no assigned load
-        // this period), so the button is enabled whenever the roster is
-        // non-empty — not gated on there being actual assignment rows.
-        document.getElementById('facSubScopeLabel').textContent = nFac
-            ? `${nFac} faculty member${nFac === 1 ? '' : 's'} (${data.count || 0} assignment${(data.count || 0) === 1 ? '' : 's'})`
-            : 'No faculty match the selected type(s).';
-    } catch (e) {
-        document.getElementById('facSubScopeLabel').textContent = 'Network error — check server connection.';
-    }
-    _updateFacSubFooter();
-}
-
-function _updateFacSubFooter() {
-    const f    = _facSubFilters();
-    const fmts = document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected');
-    const hasFilters = f.ay_ids.length > 0 && f.sem_types.length > 0 && f.faculty_types.length > 0;
-    const ok = hasFilters && fmts.length > 0 && _facSubLastFacultyCount > 0;
-    document.getElementById('facSubConfirmBtn').disabled = !ok;
-}
-
-async function executeFacSubExport() {
-    const f      = _facSubFilters();
-    const fmts   = Array.from(document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected')).map(c => c.dataset.format);
-    const fmtErr = document.getElementById('facSubFmtError');
-    if (!fmts.length) { fmtErr.style.display = 'block'; return; }
-    fmtErr.style.display = 'none';
-    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
-        _showExportToast('error', 'Missing Selection', 'Select at least one Academic Year, Semester, and Faculty Type.');
-        return;
-    }
-    const filename = (document.getElementById('facSubFilenameInput').value || 'Faculty_Subject_Assignment').trim().replace(/[\/\\:*?"<>|]/g, '_');
-    const btn = document.getElementById('facSubConfirmBtn');
-    btn.disabled = true;
-    closeFacSubExportModal();
-    _showExportLoading('Generating Export', 'Building faculty/subject assignment report...');
-
-    try {
-        const resp = await fetch(_FACSUB_EXPORT_ROUTE, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ ...f, formats: fmts, filename }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || resp.statusText);
-        }
-        const blob = await resp.blob();
-        const ext  = fmts.length > 1 ? '.zip' : '.' + fmts[0];
-        const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + ext });
-        a.click(); URL.revokeObjectURL(a.href);
-        _showExportToast('success', 'Export Complete', 'Faculty/subject assignment export downloaded.');
-    } catch (e) {
-        _showExportToast('error', 'Export Failed', e.message);
-    } finally {
-        _hideExportLoading();
-        btn.disabled = false;
-    }
-}
+// Subject/Faculty Assignment Export moved to Reports > Teaching Assignment
+// (see reports.html / reports_admin.html) — no longer lives on this page.

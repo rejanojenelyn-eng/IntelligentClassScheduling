@@ -103,63 +103,87 @@ body, * {
     display: flex;
     flex-direction: column;
     gap: 15px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 8px;
 }
+.schedule-list::-webkit-scrollbar { width: 7px; }
+.schedule-list::-webkit-scrollbar-track { background: transparent; }
+.schedule-list::-webkit-scrollbar-thumb { background: #d8b4b4; border-radius: 10px; }
+.schedule-list::-webkit-scrollbar-thumb:hover { background: #800000; }
 .schedule-card {
     background-color: #ffffff;
-    border: 1px solid #800000;
-    border-left: 6px solid #800000;
-    border-radius: 8px;
+    border: 1px solid #edeff1;
+    border-left: 4px solid #800000;
+    border-radius: 10px;
     display: flex;
     overflow: hidden;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+    transition: box-shadow 0.15s, transform 0.15s;
+}
+.schedule-card:hover {
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    transform: translateY(-1px);
 }
 .sched-time {
-    padding: 20px 15px;
-    background-color: #fcfcfc;
-    border-right: 1px solid #e9ecef;
-    min-width: 105px;
+    padding: 14px 16px;
+    background-color: #faf6f6;
+    border-right: 1px solid #f2e6e6;
+    min-width: 92px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 4px;
 }
 .sched-time i {
-    font-size: 24px;
+    font-size: 16px;
     color: #800000;
-    margin-bottom: 8px;
 }
 .sched-time span {
     font-size: 10px;
-    font-weight: 800;
-    color: #495057;
+    font-weight: 700;
+    color: #6c757d;
     text-align: center;
-    line-height: 1.4;
+    line-height: 1.5;
 }
 .sched-details {
-    padding: 20px;
+    padding: 12px 18px;
     display: flex;
     flex-direction: column;
     justify-content: center;
+    gap: 8px;
+    min-width: 0;
 }
 .sched-title {
-    margin: 0 0 12px 0;
-    font-size: 18px;
-    font-weight: 800;
-    color: #800000;
-    text-transform: uppercase;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #2b2f33;
+    text-transform: none;
+    line-height: 1.35;
 }
 .sched-meta {
     display: flex;
-    gap: 25px;
-    font-size: 12px;
-    font-weight: 700;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.sched-meta div {
+    display: inline-flex;
+    align-items: center;
+    background: #f4f6f9;
     color: #6c757d;
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 3px 10px;
+    border-radius: 20px;
 }
 .sched-meta i {
-    font-size: 14px;
-    margin-right: 6px;
-    color: #adb5bd;
+    font-size: 10px;
+    margin-right: 5px;
+    color: #800000;
 }
 
 /* Overview Cards */
