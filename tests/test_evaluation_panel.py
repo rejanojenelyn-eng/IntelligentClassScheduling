@@ -54,8 +54,10 @@ def test_eligible_for_approval_requires_zero_incomplete_even_if_csp_passes():
     import app
 
     schedule_data = [{
-        "subject_code": "ZZZNOPE3", "instructor": "Nobody, N.",
-        "room": "LQ999", "start_time": time(7, 30), "end_time": time(9, 0),
+        "subject_code": "ZZZNOPE3", "instructor": "Magtibay, Joel", "faculty_id": "20123",
+        # A real faculty + room: a row whose room/faculty doesn't exist is now
+        # (correctly) incomplete, which is not what this test is about.
+        "room": "LQ117", "room_id": 18, "start_time": time(7, 30), "end_time": time(9, 0),
         "days_list": ["Monday"],
     }]
     complete_eval = app._compute_schedule_evaluation(
@@ -78,8 +80,10 @@ def test_completion_rate_passthrough_defaults_to_complete_for_legacy_callers():
     import app
 
     schedule_data = [{
-        "subject_code": "ZZZNOPE4", "instructor": "Nobody, N.",
-        "room": "LQ999", "start_time": time(7, 30), "end_time": time(9, 0),
+        "subject_code": "ZZZNOPE4", "instructor": "Magtibay, Joel", "faculty_id": "20123",
+        # A real faculty + room: a row whose room/faculty doesn't exist is now
+        # (correctly) incomplete, which is not what this test is about.
+        "room": "LQ117", "room_id": 18, "start_time": time(7, 30), "end_time": time(9, 0),
         "days_list": ["Monday"],
     }]
     result = app._compute_schedule_evaluation(

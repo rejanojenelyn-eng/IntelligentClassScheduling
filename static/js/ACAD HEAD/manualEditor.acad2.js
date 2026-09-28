@@ -485,7 +485,8 @@ async function onFacultySelect(empNum) {
     _facInfo = null;
     if (empNum) {
         try {
-            const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}`).then(r => r.json());
+            const _subjectCode = (document.getElementById('sel_subj')?.value || '').trim();
+            const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}&subject_code=${encodeURIComponent(_subjectCode)}`).then(r => r.json());
             if (typeof _subjClickToken !== 'undefined' && _subjClickToken !== _mySubjToken) return;
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
@@ -530,64 +531,24 @@ function _checkFacultySpecWarning() {
     const container = document.getElementById('fac-spec-warning');
     if (!container) return;
     container.innerHTML = '';
-
     if (!SPEC_CONSTRAINT_ENABLED || !_facInfo || !_subjInfo) return;
 
     const spec     = (_facInfo.specializationname || '').trim();
     const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
-    const compat   = _getSpecCompatibility(spec, subjCode);
+    if (_facInfo.spec_match !== false) return;
 
-    if (compat.level === 'unrestricted' || compat.level === 'exact') return;
-
-    const facName  = (_facInfo.fullname || 'This faculty member').trim();
+    const facName    = (_facInfo.fullname || 'This faculty member').trim();
+    const required   = _facInfo.required_specialization || 'a compatible specialization';
     const isImported = !!window.currentEditSession;
+    const facValNow  = (document.getElementById('sel_faculty')?.value || '').trim();
+    if (isImported && window._specWarnBaselineFacId && facValNow === window._specWarnBaselineFacId) return;
 
-    if (compat.level === 'related') {
-        // Soft informational note — green-tinted
-        container.innerHTML =
-            `<div style="background:#eafaf1;border:1.5px solid #27ae60;border-radius:8px;` +
-            `padding:10px 14px;margin-top:8px;font-size:13px;color:#1a6b3c;` +
-            `display:flex;gap:8px;align-items:flex-start;">` +
-            `<span style="font-size:15px;margin-top:1px">&#10003;</span>` +
-            `<span><strong>${facName}</strong> (${spec}) — <strong>Related Field</strong> for ${subjCode}. ` +
-            `This specialization is acceptable for this subject.</span></div>`;
-        return;
-    }
-
-    if (compat.level === 'mismatch') {
-        // Reopening an already-assigned session with the same faculty still on it means the
-        // mismatch was already acknowledged (or pre-dates the constraint) — don't re-flag it
-        // every time the schedule is reopened. Only re-flag if the faculty is actually changed.
-        const facValNow = (document.getElementById('sel_faculty')?.value || '').trim();
-        if (isImported && window._specWarnBaselineFacId && facValNow === window._specWarnBaselineFacId) {
-            return;
-        }
-        if (isImported) {
-            // Imported/existing session — informational only, never blocking
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            container.innerHTML =
-                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
-                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
-                `display:flex;gap:8px;align-items:flex-start;">` +
-                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
-                `<span>This assignment was imported from an approved official schedule. ` +
-                `Specialization analysis: <strong>Potential Mismatch</strong> — ` +
-                `${facName} (${spec}) vs. expected ${primary}. ` +
-                `No action required unless reviewed by the scheduler.</span></div>`;
-        } else {
-            // New manual assignment — informational note only (no longer a hard block)
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            container.innerHTML =
-                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
-                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
-                `display:flex;gap:8px;align-items:flex-start;">` +
-                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
-                `<span>Specialization note: <strong>${facName}</strong> (${spec}) may not be the ideal fit ` +
-                `for <strong>${subjCode}</strong> (expected: ${primary}). This is for reference only.</span></div>`;
-        }
-    }
+    container.innerHTML =
+        `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
+        `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;display:flex;gap:8px;align-items:flex-start;">` +
+        `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
+        `<span><strong>SC9 — Specialization Advisory:</strong> ${facName} (${spec || 'none on file'}) ` +
+        `may not match ${subjCode}. Expected: ${required}. This is a soft preference and does not block saving.</span></div>`;
 }
 
 async function onDayChange() {
@@ -1394,15 +1355,8 @@ async function triggerDSSLogic() {
         let facRec = data.faculty.recommended;
         let facOth = data.faculty.others;
         if (SPEC_CONSTRAINT_ENABLED && facRec.length === 0) {
-            const _subj = (document.getElementById('sel_subj')?.value || '').trim();
-            facRec = facOth.filter(f => {
-                const c = _getSpecCompatibility(f.specialization || '', _subj);
-                return c.level === 'exact' || c.level === 'related';
-            });
-            facOth = facOth.filter(f => {
-                const c = _getSpecCompatibility(f.specialization || '', _subj);
-                return c.level !== 'exact' && c.level !== 'related';
-            });
+            facRec = facOth.filter(f => f.spec_match === true);
+            facOth = facOth.filter(f => f.spec_match !== true);
             if (facRec.length > 0) console.log('[DSS] spec fallback: no history, using specialization for recommendations');
         }
 
@@ -1411,6 +1365,16 @@ async function triggerDSSLogic() {
             { cls: 'recommended', label: 'RECOMMENDATIONS', items: facRec.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) },
             { cls: 'others',      label: 'OTHERS',          items: facOth.map(f => ({ value: f.id, text: f.name, typename: f.typename, max_units: f.max_units, assigned_units: f.assigned_units })) }
         ]);
+
+        // Phase 4: cache subject-level historical Day ranking. Rendering is explicit and
+        // slice-local; triggerDSSLogic does NOT loop over all rows or mutate Day selections.
+        window._dssRecommendedDays = (data.days && Array.isArray(data.days.recommended))
+            ? data.days.recommended : [];
+        window._dssRecommendedTimes = (data.times && Array.isArray(data.times.recommended))
+            ? data.times.recommended : [];
+        if (typeof window._scheduleRecommendationRefresh === 'function') {
+            window._scheduleRecommendationRefresh();
+        }
 
         const isPreferredType = (r) => data.is_lab ? r.type === 'Laboratory' : r.type !== 'Laboratory';
 
@@ -1699,52 +1663,48 @@ async function confirmAndPlace() {
         }
     }
 
-    if (_facInfo && dayVal) {
-        const isWkd    = MAN_WEEKDAYS.has(dayVal);
-        const startIdx = getTimeSlotIndex(startVal) - 1;
-
-        // ── HC7: Night-class cap for Designee faculty ──
-        // night_service is nights/week of night OFFICE duty, subtracted from the
-        // 6-night (Mon–Sat) week to get nights available for evening teaching.
-        if (_facInfo.has_designation && isWkd && startIdx >= NIGHT_START_IDX) {
-            const nightCap = Math.max(0, 6 - (_facInfo.night_service || 0));
-            let pendingNight = 0;
-            for (const c of pendingManualSchedule) {
-                if (String(c.faculty_id) !== String(facVal)) continue;
-                if (c.ay !== ay || c.sem !== sem) continue;
-                if (window.currentEditSession && c.temp_id === window.currentEditSession.temp_id) continue;
-                if (!MAN_WEEKDAYS.has(c.day)) continue;
-                if (getTimeSlotIndex(c.start_time) - 1 >= NIGHT_START_IDX) pendingNight++;
-            }
-            const dbNight  = (_facLoadData && _facLoadData.night_classes) ? _facLoadData.night_classes : 0;
-            const totalNight = dbNight + pendingNight;
+    // ── HC8: Designee PT/Night Teaching Service limit ──
+    // The backend rule decides (max DISTINCT days/week inside 6:00–9:00 PM, per
+    // the designation's PT/Night Teaching Service value; 4:30–6:00 PM never
+    // counts). The editor only sends this faculty's pending rows + the candidate
+    // and displays the result.
+    if (_facInfo && _facInfo.has_designation && dayVal) {
+        const nightRows = pendingManualSchedule
+            .filter(c => String(c.faculty_id) === String(facVal) && c.ay === ay && c.sem === sem)
+            .filter(c => !(window.currentEditSession && c.temp_id === window.currentEditSession.temp_id))
+            .map(c => ({ faculty_id: c.faculty_id, day: c.day, days_list: c.days_list,
+                         start_time: c.start_time, end_time: c.end_time,
+                         subject_code: c.subject_code }));
+        nightRows.push({ faculty_id: facVal, day: dayVal, days_list: [dayVal],
+                         start_time: startVal, end_time: endVal, subject_code: subjSel.value });
+        let nightViol = null;
+        try {
+            const nRes  = await fetch('/api/manual/designee_night_check', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ ay, sem, program: prog, year_level: yl, schedule_data: nightRows })
+            });
+            const nData = await nRes.json();
+            if (nData.has_violations) nightViol = nData.violations[0];
+        } catch (e) {
+            // check unreachable — Save/Approve re-validate the same rule server-side
+        }
+        if (nightViol) {
             if (_sm() === 'local') {
                 // Local mode: soft constraint — warn but allow override
-                if (nightCap === 0 || totalNight >= nightCap) {
-                    const proceed = await showConfirmModal(
-                        `[Local Override] ${facName} has a night class restriction ` +
-                        `(allowed: ${nightCap}, current: ${totalNight}). ` +
-                        `Local Scheduler allows this override. Proceed?`,
-                        'HC Override — Night Class'
-                    );
-                    if (!proceed) return;
-                }
+                const proceed = await showConfirmModal(
+                    `[Local Override] ${nightViol.detail} Local Scheduler allows this override. Proceed?`,
+                    'HC Override — Night Teaching Service'
+                );
+                if (!proceed) return;
             } else {
-                if (nightCap === 0) {
-                    await showValidationModal('Night Class Restriction',
-                        `${facName}'s designation does not allow weekday night classes.`);
-                    return;
-                } else if (totalNight >= nightCap) {
-                    await showValidationModal('Night Class Limit Reached',
-                        `${facName} already has ${totalNight} night class${totalNight !== 1 ? 'es' : ''} ` +
-                        `(maximum: ${nightCap} for their designation).`);
-                    return;
-                }
+                await showValidationModal('Night Teaching Service Limit', nightViol.detail);
+                return;
             }
         }
     }
 
-    // ── HC8: Maximum teaching load ──
+    // ── HC9: Teaching load limit ──
     // Load is measured in actual/nominal HOURS now (faculty_load.py), not credit units.
     // _facLoadData.total_units/scheduled_units already carry hours (from
     // /api/manual/faculty_load); subjectHrs/pendingHrs use each subject's nominal
@@ -1782,21 +1742,9 @@ async function confirmAndPlace() {
         }
     }
 
-    // ── Specialization check — skipped in local mode (intentional overrides allowed) ──
-    if (_sm() !== 'local' && _facInfo) {
-        const facSpec = (_facInfo.specializationname || '').trim();
-        const compat  = _getSpecCompatibility(facSpec, subjSel.value);
-        // 'exact' and 'related' are both acceptable; only true 'mismatch' blocks
-        if (compat.level === 'mismatch') {
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjSel.value.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            await showValidationModal('Specialization Mismatch',
-                `${facName}'s specialization (${facSpec}) does not match what is required ` +
-                `for "${subjSel.value}" (${primary}). ` +
-                `Please select a faculty member with a compatible specialization.`);
-            return;
-        }
-    }
+    // SC9 specialization is intentionally NOT a pre-save blocking gate.
+    // The authoritative backend validator returns legacy HC_SPEC as a warning only,
+    // while final SC9 influences recommendation/fitness preference.
 
     const currentSubjCode = (subjSel.value || '').toUpperCase();
 
@@ -2086,7 +2034,7 @@ window._dropSession = async function(sessDataEncoded, event) {
                 const _sibUrl = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(sd.subjectcode)}`
                     + `&ay_id=${encodeURIComponent(_sAy)}&semester=${encodeURIComponent(_sSem)}`
                     + `&program=${encodeURIComponent(_sProg)}&year_level=${encodeURIComponent(_sYl)}`
-                    + `&section_id=${encodeURIComponent(_sSect)}`;
+                    + `&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sSect)}`;
                 const _sibResp = await fetch(_sibUrl).then(r => r.json());
                 if (_sibResp.success) {
                     const _seen = new Set();

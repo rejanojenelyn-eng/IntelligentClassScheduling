@@ -1,0 +1,143 @@
+{% extends "admin/base_admin.html" %}
+
+{% block head %}
+<style>
+    .dashboard-wrapper { padding: 35px 40px; background-color: #f8f9fa; min-height: 100vh; }
+
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .page-header h1 {
+        font-size: 28px; font-weight: 800; color: #800000; margin: 0;
+        text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .table-container { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }
+    .table-corrections { width: 100%; border-collapse: collapse; }
+    .table-corrections thead th {
+        background: #800000; color: #fff; padding: 14px 16px; font-size: 11px;
+        text-transform: uppercase; letter-spacing: 0.5px; text-align: left;
+    }
+    .table-corrections tbody td { padding: 14px 16px; font-size: 13px; color: #333; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    .table-corrections tbody tr.batch-start td { border-top: 2px solid #800000; }
+    .table-corrections tbody tr.batch-start:first-child td { border-top: none; }
+    .table-corrections tbody tr:last-child td { border-bottom: none; }
+
+    .status-pill { padding: 4px 12px; border-radius: 50px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .status-Pending  { background: #fff3cd; color: #856404; }
+    .status-Approved { background: #d4edda; color: #155724; }
+    .status-Rejected { background: #f8d7da; color: #721c24; }
+
+    .action-group { display: flex; gap: 8px; }
+    .action-btn {
+        width: 34px; height: 34px; border-radius: 6px; border: 1px solid #e0e0e0; background: #fff;
+        cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.15s;
+    }
+    .action-btn.approve { color: #155724; } .action-btn.approve:hover { background: #d4edda; border-color: #155724; }
+    .action-btn.reject  { color: #721c24; } .action-btn.reject:hover  { background: #f8d7da; border-color: #721c24; }
+
+    .acr-modal {
+        display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5); align-items: center; justify-content: center;
+    }
+    .acr-modal-content { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.2); width: 100%; max-width: 420px; }
+    .acr-modal-header { padding: 18px 25px; display: flex; justify-content: space-between; align-items: center; color: #fff; }
+    .acr-modal-header h2 { margin: 0; font-size: 1.05rem; font-weight: 800; text-transform: uppercase; }
+    .acr-modal-header i.close { font-size: 22px; cursor: pointer; }
+    .acr-modal-body { padding: 22px 25px; }
+    .acr-modal-body textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; font-family: inherit; }
+    .acr-modal-footer { padding: 14px 25px 22px; display: flex; justify-content: flex-end; gap: 10px; }
+    .acr-btn { padding: 10px 20px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; text-transform: uppercase; }
+    .acr-btn-cancel { background: #e9ecef; color: #495057; }
+    .acr-btn-confirm { background: #800000; color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-wrapper">
+    <div class="page-header">
+        <h1>Account Correction Requests</h1>
+    </div>
+
+    <div class="table-container">
+        <table class="table-corrections">
+            <thead>
+                <tr>
+                    <th>Employee ID</th>
+                    <th>Faculty Name</th>
+                    <th>Field</th>
+                    <th>Current Value</th>
+                    <th>Proposed Value</th>
+                    <th>Remarks</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set ns = namespace(last_batch=none) %}
+                {% for r in requests %}
+                {% set is_new_group = (r.batch_id != ns.last_batch) %}
+                {% set ns.last_batch = r.batch_id %}
+                <tr class="{{ 'batch-start' if is_new_group and r.batch_id }}">
+                    <td>{{ r.employeenumber or r.username }}</td>
+                    <td>{{ [r.firstname, r.middlename, r.lastname, r.suffix] | select | join(' ') if r.firstname else r.username }}</td>
+                    <td>{{ r.field_name }}</td>
+                    <td>{{ r.current_value or '—' }}</td>
+                    <td><strong>{{ r.proposed_value }}</strong></td>
+                    <td>{{ r.remarks or '—' }}</td>
+                    <td><span class="status-pill status-{{ r.status }}">{{ r.status }}</span></td>
+                    <td>{{ r.created_at.strftime('%m-%d-%y %I:%M %p') if r.created_at else '—' }}</td>
+                    <td>
+                        {% if r.status == 'Pending' %}
+                        <div class="action-group">
+                            <button class="action-btn approve" title="Approve" onclick="prepareDecision({{ r.requestid }}, 'Approved')"><i class="fas fa-check"></i></button>
+                            <button class="action-btn reject" title="Reject" onclick="prepareDecision({{ r.requestid }}, 'Rejected')"><i class="fas fa-times"></i></button>
+                        </div>
+                        {% else %}
+                            <small style="color:#888;">
+                                by {{ r.decided_by or '—' }}<br>
+                                {{ r.decided_at.strftime('%m-%d-%y %I:%M %p') if r.decided_at else '' }}
+                                {% if r.admin_remarks %}<br><em>{{ r.admin_remarks }}</em>{% endif %}
+                            </small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="9" style="padding:30px; text-align:center; color:#6c757d;">No correction requests yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="acrDecisionModal" class="acr-modal">
+    <div class="acr-modal-content">
+        <div class="acr-modal-header" id="acrModalHeader">
+            <h2 id="acrModalTitle">Decision</h2>
+            <i class="fas fa-times close" onclick="closeAcrModal()"></i>
+        </div>
+        <form id="acrDecisionForm" method="POST">
+            <input type="hidden" name="decision" id="acrDecisionInput">
+            <div class="acr-modal-body">
+                <label style="display:block; font-size:11px; font-weight:700; color:#495057; margin-bottom:8px; text-transform:uppercase;">Remarks (optional)</label>
+                <textarea name="admin_remarks" rows="3" placeholder="Notes for the record"></textarea>
+            </div>
+            <div class="acr-modal-footer">
+                <button type="button" class="acr-btn acr-btn-cancel" onclick="closeAcrModal()">Cancel</button>
+                <button type="submit" class="acr-btn acr-btn-confirm" id="acrConfirmBtn">Confirm</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function prepareDecision(requestId, decision) {
+        document.getElementById('acrDecisionForm').action = '/admin/account-corrections/' + requestId + '/decide';
+        document.getElementById('acrDecisionInput').value = decision;
+        document.getElementById('acrModalTitle').textContent = decision === 'Approved' ? 'Approve Request' : 'Reject Request';
+        document.getElementById('acrModalHeader').style.background = decision === 'Approved' ? '#2e7d32' : '#800000';
+        document.getElementById('acrConfirmBtn').textContent = decision === 'Approved' ? 'Confirm Approve' : 'Confirm Reject';
+        document.getElementById('acrDecisionModal').style.display = 'flex';
+    }
+    function closeAcrModal() { document.getElementById('acrDecisionModal').style.display = 'none'; }
+</script>
+{% endblock %}

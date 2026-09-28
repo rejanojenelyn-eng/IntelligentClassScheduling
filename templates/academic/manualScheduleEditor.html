@@ -1255,11 +1255,14 @@
             <div class="right-save-section">
                 {% if scheduler_mode == 'local' %}
                     {# Local Scheduler buttons #}
-                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement(false)">
+                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement()">
                         SAVE AS LOCAL ARRANGEMENT
                     </button>
                     <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="saveLocalArrangement(true)">
                         SAVE AS DRAFT
+                    </button>
+                    <button type="button" class="btn-save-outlined btn-approve" id="btnPublishLocalArr" onclick="publishLocalArrangementFromEditor()">
+                        PUBLISH LOCAL ARRANGEMENT
                     </button>
                     {# MAKE UP CLASS: Academic Head only #}
                     {% if is_acad_head %}
@@ -1382,7 +1385,7 @@
      data-from-generator="{{ init_from_generator }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260710d"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260927a"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -4961,6 +4964,155 @@ function _buildRoomOpts(selRoomId='') {
         ).join('');
 }
 
+function _renderDayRecommendations(rowId) {
+    const row = document.getElementById(`ts-row-${rowId}`);
+    const box = document.getElementById(`ts-day-rec-${rowId}`);
+    const sel = row?.querySelector('.ts-day-sel');
+    if (!row || !box || !sel) return;
+
+    // The select is already the source of truth for restricted-day rules AND, when
+    // room+time are known, current availability. Never recommend a day absent from it.
+    const feasibleDays = new Set(Array.from(sel.options).map(o => o.value).filter(Boolean));
+    const recs = (window._dssRecommendedDays || [])
+        .filter(r => r && feasibleDays.has(r.day))
+        .slice(0, 3);
+
+    if (!recs.length) {
+        box.innerHTML = '';
+        box.hidden = true;
+        return;
+    }
+
+    box.hidden = false;
+    const nextHtml = `
+        <div class="ts-rec-section-title ts-day-rec-title">RECOMMENDATIONS</div>
+        ${recs.map((r, i) => `
+            <button type="button" class="ts-day-rec-item" data-day="${r.day}"
+                    onclick="_chooseRecommendedDay(${rowId}, '${r.day}')">
+                <span class="ts-day-rec-rank">#${i + 1}</span>
+                <span>${r.day}</span>
+            </button>`).join('')}`;
+    if (box.innerHTML !== nextHtml) box.innerHTML = nextHtml;
+}
+
+function _chooseRecommendedDay(rowId, day) {
+    const sel = document.getElementById(`ts-day-${rowId}`);
+    if (!sel || !Array.from(sel.options).some(o => o.value === day)) return;
+    sel.value = day;
+    onTsDayChange(rowId);
+}
+
+window._refreshDayRecommendations = function() {
+    // Deliberately render-only: no fetch, no selection change, no pendingSchedule mutation.
+    document.querySelectorAll('.ts-row').forEach(row => {
+        const id = Number(String(row.id).replace('ts-row-', ''));
+        if (Number.isFinite(id)) _renderDayRecommendations(id);
+    });
+};
+
+function _timeToMinutes(value) {
+    const s = String(value || '').trim().toUpperCase();
+    const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+    if (!m) return null;
+    let h = Number(m[1]) % 12;
+    if (m[3] === 'PM') h += 12;
+    return h * 60 + Number(m[2]);
+}
+
+function _sliceRequiredMinutes(rowId) {
+    // Prefer the slice's already-selected duration. For a new blank slice, use the
+    // subject's remaining required hours when available; otherwise do not duration-filter.
+    const row = document.getElementById(`ts-row-${rowId}`);
+    const start = row?.querySelector('.ts-start-hidden')?.value || '';
+    const end = row?.querySelector('.ts-end-hidden')?.value || '';
+    const sm = _timeToMinutes(start), em = _timeToMinutes(end);
+    if (sm !== null && em !== null && em > sm) return em - sm;
+
+    const code = (typeof _currentSubjectCode !== 'undefined' ? _currentSubjectCode : '') || '';
+    const meta = (typeof _subjectMeta !== 'undefined' && _subjectMeta[code]) || {};
+    const totalHours = Number(meta.total_hours || 0);
+    if (!totalHours) return null;
+    const ay = document.getElementById('sel_ay')?.value || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    const scheduled = (typeof _getScheduledHoursForCode === 'function')
+        ? Number(_getScheduledHoursForCode(code, ay, sem) || 0) : 0;
+    const remaining = Math.max(0, totalHours - scheduled);
+    return remaining > 0 ? Math.round(remaining * 60) : null;
+}
+
+function _renderTimeRecommendations(rowId) {
+    const row = document.getElementById(`ts-row-${rowId}`);
+    const box = document.getElementById(`ts-time-rec-${rowId}`);
+    const manualLabel = document.getElementById(`ts-time-manual-label-${rowId}`);
+    if (!row || !box) return;
+
+    const requiredMinutes = _sliceRequiredMinutes(rowId);
+    const recs = (window._dssRecommendedTimes || []).filter(r => {
+        const sm = _timeToMinutes(r.start), em = _timeToMinutes(r.end);
+        if (sm === null || em === null || em <= sm) return false;
+        if (requiredMinutes !== null && (em - sm) !== requiredMinutes) return false;
+        // Both boundaries must exist in the Manual Editor's actual time-slice scale.
+        return _TS_TIMES.includes(r.start) && _TS_TIMES.includes(r.end);
+    }).slice(0, 3);
+
+    if (!recs.length) {
+        box.innerHTML = '';
+        box.hidden = true;
+        if (manualLabel) manualLabel.hidden = true;
+        return;
+    }
+
+    box.hidden = false;
+    if (manualLabel) manualLabel.hidden = false;
+    const nextHtml = `
+        <div class="ts-rec-section-title ts-time-rec-title">RECOMMENDATIONS</div>
+        ${recs.map((r, i) => `
+            <button type="button" class="ts-time-rec-item"
+                    onclick="_chooseRecommendedTime(${rowId}, '${r.start}', '${r.end}')">
+                <span class="ts-time-rec-rank">#${i + 1}</span>
+                <span class="ts-time-rec-range">${r.start} – ${r.end}</span>
+            </button>`).join('')}`;
+    if (box.innerHTML !== nextHtml) box.innerHTML = nextHtml;
+}
+
+function _chooseRecommendedTime(rowId, start, end) {
+    if (!_TS_TIMES.includes(start) || !_TS_TIMES.includes(end)) return;
+    const sm = _timeToMinutes(start), em = _timeToMinutes(end);
+    if (sm === null || em === null || em <= sm) return;
+
+    // Use the existing time-selection pipeline so room availability, dirty state,
+    // pendingManualSchedule and validation remain synchronized.
+    tsSel('tsst', rowId, start);
+    tsSel('tset', rowId, end);
+}
+
+window._refreshTimeRecommendations = function() {
+    // Render-only. No fetches, no auto-selection, no schedule-state mutation.
+    document.querySelectorAll('.ts-row').forEach(row => {
+        const id = Number(String(row.id).replace('ts-row-', ''));
+        if (Number.isFinite(id)) _renderTimeRecommendations(id);
+    });
+};
+
+let _recommendationRefreshFrame = 0;
+window._scheduleRecommendationRefresh = function() {
+    if (_recommendationRefreshFrame) return;
+    const run = () => {
+        _recommendationRefreshFrame = 0;
+        document.querySelectorAll('.ts-row').forEach(row => {
+            const id = Number(String(row.id).replace('ts-row-', ''));
+            if (!Number.isFinite(id)) return;
+            _renderDayRecommendations(id);
+            _renderTimeRecommendations(id);
+        });
+    };
+    if (typeof requestAnimationFrame === 'function') {
+        _recommendationRefreshFrame = requestAnimationFrame(run);
+    } else {
+        _recommendationRefreshFrame = setTimeout(run, 0);
+    }
+};
+
 function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJson='', skipFullCheck=false) {
     if (!dayVal && !startVal && !endVal && !existingJson && !skipFullCheck) {
         const _chkCode = _currentSubjectCode;
@@ -5024,6 +5176,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                         onchange="onTsDayChange(${id})">${_buildDayOpts(dayVal)}</select>
                     <span class="ts-caret">▼</span>
                 </div>
+                <div class="ts-rec-section ts-day-rec-box" id="ts-day-rec-${id}" hidden></div>
             </div>
         </div>
 
@@ -5031,6 +5184,8 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             <div class="ts-field-icon"><i class="fas fa-clock"></i></div>
             <div class="ts-field-body">
                 <div class="ts-label">TIME</div>
+                <div class="ts-rec-section ts-time-rec-box" id="ts-time-rec-${id}" hidden></div>
+                <div class="ts-time-manual-label" id="ts-time-manual-label-${id}" hidden>OTHER / MANUAL TIME</div>
                 <div class="ts-time-pair">
                     <div class="ts-time-field">
                         <div class="ts-ss-wrap">
@@ -5082,6 +5237,10 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     if (roomId && startVal && endVal && typeof _applyDayAvailabilityFilter === 'function') {
         _applyDayAvailabilityFilter(id);
     }
+
+    // Day recommendations are a render-only view of the current feasible Day options.
+    _renderDayRecommendations(id);
+    _renderTimeRecommendations(id);
 
     // New (unsaved) slices start dirty and auto-selected
     if (!existingJson) {
@@ -5391,6 +5550,7 @@ function onTsStartChange(id) {
     _updateWorkflowBar();
     _filterEndTimeItems(id, startVal);
     _applyRoomAvailabilityFilter(id);
+    _renderTimeRecommendations(id);
 }
 
 function _filterEndTimeItems(id, startVal) {
@@ -5671,6 +5831,8 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         const newClass = {
             temp_id:      localTempId,
             versionid:    sess.versionid || null,
+            // PHASE 5 — exact Official occurrence replaced by this Local slice.
+            official_sessionid: sess.official_sessionid || sess.sessionid || null,
             ay, sem,
             subject_code: sess.subjectcode,
             subject_name: sess.subjectname || sess.subjectcode,
@@ -5693,13 +5855,16 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
             // any pill rendered from it) has no section_id/sectionname to match against when
             // a pill is later clicked, and no way to tell it apart from a different section's
             // merged badge on the same pill.
-            section_id:   document.getElementById('sel_section')?.value || '',
-            sectionname:  (document.getElementById('bc-sect-text')?.textContent || '').trim(),
+            section_id:   String(sess.sectionid || document.getElementById('sel_section')?.value || ''),
+            sectionname:  sess.sectionname || (document.getElementById('bc-sect-text')?.textContent || '').trim(),
             units:             typeof _subjInfo !== 'undefined' && _subjInfo ? _subjInfo.creditunits : 0,
             total_subject_hrs: typeof _subjInfo !== 'undefined' && _subjInfo ? parseFloat(_subjInfo.total_hours || 0) : 0,
             isLocal:      true,
             fromExisting: true,
-            status:       sess.status || 'Draft'
+            status:       sess.status || 'Draft',
+            // As loaded, so a Local save can send only the occurrences actually changed.
+            // versionid is set only on Official rows (Local rows come back with NULL).
+            _loaded:      { day: sess.daydesc, start_time: st, end_time: et, room_id: String(roomId) }
         };
         pendingManualSchedule.push(newClass);
 
@@ -6307,7 +6472,7 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             } else if (currentSubj) {
                 try {
                     const _postSaveSectId = document.getElementById('sel_section')?.value || '';
-                    const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(_postSaveSectId)}`);
+                    const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&section_id=${encodeURIComponent(_postSaveSectId)}`);
                     const exData = await exResp.json();
                     if (exData.success && exData.sessions && exData.sessions.length) {
                         await _loadExistingSessionsIntoSlices(exData.sessions);
@@ -6886,62 +7051,108 @@ document.addEventListener('DOMContentLoaded', () => {
         selectYearLevel(initYl, labels[initYl] || initYl + 'th Year');
     }
 
-    // ── Load generator-transferred schedule data from sessionStorage ────────────
-    // Runs BEFORE section selection so pendingManualSchedule is populated before
-    // renderProgramTimetable fires (which overlays the generator pills).
+    // ── Generator → Manual Editor fallback hydration ─────────────────────────
+    // Normal DB Draft rows remain authoritative. This transfer is used only for:
+    //   • fully unresolved/TBA subjects that /api/schedule/save-draft could not persist, or
+    //   • the full generated snapshot when the Draft save itself failed.
+    // It is consumed once and normalized before touching pendingManualSchedule.
+    function _normalizeGeneratorTransferEntry(entry, genCtx) {
+        const e = entry || {};
+        const ctx = genCtx || {};
+        const subjectCode = String(e.subject_code || e.subjectcode || e.SubjectCode || '').trim();
+        const rawDays = e.days_list ?? e.days ?? e.daydesc ?? e.day ?? e['Day/s'] ?? [];
+        const days = (Array.isArray(rawDays) ? rawDays : String(rawDays).split(/\s*[/,]\s*/))
+            .map(v => String(v || '').trim()).filter(Boolean);
+
+        let start = String(e.start_time || e.starttime || e.start_fmt || '').trim();
+        let end   = String(e.end_time || e.endtime || e.end_fmt || '').trim();
+        const combined = e.time || e.Time || '';
+        if ((!start || !end) && combined) {
+            const parts = String(combined).replace(/[–—]/g, '-').split(/\s+-\s+|\s*-\s*/);
+            if (parts.length >= 2) {
+                if (!start) start = parts[0].trim();
+                if (!end)   end   = parts.slice(1).join('-').trim();
+            }
+        }
+
+        return {
+            subject_code: subjectCode,
+            subject_name: e.subject_name || e.subjectname || e.SubjectName || subjectCode,
+            faculty_id:   String(e.faculty_id || e.employeenumber || e.employee_number || ''),
+            faculty_name: e.faculty_name || e.instructor || e.Instructor || '',
+            room_id:      String(e.room_id || e.roomid || e.RoomID || ''),
+            room:         e.room || e.roomname || e.RoomName || 'TBA',
+            days,
+            start_time:   start,
+            end_time:     end,
+            starttimeid:  e.starttimeid || e.start_time_id || 0,
+            endtimeid:    e.endtimeid || e.end_time_id || 0,
+            ay:           ctx.acadYear || ctx.ay || ctx.academic_year || '',
+            sem:          ctx.term || ctx.sem || ctx.semester || '',
+            section_id:   String(ctx.section || ctx.sectionId || ctx.section_id || e.section_id || e.sectionid || ''),
+        };
+    }
+
+    function _generatorPendingKey(row) {
+        return [
+            String(row.section_id || ''),
+            String(row.subject_code || '').toUpperCase(),
+            String(row.day || ''),
+            String(row.start_time || ''),
+            String(row.end_time || ''),
+            String(row.room_id || row.room || '')
+        ].join('|');
+    }
+
     const _fromGenerator = initData.dataset.fromGenerator === '1';
     if (_fromGenerator) {
         try {
             const _transferStr = sessionStorage.getItem('_sched_gen_transfer');
             if (_transferStr) {
+                // Consume once. Reloading Manual Editor must not append the same fallback again.
                 sessionStorage.removeItem('_sched_gen_transfer');
-                const _transfer  = JSON.parse(_transferStr);
-                const _genData   = _transfer.schedule_data || [];
-                const _genCtx    = _transfer.context || {};
-                let   _genIdx    = 0;
-                for (const _entry of _genData) {
-                    // A generator entry may span multiple days — create one pending row per day.
-                    const _days = _entry.days_list || (_entry.day ? [_entry.day] : []);
+                const transfer = JSON.parse(_transferStr);
+                const genData  = Array.isArray(transfer.schedule_data) ? transfer.schedule_data : [];
+                const genCtx   = transfer.context || {};
+                const existingKeys = new Set(
+                    (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])
+                        .map(_generatorPendingKey)
+                );
+                let genIdx = 0;
 
-                    // Parse start/end time strings from the combined 'time' field when not present directly.
-                    // Scheduler serializes datetime.time objects as a combined 'time' string, e.g. "07:30 AM – 09:30 AM".
-                    let _startTimeStr = _entry.start_time || '';
-                    let _endTimeStr   = _entry.end_time   || '';
-                    if ((!_startTimeStr || !_endTimeStr) && _entry.time) {
-                        const _tp = String(_entry.time).replace(/–/g, '-').split('-');
-                        if (_tp.length >= 2) {
-                            _startTimeStr = _tp[0].trim();
-                            _endTimeStr   = _tp[1].trim();
-                        }
-                    }
+                for (const rawEntry of genData) {
+                    const n = _normalizeGeneratorTransferEntry(rawEntry, genCtx);
+                    // A fully unresolved subject may have no Day at all. Preserve one TBA
+                    // placeholder instead of silently dropping the subject.
+                    const days = n.days.length ? n.days : [''];
 
-                    for (const _day of _days) {
-                        if (typeof pendingManualSchedule !== 'undefined') {
-                            pendingManualSchedule.push({
-                                temp_id:       `_gen_${_genIdx++}`,
-                                subject_code:  _entry.subject_code  || _entry.subjectcode  || '',
-                                subject_name:  _entry.subject_name  || _entry.subjectname  || _entry.subject_code || '',
-                                faculty_id:    String(_entry.faculty_id || _entry.employeenumber || ''),
-                                faculty_name:  _entry.faculty_name  || _entry.instructor   || '',
-                                room_id:       String(_entry.room_id || _entry.roomid || ''),
-                                room:          _entry.room          || _entry.roomname     || 'TBA',
-                                day:           _day,
-                                days_list:     [_day],
-                                start_time:    _startTimeStr,
-                                end_time:      _endTimeStr,
-                                starttimeid:   _entry.starttimeid   || 0,
-                                endtimeid:     _entry.endtimeid     || 0,
-                                ay:            _genCtx.acadYear     || '',
-                                sem:           _genCtx.term         || '',
-                                // Must be tagged so this entry only ever renders/pre-fills under the
-                                // section it was generated for — without it, switching sections while
-                                // this sessionStorage fallback transfer is still pending would show
-                                // this section's generated schedule under every other section too.
-                                section_id:    _genCtx.section || _genCtx.sectionId || _genCtx.section_id || '',
-                                fromGenerator: true,
-                                fromExisting:  false,
-                                isPreview:     false,
-                            });
+                    for (const day of days) {
+                        const pending = {
+                            temp_id:       `_gen_${genIdx++}`,
+                            subject_code:  n.subject_code,
+                            subject_name:  n.subject_name,
+                            faculty_id:    n.faculty_id,
+                            faculty_name:  n.faculty_name,
+                            room_id:       n.room_id,
+                            room:          n.room || 'TBA',
+                            day,
+                            days_list:     day ? [day] : [],
+                            start_time:    n.start_time,
+                            end_time:      n.end_time,
+                            starttimeid:   n.starttimeid,
+                            endtimeid:     n.endtimeid,
+                            ay:            n.ay,
+                            sem:           n.sem,
+                            section_id:    n.section_id,
+                            fromGenerator: true,
+                            fromExisting:  false,
+                            isPreview:     false,
+                            isIncompleteFallback: transfer.mode === 'unsaved_only',
+                        };
+                        const key = _generatorPendingKey(pending);
+                        if (!existingKeys.has(key) && typeof pendingManualSchedule !== 'undefined') {
+                            pendingManualSchedule.push(pending);
+                            existingKeys.add(key);
                         }
                     }
                 }
@@ -7438,7 +7649,10 @@ function _applyDayAvailabilityFilter(rowId) {
     daySel.innerHTML = daySel.dataset.baseOptionsHtml;
     daySel.value = curVal;
 
-    if (!roomId || roomId === 'TBA' || !start || !end) return;
+    if (!roomId || roomId === 'TBA' || !start || !end) {
+        _renderDayRecommendations(rowId);
+        return;
+    }
 
     const startIdx = _TS_TIMES.indexOf(start);
     const endIdx   = _TS_TIMES.indexOf(end);
@@ -7476,6 +7690,7 @@ function _applyDayAvailabilityFilter(rowId) {
     // selected day should never end up removed by the loop — but if it somehow did, fall
     // back to the placeholder rather than leave the <select> pointing at a vanished option.
     daySel.value = Array.from(daySel.options).some(o => o.value === curVal) ? curVal : '';
+    _renderDayRecommendations(rowId);
 }
 
 // Hides room options that are already booked for this slice's Day + Start + End.
@@ -7873,14 +8088,67 @@ function switchEditorTab(tab, el) {
  *   2. New pending sessions the user placed this session (ay/sem match)
  *   3. Filled UI time-slice rows not yet confirmed
  */
-async function saveLocalArrangement(skipModal = false) {
+
+// Latest server-issued updated_at per Local Arrangement, echoed back as
+// expected_updated_at so the backend's optimistic-concurrency check can pass.
+// Refreshed from every list/save/publish/restore response — never reuse a stale value.
+const _localArrUpdatedAt = {};
+function _rememberLocalUpdatedAt(arrId, updatedAt) {
+    if (arrId != null && updatedAt) _localArrUpdatedAt[String(arrId)] = updatedAt;
+}
+
+// Classify a Local Scheduler API call. Only a rejected fetch() means the server was
+// unreachable; HTTP errors and unreadable bodies are reported as what they are.
+async function _localApiRequest(url, options = {}) {
+    let res;
+    try {
+        res = await fetch(url, options);
+    } catch (err) {
+        console.error(`Local Scheduler request to ${url} failed:`, err);
+        return { kind: 'network', error: 'Could not reach the server. Please try again.' };
+    }
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (res.status >= 500 || !data || typeof data !== 'object') {
+        console.error(`Local Scheduler server error from ${url}: HTTP ${res.status}`, data);
+        return { kind: 'server', status: res.status, data,
+                 error: 'The server could not complete the Local Scheduler request. Please try again or contact the administrator.' };
+    }
+    if (!res.ok || !data.success) {
+        return { kind: 'rejected', status: res.status, data,
+                 error: data.error || 'The Local Scheduler request was rejected.' };
+    }
+    return { kind: 'ok', status: res.status, data };
+}
+
+function _showLocalApiFailure(result, rejectedTitle) {
+    if (result.kind === 'network') return showValidationModal('Network Error', result.error);
+    if (result.kind === 'server')  return showValidationModal('Server Error', result.error);
+    return showValidationModal(rejectedTitle, result.error);
+}
+
+async function saveLocalArrangement(skipModal = false, options = {}) {
+    // PHASE 2 — Local Scheduler is an override of Published Official.
+    const _phase2SectionId = document.getElementById('sel_section')?.value || '';
+    const _phase2Subject   = document.getElementById('sel_subj')?.value
+        || (typeof _currentSubjectCode !== 'undefined' ? _currentSubjectCode : '') || '';
+    if (!_phase2SectionId) {
+        await showValidationModal('Section Required', 'Select a section before creating a Local Arrangement.');
+        return;
+    }
+    if (!_phase2Subject) {
+        await showValidationModal('Subject Required', 'Select a subject from the Published Official Schedule first.');
+        return;
+    }
+
     const ay   = typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || '');
     const sem  = typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || '');
     const prog = document.getElementById('sel_prog')?.value || '';
     const yl   = document.getElementById('sel_year')?.value || '';
+    const sectionId = document.getElementById('sel_section')?.value || '';
 
-    if (!ay || !sem || !prog || !yl) {
-        await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, and Year Level before saving.');
+    if (!ay || !sem || !prog || !yl || !sectionId) {
+        await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, Year Level, and Section before saving.');
         return;
     }
 
@@ -7890,8 +8158,8 @@ async function saveLocalArrangement(skipModal = false) {
     const all = typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [];
     let contextSessions = all.filter(c =>
         !c.isPreview && (
-            c.fromExisting ||                          // Official Published base
-            (c.ay === ay && c.sem === sem)             // new additions this session
+            (c.fromExisting && (!c.section_id || String(c.section_id) === String(sectionId))) || // Official Published base for this section
+            (c.ay === ay && c.sem === sem && (!c.section_id || String(c.section_id) === String(sectionId))) // new additions for this section
         )
     );
 
@@ -7911,11 +8179,32 @@ async function saveLocalArrangement(skipModal = false) {
             end_time:   row.querySelector('.ts-end-hidden').value,
             room_id:    row.querySelector('.ts-room-hidden').value,
             ay, sem,
+            section_id: sectionId,
         }));
     }
 
     if (!contextSessions.length) {
         await showValidationModal('No Sessions', 'No sessions found to save. Load a subject from the Curriculum Guide first.');
+        return;
+    }
+
+    // A Local Arrangement overrides only the Official occurrences the user changed; every
+    // other occurrence stays Official in the effective schedule, so it is not sent.
+    // Rows loaded from a Local Arrangement (no Official versionid) are already Local
+    // overrides and are always kept.
+    const _isOverride = c => {
+        if (!c.fromExisting || !c._loaded || !c.versionid) return true;
+        const o = c._loaded;
+        return String(c.day || '') !== String(o.day || '')
+            || String(c.start_time || '') !== String(o.start_time || '')
+            || String(c.end_time || '') !== String(o.end_time || '')
+            || String(c.room_id ?? '') !== String(o.room_id ?? '');
+    };
+    contextSessions = contextSessions.filter(_isOverride);
+    if (!contextSessions.length) {
+        if (options.silent) return { success: false, noChanges: true };
+        await showValidationModal('No Changes',
+            'Change the day, time, or room of an Official occurrence before saving a Local Arrangement.');
         return;
     }
 
@@ -7931,13 +8220,15 @@ async function saveLocalArrangement(skipModal = false) {
         day:        c.day     || c.daydesc,
         start_time: c.start_time || c.start_fmt,
         end_time:   c.end_time   || c.end_fmt,
-    })).filter(s => s.room_id && s.day && s.start_time && s.end_time);
+        subject_code: c.subject_code || c.subjectcode || document.getElementById('sel_subj')?.value || _currentSubjectCode || '',
+        faculty_id: c.faculty_id || c.faculty_employeenumber || c.employeenumber || document.getElementById('sel_faculty')?.value || '',
+        official_sessionid: c.official_sessionid || c.officialSessionId || null,
+    })).filter(s => s.day && s.start_time && s.end_time);
 
     const currentSubjCode = document.getElementById('sel_subj')?.value || _currentSubjectCode || '';
 
     if (conflictSessions.length) {
-        try {
-            const cRes  = await fetch('/api/local/check_room_conflicts', {
+        const cResult = await _localApiRequest('/api/local/check_room_conflicts', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
@@ -7951,46 +8242,91 @@ async function saveLocalArrangement(skipModal = false) {
                     // this and let it save silently.
                     program:          prog,
                     year_level:       yl,
+                    section_id:        sectionId,
                 }),
             });
-            const cData = await cRes.json();
-            if (cData.success && cData.conflicts && cData.conflicts.length > 0) {
-                await _showLocalOverrideModal(cData.conflicts);
-                return;   // hard stop — no override path, save does not proceed
-            }
-        } catch (_) { /* network error in conflict check — proceed without blocking */ }
+
+        // Fail closed: never save an unvalidated Local arrangement.
+        if (cResult.kind !== 'ok') {
+            await _showLocalApiFailure(cResult, 'Validation Unavailable');
+            return;
+        }
+        const cData = cResult.data;
+        if (Array.isArray(cData.conflicts) && cData.conflicts.length > 0) {
+            _presentLocalEffectiveConflicts(cData.conflicts);
+            return;   // hard stop — Local conflicts have no override path
+        }
     }
 
-    // Reason modal — skip when called from "SAVE AS DRAFT"
-    const reason = skipModal ? '' : await _showLocalReasonModal();
-    if (reason === null) return;   // user cancelled the modal
+    // Publishing may supply its already-confirmed reason; ordinary Draft save
+    // keeps the existing reason-modal behaviour.
+    const hasProvidedReason = Object.prototype.hasOwnProperty.call(options, 'reason');
+    const reason = hasProvidedReason
+        ? String(options.reason || '').trim()
+        : (skipModal ? '' : await _showLocalReasonModal());
+    if (reason === null) return null;   // user cancelled the modal
 
-    const btn = document.getElementById('btnSaveLocalArr');
+    // Publish drives its own button; a silent (publish-initiated) save leaves the Save button alone.
+    const btn = options.silent ? null : document.getElementById('btnSaveLocalArr');
+    const btnLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; btn.disabled = true; }
 
+    // Backend contract (api_save_local_arrangement): top-level context keys and, per
+    // session, numeric timeslot/room IDs plus the exact Official occurrence it replaces.
+    const payloadSessions = contextSessions.map(c => {
+        const startLbl = c.start_time || c.start_fmt || '';
+        const endLbl   = c.end_time   || c.end_fmt   || '';
+        const roomRaw  = String(c.room_id ?? c.roomid ?? '');
+        return {
+            subject_code:       c.subject_code || c.subjectcode || currentSubjCode,
+            day:                c.day || c.daydesc || '',
+            starttimeid:        c.starttimeid || getTimeSlotIndex(startLbl) || null,
+            endtimeid:          c.endtimeid   || getTimeSlotIndex(endLbl)   || null,
+            roomid:             /^\d+$/.test(roomRaw) ? parseInt(roomRaw, 10) : null,
+            official_sessionid: c.official_sessionid || c.officialSessionId || null,
+            faculty_id:         c.faculty_id || c.faculty_employeenumber || c.employeenumber || null,
+        };
+    });
+
     try {
-        const res  = await fetch('/api/local/save_arrangement', {
+        const result = await _localApiRequest('/api/local/save_arrangement', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
-                context:           { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay },
-                sessions:          contextSessions,
+                program:           prog,
+                year_level:        parseInt(yl, 10),
+                ay_id:             ay,
+                term:              sem,
+                section_id:        parseInt(sectionId, 10),
+                sessions:          payloadSessions,
                 reason,
                 violations:        [],
                 displace_subjects: [],
             }),
         });
-        const data = await res.json();
-        if (data.success) {
+        if (result.kind !== 'ok') {
+            window.__lastLocalArrangementSaveResult = null;
+            await _showLocalApiFailure(result, 'Save Failed');
+            return result.data || { success: false, error: result.error };
+        }
+
+        const data = result.data;
+        window.__lastLocalArrangementSaveResult = data;
+        _rememberLocalUpdatedAt(data.arrangement_id, data.updated_at);
+        if (!options.silent) {
             await showValidationModal(
                 'Arrangement Saved',
-                `Local Arrangement #${data.arrangementid} has been saved.\nView it under Schedule → Local Arrangements.`
+                `Local arrangement saved as draft (#${data.arrangement_id}).\nPublish it to make it effective.`
             );
+        }
 
+        // The Draft is already saved; a failure while refreshing the editor below is a
+        // client-side rendering problem, never a server/network failure.
+        try {
             // Clear all pending sessions for this context so the slice panel is clean
             if (typeof pendingManualSchedule !== 'undefined') {
                 pendingManualSchedule = pendingManualSchedule.filter(
-                    c => !(c.ay === ay && c.sem === sem)
+                    c => !(c.ay === ay && c.sem === sem && (!c.section_id || String(c.section_id) === String(sectionId)))
                 );
             }
             if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
@@ -8012,13 +8348,12 @@ async function saveLocalArrangement(skipModal = false) {
             if (typeof _updateSubjectList === 'function') {
                 _updateSubjectList().catch(() => {});
             }
-        } else {
-            await showValidationModal('Save Failed', data.error || 'Could not save local arrangement.');
+        } catch (uiErr) {
+            console.error('Local Arrangement saved, but refreshing the editor failed:', uiErr);
         }
-    } catch (e) {
-        await showValidationModal('Network Error', 'Could not reach the server. Please try again.');
+        return data;
     } finally {
-        if (btn) { btn.innerHTML = 'SAVE AS LOCAL ARRANGEMENT'; btn.disabled = false; }
+        if (btn) { btn.innerHTML = btnLabel; btn.disabled = false; }
     }
 }
 
@@ -8096,6 +8431,7 @@ async function publishLatestLocalDraft() {
         const res  = await fetch('/api/local/arrangements?' + params.toString());
         const data = await res.json();
         const drafts = (data.arrangements || []).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+        drafts.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));
         if (!drafts.length) {
             await showValidationModal('No Draft Found', 'Save an arrangement as Draft first before publishing.');
             return;
@@ -8634,7 +8970,7 @@ async function _loadDraftListPanel() {
             const isLocal = d.source === 'local';
             const srcBadge = isLocal
                 ? `<span style="font-size:0.55rem;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:10px;padding:1px 7px;font-weight:900;margin-left:6px;vertical-align:middle;">LOCAL</span>`
-                : `<span style="font-size:0.55rem;background:#e8f0fe;color:#1a56db;border:1px solid #b6ccfc;border-radius:10px;padding:1px 7px;font-weight:900;margin-left:6px;vertical-align:middle;">OFFICIAL</span>`;
+                : `<span style="font-size:0.55rem;background:#e8f0fe;color:#1a56db;border:1px solid #b6ccfc;border-radius:10px;padding:1px 7px;font-weight:900;margin-left:6px;vertical-align:middle;">OFFICIAL · LOCKED</span>`;
             return `
             <div class="dlp-card" data-vid="${d.versionid}">
                 <div class="dlp-card-meta">
@@ -8791,6 +9127,7 @@ async function _loadVersionHistoryPanel() {
             const res  = await fetch('/api/local/arrangements?' + params.toString());
             const data = await res.json();
             const arr  = (data.arrangements || []);
+            arr.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));
 
             if (subtitle) subtitle.textContent = `${arr.length} arrangement${arr.length !== 1 ? 's' : ''}`;
             if (!arr.length) {
@@ -9083,49 +9420,166 @@ async function viewLocalArrangementInline(arrId) {
     }
 }
 
+
+async function publishLocalArrangementFromEditor() {
+    // Save the current Local Scheduler state as a Draft first. Publishing is a
+    // separate lifecycle transition so the active Published Local Arrangement
+    // is never edited in place.
+    const reason = (typeof _showLocalReasonModal === 'function')
+        ? await _showLocalReasonModal()
+        : window.prompt('Reason for publishing this Local Arrangement:');
+    if (reason === null) return;
+
+    const cleanReason = String(reason || '').trim();
+    if (!cleanReason) {
+        await showValidationModal('Reason Required', 'Enter a reason before publishing the Local Arrangement.');
+        return;
+    }
+
+    const btn = document.getElementById('btnPublishLocalArr');
+    if (btn?.disabled) return;
+    const btnLabel = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing…'; }
+    try {
+        window.__lastLocalArrangementSaveResult = null;
+        // Step 1: pending edits are saved (or the identical Draft reused) first — errors are
+        // reported by the save itself. With no pending edits, publish the section's latest
+        // saved Draft instead.
+        const draft = await saveLocalArrangement(true, {
+            returnResult: true, reason: cleanReason, silent: true
+        });
+        let draftId = draft && draft.success ? draft.arrangement_id : null;
+        if (!draftId && draft && draft.noChanges) {
+            draftId = await _latestLocalDraftIdForSection();
+            if (draftId === undefined) return;          // lookup failure already reported
+            if (!draftId) {
+                await showValidationModal('No Draft to Publish',
+                    'Save a Local Arrangement as a draft first, then publish it.');
+                return;
+            }
+        }
+        if (!draftId) return;
+
+        // Step 2: explicit Draft → Published transition for that exact Draft.
+        await _publishLocalArrangementRequest(draftId, cleanReason);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
+    }
+}
+
+// Newest Local Draft for the selected section (null when none; undefined when the
+// lookup itself failed and was already reported). Refreshes its stored updated_at.
+async function _latestLocalDraftIdForSection() {
+    const params = new URLSearchParams({
+        program:    document.getElementById('sel_prog')?.value || '',
+        year_level: document.getElementById('sel_year')?.value || '',
+        section_id: document.getElementById('sel_section')?.value || '',
+        ay_id:      typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || ''),
+        sem:        typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || ''),
+        status:     'Draft',
+    });
+    const result = await _localApiRequest('/api/local/arrangements?' + params.toString());
+    if (result.kind !== 'ok') {
+        await _showLocalApiFailure(result, 'Cannot Publish');
+        return undefined;
+    }
+    const drafts = (result.data.arrangements || [])
+        .slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    drafts.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));
+    return drafts.length ? drafts[0].arrangementid : null;
+}
+
+// Shared Draft → Published request for the editor button and Version History.
+// Sends the latest server-issued updated_at; the backend rejects a stale one.
+async function _publishLocalArrangementRequest(arrId, reason) {
+    const result = await _localApiRequest(`/api/local/arrangement/${arrId}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            reason,
+            expected_updated_at: _localArrUpdatedAt[String(arrId)] || null,
+        })
+    });
+    if (result.kind !== 'ok') {
+        const data = result.data || {};
+        if (result.kind === 'rejected' && Array.isArray(data.conflicts) && data.conflicts.length) {
+            _presentLocalPublishConflicts(data.conflicts, data.error);
+        } else {
+            await _showLocalApiFailure(result, 'Cannot Publish');
+        }
+        // A stale timestamp means someone else changed it — reload the latest state.
+        if (data.code === 'STALE_LOCAL_ARRANGEMENT' && typeof _loadVersionHistoryPanel === 'function') {
+            _loadVersionHistoryPanel();
+        }
+        return false;
+    }
+
+    _rememberLocalUpdatedAt(arrId, result.data.updated_at);
+    await showValidationModal('Published', 'Local arrangement published successfully.');
+    try {
+        if (typeof _loadVersionHistoryPanel === 'function') _loadVersionHistoryPanel();
+        if (typeof refreshScheduleGrid === 'function') await refreshScheduleGrid();
+    } catch (uiErr) {
+        console.error('Local Arrangement published, but refreshing the editor failed:', uiErr);
+    }
+    return true;
+}
+
 async function publishLocalArrangement(arrId, btn) {
     const ok = await showConfirmModal(
-        'Publishing this local arrangement will make it the active override layer for this section. The previous published arrangement (if any) will be archived.',
+        'Publishing this Draft will make it the active Local Arrangement for this section. The previous Published Local Arrangement (if any) will be archived.',
         'Publish Local Arrangement'
     );
     if (!ok) return;
+
+    // PHASE 3 — the publication reason belongs to the Draft -> Published
+    // transition and is required by the backend for audit/history.
+    const reason = (typeof _showLocalReasonModal === 'function')
+        ? await _showLocalReasonModal()
+        : window.prompt('Reason for publishing this Local Arrangement:');
+    if (reason === null) return;
+
+    const cleanReason = String(reason || '').trim();
+    if (!cleanReason) {
+        await showValidationModal('Reason Required', 'Enter a reason before publishing the Local Arrangement.');
+        return;
+    }
+
+    const btnLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
     try {
-        const res  = await fetch(`/api/local/arrangement/${arrId}/publish`, { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-            await showValidationModal('Published', 'Local Arrangement published successfully.');
-            _loadVersionHistoryPanel();
-        } else {
-            await showValidationModal('Error', data.error || 'Could not publish.');
-        }
-    } catch(e) {
-        await showValidationModal('Error', e.message);
+        await _publishLocalArrangementRequest(arrId, cleanReason);
     } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> PUBLISH'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
     }
 }
 
 async function restoreLocalArrangement(arrId, btn) {
     const ok = await showConfirmModal(
         'This will create a new Draft arrangement by copying the sessions from this version, referencing the current Published Official Schedule as the base.',
-        'Restore Local Arrangement'
+        'Restore as Draft'
     );
     if (!ok) return;
+    const btnLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
     try {
-        const res  = await fetch(`/api/local/arrangement/${arrId}/restore`, { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-            await showValidationModal('Restored', `New Draft #${data.new_arrangementid} created. You can publish it when ready.`);
-            _loadVersionHistoryPanel();
-        } else {
-            await showValidationModal('Error', data.error || 'Could not restore.');
+        const result = await _localApiRequest(`/api/local/arrangement/${arrId}/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expected_updated_at: _localArrUpdatedAt[String(arrId)] || null })
+        });
+        if (result.kind !== 'ok') {
+            await _showLocalApiFailure(result, 'Cannot Restore');
+            if ((result.data || {}).code === 'STALE_LOCAL_ARRANGEMENT') _loadVersionHistoryPanel();
+            return;
         }
-    } catch(e) {
-        await showValidationModal('Error', e.message);
+        const data = result.data;
+        _rememberLocalUpdatedAt(data.new_arrangementid, data.updated_at);
+        await showValidationModal('Restored', `New Draft #${data.new_arrangementid} created. You can publish it when ready.`);
+        try { _loadVersionHistoryPanel(); }
+        catch (uiErr) { console.error('Local Arrangement restored, but refreshing history failed:', uiErr); }
     } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
     }
 }
 
@@ -9772,3 +10226,148 @@ window.triggerCascade = async function(skipGridRender) {
 };
 </script>
 {% endblock %}
+
+
+<div id="localOfficialRequirementBanner" class="alert alert-warning d-none" role="alert" style="margin: 0 0 1rem 0;">
+    <strong>Published Official Schedule required.</strong>
+    <span id="localOfficialRequirementMessage">
+        Local Scheduler can only rearrange subjects from the Published Official Schedule of the selected section.
+    </span>
+</div>
+
+<script id="phase2LocalOfficialFacultyLock">
+document.addEventListener('DOMContentLoaded', function () {
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get('scheduler') || '').toLowerCase() !== 'local') return;
+
+    const faculty = document.getElementById('faculty');
+    const badge = document.getElementById('facultySourceBadge');
+    const section = document.getElementById('section');
+    const subject = document.getElementById('subject');
+    const banner = document.getElementById('localOfficialRequirementBanner');
+    const bannerMsg = document.getElementById('localOfficialRequirementMessage');
+
+    if (faculty) {
+        faculty.disabled = true;
+        faculty.setAttribute('aria-disabled', 'true');
+        faculty.title = 'Faculty is inherited from the Published Official Schedule.';
+    }
+    if (badge) badge.textContent = 'OFFICIAL · LOCKED';
+
+    // Place the requirement notice near the scheduling controls when possible.
+    if (banner) {
+        const target = section?.closest('.card, .panel, .manual-editor, .schedule-editor');
+        if (target && target.parentNode) target.parentNode.insertBefore(banner, target);
+    }
+
+    function setLocalOfficialState(message) {
+        if (!banner || !bannerMsg) return;
+        if (message) {
+            bannerMsg.textContent = message;
+            banner.classList.remove('d-none');
+        } else {
+            banner.classList.add('d-none');
+        }
+    }
+
+    function refreshLocalPrerequisiteHint() {
+        if (!section || !section.value) {
+            setLocalOfficialState('Select a section first. Local Scheduler requires that section to have a Published Official Schedule.');
+            return;
+        }
+        // Once a section is selected, the existing subject/session loaders and
+        // backend decide whether a Published Official source exists. Avoid
+        // guessing from an empty dropdown while asynchronous loading is active.
+        setLocalOfficialState('');
+    }
+
+    section?.addEventListener('change', refreshLocalPrerequisiteHint);
+    refreshLocalPrerequisiteHint();
+
+    // Expose a tiny helper for existing AJAX error handlers or later phases.
+    window.setLocalOfficialRequirement = setLocalOfficialState;
+});
+</script>
+
+<script>
+function showLocalOfficialRequirementFromError(message) {
+    const text = String(message || '');
+    if (window.setLocalOfficialRequirement &&
+        /Published Official Schedule|not part of the Published Official Schedule|Official schedule has no assigned faculty/i.test(text)) {
+        window.setLocalOfficialRequirement(text);
+    }
+}
+</script>
+
+
+<script id="phase4LocalConflictPresentation">
+function _presentLocalEffectiveConflicts(conflicts) {
+    const items = Array.isArray(conflicts) ? conflicts : [];
+    if (!items.length) return false;
+
+    const grouped = { Room: [], Faculty: [], Section: [] };
+    items.forEach(c => {
+        const type = c.conflict_type || 'Section';
+        if (!grouped[type]) grouped[type] = [];
+        grouped[type].push(c);
+    });
+
+    const parts = [];
+    ['Room', 'Faculty', 'Section'].forEach(type => {
+        const rows = grouped[type] || [];
+        if (!rows.length) return;
+        const examples = rows.slice(0, 3).map(c => {
+            const subject = c.subjectcode || c.subjectname || 'Schedule';
+            const source = c.source ? ` (${c.source})` : '';
+            const when = [c.daydesc, c.start_fmt && c.end_fmt ? `${c.start_fmt}–${c.end_fmt}` : '']
+                .filter(Boolean).join(' ');
+            const detail = type === 'Room'
+                ? (c.roomname || 'same room')
+                : type === 'Faculty'
+                    ? (c.instructor || c.employeenumber || 'same faculty')
+                    : 'same section';
+            return `${subject}${source}: ${when} — ${detail}`;
+        });
+        parts.push(`${type} conflict${rows.length === 1 ? '' : 's'} (${rows.length})\n${examples.join('\n')}`);
+    });
+
+    const message =
+        'This Local Arrangement cannot be published because it conflicts with the effective schedule.\n\n' +
+        parts.join('\n\n');
+
+    if (typeof showValidationModal === 'function') {
+        showValidationModal('Local Schedule Conflict', message);
+    } else if (typeof showToast === 'function') {
+        showToast(message, 'error');
+    } else {
+        alert(message);
+    }
+    return true;
+}
+</script>
+
+
+<script id="phase4LocalPublishConflictPresentation">
+function _presentLocalPublishConflicts(conflicts, errorMessage) {
+    const items = Array.isArray(conflicts) ? conflicts : [];
+    const lines = items.slice(0, 8).map(c => {
+        const dims = Array.isArray(c.dimensions) ? c.dimensions.join(', ') : 'Schedule';
+        const source = c.source || 'Effective schedule';
+        const other = c.subjectcode || 'another subject';
+        const candidate = c.candidate_subject || 'Local subject';
+        return `${candidate} conflicts with ${other} (${source}) — ${dims}`;
+    });
+
+    const more = items.length > 8 ? `\n+ ${items.length - 8} more conflict(s)` : '';
+    const message =
+        (errorMessage || 'This Draft is no longer conflict-free.') +
+        '\n\n' + lines.join('\n') + more +
+        '\n\nThe Draft was not published. The currently Published Local Arrangement remains active.';
+
+    if (typeof showValidationModal === 'function') {
+        showValidationModal('Cannot Publish — Schedule Conflict', message);
+    } else {
+        alert(message);
+    }
+}
+</script>

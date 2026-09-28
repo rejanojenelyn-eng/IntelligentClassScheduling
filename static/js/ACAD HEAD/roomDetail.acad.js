@@ -75,10 +75,14 @@ async function loadRoomSchedule(roomId) {
         if (ACTIVE_SEM)   params.set('semester', ACTIVE_SEM);
         const res = await fetch(`/api/get_room_schedule/${roomId}?${params}`);
         const data = await res.json();
+        // A newer room selection (or a building switch resetting currentRoomId)
+        // may have happened while this request was in flight — don't let a
+        // slower, stale response overwrite what the user is looking at now.
+        if (roomId !== currentRoomId) return;
         renderSchedule(Array.isArray(data) ? data : []);
     } catch (e) {
         console.error('Failed to load room schedule:', e);
-        renderSchedule([]);
+        if (roomId === currentRoomId) renderSchedule([]);
     } finally {
         loading.style.display = 'none';
     }
@@ -112,6 +116,13 @@ function selectRoom(btn, roomId, roomName) {
 function switchBuilding(btn, buildingId) {
     document.querySelectorAll('.rd-tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    // Switching buildings must drop the previous building's room selection —
+    // otherwise the sidebar shows the new building's rooms while the calendar
+    // silently keeps showing the old room's schedule under its old label.
+    currentRoomId = null;
+    const label = document.getElementById('rdCalRoomLabel');
+    if (label) label.textContent = 'Select a room';
+    renderSchedule([]);
     populateRoomSidebar(buildingId);
 }
 

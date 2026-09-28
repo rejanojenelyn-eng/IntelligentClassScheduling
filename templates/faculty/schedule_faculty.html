@@ -4,26 +4,20 @@
 {{ super() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
 <style>
-    /* Lock-badge for disabled selects */
-    .fcs-locked-select {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        width: 100%;
-    }
-    .fcs-locked-select select:disabled {
-        opacity: 1 !important;
+    /* Academic Year / Semester stay functionally locked to the current term
+       (disabled, single option) exactly as before — this is a visual-only
+       change so they read as normal active filters, matching the Academic
+       Head Class Schedule SIS, instead of a grayed-out "disabled" control.
+       The explicit re-assertion of the base .cs-filter-unit select colors is
+       needed because browsers (WebKit especially) otherwise mute a disabled
+       select's text/background regardless of author CSS. */
+    #view_ay:disabled, #view_sem:disabled {
+        opacity: 1;
+        -webkit-text-fill-color: #fff;
+        background: rgba(255,255,255,0.13);
+        color: #fff;
+        font-weight: 600;
         cursor: default;
-        background: #e9ecef;
-        color: #495057;
-        font-weight: 700;
-    }
-    .fcs-lock-icon {
-        position: absolute;
-        right: 8px;
-        color: #888;
-        font-size: 0.7rem;
-        pointer-events: none;
     }
 
     /* ── Schedule table (TABLE VIEW) ── */
@@ -101,22 +95,16 @@
             <!-- ACAD YEAR — locked to current, read-only -->
             <div class="cs-filter-unit">
                 <label>ACAD YEAR</label>
-                <div class="fcs-locked-select">
-                    <select id="view_ay" disabled>
-                        <option value="{{ active_ay_id }}">{{ active_ay_label }}</option>
-                    </select>
-                    <i class="fas fa-lock fcs-lock-icon"></i>
-                </div>
+                <select id="view_ay" disabled>
+                    <option value="{{ active_ay_id }}">{{ active_ay_label }}</option>
+                </select>
             </div>
             <!-- SEMESTER — locked to current, read-only -->
             <div class="cs-filter-unit">
                 <label>SEMESTER</label>
-                <div class="fcs-locked-select">
-                    <select id="view_sem" disabled>
-                        <option value="{{ active_sem }}">{{ active_sem_label }}</option>
-                    </select>
-                    <i class="fas fa-lock fcs-lock-icon"></i>
-                </div>
+                <select id="view_sem" disabled>
+                    <option value="{{ active_sem }}">{{ active_sem_label }}</option>
+                </select>
             </div>
             <div class="cs-filter-unit cs-filter-program">
                 <label>PROGRAM</label>

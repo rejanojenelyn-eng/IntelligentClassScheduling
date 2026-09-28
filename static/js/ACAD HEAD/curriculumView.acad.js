@@ -134,3 +134,4 @@ function _viewExpPDF(curricula, filename) {
     }
     doc.save(filename + '.pdf');
 }
+

@@ -2776,3 +2776,36 @@
 /* Program Management's alert popup now reuses the shared .notif-overlay
    component (style.css + showAlertPopup() in base.admin.js) — no page-local
    popup styles needed here anymore. */
+
+/* Phase S2 — final policy-oriented Settings navigation */
+.settings-section-nav{position:sticky;top:0;z-index:8;display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;margin:0 0 14px;background:rgba(255,255,255,.96);border:1px solid #e4e8ef;border-radius:10px;box-shadow:0 2px 8px rgba(20,35,60,.05)}
+.settings-section-nav a{display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1px solid #dfe4ec;border-radius:7px;color:#4b5870;text-decoration:none;font-size:12px;font-weight:700;background:#fff}
+.settings-section-nav a:hover{color:#9e0b0f;border-color:#c94a4d;background:#fff8f8}
+#settings-faculty-policy,#settings-designee-policy,#settings-constraints,#settings-merge-calendar{scroll-margin-top:76px}
+.rule-lock{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#f2f5f8;color:#536176;font-size:10px;font-weight:800;letter-spacing:.04em}
+.constraint-card-system{border-color:#e0e5ec}
+.constraint-card-wide{grid-column:1/-1}
+.enforced-rule-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.enforced-rule-list>div{display:grid;grid-template-columns:50px 1fr auto;align-items:center;gap:8px;padding:9px 10px;border:1px solid #e5e9ef;border-radius:7px;background:#fafbfd;font-size:12px}
+.enforced-rule-list strong{color:#990d11}.enforced-rule-list em{font-style:normal;color:#14894b;font-weight:800;font-size:10px;text-transform:uppercase}
+.card-category b{color:#990d11}
+@media(max-width:850px){.enforced-rule-list{grid-template-columns:1fr}.settings-section-nav{position:static}}
+
+/* Phase S3 — policy wizard visual refinement */
+.settings-policy-stepper{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 18px;padding:10px;background:#fff;border:1px solid #e2e6ec;border-radius:12px;box-shadow:0 4px 16px rgba(28,39,60,.05)}
+.policy-step{appearance:none;border:1px solid transparent;background:#f8f9fb;border-radius:9px;padding:10px 12px;display:flex;align-items:center;gap:10px;text-align:left;color:#687386;cursor:pointer;transition:.18s ease;font-family:inherit}
+.policy-step>span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#e8ebf0;color:#6c7585;font-weight:800;font-size:12px;flex:none}
+.policy-step div{display:flex;flex-direction:column;min-width:0}.policy-step strong{font-size:12px;color:#3d4757}.policy-step small{font-size:10px;margin-top:2px;color:#8992a1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.policy-step:hover{border-color:#e0b9bb;background:#fffafa}.policy-step.active{border-color:#a81016;background:#fff7f7;box-shadow:0 2px 8px rgba(158,11,15,.08)}.policy-step.active>span{background:#990d11;color:#fff}.policy-step.active strong{color:#8f0c10}
+.settings-policy-panel{animation:settingsPanelIn .2s ease}.settings-policy-panel[hidden]{display:none!important}@keyframes settingsPanelIn{from{opacity:.25;transform:translateY(4px)}to{opacity:1;transform:none}}
+.policy-section-heading{align-items:flex-start}.policy-section-heading .section-title-group{align-items:flex-start}.policy-section-heading p{margin:3px 0 0;color:#7a8494;font-size:12px;font-weight:400}
+#tab-academic .section-block{border-radius:12px;border:1px solid #e2e6ec;box-shadow:0 3px 14px rgba(31,43,67,.045);background:#fff;margin-bottom:14px}
+#tab-academic .section-header-row{padding-bottom:12px;border-bottom:1px solid #edf0f4;margin-bottom:14px}
+#tab-academic .section-title-group h2{letter-spacing:.01em}
+#tab-academic .constraint-card{border-radius:10px;box-shadow:0 2px 8px rgba(30,43,66,.035)}
+#tab-academic .card-category{letter-spacing:.06em}
+.settings-policy-footer{position:sticky;bottom:12px;z-index:7;display:grid;grid-template-columns:150px 1fr 150px;align-items:center;gap:14px;margin:18px 0 6px;padding:10px 12px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border:1px solid #dfe4ea;border-radius:12px;box-shadow:0 6px 24px rgba(30,43,66,.09)}
+.policy-nav-btn{height:38px;border-radius:7px;border:1px solid #d9dee6;background:#fff;color:#505b6d;font-weight:750;font-size:12px;cursor:pointer}.policy-nav-btn:hover:not(:disabled){border-color:#9b1014;color:#8f0c10;background:#fff8f8}.policy-nav-btn:disabled{opacity:.35;cursor:not-allowed}.policy-next{background:#990d11;color:#fff;border-color:#990d11}.policy-next:hover:not(:disabled){background:#7f090d;color:#fff}
+.policy-progress{display:flex;justify-content:center;align-items:center;gap:7px}.policy-progress button{width:8px;height:8px;padding:0;border:0;border-radius:50%;background:#d3d8df;cursor:pointer}.policy-progress button.active{width:22px;border-radius:8px;background:#990d11}.policy-progress span{font-size:10px;font-weight:750;color:#7c8593;margin-left:5px}
+@media(max-width:980px){.settings-policy-stepper{grid-template-columns:repeat(2,1fr)}.settings-policy-footer{grid-template-columns:120px 1fr 120px}}
+@media(max-width:620px){.settings-policy-stepper{grid-template-columns:1fr}.policy-step small{white-space:normal}.settings-policy-footer{grid-template-columns:1fr 1fr}.policy-progress{grid-column:1/-1;grid-row:1}.policy-prev{grid-column:1}.policy-next{grid-column:2}}

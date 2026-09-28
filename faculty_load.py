@@ -3,13 +3,33 @@
 Single source of truth for Regular / Part-Time / Teaching-Substitution load caps
 and usage. Load is measured in ACTUAL SCHEDULED HOURS (real timeslot start/end),
 never curriculum credit units. Used by both app.py (Manual Editor, Faculty Load
-tab, DSS suggestions, validation) and scheduler.py (the GA) so they can't drift
-from each other the way the old per-file duplicate implementations did.
+tab, DSS suggestions, validation) and scheduler.py (the GA and CSPValidator) so
+they can't drift from each other the way the old per-file duplicate
+implementations did.
 
 `employeetype.regularload` / `parttimeload` / `teachingsubstitution` and
 `designation.regularloadunit` are reinterpreted IN PLACE as hour caps (no schema
 change) — the same columns that used to mean "credit units" now mean "hours".
+
+Phase B checkpoint 1 (final HC1-HC4/HC8/HC9 load classification): `classify_assignment`
+and `is_am_pt_window` are the ONE authoritative Regular-vs-PT decision, reused by
+`classify_slice` below and by scheduler.CSPValidator's `_check_time_windows`,
+`_check_night_pt_cap`, and `_check_load_limits`. Before this checkpoint, those
+three places disagreed about whether a designee's 7:30-9:00 AM class was Regular
+or PT — see the Phase B0 gap analysis. There must never be a fourth classifier.
+Phase B checkpoint 3: `is_valid_merge` (final HC16) lives HERE, not in the
+constraints/ package, deliberately. scheduler.py already does `import
+faculty_load`; the constraints/ package's __init__.py imports scheduler.py
+(via hard_constraints.py) unconditionally at package-import time. Importing
+`constraints` from this module would therefore create a real circular
+import that fails depending on which module happens to be imported first
+(traced and confirmed during this checkpoint, not a theoretical concern) --
+so this module stays a dependency-free leaf, exactly as it already was
+after checkpoint 1, and scheduler.CSPValidator.is_valid_merge delegates to
+the copy here instead of the reverse.
 """
+from collections import defaultdict
+from datetime import time
 
 WEEKDAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'}
 
@@ -115,15 +135,61 @@ _BATCH_HOURS_SQL_TMPL = """
 """
 
 
-def classify_slice(day, end_hour, start_hour=None):
-    """Regular = weekday, ends at/before 4 PM, and not a 7:30-9:00 AM PT/TS morning
-    slice. Everything else (evenings, Sat/Sun, and the AM PT/TS window) is PT.
+def is_am_pt_window(day, start_time, end_time, am_pt_start=None, am_pt_end=None):
+    """True when a weekday slice falls entirely within the shared authorized
+    morning extra-teaching window (default 7:30-9:00 AM). This is the ONE
+    place that decision is made -- classify_assignment() below and
+    scheduler.CSPValidator's HC1/HC2/HC3/HC4 window checks all call this
+    (directly or via classify_assignment) so they can never disagree about
+    which slices qualify."""
+    am_pt_start = am_pt_start or time(7, 30)
+    am_pt_end   = am_pt_end   or time(9, 0)
+    if day not in WEEKDAYS or start_time is None or end_time is None:
+        return False
+    return start_time >= am_pt_start and end_time <= am_pt_end
 
-    The AM PT/TS window (Aug 2026 policy — see scheduler.py AM_PT_START/AM_PT_END)
-    means a Regular faculty's early 7:30-9:00 AM class is PT/TS load, never Regular
-    load, even though it falls on a weekday before noon; `start_hour` lets callers
-    that have it flag that case. Hour-granularity only (matches the rest of this
-    function), so `start_hour` is only used to catch the whole-hour-floor case.
+
+def classify_assignment(day, start_time, end_time, *, is_part_time=False,
+                         regular_start=None, regular_end=None,
+                         am_pt_start=None, am_pt_end=None):
+    """Single authoritative Regular-vs-PT classifier for one scheduled time
+    slice, for ANY faculty type (full-time, designee, or part-time), given
+    that faculty's own applicable regular-teaching window. Returns 'regular'
+    or 'pt'.
+
+    TS is never returned here -- Teaching Substitution is an OVERFLOW concept
+    applied afterward once a faculty's totals exceed their Regular/PT caps
+    (see cap_spill()), not a property of a single slice's time/day.
+
+    The authorized morning extra-teaching window (default 7:30-9:00 AM) is
+    ALWAYS 'pt', for every faculty type -- this is what fixes the designee
+    gap Phase B0 identified: a designee's 7:30-9:00 class used to be
+    validated as if it were a Regular-hours slot with no exception, unlike
+    full-time faculty who already had one.
+    """
+    if is_part_time:
+        return 'pt'   # Part-time faculty have no Regular bucket at all.
+    if day not in WEEKDAYS:
+        return 'pt'
+    if is_am_pt_window(day, start_time, end_time, am_pt_start, am_pt_end):
+        return 'pt'
+    reg_start = regular_start or time(7, 30)
+    reg_end   = regular_end   or time(16, 30)
+    if start_time is not None and end_time is not None \
+       and start_time >= reg_start and end_time <= reg_end:
+        return 'regular'
+    return 'pt'
+
+
+def classify_slice(day, end_hour, start_hour=None):
+    """Hour-granularity wrapper around classify_assignment(), kept for the
+    existing Faculty Load tab / group_assignments() call sites which only
+    have whole-hour time_code data (not full datetime.time objects) and no
+    per-faculty regular-window override on hand. Delegates to
+    classify_assignment() with this function's own long-standing defaults
+    (4:00 PM regular-end cutoff, 7:30-9:00 AM window) once both hours are
+    known; falls back to the plain end-hour-only rule when start_hour is
+    absent, exactly as before.
     """
     try:
         end_hour = int(end_hour)
@@ -131,13 +197,24 @@ def classify_slice(day, end_hour, start_hour=None):
         end_hour = 0
     if day not in WEEKDAYS:
         return 'pt'
-    if start_hour is not None:
-        try:
-            if int(start_hour) < 9 and end_hour <= 9:
-                return 'pt'
-        except (TypeError, ValueError):
-            pass
-    return 'regular' if end_hour <= 16 else 'pt'
+    if start_hour is None:
+        return 'regular' if end_hour <= 16 else 'pt'
+    try:
+        start_hour = int(start_hour)
+    except (TypeError, ValueError):
+        return 'regular' if end_hour <= 16 else 'pt'
+    start_t = time(min(max(start_hour, 0), 23), 0)
+    end_t   = time(min(max(end_hour, 0), 23), 59 if end_hour >= 24 else 0)
+    # regular_start=00:00 and am_pt_start=00:00 deliberately reproduce this
+    # function's own original condition exactly: "start_hour < 9 and
+    # end_hour <= 9" -> PT (hour-truncated, so a real 7:30 start arrives here
+    # as hour 7 -- a lower bound of 7:30 would wrongly miss it), else
+    # "end_hour <= 16" -> Regular. Verified byte-for-byte equal to the
+    # pre-refactor function across every start<end hour pair a real
+    # schedule can produce (see the Phase B checkpoint report).
+    return classify_assignment(day, start_t, end_t, regular_start=time(0, 0),
+                                regular_end=time(16, 0),
+                                am_pt_start=time(0, 0), am_pt_end=time(9, 0))
 
 
 def _time_code_end_hour(time_code):
@@ -243,17 +320,147 @@ def get_subject_nominal_hours(subject_row):
     return lh + lab
 
 
-def group_assignments(sessions):
+# ── Final HC16 Merged-Class Validity (shared with scheduler.CSPValidator) ──
+
+def parse_merge_section_pairs(raw):
+    """Parse the hc_merge_section_pairs scheduler_config value (JSON array of
+    ["PROGRAMCODE-SECTIONNAME", "PROGRAMCODE-SECTIONNAME"] pairs) into a set
+    of unordered frozensets, so either ordering matches. Empty/unparsable ->
+    empty set (no pairs configured)."""
+    import json as _json
+    pairs = set()
+    try:
+        for pair in _json.loads(raw or '[]'):
+            if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[0] and pair[1]:
+                pairs.add(frozenset((str(pair[0]).upper(), str(pair[1]).upper())))
+    except (TypeError, ValueError):
+        pass
+    return pairs
+
+
+def _section_pair_allowed_by_label(label_a, label_b, merge_section_pairs):
+    """Core of the Class Merging Policy's section-pair check, operating on
+    already-extracted 'PROGRAMCODE-SECTIONNAME' labels (or None when
+    identity is unknown) rather than raw gene/session dicts -- shared by
+    is_valid_merge() below (scheduler.py gene dicts) and group_assignments()
+    (this module's own SQL-row labels) so the pair-matching decision is
+    never reimplemented a second time."""
+    if not merge_section_pairs:
+        return True  # nothing configured yet -- don't newly restrict existing behavior
+    if not label_a or not label_b:
+        return True  # identity unknown on a side -- can't evaluate, allow through
+    if label_a == label_b:
+        return True  # same section, e.g. two time-slices of the same assignment
+    return frozenset((label_a, label_b)) in merge_section_pairs
+
+
+def is_merge_in_scope(subject_code, config=None):
+    """Is this subject code within the configured Class Merging Policy scope
+    (hc_merge_enabled / hc_merge_scope / hc_merge_scope_subjects)? Shared by
+    is_valid_merge() below and group_assignments()'s own merge detection."""
+    from database import parse_merge_scope_subjects, code_in_merge_scope
+    cfg = config or {}
+    if not bool(cfg.get('hc_merge_enabled', 1)):
+        return False
+    code_u = (subject_code or '').upper()
+    is_nstp = code_u.startswith(('NSTP', 'OU'))
+    scope_subjects = parse_merge_scope_subjects(cfg.get('hc_merge_scope_subjects'))
+    if scope_subjects is not None:
+        return code_in_merge_scope(code_u, scope_subjects)
+    merge_scope = str(cfg.get('hc_merge_scope', 'nstp_only'))
+    return (
+        (merge_scope == 'nstp_only'    and is_nstp) or
+        (merge_scope == 'non_nstp'     and not is_nstp) or
+        (merge_scope == 'all_subjects')
+    )
+
+
+def _gene_section_label(cls):
+    """'PROGRAMCODE-SECTIONNAME' identity for a scheduler.py gene dict, or
+    None when it carries no section identity. Mirrors
+    scheduler.CSPValidator._section_label exactly (that method is left
+    in place, still used by HC12's _same_section -- this is a standalone
+    copy for is_valid_merge's use here, not a behavior change to HC12)."""
+    prog = cls.get('course') or cls.get('program') or cls.get('programcode')
+    sect = cls.get('section_name') or cls.get('sectionname')
+    if not prog or not sect:
+        return None
+    return f"{str(prog).upper()}-{sect}"
+
+
+def is_valid_merge(a: dict, b: dict, config: dict = None, merge_section_pairs=None) -> bool:
+    """Final HC16 (Merged-Class Validity) -- the ONE authoritative merge/
+    shared-class decision for scheduler.py gene dicts: same subject, in the
+    configured merge scope, an appropriate faculty-sharing rule (NSTP/OU
+    sections may share different faculty; any other eligible subject
+    requires the SAME faculty), and an explicitly allowed section pairing
+    when one is configured.
+
+    scheduler.CSPValidator.is_valid_merge delegates here (passing its own
+    already-parsed `merge_section_pairs` to avoid re-parsing JSON on every
+    pairwise call in the GA's hot fitness loop) instead of this module
+    importing scheduler.py -- see the module docstring for why.
+
+    Does NOT check room equality -- that's HC11's own concern.
+    """
+    a_code = (a.get('subject_code') or a.get('subjectcode') or '').upper()
+    b_code = (b.get('subject_code') or b.get('subjectcode') or '').upper()
+    if not a_code or a_code != b_code:
+        return False
+    cfg = config or {}
+    if not is_merge_in_scope(a_code, cfg):
+        return False
+    is_nstp = a_code.startswith(('NSTP', 'OU'))
+    same_fac = a.get('faculty_id') == b.get('faculty_id')
+    if not (is_nstp or same_fac):
+        return False
+    if merge_section_pairs is None:
+        merge_section_pairs = parse_merge_section_pairs(cfg.get('hc_merge_section_pairs'))
+    return _section_pair_allowed_by_label(
+        _gene_section_label(a), _gene_section_label(b), merge_section_pairs
+    )
+
+
+def group_assignments(sessions, config=None):
     """Merge multi-slice rows of the same (subjectcode, year_section) into one assignment,
     tracking hour totals split by Regular-time vs PT-time slices. Mirrors the JS
     `_flGroupSessions` algorithm this module replaces so nothing can diverge again.
     Each input session dict needs: subjectcode, year_section, days, time_code, time_range, hrs.
+
+    Phase B checkpoint 3 (HC17 consistency): when `config` is supplied, a
+    valid merged/shared class (final HC16 -- same subject, in scope, and an
+    allowed section pairing) that appears as separate rows per participating
+    section (the schema requires one `schedule` row per section; there is no
+    single shared row to begin with) has its hours counted ONCE, matching
+    scheduler.CSPValidator's HC17 fix in _check_load_limits. Without
+    `config` (the previous behavior), no dedup is attempted -- any existing
+    caller that doesn't pass it keeps exactly today's behavior.
     """
+    skip_hours = [False] * len(sessions)
+    if config is not None:
+        merge_section_pairs = parse_merge_section_pairs(config.get('hc_merge_section_pairs'))
+        by_signature = defaultdict(list)
+        for i, s in enumerate(sessions):
+            sig = (s.get('subjectcode'), s.get('days'), s.get('time_code'))
+            by_signature[sig].append(i)
+        for (subj_code, _days, _tc), idxs in by_signature.items():
+            if len(idxs) < 2 or not is_merge_in_scope(subj_code, config):
+                continue
+            first = idxs[0]
+            first_label = str(sessions[first].get('year_section') or '').upper() or None
+            for other in idxs[1:]:
+                other_section = sessions[other].get('year_section')
+                if other_section == sessions[first].get('year_section'):
+                    continue  # identical row for the SAME section -- not a merge case
+                other_label = str(other_section or '').upper() or None
+                if _section_pair_allowed_by_label(first_label, other_label, merge_section_pairs):
+                    skip_hours[other] = True
+
     groups = {}
     order = []
-    for s in sessions:
+    for i, s in enumerate(sessions):
         key = (s.get('subjectcode'), s.get('year_section'))
-        h = float(s.get('hrs') or 0)
+        h = 0.0 if skip_hours[i] else float(s.get('hrs') or 0)
         reg = is_reg_slice(s.get('days'), s.get('time_code'))
         if key not in groups:
             g = dict(s)
@@ -261,6 +468,9 @@ def group_assignments(sessions):
             g['_pt_hrs'] = 0.0 if reg else h
             g['_days'] = [s.get('days')] if s.get('days') else []
             g['_times'] = [s.get('time_range')] if s.get('time_range') else []
+            pair = (s.get('days'), s.get('time_range'))
+            g['_reg_pairs'] = [pair] if (reg and s.get('days')) else []
+            g['_pt_pairs'] = [pair] if (not reg and s.get('days')) else []
             g['hrs'] = h
             groups[key] = g
             order.append(key)
@@ -274,6 +484,13 @@ def group_assignments(sessions):
             if s.get('days'):
                 g['_days'].append(s.get('days'))
                 g['_times'].append(s.get('time_range'))
+                pair = (s.get('days'), s.get('time_range'))
+                (g['_reg_pairs'] if reg else g['_pt_pairs']).append(pair)
+
+    def _join(pairs):
+        ordered = sorted(pairs, key=lambda p: DAY_ORDER.get(p[0], 7))
+        return ', '.join(p[0] for p in ordered), ', '.join(p[1] for p in ordered)
+
     result = []
     for key in order:
         g = groups[key]
@@ -282,6 +499,8 @@ def group_assignments(sessions):
         pairs = sorted(zip(g['_days'], g['_times']), key=lambda p: DAY_ORDER.get(p[0], 7))
         g['days'] = ', '.join(p[0] for p in pairs)
         g['time_range'] = ', '.join(p[1] for p in pairs)
+        g['reg_days'], g['reg_time_range'] = _join(g['_reg_pairs'])
+        g['pt_days'], g['pt_time_range'] = _join(g['_pt_pairs'])
         result.append(g)
     return result
 
@@ -310,12 +529,19 @@ def cap_spill(items, max_hours):
     return kept, spilled
 
 
-def compute_load_buckets(sessions, faculty_row):
-    """Given a faculty's raw per-slice session rows (already merge-collapsed by the caller
-    if Class Merging applies) and their cap-lookup row, return Regular/PT/TS hour usage.
-    This is the single source of truth reused by the Faculty Load tab, the assignment-time
-    validation gate, the Reassign side panel, DSS "suggest faculty", and the GA's post-hoc
-    HC8 check — replaces the old JS-only `_computeFacultyLoadBuckets`."""
+def compute_load_buckets(sessions, faculty_row, config=None):
+    """Given a faculty's raw per-slice session rows and their cap-lookup row,
+    return Regular/PT/TS hour usage. This is the single source of truth
+    reused by the Faculty Load tab, the assignment-time validation gate, the
+    Reassign side panel, DSS "suggest faculty", and the GA's post-hoc HC9
+    check — replaces the old JS-only `_computeFacultyLoadBuckets`.
+
+    Phase B checkpoint 3: pass `config` (scheduler_config, e.g. from
+    load_scheduler_config()) so a valid merged/shared class's hours are
+    counted once rather than once per participating section, matching
+    scheduler.CSPValidator's HC17 fix -- see group_assignments(). Omitting
+    `config` keeps the previous (pre-checkpoint-3) behavior exactly.
+    """
     reg_max, pt_max, ts_max = get_faculty_caps(faculty_row)
     g = faculty_row.get
     typename = (g('typename') or g('employee_type') or g('employeestatus') or '').lower()
@@ -324,11 +550,11 @@ def compute_load_buckets(sessions, faculty_row):
     if is_part_time:
         # Part-time faculty have no separate daytime-duty bucket — every session is PT
         # first; only overflow beyond ptMax spills into TS.
-        grouped = group_assignments(sessions)
+        grouped = group_assignments(sessions, config=config)
         pt_kept, pt_spilled = cap_spill(grouped, pt_max)
         grouped_reg, grouped_pt, ts_sessions = [], pt_kept, pt_spilled
     else:
-        grouped = group_assignments(sessions)
+        grouped = group_assignments(sessions, config=config)
         reg_candidates, pt_candidates = [], []
         for g in grouped:
             total = g['_reg_hrs'] + g['_pt_hrs']
@@ -341,7 +567,11 @@ def compute_load_buckets(sessions, faculty_row):
                 # proportionally by hour-share rather than double-counting the whole
                 # assignment into both buckets.
                 r = dict(g); r['hrs'] = round(g['_reg_hrs'], 2); r['_split'] = True
+                r['days'] = g.get('reg_days') or r['days']
+                r['time_range'] = g.get('reg_time_range') or r['time_range']
                 p = dict(g); p['hrs'] = round(g['_pt_hrs'], 2); p['_split'] = True
+                p['days'] = g.get('pt_days') or p['days']
+                p['time_range'] = g.get('pt_time_range') or p['time_range']
                 reg_candidates.append(r)
                 pt_candidates.append(p)
         reg_kept, reg_spilled = cap_spill(reg_candidates, reg_max)

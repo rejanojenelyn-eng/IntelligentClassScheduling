@@ -157,6 +157,11 @@
                             <i class="fas fa-user-shield"></i><span class="nav-label">User Management </span>
                         </a>
                     </li>
+                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_account_corrections' }}">
+                        <a href="{{ url_for('admin_account_corrections') }}" class="nav-link">
+                            <i class="fas fa-user-pen"></i><span class="nav-label">Account Corrections</span>
+                        </a>
+                    </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_program_management' }}">
                         <a href="{{ url_for('admin_program_management') }}" class="nav-link">
                             <i class="fas fa-graduation-cap"></i><span class="nav-label">Program Management</span>
@@ -223,6 +228,16 @@
     <script>setTimeout(() => document.getElementById('flashNotifOverlay')?.remove(), 6000);</script>
     {% endif %}
     {% endwith %}
+    <script>
+    // If this page is restored from the browser's back/forward cache, the
+    // flash popup above (baked into the HTML at the time of the original
+    // load) can resurface even though its message is no longer current —
+    // e.g. navigating away right after an unrelated action, then hitting
+    // Back. Drop it on any bfcache restore so a stale message can't reappear.
+    window.addEventListener('pageshow', function (e) {
+        if (e.persisted) document.getElementById('flashNotifOverlay')?.remove();
+    });
+    </script>
 
     <!-- Profile / Email / Password Panels -->
     <div id="profilePanel" class="up-panel" style="display:none;">

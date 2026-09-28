@@ -1,7 +1,7 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scheduleGeneration.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scheduleGeneration.css') }}?v=20260927c">
 {% endblock %}
 
 {% block content %}
@@ -133,7 +133,7 @@
                 <!-- Criteria header / table title -->
                 <div class="criteria-header" id="tableTitle">WAITING FOR SELECTION...</div>
                 <div class="preserve-caption hidden" id="preserveCaption">
-                    <i class="fas fa-info-circle"></i> Only checked rows will be regenerated — check Instructor, Time/Days, or Room within a row to preserve that value instead.
+                    <i class="fas fa-info-circle"></i> Only checked rows will be regenerated — lock any Instructor, Time/Days, or Room value you want to preserve.
                 </div>
 
                 <!-- Table View -->
@@ -197,33 +197,24 @@
                 </div>
 
                 <!-- Conflict Warning Banner -->
-                <div id="conflictBanner" class="conflict-banner hidden">
-                    <div style="display:flex;align-items:flex-start;gap:8px;width:100%;">
-                        <i class="fas fa-exclamation-triangle" style="margin-top:3px;flex-shrink:0;"></i>
-                        <div style="flex:1;">
-                            <span id="conflictText">Schedule has unresolved conflicts. Approve is blocked until resolved.</span>
-                            <ul id="conflictDetailList" style="margin:6px 0 0 0;padding-left:18px;font-size:0.85em;opacity:0.92;display:none;"></ul>
-                        </div>
-                        <button onclick="document.getElementById('conflictBanner').classList.add('hidden')" style="flex-shrink:0;">
-                            <i class="fas fa-times"></i>
-                        </button>
+                <!-- Collapsible conflict panel: built from the evaluation's conflict list -->
+                <div id="conflictBanner" class="conflict-banner conflict-panel hidden" role="region" aria-label="Schedule conflicts">
+                    <div class="conflict-panel-head">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span id="conflictText" class="conflict-panel-title"></span>
+                        <button type="button" id="btnSelectConflictRows" class="conflict-panel-btn">Select Conflict Rows</button>
+                        <button type="button" id="btnToggleConflictDetails" class="conflict-panel-toggle"
+                                aria-expanded="false" aria-controls="conflictDetailList"></button>
                     </div>
+                    <ul id="conflictDetailList" class="conflict-panel-list hidden"></ul>
                 </div>
 
-                <!-- Incomplete Components Banner (partial-generation results) -->
-                <div id="incompleteBanner" class="conflict-banner hidden" style="background:#fff6e0;border-color:#b8860b;color:#7a5c00;">
-                    <div style="display:flex;align-items:flex-start;gap:8px;width:100%;">
-                        <i class="fas fa-circle-question" style="margin-top:3px;flex-shrink:0;"></i>
-                        <div style="flex:1;">
-                            <span id="incompleteText">Some components could not be resolved.</span>
-                        </div>
-                        <button id="btnSelectIncomplete" type="button" class="outline-btn" style="flex-shrink:0;">
-                            Select All Incomplete
-                        </button>
-                        <button onclick="document.getElementById('incompleteBanner').classList.add('hidden')" style="flex-shrink:0;">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
+                <!-- Compact Incomplete Components banner: built from the evaluation's incomplete list -->
+                <div id="incompleteBanner" class="conflict-banner incomplete-banner hidden" role="region" aria-label="Incomplete components">
+                    <i class="fas fa-circle-question"></i>
+                    <span id="incompleteText" class="conflict-panel-title"></span>
+                    <button id="btnSelectIncomplete" type="button" class="conflict-panel-btn">Select Incomplete</button>
+                    <ul id="incompleteDetailList" class="incomplete-detail-list"></ul>
                 </div>
 
                 <!-- Action Buttons -->
@@ -240,9 +231,13 @@
                         <button id="btnRegenerate" class="btn-white-maroon" disabled>
                             <i class="fas fa-sync-alt"></i> Re-generate
                         </button>
-                        <button id="btnApprove" class="btn-maroon-solid" disabled>
-                            <i class="fas fa-check-circle"></i> Approve Schedule
-                        </button>
+                        <!-- Wrapper carries the "why is Approve disabled" tooltip (a disabled
+                             button does not show one in every browser). -->
+                        <span id="approveWrap" class="approve-wrap">
+                            <button id="btnApprove" class="btn-maroon-solid" disabled>
+                                <i class="fas fa-check-circle"></i> Approve Schedule
+                            </button>
+                        </span>
                     </div>
                 </div>
 
@@ -256,7 +251,7 @@
             </button>
             <div class="checkbox-wrapper">
                 <input type="checkbox" id="useHistorical" name="useHistorical">
-                <label for="useHistorical">Load exact previous published schedule</label>
+                <label for="useHistorical">Retrieve previous AY schedule</label>
             </div>
 
             <!-- Schedule Evaluation Panel -->
@@ -264,7 +259,8 @@
                 <div class="eval-title"><i class="fas fa-clipboard-check"></i> SCHEDULE EVALUATION</div>
 
                 <div class="eval-score-pct" id="evalScorePct">—</div>
-                <div class="eval-score-label" id="evalScoreLabel">OVERALL EVALUATION SCORE</div>
+                <div class="eval-score-label" id="evalScoreLabel"
+                     title="Quality of the schedule (60% conflicts, 30% constraint compliance, 10% historical match). Completion and approval eligibility are shown separately below.">QUALITY SCORE (60/30/10)</div>
 
                 <div class="eval-csp-badge status-pending" id="evalCspBadge">
                     <i class="fas fa-circle-notch" id="evalCspIcon"></i>
@@ -273,6 +269,11 @@
                 <div class="eval-approval-badge hidden" id="evalApprovalBadge" role="status">
                     <i class="fas fa-check-circle"></i>
                     <span id="evalApprovalText">ELIGIBLE FOR APPROVAL</span>
+                </div>
+                <!-- Shown whenever the schedule is NOT approvable (incomplete and/or hard violations) -->
+                <div class="eval-readiness hidden" id="evalReadiness" role="status">
+                    <i class="fas fa-ban"></i>
+                    <span id="evalReadinessText"></span>
                 </div>
                 <!-- Partial-generation support (architecture spec section 12) -->
                 <div class="eval-completion-text" id="evalCompletionText"></div>
@@ -432,5 +433,5 @@
 .export-fmt-card.selected { border-color:#8B0000; background:#fff0f0; font-weight:600; }
 </style>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/scheduleGeneration.acad.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/scheduleGeneration.acad.js') }}?v=20260927c"></script>
 {% endblock %}

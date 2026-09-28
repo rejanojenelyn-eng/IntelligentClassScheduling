@@ -1,3 +1,19 @@
+
+async function _laAskPublishReason() {
+    const reason = window.prompt('Reason for publishing this Local Arrangement:');
+    if (reason === null) return null;
+    const clean = String(reason).trim();
+    if (!clean) {
+        if (typeof showToast === 'function') {
+            showToast('A reason is required before publishing a Local Arrangement.', 'warning');
+        } else {
+            alert('A reason is required before publishing a Local Arrangement.');
+        }
+        return null;
+    }
+    return clean;
+}
+
 /* localArrangements.acad.js — Local Arrangements list page */
 
 const _AY_SEM_MAP = {};   // populated from embedded server data
@@ -94,7 +110,11 @@ async function laLoadArrangements() {
     }
 }
 
+// Latest server-issued updated_at per arrangement, sent back as expected_updated_at.
+const _laUpdatedAt = {};
+
 function _laRenderCards(arrangements) {
+    arrangements.forEach(a => { if (a.updated_at) _laUpdatedAt[String(a.arrangementid)] = a.updated_at; });
     _laShowLoading(false);
     const list = document.getElementById('laCardList');
     const empty = document.getElementById('laEmpty');
@@ -134,10 +154,11 @@ function _laCardHtml(a) {
         <div class="la-card-icon">${hcIcon}</div>
         <div class="la-card-info">
             <div class="la-card-eyebrow">Local Arrangement #${a.arrangementid}</div>
-            <div class="la-card-title">${_laEsc(a.programcode || '—')} — Year ${a.yearlevel || '—'}</div>
+            <div class="la-card-title">${_laEsc(a.programcode || '—')} — Year ${a.yearlevel || '—'} — ${_laEsc(a.sectionname || (a.sectionid ? `Section ${a.sectionid}` : 'Legacy / Unassigned Section'))}</div>
             <div class="la-card-badges">
                 <span class="la-badge la-badge-green">${_laEsc(ayLabel)}</span>
                 <span class="la-badge la-badge-blue">${_laEsc(semLabel)}</span>
+                <span class="la-badge la-badge-gray"><i class="fas fa-users" style="font-size:0.55rem;"></i> ${_laEsc(a.sectionname || (a.sectionid ? `Section ${a.sectionid}` : 'Legacy / Unassigned'))}</span>
                 <span class="la-badge la-badge-gray">${a.session_count || 0} session${a.session_count === 1 ? '' : 's'}</span>
                 <span class="la-badge la-badge-gray"><i class="fas fa-user" style="font-size:0.55rem;"></i> ${_laEsc(a.created_by || '—')}</span>
                 <span class="la-badge la-badge-gray">${createdAt}</span>
@@ -167,7 +188,7 @@ async function laViewArrangement(arrId) {
         const sess = data.sessions || [];
 
         document.getElementById('laModalTitle').textContent =
-            `${a.programcode || '—'} — Year ${a.yearlevel || '—'}`;
+            `${a.programcode || '—'} — Year ${a.yearlevel || '—'} — ${a.sectionname || (a.sectionid ? `Section ${a.sectionid}` : 'Legacy / Unassigned Section')}`;
 
         const ayLabel = a.yearstart && a.yearend
             ? `A.Y ${a.yearstart}–${a.yearend}` : (a.acadyear || '—');
@@ -189,6 +210,10 @@ async function laViewArrangement(arrId) {
             <div class="la-modal-info-item">
                 <span class="la-modal-info-label">Year Level</span>
                 <span class="la-modal-info-val">${a.yearlevel || '—'}</span>
+            </div>
+            <div class="la-modal-info-item">
+                <span class="la-modal-info-label">Section</span>
+                <span class="la-modal-info-val">${_laEsc(a.sectionname || (a.sectionid ? `Section ${a.sectionid}` : 'Legacy / Unassigned'))}</span>
             </div>
             <div class="la-modal-info-item">
                 <span class="la-modal-info-label">Period</span>
@@ -246,10 +271,27 @@ function laCloseModal() {
 /* ── Deactivate ── */
 async function laDeactivate(arrId) {
     if (!confirm(`Remove Local Arrangement #${arrId}? This cannot be undone.`)) return;
+    let res;
     try {
-        const res  = await fetch(`/api/local/arrangement/${arrId}/deactivate`, { method: 'POST' });
-        const data = await res.json();
+        res = await fetch(`/api/local/arrangement/${arrId}/deactivate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expected_updated_at: _laUpdatedAt[String(arrId)] || null })
+        });
+    } catch (e) {
+        alert('Network error. Could not reach the server. Please try again.');
+        return;
+    }
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (res.status >= 500 || !data) {
+        console.error(`[localArrangements] deactivate #${arrId}: HTTP ${res.status}`, data);
+        alert('Server error. The arrangement could not be removed. Please try again.');
+        return;
+    }
+    try {
         if (data.success) {
+            if (data.updated_at) _laUpdatedAt[String(arrId)] = data.updated_at;
             const card = document.getElementById(`la-card-${arrId}`);
             if (card) {
                 card.style.transition = 'opacity 0.3s, transform 0.3s';
@@ -267,8 +309,8 @@ async function laDeactivate(arrId) {
         } else {
             alert(data.error || 'Could not remove arrangement.');
         }
-    } catch (e) {
-        alert('Network error. Please try again.');
+    } catch (uiErr) {
+        console.error('[localArrangements] arrangement removed, but updating the list failed:', uiErr);
     }
 }
 

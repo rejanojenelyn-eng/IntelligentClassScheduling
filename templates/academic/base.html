@@ -286,6 +286,16 @@
     <script>setTimeout(() => document.getElementById('flashNotifOverlay')?.remove(), 6000);</script>
     {% endif %}
     {% endwith %}
+    <script>
+    // If this page is restored from the browser's back/forward cache, the
+    // flash popup above (baked into the HTML at the time of the original
+    // load) can resurface even though its message is no longer current —
+    // e.g. navigating away right after an unrelated action, then hitting
+    // Back. Drop it on any bfcache restore so a stale message can't reappear.
+    window.addEventListener('pageshow', function (e) {
+        if (e.persisted) document.getElementById('flashNotifOverlay')?.remove();
+    });
+    </script>
 
     <!-- ══════════════════════════════════════════
          PROFILE SETTINGS PANEL

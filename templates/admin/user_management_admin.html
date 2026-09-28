@@ -304,9 +304,6 @@
     <!-- Header -->
     <div class="page-header">
         <h1>USER MANAGEMENT</h1>
-        <button class="btn-add-user" onclick="openModal('modalAddAccount')">
-            <i class="fas fa-user-plus"></i> ADD NEW USER
-        </button>
     </div>
 
     <!-- Table Container -->
@@ -378,49 +375,6 @@
 
 <!-- ================= MODALS ================= -->
 
-<!-- ADD ACCOUNT MODAL -->
-<div id="modalAddAccount" class="um-modal">
-    <div class="um-modal-content" style="max-width: 450px;">
-        <div class="um-modal-header">
-            <h2>Add New Account</h2>
-            <i class="fas fa-times" onclick="closeModal('modalAddAccount')"></i>
-        </div>
-        <form action="{{ url_for('account_add') }}" method="POST">
-            <div class="um-modal-body">
-                <div class="um-input-group">
-                    <label>Username / Employee No.</label>
-                    <input type="text" name="username" class="um-input" required placeholder="e.g. EMP001">
-                </div>
-                <div class="um-input-group">
-                    <label>Role / Employment Type</label>
-                    <select name="role" id="addRoleSelect" class="um-input" onchange="toggleEmpField()" required>
-                        <option value="">— Select Role —</option>
-                        <option value="Admin">Admin</option>
-                        <option value="Academic Head">Academic Head</option>
-                        <option value="Faculty">Faculty</option>
-                    </select>
-                </div>
-                <div class="um-input-group" id="empLinkRow" style="display:none;">
-                    <label>Link to Faculty Profile</label>
-                    <select name="employeenumber" class="um-input">
-                        <option value="">— No Profile Link —</option>
-                        {% for emp in unlinked_employees %}
-                        <option value="{{ emp.employeenumber }}">{{ emp.employeenumber }} — {{ emp.fullname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <p style="font-size:0.75rem; color:#6c757d; font-style:italic; margin: 15px 0 0 0; line-height:1.4;">
-                    * The default password will automatically be set to <strong>PUP@{username}</strong>. 
-                </p>
-            </div>
-            <div class="um-modal-footer">
-                <button type="button" class="um-btn um-btn-cancel" onclick="closeModal('modalAddAccount')">Cancel</button>
-                <button type="submit" class="um-btn um-btn-confirm">Create User</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <!-- RESET PASSWORD MODAL -->
 <div id="modalResetPw" class="um-modal">
     <div class="um-modal-content" style="max-width: 400px;">
@@ -480,12 +434,6 @@ window.onclick = function(event) {
     }
 }
 
-function toggleEmpField() {
-    const role = document.getElementById('addRoleSelect').value;
-    document.getElementById('empLinkRow').style.display =
-        (role === 'Faculty' || role === 'Academic Head') ? 'block' : 'none';
-}
-
 function prepareReset(userId, username) {
     document.getElementById('resetUserId').value      = userId;
     document.getElementById('resetUsername').value    = username;
@@ -499,19 +447,19 @@ function prepareToggle(userId, username, isActive) {
     document.getElementById('toggleUserId').value    = userId;
     document.getElementById('toggleNewStatus').value = active ? 'false' : 'true';
     
-    document.getElementById('toggleTitle').textContent = active ? `Deactivate User` : `Activate User`;
-    
+    document.getElementById('toggleTitle').textContent = active ? `Deactivate User?` : `Activate User?`;
+
     document.getElementById('toggleDesc').innerHTML = active
-            ? `Are you sure you want to suspend access for <strong style="color:#800000;">${username}</strong>?<br>They will no longer be able to log in.`
-            : `Restore system access for <strong style="color:#2e7d32;">${username}</strong>?`;
-            
+            ? `Are you sure you want to deactivate <strong style="color:#800000;">${username}</strong>'s faculty account? The faculty will no longer be able to log in or be assigned to new classes.`
+            : `Are you sure you want to activate <strong style="color:#2e7d32;">${username}</strong>'s faculty account?`;
+
     const icon = document.getElementById('toggleIcon');
     icon.className = active ? 'fas fa-user-slash' : 'fas fa-user-check';
     icon.style.color = active ? '#dc3545' : '#198754';
-    
+
     const btn = document.getElementById('toggleConfirmBtn');
     btn.style.backgroundColor = active ? '#dc3545' : '#198754';
-    btn.textContent = active ? 'Deactivate' : 'Activate';
+    btn.textContent = active ? 'Confirm Deactivation' : 'Confirm Activation';
 
     openModal('modalToggleStatus');
 }

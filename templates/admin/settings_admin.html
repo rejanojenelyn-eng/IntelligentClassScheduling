@@ -56,8 +56,15 @@
        ════════════════════════════════════════════════ -->
   <div id="tab-academic" class="tab-content active">
 
+    <div class="settings-policy-stepper" aria-label="Academic management policy sections">
+      <button type="button" class="policy-step active" data-settings-step="1" data-target="#settings-faculty-policy" onclick="showSettingsPolicyStep(1)"><span>1</span><div><strong>Faculty Policy</strong><small>Academic year &amp; faculty rules</small></div></button>
+      <button type="button" class="policy-step" data-settings-step="2" data-target="#settings-designee-policy" onclick="showSettingsPolicyStep(2)"><span>2</span><div><strong>Designee Policy</strong><small>Designation-specific rules</small></div></button>
+      <button type="button" class="policy-step" data-settings-step="3" data-target="#settings-constraints" onclick="showSettingsPolicyStep(3)"><span>3</span><div><strong>Schedule Constraints</strong><small>System-wide validation</small></div></button>
+      <button type="button" class="policy-step" data-settings-step="4" data-target="#settings-merge-calendar" onclick="showSettingsPolicyStep(4)"><span>4</span><div><strong>Merging &amp; Calendar</strong><small>Merge &amp; academic policy</small></div></button>
+    </div>
+
     <!-- ── ACADEMIC YEAR MANAGEMENT ─────────────── -->
-    <div class="section-block">
+    <div class="section-block settings-policy-panel" id="settings-faculty-policy" data-policy-step="1">
       <div class="section-header-row">
         <div class="section-title-group">
           <i class="fas fa-calendar-alt section-icon"></i>
@@ -174,11 +181,11 @@
     </div>
 
     <!-- ── EMPLOYEE FACULTY HOURS ────────────────── -->
-    <div class="section-block">
+    <div class="section-block settings-policy-panel" data-policy-step="1">
       <div class="section-header-row">
         <div class="section-title-group">
           <i class="fas fa-users section-icon"></i>
-          <h2>Faculty Hours</h2>
+          <h2>Faculty Scheduling Policy</h2>
         </div>
       </div>
       <div class="table-wrapper">
@@ -229,12 +236,12 @@
       </div>
     </div>
 
-    <!-- ── DESIGNEES FACULTY HOURS ───────────────── -->
-    <div class="section-block">
+    <!-- ── DESIGNEE SCHEDULING POLICY ───────────────── -->
+    <div class="section-block settings-policy-panel" id="settings-designee-policy" data-policy-step="2">
       <div class="section-header-row">
         <div class="section-title-group">
           <i class="fas fa-user-tie section-icon"></i>
-          <h2>Designees Hours</h2>
+          <h2>Designee Scheduling Policy</h2>
         </div>
         <button class="btn-primary" onclick="openSModal('modalAddDesig')">
           <i class="fas fa-plus"></i> ADD DESIGNEE
@@ -246,7 +253,7 @@
             <tr>
               <th style="text-align:left; padding-left:20px;">DESIGNATION</th>
               <th>REGULAR LOAD (HRS)</th>
-              <th>PT/NIGHT TEACHING SERVICE</th>
+              <th title="Maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window">PT/NIGHT TEACHING<br>(MAX DAYS/WEEK)</th>
               <th>REGULAR HOURS</th>
               <th class="col-action"></th>
             </tr>
@@ -273,11 +280,11 @@
     </div>
 
     <!-- ── HARD CONSTRAINTS CONTROLLER ──────────── -->
-    <div class="section-block">
+    <div class="section-block settings-policy-panel" id="settings-constraints" data-policy-step="3">
       <div class="section-header-row">
         <div class="section-title-group">
           <i class="fas fa-shield-alt section-icon"></i>
-          <h2>Hard Constraints Controller</h2>
+          <h2>Schedule Constraints</h2>
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
           <span id="hc-save-status" class="hc-save-status"></span>
@@ -285,7 +292,7 @@
         </div>
       </div>
       <p class="section-desc">
-        Strict scheduling rules enforced system-wide during schedule generation, conflict validation, room and faculty assignment, and publishing. All changes are automatically saved to the database and take effect on the next schedule generation or validation run.
+        Configure system scheduling rules and validation parameters. Hard constraints determine feasibility; soft constraints guide recommendations and optimization. Changes are saved automatically and apply to subsequent generation and validation runs.
       </p>
 
       <div class="constraints-grid">
@@ -294,7 +301,7 @@
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">DAY RESTRICTION</span>
+              <span class="card-category"><b>HC5</b> · RESTRICTED DAYS</span>
               <label class="tog">
                 <input type="checkbox" id="tog-weekend" onchange="saveConstraint('weekend',this.checked)">
                 <span class="tog-slider"></span>
@@ -333,13 +340,13 @@
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">DAY ASSIGNMENT</span>
+              <span class="card-category"><b>HC7</b> · DAY PAIRING</span>
               <label class="tog">
                 <input type="checkbox" id="tog-day-pair" onchange="saveConstraint('day_pairing',this.checked)">
                 <span class="tog-slider"></span>
               </label>
             </div>
-            <h3 class="card-title">Regular Day Pairing Alignment</h3>
+            <h3 class="card-title">Required Day Pairing</h3>
             <p class="card-desc">When enabled, classes must align into standard pairs. If disabled random pairings are accepted.</p>
           </div>
           <div class="card-body">
@@ -356,7 +363,7 @@
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">LABORATORY</span>
+              <span class="card-category"><b>HC13</b> · LABORATORY</span>
               <label class="tog">
                 <input type="checkbox" id="tog-lab" onchange="saveConstraint('lab_session',this.checked)">
                 <span class="tog-slider"></span>
@@ -370,35 +377,83 @@
           </div>
         </div>
 
+        <!-- Card: Standard Time Slots (HC6) -->
+        <div class="constraint-card constraint-card-system">
+          <div class="card-head">
+            <div class="card-toprow"><span class="card-category"><b>HC6</b> · STANDARD TIME SLOTS</span><span class="rule-lock"><i class="fas fa-lock"></i> ENFORCED</span></div>
+            <h3 class="card-title">Standard Time-Slot Compliance</h3>
+            <p class="card-desc">Class start and end times must use the configured scheduling grid. The current policy uses the standard time-slot configuration maintained by the scheduler.</p>
+          </div>
+          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-clock ic-green"></i><span>System validation uses the configured <code>hc_time_slots</code> grid; this rule is not independently disabled from this screen.</span></div></div>
+        </div>
+
+        <!-- Card: Room Capacity (HC14) -->
+        <div class="constraint-card constraint-card-system">
+          <div class="card-head">
+            <div class="card-toprow"><span class="card-category"><b>HC14</b> · ROOM CAPACITY</span><span class="rule-lock"><i class="fas fa-lock"></i> ENFORCED</span></div>
+            <h3 class="card-title">Room Capacity Requirement</h3>
+            <p class="card-desc">Assigned rooms must accommodate the expected class size when reliable section-size and room-capacity data are available.</p>
+          </div>
+          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-check-circle ic-green"></i><span>Missing capacity data remains non-blocking under the frozen HC14 policy.</span></div></div>
+        </div>
+
+        <!-- Card: Conflict Validation (HC10-HC12 + HC15) -->
+        <div class="constraint-card constraint-card-wide constraint-card-system">
+          <div class="card-head">
+            <div class="card-toprow"><span class="card-category">CONFLICT VALIDATION</span><span class="rule-lock"><i class="fas fa-lock"></i> SYSTEM ENFORCED</span></div>
+            <h3 class="card-title">Core Conflict Validation</h3>
+            <p class="card-desc">Core double-booking protection is always enforced. Configured merge/shared-session exemptions are evaluated by the centralized constraint layer.</p>
+          </div>
+          <div class="card-body">
+            <div class="enforced-rule-list">
+              <div><strong>HC10</strong><span>Faculty Schedule Conflict</span><em>Enforced</em></div>
+              <div><strong>HC11</strong><span>Room Schedule Conflict</span><em>Enforced</em></div>
+              <div><strong>HC12</strong><span>Section Schedule Conflict</span><em>Enforced</em></div>
+              <div><strong>HC15</strong><span>Cross-Schedule Conflict Validation</span><em>Enforced</em></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Card: Faculty Specialization Restriction -->
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">FACULTY QUALIFICATION</span>
+              <span class="card-category"><b>SC9</b> · SOFT PREFERENCE</span>
               <label class="tog">
                 <input type="checkbox" id="tog-faculty-spec" onchange="saveConstraint('faculty_spec',this.checked)">
                 <span class="tog-slider"></span>
               </label>
             </div>
-            <h3 class="card-title">Faculty Specialization Guidance</h3>
-            <p class="card-desc">When enabled, the system checks whether a faculty member's specialization matches the assigned subject and displays a warning notice if a mismatch is detected. The assignment is still allowed — the warning is advisory only. When disabled, no specialization check or notice is shown.</p>
+            <h3 class="card-title">Faculty Specialization Match</h3>
+            <p class="card-desc">Prefer faculty whose specialization matches the assigned subject. A mismatch is advisory only and does not invalidate an otherwise feasible schedule.</p>
           </div>
           <div class="card-body simple-status">
             <div class="status-row"><i class="fas fa-info-circle ic-green"></i><span>Shows an advisory notice in Manual Editor when a faculty's specialization does not match the subject. Assignment is always permitted.</span></div>
           </div>
         </div>
 
+      </div><!-- /constraints-grid: schedule constraints -->
+    </div><!-- /schedule constraints section -->
+
+    <div class="section-block settings-policy-panel" id="settings-merge-calendar" data-policy-step="4">
+      <div class="section-header-row policy-section-heading">
+        <div class="section-title-group">
+          <i class="fas fa-layer-group section-icon"></i>
+          <div><h2>Class Merging &amp; Academic Calendar</h2><p>Configure merged-class policy and academic calendar limits without changing the frozen constraint definitions.</p></div>
+        </div>
+      </div>
+      <div class="constraints-grid">
         <!-- Card: Class Merging Policy -->
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">CLASS MERGING</span>
+              <span class="card-category"><b>HC16</b> · CLASS MERGING</span>
               <label class="tog">
                 <input type="checkbox" id="tog-merge" onchange="saveMergeConstraint(this.checked)">
                 <span class="tog-slider"></span>
               </label>
             </div>
-            <h3 class="card-title">Class Merging Policy</h3>
+            <h3 class="card-title">Merged-Class Validity</h3>
             <p class="card-desc">When enabled, multiple sections may share the same schedule slot, room, and faculty. The merge scope defines which subjects are eligible. Commonly used for NSTP subjects held on Sundays where multiple sections attend a single class.</p>
           </div>
           <div class="card-body" id="merge-body">
@@ -431,7 +486,7 @@
 
             <div class="cparam-divider"></div>
             <div class="pair-list-head">
-              <span class="param-sublabel"><i class="fas fa-calculator param-sublabel-icon"></i>MERGED CLASS FACULTY LOAD POLICY</span>
+              <span class="param-sublabel"><i class="fas fa-calculator param-sublabel-icon"></i>HC17 · MERGED CLASS FACULTY LOAD POLICY</span>
               <button class="btn-add-item" onclick="addMergeLoadPolicyRow()"><i class="fas fa-plus"></i> ADD RULE</button>
             </div>
             <p class="card-desc" style="margin:2px 0 8px;">Define which subjects count as merged for a given number of sections (e.g. NSTP with 2–3 merged sections). Credited units and teaching hours are never entered manually — they're always pulled automatically from the subject's own record (credited units, tuition hours) whenever a rule matches. When no rule matches, the subject's real credited units and the shared session's actual duration are used instead.</p>
@@ -459,7 +514,7 @@
         <div class="constraint-card">
           <div class="card-head">
             <div class="card-toprow">
-              <span class="card-category">ACADEMIC CALENDAR</span>
+              <span class="card-category">ACADEMIC CALENDAR POLICY</span>
               <label class="tog">
                 <input type="checkbox" id="tog-sem-span" onchange="saveSemSpanConstraint(this.checked)">
                 <span class="tog-slider"></span>
@@ -497,8 +552,20 @@
           </div>
         </div>
 
-      </div><!-- /constraints-grid -->
-    </div><!-- /hard constraints section-block -->
+      </div><!-- /constraints-grid: merging & calendar -->
+    </div><!-- /merging & calendar section -->
+
+    <div class="settings-policy-footer" id="settingsPolicyFooter">
+      <button type="button" class="policy-nav-btn policy-prev" id="settingsPolicyPrev" onclick="changeSettingsPolicyStep(-1)"><i class="fas fa-chevron-left"></i> Previous</button>
+      <div class="policy-progress" aria-label="Settings section progress">
+        <button type="button" class="active" data-progress-step="1" onclick="showSettingsPolicyStep(1)" aria-label="Faculty Policy"></button>
+        <button type="button" data-progress-step="2" onclick="showSettingsPolicyStep(2)" aria-label="Designee Policy"></button>
+        <button type="button" data-progress-step="3" onclick="showSettingsPolicyStep(3)" aria-label="Schedule Constraints"></button>
+        <button type="button" data-progress-step="4" onclick="showSettingsPolicyStep(4)" aria-label="Merging and Calendar"></button>
+        <span id="settingsPolicyCounter">1 of 4</span>
+      </div>
+      <button type="button" class="policy-nav-btn policy-next" id="settingsPolicyNext" onclick="changeSettingsPolicyStep(1)">Next <i class="fas fa-chevron-right"></i></button>
+    </div>
 
   </div><!-- /tab-academic -->
 
@@ -999,7 +1066,7 @@
                    onchange="updateDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT OFFICE SERVICE (NIGHTS/WEEK)</label>
+            <label>PT / NIGHT TEACHING SERVICE (MAX DAYS/WEEK)</label>
             <input type="number" name="night_teaching" id="modal_des_night" class="m-input" min="0" required
                    onchange="updateDesigHours()">
           </div>
@@ -1016,7 +1083,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service is how many nights per week (Mon–Sat) this designee is on night office duty — it's subtracted from 6 to get how many nights they may still teach in the evening.</p>
+        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service is the maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1052,7 +1119,7 @@
                    onchange="updateAddDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT OFFICE SERVICE (NIGHTS/WEEK)</label>
+            <label>PT / NIGHT TEACHING SERVICE (MAX DAYS/WEEK)</label>
             <input type="number" name="night_teaching" id="add_des_night" class="m-input" min="0" required
                    onchange="updateAddDesigHours()">
           </div>
@@ -1065,7 +1132,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours band is computed from the night office service value. PT/Night Teaching Service is how many nights per week (Mon–Sat) this designee is on night office duty — it's subtracted from 6 to get how many nights they may still teach in the evening.</p>
+        <p class="m-note">* Regular hours band is computed from the PT/Night Teaching Service value. PT/Night Teaching Service is the maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>

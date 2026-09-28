@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Up Your Account - PUP Lopez</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { min-height: 100vh; background: #fdfdfd; display: flex; justify-content: center; padding: 50px 20px 80px; }
+        .setup-card { width: 100%; max-width: 760px; }
+        .setup-card .brand-row { text-align: center; }
+        .setup-card img.logo { width: 80px; margin-bottom: 8px; }
+        .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.2rem; letter-spacing: 0.5px; }
+        .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.72rem; letter-spacing: 1px; margin-bottom: 20px; }
+
+        h1.step-title { color: #800000; font-weight: 800; font-size: 1.8rem; text-align: center; margin-bottom: 24px; }
+
+        .error-msg { color: #b22222; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
+        .success-msg { color: #2e7d32; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
+
+        .section-card { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 22px 26px; margin-bottom: 22px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
+        .section-title { color: #800000; font-weight: 800; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f3e5e5; }
+
+        .field-row {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            padding: 12px 0; border-bottom: 1px solid #f5f5f5;
+        }
+        .field-row:last-child { border-bottom: none; }
+        .field-label { color: #888; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .field-value { color: #333; font-size: 1rem; font-weight: 600; }
+        .field-value.muted { color: #aaa; font-weight: 500; font-style: italic; }
+        .field-main { flex: 1; }
+
+        .name-block .field-value.full-name { font-size: 1.3rem; color: #4b0a0a; font-weight: 800; margin-bottom: 10px; }
+        .name-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
+        .name-part-label { color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
+        .name-part-value { color: #333; font-size: 0.92rem; font-weight: 600; }
+
+        .btn-request-correction {
+            background: none; border: 1px solid #800000; color: #800000; border-radius: 6px;
+            padding: 7px 14px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 0.3px; cursor: pointer; white-space: nowrap; margin-left: 16px; transition: 0.15s;
+        }
+        .btn-request-correction:hover { background: #800000; color: #fff; }
+
+        .correction-panel {
+            display: none; margin-top: 14px; padding: 18px 20px; border: 1px solid #e8c8c8;
+            border-radius: 10px; background: #fef9f9;
+        }
+        .correction-panel.open { display: block; }
+        .correction-panel .cp-title { color: #4b0a0a; font-weight: 800; font-size: 0.85rem; margin-bottom: 14px; }
+        .cp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .cp-field label { display: block; color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
+        .cp-field .cp-current { color: #999; font-size: 0.85rem; margin-bottom: 6px; }
+        .cp-field input, .cp-field select {
+            width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 0.9rem; font-family: inherit; background: #fff;
+        }
+        .cp-actions { display: flex; justify-content: flex-end; gap: 10px; }
+        .btn-cp-cancel { background: none; border: none; color: #888; font-weight: 700; font-size: 0.8rem; cursor: pointer; padding: 9px 14px; }
+        .btn-cp-add { background: #800000; color: #fff; border: none; border-radius: 6px; padding: 9px 18px; font-weight: 800; font-size: 0.8rem; cursor: pointer; }
+        .btn-cp-add:hover { background: #5c0000; }
+
+        .summary-section { display: none; }
+        .summary-section.open { display: block; }
+        .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+        .summary-table th { text-align: left; font-size: 0.68rem; color: #888; text-transform: uppercase; padding: 8px 10px; border-bottom: 2px solid #eee; }
+        .summary-table td { padding: 10px; font-size: 0.88rem; border-bottom: 1px solid #f2f2f2; vertical-align: top; }
+        .summary-table .sv-current { color: #999; }
+        .summary-table .sv-new { color: #2e7d32; font-weight: 700; }
+        .summary-remove { background: none; border: none; color: #b22222; cursor: pointer; font-size: 0.9rem; }
+        .summary-remarks label { display: block; color: #800000; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .summary-remarks textarea {
+            width: 100%; padding: 12px 14px; border: 1px solid #ddd; border-radius: 8px;
+            font-size: 0.9rem; font-family: inherit; resize: vertical; margin-bottom: 16px;
+        }
+
+        .actions-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
+        .btn-outline {
+            padding: 12px 26px; border: 2px solid #800000; border-radius: 6px; background: #fff;
+            color: #800000; font-weight: 800; font-size: 0.85rem; cursor: pointer; transition: 0.2s;
+        }
+        .btn-outline:hover { background: #800000; color: #fff; }
+        .btn-outline.secondary { border-color: #ccc; color: #888; }
+        .btn-outline.secondary:hover { background: #f3f3f3; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="setup-card">
+        <div class="brand-row">
+            <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+            <div class="brand-title">PUP LOPEZ</div>
+            <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
+        </div>
+
+        <h1 class="step-title">Check Your Information</h1>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <p class="{{ 'success-msg' if category == 'success' else 'error-msg' }}">{{ message }}</p>
+            {% endfor %}
+        {% endwith %}
+
+        <!-- ACCOUNT INFORMATION -->
+        <div class="section-card">
+            <div class="section-title">Account Information</div>
+            <div class="field-row">
+                <div class="field-main">
+                    <div class="field-label">Employee ID</div>
+                    <div class="field-value">{{ info['Employee ID'] }}</div>
+                </div>
+                <button type="button" class="btn-request-correction" onclick="openCorrection('empid')">Request Correction</button>
+            </div>
+            <div class="field-row">
+                <div class="field-main">
+                    <div class="field-label">Email Address</div>
+                    <div class="field-value">{{ account_email or '—' }}</div>
+                </div>
+            </div>
+            <div class="field-row">
+                <div class="field-main">
+                    <div class="field-label">Contact Number</div>
+                    <div class="field-value">{{ account_contact or '—' }}</div>
+                </div>
+            </div>
+            <p style="font-size: 0.75rem; color: #999; margin-top: 8px; font-style: italic;">
+                Email and Contact Number can be updated from the account information step, not here.
+            </p>
+        </div>
+
+        <!-- OFFICIAL FACULTY INFORMATION -->
+        <div class="section-card">
+            <div class="section-title">Official Faculty Information</div>
+
+            <div class="field-row name-block">
+                <div class="field-main">
+                    <div class="field-value full-name">{{ full_name }}</div>
+                    <div class="name-parts">
+                        <div><div class="name-part-label">First Name</div><div class="name-part-value">{{ info['First Name'] or '—' }}</div></div>
+                        <div><div class="name-part-label">Middle Name</div><div class="name-part-value">{{ info['Middle Name'] or '—' }}</div></div>
+                        <div><div class="name-part-label">Last Name</div><div class="name-part-value">{{ info['Last Name'] or '—' }}</div></div>
+                        <div><div class="name-part-label">Suffix</div><div class="name-part-value">{{ info['Suffix'] or '—' }}</div></div>
+                    </div>
+                </div>
+                <button type="button" class="btn-request-correction" onclick="openCorrection('name')">Request Correction</button>
+            </div>
+
+            <div class="field-row">
+                <div class="field-main">
+                    <div class="field-label">Designation</div>
+                    <div class="field-value {{ 'muted' if not info['Designation'] }}">{{ info['Designation'] or 'Not set' }}</div>
+                </div>
+                <button type="button" class="btn-request-correction" onclick="openCorrection('designation')">Request Correction</button>
+            </div>
+
+            <div class="field-row">
+                <div class="field-main">
+                    <div class="field-label">Specialization</div>
+                    <div class="field-value {{ 'muted' if not info['Specialization'] }}">{{ info['Specialization'] or 'Not set' }}</div>
+                </div>
+                <button type="button" class="btn-request-correction" onclick="openCorrection('specialization')">Request Correction</button>
+            </div>
+
+            <!-- CORRECTION PANELS -->
+            <div class="correction-panel" id="panel-name">
+                <div class="cp-title">Correct Name</div>
+                <div class="cp-grid">
+                    <div class="cp-field">
+                        <label>First Name</label>
+                        <div class="cp-current">Current: {{ info['First Name'] or '—' }}</div>
+                        <input type="text" id="cp-name-first" value="{{ info['First Name'] }}">
+                    </div>
+                    <div class="cp-field">
+                        <label>Middle Name</label>
+                        <div class="cp-current">Current: {{ info['Middle Name'] or '—' }}</div>
+                        <input type="text" id="cp-name-middle" value="{{ info['Middle Name'] }}">
+                    </div>
+                    <div class="cp-field">
+                        <label>Last Name</label>
+                        <div class="cp-current">Current: {{ info['Last Name'] or '—' }}</div>
+                        <input type="text" id="cp-name-last" value="{{ info['Last Name'] }}">
+                    </div>
+                    <div class="cp-field">
+                        <label>Suffix (optional)</label>
+                        <div class="cp-current">Current: {{ info['Suffix'] or '—' }}</div>
+                        <input type="text" id="cp-name-suffix" value="{{ info['Suffix'] }}" placeholder="Jr., Sr., III...">
+                    </div>
+                </div>
+                <div class="cp-actions">
+                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('name')">Cancel</button>
+                    <button type="button" class="btn-cp-add" onclick="addNameCorrection()">Add to Request</button>
+                </div>
+            </div>
+
+            <div class="correction-panel" id="panel-designation">
+                <div class="cp-title">Correct Designation</div>
+                <div class="cp-field" style="margin-bottom:14px;">
+                    <label>Designation</label>
+                    <div class="cp-current">Current: {{ info['Designation'] or 'Not set' }}</div>
+                    <select id="cp-designation">
+                        <option value="">— Select correct designation —</option>
+                        {% for d in designations %}
+                        <option value="{{ d.designationname }}">{{ d.designationname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="cp-actions">
+                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('designation')">Cancel</button>
+                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Designation', 'cp-designation')">Add to Request</button>
+                </div>
+            </div>
+
+            <div class="correction-panel" id="panel-specialization">
+                <div class="cp-title">Correct Specialization</div>
+                <div class="cp-field" style="margin-bottom:14px;">
+                    <label>Specialization</label>
+                    <div class="cp-current">Current: {{ info['Specialization'] or 'Not set' }}</div>
+                    <select id="cp-specialization">
+                        <option value="">— Select correct specialization —</option>
+                        {% for s in specializations %}
+                        <option value="{{ s.specializationname }}">{{ s.specializationname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="cp-actions">
+                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('specialization')">Cancel</button>
+                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Specialization', 'cp-specialization')">Add to Request</button>
+                </div>
+            </div>
+
+            <div class="correction-panel" id="panel-empid">
+                <div class="cp-title">Correct Employee ID</div>
+                <p style="font-size:0.78rem; color:#a15c00; background:#fff8e1; border-radius:6px; padding:10px 12px; margin-bottom:14px;">
+                    <i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. A correction here is always reviewed and applied manually by the Admin, never automatically.
+                </p>
+                <div class="cp-field" style="margin-bottom:14px;">
+                    <label>Employee ID</label>
+                    <div class="cp-current">Current: {{ info['Employee ID'] }}</div>
+                    <input type="text" id="cp-empid" placeholder="Correct Employee ID">
+                </div>
+                <div class="cp-actions">
+                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('empid')">Cancel</button>
+                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Employee ID', 'cp-empid')">Add to Request</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- REQUEST SUMMARY -->
+        <div class="section-card summary-section" id="summarySection">
+            <div class="section-title">Correction Request Summary</div>
+            <table class="summary-table">
+                <thead><tr><th>Field</th><th>Current</th><th>Requested Correction</th><th></th></tr></thead>
+                <tbody id="summaryBody"></tbody>
+            </table>
+            <div class="summary-remarks">
+                <label>REASON / REMARKS (OPTIONAL)</label>
+                <textarea id="summaryRemarks" rows="3" placeholder="Explain why this needs to be corrected"></textarea>
+            </div>
+            <div class="actions-row">
+                <button type="button" class="btn-outline secondary" onclick="clearCart()">Cancel</button>
+                <button type="button" class="btn-outline" onclick="submitCorrections()">Submit Correction Request</button>
+            </div>
+        </div>
+
+        <form method="POST" id="confirmForm">
+            <input type="hidden" name="action" value="confirm">
+            <div class="actions-row">
+                <button type="submit" class="btn-outline">SAVE AND CONFIRM</button>
+            </div>
+        </form>
+
+        <form method="POST" id="correctionForm" style="display:none;">
+            <input type="hidden" name="action" value="correction">
+            <input type="hidden" name="corrections_json" id="correctionsJsonInput">
+            <input type="hidden" name="remarks" id="remarksInput">
+        </form>
+    </div>
+
+<script>
+    const CURRENT = {{ info | tojson }};
+    let cart = [];
+
+    function openCorrection(key) {
+        document.querySelectorAll('.correction-panel').forEach(p => p.classList.remove('open'));
+        document.getElementById('panel-' + key).classList.add('open');
+    }
+    function closeCorrection(key) {
+        document.getElementById('panel-' + key).classList.remove('open');
+    }
+
+    function addNameCorrection() {
+        const parts = [
+            ['First Name', document.getElementById('cp-name-first').value.trim()],
+            ['Middle Name', document.getElementById('cp-name-middle').value.trim()],
+            ['Last Name', document.getElementById('cp-name-last').value.trim()],
+            ['Suffix', document.getElementById('cp-name-suffix').value.trim()],
+        ];
+        let added = 0;
+        parts.forEach(([field, value]) => {
+            const current = CURRENT[field] || '';
+            if (value !== current && (value !== '' || field === 'Middle Name' || field === 'Suffix')) {
+                if (value === '' && current === '') return;
+                addCartItem(field, current, value);
+                added++;
+            }
+        });
+        if (added === 0) { alert('Please change at least one name field before adding.'); return; }
+        closeCorrection('name');
+    }
+
+    function addSimpleCorrection(field, inputId) {
+        const el = document.getElementById(inputId);
+        const value = el.value.trim();
+        if (!value) { alert('Please provide the correct information.'); return; }
+        const current = CURRENT[field] || '';
+        if (value === current) { alert('That matches the current value already on file.'); return; }
+        addCartItem(field, current, value);
+        const key = field === 'Employee ID' ? 'empid' : field.toLowerCase();
+        closeCorrection(key);
+    }
+
+    function addCartItem(field, current, value) {
+        // Replace any existing pending entry for the same field rather than duplicating it.
+        cart = cart.filter(c => c.field_name !== field);
+        cart.push({ field_name: field, current_value: current, proposed_value: value });
+        renderSummary();
+    }
+
+    function removeCartItem(index) {
+        cart.splice(index, 1);
+        renderSummary();
+    }
+
+    function renderSummary() {
+        const section = document.getElementById('summarySection');
+        const body = document.getElementById('summaryBody');
+        if (cart.length === 0) {
+            section.classList.remove('open');
+            body.innerHTML = '';
+            return;
+        }
+        section.classList.add('open');
+        body.innerHTML = cart.map((c, i) => `
+            <tr>
+                <td><strong>${c.field_name}</strong></td>
+                <td class="sv-current">${c.current_value || '—'}</td>
+                <td class="sv-new">${c.proposed_value || '<em>(blank)</em>'}</td>
+                <td><button type="button" class="summary-remove" onclick="removeCartItem(${i})" title="Remove"><i class="fas fa-times"></i></button></td>
+            </tr>
+        `).join('');
+    }
+
+    function clearCart() {
+        cart = [];
+        renderSummary();
+        document.getElementById('summaryRemarks').value = '';
+    }
+
+    function submitCorrections() {
+        if (cart.length === 0) return;
+        document.getElementById('correctionsJsonInput').value = JSON.stringify(cart);
+        document.getElementById('remarksInput').value = document.getElementById('summaryRemarks').value.trim();
+        document.getElementById('correctionForm').submit();
+    }
+</script>
+</body>
+</html>

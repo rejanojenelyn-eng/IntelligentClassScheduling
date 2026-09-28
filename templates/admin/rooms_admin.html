@@ -21,14 +21,14 @@
 
     <!-- STATS CARDS -->
     <div class="stats-row">
-        <div class="stat-card stat-green">
+        <div class="stat-card stat-green stat-clickable" ondblclick="openRoomTypeModal('Laboratory')" title="Double-click to view laboratory rooms">
             <div class="stat-content">
                 <span class="stat-label">TOTAL LABORATORIES</span>
                 <span class="stat-value" id="statLabs">{{ total_labs }}</span>
             </div>
             <div class="stat-icon"><i class="fas fa-flask"></i></div>
         </div>
-        <div class="stat-card stat-orange">
+        <div class="stat-card stat-orange stat-clickable" ondblclick="openRoomTypeModal('Lecture')" title="Double-click to view lecture rooms">
             <div class="stat-content">
                 <span class="stat-label">TOTAL LECTURE</span>
                 <span class="stat-value" id="statLec">{{ total_lec }}</span>
@@ -111,47 +111,20 @@
                 </div>
                 <!-- ACTIONS -->
                 <div class="actions-row">
-                    <button class="btn-outline-action" onclick="toggleAvailabilityRow()">
-                        <i class="fas fa-clock"></i> AVAILABILITY
-                    </button>
-                    <button class="btn-outline-action" onclick="openRoomExportModal()">
-                        <i class="fas fa-upload"></i> EXPORT
-                    </button>
-                    <button class="btn-outline-action" onclick="openRoomSchedExportModal()">
-                        <i class="fas fa-calendar-alt"></i> ROOM SCHEDULE EXPORT
-                    </button>
-                </div>
-            </div>
-
-            <!-- TOGGLEABLE AVAILABILITY CARD -->
-            <div id="availabilityRow" class="filter-card" style="display: none; transition: 0.3s;">
-                <div class="filter-group-row">
-                    <div class="filter-item">
-                        <label>DAY</label>
-                        <div class="filter-input-wrap">
-                            <select id="filterDay" onchange="filterRoomTable()">
-                                <option value="">-- Select --</option>
-                                <option>Monday</option>
-                                <option>Tuesday</option>
-                                <option>Wednesday</option>
-                                <option>Thursday</option>
-                                <option>Friday</option>
-                                <option>Saturday</option>
-                                <option>Sunday</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="filter-item">
-                        <label>TIME</label>
-                        <div class="filter-input-wrap">
-                            <input type="text" id="filterTime" placeholder="e.g. 7:30AM - 10:30AM" onkeyup="filterRoomTable()">
+                    <div class="export-btn-group">
+                        <button class="btn-outline-action" onclick="toggleExportMenu(event)">
+                            <i class="fas fa-upload"></i> EXPORT <i class="fas fa-caret-down"></i>
+                        </button>
+                        <div class="export-dropdown" id="exportMenu">
+                            <div class="export-dropdown-item" onclick="closeExportMenu(); openRoomExportModal();">
+                                <i class="fas fa-door-open"></i> Export Room List
+                            </div>
+                            <div class="export-dropdown-item" onclick="closeExportMenu(); openRoomSchedExportModal();">
+                                <i class="fas fa-calendar-alt"></i> Export Room Schedule
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div id="availableBanner" class="available-banner" style="display: none;">
-                A V A I L A B L E &nbsp; R O O M S
             </div>
 
             <!-- TABLE CONTAINER -->
@@ -363,6 +336,31 @@
             <button class="rm-btn-delete" id="btnDeleteConfirm" onclick="_confirmDeleteAction()">
                 <i class="fas fa-trash"></i> Delete
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- ROOM TYPE LIST MODAL (double-click Total Laboratories / Total Lecture) -->
+<div id="modalRoomTypeList" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomTypeModal()">
+    <div class="rm-box rm-box-wide">
+        <div class="rm-header">
+            <div class="rm-hdr-icon" id="rtlIcon"><i class="fas fa-flask"></i></div>
+            <div><h2 id="rtlTitle">Laboratory Rooms</h2><p id="rtlSub">All laboratory rooms across every building.</p></div>
+            <button class="rm-hdr-close" onclick="closeRoomTypeModal()">&#215;</button>
+        </div>
+        <div class="rm-body" style="padding:0;">
+            <div class="rtl-table-wrap">
+                <table class="rtl-table">
+                    <thead>
+                        <tr><th>Room No.</th><th>Building</th><th>Capacity</th></tr>
+                    </thead>
+                    <tbody id="rtlTableBody"></tbody>
+                </table>
+                <div id="rtlEmpty" class="rtl-empty" style="display:none;">No rooms found.</div>
+            </div>
+        </div>
+        <div class="rm-footer">
+            <button class="rm-btn-cancel" onclick="closeRoomTypeModal()">Close</button>
         </div>
     </div>
 </div>

@@ -4,44 +4,272 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
     <style>
-        /* ── Main schedule table (Table View) ──
+        /* ══════════════════════════════════════════════════════════════
+           CLASS SCHEDULE (SIS) — visual redesign only.
+           Every rule below is scoped under .sis-schedule-page (added to
+           this page's own wrapper div) so none of it leaks into the other
+           pages that share schedule_acad.css (Academic Head / Faculty
+           schedule, Room Schedule). No ids/classes were renamed and no
+           markup structure changed, so existing JS (getElementById /
+           classList / querySelector) keeps working exactly as before —
+           only color, spacing, border, radius and typography values
+           change from here down.
+        ══════════════════════════════════════════════════════════════ */
+        .sis-schedule-page {
+            --maroon:        #630100;
+            --maroon-deep:   #440000;
+            --maroon-soft:   #8a3030;
+            --maroon-tint:   #fbf3f3;
+            --gold:          #a97b1f;
+            --gold-soft:     #d9b46a;
+            --ink:           #2a2320;
+            --ink-muted:     #6f6560;
+            --line:          #e8e1da;
+            --line-soft:     #f2ede7;
+            --surface:       #ffffff;
+            --surface-tint:  #faf8f6;
+        }
+        .sis-schedule-page { background: var(--surface-tint); }
+
+        /* ── Page header ── */
+        .sis-schedule-page .cs-page-header { margin-bottom: 18px; }
+        .sis-schedule-page .cs-title {
+            color: var(--maroon);
+            font-size: 1.55rem;
+            letter-spacing: 0.8px;
+            font-weight: 800;
+        }
+        .sis-schedule-page .cs-subtitle {
+            color: var(--ink-muted);
+            font-style: normal;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .sis-schedule-page .cs-subtitle::before {
+            content: "\f05a";
+            font-family: "Font Awesome 6 Free";
+            font-weight: 900;
+            color: var(--gold);
+            font-size: 0.85rem;
+        }
+
+        /* ── Filter controls: solid maroon block → clean card with a slim
+           maroon accent bar, so the many controls read as one grouped
+           section instead of a loud block of color. ── */
+        .sis-schedule-page .cs-filter-box {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(43,0,0,0.05);
+            margin-bottom: 18px;
+            overflow: visible;
+        }
+        .sis-schedule-page .cs-filter-box-top {
+            background: var(--maroon);
+            border-bottom: none;
+            border-radius: 10px 10px 0 0;
+            padding: 9px 20px;
+        }
+        .sis-schedule-page .cs-filter-label {
+            color: rgba(255,255,255,0.92);
+            letter-spacing: 1.6px;
+            font-size: 0.62rem;
+        }
+        .sis-schedule-page .cs-filter-label i { color: var(--gold-soft); opacity: 1; }
+        .sis-schedule-page .cs-filter-row {
+            padding: 16px 20px 18px;
+            gap: 24px;
+            row-gap: 16px;
+        }
+        .sis-schedule-page .cs-filter-unit label {
+            color: var(--ink-muted);
+            font-size: 0.62rem;
+            letter-spacing: 0.7px;
+            font-weight: 800;
+        }
+        .sis-schedule-page .cs-filter-unit select {
+            background: var(--surface);
+            color: var(--ink);
+            border: 1.5px solid var(--line);
+            border-radius: 7px;
+            padding: 7px 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .sis-schedule-page .cs-filter-unit select option { background: var(--surface); color: var(--ink); }
+        .sis-schedule-page .cs-filter-unit select:hover { border-color: var(--maroon-soft); }
+        .sis-schedule-page .cs-filter-unit select:focus {
+            background: var(--surface);
+            border-color: var(--maroon);
+            box-shadow: 0 0 0 3px rgba(99,1,0,0.12);
+        }
+        .sis-schedule-page #view_ay         { width: 130px; }
+        .sis-schedule-page #view_sem        { width: 160px; }
+        .sis-schedule-page #view_yl         { width: 120px; }
+        .sis-schedule-page #view_section    { width: 160px; }
+        .sis-schedule-page #view_instructor { width: 230px; }
+
+        /* Custom searchable PROGRAM dropdown */
+        .sis-schedule-page .prog-search-trigger {
+            background: var(--surface);
+            color: var(--ink);
+            border: 1.5px solid var(--line);
+            border-radius: 7px;
+            padding: 7px 10px;
+            font-weight: 600;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .sis-schedule-page .prog-search-trigger:hover,
+        .sis-schedule-page .prog-search-wrapper.open .prog-search-trigger {
+            background: var(--surface);
+            border-color: var(--maroon);
+            box-shadow: 0 0 0 3px rgba(99,1,0,0.12);
+        }
+        .sis-schedule-page .prog-search-chevron { color: var(--ink-muted); opacity: 1; }
+        .sis-schedule-page .prog-search-menu {
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            box-shadow: 0 10px 28px rgba(43,0,0,0.16);
+            margin-top: 2px;
+        }
+        .sis-schedule-page .prog-search-box { background: var(--surface-tint); border-bottom: 1px solid var(--line); }
+        .sis-schedule-page .prog-search-input { border: 1.5px solid var(--line); border-radius: 6px; }
+        .sis-schedule-page .prog-search-input:focus { border-color: var(--maroon); }
+        .sis-schedule-page .prog-search-option { border-bottom: 1px solid var(--line-soft); color: var(--ink); }
+        .sis-schedule-page .prog-search-option:hover { background: var(--maroon-tint); color: var(--maroon); }
+        .sis-schedule-page .prog-search-option strong { color: var(--maroon); }
+
+        /* ── View toggle + action buttons row ── */
+        .sis-schedule-page .landing-section { margin-top: 4px; }
+        .sis-schedule-page .view-control-row {
+            border: none;
+            background: transparent;
+            padding: 0;
+            margin-bottom: 14px;
+        }
+        .sis-schedule-page .view-toggles {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            padding: 4px;
+            gap: 2px;
+        }
+        .sis-schedule-page .toggle-btn {
+            border: none;
+            color: var(--ink-muted);
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            transition: background 0.15s, color 0.15s;
+        }
+        .sis-schedule-page .toggle-btn:hover { background: var(--line-soft); color: var(--maroon); }
+        .sis-schedule-page .toggle-btn.active {
+            background: var(--maroon);
+            color: #fff;
+            box-shadow: 0 1px 4px rgba(99,1,0,0.35);
+        }
+        .sis-schedule-page .right-controls-row { border-left: 1px solid var(--line); }
+        .sis-schedule-page .cs-action-btn {
+            background: var(--surface);
+            color: var(--maroon);
+            border: 1.5px solid var(--line);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.72rem;
+        }
+        .sis-schedule-page .cs-action-btn:hover {
+            background: var(--maroon);
+            border-color: var(--maroon);
+            color: #fff;
+        }
+
+        /* ── Shared header above Calendar/Table (short contextual label) ── */
+        .sis-schedule-page .schedule-grid-card {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(43,0,0,0.05);
+            margin-top: 0;
+        }
+        .sis-schedule-page .grid-card-header {
+            background: var(--maroon);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            padding: 12px 20px;
+        }
+
+        /* ── Table View ──
            No fixed table-layout and no nowrap/ellipsis on data cells: a merged
            offering can carry several sessions ('MON/THU/SAT' with three distinct
            time ranges), so Time/Days/Room/Description wrap onto multiple lines
            instead of clipping. min-width keeps columns from being squeezed
            unreadably on narrow screens — the wrapper scrolls horizontally
            instead of hiding content. */
-        .schedule-table { width:100%; min-width:1180px; border-collapse:collapse; font-size:0.8rem; }
-        .schedule-table thead { background:#2c0000; color:#fff; position:sticky; top:0; z-index:2; }
-        .schedule-table th { padding:8px 7px; font-weight:700; font-size:0.67rem; letter-spacing:.4px; text-transform:uppercase; text-align:center; border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; }
-        .schedule-table th:first-child { text-align:left; padding-left:14px; }
-        .schedule-table th:nth-child(3) { text-align:left; padding-left:10px; }
-        .schedule-table th:last-child   { border-right:none; }
-        .schedule-table th:nth-child(1)  { width:13%; } .schedule-table th:nth-child(2)  { width:7%;  }
-        .schedule-table th:nth-child(3)  { width:16%; } .schedule-table th:nth-child(4)  { width:4%;  }
-        .schedule-table th:nth-child(5)  { width:4%;  } .schedule-table th:nth-child(6)  { width:5%;  }
-        .schedule-table th:nth-child(7)  { width:6%;  } .schedule-table th:nth-child(8)  { width:18%; }
-        .schedule-table th:nth-child(9)  { width:4%;  } .schedule-table th:nth-child(10) { width:10%; }
-        .schedule-table th:nth-child(11) { width:13%; }
-        .schedule-table tbody tr { border-bottom:1px solid #f0e8e8; transition:background .12s; }
-        .schedule-table tbody tr:nth-child(odd)  { background:#fff; }
-        .schedule-table tbody tr:nth-child(even) { background:#fdf5f5; }
-        .schedule-table tbody tr:hover { background:#f8eaea !important; }
-        .schedule-table td { padding:7px 7px; color:#333; font-size:0.79rem; text-align:center; border-right:1px solid #f0e8e8; vertical-align:middle; white-space:normal; word-break:break-word; }
-        .schedule-table td:last-child { border-right:none; }
-        .schedule-table td.td-instructor { text-align:left; padding-left:14px; font-weight:600; color:#1a0000; }
-        .schedule-table td.td-code    { font-weight:800; color:#630100; font-size:.82rem; letter-spacing:.2px; }
-        .schedule-table td.td-desc    { text-align:left; padding-left:10px; font-weight:500; }
-        .schedule-table td.td-units   { font-weight:800; color:#630100; }
-        .schedule-table td.td-days    { font-weight:700; color:#630100; font-size:.78rem; }
-        .schedule-table td.td-time    { font-size:.77rem; font-weight:600; }
-        .schedule-table td.td-room    { font-weight:600; }
-        .empty-row td { text-align:center; padding:40px 20px; }
-        .empty-msg { font-size:13px; color:#aaa; display:flex; align-items:center; justify-content:center; gap:8px; }
-        #tableViewWrapper.table-wrapper { background:#fff; overflow-x:auto; }
-        .timetable-grid td.time-cell { padding:0; font-size:0.72rem; font-weight:900; white-space:nowrap; }
-        .schedule-grid-card { background:#fff; border:1px solid #e0c8c8; border-radius:10px; overflow:hidden; box-shadow:0 2px 8px rgba(122,0,0,.13); margin-top:4px; }
-        .grid-card-header { background:linear-gradient(135deg,#7a0000 0%,#5c0000 100%); border-radius:0; }
+        .sis-schedule-page .schedule-table { width:100%; min-width:1180px; border-collapse:collapse; font-size:0.8rem; }
+        .sis-schedule-page .schedule-table thead { background:var(--maroon-deep); color:#fff; position:sticky; top:0; z-index:2; }
+        .sis-schedule-page .schedule-table th { padding:11px 7px; font-weight:700; font-size:0.66rem; letter-spacing:.6px; text-transform:uppercase; text-align:center; border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; }
+        .sis-schedule-page .schedule-table th:first-child { text-align:left; padding-left:16px; }
+        .sis-schedule-page .schedule-table th:nth-child(3) { text-align:left; padding-left:10px; }
+        .sis-schedule-page .schedule-table th:last-child   { border-right:none; }
+        .sis-schedule-page .schedule-table th:nth-child(1)  { width:13%; } .sis-schedule-page .schedule-table th:nth-child(2)  { width:7%;  }
+        .sis-schedule-page .schedule-table th:nth-child(3)  { width:16%; } .sis-schedule-page .schedule-table th:nth-child(4)  { width:4%;  }
+        .sis-schedule-page .schedule-table th:nth-child(5)  { width:4%;  } .sis-schedule-page .schedule-table th:nth-child(6)  { width:5%;  }
+        .sis-schedule-page .schedule-table th:nth-child(7)  { width:6%;  } .sis-schedule-page .schedule-table th:nth-child(8)  { width:18%; }
+        .sis-schedule-page .schedule-table th:nth-child(9)  { width:4%;  } .sis-schedule-page .schedule-table th:nth-child(10) { width:10%; }
+        .sis-schedule-page .schedule-table th:nth-child(11) { width:13%; }
+        .sis-schedule-page .schedule-table tbody tr { border-bottom:1px solid var(--line-soft); transition:background .12s; }
+        .sis-schedule-page .schedule-table tbody tr:nth-child(odd)  { background:var(--surface); }
+        .sis-schedule-page .schedule-table tbody tr:nth-child(even) { background:var(--surface-tint); }
+        .sis-schedule-page .schedule-table tbody tr:hover { background:var(--maroon-tint) !important; }
+        .sis-schedule-page .schedule-table td { padding:9px 7px; color:var(--ink); font-size:0.79rem; text-align:center; border-right:1px solid var(--line-soft); vertical-align:middle; white-space:normal; word-break:break-word; }
+        .sis-schedule-page .schedule-table td:last-child { border-right:none; }
+        .sis-schedule-page .schedule-table td.td-instructor { text-align:left; padding-left:16px; font-weight:600; color:var(--ink); }
+        .sis-schedule-page .schedule-table td.td-code    { font-weight:800; color:var(--maroon); font-size:.82rem; letter-spacing:.2px; }
+        .sis-schedule-page .schedule-table td.td-desc    { text-align:left; padding-left:10px; font-weight:500; }
+        .sis-schedule-page .schedule-table td.td-units   { font-weight:800; color:var(--maroon); }
+        .sis-schedule-page .schedule-table td.td-days    { font-weight:700; color:var(--maroon); font-size:.78rem; }
+        .sis-schedule-page .schedule-table td.td-time    { font-size:.77rem; font-weight:600; }
+        .sis-schedule-page .schedule-table td.td-room    { font-weight:600; }
+        .sis-schedule-page .schedule-table tr.sis-total-row td { background: var(--maroon-tint); border-top: 2px solid var(--maroon); color: var(--ink); }
+        .sis-schedule-page .empty-row td { text-align:center; padding:48px 20px; }
+        .sis-schedule-page .empty-msg { font-size:13px; color:var(--ink-muted); display:flex; align-items:center; justify-content:center; gap:8px; }
+        .sis-schedule-page #tableViewWrapper.table-wrapper { background:var(--surface); overflow-x:auto; }
+
+        /* ── Calendar View ── */
+        .sis-schedule-page .timetable-grid thead tr th {
+            background: var(--maroon-deep);
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            border-color: rgba(255,255,255,0.1);
+        }
+        .sis-schedule-page .timetable-grid thead tr th.time-header,
+        .sis-schedule-page .timetable-grid .time-header,
+        .sis-schedule-page .timetable-grid .time-cell {
+            background: var(--maroon) !important;
+        }
+        .sis-schedule-page .timetable-grid td.time-cell { padding:0; font-size:0.7rem; font-weight:700; white-space:nowrap; }
+        .sis-schedule-page .timetable-grid td { border: 1px solid var(--line-soft); }
+        .sis-schedule-page .timetable-wrapper { background: var(--surface); }
+
+        /* Schedule pill chrome only (per-subject background color stays as
+           set by the existing JS — not touched here) */
+        .sis-schedule-page .schedule-pill {
+            border-radius: 7px;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 1px 4px rgba(43,0,0,0.18);
+        }
+        .sis-schedule-page .schedule-pill:hover {
+            box-shadow: 0 4px 14px rgba(43,0,0,0.3);
+        }
+        .sis-schedule-page .schedule-pill .pill-subject { font-weight: 700; letter-spacing: 0.1px; }
+        .sis-schedule-page .schedule-pill .pill-instructor,
+        .sis-schedule-page .schedule-pill .pill-room { font-weight: 500; }
 
         /* ══════════════════════════════════════════════════════════════
            SCHEDULE EXPORT MODAL
@@ -122,7 +350,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="schedule-page-container">
+<div class="schedule-page-container sis-schedule-page">
 
     <!-- PAGE HEADER -->
     <div class="cs-page-header">
@@ -139,7 +367,7 @@
             <div class="cs-filter-unit">
                 <label>ACAD YEAR</label>
                 <select id="view_ay" onchange="updateSections(); refreshOfferings()">
-                    <option value="">Select Academic Year</option>
+                    <option value="">SELECT</option>
                     {% for ay in acad_years %}
                     <option value="{{ ay.academicyearid }}"
                         {% if ay.academicyearid == active_ay %}selected{% endif %}>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Up Your Account - PUP Lopez</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { min-height: 100vh; background: #fdfdfd; display: flex; justify-content: center; padding: 50px 20px; }
+        .setup-card { width: 100%; max-width: 620px; text-align: center; }
+        .setup-card img.logo { width: 90px; margin-bottom: 10px; }
+        .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px; }
+        .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 28px; }
+
+        p.step-sub { color: #666; font-size: 1.3rem; margin: 18px 0 28px; }
+
+        .avatar-row { display: flex; align-items: center; justify-content: center; gap: 40px; margin-bottom: 12px; }
+        .avatar-circle {
+            width: 160px; height: 160px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
+            background: linear-gradient(180deg, #cfeeff 0%, #cfeeff 55%, #9fd989 55%, #7fc85f 100%);
+            display: flex; align-items: center; justify-content: center; position: relative;
+        }
+        .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+        .upload-btn {
+            display: inline-flex; align-items: center; gap: 10px; padding: 10px 22px 10px 10px;
+            border-radius: 50px; border: 2px solid #800000; background: #fff; color: #800000;
+            font-weight: 800; cursor: pointer; font-size: 0.9rem;
+        }
+        .upload-btn i { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #800000;
+            display: flex; align-items: center; justify-content: center; }
+        .skip-link { display: block; margin: 10px 0 30px; color: #999; font-size: 0.8rem; text-decoration: underline; cursor: pointer; background: none; border: none; }
+
+        p.section-sub { color: #666; font-size: 1.1rem; margin-bottom: 22px; }
+
+        .form-group { text-align: left; margin-bottom: 20px; }
+        label { display: block; color: #800000; font-weight: 800; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 8px; }
+        input[type="text"], input[type="email"], input[type="tel"] {
+            width: 100%; padding: 15px 18px; border: none; border-radius: 8px;
+            background: linear-gradient(90deg, #4b0a0a 0%, #b22222 100%);
+            color: #fff; font-size: 1rem; outline: none;
+        }
+        input[readonly] { opacity: 0.75; cursor: not-allowed; }
+        input::placeholder { color: rgba(255,255,255,0.75); }
+
+        .error-msg { color: #b22222; font-size: 0.85rem; margin-top: -8px; margin-bottom: 18px; font-weight: 600; text-align: left; }
+
+        .btn-row { text-align: right; margin-top: 30px; }
+        .btn-continue {
+            padding: 13px 40px; border: 2px solid #800000; border-radius: 8px; background: #fff;
+            color: #800000; font-weight: 800; font-size: 1rem; cursor: pointer; transition: 0.2s;
+        }
+        .btn-continue:hover { background: #800000; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="setup-card">
+        <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+        <div class="brand-title">PUP LOPEZ</div>
+        <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <p class="error-msg">{{ message }}</p>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="POST" enctype="multipart/form-data" autocomplete="off">
+            <p class="step-sub">Kindly add a profile picture</p>
+            <div class="avatar-row">
+                <div class="avatar-circle" id="avatarPreviewWrap">
+                    <img id="avatarPreview" style="display:none;">
+                </div>
+                <label class="upload-btn" for="photoInput"><i class="fas fa-arrow-up"></i>UPLOAD</label>
+                <input type="file" id="photoInput" name="photo" accept=".jpg,.jpeg,.png" style="display:none" onchange="previewPhoto(this)">
+            </div>
+            <span class="skip-link" onclick="document.getElementById('photoInput').value=''">Skip for Now</span>
+
+            <p class="section-sub">Check your email information.</p>
+            <div class="form-group">
+                <label>CURRENT EMAIL</label>
+                <input type="text" value="{{ current_email or 'Not on file yet' }}" readonly>
+            </div>
+            <div class="form-group">
+                <label>NEW EMAIL</label>
+                <input type="email" name="email" placeholder="you@example.com" required>
+            </div>
+            <div class="form-group">
+                <label>CONTACT NUMBER</label>
+                <input type="tel" name="contact_number" placeholder="09XXXXXXXXX" required>
+            </div>
+
+            <div class="btn-row">
+                <button type="submit" class="btn-continue">CONTINUE</button>
+            </div>
+        </form>
+    </div>
+
+<script>
+    function previewPhoto(input) {
+        if (!input.files || !input.files[0]) return;
+        const reader = new FileReader();
+        const img = document.getElementById('avatarPreview');
+        reader.onload = e => { img.src = e.target.result; img.style.display = 'block'; };
+        reader.readAsDataURL(input.files[0]);
+    }
+</script>
+</body>
+</html>

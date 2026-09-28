@@ -2195,3 +2195,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   const editSecForm = document.getElementById('formEditSection');
   if (editSecForm) editSecForm.addEventListener('submit', _submitEditSection);
 });
+
+/* Phase S3 — four-section Settings wizard. UI-only; no scheduling policy logic. */
+let _settingsPolicyStep = 1;
+function showSettingsPolicyStep(step, options = {}) {
+  const next = Math.max(1, Math.min(4, Number(step) || 1));
+  _settingsPolicyStep = next;
+  document.querySelectorAll('.settings-policy-panel').forEach(panel => {
+    panel.hidden = Number(panel.dataset.policyStep) !== next;
+  });
+  document.querySelectorAll('.policy-step').forEach(btn => {
+    btn.classList.toggle('active', Number(btn.dataset.settingsStep) === next);
+  });
+  document.querySelectorAll('[data-progress-step]').forEach(dot => {
+    dot.classList.toggle('active', Number(dot.dataset.progressStep) === next);
+  });
+  const counter = document.getElementById('settingsPolicyCounter');
+  if (counter) counter.textContent = `${next} of 4`;
+  const prev = document.getElementById('settingsPolicyPrev');
+  const nxt = document.getElementById('settingsPolicyNext');
+  if (prev) prev.disabled = next === 1;
+  if (nxt) nxt.disabled = next === 4;
+  try { sessionStorage.setItem('settingsPolicyStep', String(next)); } catch (_) {}
+  if (options.scroll !== false) {
+    const activePanel = document.querySelector(`.settings-policy-panel[data-policy-step="${next}"]`);
+    if (activePanel) activePanel.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+function changeSettingsPolicyStep(delta) { showSettingsPolicyStep(_settingsPolicyStep + Number(delta || 0)); }
+document.addEventListener('DOMContentLoaded', () => {
+  let initial = 1;
+  try { initial = Number(sessionStorage.getItem('settingsPolicyStep')) || 1; } catch (_) {}
+  showSettingsPolicyStep(initial, {scroll:false});
+});

@@ -19,6 +19,64 @@ function _rmErr(errId, msg) {
     el.style.display = 'flex';
 }
 
+// Room Schedule (eye icon) — opens as a popup so the user never navigates away
+// from /room; closing it just hides the modal, nothing to redirect.
+function openRoomScheduleModal(roomId) {
+    const frame = document.getElementById('roomScheduleFrame');
+    if (frame) frame.src = `/room/view/${roomId}?modal=1`;
+    openRoomModal('modalRoomSchedule');
+}
+function closeRoomScheduleModal() {
+    closeRoomModal('modalRoomSchedule');
+    const frame = document.getElementById('roomScheduleFrame');
+    if (frame) frame.src = 'about:blank';
+}
+
+// ── Export menu (single EXPORT button, choose Room List vs Room Schedule) ─────
+function toggleExportMenu(e) {
+    if (e) e.stopPropagation();
+    document.getElementById('exportMenu')?.classList.toggle('open');
+}
+function closeExportMenu() {
+    document.getElementById('exportMenu')?.classList.remove('open');
+}
+window.addEventListener('click', () => closeExportMenu());
+
+// ── Room Type List modal (double-click Total Laboratories / Total Lecture) ───
+function openRoomTypeModal(type) {
+    const rows = Array.from(document.querySelectorAll('#roomTable tbody tr'))
+        .map(tr => ({
+            type: (tr.querySelector('.td-room-type')?.textContent || '').trim(),
+            name: (tr.querySelector('.td-room-name')?.textContent || '').trim(),
+            bldg: (tr.querySelector('.td-building')?.textContent  || '').trim(),
+            cap:  (tr.querySelector('.td-room-cap')?.textContent  || '').trim(),
+        }))
+        .filter(r => r.type === type)
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    document.getElementById('rtlTitle').textContent = type === 'Laboratory' ? 'Laboratory Rooms' : 'Lecture Rooms';
+    document.getElementById('rtlSub').textContent   = `All ${type.toLowerCase()} rooms across every building.`;
+    document.getElementById('rtlIcon').innerHTML    = type === 'Laboratory'
+        ? '<i class="fas fa-flask"></i>' : '<i class="fas fa-chalkboard-teacher"></i>';
+
+    const body  = document.getElementById('rtlTableBody');
+    const empty = document.getElementById('rtlEmpty');
+    body.innerHTML = '';
+    rows.forEach(r => {
+        const tr = document.createElement('tr');
+        ['name', 'bldg', 'cap'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = r[key];
+            tr.appendChild(td);
+        });
+        body.appendChild(tr);
+    });
+    empty.style.display = rows.length ? 'none' : 'block';
+
+    openRoomModal('modalRoomTypeList');
+}
+function closeRoomTypeModal() { closeRoomModal('modalRoomTypeList'); }
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let _toastTimer = null;
 function _rmToast(type, title, msg) {
@@ -98,19 +156,26 @@ window.addEventListener('click', () => {
 });
 
 // ── Open Edit Room Modal ──────────────────────────────────────────────────────
-function openEditRoomModal(id, name, type, capacity, bldgId) {
+function openEditRoomModal(id, name, type, capacity, bldgId, bldgName) {
     document.getElementById('edit_room_id').value       = id;
     document.getElementById('edit_room_name').value     = name;
     document.getElementById('edit_room_type').value     = type;
     document.getElementById('edit_room_capacity').value = capacity;
     const bldgSel = document.getElementById('edit_room_bldg_id');
-    if (bldgSel && bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined') {
-        bldgSel.value = String(bldgId);
-        if (!bldgSel.value || bldgSel.value !== String(bldgId)) {
+    if (bldgSel) {
+        const bid = (bldgId != null && bldgId !== '' && String(bldgId) !== 'null' && String(bldgId) !== 'undefined')
+                    ? String(bldgId) : '';
+        if (bid) {
+            bldgSel.value = bid;
+            // If the option wasn't in the list (e.g. building is inactive), add it temporarily
+            if (bldgSel.value !== bid && bldgName) {
+                const opt = new Option(bldgName, bid, true, true);
+                bldgSel.add(opt, 1); // insert after the placeholder
+                bldgSel.value = bid;
+            }
+        } else {
             bldgSel.value = '';
         }
-    } else if (bldgSel) {
-        bldgSel.value = '';
     }
     openRoomModal('modalEditRoom');
 }
@@ -166,6 +231,8 @@ async function submitAddRoom() {
     const bldg_id  =  document.getElementById('inp_room_bldg')?.value;
     if (!name)     { _rmErr('errRoom', 'Room number is required.'); return; }
     if (!capacity) { _rmErr('errRoom', 'Capacity is required.'); return; }
+    const addCapNum = Number(capacity);
+    if (!Number.isInteger(addCapNum) || addCapNum < 35) { _rmErr('errRoom', 'Capacity must be a whole number of at least 35.'); return; }
     if (!bldg_id)  { _rmErr('errRoom', 'Please select a building.'); return; }
     const btn = document.getElementById('btnAddRoom');
     btn.disabled = true;
@@ -195,6 +262,11 @@ async function submitEditRoom() {
     const capacity =  document.getElementById('edit_room_capacity')?.value;
     const bldg_id  =  document.getElementById('edit_room_bldg_id')?.value;
     if (!name) { _rmErr('errEditRoom', 'Room number is required.'); return; }
+    if (!capacity) { _rmErr('errEditRoom', 'Capacity is required.'); return; }
+    const capNum = Number(capacity);
+    if (!Number.isInteger(capNum) || capNum < 35) { _rmErr('errEditRoom', 'Capacity must be a whole number of at least 35.'); return; }
+
+    const oldType = document.querySelector(`#roomTable tr[data-room-id="${room_id}"] .td-room-type`)?.textContent || '';
     const btn = document.getElementById('btnEditRoom');
     btn.disabled = true;
     try {
@@ -207,6 +279,10 @@ async function submitEditRoom() {
         if (!data.success) { _rmErr('errEditRoom', data.error || 'Failed to update room.'); return; }
         closeRoomModal('modalEditRoom');
         _domUpdateRoomRow(data);
+        if (oldType && data.roomtype !== oldType) {
+            _adjustStat(oldType === 'Laboratory' ? 'statLabs' : 'statLec', -1);
+            _adjustStat(data.roomtype === 'Laboratory' ? 'statLabs' : 'statLec', 1);
+        }
         _rmToast('success', 'Room Updated', `Room "${data.roomname}" updated.`);
     } catch { _rmErr('errEditRoom', 'Network error. Please try again.'); }
     finally { btn.disabled = false; }
@@ -307,7 +383,7 @@ function _domAddRoomRow(r) {
         <td>
             <div class="action-btns-wrapper" style="justify-content:center;">
                 <button class="btn-action view" title="View"
-                    onclick="window.location.href='/room/view/${r.roomid}'">
+                    onclick="openRoomScheduleModal(${r.roomid})">
                     <i class="fas fa-eye"></i>
                 </button>
                 <button class="btn-action edit" title="Edit"
@@ -668,3 +744,16 @@ async function roomSchedExecuteExport() {
         btn.disabled = false;
     }
 }
+
+// ── Back/forward-cache guard ───────────────────────────────────────────────────
+// If the browser restores this page from bfcache (e.g. a real edit shows the
+// "Room Updated" toast, the user navigates away before its 4s timer clears it,
+// then hits Back), the DOM/JS snapshot is frozen exactly as it was — including
+// the toast still mid-display and any modal left open. Reset that stale state
+// instead of letting a past action's success message resurface on return.
+window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) return;
+    document.getElementById('roomCrudToast')?.classList.remove('rm-show');
+    document.querySelectorAll('.rm-overlay, .room-exp-overlay').forEach(m => { m.style.display = 'none'; });
+    closeExportMenu();
+});

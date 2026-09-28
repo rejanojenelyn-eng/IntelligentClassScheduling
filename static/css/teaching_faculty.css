@@ -5,45 +5,220 @@
     font-family: 'Inter', sans-serif;
 }
 
-/* Header section with Title and Export Button */
-.main-header {
+/* ── Page header: icon/title/subtitle + summary cards ── */
+.ta-page-header {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    background-color: #5D0000; /* Dark Maroon */
-    color: white;
-    padding: 15px 25px;
-    margin-bottom: 20px;
+    gap: 16px;
+    margin-bottom: 18px;
 }
-
-.main-header h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0;
-}
-
-.btn-export-pdf {
-    background-color: white;
-    color: #333;
-    border: 1px solid #ccc;
-    padding: 8px 15px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 500;
+.ta-page-title {
     display: flex;
     align-items: center;
-    gap: 8px; /* Space between icon and text */
+    gap: 12px;
+}
+.ta-page-title > i {
+    font-size: 1.6rem;
+    color: #630100;
+}
+.ta-page-title h1 {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: #630100;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.ta-page-sub {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 2px;
+}
+.ta-sub-dot { margin: 0 6px; color: #bbb; }
+
+.ta-stat-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.ta-stat-card {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-width: 140px;
+}
+.ta-stat-num { font-size: 1.5rem; font-weight: 800; color: #333; line-height: 1; }
+.ta-stat-label { font-size: 0.7rem; font-weight: 700; color: #777; text-transform: uppercase; margin-top: 4px; }
+.ta-stat-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.05rem;
+    flex-shrink: 0;
+}
+.ta-ic-green  { background: #e6f4ea; color: #2e8b57; }
+.ta-ic-orange { background: #fdf2e9; color: #e67e22; }
+.ta-ic-blue   { background: #ebf5fb; color: #2980b9; }
+.ta-ic-maroon { background: #f9ebeb; color: #630100; }
+
+/* ── Tabs row + shared toolbar (Official/Local toggle, Export) ── */
+.ta-tabs-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.ta-shared-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: -2px;
+}
+.ta-schedule-toggle {
+    display: flex;
+    border: 1px solid #630100;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.ta-toggle-btn {
+    background: #fff;
+    color: #630100;
+    border: none;
+    padding: 7px 14px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: 0.15s;
+}
+.ta-toggle-btn + .ta-toggle-btn { border-left: 1px solid #630100; }
+.ta-toggle-btn.active { background: #630100; color: #fff; }
+
+.btn-export-pdf {
+    background-color: #fff;
+    color: #630100;
+    border: 1px solid #630100;
+    padding: 7px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .btn-export-pdf:hover {
-    background-color: #f2f2f2;
+    background-color: #fdf5f5;
 }
+
+/* ── Legend (Weekly Schedule) ── */
+.ta-legend-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+.ta-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #444;
+}
+.ta-legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+/* ── Week toolbar (nav + BY PROGRAM) ── */
+.ta-week-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.ta-nav-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ta-nav-btn {
+    background: #fff;
+    border: 1px solid #ccc;
+    color: #630100;
+    width: 30px; height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem;
+    transition: 0.15s;
+}
+.ta-nav-btn:hover { background: #fdf5f5; border-color: #630100; }
+.ta-nav-btn.ta-nav-today { width: auto; padding: 0 14px; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.5px; }
+.ta-week-label { font-size: 0.75rem; color: #777; font-weight: 600; margin-left: 6px; }
+
+.ta-program-filter select {
+    padding: 7px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #630100;
+    background: #fff;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.ta-today-col { background: #7a0100 !important; }
+
+/* ── Faculty header box (Teaching Assignment) ── */
+.ta-faculty-box {
+    background: #fdf6f6;
+    border: 1px solid #e5c8c8;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin-bottom: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.ta-faculty-box-name {
+    font-weight: 800;
+    color: #630100;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+}
+.ta-faculty-box-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #630100;
+    text-transform: uppercase;
+}
+.ta-faculty-box-meta strong { color: #333; }
 
 /* Tab navigation styling */
 .tabs-container {
     display: flex;
-    margin-bottom: 30px;
     border-bottom: 2px solid #ddd;
 }
 
@@ -88,11 +263,12 @@
 .table-container {
     border: 1px solid #e0e0e0;
     border-radius: 5px;
-    overflow: hidden; /* Ensures the child table respects the border radius */
+    overflow-x: auto; /* narrow screens scroll instead of squashing the table unreadable */
 }
 
 table {
     width: 100%;
+    min-width: 760px;
     border-collapse: collapse;
 }
 

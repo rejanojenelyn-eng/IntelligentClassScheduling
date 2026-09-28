@@ -317,6 +317,25 @@
     outline-offset: 2px;
 }
 
+/* Cell-level conflict indicator — same look as .row-conflict-flag, but placed
+   inside the specific cell (Instructor/Room/Day/Time) a violation actually
+   affects, instead of every violation type landing on one column. */
+.cell-conflict-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+    color: var(--danger);
+    cursor: help;
+    border-radius: 50%;
+}
+.cell-conflict-flag:focus-visible {
+    outline: 2px solid var(--danger);
+    outline-offset: 2px;
+}
+
 /* ── Incomplete row highlighting (partial-generation results) ── */
 /* Amber, not red — an incomplete component is unresolved, not a rule
    violation; keeps it visually distinct from .row-conflict. */
@@ -341,6 +360,20 @@
     outline: 2px solid #b8860b;
     outline-offset: 2px;
 }
+/* Per-cell marker for the specific unresolved component (Room "TBA", etc.) */
+.cell-incomplete-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+    color: #b8860b;
+    cursor: help;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+.cell-incomplete-flag:focus-visible { outline: 2px solid #b8860b; outline-offset: 2px; }
 
 /* ── OUTLINE / ACTIVE BUTTONS ── */
 .outline-btn {
@@ -884,6 +917,39 @@
     justify-content: space-between;
     gap: 6px;
 }
+/* Per-field regeneration lock (checked rows only): small icon, no text label.
+   Closed lock = keep this value (maroon); open lock = may regenerate (green). */
+.offerings-list-table tr.row-selected td { background: #fdf3f3; }
+.offerings-list-table .regen-lock {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.offerings-list-table .regen-lock.is-locked {
+    color: #800000;
+    background: #f8e1e1;
+    border-color: #ecc4c4;
+}
+.offerings-list-table .regen-lock.is-unlocked {
+    color: #1e7d45;
+    background: #e3f4e9;
+    border-color: #bfe3cc;
+}
+.offerings-list-table .regen-lock:hover { filter: brightness(.95); }
+/* Locked by the Academic Head: same icon, a subtly darker outline. */
+.offerings-list-table .regen-lock.is-locked[data-origin="user"] { border-color: #800000; }
+/* Unresolved value (e.g. Room TBA): can't be locked. */
+.offerings-list-table .regen-lock[data-origin="unresolved"] { cursor: not-allowed; opacity: .75; }
+.offerings-list-table .regen-lock:focus-visible { outline: 2px solid #800000; outline-offset: 1px; }
 .offerings-list-table .preserve-select-wrap {
     display: flex;
     align-items: center;
@@ -1058,6 +1124,8 @@
     animation: slideIn .3s ease;
 }
 
+.toast.toast-warn { background: var(--warning, #d4910f); }
+
 @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }
     to   { transform: translateX(0);   opacity: 1; }
@@ -1089,6 +1157,71 @@
     transition: var(--transition);
 }
 .conflict-banner button:hover { opacity: 1; }
+
+/* Collapsible conflict panel (same banner colors; header row + in-place list) */
+.conflict-banner.conflict-panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+}
+.conflict-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.conflict-panel-title { font-size: 13px; font-weight: 700; }
+.conflict-banner .conflict-panel-btn,
+.conflict-banner .conflict-panel-toggle {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    opacity: 1;
+    border-radius: 5px;
+    padding: 5px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.conflict-banner .conflict-panel-btn {
+    margin-left: auto;
+    background: rgba(255,255,255,.95);
+    color: #8a4b00;
+    border: 1px solid rgba(255,255,255,.95);
+}
+.conflict-banner .conflict-panel-btn:hover { background: #fff; }
+.conflict-banner .conflict-panel-btn.hidden + .conflict-panel-toggle { margin-left: auto; }
+.conflict-banner .conflict-panel-toggle {
+    margin-left: 0;
+    background: transparent;
+    color: var(--white);
+    border: 1px solid rgba(255,255,255,.7);
+}
+.conflict-banner .conflict-panel-toggle:hover { background: rgba(255,255,255,.12); }
+.conflict-panel-list {
+    margin: 10px 0 0 0;
+    padding: 10px 0 0 22px;
+    border-top: 1px solid rgba(255,255,255,.35);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.55;
+}
+.conflict-panel-list li + li { margin-top: 3px; }
+.conflict-panel-list .conflict-rule { font-weight: 800; }
+
+/* Compact incomplete banner (amber, one line) */
+.conflict-banner.incomplete-banner {
+    background: #fff6e0;
+    color: #7a5c00;
+    border: 1px solid #e6c878;
+    box-shadow: none;
+}
+.conflict-banner.incomplete-banner .conflict-panel-btn {
+    background: #fff;
+    color: #7a5c00;
+    border: 1px solid #d9b25c;
+}
+.conflict-banner.incomplete-banner .conflict-panel-btn:hover { background: #fffaf0; }
 
 /* ── ACTION BUTTONS ── */
 #actionButtons {
@@ -1216,3 +1349,19 @@
     .left-actions, .right-actions { flex-direction: column; width: 100%; }
     #actionButtons button, #actionButtons a { width: 100%; justify-content: center; }
 }
+
+/* ── Approve gate + "Schedule Generated with Issues" dialog ─────────────── */
+.approve-wrap { display: inline-block; }
+.approve-wrap button:disabled { pointer-events: none; }   /* hover reaches the wrapper's tooltip */
+.issue-list { text-align: left; margin: 8px 0 0 18px; padding: 0; font-size: 13px; line-height: 1.45; }
+.issue-list.issue-blocking li { color: #9b1c1c; }
+.issue-advisory-title { text-align: left; margin-top: 10px; font-size: 12px; font-weight: 600; color: #6b7280; }
+.issue-list.issue-advisory li { color: #6b7280; font-style: italic; }
+
+/* ── Evaluation: quality score vs approval readiness; incomplete rows ─────── */
+.eval-readiness { margin-top: 8px; padding: 6px 8px; border-radius: 6px; background: #fdecec; color: #9b1c1c;
+                  font-size: 11px; font-weight: 700; text-align: center; letter-spacing: .02em; }
+.eval-readiness i { margin-right: 4px; }
+.incomplete-detail-list { flex-basis: 100%; margin: 6px 0 0 22px; padding: 0; font-size: 12.5px; line-height: 1.5; }
+.conflict-banner.incomplete-banner { flex-wrap: wrap; }
+.incomplete-detail-list:empty { display: none; }
