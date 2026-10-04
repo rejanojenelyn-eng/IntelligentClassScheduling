@@ -5,45 +5,253 @@
     font-family: 'Inter', sans-serif;
 }
 
-/* Header section with Title and Export Button */
-.main-header {
+/* ── Page header: icon/title/subtitle + summary cards ── */
+.ta-page-header {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    background-color: #5D0000; /* Dark Maroon */
-    color: white;
-    padding: 15px 25px;
-    margin-bottom: 20px;
+    gap: 16px;
+    margin-bottom: 18px;
 }
-
-.main-header h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0;
-}
-
-.btn-export-pdf {
-    background-color: white;
-    color: #333;
-    border: 1px solid #ccc;
-    padding: 8px 15px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 500;
+.ta-page-title {
     display: flex;
     align-items: center;
-    gap: 8px; /* Space between icon and text */
+    gap: 12px;
+}
+.ta-page-title > i {
+    font-size: 1.6rem;
+    color: #630100;
+}
+.ta-page-title h1 {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: #630100;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.ta-page-sub {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 2px;
+}
+.ta-sub-dot { margin: 0 6px; color: #bbb; }
+
+.ta-stat-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.ta-stat-card {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-width: 140px;
+}
+.ta-stat-num { font-size: 1.5rem; font-weight: 800; color: #333; line-height: 1; }
+.ta-stat-label { font-size: 0.7rem; font-weight: 700; color: #777; text-transform: uppercase; margin-top: 4px; }
+.ta-stat-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.05rem;
+    flex-shrink: 0;
+}
+.ta-ic-green  { background: #e6f4ea; color: #2e8b57; }
+.ta-ic-orange { background: #fdf2e9; color: #e67e22; }
+.ta-ic-blue   { background: #ebf5fb; color: #2980b9; }
+.ta-ic-maroon { background: #f9ebeb; color: #630100; }
+
+/* ── Tabs row + shared toolbar (Official/Local toggle, Export) ── */
+.ta-tabs-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.ta-shared-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: -2px;
+}
+.ta-schedule-toggle {
+    display: flex;
+    border: 1px solid #630100;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.ta-toggle-btn {
+    background: #fff;
+    color: #630100;
+    border: none;
+    padding: 7px 14px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: 0.15s;
+}
+.ta-toggle-btn + .ta-toggle-btn { border-left: 1px solid #630100; }
+.ta-toggle-btn.active { background: #630100; color: #fff; }
+
+.btn-export-pdf {
+    background-color: #fff;
+    color: #630100;
+    border: 1px solid #630100;
+    padding: 7px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .btn-export-pdf:hover {
-    background-color: #f2f2f2;
+    background-color: #fdf5f5;
 }
+
+/* ── Legend (Weekly Schedule) ── */
+.ta-legend-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+.ta-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #444;
+}
+.ta-legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+/* ── Week toolbar (nav + BY PROGRAM) ── */
+.ta-week-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.ta-nav-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ta-nav-btn {
+    background: #fff;
+    border: 1px solid #ccc;
+    color: #630100;
+    width: 30px; height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem;
+    transition: 0.15s;
+}
+.ta-nav-btn:hover { background: #fdf5f5; border-color: #630100; }
+.ta-nav-btn.ta-nav-today { width: auto; padding: 0 14px; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.5px; }
+.ta-week-label { font-size: 0.75rem; color: #777; font-weight: 600; margin-left: 6px; }
+
+.ta-program-filter select {
+    padding: 7px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #630100;
+    background: #fff;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+/* ── Week navigation state ── */
+.ta-nav-btn:disabled, .ta-nav-btn.ta-nav-current { cursor: default; }
+.ta-nav-btn.ta-nav-current { background: #630100; color: #fff; border-color: #630100; }
+.ta-week-label { font-size: 0.85rem; color: #333; font-weight: 800; }
+.ta-week-badge {
+    font-size: 0.66rem; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 20px; background: #f1f1f1; color: #666; margin-left: 2px;
+}
+.ta-week-badge.is-current { background: #fdf0d5; color: #8a5a00; }
+
+/* ── Day headers with dates + today highlight ── */
+.cal-table th.cal-day-th { line-height: 1.25; }
+.cal-th-day  { display: block; }
+.cal-th-date { display: block; font-size: 0.68rem; font-weight: 600; opacity: 0.85; }
+.cal-table th.ta-today-col { background: #b8860b !important; box-shadow: inset 0 -3px 0 #ffd66b; }
+.cal-table th.ta-today-col .cal-th-date::after {
+    content: 'TODAY'; display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: 10px;
+    background: #fff; color: #8a5a00; font-size: 0.58rem; font-weight: 900; letter-spacing: 0.4px;
+}
+.cal-table td.cal-today-cell { background: #fff8e6 !important; }
+.cal-table td.cal-off-day   { background: repeating-linear-gradient(135deg, #f3f3f3 0 6px, #ebebeb 6px 12px) !important; }
+.cal-table th.cal-off-day-th { background: #8c7a7a !important; }
+
+/* Make-up class pill (one date only) */
+.cal-pill.makeup-pill { outline: 2px solid #ffd66b; outline-offset: -2px; }
+.cal-pill-badge {
+    display: inline-block; margin-top: 2px; padding: 0 5px; border-radius: 8px; background: #ffd66b;
+    color: #5a3a00; font-size: 0.52rem; font-weight: 900; letter-spacing: 0.3px;
+}
+.cal-week-note {
+    margin-bottom: 10px; padding: 10px 14px; border-radius: 8px; font-size: 0.78rem; font-weight: 600;
+    background: #fdf6f6; border: 1px solid #e5c8c8; color: #630100;
+}
+.cal-week-note i { margin-right: 6px; }
+
+/* ── Faculty header box (Teaching Assignment) ── */
+.ta-faculty-box {
+    background: #fdf6f6;
+    border: 1px solid #e5c8c8;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin-bottom: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.ta-faculty-box-name {
+    font-weight: 800;
+    color: #630100;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+}
+.ta-faculty-box-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #630100;
+    text-transform: uppercase;
+}
+.ta-faculty-box-meta strong { color: #333; }
 
 /* Tab navigation styling */
 .tabs-container {
     display: flex;
-    margin-bottom: 30px;
     border-bottom: 2px solid #ddd;
 }
 
@@ -88,11 +296,12 @@
 .table-container {
     border: 1px solid #e0e0e0;
     border-radius: 5px;
-    overflow: hidden; /* Ensures the child table respects the border radius */
+    overflow-x: auto; /* narrow screens scroll instead of squashing the table unreadable */
 }
 
 table {
     width: 100%;
+    min-width: 760px;
     border-collapse: collapse;
 }
 
@@ -117,6 +326,34 @@ tbody tr:nth-child(even) {
 tbody td {
     color: #444;
 }
+
+/* ── Teaching Assignment tables (Regular + Part-Time) ──────────────────────
+   Both tables use the SAME fixed column widths so every column lines up from
+   one table to the next (auto layout sized each table by its own content, so
+   e.g. TIME and everything after it sat in different places). Short fields
+   are centred, text fields left-aligned, header and body cells match. */
+.load-section table { table-layout: fixed; }
+.load-section th, .load-section td {
+    padding: 11px 12px;
+    vertical-align: middle;
+    overflow-wrap: break-word;
+}
+.load-section thead th { font-size: 0.74rem; letter-spacing: 0.3px; line-height: 1.3; }
+.load-section th:nth-child(1) { width: 11%; }   /* Subject Code        */
+.load-section th:nth-child(2) { width: 22%; }   /* Subject Description */
+.load-section th:nth-child(3) { width: 7%;  }   /* Units               */
+.load-section th:nth-child(4) { width: 11%; }   /* Year & Section      */
+.load-section th:nth-child(5) { width: 19%; }   /* Time                */
+.load-section th:nth-child(6) { width: 8%;  }   /* Day/s               */
+.load-section th:nth-child(7) { width: 10%; }   /* Room                */
+.load-section th:nth-child(8) { width: 12%; }   /* Effectivity         */
+.load-section th:nth-child(n+3):not(:nth-child(5)),
+.load-section tbody td:nth-child(n+3):not(:nth-child(5)) { text-align: center; }
+.load-section tbody td:nth-child(5) { line-height: 1.5; }   /* one line per meeting time */
+.load-section tbody td[colspan] { text-align: center; }      /* "No load assigned" rows   */
+/* Totals right-aligned, in line with the OVERALL TOTAL bar below (the page's
+   intended style — the generic tfoot rule further down had been overriding it). */
+.load-section tfoot td.total-units { text-align: right; padding-right: 16px; }
 
 /* Footer style for total units */
 tfoot .total-units {

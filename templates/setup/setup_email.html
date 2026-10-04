@@ -1,0 +1,14 @@
+{% extends "setup/_setup_layout.html" %}
+{% block content %}
+    <p class="step-sub">Check your email information.</p>
+    <p class="step-hint">Optional — you can skip this and add it later from Profile Settings.</p>
+    <div class="form-group">
+        <label>CURRENT EMAIL</label>
+        <input type="text" value="{{ current_email or 'Not on file yet' }}" readonly>
+    </div>
+    <div class="form-group">
+        <label for="setupEmail">NEW EMAIL</label>
+        <input type="email" id="setupEmail" name="email" value="{{ draft_email }}"
+               placeholder="{{ 'Leave blank to keep your current email' if current_email else 'you@example.com' }}">
+    </div>
+{% endblock %}

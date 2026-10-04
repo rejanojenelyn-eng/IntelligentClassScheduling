@@ -1,21 +1,45 @@
-﻿import os
+import os
 import re
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
+import uuid
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response, make_response
 from database import get_db_connection, query_db
 from config import Config
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime, date, time, timedelta
+from decimal import Decimal
 import csv
 import io
 import json
 import psycopg2.extras
+import psycopg2.errors
 from psycopg2.extras import RealDictCursor
 from pdf_curriculum_parser import parse_curriculum_pdf
 from docx_curriculum_parser import parse_curriculum_docx
 from pdf_faculty_parser import parse_faculty_pdf
 from docx_faculty_parser import parse_faculty_docx
 import faculty_load
+import makeup_requests as _makeup
+import password_change as _pwchange
+import password_reset as _pwreset
+import teaching_assignment_export as _ta_export
+import weekly_schedule_export as _ws_export
+
+def _friendly_faculty_db_error(e):
+    """Map a raw Faculty INSERT/UPDATE failure to a message safe to show a
+    user — never the raw Postgres exception text. faculty has exactly two
+    uniqueness constraints that can fire here — verified directly against
+    the live database (pg_constraint), since the live schema's actual
+    constraint names (pk_faculty / uq_faculty_email) differ from the
+    faculty_pkey / faculty_email_key names in the checked-in schema.sql."""
+    if isinstance(e, psycopg2.errors.UniqueViolation):
+        constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
+        if constraint in ('pk_faculty', 'faculty_pkey'):
+            return "This Faculty Number is already registered. Please use a different faculty number."
+        if constraint in ('uq_faculty_email', 'faculty_email_key'):
+            return "This email address is already registered. Please use a different email address."
+        return "Unable to save faculty. This record conflicts with an existing one."
+    return "Unable to save faculty. Please check the information and try again."
 
 # One-time idempotent migration: ensure schedule_version.source column exists
 _source_col_ensured = False
@@ -321,6 +345,9 @@ def _ensure_request_tables():
         for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT", "end_date DATE"]:
             _cur.execute(f"ALTER TABLE public.schedule_change_request ADD COLUMN IF NOT EXISTS {_col}")
 
+        # Date-specific make-up exceptions live in schedule_exception_log
+        _makeup.ensure_schema(_cur)
+
         _conn.commit()
         _request_tables_ensured = True
     except Exception:
@@ -390,6 +417,9 @@ def inject_user_display():
         cur.close(); conn.close()
         if row and row.get('lastname'):
             return {'current_user_display': f"{row['firstname']} {row['lastname']}"}
+        if session.get('role') == 'Admin':
+            # The system Admin is a standalone account (no faculty record).
+            return {'current_user_display': 'Administrator'}
         return {'current_user_display': username.title()}
     except:
         return {'current_user_display': session.get('username', 'User')}
@@ -633,10 +663,10 @@ def setup():
         cur.execute("TRUNCATE TABLE Accounts RESTART IDENTITY CASCADE")
         
         hashed = generate_password_hash('password123', method='pbkdf2:sha256')
-        
-        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role) VALUES (%s, %s, %s)", ('admin', hashed, 'Admin'))
-        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role) VALUES (%s, %s, %s)", ('acadhead', hashed, 'Academic Head'))
-        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role) VALUES (%s, %s, %s)", ('faculty', hashed, 'Faculty'))
+
+        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role, must_change_password, account_setup_complete) VALUES (%s, %s, %s, TRUE, FALSE)", ('admin', hashed, 'Admin'))
+        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role, must_change_password, account_setup_complete) VALUES (%s, %s, %s, TRUE, FALSE)", ('acadhead', hashed, 'Academic Head'))
+        cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role, must_change_password, account_setup_complete) VALUES (%s, %s, %s, TRUE, FALSE)", ('faculty', hashed, 'Faculty'))
 
         conn.commit()
         return "Setup Success! Login with password123"
@@ -666,14 +696,41 @@ def login():
             db_role     = user_data.get('role')
 
             if check_password_hash(db_password, password):
+                if not user_data.get('isactive', True):
+                    flash("Your account has been deactivated. Please contact the Administrator.")
+                    session['saved_username'] = username
+                    return redirect(url_for('login'))
+
+                must_change = bool(user_data.get('must_change_password'))
+                setup_done  = bool(user_data.get('account_setup_complete', True))
+
+                # Accounts created before must_change_password existed (or created by a
+                # path that doesn't set it -- employee-import flows use the Employee
+                # Number as both username and password, the admin "add account" form
+                # uses PUP@{username}, and the /setup dev bootstrap route uses
+                # 'password123') never got flagged even though they're still on a
+                # system-assigned default password. Detect that here from the password
+                # actually submitted and self-heal the flag so this only runs once.
+                if not must_change and password in (f"PUP@{username}", username, 'password123'):
+                    must_change = True
+                    setup_done  = False
+                    try:
+                        _c3 = get_db_connection(); _cur3 = _c3.cursor()
+                        _cur3.execute("""
+                            UPDATE accounts SET must_change_password = TRUE, account_setup_complete = FALSE
+                            WHERE username = %s
+                        """, (username,))
+                        _c3.commit(); _cur3.close(); _c3.close()
+                    except Exception: pass
+
                 session.clear()
                 session['loggedin'] = True
                 session['username'] = user_data.get('username')
                 session['role']     = db_role
+                session['must_change_password']   = must_change
+                session['account_setup_complete'] = setup_done
                 try:
                     _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
-                    _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
-                    _cur2.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
                     _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
                     _conn2.commit(); _cur2.close(); _conn2.close()
                 except Exception: pass
@@ -688,20 +745,610 @@ def login():
                     flash("Your account does not have an assigned dashboard.")
                     return redirect(url_for('login'))
             else:
-                flash("Wrong password. Try again.")
+                flash("Invalid username or password.")
                 session['saved_username'] = username
         else:
-            flash("Username not found!")
+            flash("Invalid username or password.")
             session['saved_username'] = username
 
         return redirect(url_for('login'))
+
+    # Already logged in (e.g. the browser Back button walked back onto /login
+    # from a dashboard): send them to their own dashboard instead of wiping the
+    # session. Logging out is done only through /logout.
+    if session.get('loggedin') and _dashboard_url_for_role(session.get('role')) != 'login':
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
 
     saved_username = session.get('saved_username', '')
     flashes = session.get('_flashes')
     session.clear()
     if flashes:
         session['_flashes'] = flashes
-    return render_template('login.html', saved_username=saved_username)
+    resp = make_response(render_template('login.html', saved_username=saved_username))
+    # Never serve the login page from the back/forward cache, so Back always
+    # re-asks the server (which redirects a logged-in user to their dashboard).
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
+
+
+def _dashboard_url_for_role(role):
+    return {'Admin': 'admin_dashboard', 'Academic Head': 'academic_my_dashboard',
+            'Faculty': 'faculty_dashboard'}.get(role, 'login')
+
+
+# ── Forgot Password (logged out) ─────────────────────────────────────────────
+#   Login → Forgot Password → Employee Number / Username → emailed code →
+#   Verify → New + Confirm Password → Login.   (password_reset.py)
+# Separate from the first-login setup wizard and from Admin Reset Password:
+# it changes only the password and never touches account_setup_complete or
+# any profile data, so a set-up account goes straight to its dashboard.
+# The session holds only the request row id (fp_rid) and, after verifying, a
+# one-time token (fp_token); everything else is in PostgreSQL.
+def _client_ip():
+    """Client IP for rate limiting. Behind Render's proxy (TRUST_PROXY=1) use
+    the address the edge proxy reports; otherwise the socket address."""
+    if Config.TRUST_PROXY:
+        for h in ('CF-Connecting-IP', 'True-Client-IP'):
+            v = (request.headers.get(h) or '').strip()
+            if v:
+                return v[:64]
+        xff = [p.strip() for p in (request.headers.get('X-Forwarded-For') or '').split(',') if p.strip()]
+        if xff:
+            return xff[0][:64]
+    return (request.remote_addr or '')[:64]
+
+
+def _dispatch_reset_email(job):
+    """Send outside the request so the response time is the same whether or not
+    an email goes out (no account enumeration by timing). Failures are logged
+    without the address or the code."""
+    if not job:
+        return
+    def run():
+        try:
+            job()
+        except Exception as e:
+            print(f"[forgot_password] reset email could not be sent: {type(e).__name__}: {e}", flush=True)
+    if _pwreset.SEND_IN_BACKGROUND:
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+    else:
+        run()
+
+
+def _fp_page(step, status=200, **ctx):
+    resp = make_response(render_template('forgot_password.html', step=step,
+                                         code_ttl=_pwreset.CODE_TTL_MINUTES, **ctx), status)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
+
+
+def _fp_logged_in_redirect():
+    if session.get('loggedin') and _dashboard_url_for_role(session.get('role')) != 'login':
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+    return None
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    r = _fp_logged_in_redirect()
+    if r:
+        return r
+    if request.method == 'GET':
+        if request.args.get('restart'):
+            session.pop('fp_rid', None); session.pop('fp_token', None)
+        return _fp_page('request')
+
+    identifier = (request.form.get('identifier') or '').strip()
+    conn = get_db_connection()
+    try:
+        rid, job = _pwreset.start(conn, Config, identifier, _client_ip())
+    except _pwreset.ResetError as e:
+        return _fp_page('request', e.status, error=e.message, identifier=identifier)
+    except Exception as e:
+        print(f"[forgot_password] start failed: {type(e).__name__}")
+        return _fp_page('request', 500, error='Something went wrong. Please try again.', identifier=identifier)
+    finally:
+        conn.close()
+    session.pop('fp_token', None)
+    session['fp_rid'] = rid
+    _dispatch_reset_email(job)
+    flash(_pwreset.GENERIC_SENT, 'info')
+    return redirect(url_for('forgot_password_verify'))
+
+
+@app.route('/forgot-password/verify', methods=['GET', 'POST'])
+def forgot_password_verify():
+    r = _fp_logged_in_redirect()
+    if r:
+        return r
+    rid = session.get('fp_rid')
+    if not rid:
+        return redirect(url_for('forgot_password'))
+    conn = get_db_connection()
+    try:
+        error, status_code = None, 200
+        if request.method == 'POST':
+            try:
+                session['fp_token'] = _pwreset.verify(conn, rid, request.form.get('code', ''))
+                return redirect(url_for('forgot_password_new'))
+            except _pwreset.ResetError as e:
+                if e.error == 'no_session':
+                    session.pop('fp_rid', None); session.pop('fp_token', None)
+                    flash(e.message, 'error')
+                    return redirect(url_for('forgot_password'))
+                error, status_code = e.message, e.status
+        try:
+            wait = _pwreset.status(conn, rid)['resend_wait']
+        except _pwreset.ResetError:
+            session.pop('fp_rid', None)
+            return redirect(url_for('forgot_password'))
+        return _fp_page('verify', status_code, error=error, resend_wait=wait)
+    finally:
+        conn.close()
+
+
+@app.route('/forgot-password/resend', methods=['POST'])
+def forgot_password_resend():
+    r = _fp_logged_in_redirect()
+    if r:
+        return r
+    rid = session.get('fp_rid')
+    if not rid:
+        return redirect(url_for('forgot_password'))
+    conn = get_db_connection()
+    try:
+        new_rid, job = _pwreset.resend(conn, Config, rid, _client_ip())
+    except _pwreset.ResetError as e:
+        if e.error == 'no_session':
+            session.pop('fp_rid', None); session.pop('fp_token', None)
+            flash(e.message, 'error')
+            return redirect(url_for('forgot_password'))
+        flash(e.message, 'error')
+        return redirect(url_for('forgot_password_verify'))
+    finally:
+        conn.close()
+    session['fp_rid'] = new_rid
+    session.pop('fp_token', None)
+    _dispatch_reset_email(job)
+    flash('A new verification code has been sent to your registered email (if the account has one). '
+          'Earlier codes no longer work.', 'info')
+    return redirect(url_for('forgot_password_verify'))
+
+
+@app.route('/forgot-password/new-password', methods=['GET', 'POST'])
+def forgot_password_new():
+    r = _fp_logged_in_redirect()
+    if r:
+        return r
+    rid, token = session.get('fp_rid'), session.get('fp_token')
+    if not rid:
+        return redirect(url_for('forgot_password'))
+    conn = get_db_connection()
+    try:
+        if not _pwreset.is_verified(conn, rid, token):
+            session.pop('fp_token', None)
+            flash('Please verify the code sent to your email first. If it has expired, request a new one.', 'error')
+            return redirect(url_for('forgot_password_verify'))
+        if request.method == 'GET':
+            return _fp_page('reset')
+        try:
+            username = _pwreset.reset(conn, rid, token, request.form.get('new_password', ''),
+                                      request.form.get('confirm_password', ''))
+        except _pwreset.ResetError as e:
+            if e.error == 'not_verified':
+                session.pop('fp_token', None)
+                flash(e.message, 'error')
+                return redirect(url_for('forgot_password_verify'))
+            return _fp_page('reset', e.status, error=e.message)
+    finally:
+        conn.close()
+    session.pop('fp_rid', None); session.pop('fp_token', None)
+    session['saved_username'] = username          # pre-fills the Login form
+    flash('Your password has been reset. You can now log in with your new password.', 'success')
+    return redirect(url_for('login'))
+
+
+@app.before_request
+def _enforce_account_setup():
+    """Single enforcement point for every already-logged-in request:
+    1. A deactivated account loses access immediately, even mid-session --
+       re-checked fresh from the DB on every request (not just at login),
+       so an Admin deactivating someone right now cuts them off right now,
+       not just on their next login attempt. Covers API/AJAX calls too.
+    2. Forces a just-created/just-reset account through the setup wizard
+       (change password -> confirm contact info -> verify personal info)
+       before it can reach any other page.
+    This means the other ~150 existing routes don't each need their own check."""
+    if not session.get('loggedin'):
+        return
+    ep = request.endpoint or ''
+    if request.path.startswith('/static/') or ep in ('login', 'logout'):
+        return
+
+    row = query_db("SELECT isactive FROM accounts WHERE username = %s", (session.get('username'),), one=True)
+    if not row or not row.get('isactive'):
+        session.clear()
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'error': "Your account has been deactivated. Please contact the Administrator."}), 403
+        flash("Your account has been deactivated. Please contact the Administrator.")
+        return redirect(url_for('login'))
+
+    if request.path.startswith('/api/'):
+        return
+    if ep.startswith('account_setup_'):
+        return
+    if session.get('must_change_password'):
+        return redirect(url_for('account_setup_password'))
+    if not session.get('account_setup_complete', True):
+        return redirect(url_for('account_setup_email'))
+
+
+# ── First-login account setup wizard ─────────────────────────────────────────
+#   1. Change Password (required, no Skip)   /account-setup/password
+#   2. Email           (optional: Skip)      /account-setup/email
+#   3. Profile Picture (optional: Skip)      /account-setup/photo
+#   4. Contact Number  (optional: Skip)      /account-setup/contact
+#   5. Review & Complete                     /account-setup/verify
+# Every step has Back. Back keeps what was typed (held in the session until the
+# step is continued or skipped) and can never get past the password change:
+# every later step redirects to step 1 while must_change_password is set.
+_SETUP_STEPS = [
+    ('password', 'Password',          'account_setup_password'),
+    ('email',    'Email',             'account_setup_email'),
+    ('photo',    'Profile Photo',     'account_setup_photo'),
+    ('contact',  'Contact No.',       'account_setup_contact'),
+    ('verify',   'Review',            'account_setup_verify'),
+]
+
+
+def _setup_ctx(step):
+    idx = [s[0] for s in _SETUP_STEPS].index(step)
+    return {'steps': _SETUP_STEPS, 'step_index': idx, 'step_key': step}
+
+
+def _setup_draft():
+    return session.get('setup_draft') or {}
+
+
+def _setup_set_draft(**kw):
+    d = dict(_setup_draft())
+    d.update(kw)
+    session['setup_draft'] = d
+
+
+def _setup_clear_draft(*keys):
+    d = dict(_setup_draft())
+    for k in keys:
+        d.pop(k, None)
+    session['setup_draft'] = d
+
+
+def _setup_guard():
+    """Redirect for anyone who may NOT be on an optional step right now (or None)."""
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+    if session.get('must_change_password'):
+        return redirect(url_for('account_setup_password'))      # never skippable
+    if session.get('account_setup_complete', True):
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+    return None
+
+
+def _setup_account():
+    return query_db("""
+        SELECT a.username, a.employeenumber, a.profile_photo, a.email AS account_email,
+               f.email AS faculty_email, f.contactnumber
+        FROM accounts a LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+        WHERE a.username = %s
+    """, (session.get('username'),), one=True) or {}
+
+
+@app.route('/account-setup/password', methods=['GET', 'POST'])
+def account_setup_password():
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+    if not session.get('must_change_password'):
+        if session.get('account_setup_complete', True):
+            return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+        # Came Back to step 1 after already changing the password: show it as done.
+        if request.method == 'POST':
+            return redirect(url_for('account_setup_email'))
+        return render_template('setup/setup_password.html', password_done=True, **_setup_ctx('password'))
+
+    if request.method == 'POST':
+        username   = session.get('username')
+        current_pw = request.form.get('current_password', '')
+        new_pw     = request.form.get('new_password', '')
+        confirm_pw = request.form.get('confirm_password', '')
+
+        row = query_db("SELECT passwordhash FROM accounts WHERE username = %s", (username,), one=True)
+        if not row or not check_password_hash(row['passwordhash'], current_pw):
+            flash("Current password is incorrect.", "error")
+        elif _pwchange.password_problem(new_pw, username):
+            flash(_pwchange.password_problem(new_pw, username), "error")
+        elif new_pw != confirm_pw:
+            flash("New password and confirmation do not match.", "error")
+        elif check_password_hash(row['passwordhash'], new_pw):
+            flash("New password must be different from your current password.", "error")
+        else:
+            conn = get_db_connection(); cur = conn.cursor()
+            try:
+                cur.execute("""
+                    UPDATE accounts SET passwordhash = %s, must_change_password = FALSE,
+                                        password_changed_at = NOW()
+                    WHERE username = %s
+                """, (generate_password_hash(new_pw), username))
+                conn.commit()
+                session['must_change_password'] = False
+                if not session.get('account_setup_complete', True):
+                    return redirect(url_for('account_setup_email'))
+                flash("Password updated.", "success")
+                return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+            except Exception as e:
+                conn.rollback()
+                print(f"[account setup] password update failed: {type(e).__name__}")
+                flash("Your password could not be updated. Please try again.", "error")
+            finally:
+                cur.close(); conn.close()
+        return redirect(url_for('account_setup_password'))
+
+    return render_template('setup/setup_password.html', password_done=False, **_setup_ctx('password'))
+
+
+@app.route('/account-setup/info', methods=['GET', 'POST'])
+def account_setup_info():
+    # Former single "profile info" step, now split into Email / Photo / Contact.
+    return redirect(url_for('account_setup_email'))
+
+
+@app.route('/account-setup/email', methods=['GET', 'POST'])
+def account_setup_email():
+    guard = _setup_guard()
+    if guard:
+        return guard
+    acc = _setup_account()
+    on_file = (acc.get('faculty_email') if acc.get('employeenumber') else acc.get('account_email')) or ''
+
+    if request.method == 'POST':
+        action = request.form.get('action', 'continue')
+        email  = request.form.get('email', '').strip()
+        if action == 'back':
+            _setup_set_draft(email=email)
+            return redirect(url_for('account_setup_password'))
+        if action == 'skip':
+            _setup_clear_draft('email')
+            return redirect(url_for('account_setup_photo'))
+        if not email and on_file:
+            _setup_clear_draft('email')                     # keep the email already on file
+            return redirect(url_for('account_setup_photo'))
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
+            _setup_set_draft(email=email)
+            flash("Please enter a valid email address, or choose Skip.", "error")
+            return redirect(url_for('account_setup_email'))
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            if acc.get('employeenumber'):
+                cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s",
+                            (email, acc['employeenumber']))
+            else:
+                cur.execute("UPDATE accounts SET email = %s WHERE username = %s AND employeenumber IS NULL",
+                            (email, session.get('username')))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            _setup_set_draft(email=email)
+            if isinstance(e, psycopg2.errors.UniqueViolation):
+                flash("That email address is already used by another faculty member.", "error")
+            else:
+                print(f"[account setup] email save failed: {type(e).__name__}")
+                flash("Your email could not be saved. Please try again.", "error")
+            return redirect(url_for('account_setup_email'))
+        finally:
+            cur.close(); conn.close()
+        _setup_clear_draft('email')
+        return redirect(url_for('account_setup_photo'))
+
+    return render_template('setup/setup_email.html', current_email=on_file,
+                           draft_email=_setup_draft().get('email', ''), **_setup_ctx('email'))
+
+
+@app.route('/account-setup/photo', methods=['GET', 'POST'])
+def account_setup_photo():
+    guard = _setup_guard()
+    if guard:
+        return guard
+    acc = _setup_account()
+
+    if request.method == 'POST':
+        action = request.form.get('action', 'continue')
+        photo  = request.files.get('photo')
+        chosen = bool(photo and photo.filename)
+        if chosen and action in ('continue', 'back'):
+            # A picked photo is saved on Continue AND on Back, so going back loses nothing.
+            _url, err = _save_profile_photo(session.get('username'), photo)
+            if err:
+                flash(err, "error")
+                return redirect(url_for('account_setup_photo'))
+        if action == 'back':
+            return redirect(url_for('account_setup_email'))
+        if action == 'continue' and not chosen and not acc.get('profile_photo'):
+            flash("Please choose a photo to upload, or choose Skip.", "error")
+            return redirect(url_for('account_setup_photo'))
+        return redirect(url_for('account_setup_contact'))
+
+    return render_template('setup/setup_photo.html', current_photo=acc.get('profile_photo') or '',
+                           **_setup_ctx('photo'))
+
+
+@app.route('/account-setup/contact', methods=['GET', 'POST'])
+def account_setup_contact():
+    guard = _setup_guard()
+    if guard:
+        return guard
+    acc = _setup_account()
+    if not acc.get('employeenumber'):
+        # Standalone account (no faculty record): there is nowhere to keep a contact number.
+        if request.method == 'POST' and request.form.get('action') == 'back':
+            return redirect(url_for('account_setup_photo'))
+        return redirect(url_for('account_setup_verify'))
+    on_file = acc.get('contactnumber') or ''
+
+    if request.method == 'POST':
+        action  = request.form.get('action', 'continue')
+        contact = request.form.get('contact_number', '').strip()
+        if action == 'back':
+            _setup_set_draft(contact=contact)
+            return redirect(url_for('account_setup_photo'))
+        if action == 'skip':
+            _setup_clear_draft('contact')
+            return redirect(url_for('account_setup_verify'))
+        if not contact and on_file:
+            _setup_clear_draft('contact')
+            return redirect(url_for('account_setup_verify'))
+        digits = re.sub(r'\D', '', contact)
+        if not re.fullmatch(r'[0-9+()\-\s]+', contact or 'x') or not (7 <= len(digits) <= 15):
+            _setup_set_draft(contact=contact)
+            flash("Please enter a valid contact number, or choose Skip.", "error")
+            return redirect(url_for('account_setup_contact'))
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            cur.execute("UPDATE faculty SET contactnumber = %s WHERE employeenumber = %s",
+                        (contact, acc['employeenumber']))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            _setup_set_draft(contact=contact)
+            print(f"[account setup] contact save failed: {type(e).__name__}")
+            flash("Your contact number could not be saved. Please try again.", "error")
+            return redirect(url_for('account_setup_contact'))
+        finally:
+            cur.close(); conn.close()
+        _setup_clear_draft('contact')
+        return redirect(url_for('account_setup_verify'))
+
+    return render_template('setup/setup_contact.html', current_contact=on_file,
+                           draft_contact=_setup_draft().get('contact', ''), **_setup_ctx('contact'))
+
+
+_CORRECTION_FIELDS = ('First Name', 'Middle Name', 'Last Name', 'Suffix',
+                       'Designation', 'Specialization', 'Employee ID')
+
+@app.route('/account-setup/verify', methods=['GET', 'POST'])
+def account_setup_verify():
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+    if session.get('must_change_password'):
+        return redirect(url_for('account_setup_password'))
+    if session.get('account_setup_complete', True):
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+
+    username = session.get('username')
+    info = query_db("""
+        SELECT f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
+               f.email, f.contactnumber, d.designationname, s.specializationname
+        FROM accounts a
+        LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+        LEFT JOIN designation d ON f.designationid = d.designationid
+        LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        WHERE a.username = %s
+    """, (username,), one=True)
+
+    if not info or not info.get('employeenumber'):
+        # No linked faculty record (e.g. a pure Admin account) -- nothing to verify.
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+        session['account_setup_complete'] = True
+        session.pop('setup_draft', None)
+        flash("Account setup complete.", "success")
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+
+    full_name = ' '.join(filter(None, [info.get('firstname'), info.get('middlename'),
+                                        info.get('lastname'), info.get('suffix')]))
+    current_values = {
+        'Employee ID':    info.get('employeenumber') or '',
+        'First Name':     info.get('firstname') or '',
+        'Middle Name':    info.get('middlename') or '',
+        'Last Name':      info.get('lastname') or '',
+        'Suffix':         info.get('suffix') or '',
+        'Designation':    info.get('designationname') or '',
+        'Specialization': info.get('specializationname') or '',
+    }
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            if action == 'correction':
+                try:
+                    items = json.loads(request.form.get('corrections_json', '[]'))
+                except (ValueError, TypeError):
+                    items = []
+                remarks  = request.form.get('remarks', '').strip() or None
+                batch_id = uuid.uuid4().hex[:12]
+                inserted = 0
+
+                for item in items if isinstance(items, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    field_name     = str(item.get('field_name', '')).strip()
+                    proposed_value = str(item.get('proposed_value', '')).strip()
+                    if field_name not in _CORRECTION_FIELDS:
+                        continue
+                    current_value = current_values.get(field_name, '')
+                    # Middle Name / Suffix may legitimately be corrected to blank
+                    # (e.g. clearing a wrongly-entered value); every other field
+                    # needs an actual value. Either way, skip a "correction" that
+                    # doesn't actually change anything.
+                    if field_name not in ('Middle Name', 'Suffix') and not proposed_value:
+                        continue
+                    if proposed_value == current_value:
+                        continue
+                    cur.execute("""
+                        INSERT INTO personal_info_correction_request
+                            (username, employeenumber, field_name, current_value, proposed_value, remarks, batch_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (username, info.get('employeenumber'), field_name,
+                          current_value, proposed_value, remarks, batch_id))
+                    inserted += 1
+
+                if inserted == 0:
+                    flash("Please select at least one field to correct and provide a new value.", "error")
+                    return redirect(url_for('account_setup_verify'))
+
+                cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
+                conn.commit()
+                flash(f"Correction request submitted for admin review ({inserted} field"
+                      f"{'s' if inserted != 1 else ''}). Your official record stays unchanged until it's approved.", "success")
+            else:
+                cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
+                conn.commit()
+                flash("Account setup complete. Welcome!", "success")
+            session['account_setup_complete'] = True
+            session.pop('setup_draft', None)
+            return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+        except Exception as e:
+            conn.rollback()
+            print(f"[account setup] complete failed: {type(e).__name__}")
+            flash("Your setup could not be completed. Please try again.", "error")
+            return redirect(url_for('account_setup_verify'))
+        finally:
+            cur.close(); conn.close()
+
+    designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
+    specializations = query_db("SELECT specializationid, specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
+
+    return render_template('setup/setup_verify.html',
+                           info=current_values, full_name=full_name,
+                           account_email=info.get('email') or '',
+                           account_contact=info.get('contactnumber') or '',
+                           designations=designations, specializations=specializations,
+                           back_url=url_for('account_setup_contact'), **_setup_ctx('verify'))
+
 
 # ==============================================================================
 # --- ACADEMIC HEAD PERSONAL FACULTY VIEW ---
@@ -1254,107 +1901,61 @@ def api_requests_validate():
 
     try:
         if req_type == 'makeup':
-            row = query_db("""
-                SELECT cmr.*, sc.employeenumber, sc.scheduleid AS orig_sched,
-                       ts_s.timevalue AS start_t, ts_e.timevalue AS end_t
-                FROM class_meeting_request cmr
-                JOIN schedule sc ON cmr.scheduleid = sc.scheduleid
-                JOIN timeslot ts_s ON cmr.new_starttimeid = ts_s.timeid
-                JOIN timeslot ts_e ON cmr.new_endtimeid   = ts_e.timeid
-                WHERE cmr.requestid = %s
-            """, [req_id], one=True)
-            if not row:
-                return jsonify({'success': False, 'error': 'Not found'}), 404
+            # Date-specific check against the CURRENT database state, scoped to
+            # the request's own semester. Shares its conflict definitions with
+            # submission and with the final re-check inside /api/requests/decide
+            # (which remains authoritative — this endpoint is a preview only).
+            _vconn = get_db_connection()
+            try:
+                _vcur = _vconn.cursor(cursor_factory=RealDictCursor)
+                _vcur.execute("""
+                    SELECT cmr.requestid, cmr.scheduleid, cmr.requested_date, cmr.status,
+                           cmr.new_starttimeid, cmr.new_endtimeid, cmr.new_roomid
+                    FROM class_meeting_request cmr
+                    WHERE cmr.requestid = %s
+                """, [req_id])
+                row = _vcur.fetchone()
+                if not row:
+                    return jsonify({'success': False, 'error': 'not_found',
+                                    'message': 'Make-up request not found.'}), 404
+                ctx = _makeup.schedule_context_by_id(_vcur, row['scheduleid'])
+                if not ctx:
+                    return jsonify({'success': False, 'error': 'schedule_not_found',
+                                    'message': 'The class schedule for this request no longer exists.'}), 404
+                hard, warnings = _makeup.request_conflict_snapshot(_vcur, row, ctx)
+            finally:
+                _vconn.close()
 
-            from datetime import date as _date
-            req_date  = row['requested_date']
-            day_name  = req_date.strftime('%A') if req_date else None
-            start_t   = row['start_t']
-            end_t     = row['end_t']
-            room_id   = row['new_roomid']
-            emp_num   = row['employeenumber']
-            sched_id  = row['scheduleid']
+            kinds = {c['type'] for c in hard}
+            room_available = 'room' not in kinds
+            faculty_free   = 'faculty' not in kinds
+            section_free   = 'section' not in kinds
+            program_ok     = not warnings
+            return jsonify({
+                'success':        True,
+                'status':         row['status'],
+                'requested_date': row['requested_date'].isoformat(),
+                'semesterid':     ctx['semesterid'],
+                'room_available': room_available,
+                'faculty_free':   faculty_free,
+                'section_free':   section_free,
+                'program_ok':     program_ok,
+                'conflicts':      [c['message'] for c in hard],
+                'conflict_details': hard,
+                'warnings':       warnings,
+                # Program/year-level overlap is advisory; hard conflicts block approval.
+                'all_ok':         not hard,
+                'constraint_rules': list(dict.fromkeys(
+                    _context_conflicts.request_conflict_rules(
+                        room_conflict=not room_available,
+                        faculty_conflict=not faculty_free,
+                        cohort_conflict=not program_ok,
+                    ) + ([] if section_free else [_context_conflicts.SECTION_CONFLICT_RULE,
+                                                  _context_conflicts.CROSS_SCHEDULE_RULE])
+                )),
+            })
 
-            # 1. Room: published schedule conflict
-            rc1 = query_db("""
-                SELECT 1 FROM schedule_sessions ss
-                JOIN schedule_version sv ON ss.versionid = sv.versionid
-                JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-                JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
-                WHERE sv.status = 'Published' AND ss.roomid = %s
-                  AND UPPER(ss.daydesc) = UPPER(%s)
-                  AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                LIMIT 1
-            """, [room_id, day_name, end_t, start_t]) or []
-
-            # 2. Room: other approved makeup on same date
-            rc2 = query_db("""
-                SELECT 1 FROM class_meeting_request c2
-                JOIN timeslot ts_s ON c2.new_starttimeid = ts_s.timeid
-                JOIN timeslot ts_e ON c2.new_endtimeid   = ts_e.timeid
-                WHERE c2.status = 'Approved' AND c2.new_roomid = %s
-                  AND c2.requested_date = %s
-                  AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                  AND c2.requestid != %s
-                LIMIT 1
-            """, [room_id, req_date, end_t, start_t, req_id]) or []
-
-            room_available = not rc1 and not rc2
-
-            # 3. Faculty: published schedule (all schedules — makeup is an extra session, not a replacement)
-            fc1 = query_db("""
-                SELECT 1 FROM schedule_sessions ss
-                JOIN schedule_version sv ON ss.versionid = sv.versionid
-                JOIN schedule sc2 ON sv.scheduleid = sc2.scheduleid
-                JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-                JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
-                WHERE sv.status = 'Published' AND sc2.employeenumber = %s
-                  AND UPPER(ss.daydesc) = UPPER(%s)
-                  AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                LIMIT 1
-            """, [emp_num, day_name, end_t, start_t]) or []
-
-            # 4. Faculty: other approved makeup on same date
-            fc2 = query_db("""
-                SELECT 1 FROM class_meeting_request c2
-                JOIN schedule sc2 ON c2.scheduleid = sc2.scheduleid
-                JOIN timeslot ts_s ON c2.new_starttimeid = ts_s.timeid
-                JOIN timeslot ts_e ON c2.new_endtimeid   = ts_e.timeid
-                WHERE c2.status = 'Approved' AND sc2.employeenumber = %s
-                  AND c2.requested_date = %s
-                  AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                  AND c2.requestid != %s
-                LIMIT 1
-            """, [emp_num, req_date, end_t, start_t, req_id]) or []
-
-            faculty_free = not fc1 and not fc2
-
-            # 5. Program conflict
-            pyl = query_db("""
-                SELECT sec.programyearlevelid FROM schedule sc2
-                JOIN sections sec ON sc2.sectionid = sec.sectionid
-                WHERE sc2.scheduleid = %s LIMIT 1
-            """, [sched_id], one=True)
-            if pyl:
-                pc1 = query_db("""
-                    SELECT 1 FROM schedule_sessions ss
-                    JOIN schedule_version sv ON ss.versionid = sv.versionid
-                    JOIN schedule sc2 ON sv.scheduleid = sc2.scheduleid
-                    JOIN sections sec ON sc2.sectionid = sec.sectionid
-                    JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-                    JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
-                    WHERE sv.status = 'Published'
-                      AND sec.programyearlevelid = %s
-                      AND UPPER(ss.daydesc) = UPPER(%s)
-                      AND ts_s.timevalue < %s AND ts_e.timevalue > %s
-                      AND sc2.scheduleid != %s
-                    LIMIT 1
-                """, [pyl['programyearlevelid'], day_name, end_t, start_t, sched_id]) or []
-                program_ok = not pc1
-            else:
-                program_ok = True
-
-        elif req_type == 'adjustment':
+        if req_type == 'adjustment':
             row = query_db("""
                 SELECT scr.*, sc.employeenumber, sc.scheduleid AS orig_sched,
                        ts_s.timevalue AS start_t, ts_e.timevalue AS end_t
@@ -1445,6 +2046,14 @@ def api_requests_validate():
             'program_ok':     program_ok,
             'conflicts':      conflicts,
             'all_ok':         room_available and faculty_free and program_ok,
+            # Phase 3D: semantic mapping only. The SQL above intentionally
+            # remains date/database-aware; these IDs identify the frozen
+            # constraint dimensions without replacing request-specific scope.
+            'constraint_rules': _context_conflicts.request_conflict_rules(
+                room_conflict=not room_available,
+                faculty_conflict=not faculty_free,
+                cohort_conflict=not program_ok,
+            ),
         })
     except Exception as e:
         print(f"[api_requests_validate] Error: {e}")
@@ -1466,47 +2075,43 @@ def api_requests_decide():
     if decision not in ('Approved', 'Rejected'):
         return jsonify({'success': False, 'error': 'Invalid decision'}), 400
 
+    if req_type == 'makeup':
+        # A make-up class is a one-time, date-specific exception: approval writes
+        # one schedule_exception_log row and never touches the recurring
+        # schedule_sessions grid. Lock, state check, conflict re-check, status
+        # update and exception insert all happen in one transaction.
+        reviewer = session.get('employeenumber')
+        if not reviewer:
+            _acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s",
+                            [session.get('username')], one=True)
+            reviewer = _acc['employeenumber'] if _acc else None
+        _mconn = get_db_connection()
+        if not _mconn:
+            return jsonify({'success': False, 'error': 'server_error',
+                            'message': 'Database connection failed.'}), 500
+        try:
+            result = _makeup.decide(_mconn, request_id=req_id, decision=decision,
+                                    reviewer=reviewer, remarks=remarks)
+        except _makeup.MakeupError as me:
+            return jsonify(me.to_json()), me.status
+        finally:
+            _mconn.close()
+        write_activity_log(
+            action=f"Request {decision}",
+            details=(f"MAKEUP request #{result['requestid']} {decision.lower()} by {reviewer}"
+                     + (f" — one-time exception #{result['exception_logid']}"
+                        if result.get('exception_logid') else '')),
+            category='approval',
+            color='green' if decision == 'Approved' else 'orange'
+        )
+        return jsonify({'success': True, **result})
+
     decided_by = session.get('employeenumber') or session.get('username', 'unknown')
 
     _conn = get_db_connection()
     _cur  = _conn.cursor(cursor_factory=RealDictCursor)
     try:
-        if req_type == 'makeup':
-            _cur.execute("""
-                UPDATE class_meeting_request
-                SET status = %s, decided_by = %s, decided_at = NOW(), remarks = %s,
-                    reviewed_by = %s, reviewed_at = NOW()
-                WHERE requestid = %s
-            """, [decision, decided_by, remarks, decided_by, req_id])
-            if decision == 'Approved':
-                _cur.execute("SELECT * FROM class_meeting_request WHERE requestid = %s", [req_id])
-                mk = _cur.fetchone()
-                if mk and mk.get('scheduleid') and mk.get('new_starttimeid') and mk.get('new_endtimeid') and mk.get('requested_date'):
-                    _cur.execute("""
-                        SELECT versionid FROM schedule_version
-                        WHERE scheduleid = %s AND status = 'Published'
-                        ORDER BY version_number DESC LIMIT 1
-                    """, [mk['scheduleid']])
-                    ver = _cur.fetchone()
-                    if ver:
-                        # Room Schedule has no concept of a one-time calendar date — it's a
-                        # purely weekly-recurring grid keyed by day-of-week. Derive the
-                        # day-of-week from the requested date so the approved make-up class
-                        # is visible there (it will show as a normal weekly slot on that day).
-                        day_of_week = mk['requested_date'].strftime('%A')
-                        _cur.execute("""
-                            SELECT 1 FROM schedule_sessions
-                            WHERE versionid = %s AND daydesc = %s
-                              AND starttimeid = %s AND endtimeid = %s
-                              AND roomid IS NOT DISTINCT FROM %s
-                        """, [ver['versionid'], day_of_week, mk['new_starttimeid'], mk['new_endtimeid'], mk.get('new_roomid')])
-                        if not _cur.fetchone():
-                            _cur.execute("""
-                                INSERT INTO schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid)
-                                VALUES (%s, %s, %s, %s, %s)
-                            """, [ver['versionid'], day_of_week, mk['new_starttimeid'], mk['new_endtimeid'], mk.get('new_roomid')])
-
-        elif req_type == 'adjustment':
+        if req_type == 'adjustment':
             _cur.execute("""
                 UPDATE schedule_change_request
                 SET status = %s, decided_by = %s, decided_at = NOW(), remarks = %s,
@@ -1729,6 +2334,84 @@ def edit_employee():
             cur.close()
             conn.close()
         return redirect(url_for('employee'))
+
+# ── JSON variants of add/edit — used by the Add/Edit Faculty modals so a
+# failed submit (e.g. a duplicate faculty number/email) shows a friendly
+# message INSIDE the still-open modal with the typed fields intact, instead
+# of a raw SQL error after a full-page reload that wipes the form. The
+# original form-POST routes above are left in place untouched. ─────────────
+@app.route('/api/add_employee', methods=['POST'])
+def api_add_employee():
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in.'}), 401
+    data = request.get_json() or {}
+    emp_num  = (data.get('employee_number') or '').strip()
+    f_name   = (data.get('first_name') or '').strip()
+    m_name   = (data.get('middle_name') or '').strip() or None
+    l_name   = (data.get('last_name') or '').strip()
+    email    = (data.get('email') or '').strip()
+    contact  = (data.get('contact') or '').strip()
+    spec_id  = data.get('specialization_id')
+    type_id  = data.get('type_id')
+    status   = data.get('status')
+    desig_id = data.get('designation_id') or None
+    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+        return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
+    if not contact.isdigit():
+        return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+        conn.commit()
+        flash("Employee added successfully!", "success")
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _friendly_faculty_db_error(e)}), 409
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/api/edit_employee', methods=['POST'])
+def api_edit_employee():
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in.'}), 401
+    data = request.get_json() or {}
+    emp_num  = (data.get('employee_number') or '').strip()
+    f_name   = (data.get('first_name') or '').strip()
+    m_name   = (data.get('middle_name') or '').strip() or None
+    l_name   = (data.get('last_name') or '').strip()
+    email    = (data.get('email') or '').strip()
+    contact  = (data.get('contact') or '').strip()
+    spec_id  = data.get('specialization_id')
+    type_id  = data.get('type_id')
+    status   = data.get('status')
+    desig_id = data.get('designation_id') or None
+    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+        return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
+    if not contact.isdigit():
+        return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE Faculty
+            SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s,
+                SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
+            WHERE EmployeeNumber=%s
+        """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+        conn.commit()
+        flash("Employee details updated successfully!", "success")
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _friendly_faculty_db_error(e)}), 409
+    finally:
+        cur.close(); conn.close()
 
 def _archive_block_reasons(cur, emp_ids):
     """
@@ -2122,8 +2805,9 @@ def _acad_insert_employees(rows, conn, cur):
                   email or None, contact or None, spec_id, etype_id, desig_id, status))
             hashed_pw = generate_password_hash(emp_num)
             cur.execute("""
-                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
-                VALUES (%s, %s, 'Faculty', TRUE, %s) ON CONFLICT (Username) DO NOTHING
+                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
+                                       must_change_password, account_setup_complete)
+                VALUES (%s, %s, 'Faculty', TRUE, %s, TRUE, FALSE) ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_pw, emp_num))
         except ValueError as ve:
             errors.append(f"Row {i}: {ve}")
@@ -2987,19 +3671,38 @@ def view_curriculum(curriculum_id):
 
 @app.route('/room')
 def room():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
     try:
-        total_labs = query_db("SELECT COUNT(*) as count FROM Room WHERE RoomType = 'Laboratory'", one=True)
-        total_lec = query_db("SELECT COUNT(*) as count FROM Room WHERE RoomType = 'Lecture'", one=True)
-        total_rooms = query_db("SELECT COUNT(*) as count FROM Room", one=True)
+        total_labs = query_db("""
+            SELECT COUNT(*) as count FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+            WHERE r.RoomType = 'Laboratory' AND b.IsActive = TRUE
+        """, one=True)
+        total_lec = query_db("""
+            SELECT COUNT(*) as count FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+            WHERE r.RoomType = 'Lecture' AND b.IsActive = TRUE
+        """, one=True)
+        total_rooms = query_db("""
+            SELECT COUNT(*) as count FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+            WHERE b.IsActive = TRUE
+        """, one=True)
         total_bldgs = query_db("SELECT COUNT(*) as count FROM Building WHERE IsActive = TRUE", one=True)
         raw_buildings = query_db("SELECT BuildingID AS buildingid, BuildingName AS buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
         buildings = [{k.lower(): v for k, v in row.items()} for row in raw_buildings] if raw_buildings else []
 
+        # NOTE: BuildingID must be selected — the template renders it into
+        # data-building-id, and the building filter (sidebar + dropdown)
+        # compares against it. Omitting it here previously left every row's
+        # data-building-id empty, so selecting any specific building hid the
+        # entire table. Also scoped to active buildings only, matching the
+        # buildings/dropdown list above and Admin's equivalent query, so a
+        # room whose building was deactivated doesn't show in the active
+        # inventory while being unselectable in the building filter.
         raw_rooms = query_db("""
-            SELECT r.RoomID, r.RoomName, r.RoomType, r.RoomCapacity, b.BuildingName
+            SELECT r.RoomID, r.RoomName, r.RoomType, r.RoomCapacity, r.BuildingID, b.BuildingName
             FROM Room r
             JOIN Building b ON r.BuildingID = b.BuildingID
+            WHERE b.IsActive = TRUE
             ORDER BY
                 regexp_replace(r.RoomName, '[0-9]', '', 'g'),
                 CASE WHEN regexp_replace(r.RoomName, '[^0-9]', '', 'g') = ''
@@ -3018,13 +3721,21 @@ def room():
                                buildings=buildings, rooms=rooms, acad_years=acad_years)
 
     except Exception as e:
-        return render_template('academic/room.html', total_labs=0, buildings=[], rooms=[], acad_years=[])
+        print(f"room() error: {e}")
+        flash("Unable to load room data. Please try again.", "error")
+        return render_template('academic/room.html', total_labs=0, total_lec=0, total_rooms=0,
+                               total_bldgs=0, buildings=[], rooms=[], acad_years=[])
 
 
 
 @app.route('/room/view/<int:room_id>')
 def room_view(room_id):
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    # Shared by both roles: Admin's rooms.admin.js and Academic Head's
+    # room.acad.js both open this route in a popup iframe for the "view"
+    # (eye icon) action, so this must accept Admin too, not just Academic
+    # Head — _ROOM_ROLES is the same allow-list the room CRUD API already uses.
+    if 'loggedin' not in session or session.get('role') not in _ROOM_ROLES:
+        return redirect(url_for('login'))
     is_modal = request.args.get('modal') == '1'
     try:
         room_info = query_db("""
@@ -3035,7 +3746,11 @@ def room_view(room_id):
             WHERE r.roomid = %s
         """, (room_id,), one=True)
         if not room_info:
-            return redirect(url_for('room'))
+            # This route is shared by Admin and Academic Head (_ROOM_ROLES);
+            # /room is Academic-Head-only, so an Admin landing here on error
+            # must not be bounced through it — it would immediately kick them
+            # out to /login instead of back to their own Rooms page.
+            return redirect(url_for('admin_rooms') if session.get('role') == 'Admin' else url_for('room'))
 
         buildings = query_db("SELECT buildingid, buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
 
@@ -3076,10 +3791,11 @@ def room_view(room_id):
                                active_ay_id=active_ay_id,
                                active_sem=active_sem,
                                is_modal=is_modal,
+                               rooms_home_url=(url_for('admin_rooms') if session.get('role') == 'Admin' else url_for('room')),
                                base_template=('shared/blank_layout.html' if is_modal else 'academic/base.html'))
     except Exception as e:
         print(f"room_view error: {e}")
-        return redirect(url_for('room'))
+        return redirect(url_for('admin_rooms') if session.get('role') == 'Admin' else url_for('room'))
 
 # Insert these routes into the "ACADEMIC HEAD SPECIFIC ROUTES" section of your app.py
 
@@ -3924,13 +4640,16 @@ def export_schedule():
 # ══════════════════════════════════════════════════════════════
 
 
-def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True):
+def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, published_only=False):
     """Return list of schedule rows (normalized + historical fallback).
     When merge=True (default), collapses multiple schedule_sessions rows per
     subject offering into one (used by Table View exports). When merge=False,
     returns one row per individual day/time session, needed by Calendar View
-    exports to place each meeting on its own day/time cell."""
-    nf, np_ = ["sv.status IN ('Published', 'Draft')"], []
+    exports to place each meeting on its own day/time cell.
+    published_only=True (Faculty side) returns only Published sessions — no
+    Draft versions and no historical_data fallback — matching what the
+    Faculty Class Schedule page itself shows."""
+    nf, np_ = ["sv.status = 'Published'" if published_only else "sv.status IN ('Published', 'Draft')"], []
     if ay_ids:
         nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); np_.extend(ay_ids)
     if sem_types:
@@ -3984,6 +4703,9 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True):
     """
     cur.execute(norm_q, np_)
     norm_rows = cur.fetchall()
+    if published_only:
+        rows = [r for r in norm_rows if r['Time']] + [r for r in norm_rows if not r['Time']]
+        return _sch_merge_session_rows(rows) if merge else rows
 
     hf, hp_ = ["TRUE"], []
     if ay_ids:
@@ -4548,7 +5270,7 @@ def _sch_period_title(ay_label, sem_type):
     return _sch_official_title(_SCH_SEM_LABEL.get(sem_type, sem_type or 'All Semesters'), ay_label)
 
 
-def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table'):
+def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table', published_only=False):
     """Fetch + group Class Schedule rows and compute the semester/AY labels and
     full program names used by the 'official' SUBJECT OFFERINGS layout
     (_sch_gen_xlsx/docx/pdf) — the exact same data prep the Class Schedule SIS
@@ -4556,7 +5278,7 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     > Class Schedule (preview + export) calls this too so both stay identical
     to that feature instead of drifting into a separate report design."""
     layout = layout if layout in ('table', 'calendar') else 'table'
-    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, published_only=published_only)
     groups = _sch_exp_groups(rows)
 
     sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
@@ -4575,10 +5297,34 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     # can be placed in its own grid cell — only fetched when actually needed.
     cal_rows = cal_groups = None
     if layout == 'calendar':
-        cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False)
+        cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False,
+                                    published_only=published_only)
         cal_groups = _sch_exp_groups(cal_rows)
 
     return rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout
+
+
+def _sch_filter_export(cur, rows, groups, cal_rows, cal_groups, section_id=None, faculty_id=None, room_id=None):
+    """Narrow an _sch_export_context result to one section / instructor / room
+    (Reports > Class Schedule and the Faculty Class Schedule export)."""
+    if not (section_id or room_id or faculty_id):
+        return rows, groups, cal_rows, cal_groups
+    _fac_fname = None
+    if faculty_id:
+        cur.execute("SELECT lastname, firstname, middlename FROM faculty WHERE employeenumber = %s", (faculty_id,))
+        _f = cur.fetchone()
+        _fac_fname = (f"{_f['lastname']}, {_f['firstname']}" + (f" {_f['middlename']}" if _f.get('middlename') else '')) if _f else None
+
+    def _filt(rs):
+        if section_id: rs = [r for r in rs if str(r.get('SectionID')) == str(section_id)]
+        if room_id:    rs = [r for r in rs if str(r.get('RoomID')) == str(room_id)]
+        if faculty_id: rs = [r for r in rs if _fac_fname and r.get('Instructor') == _fac_fname]
+        return rs
+
+    rows = _filt(rows); groups = _sch_exp_groups(rows)
+    if cal_rows is not None:
+        cal_rows = _filt(cal_rows); cal_groups = _sch_exp_groups(cal_rows)
+    return rows, groups, cal_rows, cal_groups
 
 
 @app.route('/academic/schedule/export/count', methods=['POST'])
@@ -4674,6 +5420,163 @@ def schedule_export_multi():
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+def _faculty_active_term(cur):
+    """The active (academicyearid, semestertype) — the only term the Faculty
+    Class Schedule page and its export ever use, whatever the browser sends."""
+    cur.execute("SELECT s.academicyearid, s.semestertype FROM semester s WHERE s.isactive = TRUE LIMIT 1")
+    return cur.fetchone()
+
+
+def _faculty_se_filters(data):
+    """Program / Year Level lists from the shared Class Schedule export dialog.
+    Any ay_ids / sem_types in the body are ignored on purpose."""
+    programs = [str(p).strip() for p in (data.get('programs') or []) if str(p).strip()]
+    year_levels = [int(y) for y in (data.get('year_levels') or []) if str(y).strip()]
+    return programs, year_levels
+
+
+@app.route('/faculty/schedule/export/count', methods=['POST'])
+def faculty_schedule_export_count():
+    """Row / program count for the Faculty Class Schedule export dialog — same
+    as /academic/schedule/export/count, but always the active term and only
+    Published schedules (what the Faculty page shows)."""
+    if 'loggedin' not in session or session.get('role') != 'Faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        programs, year_levels = _faculty_se_filters(data)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid year level.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        active = _faculty_active_term(cur)
+        if not active:
+            return jsonify({'count': 0, 'programs': 0})
+        rows = _sch_exp_fetch(cur, [active['academicyearid']], [active['semestertype']],
+                              programs, year_levels, published_only=True)
+        return jsonify({'count': len(rows), 'programs': len(_sch_exp_groups(rows))})
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'Could not count the schedule rows.'}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/faculty/schedule/export', methods=['POST'])
+def faculty_schedule_export():
+    """Faculty → Class Schedule (SIS) → Export. Documents come from the same
+    official generators as the Academic Head's Class Schedule export and
+    Reports > Class Schedule (_sch_export_context / _sch_export_bytes), so the
+    file looks identical to every other class schedule the system produces.
+
+    Two request shapes:
+      • {formats: [...], programs: [...], year_levels: [...], layout, filename}
+        — the shared Academic Head export dialog: one or more formats (several
+        → one .zip), always the active term and Published schedules only.
+      • {format, program, year_level, section_id | emp_num, layout, filename}
+        — single format narrowed to one section / instructor (kept working)."""
+    if 'loggedin' not in session or session.get('role') != 'Faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    data    = request.get_json(silent=True) or {}
+    if isinstance(data.get('formats'), list):
+        return _faculty_schedule_export_multi(data)
+    fmt     = (data.get('format') or '').strip().lower()
+    layout  = (data.get('layout') or 'table').strip().lower()
+    if layout not in ('table', 'calendar'):
+        layout = 'table'
+    mime_map = _ta_export.MIME
+    if fmt not in mime_map:
+        return jsonify({'error': 'Please choose one format: XLSX, CSV, PDF or DOCX.'}), 400
+
+    program    = (data.get('program') or '').strip()
+    section_id = str(data.get('section_id') or '').strip()
+    emp_num    = str(data.get('emp_num') or '').strip()
+    try:
+        year_levels = [int(data['year_level'])] if str(data.get('year_level') or '').strip() else []
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid year level.'}), 400
+    if not (section_id or emp_num):
+        return jsonify({'error': 'Select a Section or an Instructor first.'}), 400
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # The Faculty page is locked to the active term, so the export is too.
+        cur.execute("""SELECT s.academicyearid, s.semestertype FROM semester s
+                       WHERE s.isactive = TRUE LIMIT 1""")
+        active = cur.fetchone()
+        if not active:
+            return jsonify({'error': 'No active academic term found.'}), 400
+
+        rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
+            _sch_export_context(cur, [active['academicyearid']], [active['semestertype']],
+                                [program] if program else [], year_levels, layout, published_only=True)
+        rows, groups, cal_rows, cal_groups = _sch_filter_export(
+            cur, rows, groups, cal_rows, cal_groups, section_id or None, emp_num or None)
+        if not rows:
+            return jsonify({'error': 'There is no published schedule for the selected filters.'}), 404
+
+        out = _sch_export_bytes(fmt, layout, rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map)
+        filename = _ta_export.clean_filename(data.get('filename')) or \
+            _ta_export.clean_filename(f"Class_Schedule_{sem_labels}_{ay_label}")
+        mime, ext = mime_map[fmt]
+        return Response(out, mimetype=mime,
+                        headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'The export could not be generated. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+def _faculty_schedule_export_multi(data):
+    """The shared (Academic Head) export dialog on the Faculty page — same
+    output as schedule_export_multi, locked to the active term, Published only."""
+    formats = []
+    for f in data.get('formats') or []:
+        f = str(f or '').strip().lower()
+        if f and f not in formats:
+            formats.append(f)
+    if not formats or any(f not in _ta_export.MIME for f in formats):
+        return jsonify({'error': 'Please choose at least one format: PDF, DOCX, XLSX or CSV.'}), 400
+    layout = (data.get('layout') or 'table').strip().lower()
+    try:
+        programs, year_levels = _faculty_se_filters(data)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid year level.'}), 400
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        active = _faculty_active_term(cur)
+        if not active:
+            return jsonify({'error': 'No active academic term found.'}), 400
+        rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
+            _sch_export_context(cur, [active['academicyearid']], [active['semestertype']],
+                                programs, year_levels, layout, published_only=True)
+        if not rows:
+            return jsonify({'error': 'There is no published schedule for the selected filters.'}), 404
+        filename = _ta_export.clean_filename(data.get('filename')) or 'schedule_export'
+        if len(formats) == 1:
+            mime, ext = _ta_export.MIME[formats[0]]
+            out = _sch_export_bytes(formats[0], layout, rows, groups, cal_rows, cal_groups,
+                                    sem_labels, ay_label, prog_name_map)
+            return Response(out, mimetype=mime,
+                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in formats:
+                zf.writestr(filename + _ta_export.MIME[f][1],
+                            _sch_export_bytes(f, layout, rows, groups, cal_rows, cal_groups,
+                                              sem_labels, ay_label, prog_name_map))
+        return Response(buf.getvalue(), mimetype='application/zip',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'The export could not be generated. Please try again.'}), 500
     finally:
         cur.close(); conn.close()
 
@@ -12182,7 +13085,12 @@ def api_local_check_room_conflicts():
                 key = (row['subjectcode'], row['daydesc'], row['start_fmt'])
                 if key not in seen_conflicts:
                     seen_conflicts.add(key)
-                    conflicts.append(dict(row))
+                    _conflict = dict(row)
+                    _conflict['constraint_rules'] = [
+                        _context_conflicts.ROOM_CONFLICT_RULE,
+                        _context_conflicts.CROSS_SCHEDULE_RULE,
+                    ]
+                    conflicts.append(_conflict)
 
             # Section-level check: the room check above only catches two subjects fighting
             # over the same ROOM, so a different subject already on this program+year-level
@@ -12241,7 +13149,12 @@ def api_local_check_room_conflicts():
                     key = (row['subjectcode'], row['daydesc'], row['start_fmt'])
                     if key not in seen_conflicts:
                         seen_conflicts.add(key)
-                        conflicts.append(dict(row))
+                        _conflict = dict(row)
+                    _conflict['constraint_rules'] = [
+                        _context_conflicts.SECTION_CONFLICT_RULE,
+                        _context_conflicts.CROSS_SCHEDULE_RULE,
+                    ]
+                    conflicts.append(_conflict)
 
         cur.close(); conn.close()
         return jsonify({'success': True, 'conflicts': conflicts})
@@ -12479,11 +13392,20 @@ def api_get_faculty_schedule():
     Returns schedule sessions for a faculty member (or all faculty if emp_num omitted).
     Used by both the Weekly Schedule calendar and the Teaching Assignment table.
     Query params:
-      emp_num    – faculty employee number (required for calendar; optional for table)
-      ay_id      – academicyearid
-      semester   – semester type ('A', 'B', 'C')
-      program    – programcode filter (optional)
-      year_level – yearlevel filter (optional)
+      emp_num      – faculty employee number (required for calendar; optional for table)
+      ay_id        – academicyearid
+      semester     – semester type ('A', 'B', 'C')
+      program      – programcode filter (optional)
+      year_level   – yearlevel filter (optional)
+      prefer_draft – '1' to prefer each (subject, section)'s Draft slices over
+                     Published ones when both exist for the same emp_num — the
+                     same resolution api_faculty_teaching_assignments already
+                     uses so an editor's own self-view shows their latest saved
+                     work immediately, without waiting for Publish. Only takes
+                     effect when emp_num + ay_id + semester are all given (a
+                     specific person's own view); ignored otherwise. Faculty's
+                     own "Official Schedule" must never pass this — it stays
+                     Published-only by simply omitting the param.
     """
     if 'loggedin' not in session:
         return jsonify([])
@@ -12493,8 +13415,9 @@ def api_get_faculty_schedule():
     semester   = request.args.get('semester')
     program    = request.args.get('program')
     year_level = request.args.get('year_level')
+    prefer_draft = request.args.get('prefer_draft') == '1' and bool(emp_num and ay_id and semester)
 
-    filters = ["sv.status = 'Published'"]
+    filters = ["sv.status IN ('Published','Draft')"] if prefer_draft else ["sv.status = 'Published'"]
     params  = []
 
     if emp_num:
@@ -12517,16 +13440,17 @@ def api_get_faculty_schedule():
         params.append(int(year_level))
 
     try:
-        rows = query_db(f"""
+        base_select = f"""
             SELECT cs.subjectcode, cs.subjectname, cs.creditunits,
                    sec.sectionname, pyl.yearlevel, pyl.programcode, ss.daydesc, r.roomname,
                    ss.starttimeid, ss.endtimeid, sv.status,
                    f.lastname || ', ' || f.firstname AS instructor,
-                   sc.employeenumber,
+                   sc.employeenumber, sc.sectionid,
                    TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
                    TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
                    ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
                    TO_CHAR(sem.semstartdate, 'MM/DD/YYYY') AS effectivity
+                   {", BOOL_OR(sv.status = 'Draft') OVER (PARTITION BY cs.subjectcode, sc.sectionid) AS has_draft" if prefer_draft else ""}
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
@@ -12539,9 +13463,21 @@ def api_get_faculty_schedule():
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
             LEFT JOIN semester sem ON sc.semesterid = sem.semesterid
             WHERE {' AND '.join(filters)}
-            ORDER BY ts_s.timevalue, ss.daydesc
-        """, params or None)
-        return jsonify([dict(r) for r in (rows or [])])
+        """
+        if prefer_draft:
+            # has_draft is a window function result — it can't be filtered on in
+            # the same SELECT it's computed in, hence the outer wrap.
+            rows = query_db(f"""
+                SELECT * FROM ({base_select}) resolved
+                WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')
+                ORDER BY starttimeid, daydesc
+            """, params or None)
+        else:
+            rows = query_db(f"{base_select} ORDER BY ts_s.timevalue, ss.daydesc", params or None)
+        rows = [dict(r) for r in (rows or [])]
+        for r in rows:
+            r.pop('has_draft', None)
+        return jsonify(rows)
     except Exception as e:
         print(f"[api_get_faculty_schedule] Error: {e}")
         return jsonify([]), 500
@@ -12589,6 +13525,10 @@ def api_faculty_my_local_schedule():
                    las.starttimeid, las.endtimeid,
                    TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
                    TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
+                   LPAD(EXTRACT(HOUR FROM ts_s.timevalue)::text,2,'0') ||
+                   LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
+                   ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
+                   COALESCE(la.programcode,'') || '-' || COALESCE(la.yearlevel::text,'') AS year_section,
                    la.programcode,
                    la.yearlevel,
                    'Published' AS status,
@@ -12849,11 +13789,16 @@ def api_dss_suggest():
             reg_load, pt_load, teach_sub = faculty_load.get_faculty_caps(f)
             max_u = reg_load + pt_load + teach_sub
             assigned = fac_loads.get(f['employeenumber'], 0) if (ay_id and sem) else None
+            _spec_name = (f.get('specializationname') or '').strip()
             item = {
                 "id":             f['employeenumber'],
                 "name":           f['fullname'].strip(),
                 "typename":       f.get('typename', 'Regular'),
-                "specialization": f.get('specializationname', ''),
+                "specialization": _spec_name,
+                # Phase 3B: Manual Editor recommendation fallback uses the SAME
+                # specialization predicate as final SC9 / legacy HC_SPEC.
+                "spec_match":     _spec_matches_subject(_spec_name, subject_code),
+                "required_specialization": _required_spec_for_subject(subject_code),
             }
             if ay_id and sem:
                 item["max_units"]      = max_u
@@ -13257,6 +14202,7 @@ def api_hc_config():
         'hc_faculty_load_enabled':  int(hc.get('hc_faculty_load_enabled',  1)),
         'hc_room_conflict_enabled': int(hc.get('hc_room_conflict_enabled', 1)),
         'hc_publish_gate_enabled':  int(hc.get('hc_publish_gate_enabled',  1)),
+        # Legacy compatibility toggle: specialization is final SC9 (soft), not HC18.
         'hc_faculty_spec_enabled':  int(hc.get('hc_faculty_spec_enabled',  1)),
         'hc_weekend_subject':       hc.get('hc_weekend_subject', 'nstp_only'),
         'hc_weekend_day':           hc.get('hc_weekend_day',     'sunday_only'),
@@ -13311,6 +14257,7 @@ def api_manual_subject_info():
 @app.route('/api/manual/faculty_info')
 def api_manual_faculty_info():
     emp_num = request.args.get('emp_num', '').strip()
+    subject_code = request.args.get('subject_code', '').strip()
     if not emp_num:
         return jsonify({'success': False})
     row = query_db("""
@@ -13363,6 +14310,12 @@ def api_manual_faculty_info():
         'parttime_end':       _fmt(row['parttime_end']),
         'specializationid':   row['specializationid'],
         'specializationname': row['specializationname'],
+        # Final SC9 is soft/advisory.  These fields come from scheduler.py's
+        # authoritative predicate so Manual Editor does not maintain a second
+        # specialization rule table in JavaScript.
+        'spec_match': (_spec_matches_subject((row['specializationname'] or '').strip(), subject_code)
+                       if subject_code else None),
+        'required_specialization': (_required_spec_for_subject(subject_code) if subject_code else ''),
     })
 
 
@@ -15325,8 +16278,9 @@ def admin_add_employee():
             
             hashed_password = generate_password_hash(emp_num)
             cur.execute("""
-                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
-                VALUES (%s, %s, %s, TRUE, %s)
+                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
+                                       must_change_password, account_setup_complete)
+                VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
                 ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_password, role, emp_num))
            
@@ -15378,7 +16332,7 @@ def admin_edit_employee():
                     role = 'Academic Head'
             
             cur.execute("UPDATE Accounts SET Role = %s WHERE Username = %s", (role, emp_num))
-            
+
             conn.commit()
             flash("Employee details updated successfully!", "success")
         except Exception as e:
@@ -15388,6 +16342,109 @@ def admin_edit_employee():
             cur.close()
             conn.close()
         return redirect(url_for('admin_employee'))
+
+# ── JSON variants of add/edit — used by the Add/Edit Faculty modals so a
+# failed submit (e.g. a duplicate faculty number/email) shows a friendly
+# message INSIDE the still-open modal with the typed fields intact, instead
+# of a raw SQL error after a full-page reload that wipes the form. The
+# original form-POST routes above are left in place untouched. ─────────────
+@app.route('/admin/api/add_employee', methods=['POST'])
+def admin_api_add_employee():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    emp_num  = (data.get('employee_number') or '').strip()
+    f_name   = (data.get('first_name') or '').strip()
+    m_name   = (data.get('middle_name') or '').strip() or None
+    l_name   = (data.get('last_name') or '').strip()
+    email    = (data.get('email') or '').strip()
+    contact  = (data.get('contact') or '').strip()
+    spec_id  = data.get('specialization_id')
+    type_id  = data.get('type_id')
+    status   = data.get('status')
+    desig_id = data.get('designation_id') or None
+    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+        return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
+    if not contact.isdigit():
+        return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        role = 'Faculty'
+        if desig_id:
+            cur.execute("SELECT DesignationName FROM Designation WHERE DesignationID = %s", (desig_id,))
+            designation = cur.fetchone()
+            if designation and designation['designationname'] == 'Academic Head':
+                role = 'Academic Head'
+
+        cur.execute(
+            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+
+        hashed_password = generate_password_hash(emp_num)
+        cur.execute("""
+            INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
+                                   must_change_password, account_setup_complete)
+            VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
+            ON CONFLICT (Username) DO NOTHING
+        """, (emp_num, hashed_password, role, emp_num))
+
+        conn.commit()
+        flash("Employee added successfully and account created!", "success")
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _friendly_faculty_db_error(e)}), 409
+    finally:
+        cur.close(); conn.close()
+
+@app.route('/admin/api/edit_employee', methods=['POST'])
+def admin_api_edit_employee():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    emp_num  = (data.get('employee_number') or '').strip()
+    f_name   = (data.get('first_name') or '').strip()
+    m_name   = (data.get('middle_name') or '').strip() or None
+    l_name   = (data.get('last_name') or '').strip()
+    email    = (data.get('email') or '').strip()
+    contact  = (data.get('contact') or '').strip()
+    spec_id  = data.get('specialization_id')
+    type_id  = data.get('type_id')
+    status   = data.get('status')
+    desig_id = data.get('designation_id') or None
+    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+        return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
+    if not contact.isdigit():
+        return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            UPDATE Faculty
+            SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s,
+                SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
+            WHERE EmployeeNumber=%s
+        """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+
+        role = 'Faculty'
+        if desig_id:
+            cur.execute("SELECT DesignationName FROM Designation WHERE DesignationID = %s", (desig_id,))
+            designation = cur.fetchone()
+            if designation and designation['designationname'] == 'Academic Head':
+                role = 'Academic Head'
+        cur.execute("UPDATE Accounts SET Role = %s WHERE Username = %s", (role, emp_num))
+
+        conn.commit()
+        flash("Employee details updated successfully!", "success")
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _friendly_faculty_db_error(e)}), 409
+    finally:
+        cur.close(); conn.close()
 
 @app.route('/admin/archive_employee/<emp_num>')
 def admin_archive_employee(emp_num):
@@ -15583,8 +16640,9 @@ def admin_bulk_import():
 
                 hashed_password = generate_password_hash(emp_num)
                 cur.execute("""
-                    INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
-                    VALUES (%s, %s, %s, TRUE, %s)
+                    INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
+                                           must_change_password, account_setup_complete)
+                    VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
                     ON CONFLICT (Username) DO NOTHING
                 """, (emp_num, hashed_password, role, emp_num))
 
@@ -15711,8 +16769,9 @@ def _admin_insert_employees(rows, conn, cur):
 
             hashed_pw = generate_password_hash(emp_num)
             cur.execute("""
-                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber)
-                VALUES (%s, %s, %s, TRUE, %s) ON CONFLICT (Username) DO NOTHING
+                INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
+                                       must_change_password, account_setup_complete)
+                VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE) ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_pw, role, emp_num))
 
         except ValueError as ve:
@@ -16057,13 +17116,29 @@ def admin_bulk_restore():
 def admin_rooms():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     
-    total_labs = query_db("SELECT COUNT(*) as c FROM Room WHERE RoomType = 'Laboratory'", one=True)
-    total_lec = query_db("SELECT COUNT(*) as c FROM Room WHERE RoomType = 'Lecture'", one=True)
-    total_rooms = query_db("SELECT COUNT(*) as c FROM Room", one=True)
+    # Scoped to active buildings only, matching the buildings/dropdown list
+    # below — otherwise a room whose building was deactivated would still
+    # count toward totals and show in the table while being unselectable in
+    # the building filter (the building itself is correctly hidden there).
+    total_labs = query_db("""
+        SELECT COUNT(*) as c FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+        WHERE r.RoomType = 'Laboratory' AND b.IsActive = TRUE
+    """, one=True)
+    total_lec = query_db("""
+        SELECT COUNT(*) as c FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+        WHERE r.RoomType = 'Lecture' AND b.IsActive = TRUE
+    """, one=True)
+    total_rooms = query_db("""
+        SELECT COUNT(*) as c FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+        WHERE b.IsActive = TRUE
+    """, one=True)
     total_bldgs = query_db("SELECT COUNT(*) as c FROM Building WHERE IsActive = TRUE", one=True)
 
     raw_buildings = query_db("SELECT BuildingID as buildingid, BuildingName as buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
-    raw_rooms = query_db("SELECT r.*, b.BuildingName FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID ORDER BY r.RoomName ASC")
+    raw_rooms = query_db("""
+        SELECT r.*, b.BuildingName FROM Room r JOIN Building b ON r.BuildingID = b.BuildingID
+        WHERE b.IsActive = TRUE ORDER BY r.RoomName ASC
+    """)
     rooms =[{k.lower(): v for k, v in row.items()} for row in raw_rooms] if raw_rooms else[]
     acad_years = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
 
@@ -16116,7 +17191,7 @@ def delete_room(room_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     try:
         conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM Schedule WHERE RoomID = %s", (room_id,))
+        cur.execute("SELECT COUNT(*) FROM schedule_sessions WHERE roomid = %s", (room_id,))
         if cur.fetchone()[0] > 0:
             flash("Delete Denied: This room is still assigned to an active schedule.", "error")
         else:
@@ -16145,7 +17220,7 @@ def edit_room_submit():
         cur.execute("SELECT RoomName FROM Room WHERE RoomID = %s", (r_id,))
         old_name = cur.fetchone()[0]
         if old_name != new_name:
-            cur.execute("SELECT COUNT(*) FROM Schedule WHERE RoomID = %s", (r_id,))
+            cur.execute("SELECT COUNT(*) FROM schedule_sessions WHERE roomid = %s", (r_id,))
             if cur.fetchone()[0] > 0:
                 flash("Error: Cannot change Room Number because it is linked to a schedule.", "error")
                 return redirect(url_for('admin_rooms'))
@@ -16268,6 +17343,7 @@ def api_edit_room():
     capacity  = data.get('capacity')
     bldg_id   = data.get('bldg_id')
     if not new_name: return jsonify({'success': False, 'error': 'Room number is required.'}), 400
+    if not bldg_id:  return jsonify({'success': False, 'error': 'Building is required.'}), 400
     if not capacity: return jsonify({'success': False, 'error': 'Capacity is required.'}), 400
     if int(capacity) < 35: return jsonify({'success': False, 'error': 'Capacity must be at least 35.'}), 400
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -17981,24 +19057,95 @@ def admin_user_management():
         """)
         accounts = to_dict(cur)
 
-        cur.execute("""
-            SELECT f.employeenumber,
-                   f.lastname || ', ' || f.firstname AS fullname
-            FROM   faculty f
-            WHERE  f.employeenumber NOT IN (
-                       SELECT employeenumber FROM accounts WHERE employeenumber IS NOT NULL
-                   )
-            ORDER BY f.lastname, f.firstname
-        """)
-        unlinked_employees = to_dict(cur)
-
-        return render_template('admin/user_management_admin.html',
-                               accounts=accounts, unlinked_employees=unlinked_employees)
+        return render_template('admin/user_management_admin.html', accounts=accounts)
     except Exception as e:
         flash(f"Error loading accounts: {e}", "error")
         return redirect(url_for('admin_dashboard'))
     finally:
         cur.close(); conn.close()
+
+@app.route('/admin/account-corrections')
+def admin_account_corrections():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    requests_ = query_db("""
+        SELECT r.requestid, r.username, r.employeenumber, r.field_name, r.current_value, r.proposed_value,
+               r.remarks, r.status, r.decided_by, r.decided_at, r.admin_remarks, r.created_at, r.batch_id,
+               f.firstname, f.middlename, f.lastname, f.suffix
+        FROM personal_info_correction_request r
+        LEFT JOIN faculty f ON r.employeenumber = f.employeenumber
+        ORDER BY (r.status = 'Pending') DESC, r.created_at DESC, r.batch_id NULLS LAST, r.requestid ASC
+    """)
+    return render_template('admin/account_corrections_admin.html', requests=requests_)
+
+@app.route('/admin/account-corrections/<int:request_id>/decide', methods=['POST'])
+def admin_account_correction_decide(request_id):
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    decision      = request.form.get('decision')
+    admin_remarks = request.form.get('admin_remarks', '').strip() or None
+    if decision not in ('Approved', 'Rejected'):
+        flash("Invalid decision.", "error")
+        return redirect(url_for('admin_account_corrections'))
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM personal_info_correction_request WHERE requestid = %s", (request_id,))
+        req = cur.fetchone()
+        if not req:
+            flash("Correction request not found.", "error")
+            return redirect(url_for('admin_account_corrections'))
+
+        applied_note = None
+        if decision == 'Approved' and req['employeenumber']:
+            field = req['field_name']
+            value = req['proposed_value']
+            _NAME_COLUMN = {'First Name': 'firstname', 'Middle Name': 'middlename',
+                             'Last Name': 'lastname', 'Suffix': 'suffix'}
+            if field == 'Designation':
+                cur.execute("SELECT designationid FROM designation WHERE LOWER(designationname) = LOWER(%s)", (value,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute("UPDATE faculty SET designationid = %s WHERE employeenumber = %s",
+                                (row['designationid'], req['employeenumber']))
+                    applied_note = "Designation updated automatically."
+                else:
+                    applied_note = f"No matching designation named '{value}' -- update manually via Employee Management."
+            elif field == 'Specialization':
+                cur.execute("SELECT specializationid FROM specialization WHERE LOWER(specializationname) = LOWER(%s)", (value,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute("UPDATE faculty SET specializationid = %s WHERE employeenumber = %s",
+                                (row['specializationid'], req['employeenumber']))
+                    applied_note = "Specialization updated automatically."
+                else:
+                    applied_note = f"No matching specialization named '{value}' -- update manually via Employee Management."
+            elif field in _NAME_COLUMN:
+                # Unlike the old combined "Name" field, each name part is now its own
+                # unambiguous column -- safe to apply directly (Middle Name/Suffix may
+                # be an intentional blank, to clear a wrongly-entered value).
+                cur.execute(f"UPDATE faculty SET {_NAME_COLUMN[field]} = %s WHERE employeenumber = %s",
+                            (value or None, req['employeenumber']))
+                applied_note = f"{field} updated automatically."
+            else:
+                # Employee ID: never auto-applied -- it's a primary key referenced by
+                # faculty, accounts, mergedclass, schedule, etc. with ON UPDATE NO ACTION,
+                # so an automatic rewrite risks orphaning rows. Record the approval; the
+                # admin applies it by hand.
+                applied_note = f"{field} approved -- update it manually via Employee Management."
+
+        cur.execute("""
+            UPDATE personal_info_correction_request
+            SET status = %s, decided_by = %s, decided_at = NOW(), admin_remarks = %s
+            WHERE requestid = %s
+        """, (decision, session.get('username'), admin_remarks, request_id))
+        conn.commit()
+
+        flash(f"Request {decision.lower()}." + (f" {applied_note}" if applied_note else ""), "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error deciding request: {e}", "error")
+    finally:
+        cur.close(); conn.close()
+    return redirect(url_for('admin_account_corrections'))
 
 def _ensure_ay_finalized_col(cur):
     """Add isfinalized BOOLEAN DEFAULT FALSE to academicyear if not present."""
@@ -18688,8 +19835,13 @@ def admin_program_management():
 @app.route('/admin/settings/update_scheduler_config', methods=['POST'])
 def update_scheduler_config():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
+    # Phase B checkpoint 3: sc2_night is kept saveable for backward
+    # compatibility (old stored values remain readable) but is DEPRECATED --
+    # _fitness() no longer reads it; see scheduler.py's _fitness() docstring.
+    # sc7_building/sc9_specialization are new final-SC7/SC9 weights.
     keys = ['sc1_daytime','sc2_night','sc3_day_dist','sc4_compact',
-            'sc5_pt_balance','sc6_weekend','sc7_consecutive','hc7_max_night']
+            'sc5_pt_balance','sc6_weekend','sc7_consecutive','hc7_max_night',
+            'sc7_building','sc9_specialization']
     conn = get_db_connection(); cur = conn.cursor()
     try:
         for key in keys:
@@ -18709,35 +19861,6 @@ def update_scheduler_config():
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
 
-@app.route('/admin/accounts/add', methods=['POST'])
-def account_add():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
-    username   = request.form.get('username', '').strip()
-    role       = request.form.get('role', '').strip()
-    emp_number = request.form.get('employeenumber', '').strip() or None
-    if not username or not role:
-        flash("Username and role are required.", "error")
-        return redirect(url_for('admin_settings'))
-    conn = get_db_connection(); cur = conn.cursor()
-    try:
-        cur.execute("SELECT 1 FROM accounts WHERE LOWER(username) = LOWER(%s)", (username,))
-        if cur.fetchone():
-            flash(f"Username '{username}' already exists.", "error")
-        else:
-            default_pw = generate_password_hash(f"PUP@{username}")
-            cur.execute("""
-                INSERT INTO accounts (username, passwordhash, role, isactive, employeenumber)
-                VALUES (%s, %s, %s, TRUE, %s)
-            """, (username, default_pw, role, emp_number))
-            conn.commit()
-            flash(f"Account '{username}' created. Default password: PUP@{username}", "success")
-    except Exception as e:
-        conn.rollback()
-        flash(f"Error creating account: {e}", "error")
-    finally:
-        cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
-
 @app.route('/admin/accounts/reset_password', methods=['POST'])
 def account_reset_password():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -18746,15 +19869,26 @@ def account_reset_password():
     conn = get_db_connection(); cur = conn.cursor()
     try:
         new_pw = generate_password_hash(f"PUP@{username}")
-        cur.execute("UPDATE accounts SET passwordhash = %s WHERE userid = %s", (new_pw, user_id))
+        # Temporary password → required password change → dashboard. Only the
+        # password is reset: account_setup_complete (and the email / photo /
+        # contact the faculty already set up) stays as it is, so a completed
+        # profile setup is not restarted. Pending Forgot Password codes for the
+        # account stop working.
+        cur.execute("""
+            UPDATE accounts SET passwordhash = %s, must_change_password = TRUE
+            WHERE userid = %s
+        """, (new_pw, user_id))
+        cur.execute("""UPDATE password_reset_requests
+                       SET invalidated_at = NOW(), code_hash = NULL, reset_token_hash = NULL
+                       WHERE userid = %s AND used_at IS NULL AND invalidated_at IS NULL""", (user_id,))
         conn.commit()
-        flash(f"Password for '{username}' reset to: PUP@{username}", "success")
+        flash(f"Password for '{username}' reset to: PUP@{username}. They must change it on next login.", "success")
     except Exception as e:
         conn.rollback()
         flash(f"Error resetting password: {e}", "error")
     finally:
         cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
+    return redirect(url_for('admin_user_management'))
 
 @app.route('/admin/accounts/toggle_status', methods=['POST'])
 def account_toggle_status():
@@ -18767,7 +19901,7 @@ def account_toggle_status():
             cur.execute("SELECT COUNT(*) FROM accounts WHERE role = 'Admin' AND isactive = TRUE AND userid != %s", (user_id,))
             if cur.fetchone()[0] == 0:
                 flash("Cannot deactivate the last active admin account.", "error")
-                return redirect(url_for('admin_settings'))
+                return redirect(url_for('admin_user_management'))
         cur.execute("UPDATE accounts SET isactive = %s WHERE userid = %s", (new_status, user_id))
         conn.commit()
         label = "activated" if new_status else "deactivated"
@@ -18777,7 +19911,7 @@ def account_toggle_status():
         flash(f"Error updating account status: {e}", "error")
     finally:
         cur.close(); conn.close()
-    return redirect(url_for('admin_settings'))
+    return redirect(url_for('admin_user_management'))
 
 @app.route('/admin/settings/add_designation', methods=['POST'])
 def add_designation():
@@ -23142,22 +24276,8 @@ def report_export(report_type):
             rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
                 _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout)
 
-            if section_id or room_id or faculty_id:
-                _fac_fname = None
-                if faculty_id:
-                    cur.execute("SELECT lastname, firstname, middlename FROM faculty WHERE employeenumber = %s", (faculty_id,))
-                    _f = cur.fetchone()
-                    _fac_fname = (f"{_f['lastname']}, {_f['firstname']}" + (f" {_f['middlename']}" if _f.get('middlename') else '')) if _f else None
-
-                def _filt(rs):
-                    if section_id: rs = [r for r in rs if str(r.get('SectionID')) == str(section_id)]
-                    if room_id:    rs = [r for r in rs if str(r.get('RoomID')) == str(room_id)]
-                    if faculty_id: rs = [r for r in rs if _fac_fname and r.get('Instructor') == _fac_fname]
-                    return rs
-
-                rows = _filt(rows); groups = _sch_exp_groups(rows)
-                if cal_rows is not None:
-                    cal_rows = _filt(cal_rows); cal_groups = _sch_exp_groups(cal_rows)
+            rows, groups, cal_rows, cal_groups = _sch_filter_export(
+                cur, rows, groups, cal_rows, cal_groups, section_id, faculty_id, room_id)
 
             mime_map = {
                 'csv':  ('text/csv', '.csv'),
@@ -23536,7 +24656,9 @@ def faculty_teaching_assignment():
         emp_num = acc['employeenumber'] if acc else None
 
         active = query_db("""
-            SELECT ay.academicyearid, s.semestertype
+            SELECT ay.academicyearid, s.semestertype,
+                   TO_CHAR(s.semstartdate, 'YYYY-MM-DD') AS sem_start,
+                   TO_CHAR(s.semenddate,   'YYYY-MM-DD') AS sem_end
             FROM semester s
             JOIN academicyear ay ON s.academicyearid = ay.academicyearid
             WHERE s.isactive = TRUE LIMIT 1
@@ -23547,7 +24669,9 @@ def faculty_teaching_assignment():
         return render_template('faculty/teaching_faculty.html',
                                emp_num=emp_num,
                                active_ay_id=active_ay_id,
-                               active_sem=active_sem)
+                               active_sem=active_sem,
+                               sem_start=(active or {}).get('sem_start') or '',
+                               sem_end=(active or {}).get('sem_end') or '')
     except Exception as e:
         return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
 
@@ -23610,6 +24734,12 @@ def faculty_schedule():
         active_sem=active_sem,
         active_ay_label=active_ay_label,
         active_sem_label=active_sem_label,
+        my_emp_num=_session_employee_number() or '',
+        # Export dialog = the Academic Head's (templates/_schedule_export_modal.html),
+        # with Academic Year / Semester fixed to the active term.
+        programs=programs,
+        se_fixed_term=({'ay_id': active_ay_id, 'yearstart': active['yearstart'],
+                        'yearend': active['yearend'], 'sem': active_sem} if active else None),
     )
 
 # --- Route for Room Schedule Page ---
@@ -23769,6 +24899,11 @@ def api_faculty_update_request(req_type, req_id):
 
     data = request.json or {}
 
+    if req_type == 'makeup':
+        if not emp_num:
+            return jsonify({'success': False, 'error': 'Could not determine faculty employee number.'}), 400
+        return _save_makeup_request(data, emp_num, existing_requestid=req_id)
+
     def _time_to_id(t_str):
         from datetime import datetime as _dt
         if not t_str: return None
@@ -23812,24 +24947,7 @@ def api_faculty_update_request(req_type, req_id):
             return jsonify({'success': False, 'error': 'Database connection failed.'}), 500
         try:
             cur2 = conn2.cursor()
-            if req_type == 'makeup':
-                req_date = data.get('request_date') or None
-                existing = query_db(
-                    "SELECT requestid, scheduleid FROM class_meeting_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
-                    [req_id, emp_num], one=True)
-                if not existing:
-                    return jsonify({'success': False, 'error': 'Request not found or not editable.'}), 404
-                _dur_err = _check_duration(existing.get('scheduleid'))
-                if _dur_err:
-                    return jsonify({'success': False, 'error': _dur_err}), 400
-                cur2.execute("""
-                    UPDATE class_meeting_request
-                    SET requested_date=%s, new_starttimeid=%s, new_endtimeid=%s,
-                        new_roomid=%s, reason=%s
-                    WHERE requestid=%s
-                """, (req_date, start_tid, end_tid, rid, reason, req_id))
-
-            elif req_type == 'adjustment':
+            if req_type == 'adjustment':
                 new_day  = data.get('day','') or None
                 eff_from = data.get('start_date') or None
                 end_date = data.get('end_date') or None
@@ -23978,9 +25096,494 @@ def api_faculty_me():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+_DAY_ABBR = {'Monday': 'M', 'Tuesday': 'T', 'Wednesday': 'W', 'Thursday': 'TH',
+             'Friday': 'F', 'Saturday': 'S', 'Sunday': 'SU'}
+
+
+def _abbr_days(days_str):
+    """'Monday, Thursday' -> 'M/TH' for compact Day/s display. Only a display
+    transform on faculty_load.group_assignments' own 'days' field — that
+    field's full-name/comma format is left untouched for every other caller."""
+    if not days_str:
+        return ''
+    return '/'.join(_DAY_ABBR.get(d.strip(), d.strip()) for d in days_str.split(','))
+
+
+def _collapse_time_range(time_range_str):
+    """group_assignments joins one time_range segment per day, comma-separated —
+    so a class meeting on multiple days at the SAME time (e.g. M/TH 7:30-9:00 AM)
+    arrives as "7:30 AM - 9:00 AM, 7:30 AM - 9:00 AM", not one value. Collapse to
+    a single instance when every segment matches; otherwise leave the distinct
+    per-day times visible (they're meaningfully different, not a display bug)."""
+    if not time_range_str:
+        return time_range_str
+    parts = [p.strip() for p in time_range_str.split(',')]
+    return parts[0] if len(set(parts)) == 1 else time_range_str
+
+
+def _faculty_identity_and_caps_row(cur, emp_num):
+    """Faculty identity + the columns faculty_load.get_faculty_caps needs, in
+    the shape both /api/faculty/my_teaching_load and its local-source variant
+    require. Kept in one place so the two never drift on the caps lookup."""
+    cur.execute("""
+        SELECT f.employeenumber,
+               f.lastname || ', ' || f.firstname AS fullname,
+               f.designationid,
+               COALESCE(d.designationname, et.typename, f.employeestatus, 'Regular') AS employee_type,
+               et.typename, f.employeestatus,
+               COALESCE(et.regularload, 0)          AS regularload,
+               COALESCE(et.parttimeload, 0)          AS parttimeload,
+               COALESCE(et.teachingsubstitution, 0)  AS teachingsubstitution,
+               COALESCE(d.regularloadunit, 0)         AS designation_regular_load
+        FROM faculty f
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        LEFT JOIN designation  d  ON f.designationid  = d.designationid
+        WHERE f.employeenumber = %s
+    """, (emp_num,))
+    return cur.fetchone()
+
+
+def _local_teaching_sessions(cur, emp_num, ay_id, sem):
+    """Local-arrangement equivalent of faculty_load.get_faculty_sessions —
+    same shape (subjectcode/year_section/days/time_code/time_range/hrs/units)
+    so group_assignments/compute_load_buckets work on it unmodified."""
+    cur.execute("""
+        SELECT las.subjectcode,
+               COALESCE(cs.subjectname, las.subjectcode) AS subjectname,
+               COALESCE(cs.creditunits, 0) AS units,
+               COALESCE(la.programcode,'') || '-' || COALESCE(la.yearlevel::text,'') AS year_section,
+               las.daydesc AS days,
+               LPAD(EXTRACT(HOUR FROM ts_s.timevalue)::text,2,'0') ||
+               LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
+               ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
+               COALESCE(r.roomname,'—') AS room
+        FROM public.local_arrangement_sessions las
+        JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
+        LEFT JOIN LATERAL (
+            SELECT subjectname, creditunits FROM curriculumsubject
+            WHERE UPPER(subjectcode) = UPPER(las.subjectcode) LIMIT 1
+        ) cs ON TRUE
+        LEFT JOIN room r ON las.roomid = r.roomid
+        LEFT JOIN timeslot ts_s ON las.starttimeid = ts_s.timeid
+        LEFT JOIN timeslot ts_e ON las.endtimeid   = ts_e.timeid
+        WHERE la.is_active = TRUE AND la.status = 'Published'
+          AND las.faculty_employeenumber = %s
+          AND la.semesterid = (SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1)
+        ORDER BY ts_s.timevalue, las.daydesc
+    """, (emp_num, ay_id, sem))
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
+@app.route('/api/faculty/my_teaching_load')
+def api_faculty_my_teaching_load():
+    """Authoritative Regular/Part-Time/TS load + assignment rows for the
+    logged-in user's own "Teaching Assignment" tab (Faculty or Academic Head
+    viewing their own load). Reuses faculty_load.py (the project's single
+    source of truth for load, already used correctly by the Academic Head's
+    Manual Editor) instead of re-deriving classification or unit totals here.
+    `source=official` (default) is always Published-only, never Draft/Archived.
+    `source=local` reads Published local-arrangement sessions instead — the
+    two are never combined into one set of numbers."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False}), 401
+
+    emp_num = _session_employee_number()
+    if not emp_num:
+        return jsonify({'success': False, 'error': 'No employee number linked to this account.'}), 400
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        payload, err = _my_teaching_load_payload(cur, emp_num, request.args.get('ay_id'),
+                                                 request.args.get('semester'), request.args.get('source'))
+        if err:
+            return jsonify({'success': False, 'error': err[0]}), err[1]
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+def _session_employee_number():
+    """The logged-in user's own employee number (never taken from the request)."""
+    emp_num = session.get('employeenumber')
+    if not emp_num:
+        acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s",
+                       [session.get('username')], one=True)
+        emp_num = acc['employeenumber'] if acc else None
+    return emp_num
+
+
+def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
+    """Shared by the Teaching Assignment tab (/api/faculty/my_teaching_load) and
+    its export (/faculty/teaching-assignment/export), so an exported file always
+    matches what the page shows. Returns (payload, None) or
+    (None, (error_message, http_status))."""
+    ay_id  = (ay_id or '').strip()
+    sem    = (sem or '').strip()
+    source = (source or 'official').strip().lower()
+    if source not in ('official', 'local'):
+        source = 'official'
+
+    if not ay_id or not sem:
+        cur.execute("""
+            SELECT ay.academicyearid, s.semestertype
+            FROM semester s JOIN academicyear ay ON s.academicyearid = ay.academicyearid
+            WHERE s.isactive = TRUE LIMIT 1
+        """)
+        active = cur.fetchone()
+        ay_id = ay_id or (active['academicyearid'] if active else '')
+        sem   = sem   or (active['semestertype']   if active else '')
+    if not ay_id or not sem:
+        return None, ('No active academic term found.', 400)
+
+    fac = _faculty_identity_and_caps_row(cur, emp_num)
+    if not fac:
+        return None, ('Faculty record not found.', 404)
+
+    if source == 'local':
+        sessions = _local_teaching_sessions(cur, emp_num, ay_id, sem)
+    else:
+        # Published-only — the one existing "real scheduled hours" source in
+        # the codebase (faculty_load.FACULTY_SESSIONS_SQL, published_only variant).
+        sessions = faculty_load.get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=True)
+    buckets = faculty_load.compute_load_buckets(sessions, fac)
+
+    cur.execute("""
+        SELECT TO_CHAR(s.semstartdate,'MM/DD/YYYY') AS effectivity, ay.yearstart, ay.yearend
+        FROM semester s JOIN academicyear ay ON ay.academicyearid = s.academicyearid
+        WHERE s.academicyearid = %s AND s.semestertype = %s LIMIT 1
+    """, (ay_id, sem))
+    sem_row = cur.fetchone()
+    effectivity = (sem_row['effectivity'] if sem_row and sem_row.get('effectivity') else '—')
+    ay_label  = f"{sem_row['yearstart']}-{sem_row['yearend']}" if sem_row and sem_row.get('yearstart') else ay_id
+    sem_label = _ta_export.SEM_LABELS.get(sem, sem)
+
+    # Faculty Assignment form fields: employment status + department (specialization)
+    cur.execute("""SELECT f.employeestatus, s.specializationname FROM faculty f
+                   LEFT JOIN specialization s ON s.specializationid = f.specializationid
+                   WHERE f.employeenumber = %s""", (emp_num,))
+    _fx = cur.fetchone() or {}
+
+    # Teaching load per day (hours), split Regular / Part-Time with the same
+    # per-slice rule faculty_load uses for the Regular/PT buckets.
+    per_day = {'regular': {}, 'part_time': {}}
+    for s in sessions:
+        day = s.get('days')
+        if not day:
+            continue
+        h = float(s.get('hrs') or 0)
+        is_reg = (not buckets['isPartTime']) and faculty_load.is_reg_slice(day, s.get('time_code'))
+        bucket = per_day['regular' if is_reg else 'part_time']
+        bucket[day] = round(bucket.get(day, 0) + h, 2)
+
+    def _row(g):
+        return {
+            'subjectcode':  g.get('subjectcode') or '—',
+            'subjectname':  g.get('subjectname') or '—',
+            'units':        g.get('units'),
+            'year_section': g.get('year_section') or '—',
+            'time_range':   _collapse_time_range(g.get('time_range')) or '—',
+            'days':         _abbr_days(g.get('days')),
+            'room':         g.get('room') or 'TBA',
+            'effectivity':  effectivity,
+        }
+
+    return {
+        'success': True,
+        'source': source,
+        'has_schedule': bool(sessions),
+        'employeenumber': fac['employeenumber'],
+        'fullname': fac['fullname'],
+        'employee_type': fac['employee_type'],
+        'employee_status': _fx.get('employeestatus') or '',
+        'dept_code': _fx.get('specializationname') or '',
+        'per_day_hours': per_day,
+        'ay_id': ay_id, 'semester': sem,
+        'ay_label': ay_label, 'sem_label': sem_label,
+        'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
+        'regular':  [_row(g) for g in buckets['groupedReg']],
+        'partTime': [_row(g) for g in buckets['groupedPt']],
+        'totals': {
+            'regularUnits':   buckets['regUsed'],
+            'partTimeUnits':  buckets['ptUsed'],
+            'tsUnits':        buckets['tsUsed'],
+            'totalUnits':     buckets['used'],
+            'maxUnits':       buckets['maxTotal'],
+            'availableUnits': max(0, round(buckets['maxTotal'] - buckets['used'], 2)),
+        },
+    }, None
+
+
+@app.route('/faculty/teaching-assignment/export', methods=['POST'])
+def faculty_teaching_assignment_export():
+    """Teaching Assignment export (CSV / XLSX / PDF / DOCX) for the logged-in
+    faculty member's OWN load — the account comes from the session only.
+    Same official letterhead and table design as the system's other exports
+    (see teaching_assignment_export.py)."""
+    if 'loggedin' not in session or session.get('role') != 'Faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    data   = request.get_json(silent=True) or {}
+    # One or more formats: a single file for one format, a .zip for several
+    # (same behaviour as the Reports / Class Schedule exports).
+    raw = data.get('formats') if isinstance(data.get('formats'), list) else [data.get('format')]
+    formats = []
+    for f in raw:
+        f = str(f or '').strip().lower()
+        if f and f not in formats:
+            formats.append(f)
+    if not formats or any(f not in _ta_export.MIME for f in formats):
+        return jsonify({'error': 'Please choose at least one format: PDF, XLSX, CSV or DOCX.'}), 400
+    emp_num = _session_employee_number()
+    if not emp_num:
+        return jsonify({'error': 'No employee number linked to this account.'}), 400
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        payload, err = _my_teaching_load_payload(cur, emp_num, data.get('ay_id'),
+                                                 data.get('semester'), data.get('source'))
+        if err:
+            return jsonify({'error': err[0]}), err[1]
+        filename = _ta_export.clean_filename(data.get('filename')) or payload['export_filename']
+        if len(formats) == 1:
+            out = _ta_export.GENERATORS[formats[0]](payload, _SCH_LOGO_PATH)
+            mime, ext = _ta_export.MIME[formats[0]]
+            return Response(out, mimetype=mime,
+                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in formats:
+                zf.writestr(filename + _ta_export.MIME[f][1], _ta_export.GENERATORS[f](payload, _SCH_LOGO_PATH))
+        return Response(buf.getvalue(), mimetype='application/zip',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'The export could not be generated. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+# ── Faculty Weekly Schedule: date-aware weeks (make-ups) + export ────────────
+def _week_monday(value):
+    """Monday of the week containing `value` (ISO date string), default: this week."""
+    try:
+        d = date.fromisoformat(str(value)[:10]) if value else date.today()
+    except ValueError:
+        d = date.today()
+    return d - timedelta(days=d.weekday())
+
+
+def _faculty_makeups(cur, emp_num, start, end):
+    """Approved make-up classes (one-time, date-specific — schedule_exception_log)
+    taught by this faculty between start and end inclusive."""
+    cur.execute("""
+        SELECT sel.exception_date, TO_CHAR(sel.exception_date, 'FMDay') AS days,
+               sel.starttimeid, sel.endtimeid,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
+               ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
+               cs.subjectcode, cs.subjectname, COALESCE(cs.creditunits, 0) AS units,
+               COALESCE(sec.sectionname, '') AS year_section, pyl.programcode, pyl.yearlevel,
+               COALESCE(r.roomname, 'TBA') AS room, sel.source_requestid
+        FROM schedule_exception_log sel
+        JOIN schedule sc          ON sc.scheduleid = sel.scheduleid
+        JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+        LEFT JOIN sections sec    ON sec.sectionid = sc.sectionid
+        LEFT JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+        LEFT JOIN room r          ON r.roomid = sel.roomid
+        JOIN timeslot ts_s ON ts_s.timeid = sel.starttimeid
+        JOIN timeslot ts_e ON ts_e.timeid = sel.endtimeid
+        WHERE sel.source_type = 'makeup_class' AND sel.employeenumber = %s
+          AND sel.exception_date BETWEEN %s AND %s
+        ORDER BY sel.exception_date, ts_s.timevalue
+    """, (emp_num, start, end))
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
+@app.route('/api/faculty/my_makeups')
+def api_faculty_my_makeups():
+    """The logged-in faculty member's own approved make-up classes in a date
+    range (the Weekly Schedule shows them only in the week they happen)."""
+    if 'loggedin' not in session or session.get('role') not in ('Faculty', 'Academic Head'):
+        return jsonify([]), 401
+    emp_num = _session_employee_number()
+    if not emp_num:
+        return jsonify([])
+    start = _week_monday(request.args.get('start'))
+    try:
+        end = date.fromisoformat(request.args.get('end', '')[:10])
+    except ValueError:
+        end = start + timedelta(days=6)
+    if end < start or (end - start).days > 62:
+        end = start + timedelta(days=6)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        rows = _faculty_makeups(cur, emp_num, start, end)
+        for r in rows:
+            r['exception_date'] = r['exception_date'].isoformat()
+        return jsonify(rows)
+    except Exception as e:
+        print(f"[api_faculty_my_makeups] {type(e).__name__}: {e}")
+        return jsonify([]), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/faculty/weekly-schedule/export', methods=['POST'])
+def faculty_weekly_schedule_export():
+    """Weekly Schedule export (PDF / XLSX / CSV / DOCX — one file, or a .zip
+    for several) of exactly the week shown on the Faculty Weekly Schedule tab:
+    the recurring classes that fall inside the semester that week, plus that
+    week's approved make-up classes, for the chosen Official/Local source and
+    Program filter. Same document design as the Teaching Assignment export."""
+    if 'loggedin' not in session or session.get('role') != 'Faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json(silent=True) or {}
+    raw = data.get('formats') if isinstance(data.get('formats'), list) else [data.get('format')]
+    formats = []
+    for f in raw:
+        f = str(f or '').strip().lower()
+        if f and f not in formats:
+            formats.append(f)
+    if not formats or any(f not in _ta_export.MIME for f in formats):
+        return jsonify({'error': 'Please choose at least one format: PDF, XLSX, CSV or DOCX.'}), 400
+    emp_num = _session_employee_number()
+    if not emp_num:
+        return jsonify({'error': 'No employee number linked to this account.'}), 400
+    source  = 'local' if (data.get('source') or '') == 'local' else 'official'
+    program = (data.get('program') or '').strip().upper()
+    monday  = _week_monday(data.get('week_start'))
+    week    = [monday + timedelta(days=i) for i in range(7)]
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        info, err = _my_teaching_load_payload(cur, emp_num, data.get('ay_id'), data.get('semester'), source)
+        if err:
+            return jsonify({'error': err[0]}), err[1]
+        cur.execute("""SELECT semstartdate, semenddate FROM semester
+                       WHERE academicyearid = %s AND semestertype = %s LIMIT 1""",
+                    (info['ay_id'], info['semester']))
+        sem = cur.fetchone() or {}
+        s_start, s_end = sem.get('semstartdate'), sem.get('semenddate')
+        in_sem = lambda d: (not s_start or d >= s_start) and (not s_end or d <= s_end)
+
+        if source == 'local':
+            sessions = _local_teaching_sessions(cur, emp_num, info['ay_id'], info['semester'])
+            for s in sessions:
+                s['programcode'] = (s.get('year_section') or '').split('-')[0]
+        else:
+            sessions = faculty_load.get_faculty_sessions(cur, emp_num, info['ay_id'], info['semester'],
+                                                         published_only=True)
+            sec_ids = sorted({s['sectionid'] for s in sessions if s.get('sectionid')})
+            prog_of = {}
+            if sec_ids:
+                cur.execute("""SELECT s.sectionid, pyl.programcode FROM sections s
+                               JOIN program_yearlevel pyl ON pyl.programyearlevelid = s.programyearlevelid
+                               WHERE s.sectionid = ANY(%s)""", (sec_ids,))
+                prog_of = {r['sectionid']: r['programcode'] for r in cur.fetchall()}
+            for s in sessions:
+                s['programcode'] = prog_of.get(s.get('sectionid'), '')
+
+        date_of = {d.strftime('%A'): d for d in week}
+        entries = []
+        for s in sessions:
+            d = date_of.get(s.get('days'))
+            if d and in_sem(d) and (not program or (s.get('programcode') or '').upper() == program):
+                entries.append({**s, 'date': d, 'kind': 'class'})
+        if source == 'official':
+            for mk in _faculty_makeups(cur, emp_num, week[0], week[-1]):
+                if not program or (mk.get('programcode') or '').upper() == program:
+                    entries.append({**mk, 'date': mk['exception_date'], 'kind': 'makeup'})
+
+        doc = {**info, 'program_filter': program, 'week': week,
+               'week_in_semester': [in_sem(d) for d in week],
+               'sem_start': s_start, 'sem_end': s_end, 'entries': entries}
+        name_bits = f"Weekly_Schedule_{info['fullname']}_{week[0].isoformat()}_to_{week[-1].isoformat()}"
+        filename = _ta_export.clean_filename(data.get('filename')) or _ta_export.clean_filename(name_bits)
+        if len(formats) == 1:
+            mime, ext = _ta_export.MIME[formats[0]]
+            return Response(_ws_export.GENERATORS[formats[0]](doc, _SCH_LOGO_PATH), mimetype=mime,
+                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in formats:
+                zf.writestr(filename + _ta_export.MIME[f][1], _ws_export.GENERATORS[f](doc, _SCH_LOGO_PATH))
+        return Response(buf.getvalue(), mimetype='application/zip',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'The export could not be generated. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+
 # ── User profile API ────────────────────────────────────────────────────────
 _PROFILE_PHOTO_DIR = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'profile_photos')
 os.makedirs(_PROFILE_PHOTO_DIR, exist_ok=True)
+_PROFILE_PHOTO_URL_PREFIX = '/static/uploads/profile_photos/'
+_PROFILE_PHOTO_MAX_BYTES  = 2 * 1024 * 1024
+_PROFILE_PHOTO_FORMATS    = {'JPEG': '.jpg', 'PNG': '.png'}
+
+
+def _save_profile_photo(username, file_storage):
+    """Store an uploaded profile picture for this account.
+
+    The image file lives in static/uploads/profile_photos/ (the project's
+    existing file storage); the database keeps only its path, in
+    accounts.profile_photo, on the logged-in user's own account row. Each
+    upload gets a unique name (so browsers never show a cached old photo) and
+    the account's previous photo file is removed.
+    Returns (photo_url, None) or (None, user-facing error)."""
+    if not file_storage or not file_storage.filename:
+        return None, 'Please choose a photo to upload.'
+    data = file_storage.read(_PROFILE_PHOTO_MAX_BYTES + 1)
+    if len(data) > _PROFILE_PHOTO_MAX_BYTES:
+        return None, 'Photo is too large. The maximum size is 2 MB.'
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as img:
+            fmt = img.format
+            img.verify()
+    except Exception:
+        return None, 'That file is not a valid JPG or PNG image.'
+    ext = _PROFILE_PHOTO_FORMATS.get(fmt)
+    if not ext:
+        return None, 'Photo must be a JPG or PNG image.'
+
+    safe_user = secure_filename(username) or 'user'
+    filename  = f"profile_{safe_user}_{uuid.uuid4().hex[:12]}{ext}"
+    path      = os.path.join(_PROFILE_PHOTO_DIR, filename)
+    url       = _PROFILE_PHOTO_URL_PREFIX + filename
+    with open(path, 'wb') as fh:
+        fh.write(data)
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT profile_photo FROM accounts WHERE username = %s FOR UPDATE", (username,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError('account not found')
+        cur.execute("UPDATE accounts SET profile_photo = %s WHERE username = %s", (url, username))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        try: os.remove(path)
+        except OSError: pass
+        print(f"[profile photo] save failed: {type(e).__name__}")
+        return None, 'The photo could not be saved. Please try again.'
+    finally:
+        cur.close(); conn.close()
+
+    # Remove this account's previous photo file (only files it owns in our folder).
+    old = (row or {}).get('profile_photo') or ''
+    old_name = os.path.basename(old)
+    if (old.startswith(_PROFILE_PHOTO_URL_PREFIX) and old_name != filename
+            and old_name.startswith(f"profile_{safe_user}")):
+        try: os.remove(os.path.join(_PROFILE_PHOTO_DIR, old_name))
+        except OSError: pass
+    return url, None
 
 @app.route('/api/search')
 def api_search():
@@ -24083,13 +25686,12 @@ def api_user_me():
     if 'loggedin' not in session: return jsonify({'success': False}), 401
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
-        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
-        conn.commit()
         username = session.get('username')
         cur.execute("""
             SELECT a.last_login, a.profile_photo,
-                   f.employeenumber, f.firstname, f.middlename, f.lastname, f.email, f.employeestatus,
+                   f.employeenumber, f.firstname, f.middlename, f.lastname,
+                   CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END AS email,
+                   f.employeestatus,
                    d.designationid, d.designationname,
                    s.specializationid, s.specializationname,
                    et.employeetypeid, et.typename
@@ -24106,7 +25708,8 @@ def api_user_me():
         return jsonify({
             'success': True,
             'emp_num': row['employeenumber'] or '',
-            'fullname': f"{row['firstname'] or ''} {row['lastname'] or ''}".strip(),
+            'fullname': (f"{row['firstname'] or ''} {row['lastname'] or ''}".strip()
+                         or ('Administrator' if session.get('role') == 'Admin' else '')),
             'firstname': row['firstname'] or '',
             'middlename': row['middlename'] or '',
             'lastname': row['lastname'] or '',
@@ -24121,6 +25724,7 @@ def api_user_me():
             'email': row['email'] or '',
             'role': session.get('role', ''),
             'profile_editable': _PROFILE_SELF_EDIT_ENABLED,
+            'photo_editable': True,   # own profile picture is always changeable
         })
     except Exception as e:
         conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
@@ -24170,51 +25774,71 @@ def api_user_profile_update():
 
 @app.route('/api/user/photo/upload', methods=['POST'])
 def api_user_photo_upload():
+    # A user's own profile picture can always be changed — unlike Designation /
+    # Specialization / Employment Status, which stay behind _PROFILE_SELF_EDIT_ENABLED.
     if 'loggedin' not in session: return jsonify({'success': False}), 401
-    if not _PROFILE_SELF_EDIT_ENABLED:
-        return jsonify({'success': False, 'error': 'Profile editing is temporarily unavailable.'}), 403
-    if 'photo' not in request.files: return jsonify({'success': False, 'error': 'No file'}), 400
-    file = request.files['photo']
-    if not file.filename: return jsonify({'success': False, 'error': 'No file selected'}), 400
-    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-    if ext not in ('.jpg', '.jpeg', '.png'): return jsonify({'success': False, 'error': 'Only JPG/PNG allowed'}), 400
-    username   = session.get('username')
-    filename   = secure_filename(f"profile_{username}{ext}")
-    save_path  = os.path.join(_PROFILE_PHOTO_DIR, filename)
-    file.save(save_path)
-    photo_url  = f"/static/uploads/profile_photos/{filename}"
-    conn = get_db_connection(); cur = conn.cursor()
+    url, err = _save_profile_photo(session.get('username'), request.files.get('photo'))
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    return jsonify({'success': True, 'photo_url': url})
+
+# --- Self-service password change: eligibility → emailed code → verify → change ---
+# The account is always the logged-in session's username; nothing in the request
+# body can select a different account. See password_change.py for the rules.
+def _password_step(fn, *args):
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'unauthorized',
+                        'message': 'Please log in again.'}), 401
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Database connection failed.'}), 500
     try:
-        cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)")
-        cur.execute("UPDATE accounts SET profile_photo = %s WHERE username = %s", (photo_url, username))
-        conn.commit()
-        return jsonify({'success': True, 'photo_url': photo_url})
+        return fn(conn, session['username'], *args)
+    except _pwchange.PasswordChangeError as pe:
+        return jsonify(pe.to_json()), pe.status
     except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
-    finally: cur.close(); conn.close()
+        conn.rollback()
+        print(f"[password change] unexpected error: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Something went wrong. Please try again.'}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/user/password/eligibility')
+def api_user_password_eligibility():
+    return _password_step(lambda c, u: jsonify(_pwchange.eligibility(c, u)))
+
+
+@app.route('/api/user/password/request-code', methods=['POST'])
+def api_user_password_request_code():
+    session.pop('pw_otp_verified_at', None)
+    return _password_step(lambda c, u: jsonify(_pwchange.request_code(c, u, Config)))
+
+
+@app.route('/api/user/password/verify-code', methods=['POST'])
+def api_user_password_verify_code():
+    def _verify(c, u):
+        session['pw_otp_verified_at'] = _pwchange.verify_code(c, u, request.form.get('code', ''))
+        return jsonify({'success': True})
+    return _password_step(_verify)
+
 
 @app.route('/api/user/password/change', methods=['POST'])
 def api_user_password_change():
-    if 'loggedin' not in session: return jsonify({'success': False}), 401
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        username     = session.get('username')
-        current_pw   = request.form.get('current_password', '')
-        new_pw       = request.form.get('new_password', '')
-        confirm_pw   = request.form.get('confirm_password', '')
-        if new_pw != confirm_pw: return jsonify({'success': False, 'error': 'New passwords do not match'}), 400
-        if len(new_pw) < 6: return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
-        cur.execute("SELECT passwordhash FROM accounts WHERE username = %s", (username,))
-        row = cur.fetchone()
-        if not row or not check_password_hash(row['passwordhash'], current_pw):
-            return jsonify({'success': False, 'error': 'Current password is incorrect'}), 400
-        cur.execute("UPDATE accounts SET passwordhash = %s WHERE username = %s",
-                    (generate_password_hash(new_pw), username))
-        conn.commit()
-        return jsonify({'success': True})
-    except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
-    finally: cur.close(); conn.close()
+    def _change(c, u):
+        result = _pwchange.change_password(
+            c, u, session.get('pw_otp_verified_at'),
+            request.form.get('current_password', ''),
+            request.form.get('new_password', ''),
+            request.form.get('confirm_password', ''))
+        session.pop('pw_otp_verified_at', None)
+        write_activity_log(action='Password Changed',
+                           details=f"{u} changed their password (verified by email code)",
+                           category='account', color='blue')
+        return jsonify(result)
+    return _password_step(_change)
 
 @app.route('/api/user/email/update', methods=['POST'])
 def api_user_email_update():
@@ -24223,11 +25847,18 @@ def api_user_email_update():
     try:
         username = session.get('username')
         email    = request.form.get('email', '').strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
+            return jsonify({'success': False, 'error': 'Please enter a valid email address.'}), 400
         cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
         acc = cur.fetchone()
         emp_num = acc['employeenumber'] if acc else None
-        if emp_num and email:
+        if emp_num:
             cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s", (email, emp_num))
+        else:
+            # Standalone accounts with no faculty record (the system Admin) keep
+            # their own contact email on accounts — never on a faculty row.
+            cur.execute("UPDATE accounts SET email = %s WHERE username = %s AND employeenumber IS NULL",
+                        (email, username))
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -24527,6 +26158,81 @@ def api_faculty_schedule_full():
         print(f"[api_faculty_schedule_full] Error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# --- Make-up request write paths (submit + edit) ---
+# Server-side validation is authoritative: reason, date, times, duration,
+# ownership and faculty/section/room conflicts on the exact requested date are
+# all checked here (makeup_requests.validate_submission), whatever the form did.
+def _save_makeup_request(data, faculty_empno, existing_requestid=None):
+    _ensure_request_tables()
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Database connection failed.'}), 500
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if existing_requestid is None:
+            subject = (data.get('subject_code') or '').strip()
+            try:
+                section_id = int(data.get('section_id'))
+            except (TypeError, ValueError):
+                section_id = None
+            if not subject or not section_id:
+                raise _makeup.MakeupError(400, 'validation_error', 'Please select a subject and section.')
+            ctx = _makeup.schedule_context_by_subject_section(cur, subject, section_id)
+        else:
+            cur.execute("""
+                SELECT requestid, scheduleid FROM class_meeting_request
+                WHERE requestid = %s AND submitted_by = %s AND status = 'Pending'
+                FOR UPDATE
+            """, [existing_requestid, str(faculty_empno)])
+            existing = cur.fetchone()
+            if not existing:
+                raise _makeup.MakeupError(404, 'not_found', 'Request not found or no longer editable.')
+            ctx = _makeup.schedule_context_by_id(cur, existing['scheduleid'])
+
+        vals = _makeup.validate_submission(
+            cur, faculty_empno=faculty_empno, ctx=ctx,
+            request_date=data.get('request_date'),
+            start_time=data.get('start_time'), end_time=data.get('end_time'),
+            room_id=data.get('room_id'), reason=data.get('reason'),
+            exclude_requestid=existing_requestid)
+        notes = (data.get('note') or '').strip() or None
+
+        if existing_requestid is None:
+            cur.execute("""
+                INSERT INTO class_meeting_request
+                    (scheduleid, requested_date, new_starttimeid, new_endtimeid,
+                     new_roomid, reason, notes, submitted_by, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+                RETURNING requestid
+            """, [vals['scheduleid'], vals['requested_date'], vals['starttimeid'],
+                  vals['endtimeid'], vals['roomid'], vals['reason'], notes, str(faculty_empno)])
+        else:
+            cur.execute("""
+                UPDATE class_meeting_request
+                SET requested_date = %s, new_starttimeid = %s, new_endtimeid = %s,
+                    new_roomid = %s, reason = %s
+                WHERE requestid = %s AND status = 'Pending'
+                RETURNING requestid
+            """, [vals['requested_date'], vals['starttimeid'], vals['endtimeid'],
+                  vals['roomid'], vals['reason'], existing_requestid])
+        saved = cur.fetchone()
+        conn.commit()
+        return jsonify({'success': True, 'requestid': saved['requestid'], 'status': 'Pending'})
+    except _makeup.MakeupError as me:
+        conn.rollback()
+        return jsonify(me.to_json()), me.status
+    except Exception as e:
+        conn.rollback()
+        print(f"[_save_makeup_request] Error: {e}")
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'The make-up request could not be saved. Please try again.'}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+
 # --- API: Submit a faculty room request ---
 @app.route('/api/faculty/submit_request', methods=['POST'])
 def api_faculty_submit_request():
@@ -24554,6 +26260,9 @@ def api_faculty_submit_request():
             submitted_by = acc_row[0]['employeenumber'] if acc_row else None
         if not submitted_by:
             return jsonify({'success': False, 'error': 'Could not determine faculty employee number.'}), 400
+
+        if req_type == 'makeup':
+            return _save_makeup_request(data, submitted_by)
 
         # Map "07:30 AM" → timeid in timeslot table
         def _time_to_id(t_str):
@@ -24610,43 +26319,7 @@ def api_faculty_submit_request():
             return jsonify({'success': False, 'error': 'Database connection failed.'}), 500
         try:
             cur = conn.cursor()
-            if req_type == 'makeup':
-                req_date = data.get('request_date') or None
-                if not scheduleid:
-                    return jsonify({'success': False,
-                        'error': 'No published schedule found for the given subject and section.'}), 400
-                if not start_tid or not end_tid:
-                    return jsonify({'success': False, 'error': 'Invalid time selection.'}), 400
-                # Block submission if faculty already has a committed schedule at the requested day/time
-                if req_date and start_time and end_time:
-                    try:
-                        day_of_week = _dt.strptime(req_date, '%Y-%m-%d').strftime('%A')
-                        fac_conflict = query_db("""
-                            SELECT cs.subjectcode FROM schedule_sessions ss
-                            JOIN schedule_version sv ON ss.versionid = sv.versionid
-                            JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-                            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                            JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-                            JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
-                            WHERE sv.status = 'Published'
-                              AND sc.employeenumber = %s
-                              AND UPPER(ss.daydesc) = UPPER(%s)
-                              AND ts_s.timevalue < %s::time AND ts_e.timevalue > %s::time
-                            LIMIT 1
-                        """, [submitted_by, day_of_week, end_time, start_time], one=True)
-                        if fac_conflict:
-                            return jsonify({'success': False,
-                                'error': f"You already have {fac_conflict['subjectcode']} scheduled on {day_of_week} at this time. Make-up class cannot be submitted when you have an existing commitment."}), 400
-                    except Exception as _ce:
-                        print(f"[submit_request conflict check] {_ce}")
-                cur.execute("""
-                    INSERT INTO class_meeting_request
-                        (scheduleid, requested_date, new_starttimeid, new_endtimeid,
-                         new_roomid, reason, notes, submitted_by, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
-                """, (scheduleid, req_date, start_tid, end_tid, rid, reason, notes, submitted_by))
-
-            elif req_type == 'adjustment':
+            if req_type == 'adjustment':
                 day = data.get('day', '') or None
                 if not scheduleid or not versionid:
                     return jsonify({'success': False,
@@ -24734,7 +26407,48 @@ def api_faculty_check_request_conflicts():
         section_detail   = ''
         room_detail      = ''
 
-        if emp_num:
+        # Make-up (one-time, date-specific): same conflict definitions as the
+        # authoritative submission/approval checks in makeup_requests.py —
+        # weekly Published sessions on that weekday, approved make-up exceptions
+        # on that exact date, and Local Arrangements, all within the class's semester.
+        mk_conflicts = []
+        if req_date:
+            from datetime import date as _d8, datetime as _dt8
+            try:
+                _mk_date = _d8.fromisoformat(req_date)
+                _mk_st   = _dt8.strptime(start_time, '%I:%M %p').time()
+                _mk_et   = _dt8.strptime(end_time,   '%I:%M %p').time()
+            except ValueError:
+                _mk_date = None
+            if _mk_date and _mk_et > _mk_st:
+                _mconn = get_db_connection()
+                try:
+                    _mcur = _mconn.cursor(cursor_factory=RealDictCursor)
+                    ctx = None
+                    if schedule_id.isdigit():
+                        ctx = _makeup.schedule_context_by_id(_mcur, int(schedule_id))
+                    elif subject_code and section_id.isdigit():
+                        ctx = _makeup.schedule_context_by_subject_section(_mcur, subject_code, int(section_id))
+                    _excl = request.args.get('request_id', '').strip()
+                    mk_conflicts = _makeup.find_conflicts(
+                        _mcur,
+                        semesterid=ctx['semesterid'] if ctx else sem_id_for_check,
+                        req_date=_mk_date, start_time=_mk_st, end_time=_mk_et,
+                        room_id=int(room_id) if room_id.isdigit() else None,
+                        employeenumber=ctx['employeenumber'] if ctx else emp_num,
+                        sectionid=ctx['sectionid'] if ctx else (int(section_id) if section_id.isdigit() else None),
+                        exclude_requestid=int(_excl) if _excl.isdigit() else None)
+                finally:
+                    _mconn.close()
+            for c in mk_conflicts:
+                if c['type'] == 'faculty':
+                    faculty_conflict, faculty_detail = True, c['message']
+                elif c['type'] == 'section':
+                    section_conflict, section_detail = True, c['message']
+                elif c['type'] == 'room':
+                    room_conflict, room_detail = True, c['message']
+
+        if emp_num and not req_date:
             _fac_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
             _fac_params = [str(emp_num), day, end_time, start_time]
             if sem_id_for_check:
@@ -24793,7 +26507,7 @@ def api_faculty_check_request_conflicts():
                 except Exception:
                     pass
 
-        if section_id:
+        if section_id and not req_date:
             _sect_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
             _sect_params = [int(section_id), day, end_time, start_time]
             if sem_id_for_check:
@@ -24822,7 +26536,7 @@ def api_faculty_check_request_conflicts():
                 r2 = rows2[0]
                 section_detail = f"This section already has {r2['subjectcode']} ({r2['start_t']}–{r2['end_t']}) on {day}."
 
-        if room_id:
+        if room_id and not req_date:
             try:
                 _room_excl = f"AND sv.scheduleid != {int(schedule_id)}" if schedule_id and schedule_id.isdigit() else ""
                 _room_params = [int(room_id), day, end_time, start_time]
@@ -24916,9 +26630,11 @@ def api_faculty_check_request_conflicts():
             'section_detail':    section_detail,
             'room_detail':       room_detail,
             'duration_detail':   duration_detail,
+            'conflicts':         mk_conflicts,
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"[api_faculty_check_request_conflicts] Error: {e}")
+        return jsonify({'success': False, 'error': 'server_error'}), 500
 
 
 @app.route('/api/faculty/available_rooms')
@@ -25025,11 +26741,114 @@ def api_faculty_available_rooms():
 
 
 
+def _structured_violation(code: str, v: dict) -> dict:
+    """Shape one CSPValidator violation dict into the full structured schema
+    (every field always present, None when this rule/check doesn't know it) so
+    Generation, Manual Editor, Requests and Publish all display the same shape
+    for the same violation, and the frontend can place an error indicator on
+    the exact affected cell(s) via 'affected_components' instead of always
+    defaulting to the Instructor column."""
+    return {
+        'rule':                      v.get('rule'),
+        'rule_name':                 v.get('rule_name') or v.get('type'),
+        'subject_code':              v.get('subject_code') or code,
+        'assignment_id':             v.get('assignment_id'),
+        'affected_components':       v.get('affected_components') or [],
+        'faculty_id':                v.get('faculty_id'),
+        'faculty_name':              v.get('faculty_name'),
+        'room_id':                   v.get('room_id'),
+        'room_name':                 v.get('room_name'),
+        'section_id':                v.get('section_id'),
+        'section_name':              v.get('section_name'),
+        'normalized_days':           v.get('normalized_days') or [],
+        'start_time':                v.get('start_time'),
+        'end_time':                  v.get('end_time'),
+        'conflicting_assignment_id': v.get('conflicting_assignment_id'),
+        'conflicting_subject':       v.get('conflicting_subject'),
+        'source':                    v.get('source') or 'current_result',
+        'schedule_id':               v.get('schedule_id'),
+        'schedule_version_id':       v.get('schedule_version_id'),
+        'type':                      v.get('type'),
+        'detail':                    v.get('detail'),
+    }
+
+
+def _json_safe(value):
+    """
+    Recursively convert a Python value into something json.dumps/jsonify can
+    serialize natively, using EXPLICIT per-type rules — never a blind str()
+    for any type this function already knows how to handle correctly. This is
+    applied ONLY at the API response boundary, right before jsonify; internal
+    CSP/GA/CBR code keeps real datetime.time objects (and any other native
+    Python types it needs) for correct time-arithmetic comparisons — this
+    function must never be called on data that is still headed back into the
+    scheduler/validator, only on a payload about to leave as an HTTP response.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    # datetime is a subclass of date, so it must be checked first.
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.strftime('%H:%M')
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(v) for v in value]
+    # Last-resort, LOGGED fallback for a genuinely unrecognized type — never
+    # the primary strategy for a known type, and never silent.
+    print(f"[API SERIALIZE] Coercing unrecognized type {type(value).__name__} via str(): {value!r}")
+    return str(value)
+
+
+def _safe_json_response(payload, status=200):
+    """
+    The single place API responses in this route are serialized to JSON.
+    Sanitizes the WHOLE payload (schedule rows, evaluation data, violations,
+    exact_reuse metadata, conflicting-assignment data — everything, via
+    _json_safe's recursive walk) and only then calls jsonify(). If something
+    still fails to serialize afterward (a genuinely unanticipated type), the
+    real exception is logged server-side and a structured
+    RETRIEVE_PREVIOUS_SERIALIZATION_ERROR response is returned instead of a
+    raw exception string — this must never be confused with "no previous
+    schedule exists": the data WAS found, it just couldn't be prepared for
+    display.
+    """
+    try:
+        safe = _json_safe(payload)
+        return jsonify(safe), status
+    except Exception:
+        import traceback; traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error_code': 'RETRIEVE_PREVIOUS_SERIALIZATION_ERROR',
+            'message': 'The previous schedule was found but could not be prepared for display.',
+        }), 500
+
+
+def _display_time_range(start, end):
+    """Unambiguous 12-hour display range, e.g. "3:00 PM - 6:00 PM" — no
+    leading zero on the hour, single hyphen with spaces. Distinct from
+    scheduler.format_time_12h (which zero-pads the hour and is paired with an
+    en-dash elsewhere in the app) — this is a dedicated formatter for this
+    specific display requirement, not a change to the existing one."""
+    def _one(t):
+        h12 = t.hour % 12 or 12
+        return f"{h12}:{t.minute:02d} {'AM' if t.hour < 12 else 'PM'}"
+    return f"{_one(start)} - {_one(end)}"
+
+
 # =====================================================================
 # SCHEDULE GENERATION ROUTES - FINAL WORKING VERSION
 # =====================================================================
 
-from scheduler import IntelligentScheduler, validate_draft, RULE_LABELS, _parse_weekend_days, CSPValidator
+from scheduler import (IntelligentScheduler, validate_draft, RULE_LABELS, _parse_weekend_days, CSPValidator,
+                       _spec_matches_subject, _required_spec_for_subject)
+from constraints import ConstraintService, SchedulingPolicy, context_conflicts as _context_conflicts
 from datetime import time
 import json
 
@@ -25324,8 +27143,25 @@ def _check_designee_night_limit(schedule_list, faculty_map, sem_id,
 
 
 def _parse_days(days_str: str) -> list:
+    """Canonical day normalization for this module — delegates to
+    scheduler.normalize_day_tokens (the same function CBR historical retrieval
+    and CSP validation use) so compound tokens like 'MW'/'TTH'/'MTH' expand
+    into their real component days here too, instead of this call site keeping
+    its own weaker, single-token-only map that left them unrecognized. Falls
+    back to the original per-token map for anything the canonical parser can't
+    resolve (e.g. already-full day names like 'Monday'), so existing callers
+    that already send well-formed input are unaffected.
+    """
+    if not days_str:
+        return []
+    try:
+        from scheduler import normalize_day_tokens
+        normalized = normalize_day_tokens(days_str)
+        if normalized:
+            return normalized
+    except Exception:
+        pass
     abbr_map = {'MON': 'Monday', 'TUE': 'Tuesday', 'WED': 'Wednesday', 'THU': 'Thursday', 'FRI': 'Friday', 'SAT': 'Saturday', 'SUN': 'Sunday'}
-    if not days_str: return []
     return [abbr_map.get(d.strip().upper(), d.strip()) for d in days_str.split('/')]
 
 def _parse_time_str(t_str: str):
@@ -25350,7 +27186,7 @@ def _serialize_class(cls: dict) -> dict:
     return safe
 
 def _rehydrate_schedule(schedule_data: list) -> list:
-    # Lazy-load room_type lookup map so HC_LAB can check room type from room_id.
+    # Lazy-load room_type lookup map so final HC13 can check room type from room_id.
     _room_type_map = {}
     # Exclude non-numeric room ids (e.g. the 'TBA' sentinel) — passing one to the IN (...)
     # query below would raise a type error and silently drop room_type backfill for every
@@ -25389,7 +27225,7 @@ def _rehydrate_schedule(schedule_data: list) -> list:
         if 'day' not in cls and 'days_list' in cls and cls['days_list']:
             cls['day'] = cls['days_list'][0]
         # Normalize the hours field: manual editor sends 'units'; CSP validator
-        # expects 'total_hours' or 'total_subject_hrs' for HC6 day-pairing check.
+        # expects 'total_hours' or 'total_subject_hrs' for HC7 day-pairing check.
         if 'total_hours' not in cls and 'total_subject_hrs' not in cls:
             u = cls.get('units')
             if u is not None:
@@ -25398,7 +27234,7 @@ def _rehydrate_schedule(schedule_data: list) -> list:
                 except (ValueError, TypeError):
                     pass
         # Populate room_type from DB lookup if client did not send it.
-        # HC_LAB (_check_lab_room) needs this to verify lab-hour subjects are in lab rooms.
+        # HC13 (_check_lab_room) needs this to verify lab-hour subjects are in lab rooms.
         if not cls.get('room_type') and not cls.get('roomtype'):
             rid = str(cls.get('room_id') or '')
             if rid and rid in _room_type_map:
@@ -25837,7 +27673,10 @@ def schedule_version_history():
 
 @app.route('/schedule/room-schedule')
 def room_schedule_view():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    # Academic Head's own standalone Room Schedule page — Admin has a separate
+    # /admin/schedule/room-schedule route/view, so this one is not shared.
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
     import json as _json
 
     buildings = query_db(
@@ -25964,7 +27803,7 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
                                   incomplete_count=0, completion_rate=None):
     """
     Final 60/30/10 schedule-evaluation framework — Conflict Validation (60%),
-    Constraint Compliance (30%), Recommendation Quality (10%). Returns a plain dict
+    Constraint Compliance (30%), Recommendation Quality (10%). This user-facing evaluation is separate from GA SC1-SC9 fitness. Returns a plain dict
     (not a Response); raises on unrecoverable error. Shared by the generate and
     accuracy endpoints (and anything else needing the SAME evaluation object — the
     UI, exports, approval gating) so there is exactly one evaluation implementation.
@@ -26050,8 +27889,13 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     faculty_ids = sorted({s.get('faculty_id') for s in schedule_data if s.get('faculty_id')})
     faculty_map = _build_faculty_map_for_csp(faculty_ids)
     hydrated    = _rehydrate_schedule([dict(s) for s in schedule_data])
-    csp         = CSPValidator()
-    all_violations  = csp.validate(hydrated, faculty_map)
+    # Phase A centralization: routed through ConstraintService instead of
+    # instantiating CSPValidator directly. Behavior-identical -- CSPValidator's
+    # own config=None default already resolves to load_scheduler_config(),
+    # the same source ConstraintService's SchedulingPolicy.load() reads.
+    all_violations  = ConstraintService.with_current_policy().validate_schedule(
+        hydrated, faculty_map
+    ).violations
     hard_violations = [v for v in all_violations if v.get('severity') != 'warning']
     combined_hard   = hard_violations + list(cross_violations or [])
 
@@ -26076,14 +27920,15 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     all_codes = {subject_of(s) for s in schedule_data if subject_of(s)}
 
     # ── A. Conflict Validation (60%) ────────────────────────────────────────────
-    # HC9 (room)/HC10 (faculty)/HC11 (section) already fully encode the merge and
-    # exemption rules (NSTP/OU multi-section, configured merge scope/pairs) — an
+    # Phase B checkpoint 2 renumbering: HC10 (faculty)/HC11 (room)/HC12 (section)
+    # already fully encode the merge and exemption rules (NSTP/OU multi-section,
+    # configured merge scope/pairs via HC16 -- CSPValidator.is_valid_merge) — an
     # allowed merged/exempt arrangement never produces one of these violations in
     # the first place, so it is correctly never counted as a conflict here.
     conflict_criteria = {
         'facultyConflictFree': _pct(_flagged_subjects({'HC10'}), all_codes),
-        'roomConflictFree':    _pct(_flagged_subjects({'HC9'}),  all_codes),
-        'sectionConflictFree': _pct(_flagged_subjects({'HC11'}), all_codes),
+        'roomConflictFree':    _pct(_flagged_subjects({'HC11'}), all_codes),
+        'sectionConflictFree': _pct(_flagged_subjects({'HC12'}), all_codes),
     }
 
     # ── B. Constraint Compliance (30%) ──────────────────────────────────────────
@@ -26115,34 +27960,22 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
                 suit_ok += 1
     faculty_assignment_suitability = round(100.0 * suit_ok / suit_ttl, 1) if suit_ttl else 100.0
 
-    # B2. Room Type Suitability — lab-hour subjects need >=1 Laboratory-room session;
-    # TBA/unset room is a deferred, explicitly allowed fallback, not an invalid
-    # assignment (mirrors CSPValidator._check_lab_room's own has_tba_room exemption).
-    # Lecture-only subjects have no strict type requirement in the current
-    # configuration (_build_individual prefers a typed room but falls back to any
-    # room when none is free) so they are always suitable.
+    # B2. Room Type Suitability — derive this directly from final HC13 output.
+    # Do NOT maintain a second copy of the laboratory-room rule here: HC13 already
+    # owns its live configuration and TBA/deferred-room semantics.
     from collections import defaultdict as _dd
-    subj_sessions = _dd(list)
-    for s in schedule_data:
-        code = subject_of(s)
-        if code:
-            subj_sessions[code].append(s)
-    room_ok = room_ttl = 0
-    for code, sessions in subj_sessions.items():
-        room_ttl += 1
-        needs_lab = any((s.get('lab_hours') or s.get('laboratoryhours') or 0) for s in sessions)
-        if not needs_lab:
-            room_ok += 1
-            continue
-        has_lab_room = any((s.get('room_type') or s.get('roomtype') or '').strip().lower() == 'laboratory'
-                           for s in sessions)
-        has_tba = any(not s.get('room_id') or str(s.get('room_id')).upper() == 'TBA' for s in sessions)
-        if has_lab_room or has_tba:
-            room_ok += 1
-    room_type_suitability = round(100.0 * room_ok / room_ttl, 1) if room_ttl else 100.0
+    room_type_flagged = set()
+    for v in all_violations:
+        if v.get('rule') == 'HC13':
+            for code in (v.get('subject') or '').split('/'):
+                code = code.strip().upper()
+                if code and code != 'MULTIPLE':
+                    room_type_flagged.add(code)
+    room_type_suitability = _pct(room_type_flagged, all_codes)
 
-    # B3/B4 — HC4 (Subject-Day) / HC6 (Pairing) already read the LIVE configured
-    # restricted subjects/days and day-pair list (CSPValidator._build_runtime_constants)
+    # B3/B4 — Phase B checkpoint 2 renumbering: HC5 (Subject-Day, was HC4) /
+    # HC7 (Pairing, was HC6) already read the LIVE configured restricted
+    # subjects/days and day-pair list (CSPValidator._build_runtime_constants)
     # — no hardcoded NSTP/Sunday or fixed pair list here.
     day_flagged      = set()
     pairing_flagged  = set()
@@ -26150,17 +27983,18 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     load_flagged_faculty = set()
     for v in all_violations:
         rule = v.get('rule')
-        if rule == 'HC4':
+        if rule == 'HC5':
             for code in (v.get('subject') or '').split('/'):
                 code = code.strip().upper()
                 if code: day_flagged.add(code)
-        elif rule == 'HC6':
+        elif rule == 'HC7':
             for code in (v.get('subject') or '').split('/'):
                 code = code.strip().upper()
                 if code: pairing_flagged.add(code)
-        elif rule == 'HC8':
-            # HC8's 'subject' field is just 'multiple' — the faculty is only
-            # identifiable from their fullname at the start of 'detail'.
+        elif rule == 'HC9':
+            # HC9's (was HC8's) 'subject' field is just 'multiple' — the
+            # faculty is only identifiable from their fullname at the start
+            # of 'detail'.
             detail = v.get('detail') or ''
             for name, eid in name_to_id.items():
                 if name and detail.startswith(name):
@@ -26170,7 +28004,7 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     subject_day_compliance        = _pct(day_flagged, all_codes)
     schedule_pairing_distribution = _pct(pairing_flagged, all_codes)
 
-    # B5. Faculty Load Compliance — reuses the SAME HC8 run above (per-designation
+    # B5. Faculty Load Compliance — reuses the SAME final HC9 run above (per-designation
     # Regular/PT/TS caps via faculty_load.get_faculty_caps), just re-weighted 10%.
     all_faculty_set = set(faculty_ids)
     faculty_load_compliance = (
@@ -26401,18 +28235,31 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     )
     resolved_completion_rate = completion_rate if completion_rate is not None else 100.0
 
+    # Result classification (requirement G/H) — the SAME COMPLETE_VALID /
+    # PARTIAL_VALID / INVALID_RESULT vocabulary generate_draft already uses, so
+    # every caller of this shared evaluation (Generation, the accuracy endpoint,
+    # retrieve-previous) reports status the same way instead of each inventing
+    # its own reading of cspPassed + completionRate. The frontend's primary
+    # status/color must be driven by THIS field, never by overallScore alone —
+    # a schedule can score 89% and still be INVALID_RESULT.
+    if hard_violation_count:
+        result_status = 'INVALID_RESULT'
+    elif incomplete_count:
+        result_status = 'PARTIAL_VALID'
+    else:
+        result_status = 'COMPLETE_VALID'
+
     violations_by_subject = _dd(list)
     for v in combined_hard:
         for code in (v.get('subject') or '').split('/'):
             code = code.strip().upper()
             if code and code != 'MULTIPLE':
-                violations_by_subject[code].append({
-                    'rule': v.get('rule'), 'type': v.get('type'), 'detail': v.get('detail'),
-                })
+                violations_by_subject[code].append(_structured_violation(code, v))
 
     return {
         'success': True,
         'overallScore': overall_score,
+        'resultStatus': result_status,
         'cspPassed': csp_passed,
         'hardViolationCount': hard_violation_count,
         # Publish eligibility (architecture spec section 12/14/18) requires BOTH
@@ -26420,6 +28267,20 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
         # schedule can legitimately show 100% hard-constraint compliance among
         # what it DID complete while still being correctly ineligible to publish.
         'eligibleForApproval': csp_passed and not incomplete_count,
+        # Three distinct concepts (requirement H), never collapsed into one
+        # "Completion" number: filledRate is always 100 at this layer — a
+        # required component that was never generated at all simply isn't a
+        # row in schedule_data, so it's invisible here, not "unfilled" (the
+        # caller, which DOES know the required universe, is responsible for a
+        # true fill-rate against curriculum requirements). completionRate is
+        # "how much of what's filled is actually valid" (drops when a
+        # component was stripped as incomplete). hardConstraintCompliance is
+        # compliance among only the retained/completed assignments. A
+        # genuinely filled-but-invalid schedule (this bug's exact scenario)
+        # therefore reads filledRate=100, completionRate=100 (nothing was
+        # stripped), resultStatus=INVALID_RESULT, hardViolationCount>0 — the
+        # frontend must show status from resultStatus, not from either rate.
+        'filledRate':                100.0,
         'completionRate':            resolved_completion_rate,
         'incompleteCount':            incomplete_count or 0,
         'hardConstraintCompliance':  hard_constraint_compliance,
@@ -26428,6 +28289,23 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
             'constraintCompliance':  {'weight': CATEGORY_WEIGHTS['constraintCompliance'],  'criteria': constraint_criteria},
             'recommendationQuality': {'weight': CATEGORY_WEIGHTS['recommendationQuality'], 'criteria': recommendation_criteria},
         },
+        # Phase 3E: explicit traceability to the frozen constraint specification.
+        # Evaluation weights are reporting metrics, NOT GA SC1-SC9 fitness weights.
+        'constraintRules': {
+            'facultyConflictFree': ['HC10'],
+            'roomConflictFree': ['HC11'],
+            'sectionConflictFree': ['HC12'],
+            'facultyAssignmentSuitability': ['SC9'],
+            'roomTypeSuitability': ['HC13'],
+            'subjectDayCompliance': ['HC5'],
+            'schedulePairingDistribution': ['HC7'],
+            'facultyLoadCompliance': ['HC9', 'HC17'],
+            'historicalFacultyMatch': ['SC8'],
+            'historicalRoomMatch': ['SC8'],
+            'historicalScheduleMatch': ['SC8'],
+        },
+        'evaluationModel': '60/30/10',
+        'gaFitnessSeparate': True,
         'violationsBySubject': dict(violations_by_subject),
         # Legacy-shaped extras kept for the "X of Y subjects match historical faculty"
         # subtitle and any other reader that hasn't moved to the new shape.
@@ -26497,6 +28375,22 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     if not published:
         return [], 0
 
+    # Phase B checkpoint 5: same authoritative merge decision (final HC16)
+    # CSPValidator._check_room_overlaps already applies for an intra-payload
+    # room conflict -- this cross-schedule check must not disagree with it.
+    # Before this fix, a legitimate merged/shared session (e.g. NSTP sharing
+    # a room with an already-Published section) was always flagged here as a
+    # room conflict, which fed straight into eligibleForApproval and
+    # incorrectly disabled Approve for a schedule CSPValidator itself would
+    # accept. Routed through constraints.hard_constraints (never instantiate
+    # scheduler.CSPValidator here directly) -- the same centralized adapter
+    # point every other merge-decision caller uses. Config loaded ONCE here (not
+    # per-pair inside the loop below) to avoid a DB round-trip per candidate
+    # conflict pair.
+    from constraints import hard_constraints as _hc_adapter
+    from database import load_scheduler_config as _load_merge_cfg
+    _merge_cfg = _load_merge_cfg()
+
     violations = []
     seen       = set()
 
@@ -26525,8 +28419,14 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                 if ex['day'] != day_new:
                     continue
 
-                # Room conflict
+                # Room conflict — exempt a valid merge/shared class (final HC16)
                 if r_new is not None and str(r_new) == str(ex['roomid']):
+                    if _hc_adapter.is_valid_merge(
+                        {'subject_code': sc_new, 'faculty_id': fac_new},
+                        {'subject_code': ex['subjectcode'], 'faculty_id': ex.get('faculty_id')},
+                        config=_merge_cfg,
+                    ):
+                        continue
                     key = ('room', str(r_new), day_new, sc_new, ex['subjectcode'])
                     if key not in seen:
                         seen.add(key)
@@ -26539,8 +28439,8 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                               f'({ex["programcode"]} Yr{ex["yearlevel"]}) — '
                               f'{rm_name} on {day_new} {ex["start_time"]}–{ex["end_time"]}')
                         violations.append({
-                            'rule':    'HC9',
-                            'type':    RULE_LABELS['HC9'],
+                            'rule':    'HC11',
+                            'type':    RULE_LABELS['HC11'],
                             'subject': f"{sc_new} / {ex['subjectcode']}",
                             'detail':  detail,
                         })
@@ -26581,6 +28481,28 @@ def api_generate_schedule():
     # objects — it only touches keys it recognizes, so the extra 'row_key'/
     # 'lock' keys on each entry pass through untouched.
     locked_sessions = _rehydrate_schedule(list(data.get('locked_sessions') or []))
+
+    # Re-generate Selected: entries flagged 'selected' are the checked rows. A
+    # checked row with Instructor, Time/Days and Room all locked has nothing to
+    # regenerate (it is sent fully locked, like an unchecked row); only rows with
+    # at least one unlocked field are mutable.
+    _LOCK_LABELS = (('faculty', 'Instructor'), ('schedule', 'Time/Days'), ('room', 'Room'))
+    mutable_codes = []
+    any_selected  = False
+    for ls in locked_sessions:
+        if not ls.get('selected'):
+            continue
+        any_selected = True
+        flags = ls.get('lock') or {}
+        code  = (ls.get('subject_code') or '').strip().upper()
+        if code and not all(flags.get(k) for k, _ in _LOCK_LABELS) and code not in mutable_codes:
+            mutable_codes.append(code)
+    if any_selected and not mutable_codes:
+        return jsonify({
+            'success': False, 'result_status': 'GENERATION_ERROR',
+            'error': 'Unlock at least one field to regenerate.',
+        }), 400
+
     res = scheduler_engine.generate_draft(
         data.get('program'), int(data.get('yearLevel', 1)),
         data.get('term'), data.get('curriculum'), False,  # never use historical path here
@@ -26622,6 +28544,30 @@ def api_generate_schedule():
         )
     except Exception:
         pass  # cross-check is advisory at generate time; never block generation itself
+
+    # Re-generate Selected: if a selected row still can't be placed validly with
+    # its locked values, report it and leave the on-screen schedule untouched —
+    # never return a result that quietly drops or conflicts that row.
+    if mutable_codes:
+        def _mentions(v, code):
+            return code in str(v.get('subject') or '').upper()
+        _hard = [v for v in (res.get('violations') or []) + list(cross_violations)
+                 if v.get('severity') != 'warning']
+        failed = [code for code in mutable_codes
+                  if any((g.get('subject_code') or '').strip().upper() == code and g.get('incomplete')
+                         for g in res['schedule_data'])
+                  or any(_mentions(v, code) for v in _hard)]
+        if failed:
+            return _safe_json_response({
+                'success':       False,
+                'result_status': 'REGENERATION_INFEASIBLE',
+                'failed_subjects': failed,
+                'error': (
+                    f"Unable to regenerate {', '.join(failed)} with the current locked values. "
+                    f"Try unlocking Instructor, Time/Days, or Room."
+                ),
+                'violations': [v for v in _hard if any(_mentions(v, c) for c in failed)],
+            })
 
     serialized = [_serialize_class(cls) for cls in res['schedule_data']]
     evaluation = None
@@ -26809,10 +28755,20 @@ def api_schedule_accuracy():
 @app.route('/api/schedule/retrieve-previous', methods=['POST'])
 def api_retrieve_previous_schedule():
     """
-    Retrieve the previous OFFICIAL (Published) schedule for the same program/year/semester.
-    Priority: Published records from schedule/schedule_version/schedule_sessions first,
-              then historical_data as fallback.
-    Never retrieves Draft versions.
+    Retrieve the schedule of the IMMEDIATELY PREVIOUS academic year for the same
+    program / year level / semester (and section, when the historical rows carry
+    section information) from historical_data.
+
+    historical_data is the primary and ONLY source for this feature — there is no
+    Published-snapshot lookup and no progressive search of older years: if the
+    immediately previous AY has no matching rows, NO_PREVIOUS_SCHEDULE is returned.
+
+    The retrieved rows are only a STARTING schedule for the current AY: faculty and
+    rooms are resolved against CURRENT records and the whole schedule is re-validated
+    (CSP/ConstraintService via _compute_schedule_evaluation, cross-section conflicts
+    against the current term's Published/Draft sessions, and current-term faculty
+    load) — a historical assignment is never assumed valid just because it was
+    valid last AY.
     """
     try:
         data       = request.json or {}
@@ -26820,6 +28776,7 @@ def api_retrieve_previous_schedule():
         year_level = int(data.get('yearLevel', 1))
         term       = data.get('term', '')       # 'A', 'B', or 'C'
         acad_year  = data.get('acadYear', '')   # e.g. "AY2627"
+        section_id = data.get('section') or None
 
         conn = get_db_connection()
         cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -26827,6 +28784,8 @@ def api_retrieve_previous_schedule():
         term_label = '1st Semester' if term == 'A' else '2nd Semester' if term == 'B' else 'Summer'
 
         # ── Step 1: resolve the immediate previous academic year ─────────────
+        # From the academicyear records themselves (previous AY ends the year the
+        # current one starts) — never string arithmetic, and never an older year.
         prev_ay_id    = None
         prev_ay_label = None
         if acad_year:
@@ -26849,11 +28808,17 @@ def api_retrieve_previous_schedule():
             cur.close(); conn.close()
             return jsonify({
                 'success': False,
+                'error_code': 'NO_PREVIOUS_SCHEDULE',
                 'error': (
                     f'No previous academic year found before {acad_year}. '
                     f'Cannot retrieve a prior {term_label} schedule for {program} Year {year_level}.'
                 ),
             }), 404
+
+        not_found_msg = (
+            f'No previous AY schedule was found for {program} Year {year_level}, '
+            f'{term_label}, {prev_ay_label or prev_ay_id}.'
+        )
 
         # ── Step 2: resolve semester ID for the previous AY ─────────────────
         cur.execute("""
@@ -26865,184 +28830,293 @@ def api_retrieve_previous_schedule():
         if not sem_row:
             cur.close(); conn.close()
             return jsonify({
-                'success': False,
-                'error':   f'No {term_label} semester record found for {prev_ay_id}.',
+                'success':    False,
+                'error_code': 'NO_PREVIOUS_SCHEDULE',
+                'error':      not_found_msg,
             }), 404
         prev_sem_id = sem_row['semesterid']
 
-        # ── Step 3: find the highest Published version_number ────────────────
-        # Each subject in a snapshot gets its own schedule_version row but they all
-        # share the same version_number.  We want the most recent Published snapshot,
-        # so we find MAX(version_number) where status='Published' then load every
-        # subject at that version — giving us the full schedule, not just one row.
+        # Current section's name, for matching the previous AY's section by name
+        # (section ids are per-AY, so only the name carries across years).
+        current_section_name = None
+        if section_id:
+            try:
+                cur.execute("SELECT sectionname FROM sections WHERE sectionid = %s",
+                            (int(section_id),))
+                _sec = cur.fetchone()
+                current_section_name = _sec['sectionname'] if _sec else None
+            except (ValueError, TypeError):
+                current_section_name = None
+
+        # ── Step 3: historical_data query (the only source) ─────────────────
+        # Faculty resolution mirrors CaseBasedRetriever.retrieve_best_case_assignments:
+        # historical_data.employeenumber first, then the Instructor-name match,
+        # otherwise unresolved (never guessed).
         cur.execute("""
-            SELECT COALESCE(MAX(sv.version_number), 0) AS max_pub_v
-            FROM   schedule_version sv
-            JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
-            JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-            WHERE  UPPER(c.programcode) = UPPER(%s)
-              AND  cs.yearlevel         = %s
-              AND  sc.semesterid        = %s
-              AND  sv.status            = 'Published'
-        """, (program, year_level, prev_sem_id))
-        pub_v_row = cur.fetchone()
-        max_pub_v = pub_v_row['max_pub_v'] if pub_v_row else 0
+            SELECT
+                hd.historyid           AS historyid,
+                hd."Subject Code"      AS subject_code,
+                hd."Subject Name"      AS description,
+                hd."Instructor"        AS instructor,
+                COALESCE(f_emp.employeenumber, f_name.employeenumber) AS faculty_id,
+                CASE WHEN f_emp.employeenumber  IS NOT NULL THEN CONCAT(f_emp.lastname,  ', ', f_emp.firstname)
+                     WHEN f_name.employeenumber IS NOT NULL THEN CONCAT(f_name.lastname, ', ', f_name.firstname)
+                     ELSE NULL END     AS faculty_name,
+                hd."Room"              AS room,
+                hd."Day/s"             AS raw_days,
+                hd."Time"              AS raw_time,
+                hd."Lecture Hours"     AS lec_hours,
+                hd."Laboratory Hours"  AS lab_hours,
+                hd."Credit Units"      AS credit_units,
+                hd."Hours"             AS hours,
+                hd.semesterid          AS semesterid,
+                sec.sectionname        AS section_name
+            FROM historical_data hd
+            LEFT JOIN sections sec ON hd.sectionid = sec.sectionid
+            LEFT JOIN faculty f_emp
+              ON hd.employeenumber IS NOT NULL AND TRIM(hd.employeenumber) != ''
+             AND UPPER(hd.employeenumber) = UPPER(f_emp.employeenumber)
+             AND f_emp.employeestatus != 'Archive'
+            LEFT JOIN faculty f_name
+              ON f_emp.employeenumber IS NULL
+             AND UPPER(TRIM(SPLIT_PART(hd."Instructor", ',', 1))) = UPPER(TRIM(f_name.lastname))
+             AND (
+                 SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1) = ''
+                 OR UPPER(TRIM(f_name.firstname)) LIKE (UPPER(SPLIT_PART(TRIM(SPLIT_PART(hd."Instructor", ',', 2)), ' ', 1)) || '%%')
+             )
+             AND f_name.employeestatus != 'Archive'
+            WHERE REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') ILIKE %s
+              AND CAST(hd."Year Level" AS TEXT) = %s
+              AND hd.academicyearid = %s
+              AND (hd.semesterid = %s OR hd.semesterid IS NULL)
+            ORDER BY hd."Subject Code", hd.historyid
+        """, (program, str(year_level), prev_ay_id, prev_sem_id))
+        hist_rows = cur.fetchall()
 
-        rows = []
-        if max_pub_v:
-            # ── Step 4: load ALL sessions for ALL subjects in that Published snapshot
-            cur.execute("""
-                SELECT cs.subjectcode                                 AS subject_code,
-                       cs.subjectname                                 AS description,
-                       cs.lecturehours                                AS lec_hours,
-                       cs.laboratoryhours                             AS lab_hours,
-                       cs.creditunits                                 AS credit_units,
-                       c.programcode                                  AS course,
-                       sc.employeenumber                              AS faculty_id,
-                       CONCAT(f.lastname, ', ', f.firstname)          AS instructor,
-                       ss.daydesc                                     AS day,
-                       TO_CHAR(ts_s.timevalue, 'HH12:MI AM')         AS start_str,
-                       TO_CHAR(ts_e.timevalue, 'HH12:MI AM')         AS end_str,
-                       r.roomname                                     AS room,
-                       r.roomid                                       AS room_id
-                FROM   schedule_sessions ss
-                JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
-                JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
-                JOIN   curriculumsubject cs  ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-                LEFT JOIN faculty f          ON sc.employeenumber      = f.employeenumber
-                LEFT JOIN room r             ON ss.roomid              = r.roomid
-                LEFT JOIN timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
-                LEFT JOIN timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
-                WHERE  UPPER(c.programcode) = UPPER(%s)
-                  AND  cs.yearlevel         = %s
-                  AND  sc.semesterid        = %s
-                  AND  sv.status            = 'Published'
-                  AND  sv.version_number    = %s
-                ORDER BY cs.subjectcode, ts_s.timevalue
-            """, (program, year_level, prev_sem_id, max_pub_v))
-            rows = cur.fetchall()
+        # The name-match join can fan out to several faculty for one historical
+        # row; keep exactly one result per historical_data row (first match wins).
+        _dedup, _seen_rows = [], set()
+        for r in hist_rows:
+            if r['historyid'] in _seen_rows:
+                continue
+            _seen_rows.add(r['historyid'])
+            _dedup.append(r)
+        hist_rows = _dedup
 
-        # ── Step 5: historical_data fallback ────────────────────────────────
-        if not rows:
-            cur.execute("""
-                SELECT
-                    hd."Subject Code"      AS subject_code,
-                    hd."Subject Name"      AS description,
-                    hd."Instructor"        AS instructor,
-                    hd."Room"              AS room,
-                    hd."Day/s"             AS raw_days,
-                    hd."Time"              AS raw_time,
-                    hd."Lecture Hours"     AS lec_hours,
-                    hd."Laboratory Hours"  AS lab_hours,
-                    hd."Credit Units"      AS credit_units,
-                    hd."Hours"             AS hours
-                FROM historical_data hd
-                WHERE REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') ILIKE %s
-                  AND CAST(hd."Year Level" AS TEXT) = %s
-                  AND hd.academicyearid = %s
-                  AND (hd.semesterid = %s OR hd.semesterid IS NULL)
-                ORDER BY hd."Subject Code"
-            """, (program, str(year_level), prev_ay_id, prev_sem_id))
-            hist_rows = cur.fetchall()
+        # Same semester: rows explicitly tagged with the previous AY's semester win;
+        # untagged (semesterid NULL) rows are used only when no tagged row exists.
+        _tagged = [r for r in hist_rows if r['semesterid'] == prev_sem_id]
+        hist_rows = _tagged or hist_rows
+
+        # Same section when historical section information is available: rows
+        # whose section name matches the current section (normalized — e.g.
+        # "BEED-1" vs "BEED 1"); otherwise only rows carrying no section info.
+        def _norm_section(name):
+            return re.sub(r'[\s\-_]+', '', str(name or '')).upper()
+        if current_section_name and any(r['section_name'] for r in hist_rows):
+            _want = _norm_section(current_section_name)
+            _same = [r for r in hist_rows if r['section_name'] and _norm_section(r['section_name']) == _want]
+            hist_rows = _same or [r for r in hist_rows if not r['section_name']]
+
+        if not hist_rows:
             cur.close(); conn.close()
+            return jsonify({
+                'success':    False,
+                'error_code': 'NO_PREVIOUS_SCHEDULE',
+                'error':      not_found_msg,
+            }), 404
 
-            if not hist_rows:
-                return jsonify({
-                    'success': False,
-                    'error': (
-                        f'No schedule found for {program} — Year {year_level} — {term_label} '
-                        f'in {prev_ay_id}. Generate a new schedule instead.'
-                    ),
-                }), 404
+        from scheduler import (parse_historical_day_time_verbose, resolve_historical_room,
+                               _parse_historical_days)
+        cur.execute("SELECT roomid, roomname, roomtype FROM room")
+        _current_rooms = cur.fetchall() or []
 
+        try:
             schedule_data = []
+            unresolved_time_count = 0
             for row in hist_rows:
                 lh  = int(row['lec_hours']  or 0)
                 lbh = int(row['lab_hours']  or 0)
                 cu  = int(row['credit_units'] or 0)
+                # Parse the free-text historical Day/s + Time columns through the
+                # SAME ambiguity-safe AM/PM logic the CBR path uses, instead of
+                # passing the raw text straight through unparsed — that was the
+                # source of the "3:00-6:00" (no AM/PM) display bug. This is the
+                # display-oriented variant (parse_historical_day_time_verbose,
+                # not parse_historical_day_time): it resolves any UNAMBIGUOUS
+                # time regardless of whether it lands on this system's
+                # schedulable STANDARD_BLOCKS grid, because showing an
+                # already-recorded historical row's real time correctly is not
+                # the same question as whether the GA could place it as a new
+                # slot (CBR locking uses the grid-gated function instead — see
+                # its own docstring). A value that can't be resolved
+                # unambiguously is shown as originally recorded and flagged,
+                # never silently guessed.
+                days_list, start_t, end_t, daytime_status, _reason = parse_historical_day_time_verbose(
+                    row['raw_days'], row['raw_time'])
+
+                # Historical imports intentionally preserve the source text in
+                # historical_data.  Older normalized sheets can therefore still
+                # contain compact 12-hour ranges such as "3:00 - 6:00",
+                # "9:00 - 12:00", or "5:00 - 7:00" without AM/PM.  The strict
+                # scheduler parser correctly refuses to guess those values because
+                # it is also used for placement/CBR decisions.  Retrieve Previous,
+                # however, is displaying an already-recorded class, so apply the
+                # campus school-day convention used by the import path:
+                #   7:30..12:59 => AM/noon, 1:00..7:29 => PM.
+                # Explicit AM/PM always wins.  This fallback is display/reuse-only;
+                # it does not weaken the scheduler's ambiguity rules.
+                if daytime_status != 'resolved':
+                    def _retrieve_school_clock(part):
+                        _s = str(part or '').strip().upper().replace('.', '')
+                        _m = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?', _s)
+                        if not _m:
+                            return None
+                        _h = int(_m.group(1))
+                        _min = int(_m.group(2) or 0)
+                        _mer = _m.group(3)
+                        if not (1 <= _h <= 12 and 0 <= _min <= 59):
+                            return None
+                        if _mer == 'AM':
+                            _h24 = 0 if _h == 12 else _h
+                        elif _mer == 'PM':
+                            _h24 = 12 if _h == 12 else _h + 12
+                        else:
+                            # Canonical campus operating-day interpretation.
+                            # 12 is noon; 1:00-7:29 is afternoon/evening;
+                            # 7:30-11:59 is morning.
+                            if _h == 12:
+                                _h24 = 12
+                            elif _h < 7 or (_h == 7 and _min < 30):
+                                _h24 = _h + 12
+                            else:
+                                _h24 = _h
+                        return time(_h24, _min)
+
+                    _raw_range = str(row['raw_time'] or '').strip()
+                    _parts = re.split(r'\s*[-–—]\s*', _raw_range, maxsplit=1)
+                    if len(_parts) == 2:
+                        _fallback_start = _retrieve_school_clock(_parts[0])
+                        _fallback_end   = _retrieve_school_clock(_parts[1])
+                        if _fallback_start and _fallback_end:
+                            # If only the end carries a meridiem and the inferred
+                            # start lands after it, align the start to the same
+                            # half-day when that produces a normal class duration.
+                            _sm = _fallback_start.hour * 60 + _fallback_start.minute
+                            _em = _fallback_end.hour * 60 + _fallback_end.minute
+                            if _em <= _sm and (_sm - _em) >= 6 * 60:
+                                _eh = (_fallback_end.hour + 12) % 24
+                                _fallback_end = time(_eh, _fallback_end.minute)
+                            start_t, end_t = _fallback_start, _fallback_end
+                            daytime_status = 'resolved'
+                            _reason = 'resolved_by_school_day_convention'
+                            # The strict parser returns no days when it rejects the
+                            # time, so resolve the Day/s column on its own (stray
+                            # trailing separators like "M,," trimmed) — without a
+                            # days_list the current-AY conflict checks can't run.
+                            if not days_list:
+                                _raw_days = str(row['raw_days'] or '')
+                                days_list = (_parse_historical_days(_raw_days)
+                                             or _parse_historical_days(_raw_days.strip(' ,;/'))
+                                             or [])
+
+                resolved = daytime_status == 'resolved'
+                if resolved:
+                    display_time = _display_time_range(start_t, end_t)
+                else:
+                    unresolved_time_count += 1
+                    display_time = row['raw_time'] or ''
+
+                # Resolve faculty/room against CURRENT records so the current-AY
+                # validation below (faculty conflicts/load/suitability, room
+                # conflicts/type) actually runs on these rows, and so a regeneration
+                # lock on them preserves a real faculty/room id.
+                room_id, room_name, room_type, _room_status = resolve_historical_room(
+                    row['room'], _current_rooms)
+                faculty_id = row['faculty_id']
+                incomplete_reasons = []
+                if not faculty_id:
+                    incomplete_reasons.append(
+                        f"Instructor '{row['instructor'] or 'TBA'}' does not match a current faculty record.")
+                if room_id is None:
+                    incomplete_reasons.append(
+                        f"Room '{row['room'] or 'TBA'}' does not match a current room record.")
+                if resolved and not days_list:
+                    incomplete_reasons.append(
+                        f"Day/s '{row['raw_days'] or 'TBA'}' could not be resolved.")
+
                 schedule_data.append({
-                    'subject_code':  row['subject_code'] or '',
-                    'description':   row['description']  or '',
-                    'lec_hours':     lh,
-                    'lab_hours':     lbh,
-                    'credit_units':  cu,
-                    'units':         cu,
-                    'course':        program,
-                    'faculty_id':    None,
-                    'instructor':    row['instructor'] or 'TBA',
-                    'room':          row['room']       or 'TBA',
-                    'room_id':       None,
-                    'time':          row['raw_time']   or '',
-                    'hours':         str(row['hours']  or (lh + lbh)),
-                    'days':          row['raw_days']   or '',
-                    'day':           '',
-                    'is_historical': True,
+                    'subject_code':           row['subject_code'] or '',
+                    'description':            row['description']  or '',
+                    'lec_hours':              lh,
+                    'lab_hours':              lbh,
+                    'credit_units':           cu,
+                    'units':                  cu,
+                    'course':                 program,
+                    # Same class_type convention the rest of the historical code
+                    # uses, so a regeneration lock on this row can be matched to
+                    # the generator's Lecture/Lab gene.
+                    'class_type':             'Lab' if lbh > 0 and lh == 0 else 'Lecture',
+                    'faculty_id':             faculty_id,
+                    'instructor':             (row['faculty_name'] if faculty_id and row['faculty_name']
+                                               else (row['instructor'] or 'TBA')),
+                    'room':                   room_name or row['room'] or 'TBA',
+                    'room_id':                room_id,
+                    'room_type':              room_type or '',
+                    # Raw datetime.time here on purpose — internal CSP/GA/
+                    # evaluation code below (_compute_schedule_evaluation)
+                    # needs real time objects for correct comparisons.
+                    # _safe_json_response converts these to canonical
+                    # "HH:MM" strings ONLY at the API boundary, right
+                    # before this function returns.
+                    'start_time':             start_t,
+                    'end_time':               end_t,
+                    'days_list':              days_list,
+                    'time':                   display_time,
+                    'hours':                  str(row['hours']  or (lh + lbh)),
+                    'days':                   ('/'.join(d[:3].upper() for d in days_list)
+                                               if resolved and days_list else (row['raw_days'] or '')),
+                    'day':                    days_list[0] if days_list else '',
+                    'is_historical':          True,
+                    'time_resolved':          resolved,
+                    'time_unresolved_reason': None if resolved else (_reason or daytime_status),
+                    'incomplete':             bool(incomplete_reasons),
+                    'incomplete_reason':      incomplete_reasons,
                 })
-
-            evaluation = None
-            try:
-                evaluation = _compute_schedule_evaluation(
-                    schedule_data, program, year_level, (term or '').strip().upper())
-            except Exception:
-                pass
-
+        except Exception:
+            import traceback; traceback.print_exc()
+            cur.close(); conn.close()
             return jsonify({
-                'success':        True,
-                'schedule_data':  schedule_data,
-                'conflict_count': 0,
-                'violations':     [],
-                'evaluation':     evaluation,
-                'retrieved_from': {
-                    'source':   'historical',
-                    'version':  None,
-                    'status':   'Historical',
-                    'acadYear': prev_ay_id,
-                    'ay_label': prev_ay_label or prev_ay_id,
-                    'term':     term_label,
-                },
-            })
+                'success': False,
+                'error_code': 'RETRIEVE_PREVIOUS_PARSE_ERROR',
+                'message': 'The previous schedule was found but its recorded day/time values could not be parsed.',
+            }), 500
 
-        # ── #10: Check if retrieved faculty are already overloaded in the CURRENT term ──
-        # Resolve current AY's semester (the one being scheduled, not the previous one)
-        cur_sem_id = None
-        if acad_year and term:
-            cur.execute("""
-                SELECT semesterid FROM semester
-                WHERE  academicyearid = %s AND semestertype = %s
-                LIMIT  1
-            """, (acad_year, term))
-            csem = cur.fetchone()
-            if csem:
-                cur_sem_id = csem['semesterid']
-
-        # Tally nominal hours each retrieved faculty would bring — no real day/time is
-        # committed yet at this preview stage, so use catalog lecture+lab hours (same
-        # nominal-hours convention used for other not-yet-scheduled reservations), not
-        # credit units.
+        # ── Step 4: current-term faculty load ────────────────────────────────
+        # What each retrieved faculty is already committed to in the CURRENT term
+        # (other programs/year levels — this section's own rows excluded so they
+        # aren't double counted), plus what this retrieval would add. Reported as
+        # a hard-constraint violation for review; the faculty is NOT silently
+        # replaced.
         from collections import defaultdict as _dd2
-        fac_units_retrieved: dict = _dd2(float)
-        for row in rows:
-            fid = row.get('faculty_id')
-            hrs = float(row.get('lec_hours') or 0) + float(row.get('lab_hours') or 0)
+        fac_hours_retrieved: dict = _dd2(float)
+        for e in schedule_data:
+            fid = e.get('faculty_id')
+            hrs = float(e.get('lec_hours') or 0) + float(e.get('lab_hours') or 0)
             if fid and hrs > 0:
-                fac_units_retrieved[fid] += hrs
+                fac_hours_retrieved[fid] += hrs
 
-        # Query what those faculty are already committed to in the current term, via the
-        # shared live-hours query (faculty_load.py) — real actual scheduled hours.
         current_committed: dict = {}
-        if cur_sem_id and fac_units_retrieved and acad_year and term:
-            current_committed = faculty_load.get_faculty_hours_batch(cur, acad_year, term)
-
+        if fac_hours_retrieved and acad_year and term:
+            current_committed = faculty_load.get_faculty_hours_batch(
+                cur, acad_year, term,
+                exclude_program=program, exclude_year_level=year_level)
         cur.close(); conn.close()
 
-        # Build faculty map to look up load limits
-        _fmap_retrieve = _load_faculty_map()
-
-        # Determine which faculty are AT or OVER their limit already
-        _overloaded_fids: set = set()
-        for fid in fac_units_retrieved:
+        _fmap_retrieve   = _load_faculty_map()
+        overload_notices = []
+        load_violations  = []
+        for fid, hrs in fac_hours_retrieved.items():
             fac  = _fmap_retrieve.get(fid, {})
             et   = fac.get('employeetype', {})
             maxt = ((et.get('regularload') or 0)
@@ -27050,85 +29124,71 @@ def api_retrieve_previous_schedule():
                     + (et.get('teachingsubstitution') or 0))
             if maxt <= 0:
                 continue
-            if current_committed.get(fid, 0) >= maxt:
-                _overloaded_fids.add(fid)
+            already = float(current_committed.get(fid, 0))
+            if already + hrs > maxt:
+                name  = fac.get('fullname') or fid
+                codes = sorted({e['subject_code'] for e in schedule_data if e.get('faculty_id') == fid})
+                msg   = (f"{name} already has {already:.1f}/{maxt:.1f} hours this term; "
+                         f"this schedule adds {hrs:.1f}.")
+                overload_notices.append(msg)
+                load_violations.append({
+                    'rule':    'HC9',
+                    'type':    RULE_LABELS['HC9'],
+                    'subject': ' / '.join(codes),
+                    'detail':  msg,
+                    'affected_components': ['faculty'],
+                })
 
-        # ── Step 6: group multi-day sessions (e.g. MON+WED same time) ───────
-        _ABBR = {
-            'Monday': 'MON', 'Tuesday': 'TUE', 'Wednesday': 'WED',
-            'Thursday': 'THU', 'Friday': 'FRI', 'Saturday': 'SAT', 'Sunday': 'SUN',
-        }
-        groups = {}
-        for row in rows:
-            key = (row['subject_code'], row['faculty_id'], row['start_str'], row['end_str'])
-            if key not in groups:
-                lh  = row['lec_hours']  or 0
-                lbh = row['lab_hours']  or 0
-                cu  = row['credit_units'] or 0
-                fid = row['faculty_id']
-                # #10: Replace overloaded historical faculty with TBA
-                overloaded = fid in _overloaded_fids
-                groups[key] = {
-                    'subject_code':  row['subject_code'],
-                    'description':   row['description'],
-                    'lec_hours':     lh,
-                    'lab_hours':     lbh,
-                    'credit_units':  cu,
-                    'units':         cu,
-                    'course':        row['course'],
-                    'faculty_id':    None if overloaded else fid,
-                    'instructor':    'TBA (overloaded)' if overloaded else (row['instructor'] or 'TBA'),
-                    'room':          row['room']       or 'TBA',
-                    'room_id':       row['room_id'],
-                    'time':          f"{row['start_str']} – {row['end_str']}",
-                    'hours':         str(lh + lbh),
-                    'days_list':     [],
-                    'is_historical': True,
-                    'overloaded_faculty': overloaded,
-                }
-            g = groups[key]
-            if row['day'] and row['day'] not in g['days_list']:
-                g['days_list'].append(row['day'])
+        # ── Step 5: validate against CURRENT AY constraints ─────────────────
+        cross_violations = []
+        try:
+            cross_violations, _ = _check_cross_schedule_conflicts(
+                schedule_data, (program or '').strip().upper(), year_level,
+                (term or '').strip().upper(), acad_year)
+        except Exception:
+            cross_violations = []
+        cross_violations = list(cross_violations) + load_violations
 
-        schedule_data = []
-        for entry in groups.values():
-            dl = entry['days_list']
-            entry['days'] = '/'.join(_ABBR.get(d, d[:3].upper()) for d in dl)
-            entry['day']  = dl[0] if dl else ''
-            schedule_data.append(entry)
-
-        # Human-readable notices for overloaded faculty
-        overload_notices = []
-        for fid in _overloaded_fids:
-            fac  = _fmap_retrieve.get(fid, {})
-            name = fac.get('fullname') or fid
-            et   = fac.get('employeetype', {})
-            maxt = ((et.get('regularload') or 0)
-                    + (et.get('parttimeload') or 0)
-                    + (et.get('teachingsubstitution') or 0))
-            already = current_committed.get(fid, 0)
-            overload_notices.append(
-                f"{name} already has {already:.1f}/{maxt:.1f} hours this term — replaced with TBA."
-            )
+        incomplete_count = sum(1 for e in schedule_data
+                               if e.get('incomplete') or not e.get('time_resolved'))
+        completion_rate  = (
+            round((len(schedule_data) - incomplete_count) / len(schedule_data) * 100, 1)
+            if schedule_data else 100.0
+        )
 
         evaluation = None
         try:
             evaluation = _compute_schedule_evaluation(
-                schedule_data, program, year_level, (term or '').strip().upper())
+                schedule_data, program, year_level, (term or '').strip().upper(),
+                cross_violations=cross_violations,
+                incomplete_count=incomplete_count, completion_rate=completion_rate)
         except Exception:
-            pass
+            import traceback; traceback.print_exc()
 
-        return jsonify({
+        hard_violation_count = (evaluation or {}).get('hardViolationCount', len(cross_violations))
+        flat_violations = [
+            v for viols in (evaluation or {}).get('violationsBySubject', {}).values()
+            for v in viols
+        ]
+        result_status = (evaluation or {}).get('resultStatus') or (
+            'INVALID_RESULT' if hard_violation_count else
+            'PARTIAL_VALID' if incomplete_count else 'COMPLETE_VALID'
+        )
+
+        return _safe_json_response({
             'success':          True,
+            'result_status':    result_status,
             'schedule_data':    schedule_data,
-            'conflict_count':   0,
-            'violations':       [],
+            'conflict_count':   hard_violation_count,
+            'violations':       flat_violations,
+            'incomplete_count': incomplete_count,
+            'completion_rate':  completion_rate,
+            'filled_rate':      100.0,
             'evaluation':       evaluation,
             'overload_notices': overload_notices,
             'retrieved_from': {
-                'source':   'official',
-                'version':  max_pub_v,
-                'status':   'Published',
+                'source':   'historical',
+                'status':   'Historical',
                 'acadYear': prev_ay_id,
                 'ay_label': prev_ay_label or prev_ay_id,
                 'term':     term_label,
@@ -27137,7 +29197,22 @@ def api_retrieve_previous_schedule():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # A DB-driver failure is distinct from a genuinely unexpected bug — see
+        # requirement 7's DATABASE_ERROR/PARSE_ERROR/SERIALIZATION_ERROR split.
+        # This is the last-resort catch-all; the exception is always logged
+        # server-side above, but never surfaced as the primary user-facing
+        # 'message' (only a stable error_code + a plain sentence are).
+        is_db_error = isinstance(e, psycopg2.Error)
+        return jsonify({
+            'success': False,
+            'error_code': 'RETRIEVE_PREVIOUS_DATABASE_ERROR' if is_db_error
+                           else 'RETRIEVE_PREVIOUS_UNEXPECTED_ERROR',
+            'message': (
+                'A database error occurred while retrieving the previous schedule.'
+                if is_db_error else
+                'An unexpected error occurred while retrieving the previous schedule.'
+            ),
+        }), 500
 
 
 @app.route('/api/schedule/save-draft', methods=['POST'])
@@ -27201,15 +29276,16 @@ def api_save_draft():
         all_codes_to_archive = list(set(submitted_codes + [s.upper() for s in deleted_subjects]))
 
         # ── Pre-save CSP validation — block if any hard constraint is violated ──
-        # HC6 (day-pairing) is enforced here too: it only fires when ≥ 2 days are
-        # present for the same subject, so saving a single slice still passes.
+        # HC7 (Required Day Pairing) is enforced here too. HC6 is Standard
+        # Time-Slot Compliance in the frozen HC1-HC17 inventory.
         _pre_rehydrated = _rehydrate_schedule(list(schedule_list))
         _fmap_pre = _load_faculty_map()
         if _pre_rehydrated:
-            from scheduler import CSPValidator as _CSP
-            from database import load_scheduler_config as _lsc_pre
-            _hc_cfg_pre = _lsc_pre()
-            _viols_pre = _CSP(config=_hc_cfg_pre).validate(_pre_rehydrated, _fmap_pre)
+            # Phase A2 centralization: routed through ConstraintService instead
+            # of instantiating CSPValidator directly (same call shape/result).
+            _viols_pre = ConstraintService.with_current_policy().validate_schedule(
+                _pre_rehydrated, _fmap_pre
+            ).violations
             # HC_SPEC is advisory-only (warning severity) — skip it so specialization
             # mismatches don't block saves; the Academic Head can still approve.
             _hard_viols = [v for v in _viols_pre if v.get('severity') != 'warning']
@@ -27256,6 +29332,19 @@ def api_save_draft():
             }), 400
 
         # ── Server-side section conflict check ──
+        # Phase A2 audit note (NOT removed -- see the Phase A2 report):
+        #   - The pairwise loop below (`for i, a in enumerate(incoming): ...`)
+        #     duplicates HC11 exactly -- CSPValidator's _check_section_overlaps
+        #     has no section/subject-identity filter either, so it already
+        #     flags this same "any two overlapping incoming entries" case via
+        #     the ConstraintService.validate_schedule(...) call above.
+        #   - The DB-lookup loop after it (`if incoming: cur.execute(...)`) is
+        #     NOT redundant: it checks the incoming batch against OTHER
+        #     already-saved Published/Draft sessions for this program/year/
+        #     semester, which the CSPValidator call above never saw (it was
+        #     only given `_pre_rehydrated`, the incoming batch alone -- not
+        #     merged with existing carry-forward sessions). Removing this
+        #     block would silently drop that cross-session check. Left as-is.
         rehydrated = _rehydrate_schedule(list(schedule_list))
         # Pre-load all timeslots once to avoid per-slot DB queries
         cur.execute("SELECT timeid, CAST(timevalue AS TEXT) AS tv FROM public.timeslot")
@@ -27556,10 +29645,13 @@ def api_validate_schedule():
         data        = request.json or {}
         rehydrated  = _rehydrate_schedule(list(data.get('schedule_data', [])))
         faculty_map = _load_faculty_map()
-        from scheduler import CSPValidator
-        from database import load_scheduler_config as _lsc
-        _hc_cfg    = _lsc()
-        all_viols  = CSPValidator(config=_hc_cfg).validate(rehydrated, faculty_map)
+        # Phase A2 centralization: Manual Editor's authoritative backend call
+        # now routes through ConstraintService instead of instantiating
+        # CSPValidator directly. Same config source (SchedulingPolicy.load()
+        # == load_scheduler_config()), same call shape, same return list.
+        all_viols  = ConstraintService.with_current_policy().validate_schedule(
+            rehydrated, faculty_map
+        ).violations
         # HC_SPEC is warning-only — separate it so the client can show an advisory without blocking
         hard_viols = [v for v in all_viols if v.get('severity') != 'warning']
         warn_viols = [v for v in all_viols if v.get('severity') == 'warning']
@@ -27661,7 +29753,7 @@ def api_approve_schedule():
             except (ValueError, TypeError): _ctx_section_id = None
 
         # ── Server-side CSP guard ── block approval if any hard constraint is violated
-        from scheduler import CSPValidator
+        # (CSPValidator is reached via ConstraintService below, not imported directly here.)
         sched_data  = _rehydrate_schedule(list(data.get('schedule_data', [])))
         faculty_map = _load_faculty_map()
 
@@ -27677,8 +29769,14 @@ def api_approve_schedule():
         _hc_cfg = _load_hc_cfg()
         publish_gate_on = bool(_hc_cfg.get('hc_publish_gate_enabled', 1))
 
-        # Intra-payload check: HC1–HC10 among the submitted sessions themselves
-        all_viols  = CSPValidator(config=_hc_cfg).validate(sched_data, faculty_map)
+        # Intra-payload check: authoritative CSP validation for the submitted sessions.
+        # The final inventory is HC1-HC17; HC15 is cross-schedule/distributed, while
+        # HC16/HC17 are decision/folded rules rather than standalone emitters.
+        # Phase A centralization: routed through ConstraintService instead of
+        # instantiating CSPValidator directly (same _hc_cfg, same call shape).
+        all_viols  = ConstraintService(SchedulingPolicy(_hc_cfg)).validate_schedule(
+            sched_data, faculty_map
+        ).violations
         violations = [v for v in all_viols if v.get('severity') != 'warning']
 
         if publish_gate_on and violations:
@@ -27808,12 +29906,23 @@ def api_approve_schedule():
             _build_published_baseline(cur, program, year_level, sem_id, submitted_codes, sched_data)
         )
 
-        # Cross-session HC9: check new sessions against already-published existing sessions
+        # HC15 cross-schedule validation: check new sessions against already-published existing sessions
         # (the intra-payload check above only compares new sessions with each other).
         # Generator entries carry days_list with ALL days (e.g. ['Monday','Thursday']) so we
         # check EVERY day, not just the primary 'day' field, to catch Thursday-only conflicts.
         if publish_gate_on:
             from scheduler import format_time_12h as _fmt12h
+            # Same authoritative merge decision (final HC16) as the generate-time
+            # cross-check (_check_cross_schedule_conflicts) and CSPValidator's own
+            # intra-payload HC11 -- Phase B checkpoint 5: the ad-hoc "same subject
+            # + same faculty" exemption this block used before didn't consult the
+            # configured merge scope/pairs (so it silently allowed an out-of-scope
+            # same-subject/same-faculty double-booking through) and didn't cover an
+            # NSTP/OU merge sharing different faculty (so it could wrongly BLOCK a
+            # legitimate one). Routed through constraints.hard_constraints (never
+            # instantiate scheduler.CSPValidator here directly) so this route
+            # stays centralized.
+            from constraints import hard_constraints as _hc_adapter
             existing_for_conflict = other_sessions + published_baseline
             cross_violations = []
             seen_cross_keys = set()
@@ -27848,8 +29957,14 @@ def api_approve_schedule():
                             sc_ex  = (ex.get('subjectcode') or ex.get('subject_code') or '?').upper()
                             fac_new = str(new.get('faculty_id') or new.get('employeenumber') or '')
                             fac_ex  = str(ex.get('employeenumber') or ex.get('faculty_id') or '')
-                            # Merge class: same subject + same faculty in same room/time is allowed
-                            if sc_new == sc_ex and fac_new and fac_new == fac_ex:
+                            # Merge class exemption (final HC16) -- same authoritative
+                            # decision as is_valid_merge everywhere else, not a hand-rolled
+                            # same-subject/same-faculty check.
+                            if _hc_adapter.is_valid_merge(
+                                {'subject_code': sc_new, 'faculty_id': fac_new},
+                                {'subject_code': sc_ex, 'faculty_id': fac_ex},
+                                config=_hc_cfg,
+                            ):
                                 continue
                             vkey = (r_new, day_new, str(st_new), sc_new, sc_ex)
                             if vkey in seen_cross_keys:
@@ -27857,8 +29972,8 @@ def api_approve_schedule():
                             seen_cross_keys.add(vkey)
                             room_label = new.get('room') or r_new
                             cross_violations.append({
-                                'rule':    'HC9',
-                                'type':    RULE_LABELS['HC9'],
+                                'rule':    'HC11',
+                                'type':    RULE_LABELS['HC11'],
                                 'subject': f'{sc_new} / {sc_ex}',
                                 'detail':  (
                                     f'Room {room_label} is already occupied on {day_new} '
@@ -29345,6 +31460,82 @@ def _run_startup_migrations():
         _cur.execute("ROLLBACK TO SAVEPOINT sm_hist_backfill")
         _c.commit()
         print(f'[startup migration] sm_hist_backfill: {_e}')
+
+    # First-login account setup wizard: forces a password change (and a
+    # contact-info / personal-info review) whenever an account was just
+    # created or password-reset with the PUP@{username} default password.
+    # account_setup_complete defaults TRUE so every pre-existing account is
+    # grandfathered in untouched — only accounts touched by account_reset_password
+    # (or an employee-import flow) going forward start the wizard.
+    _step('sm_account_setup', [
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_setup_complete BOOLEAN NOT NULL DEFAULT TRUE",
+    ])
+
+    # Profile picture + last login on the account. The image itself is a file in
+    # static/uploads/profile_photos/; profile_photo stores only its path. These
+    # used to be created lazily inside request handlers (login, /api/user/me,
+    # uploads) — now they're part of the schema.
+    _step('sm_account_profile_photo', [
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login    TIMESTAMP",
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)",
+    ])
+
+    # Self-service password change: once-per-month limit + emailed verification code
+    # (see password_change.py / migrations/2026-09-28_password_change_otp.sql).
+    _step('sm_password_change_otp', _pwchange.ENSURE_SCHEMA_SQL)
+
+    # Forgot Password (logged out): hashed one-time codes + reset windows, kept in
+    # the database so they survive restarts (see password_reset.py /
+    # migrations/2026-09-29_password_reset_requests.sql).
+    _step('sm_password_reset_requests', _pwreset.ENSURE_SCHEMA_SQL)
+    import mailer as _mailer
+    if not _mailer.configured(Config):
+        print("[email] WARNING: no email service is configured — Forgot Password and Profile Settings "
+              "verification codes cannot be sent. Set BREVO_API_KEY + EMAIL_FROM, RESEND_API_KEY + "
+              "EMAIL_FROM, or SMTP_HOST/SMTP_USER/SMTP_PASSWORD/SMTP_FROM (see .env.example).", flush=True)
+    else:
+        print(f"[email] sending verification codes via {_mailer.provider(Config)}", flush=True)
+
+    _step('sm_correction_requests', [
+        """
+        CREATE TABLE IF NOT EXISTS public.personal_info_correction_request (
+            requestid       INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            username        VARCHAR(50) NOT NULL,
+            employeenumber  VARCHAR(30),
+            field_name      VARCHAR(30) NOT NULL,
+            current_value   VARCHAR(255),
+            proposed_value  VARCHAR(255) NOT NULL,
+            remarks         TEXT,
+            status          VARCHAR(20) NOT NULL DEFAULT 'Pending'
+                            CHECK (status IN ('Pending','Approved','Rejected')),
+            decided_by      VARCHAR(50),
+            decided_at      TIMESTAMP,
+            admin_remarks   TEXT,
+            created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ])
+
+    # Email verification (SMTP-based) was tried and then removed -- the account
+    # setup wizard's email field is just a plain required field again. Drops the
+    # columns that feature added so no unused verification state lingers.
+    _step('sm_email_verification_removed', [
+        "ALTER TABLE faculty DROP COLUMN IF EXISTS email_verified",
+        "ALTER TABLE faculty DROP COLUMN IF EXISTS pending_email",
+        "ALTER TABLE faculty DROP COLUMN IF EXISTS email_verify_token_hash",
+        "ALTER TABLE faculty DROP COLUMN IF EXISTS email_verify_expires_at",
+    ])
+
+    # Faculty name suffix (Jr./Sr./III/etc.) -- was previously folded into the
+    # "Name" display with no dedicated column. batch_id groups the individual
+    # field rows a faculty member submits together in one correction request
+    # (e.g. correcting Last Name + Specialization at once) purely for display;
+    # each row is still approved/rejected independently.
+    _step('sm_correction_v2', [
+        "ALTER TABLE faculty ADD COLUMN IF NOT EXISTS suffix VARCHAR(20)",
+        "ALTER TABLE personal_info_correction_request ADD COLUMN IF NOT EXISTS batch_id VARCHAR(40)",
+    ])
 
     _cur.close(); _c.close()
 

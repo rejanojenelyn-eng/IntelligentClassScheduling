@@ -1,0 +1,14 @@
+{% extends "setup/_setup_layout.html" %}
+{% block content %}
+    <p class="step-sub">Add your contact number.</p>
+    <p class="step-hint">Optional — you can skip this and add it later.</p>
+    <div class="form-group">
+        <label>CURRENT CONTACT NUMBER</label>
+        <input type="text" value="{{ current_contact or 'Not on file yet' }}" readonly>
+    </div>
+    <div class="form-group">
+        <label for="setupContact">NEW CONTACT NUMBER</label>
+        <input type="tel" id="setupContact" name="contact_number" value="{{ draft_contact }}"
+               placeholder="{{ 'Leave blank to keep your current number' if current_contact else '09XXXXXXXXX' }}">
+    </div>
+{% endblock %}

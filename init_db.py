@@ -1,14 +1,20 @@
 # init_db.py
 
-import os
 from werkzeug.security import generate_password_hash
-from database import get_db_connection # Assuming your db connection function is in a file named database.py
+from database import get_db_connection
 
 def initialize_admin_user():
     """Checks for and creates the initial admin user if one doesn't exist."""
     
     conn = get_db_connection()
     cur = conn.cursor()
+
+    # Self-heal: this script can run against a database built straight from
+    # schema.sql, before app.py has ever started (app.py normally adds these
+    # columns itself on startup).
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_setup_complete BOOLEAN NOT NULL DEFAULT TRUE")
+    conn.commit()
 
     # Check if the 'admin' user already exists
     cur.execute("SELECT Username FROM Accounts WHERE Username = 'admin'")
@@ -27,8 +33,8 @@ def initialize_admin_user():
     try:
         cur.execute(
             """
-            INSERT INTO Accounts (Username, PasswordHash, Role, IsActive) 
-            VALUES (%s, %s, 'Admin', TRUE)
+            INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, must_change_password, account_setup_complete)
+            VALUES (%s, %s, 'Admin', TRUE, TRUE, FALSE)
             """,
             ('admin', hashed_password)
         )

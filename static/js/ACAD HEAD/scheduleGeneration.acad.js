@@ -23,20 +23,26 @@ document.addEventListener('DOMContentLoaded', () => {
     let _leavingIntentionally = false;
 
     // ── Selective regeneration: which rows are checked, and which of their
-    // fields are marked "preserve" (see renderTable() and btnRegenerate below).
+    // three scheduler-controlled fields (faculty = Instructor, schedule =
+    // Time/Days, room = Room) are LOCKED (see renderTable() and btnRegenerate
+    // below). A newly checked row starts with all three UNLOCKED (regenerate
+    // the whole assignment); the user locks only the values to preserve.
     // Matches the ORIGINAL table grouping (subject + faculty) rather than
     // splitting a subject's Lecture/Lab into separate rows, so a subject
     // taught by one instructor still shows as one row with one checkbox —
-    // that checkbox's selected/preserve state is shared by every underlying
+    // that checkbox's selected/lock state is shared by every underlying
     // gene (Lecture and/or Lab) it represents when the "Re-generate selected"
     // payload is built. Trade-off: if a regenerate changes the instructor for
     // a subject that was left unchecked, its key changes too, so a *previous*
     // selection on that subject (if any) won't carry forward — acceptable,
     // since an unchecked row is meant to stay untouched anyway.
-    const rowSelectionState = new Map(); // rowKey -> { selected, preserve: {faculty, room, schedule} }
+    const rowSelectionState = new Map(); // rowKey -> { selected, locks: {faculty, schedule, room} }
     function rowKeyOf(cls) {
         return (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
     }
+    const REGEN_FIELDS = ['faculty', 'schedule', 'room'];
+    const allLocked   = () => ({ faculty: true,  schedule: true,  room: true  });
+    const allUnlocked = () => ({ faculty: false, schedule: false, room: false });
 
     const acadYear      = document.getElementById('acadYear');
     const term          = document.getElementById('term');
@@ -242,12 +248,12 @@ document.addEventListener('DOMContentLoaded', () => {
             curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
             try {
                 const params = new URLSearchParams({ program: prog, year_level: yl });
-                if (ay) params.set('acad_year', ay);
-                const res  = await fetch(`/api/curriculum-by-year?${params}`);
+                if (ay) params.set('ay_id', ay);
+                const res  = await fetch(`/api/get_curriculum?${params}`);
                 const data = await res.json();
-                if (data.curriculum) {
-                    curriculum.value = data.curriculum;
-                    curriculumText.textContent = `CY ${data.curriculum}`;
+                if (data.success && data.curriculum_year) {
+                    curriculum.value = data.curriculum_year;
+                    curriculumText.textContent = `CY ${data.curriculum_year}`;
                 } else {
                     curriculumText.textContent = "No curriculum found";
                     curriculum.value = "";
@@ -504,14 +510,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // (e.g. "View Partial Schedule" / "Discard Results" for type 'partial')
     // without touching any existing call site — both default to the original
     // "OK"/"Cancel" text so every prior showInfo(...) call keeps working as-is.
+    //
+    // opts.tertiaryLabel opts a caller into a THREE-button dialog (e.g. "Try
+    // Again" / "Generate New Schedule" / "Cancel" for a server error, where a
+    // plain OK would be wrong because the dialog is genuinely asking the user
+    // to choose between distinct actions). When set, the promise resolves to
+    // one of the strings 'primary' | 'secondary' | 'cancel' instead of a
+    // boolean — every existing 2-button call site never sets this option, so
+    // it keeps resolving true/false exactly as before.
     function showInfo(title, message, type = 'info', opts = {}) {
         return new Promise(resolve => {
-            const modal    = document.getElementById('infoModal');
-            const icon     = document.getElementById('infoModalIcon');
-            const titleEl  = document.getElementById('infoModalTitle');
-            const msgEl    = document.getElementById('infoModalMessage');
+            const modal      = document.getElementById('infoModal');
+            const icon       = document.getElementById('infoModalIcon');
+            const titleEl    = document.getElementById('infoModalTitle');
+            const msgEl      = document.getElementById('infoModalMessage');
             const confirmBtn = document.getElementById('infoModalConfirmBtn');
             const cancelBtn  = document.getElementById('infoModalCancelBtn');
+            const tertiaryBtn = document.getElementById('infoModalTertiaryBtn');
 
             titleEl.textContent = title;
             msgEl.innerHTML     = message;
@@ -533,6 +548,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             modal.classList.remove('hidden');
+
+            if (opts.tertiaryLabel && tertiaryBtn) {
+                tertiaryBtn.textContent = opts.tertiaryLabel;
+                tertiaryBtn.classList.remove('hidden');
+                cancelBtn.classList.remove('hidden');
+                confirmBtn.onclick  = () => { modal.classList.add('hidden'); resolve('primary'); };
+                tertiaryBtn.onclick = () => { modal.classList.add('hidden'); resolve('secondary'); };
+                cancelBtn.onclick   = () => { modal.classList.add('hidden'); resolve('cancel'); };
+                return;
+            }
+            if (tertiaryBtn) tertiaryBtn.classList.add('hidden');
 
             if (type === 'confirm' || type === 'partial') {
                 cancelBtn.classList.remove('hidden');
@@ -641,6 +667,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     rooms:        [],
                     incomplete:        false,
                     incompleteReasons: [],
+                    timeUnresolved:        false,
+                    timeUnresolvedReasons: [],
                 };
             }
             const g = groups[key];
@@ -661,6 +689,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = cls.time || '';
             if (t && !g.times.includes(t)) g.times.push(t);
 
+            // Requirement I: never present an ambiguous bare time (e.g.
+            // "3:00-6:00", no AM/PM) as if it were a normal, trustworthy value —
+            // the backend now marks any value it could not resolve unambiguously
+            // via time_resolved/time_unresolved_reason instead of silently
+            // guessing, so surface that here rather than rendering it plain.
+            if (cls.time_resolved === false) {
+                g.timeUnresolved = true;
+                const reason = cls.time_unresolved_reason || 'unresolved';
+                if (!g.timeUnresolvedReasons.includes(reason)) g.timeUnresolvedReasons.push(reason);
+            }
+
             // #12: split on '/', ',', or whitespace so both "MON/THU" and "MON THU" are handled
             (cls.days || '').split(/[\/,\s]+/).filter(Boolean).forEach(d => {
                 const day = d.trim();
@@ -679,31 +718,68 @@ document.addEventListener('DOMContentLoaded', () => {
         tbody.innerHTML = entries.map((g) => {
             const state = rowSelectionState.get(g.rowKey);
             const sel   = !!(state && state.selected);
-            const pres  = (state && state.preserve) || {};
-            // Only a checked (selected-for-regeneration) row shows its per-field
-            // "preserve this value" checkboxes — an unchecked row is already
-            // fully preserved as a whole, so field-level checkboxes on it would
-            // be meaningless.
-            const preserveBox = (field) => sel ? `
-                <label class="preserve-select-wrap" title="Preserve this value during regeneration">
-                    <input type="checkbox" class="preserve-select" data-row-key="${g.rowKey}" data-field="${field}" ${pres[field] ? 'checked' : ''}>
-                    Preserve
-                </label>` : '';
-            // Value + its "Preserve" checkbox sit side by side on one line
-            // (not stacked) via .cell-with-preserve — see scheduleGeneration.css.
+            const locks = (state && state.locks) || allUnlocked();
+            // Only a checked (selected-for-regeneration) row shows its lock
+            // icons — an unchecked row is fully protected as a whole, so a
+            // per-field control on it would be meaningless. Closed lock =
+            // keep this value; open lock = the scheduler may regenerate it.
+            const FIELD_LABEL = { faculty: 'Instructor', schedule: 'Time/Days', room: 'Room' };
+            const lockBtn = (field) => {
+                if (!sel) return '';
+                const locked = !!locks[field];
+                const tip = `${FIELD_LABEL[field]} ${locked ? 'locked — will be kept' : 'unlocked — may be regenerated'} (click to toggle)`;
+                return `<button type="button" class="regen-lock ${locked ? 'is-locked' : 'is-unlocked'}"
+                            data-row-key="${g.rowKey}" data-field="${field}"
+                            aria-pressed="${locked}" aria-label="${tip}" title="${tip}">
+                            <i class="fas ${locked ? 'fa-lock' : 'fa-lock-open'}"></i>
+                        </button>`;
+            };
+            // Value + its lock icon sit side by side on one line (not stacked)
+            // via .cell-with-preserve — see scheduleGeneration.css.
             const cellWithPreserve = (valueHtml, field) => `
                 <div class="cell-with-preserve">
-                    <span>${valueHtml}</span>${preserveBox(field)}
+                    <span>${valueHtml}</span>${lockBtn(field)}
                 </div>`;
 
             const violations  = violBySubject[g.subject_code] || [];
             const hasConflict  = violations.length > 0;
-            const conflictTip  = hasConflict
-                ? violations.map(v => (typeof v === 'string') ? v : (v.detail || v.rule || 'Conflict detected')).join(' | ')
-                : '';
+            const violText = (v) => (typeof v === 'string') ? v : (v.detail || v.rule_name || v.rule || 'Conflict detected');
+
+            // Place each violation's indicator on the cell(s) it actually affects
+            // (per its affected_components — e.g. a room conflict marks the Room
+            // cell, a faculty conflict marks Instructor) instead of defaulting
+            // every violation type onto the Instructor column. A violation with
+            // no affected_components (older/unrecognized shape) falls back to the
+            // generic row-level flag, so nothing is silently dropped.
+            const COMPONENT_TO_CELL = {
+                instructor: 'instructor', faculty: 'instructor',
+                room: 'room', section: 'time', day: 'days', time: 'time',
+            };
+            const byCell = { instructor: [], room: [], time: [], days: [] };
+            const rowLevelOnly = [];
+            violations.forEach(v => {
+                const comps = (v && typeof v === 'object' && Array.isArray(v.affected_components))
+                    ? v.affected_components : null;
+                const cells = comps ? new Set(comps.map(c => COMPONENT_TO_CELL[c]).filter(Boolean)) : null;
+                if (!cells || !cells.size) { rowLevelOnly.push(v); return; }
+                cells.forEach(cell => byCell[cell].push(v));
+            });
+
+            // One icon per cell even when several violations affect it — the
+            // tooltip/aria-label lists all of them, joined, rather than stacking
+            // multiple icons in the same cell.
+            const cellFlag = (cellViolations) => {
+                if (!cellViolations.length) return '';
+                const tip = cellViolations.map(violText).join(' | ').replace(/"/g, '&quot;');
+                return `<span class="cell-conflict-flag" role="img" tabindex="0" aria-label="Conflict: ${tip}" title="${tip}">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </span>`;
+            };
+
             // role="img" + aria-label + title makes this reachable by keyboard (tabindex),
             // not just mouse hover, per the panel's accessibility requirement.
-            const conflictFlag = hasConflict ? `
+            const conflictTip  = rowLevelOnly.length ? rowLevelOnly.map(violText).join(' | ') : '';
+            const conflictFlag = rowLevelOnly.length ? `
                 <span class="row-conflict-flag" role="img" tabindex="0" aria-label="Conflict: ${conflictTip.replace(/"/g, '&quot;')}" title="${conflictTip.replace(/"/g, '&quot;')}">
                     <i class="fas fa-exclamation-triangle"></i>
                 </span>` : '';
@@ -715,19 +791,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 </span>` : '';
 
             return `
-            <tr class="${hasConflict ? 'row-conflict' : ''} ${g.incomplete ? 'row-incomplete' : ''}">
+            <tr class="${hasConflict ? 'row-conflict' : ''} ${g.incomplete ? 'row-incomplete' : ''} ${sel ? 'row-selected' : ''}">
                 <td class="td-check"><input type="checkbox" class="row-select" data-row-key="${g.rowKey}" ${sel ? 'checked' : ''}></td>
-                <td class="td-instructor">${conflictFlag}${incompleteFlag}${cellWithPreserve(g.instructor, 'faculty')}</td>
+                <td class="td-instructor">${conflictFlag}${incompleteFlag}${cellFlag(byCell.instructor)}${cellWithPreserve(g.instructor, 'faculty')}</td>
                 <td class="td-code">${g.subject_code}</td>
                 <td class="td-desc">${g.description}</td>
                 <td class="td-num">${g.lec_hours}</td>
                 <td class="td-num">${g.lab_hours}</td>
                 <td class="td-num">${g.credit_units}</td>
                 <td class="td-course">${g.course}</td>
-                <td class="td-time">${cellWithPreserve(g.times.map(t => `<span class="time-line">${t}</span>`).join(''), 'schedule')}</td>
+                <td class="td-time">${cellFlag(byCell.time)}${g.timeUnresolved ? `
+                    <span class="cell-conflict-flag" role="img" tabindex="0" aria-label="Time could not be resolved unambiguously: ${g.timeUnresolvedReasons.join(', ').replace(/"/g, '&quot;')}" title="Time could not be resolved unambiguously: ${g.timeUnresolvedReasons.join(', ').replace(/"/g, '&quot;')}">
+                        <i class="fas fa-circle-question"></i>
+                    </span>` : ''}${cellWithPreserve(g.times.map(t => `<span class="time-line">${t}</span>`).join(''), 'schedule')}</td>
                 <td class="td-num">${g.lec_hours + g.lab_hours}</td>
-                <td class="td-days">${_sortDays(g.days_set).join(' / ')}</td>
-                <td class="td-room">${cellWithPreserve(g.rooms.join('<br>'), 'room')}</td>
+                <td class="td-days">${cellFlag(byCell.days)}${_sortDays(g.days_set).join(' / ')}</td>
+                <td class="td-room">${cellFlag(byCell.room)}${cellWithPreserve(g.rooms.join('<br>'), 'room')}</td>
             </tr>`;
         }).join('');
 
@@ -775,20 +854,25 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('scheduleTableBody').addEventListener('change', (e) => {
         const t = e.target;
         if (t.classList.contains('row-select')) {
-            const key   = t.dataset.rowKey;
-            const state = rowSelectionState.get(key) || { selected: false, preserve: {} };
-            state.selected = t.checked;
-            if (!state.selected) state.preserve = {}; // unchecking a row clears its field-level preserves too
-            rowSelectionState.set(key, state);
-            renderTable(currentScheduleData, sortSelect.value);
-        } else if (t.classList.contains('preserve-select')) {
-            const key   = t.dataset.rowKey;
-            const field = t.dataset.field;
-            const state = rowSelectionState.get(key) || { selected: true, preserve: {} };
-            state.preserve[field] = t.checked;
-            rowSelectionState.set(key, state);
+            const key = t.dataset.rowKey;
+            // Checking a row starts it fully unlocked (regenerate the whole
+            // assignment); unchecking drops its temporary lock state entirely, so
+            // a re-check starts unlocked again. Neither touches the row's actual
+            // assignment.
+            if (t.checked) rowSelectionState.set(key, { selected: true, locks: allUnlocked() });
+            else rowSelectionState.delete(key);
             renderTable(currentScheduleData, sortSelect.value);
         }
+    });
+
+    document.getElementById('scheduleTableBody').addEventListener('click', (e) => {
+        const btn = e.target.closest('.regen-lock');
+        if (!btn) return;
+        const state = rowSelectionState.get(btn.dataset.rowKey);
+        if (!state || !state.selected) return;
+        const field = btn.dataset.field;
+        state.locks[field] = !state.locks[field];
+        renderTable(currentScheduleData, sortSelect.value);
     });
 
     const chkSelectAllRows = document.getElementById('chkSelectAllRows');
@@ -797,10 +881,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const checked = e.target.checked;
             const keys = new Set(currentScheduleData.map(rowKeyOf));
             keys.forEach(key => {
-                const state = rowSelectionState.get(key) || { selected: false, preserve: {} };
-                state.selected = checked;
-                if (!checked) state.preserve = {};
-                rowSelectionState.set(key, state);
+                const state = rowSelectionState.get(key);
+                if (!checked) rowSelectionState.delete(key);
+                else if (!(state && state.selected)) rowSelectionState.set(key, { selected: true, locks: allUnlocked() });
             });
             renderTable(currentScheduleData, sortSelect.value);
         });
@@ -965,6 +1048,18 @@ document.addEventListener('DOMContentLoaded', () => {
             `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} — YEAR ${ctx.yearLevel || '?'}${sectionPart} | ${termName} | AY ${ctx.acadYear || '—'}`;
     }
 
+    // Small top-right toast (reuses #successToast); kind 'warn' = amber variant.
+    function _showToast(msg, kind) {
+        const toast = document.getElementById('successToast');
+        if (!toast) return;
+        const icon = kind === 'warn' ? 'fa-exclamation-circle' : 'fa-check-circle';
+        toast.innerHTML = `<i class="fas ${icon}"></i> ${msg}`;
+        toast.classList.toggle('toast-warn', kind === 'warn');
+        toast.classList.remove('hidden');
+        clearTimeout(_showToast._t);
+        _showToast._t = setTimeout(() => toast.classList.add('hidden'), 4000);
+    }
+
     function applyScheduleResult(data, isRetrieve) {
         currentScheduleData = data.schedule_data || [];
         currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
@@ -1056,18 +1151,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        const toast = document.getElementById('successToast');
-        if (isRetrieve && data.retrieved_from) {
-            const rf = data.retrieved_from;
-            const msg = rf.source === 'historical'
-                ? `Previous schedule retrieved from historical data — ${rf.ay_label} ${rf.term}`
-                : `Previous official schedule retrieved — ${rf.ay_label} ${rf.term}`;
-            toast.innerHTML = `<i class="fas fa-check-circle"></i> ${msg}`;
-        } else {
-            toast.innerHTML = '<i class="fas fa-check-circle"></i> Schedule Generated Successfully!';
-        }
-        toast.classList.remove('hidden');
-        setTimeout(() => toast.classList.add('hidden'), 4000);
+        // historical_data is the expected (only) source of Retrieve Previous, so
+        // a successful retrieval is a plain success — no fallback warning.
+        _showToast(isRetrieve && data.retrieved_from
+            ? `Previous AY schedule retrieved from ${data.retrieved_from.ay_label}.`
+            : 'Schedule Generated Successfully!');
 
         if (currentEvaluation) {
             _renderEvaluationResult(currentEvaluation);
@@ -1318,12 +1406,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnSelectIncomplete) {
         btnSelectIncomplete.addEventListener('click', () => {
-            // Check every incomplete row and preserve NOTHING on it (empty
-            // preserve set == full regeneration of that row), matching the
-            // existing "checked row is locked only on ticked fields" semantics.
+            // Check every incomplete row with all three fields UNLOCKED (full
+            // regeneration of that row) — the same default as a manual check.
             currentScheduleData.forEach(cls => {
                 if (cls.incomplete) {
-                    rowSelectionState.set(rowKeyOf(cls), { selected: true, preserve: {} });
+                    rowSelectionState.set(rowKeyOf(cls), { selected: true, locks: allUnlocked() });
                 }
             });
             renderTable(currentScheduleData, sortSelect.value);
@@ -1371,6 +1458,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         yearLevel: ctx.yearLevel,
                         term:      ctx.term,
                         acadYear:  ctx.acadYear,
+                        section:   ctx.section,
                     }),
                 });
                 const data = await res.json();
@@ -1378,27 +1466,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (data.success) {
                     applyScheduleResult(data, true);
-                    // #10: Show notice if any overloaded historical faculty were replaced with TBA
+                    // #10: current-term load check — the retrieved faculty are kept
+                    // and flagged, so the Academic Head decides what to change.
                     const notices = data.overload_notices || [];
                     if (notices.length > 0) {
                         await showInfo(
                             'Faculty Load Notice',
-                            'Some faculty from the previous schedule are already at their load limit '
-                            + 'for this term and have been replaced with <strong>TBA</strong>:<br><br>'
+                            'Some faculty from the previous schedule would exceed their load limit '
+                            + 'for this term. Select those rows and unlock <strong>Instructor</strong> '
+                            + 'to reassign them:<br><br>'
                             + notices.map(n => `• ${n}`).join('<br>'),
                             'info'
                         );
                     }
                 } else {
-                    const proceed = await showInfo(
-                        'No Previous Schedule Found',
-                        (data.error || 'No saved schedule found for this selection.')
-                        + '<br><br>Would you like to <strong>generate a new schedule</strong> instead?',
-                        'confirm'
-                    );
-                    if (proceed) {
-                        useHistorical.checked = false;
-                        btnGenerate.click();
+                    // NO_PREVIOUS_SCHEDULE (the query ran fine, nothing eligible
+                    // exists) is a completely different situation from a server/
+                    // serialization/parse/database failure (data may well have
+                    // been found — it just couldn't be prepared or returned) —
+                    // conflating them as one generic "not found" dialog is
+                    // exactly the bug this fixes: it used to show the raw
+                    // Python exception text as if it meant "no schedule exists."
+                    const code = data.error_code || 'NO_PREVIOUS_SCHEDULE';
+                    if (code === 'NO_PREVIOUS_SCHEDULE') {
+                        const proceed = await showInfo(
+                            'No Previous Schedule Available',
+                            data.error || 'No previous AY schedule was found for the selected program, '
+                            + 'year level, semester, and section.',
+                            'confirm',
+                            { confirmLabel: 'Generate New Schedule', cancelLabel: 'Stay on Page' }
+                        );
+                        if (proceed) {
+                            useHistorical.checked = false;
+                            btnGenerate.click();
+                        }
+                    } else {
+                        // RETRIEVE_PREVIOUS_SERIALIZATION_ERROR / _PARSE_ERROR /
+                        // _DATABASE_ERROR / _UNEXPECTED_ERROR — a real server-side
+                        // problem, not a "nothing to retrieve" outcome.
+                        const choice = await showInfo(
+                            'Unable to Load Previous Schedule',
+                            'The previous schedule could not be prepared for display. '
+                            + 'Please try again or generate a new schedule.',
+                            'confirm',
+                            {
+                                confirmLabel:  'Try Again',
+                                tertiaryLabel: 'Generate New Schedule',
+                                cancelLabel:   'Cancel',
+                            }
+                        );
+                        if (choice === 'primary') {
+                            btnGenerate.click(); // retry the same (retrieve) action
+                        } else if (choice === 'secondary') {
+                            useHistorical.checked = false;
+                            btnGenerate.click();
+                        }
+                        // 'cancel' -> do nothing, stay on page
                     }
                 }
             } else {
@@ -1463,23 +1586,33 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Build the lock list: an unchecked row is fully preserved (faculty +
-        // room + schedule all locked, exactly as it currently is); a checked
-        // row is locked only on the fields whose own "Preserve" box is ticked.
+        // A checked row with Instructor, Time/Days and Room all locked has
+        // nothing to regenerate; if that's every checked row, stop here.
+        const hasUnlocked = (k) => {
+            const s = rowSelectionState.get(k);
+            return !!(s && s.selected && REGEN_FIELDS.some(f => !s.locks[f]));
+        };
+        if (!selectedKeys.some(hasUnlocked)) {
+            _showToast('Unlock at least one field to regenerate.', 'warn');
+            return;
+        }
+
+        // Build the lock list for EVERY row so the solver sees the whole
+        // schedule at once: an unchecked row (and a checked-but-fully-locked
+        // row) is sent fully locked, exactly as it currently is; a checked row
+        // with something unlocked carries its own per-field locks and
+        // selected:true so the server knows it is a mutable assignment.
         const locked_sessions = [];
         currentScheduleData.forEach(cls => {
             const key     = rowKeyOf(cls);
-            const state   = rowSelectionState.get(key);
-            const preserve = (state && state.selected)
-                ? (state.preserve || {})
-                : { faculty: true, room: true, schedule: true };
-            if (preserve.faculty || preserve.room || preserve.schedule) {
-                locked_sessions.push({
-                    row_key: key,
-                    lock: { faculty: !!preserve.faculty, room: !!preserve.room, schedule: !!preserve.schedule },
-                    ..._pluckGeneFields(cls),
-                });
-            }
+            const mutable = hasUnlocked(key);
+            const locks   = mutable ? rowSelectionState.get(key).locks : allLocked();
+            locked_sessions.push({
+                row_key:  key,
+                selected: mutable,
+                lock: { faculty: !!locks.faculty, room: !!locks.room, schedule: !!locks.schedule },
+                ..._pluckGeneFields(cls),
+            });
         });
 
         _generating = true;
@@ -1511,8 +1644,8 @@ document.addEventListener('DOMContentLoaded', () => {
             completeProgress();
 
             // Note: rowSelectionState is deliberately NOT cleared here (whether the
-            // result is complete, partial, or discarded), so checked rows/preserved
-            // fields stay visibly checked and the user can immediately chain
+            // result is complete, partial, or discarded), so checked rows and
+            // their locks stay visible and the user can immediately chain
             // another selective/targeted regenerate.
             await _handleGenerationResult(data, true);
         } catch (e) {

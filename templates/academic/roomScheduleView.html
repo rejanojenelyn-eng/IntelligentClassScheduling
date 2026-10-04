@@ -89,10 +89,15 @@
     .frs-bldg-tab.active { background: #800000; color: #fff; }
 
     /* ── Body ── */
+    /* Fixed (not min-) height so the room list and calendar grid below can
+       each scroll within their own bounded box instead of the whole page
+       growing with the schedule — keeps the header, tabs, and floor/room
+       selection visible no matter how many schedule entries there are. */
     .frs-body {
         display: flex;
         gap: 20px;
-        min-height: 520px;
+        height: 640px;
+        min-height: 0;
     }
 
     /* Left sidebar */
@@ -100,6 +105,7 @@
         flex: 0 0 140px;
         display: flex;
         flex-direction: column;
+        min-height: 0;
     }
     .frs-sidebar-label {
         font-size: 0.55rem;
@@ -121,7 +127,7 @@
         margin-bottom: 15px;
         background: #fff;
     }
-    .frs-room-list { flex: 1; overflow-y: auto; border: 1px solid #800000; border-radius: 6px; padding: 5px 0; background: #fff; }
+    .frs-room-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid #800000; border-radius: 6px; padding: 5px 0; background: #fff; }
     .frs-room-item {
         display: block;
         padding: 10px 15px;
@@ -145,6 +151,7 @@
     /* Calendar */
     .frs-cal-wrap {
         flex: 1;
+        min-height: 0;
         overflow-x: auto;
         display: flex;
         flex-direction: column;

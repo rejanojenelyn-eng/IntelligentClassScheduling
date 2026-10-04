@@ -47,7 +47,57 @@ document.addEventListener('DOMContentLoaded', function () {
         const saved = localStorage.getItem('currTab');
         if (saved === 'syllabi') switchCurrTab('syllabi');
     } catch(e) {}
+    _initCurrProgSearchDropdown();
 });
+
+// ── Assignments PROGRAM filter: typeable/searchable combo over the real
+//    #filterAssignProg select — mirrors the existing Specialization
+//    search-combo pattern (_initSpecSearchDropdown in employee.admin.js),
+//    copied and renamed the same way every other page reusing this
+//    pattern does. ──
+function _initCurrProgSearchDropdown() {
+    const wrapper     = document.getElementById('currProgSearchWrapper');
+    const trigger     = document.getElementById('currProgSearchTrigger');
+    const triggerText = document.getElementById('currProgSearchTriggerText');
+    const search      = document.getElementById('currProgSearchInput');
+    const list        = document.getElementById('currProgSearchList');
+    const hiddenSel   = document.getElementById('filterAssignProg');
+    if (!wrapper || !trigger || !list || !hiddenSel) return;
+
+    function openDropdown() {
+        wrapper.classList.add('open');
+        search.value = '';
+        filterOptions('');
+        search.focus();
+    }
+    function closeDropdown() { wrapper.classList.remove('open'); }
+    function filterOptions(q) {
+        list.querySelectorAll('.curr-prog-search-option').forEach(opt => {
+            const name = (opt.textContent || '').toLowerCase();
+            opt.style.display = (!q || name.includes(q)) ? '' : 'none';
+        });
+    }
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        wrapper.classList.contains('open') ? closeDropdown() : openDropdown();
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('input', function() { filterOptions(this.value.trim().toLowerCase()); });
+    list.addEventListener('click', e => {
+        const opt = e.target.closest('.curr-prog-search-option');
+        if (!opt) return;
+        const val = opt.dataset.value || '';
+        hiddenSel.value = val;
+        triggerText.textContent = opt.textContent || 'SELECT';
+        triggerText.title = opt.textContent || '';
+        closeDropdown();
+        hiddenSel.dispatchEvent(new Event('change'));
+    });
+    document.addEventListener('click', e => {
+        if (!wrapper.contains(e.target)) closeDropdown();
+    });
+}
 
 // ── Assignment table filter + sort ────────────────────────────────────────────
 function filterAssignments() {
@@ -92,28 +142,6 @@ function filterSyllabiByProgram(code) {
     const msg = document.getElementById('syllabiEmptyMsg');
     if (msg) msg.style.display = (!code || code === 'All' || anyVisible) ? 'none' : 'block';
 }
-
-function editAssignment(id, prog, curr, year, progName) {
-    document.getElementById('assignModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Assignment';
-    document.getElementById('assignPylId').value = id;
-    document.getElementById('hiddenProgramCode').value = prog;
-    document.getElementById('hiddenStartYear').value = year;
-    document.getElementById('assignStartYear').value = year;
-    document.getElementById('assignProgramCode').value = progName || prog;
-
-    const select = document.getElementById('assignCurriculumId');
-    select.querySelectorAll('option').forEach(opt => {
-        if (opt.value === "") return;
-        const match = opt.getAttribute('data-program') === prog;
-        opt.style.display = match ? 'block' : 'none';
-        opt.disabled = !match;
-    });
-
-    select.value = curr;
-    document.getElementById('assignModal').style.display = 'flex';
-}
-
-function closeAssignModal() { document.getElementById('assignModal').style.display = 'none'; }
 
 function handleProgramExport() { openCurrExportModal(); }
 function closeExportWarning() { document.getElementById('exportWarningModal').style.display = 'none'; }

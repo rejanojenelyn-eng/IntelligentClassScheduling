@@ -416,10 +416,8 @@ function _fcsDayAbbr(day) {
     return map[day] || day;
 }
 
-/* ── Export ── */
-function fcsExport() {
-    const prog = document.getElementById('view_prog').value;
-    const yl   = document.getElementById('view_yl').value;
-    if (!prog) { alert('Please select a program before exporting.'); return; }
-    window.location.href = `/api/export_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${FCS_ACTIVE_SEM}&ay=${encodeURIComponent(FCS_ACTIVE_AY)}`;
-}
+/* ── Export ──
+   EXPORT SCHEDULE opens the Academic Head's Class Schedule export dialog
+   (templates/_schedule_export_modal.html + static/js/schedule_export_modal.js),
+   pointed at /faculty/schedule/export[/count]: Academic Year and Semester are
+   the active term and cannot be changed; Published schedules only. */

@@ -325,3 +325,52 @@ async function executeExport() {
         _showExportToast('error', 'Export Failed', errors.join('; '));
     }
 }
+
+// ── Specialization: typeable/searchable combo over the real #specFilter
+//    select — mirrors the existing PROGRAM search-combo pattern
+//    (_fcsInitProgSearchDropdown in schedule.faculty.js), copied and
+//    renamed the same way every other page that reuses this pattern does. ──
+function _initSpecSearchDropdown() {
+    const wrapper     = document.getElementById('specSearchWrapper');
+    const trigger     = document.getElementById('specSearchTrigger');
+    const triggerText = document.getElementById('specSearchTriggerText');
+    const search       = document.getElementById('specSearchInput');
+    const list         = document.getElementById('specSearchList');
+    const hiddenSel    = document.getElementById('specFilter');
+    if (!wrapper || !trigger || !list || !hiddenSel) return;
+
+    function openDropdown() {
+        wrapper.classList.add('open');
+        search.value = '';
+        filterOptions('');
+        search.focus();
+    }
+    function closeDropdown() { wrapper.classList.remove('open'); }
+    function filterOptions(q) {
+        list.querySelectorAll('.spec-search-option').forEach(opt => {
+            const name = (opt.dataset.value || opt.textContent || '').toLowerCase();
+            opt.style.display = (!q || name.includes(q)) ? '' : 'none';
+        });
+    }
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        wrapper.classList.contains('open') ? closeDropdown() : openDropdown();
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('input', function() { filterOptions(this.value.trim().toLowerCase()); });
+    list.addEventListener('click', e => {
+        const opt = e.target.closest('.spec-search-option');
+        if (!opt) return;
+        const val = opt.dataset.value || '';
+        hiddenSel.value = val;
+        triggerText.textContent = val || 'SELECT';
+        triggerText.title = val;
+        closeDropdown();
+        hiddenSel.dispatchEvent(new Event('change'));
+    });
+    document.addEventListener('click', e => {
+        if (!wrapper.contains(e.target)) closeDropdown();
+    });
+}
+_initSpecSearchDropdown();

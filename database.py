@@ -14,15 +14,23 @@ _pool: '_pg_pool.ThreadedConnectionPool | None' = None
 def _get_pool() -> '_pg_pool.ThreadedConnectionPool':
     global _pool
     if _pool is None:
-        _pool = _pg_pool.ThreadedConnectionPool(
-            minconn=3,
-            maxconn=25,
-            dbname=Config.DB_NAME,
-            user=Config.DB_USER,
-            password=Config.DB_PASS,
-            host=Config.DB_HOST,
-            port=Config.DB_PORT,
-        )
+        if Config.DATABASE_URL:
+            # Render + Neon: one connection string (includes sslmode=require).
+            # Keepalives stop idle pooled connections being dropped silently.
+            _pool = _pg_pool.ThreadedConnectionPool(
+                minconn=1, maxconn=10, dsn=Config.DATABASE_URL,
+                keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5,
+            )
+        else:
+            _pool = _pg_pool.ThreadedConnectionPool(
+                minconn=3,
+                maxconn=25,
+                dbname=Config.DB_NAME,
+                user=Config.DB_USER,
+                password=Config.DB_PASS,
+                host=Config.DB_HOST,
+                port=Config.DB_PORT,
+            )
     return _pool
 
 
@@ -124,15 +132,36 @@ import json as _json
 
 _SCHEDULER_CONFIG_DEFAULTS = {
     # ── Soft constraint penalty weights ────────────────────
-    'sc1_daytime':    20,
-    'sc2_night':      15,
-    'sc3_day_dist':   10,
-    'sc4_compact':    10,
-    'sc5_pt_balance': 10,
-    'sc6_weekend':    10,
-    'sc7_consecutive':30,
+    # Phase B checkpoint 3: final SC1-SC9 mapping (see scheduler.py's
+    # _fitness() docstring and the Phase B checkpoint 3 report for the full
+    # table). These keys are ACTIVE now -- checkpoint 3 fixed the Phase B0
+    # finding that they were write-only (saved by the Admin Settings form,
+    # never read by _fitness(), which hardcoded the equivalent literals).
+    'sc1_daytime':    20,  # -> final SC1 (Minimize Unnecessary Night Classes; combines old SC1+SC2)
+    'sc2_night':      15,  # DEPRECATED -- old SC2's standalone concept folded into final SC1 above
+    'sc3_day_dist':   10,  # -> final SC3 (Balance Teaching-Day Distribution; unchanged)
+    'sc4_compact':    10,  # -> final SC2 (Minimize Faculty Schedule Gaps; was old SC4)
+    'sc5_pt_balance': 10,  # -> final SC4 (Balance Faculty/Part-Time Load; was old SC5)
+    'sc6_weekend':    10,  # -> final SC6 (Minimize Unnecessary Weekend Scheduling; NEW algorithm,
+                           #    replaces the old Saturday/Sunday BALANCE objective entirely)
+    'sc7_consecutive':30,  # -> final SC5 (Avoid Excessive Consecutive Teaching; was old SC7)
+    'sc7_building':   15,  # NEW -> final SC7 (Minimize Room/Building Movement; was fully hardcoded)
+    'sc9_specialization': 15,  # NEW -> final SC9 (Faculty Specialization Match; was HC_SPEC, no weight before)
     # ── Hard constraint limits ──────────────────────────────
+    # Phase B checkpoint 1: now ACTIVE (final HC8 flat max-PT-teaching-nights
+    # cap for designees) — previously write-only. See scheduler.py's
+    # _check_night_pt_cap.
     'hc7_max_night':   2,
+    # ── AM/PM PT window bounds (final HC1/HC2/HC3/HC4/HC8) ──
+    # Shared by BOTH full-time and designee faculty (one authorized morning
+    # extra-teaching window, not two separate configs for the same policy).
+    'hc_pt_am_start':  '07:30',
+    'hc_pt_am_end':    '09:00',
+    # Designee-specific PM PT window — narrower than full-time's own
+    # employeetype.parttime_start/parttime_end (16:30-21:00 by default),
+    # which already IS the full-time PM PT window and needs no new key here.
+    'hc4_pt_pm_start': '16:30',
+    'hc4_pt_pm_end':   '18:00',
     # ── HC toggle switches (1 = enabled, 0 = disabled) ─────
     'hc_weekend_enabled':          1,
     'hc_day_pairing_enabled':      1,
@@ -145,7 +174,7 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'hc_program_restrict_enabled': 1,
     'hc_publish_gate_enabled':     1,
     'hc_faculty_spec_enabled':     1,
-    'hc_capacity_enabled':         1,   # HC_CAPACITY — no-op until section/room class-size data exists
+    'hc_capacity_enabled':         1,   # HC14 Room Capacity — non-blocking when class-size/capacity data is unavailable
     'hc_merge_enabled':            1,   # Class Merging Policy toggle
     # ── HC configurable params (stored as JSON strings) ─────
     'hc_merge_scope':              'nstp_only',  # nstp_only | non_nstp | all_subjects
@@ -164,7 +193,8 @@ _SCHEDULER_CONFIG_DEFAULTS = {
 
 # Keys whose DB values should stay as strings (not converted to float)
 _STRING_KEYS = {'hc_day_pairs', 'hc_time_slots', 'hc_weekend_subject', 'hc_weekend_day', 'hc_merge_scope',
-                'hc_merge_section_pairs', 'hc_merge_scope_subjects'}
+                'hc_merge_section_pairs', 'hc_merge_scope_subjects',
+                'hc_pt_am_start', 'hc_pt_am_end', 'hc4_pt_pm_start', 'hc4_pt_pm_end'}
 
 
 def parse_merge_scope_subjects(raw):

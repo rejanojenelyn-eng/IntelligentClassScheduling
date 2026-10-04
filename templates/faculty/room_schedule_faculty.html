@@ -172,6 +172,19 @@
         text-transform: uppercase;
         border-bottom: 1px solid #800000;
     }
+    .frs-cal-title-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        flex-wrap: wrap; border-bottom: 1px solid #800000; background: #fff; padding-right: 12px;
+    }
+    .frs-cal-title-row .frs-cal-title { border-bottom: none; }
+    .frs-cal-actions { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+    .frs-room-request-btn { padding: 7px 14px; font-size: 0.72rem; }
+    .frs-cal-back-btn {
+        display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+        border: 1.5px solid #800000; border-radius: 8px; background: #fff; color: #800000;
+        font-size: 0.7rem; font-weight: 800; cursor: pointer;
+    }
+    .frs-cal-back-btn:hover { background: #fdf2f2; }
 
     /* Grid */
     .frs-grid-outer { overflow-x: auto; flex: 1; }
@@ -655,7 +668,21 @@
 
             <!-- Right: calendar -->
             <div class="frs-cal-wrap">
-                <div class="frs-cal-title" id="frsCalTitle">BUILDING: HEALTH AND SCIENCE – ROOM LQ101</div>
+                <!-- Room title + actions. "Request This Room" only appears once the
+                     selected room's current schedule has loaded (view first, then request). -->
+                <div class="frs-cal-title-row">
+                    <div class="frs-cal-title" id="frsCalTitle">SELECT A ROOM TO VIEW ITS SCHEDULE</div>
+                    <div class="frs-cal-actions">
+                        <button type="button" class="frs-cal-back-btn" id="frsBackToAvail" style="display:none;"
+                                onclick="frsBackToAvailable()">
+                            <i class="fas fa-arrow-left"></i> AVAILABLE ROOMS
+                        </button>
+                        <button type="button" class="btn-frs-request frs-room-request-btn" id="frsRequestRoomBtn"
+                                style="display:none;" onclick="frsRequestViewedRoom()">
+                            <i class="fas fa-plus-circle"></i> REQUEST THIS ROOM
+                        </button>
+                    </div>
+                </div>
                 <div class="frs-grid-outer">
                     <div class="frs-grid" id="frsGrid">
                         <!-- Populated by JS -->
@@ -1053,13 +1080,13 @@
             <div id="muConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
                 <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
                 <div id="muConflictText"></div>
-                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">This request will still be submitted for admin review. The academic head can override if necessary.</div>
+                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">A make-up class can't be submitted while it conflicts. Choose another date, time, or room.</div>
             </div>
             <!-- Row 6: Reason -->
             <div class="req-form-row">
                 <div class="req-form-group full">
-                    <label class="req-form-label">Reason for Request</label>
-                    <textarea id="muReason" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea>
+                    <label class="req-form-label">Reason for Request <span style="color:#c0392b">*</span></label>
+                    <textarea id="muReason" required placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea>
                 </div>
             </div>
             <!-- Row 7: Note -->
@@ -1837,6 +1864,13 @@ async function reqSubmit(type) {
     if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
     if (!payload.section_id)   return showToast('Please select a section.', 'warning');
     if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
+    if (isMakeup && (!payload.start_time || !payload.end_time)) {
+        return showToast('Please select both a start and an end time.', 'warning');
+    }
+    if (isMakeup && !(payload.reason || '').trim()) {
+        document.getElementById('muReason').focus();
+        return showToast('Please provide a reason for the make-up class request.', 'warning');
+    }
     if (payload.start_time && payload.end_time &&
         _REQ_SLOTS.indexOf(payload.end_time) <= _REQ_SLOTS.indexOf(payload.start_time)) {
         return showToast('End Time must be later than Start Time.', 'warning');
@@ -1854,8 +1888,19 @@ async function reqSubmit(type) {
         if (data.success) {
             frsCloseForm(type);
             showToast('Request submitted successfully! The academic head will review your request.', 'success', 5000);
+        } else if (data.error === 'schedule_conflict' && Array.isArray(data.conflicts)) {
+            // Server is authoritative — show exactly which conflict(s) blocked the request
+            const labels = { faculty: 'Faculty conflict', section: 'Section conflict', room: 'Room conflict' };
+            const banner = document.getElementById(p + 'ConflictBanner');
+            const textEl = document.getElementById(p + 'ConflictText');
+            if (banner && textEl) {
+                textEl.innerHTML = data.conflicts
+                    .map(c => `<b>${labels[c.type] || 'Conflict'}:</b> ${c.message}`).join('<br>');
+                banner.style.display = '';
+            }
+            showToast(data.message || 'The requested period conflicts with an existing schedule.', 'error', 6000);
         } else {
-            showToast(data.error || 'Could not submit request.', 'error');
+            showToast(data.message || data.error || 'Could not submit request.', 'error');
         }
     } catch(e) {
         showToast('Network error. Please try again.', 'error');

@@ -154,7 +154,12 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
 
         # ── table ────────────────────────────────────────────────────────────
         elif tag == 'tbl':
-            tbl_rows = element.findall('.//' + qn('w:tr'))
+            # Direct children only (not './/') — a recursive search would also pick up
+            # rows/cells from any table NESTED inside a cell of this table (a common
+            # Word formatting trick for elective sub-lists), walking the same subject
+            # twice: once as part of the nested table, once as part of the outer row
+            # that contains it.
+            tbl_rows = element.findall(qn('w:tr'))
             if not tbl_rows:
                 continue
 
@@ -162,7 +167,7 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
             sc_i, sn_i, pre_i, co_i, lc_i, lb_i, u_i, th_i = _last_cols
 
             for row_el in tbl_rows:
-                cells = row_el.findall('.//' + qn('w:tc'))
+                cells = row_el.findall(qn('w:tc'))
                 if not cells:
                     continue
 
@@ -224,6 +229,22 @@ def parse_curriculum_docx(file_bytes, override_col_map=None):
                     'yl':  current_yl,
                     'sem': current_sem,
                 })
+
+    # ── de-duplicate by subject code ──────────────────────────────────────────
+    # Guards against the same subject being walked twice (e.g. a merged/split cell,
+    # or a repeated header row misread as data) surviving as two "distinct" rows.
+    _dash_variants_re = re.compile(r'[‐‑‒–—−]')
+    def _normalize_code_key(sc):
+        s = _dash_variants_re.sub('-', sc)
+        return re.sub(r'\s+', '', s).upper()
+
+    seen_codes, deduped = set(), []
+    for s in subjects:
+        key = _normalize_code_key(s['sc'])
+        if key not in seen_codes:
+            seen_codes.add(key)
+            deduped.append(s)
+    subjects = deduped
 
     if not subjects:
         warnings.append(

@@ -485,6 +485,8 @@ async function rfSaveEdit(type) {
         };
         if (!payload.request_date) return showToast('Please select a date.', 'warning');
         if (!payload.room_id)      return showToast('Please select a room.', 'warning');
+        if (!payload.start_time || !payload.end_time) return showToast('Please select both a start and an end time.', 'warning');
+        if (!(payload.reason || '').trim()) return showToast('Please provide a reason for the make-up class request.', 'warning');
         if (payload.start_time && payload.end_time &&
             _RF_SLOTS.indexOf(payload.end_time) <= _RF_SLOTS.indexOf(payload.start_time)) {
             return showToast('End Time must be later than Start Time.', 'warning');
@@ -543,8 +545,12 @@ async function rfSaveEdit(type) {
             rfCloseEdit();
             showToast('Request updated and resubmitted successfully.', 'success');
             await rfLoadRequests();
+        } else if (data.error === 'schedule_conflict' && Array.isArray(data.conflicts)) {
+            const labels = { faculty: 'Faculty conflict', section: 'Section conflict', room: 'Room conflict' };
+            const c = data.conflicts[0];
+            showToast(`${labels[c.type] || 'Conflict'}: ${c.message}`, 'error', 6000);
         } else {
-            showToast(data.error || 'Could not save.', 'error');
+            showToast(data.message || data.error || 'Could not save.', 'error');
         }
     } catch(e) { showToast('Network error. Please try again.', 'error'); }
 }

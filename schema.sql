@@ -287,6 +287,19 @@ CREATE TABLE IF NOT EXISTS public.accounts
     datecreated timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     role character varying(20) COLLATE pg_catalog."default" NOT NULL,
     employeenumber character varying(30) COLLATE pg_catalog."default",
+    last_login timestamp without time zone,
+    -- path of the profile picture FILE in static/uploads/profile_photos/ (not the image itself)
+    profile_photo character varying(255),
+    must_change_password boolean NOT NULL DEFAULT false,
+    account_setup_complete boolean NOT NULL DEFAULT true,
+    -- self-service password change: once per month + emailed verification code
+    password_changed_at timestamp without time zone,
+    email character varying(255),              -- standalone accounts (Admin) only; faculty use faculty.email
+    pw_otp_hash character varying(255),
+    pw_otp_expires_at timestamp without time zone,
+    pw_otp_sent_at timestamp without time zone,
+    pw_otp_attempts smallint NOT NULL DEFAULT 0,
+    pw_otp_verified_at timestamp without time zone,
     CONSTRAINT accounts_pkey PRIMARY KEY (userid),
     CONSTRAINT accounts_username_key UNIQUE (username),
     CONSTRAINT fk_accounts_employeenumber FOREIGN KEY (employeenumber)
@@ -538,6 +551,12 @@ CREATE TABLE IF NOT EXISTS public.schedule_exception_log
     approved_at      timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     semesterid       integer                     NOT NULL,
     notes            text,
+    -- date-specific (one-time) exception details, e.g. an approved make-up class
+    exception_date   date,
+    starttimeid      integer,
+    endtimeid        integer,
+    roomid           integer,
+    employeenumber   character varying(30),
 
     CONSTRAINT schedule_exception_log_pkey   PRIMARY KEY (logid),
 
@@ -547,9 +566,32 @@ CREATE TABLE IF NOT EXISTS public.schedule_exception_log
     CONSTRAINT fk_sel_semester               FOREIGN KEY (semesterid)
         REFERENCES public.semester (semesterid),
 
+    CONSTRAINT fk_sel_starttime              FOREIGN KEY (starttimeid)
+        REFERENCES public.timeslot (timeid),
+
+    CONSTRAINT fk_sel_endtime                FOREIGN KEY (endtimeid)
+        REFERENCES public.timeslot (timeid),
+
+    CONSTRAINT fk_sel_room                   FOREIGN KEY (roomid)
+        REFERENCES public.room (roomid),
+
+    CONSTRAINT fk_sel_faculty                FOREIGN KEY (employeenumber)
+        REFERENCES public.faculty (employeenumber),
+
     CONSTRAINT chk_sel_source_type           CHECK (source_type IN (
-        'makeup_class', 'remedial_class','schedule_change', 'manual_edit' ))
+        'makeup_class', 'remedial_class','schedule_change', 'manual_edit' )),
+
+    CONSTRAINT chk_sel_makeup_complete       CHECK (
+        source_type <> 'makeup_class' OR (
+            source_requestid IS NOT NULL AND exception_date IS NOT NULL
+            AND starttimeid IS NOT NULL AND endtimeid IS NOT NULL
+            AND starttimeid <> endtimeid))
 );
+
+-- one exception per originating request (no duplicate approvals)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sel_source_request
+    ON public.schedule_exception_log (source_type, source_requestid)
+    WHERE source_requestid IS NOT NULL;
 
 -----------------------------------------------------------------------
 -- Local_schedule_adjustment

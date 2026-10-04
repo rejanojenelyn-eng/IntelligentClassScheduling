@@ -704,7 +704,10 @@ function rhubRenderDetail(req, v) {
             : `<span class="rhub-chip chip-bad"><i class="fas fa-times-circle"></i> ROOM CONFLICT</span>`;
         const fBadge = v.faculty_free
             ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> FACULTY FREE</span>`
-            : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> FACULTY CONFLICT</span>`;
+            : `<span class="rhub-chip ${v.section_free === undefined ? 'chip-warn' : 'chip-bad'}"><i class="fas fa-exclamation-circle"></i> FACULTY CONFLICT</span>`;
+        const sBadge = v.section_free === undefined ? '' : (v.section_free
+            ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> SECTION FREE</span>`
+            : `<span class="rhub-chip chip-bad"><i class="fas fa-times-circle"></i> SECTION CONFLICT</span>`);
         const pBadge = v.program_ok
             ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> PROGRAM OKAY</span>`
             : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> PROGRAM CONFLICT</span>`;
@@ -712,14 +715,23 @@ function rhubRenderDetail(req, v) {
             ? 'CONSTRAINT VALIDATION SUCCESSFUL, THERE ARE NO CONFLICTS TO THIS REQUEST'
             : (v.conflicts || []).join(' | ') || 'Conflicts detected.';
         const msgColor = v.all_ok ? '#1a6b3c' : '#c0392b';
+        const warnHtml = (v.warnings || []).length
+            ? `<div class="rhub-analytics-msg" style="color:#856404">Advisory: ${v.warnings.map(w => w.message).join(' | ')}</div>`
+            : '';
         analyticsHtml = `
-            <div class="rhub-chips">${rBadge}${fBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>`;
+            <div class="rhub-chips">${rBadge}${fBadge}${sBadge}${pBadge}</div>
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}`;
+        // The server may know a newer status than the list (another reviewer decided it)
+        if (v.status && v.status !== req.status) req.status = v.status;
     }
 
+    // Make-up requests with hard conflicts can't be approved (the server re-checks
+    // and refuses), so don't offer the button — rejecting is still possible.
+    const blocked = !!(v && req.req_type === 'makeup' && !v.all_ok);
     const actionBtns = req.status === 'Pending' ? `
         <div class="rhub-actions">
-            <button class="btn-rhub-approve" onclick="rhubApprove()">
+            <button class="btn-rhub-approve" onclick="rhubApprove()" ${blocked
+                ? 'disabled data-blocked="1" title="Resolve the conflicts above before approving" style="opacity:.5;cursor:not-allowed"' : ''}>
                 <i class="fas fa-check-circle"></i> APPROVE
             </button>
             <button class="btn-rhub-reject" onclick="rhubReject()">
@@ -829,26 +841,63 @@ function rhubApprove() {
 function rhubCloseApprove() {
     document.getElementById('approveModal').classList.remove('open');
 }
-async function rhubConfirmApprove() {
-    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
-    if (!req) return;
-    rhubCloseApprove();
+/* One decision in flight at a time — guards double-clicks and repeat submits.
+   The server enforces Pending-only transitions regardless (409 otherwise). */
+let _deciding = false;
+function _rhubSetActionsDisabled(disabled) {
+    document.querySelectorAll('.btn-rhub-approve, .btn-rhub-reject')
+        .forEach(b => b.disabled = disabled || b.dataset.blocked === '1');
+}
+async function _rhubDecide(req, decision, remarks) {
+    if (_deciding) return null;
+    _deciding = true;
+    _rhubSetActionsDisabled(true);
     try {
         const res  = await fetch('/api/requests/decide', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Approved', remarks: '' })
+            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision, remarks })
         });
         const data = await res.json();
-        if (data.success) {
-            _activeKey = null;
-            document.getElementById('rhubDetailsBody').innerHTML =
-                `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved successfully.</div>`;
-            rhubLoad();
-        } else {
-            alert('Error: ' + (data.error || 'Could not approve.'));
+        if (!data.success && res.status === 409 && data.error === 'invalid_state') {
+            // Someone already decided it: refresh and show the current status instead
+            alert(data.message || 'This request has already been decided.');
+            const key = _activeKey;
+            await rhubLoad();
+            const fresh = _reqs.find(r => r.req_type + '_' + r.requestid === key);
+            if (fresh) { rhubRenderDetail(fresh, null); rhubValidate(fresh.req_type, fresh.requestid, fresh); }
+            return null;
         }
-    } catch(e) { alert('Network error.'); }
+        if (!data.success && res.status === 409 && data.error === 'schedule_conflict') {
+            alert('Cannot approve — this request conflicts with the current schedule:\n\n'
+                  + (data.conflicts || []).map(c => '• ' + c.message).join('\n'));
+            rhubValidate(req.req_type, req.requestid, req);
+            return null;
+        }
+        return data;
+    } catch(e) {
+        alert('Network error.');
+        return null;
+    } finally {
+        _deciding = false;
+        _rhubSetActionsDisabled(false);
+    }
+}
+
+async function rhubConfirmApprove() {
+    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
+    if (!req) return;
+    rhubCloseApprove();
+    const data = await _rhubDecide(req, 'Approved', '');
+    if (!data) return;
+    if (data.success) {
+        _activeKey = null;
+        document.getElementById('rhubDetailsBody').innerHTML =
+            `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved successfully.</div>`;
+        rhubLoad();
+    } else {
+        alert('Error: ' + (data.message || data.error || 'Could not approve.'));
+    }
 }
 
 /* ════ REJECT ════ */
@@ -863,23 +912,17 @@ async function rhubConfirmReject() {
     const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
     if (!req) return;
     const remarks = document.getElementById('rejectRemarks').value.trim();
-    try {
-        const res  = await fetch('/api/requests/decide', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Rejected', remarks })
-        });
-        const data = await res.json();
-        if (data.success) {
-            rhubCloseReject();
-            _activeKey = null;
-            document.getElementById('rhubDetailsBody').innerHTML =
-                `<div class="rhub-empty-state"><i class="fas fa-times-circle" style="color:#c0392b"></i>Request rejected.</div>`;
-            rhubLoad();
-        } else {
-            alert('Error: ' + (data.error || 'Could not reject.'));
-        }
-    } catch(e) { alert('Network error.'); }
+    rhubCloseReject();
+    const data = await _rhubDecide(req, 'Rejected', remarks);
+    if (!data) return;
+    if (data.success) {
+        _activeKey = null;
+        document.getElementById('rhubDetailsBody').innerHTML =
+            `<div class="rhub-empty-state"><i class="fas fa-times-circle" style="color:#c0392b"></i>Request rejected.</div>`;
+        rhubLoad();
+    } else {
+        alert('Error: ' + (data.message || data.error || 'Could not reject.'));
+    }
 }
 
 /* Close modals on backdrop click */

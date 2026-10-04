@@ -317,6 +317,25 @@
     outline-offset: 2px;
 }
 
+/* Cell-level conflict indicator — same look as .row-conflict-flag, but placed
+   inside the specific cell (Instructor/Room/Day/Time) a violation actually
+   affects, instead of every violation type landing on one column. */
+.cell-conflict-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    margin-right: 4px;
+    color: var(--danger);
+    cursor: help;
+    border-radius: 50%;
+}
+.cell-conflict-flag:focus-visible {
+    outline: 2px solid var(--danger);
+    outline-offset: 2px;
+}
+
 /* ── Incomplete row highlighting (partial-generation results) ── */
 /* Amber, not red — an incomplete component is unresolved, not a rule
    violation; keeps it visually distinct from .row-conflict. */
@@ -884,6 +903,35 @@
     justify-content: space-between;
     gap: 6px;
 }
+/* Per-field regeneration lock (checked rows only): small icon, no text label.
+   Closed lock = keep this value (maroon); open lock = may regenerate (green). */
+.offerings-list-table tr.row-selected td { background: #fdf3f3; }
+.offerings-list-table .regen-lock {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.offerings-list-table .regen-lock.is-locked {
+    color: #800000;
+    background: #f8e1e1;
+    border-color: #ecc4c4;
+}
+.offerings-list-table .regen-lock.is-unlocked {
+    color: #1e7d45;
+    background: #e3f4e9;
+    border-color: #bfe3cc;
+}
+.offerings-list-table .regen-lock:hover { filter: brightness(.95); }
+.offerings-list-table .regen-lock:focus-visible { outline: 2px solid #800000; outline-offset: 1px; }
 .offerings-list-table .preserve-select-wrap {
     display: flex;
     align-items: center;
@@ -1057,6 +1105,8 @@
     gap: 8px;
     animation: slideIn .3s ease;
 }
+
+.toast.toast-warn { background: var(--warning, #d4910f); }
 
 @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }

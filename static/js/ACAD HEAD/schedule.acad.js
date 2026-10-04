@@ -534,22 +534,26 @@ async function refreshOfferings() {
         return;
     }
 
-    const ayEl     = document.getElementById('view_ay');
-    const ayTxt    = ayEl.options[ayEl.selectedIndex]?.text || ay;
-    const semLabel = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[sem] || sem;
-
+    // A.Y. and Semester are dropped here since they're already visible in the
+    // filter row above -- but Program and Year Level are kept in full: the
+    // Program filter is a fixed-width control that ellipsis-truncates long
+    // names, so this header is often the only place the complete program name
+    // is actually readable. (.grid-card-header is nowrap+ellipsis, so however
+    // long this gets, it truncates instead of wrapping and shifting the page.)
     let gridLabel;
     if (pSel.value) {
-        const pText  = pSel.options[pSel.selectedIndex].text;
-        const ylNum  = parseInt(yl) || '';
-        const secName = secSel && section ? ` · ${secSel.options[secSel.selectedIndex].text}` : '';
+        const pText = pSel.options[pSel.selectedIndex].text;
+        const ylSel = document.getElementById('view_yl');
+        const ylText = ylSel && ylSel.selectedIndex > 0 ? ylSel.options[ylSel.selectedIndex].text : '';
         const instrName = empNum && instrSel.options[instrSel.selectedIndex]
-            ? ` · ${instrSel.options[instrSel.selectedIndex].text}` : '';
-        gridLabel = `${pText.toUpperCase()}  —  ${ylNum}${secName}${instrName}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+            ? instrSel.options[instrSel.selectedIndex].text : '';
+        gridLabel = instrName
+            ? `${instrName.toUpperCase()}'S SCHEDULE`
+            : `${pText.toUpperCase()}${ylText ? ' - ' + ylText.toUpperCase() : ''} SCHEDULE`;
     } else {
         const instrName = instrSel && instrSel.options[instrSel.selectedIndex]
             ? instrSel.options[instrSel.selectedIndex].text : '';
-        gridLabel = `INSTRUCTOR: ${instrName.toUpperCase()}  ·  A.Y. ${ayTxt}  ·  ${semLabel}`;
+        gridLabel = instrName ? `${instrName.toUpperCase()}'S SCHEDULE` : 'CLASS SCHEDULE';
     }
     document.getElementById('gridLabel').innerText = gridLabel;
 

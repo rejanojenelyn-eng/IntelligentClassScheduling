@@ -49,9 +49,29 @@
                 </select>
             </div>
 
+            <!-- Specialization — typeable/searchable combo over the real
+                 #specFilter select (kept hidden, filterTable() unchanged) -->
             <div class="filter-group">
                 <label>SPECIALIZATION</label>
-                <select id="specFilter" onchange="filterTable()">
+                <div class="spec-search-wrapper" id="specSearchWrapper">
+                    <div class="spec-search-trigger" id="specSearchTrigger">
+                        <span id="specSearchTriggerText">SELECT</span>
+                        <i class="fas fa-chevron-down spec-search-chevron"></i>
+                    </div>
+                    <div class="spec-search-menu" id="specSearchMenu">
+                        <div class="spec-search-box">
+                            <input type="text" id="specSearchInput" class="spec-search-input"
+                                   placeholder="Type to search..." autocomplete="off">
+                        </div>
+                        <div class="spec-search-list" id="specSearchList">
+                            <div class="spec-search-option" data-value="">SELECT</div>
+                            {% for spec in specializations %}
+                            <div class="spec-search-option" data-value="{{ spec.specializationname }}">{{ spec.specializationname }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <select id="specFilter" onchange="filterTable()" style="display:none;">
                     <option value="">SELECT</option>
                     {% for spec in specializations %}
                         <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
@@ -64,8 +84,8 @@
             <button class="btn-secondary" onclick="sortTable()">
                 <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
             </button>
-            <button class="btn-secondary" onclick="openExportModal()">
-                <i class="fas fa-external-link-alt"></i> EXPORT
+            <button class="btn-outline-action" onclick="openExportModal()">
+                <i class="fas fa-upload"></i> EXPORT
             </button>
         </div>
     </div>
@@ -89,6 +109,7 @@
                     <th style="width: 40px; text-align: center;">
                         <input type="checkbox" id="selectAll" class="custom-checkbox">
                     </th>
+                    <th>EMPLOYEE ID</th>
                     <th>EMPLOYEE NAME</th>
                     <th>SPECIALIZATION</th>
                     <th>EMAIL</th>
@@ -105,6 +126,7 @@
                     <td style="text-align: center;">
                         <input type="checkbox" class="row-check custom-checkbox" value="{{ emp.facultyarchiveid }}">
                     </td>
+                    <td class="emp-id">{{ emp.employeenumber }}</td>
                     <td class="emp-name" style="font-weight: 600;">
                         {{ emp.lastname }}, {{ emp.firstname }}
                     </td>

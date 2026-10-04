@@ -1,17 +1,3 @@
+.env
 __pycache__/
 *.pyc
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Claude Code
-.claude/
-
-# Environment
-.env
-*.env
-
-# Virtual environment
-venv/
-env/

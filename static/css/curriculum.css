@@ -1614,7 +1614,62 @@
     min-width: 130px;
 }
 .curr-filter-input:focus { border-color: #800000; }
+.curr-filter-wide { min-width: 200px; }
 .curr-filter-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ═══════════════════════════════════════════════════════════════
+   ASSIGNMENTS PROGRAM SEARCH COMBO — typeable/searchable filter,
+   mirrors the Specialization search-combo pattern (spec-search-* in
+   employee.css). The real value still lives in the existing hidden
+   #filterAssignProg <select>, so filterAssignments() needs no changes.
+═══════════════════════════════════════════════════════════════ */
+.curr-prog-search-wrapper { position: relative; width: 200px; }
+.curr-prog-search-trigger {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    color: #333;
+    padding: 7px 11px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    box-sizing: border-box;
+    transition: 0.2s;
+}
+.curr-prog-search-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curr-prog-search-trigger:hover,
+.curr-prog-search-wrapper.open .curr-prog-search-trigger { border-color: #800000; }
+.curr-prog-search-chevron { font-size: 0.65rem; color: #999; flex-shrink: 0; transition: transform 0.15s; }
+.curr-prog-search-wrapper.open .curr-prog-search-chevron { transform: rotate(180deg); }
+.curr-prog-search-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 260px;
+    background: white;
+    border: 1px solid #800000;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    z-index: 500;
+    display: none;
+    overflow: hidden;
+}
+.curr-prog-search-wrapper.open .curr-prog-search-menu { display: block; }
+.curr-prog-search-box { padding: 7px 8px; border-bottom: 1px solid #e8e8e8; background: #fafafa; }
+.curr-prog-search-input {
+    width: 100%; box-sizing: border-box;
+    padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+    font-size: 0.75rem; color: #333; outline: none;
+}
+.curr-prog-search-input:focus { border-color: #800000; }
+.curr-prog-search-input::placeholder { color: #bbb; font-style: italic; }
+.curr-prog-search-list { max-height: 220px; overflow-y: auto; }
+.curr-prog-search-option { padding: 8px 12px; cursor: pointer; font-size: 0.78rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+.curr-prog-search-option:last-child { border-bottom: none; }
+.curr-prog-search-option:hover { background: #fdf5f5; color: #800000; }
 
 .curr-btn-sort {
     padding: 8px 14px;
@@ -1868,13 +1923,15 @@
     min-width: 130px;
 }
 .curr-view-dropdown:focus { border-color: #800000; }
-.curr-view-export-btn {
+/* Uniform outline Export/action button, used app-wide (matches
+   .btn-outline-action in room.css / employee.css). */
+.btn-outline-action {
     background: white;
-    border: 1.5px solid #800000;
+    border: 1px solid #c0a0a0;
     color: #800000;
-    padding: 8px 18px;
+    padding: 8px 15px;
     border-radius: 6px;
-    font-size: 0.78rem;
+    font-size: 0.8rem;
     font-weight: 700;
     cursor: pointer;
     display: flex;
@@ -1883,7 +1940,7 @@
     white-space: nowrap;
     flex-shrink: 0;
 }
-.curr-view-export-btn:hover { background: #fff5f5; }
+.btn-outline-action:hover { background: #fdf5f5; border-color: #800000; }
 
 /* Section groups */
 .curr-view-section { margin-bottom: 28px; }

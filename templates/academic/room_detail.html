@@ -15,7 +15,7 @@
             <span class="rd-room-meta">{{ room.roomtype }} &bull; Cap: {{ room.roomcapacity }} &bull; {{ room.buildingname }}</span>
         </div>
         {% if not is_modal %}
-        <a href="/room" class="rd-btn-back"><i class="fas fa-arrow-left"></i> BACK TO ROOMS &amp; BUILDINGS</a>
+        <a href="{{ rooms_home_url }}" class="rd-btn-back"><i class="fas fa-arrow-left"></i> BACK TO ROOMS &amp; BUILDINGS</a>
         {% endif %}
     </div>
 

@@ -39,7 +39,25 @@
                 </div>
                 <div class="curr-filter-group">
                     <label class="curr-filter-label">PROGRAM</label>
-                    <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
+                    <div class="curr-prog-search-wrapper" id="currProgSearchWrapper">
+                        <div class="curr-prog-search-trigger" id="currProgSearchTrigger">
+                            <span id="currProgSearchTriggerText">SELECT</span>
+                            <i class="fas fa-chevron-down curr-prog-search-chevron"></i>
+                        </div>
+                        <div class="curr-prog-search-menu" id="currProgSearchMenu">
+                            <div class="curr-prog-search-box">
+                                <input type="text" id="currProgSearchInput" class="curr-prog-search-input"
+                                       placeholder="Type to search..." autocomplete="off">
+                            </div>
+                            <div class="curr-prog-search-list" id="currProgSearchList">
+                                <div class="curr-prog-search-option" data-value="">SELECT</div>
+                                {% for p in programs %}
+                                <div class="curr-prog-search-option" data-value="{{ p.programname }}">{{ p.programname }}</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    <select id="filterAssignProg" class="curr-filter-input curr-filter-wide" onchange="filterAssignments()" style="display:none;">
                         <option value="">SELECT</option>
                         {% for p in programs %}
                         <option value="{{ p.programname }}">{{ p.programname }}</option>
@@ -115,7 +133,7 @@
                 <div class="curr-prog-body">
                     {% for c in prog_currs %}
                     <div class="curr-syllabi-row">
-                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</span>
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }}</span>
                         <div class="curr-syllabi-actions">
                             <a href="{{ url_for('view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
                         </div>

@@ -104,6 +104,12 @@
         }
         .forgot-link:hover { color: #fff; }
 
+        .success-msg {
+            margin-top: 14px; padding: 10px 14px; border-radius: 8px;
+            background: rgba(255,255,255,0.95); color: #1a6b3c;
+            font-size: 0.82rem; font-weight: 700; line-height: 1.4;
+        }
+
         .login-btn {
             width: 100%;
             max-width: 240px;
@@ -123,65 +129,6 @@
         .login-btn:hover { background: #fff; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
 
         .error-msg { color: #ffeb3b; font-size: 0.85rem; margin-top: 12px; text-align: center; font-weight: 600; }
-
-        /* ══ FORGOT PASSWORD MODAL ══ */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.55);
-            z-index: 9000;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(3px);
-        }
-        .modal-overlay.open { display: flex; }
-
-        .forgot-modal-card {
-            background: #fff;
-            border-radius: 20px;
-            width: 360px;
-            overflow: hidden;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
-            animation: modalIn 0.25s ease;
-            text-align: center;
-        }
-        @keyframes modalIn { from { opacity:0; transform:translateY(-16px) scale(0.97); } to { opacity:1; transform:none; } }
-
-        .forgot-modal-hdr {
-            background: linear-gradient(135deg, #4b0a0a, #800000);
-            padding: 30px 28px 22px;
-        }
-        .forgot-modal-icon {
-            width: 56px; height: 56px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.15);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.5rem; color: #fff;
-            margin: 0 auto 12px;
-        }
-        .forgot-modal-hdr h3 { color: #fff; font-size: 1.1rem; font-weight: 800; margin: 0; }
-        .forgot-modal-body { padding: 24px 28px 20px; }
-        .forgot-modal-body p { font-size: 0.85rem; color: #555; line-height: 1.6; margin-bottom: 12px; }
-        .forgot-modal-body .contact-box {
-            background: #fef9f9;
-            border: 1px solid #e8c8c8;
-            border-radius: 10px;
-            padding: 14px 18px;
-            font-size: 0.8rem;
-            color: #4b0a0a;
-            font-weight: 700;
-        }
-        .forgot-modal-body .contact-box i { margin-right: 6px; color: #800000; }
-        .forgot-modal-ftr { padding: 0 28px 24px; }
-        .btn-forgot-ok {
-            width: 100%; padding: 11px; border-radius: 8px;
-            border: none; background: #800000;
-            color: #fff; font-weight: 800; font-size: 0.82rem;
-            cursor: pointer; text-transform: uppercase; letter-spacing: .5px;
-            transition: background 0.15s;
-        }
-        .btn-forgot-ok:hover { background: #5c0000; }
     </style>
 </head>
 <body>
@@ -215,38 +162,23 @@
                             <i class="fas fa-eye"></i>
                         </button>
                     </div>
-                    <a href="javascript:void(0)" class="forgot-link" onclick="openForgotPassword()">Forgot Password?</a>
+                    <a href="{{ url_for('forgot_password') }}" class="forgot-link">Forgot Password?</a>
                 </div>
 
                 <button type="submit" class="login-btn">LOGIN</button>
             </form>
 
-            {% with messages = get_flashed_messages() %}
+            {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                {% for message in messages %}
+                {% for category, message in messages %}
+                {% if category == 'success' %}
+                <p class="success-msg" role="status"><i class="fas fa-circle-check"></i> {{ message }}</p>
+                {% else %}
                 <p class="error-msg">{{ message }}</p>
+                {% endif %}
                 {% endfor %}
             {% endif %}
             {% endwith %}
-        </div>
-    </div>
-
-    <!-- ══ FORGOT PASSWORD MODAL ══ -->
-    <div class="modal-overlay" id="forgotModalOverlay" onclick="if(event.target===this) closeForgotPassword()">
-        <div class="forgot-modal-card">
-            <div class="forgot-modal-hdr">
-                <div class="forgot-modal-icon"><i class="fas fa-lock"></i></div>
-                <h3>Forgot Password?</h3>
-            </div>
-            <div class="forgot-modal-body">
-                <p>If you have forgotten your password, please contact your system administrator to have it reset.</p>
-                <div class="contact-box">
-                    <i class="fas fa-user-shield"></i> Contact your Admin
-                </div>
-            </div>
-            <div class="forgot-modal-ftr">
-                <button class="btn-forgot-ok" onclick="closeForgotPassword()">Got it</button>
-            </div>
         </div>
     </div>
 
@@ -262,9 +194,6 @@
             icon.classList.replace('fa-eye-slash', 'fa-eye');
         }
     }
-
-    function openForgotPassword()  { document.getElementById('forgotModalOverlay').classList.add('open'); }
-    function closeForgotPassword() { document.getElementById('forgotModalOverlay').classList.remove('open'); }
 
     // After a failed login attempt, jump straight into the (empty) password field
     // so the user can retype it without an extra click.

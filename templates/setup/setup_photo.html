@@ -1,0 +1,52 @@
+{% extends "setup/_setup_layout.html" %}
+{% block extra_css %}
+        .avatar-row { display: flex; align-items: center; justify-content: center; gap: 40px; margin-bottom: 12px; }
+        .avatar-circle {
+            width: 160px; height: 160px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
+            background: linear-gradient(180deg, #cfeeff 0%, #cfeeff 55%, #9fd989 55%, #7fc85f 100%);
+            display: flex; align-items: center; justify-content: center; position: relative;
+        }
+        .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+        .upload-btn {
+            display: inline-flex; align-items: center; gap: 10px; padding: 10px 22px 10px 10px;
+            border-radius: 50px; border: 2px solid #800000; background: #fff; color: #800000;
+            font-weight: 800; cursor: pointer; font-size: 0.9rem; letter-spacing: 0;
+        }
+        .upload-btn i { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #800000;
+            display: flex; align-items: center; justify-content: center; }
+        .photo-note { color: #999; font-size: 0.8rem; margin-top: 6px; }
+        .photo-name { color: #555; font-size: 0.85rem; margin-top: 10px; min-height: 1.2em; }
+{% endblock %}
+{% block content %}
+    <p class="step-sub">Kindly add a profile picture</p>
+    <p class="step-hint">Optional — you can skip this and add it later from Profile Settings.</p>
+    <div class="avatar-row">
+        <div class="avatar-circle" id="avatarPreviewWrap">
+            <img id="avatarPreview" {% if current_photo %}src="{{ current_photo }}"{% else %}style="display:none;"{% endif %} alt="Profile picture preview">
+        </div>
+        <div>
+            <label class="upload-btn" for="photoInput"><i class="fas fa-arrow-up"></i>{{ 'CHANGE' if current_photo else 'UPLOAD' }}</label>
+            <div class="photo-note">JPG or PNG, up to 2 MB</div>
+        </div>
+        <input type="file" id="photoInput" name="photo" accept=".jpg,.jpeg,.png,image/jpeg,image/png" style="display:none" onchange="previewPhoto(this)">
+    </div>
+    <div class="photo-name" id="photoName">{{ 'Your current profile picture is shown above.' if current_photo else '' }}</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    function previewPhoto(input) {
+        const name = document.getElementById('photoName');
+        if (!input.files || !input.files[0]) { name.textContent = ''; return; }
+        const f = input.files[0];
+        if (f.size > 2 * 1024 * 1024) {
+            name.textContent = 'That file is larger than 2 MB. Please choose a smaller photo.';
+            input.value = ''; return;
+        }
+        const reader = new FileReader();
+        const img = document.getElementById('avatarPreview');
+        reader.onload = e => { img.src = e.target.result; img.style.display = 'block'; };
+        reader.readAsDataURL(f);
+        name.textContent = f.name;
+    }
+</script>
+{% endblock %}

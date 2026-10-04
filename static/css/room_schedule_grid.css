@@ -2,7 +2,10 @@
    Moved out of roomScheduleView.html's page-local <style> block so the
    Reports module's Room Schedule preview can reuse it too. */
 
-.frs-grid-outer { overflow-x: auto; flex: 1; }
+/* min-height:0 + overflow-y here is what lets this panel scroll on its own
+   (instead of the whole Room Schedule page growing with the calendar) so the
+   header, tabs, and floor/room selection stay visible while the grid scrolls. */
+.frs-grid-outer { overflow-x: auto; overflow-y: auto; flex: 1; min-height: 0; }
 .frs-grid {
     display: grid;
     grid-template-columns: 80px repeat(7, minmax(110px, 1fr));
@@ -17,6 +20,9 @@
     text-transform: uppercase;
     text-align: center;
     border-right: 1px solid rgba(255,255,255,.1);
+    position: sticky;
+    top: 0;
+    z-index: 2;
 }
 .frs-time-cell {
     font-size: 0.62rem;

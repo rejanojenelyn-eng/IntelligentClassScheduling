@@ -1,8 +1,11 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
+    {{ super() }}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/teaching_faculty.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <style>
         /* ── Calendar Grid ── */
         .cal-wrapper {
@@ -76,10 +79,10 @@
         .cal-pill:hover { transform: scale(1.02); z-index: 20; }
         .cal-pill.draft { background: #8e9ca0 !important; border: 2px dashed #2c3e50; }
         .cal-pill.local-pill { border: 2px dashed rgba(255,255,255,0.7); }
-        .cal-pill-code { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 2px; }
-        .cal-pill-sub  { font-size: 0.6rem; opacity: 0.88; }
+        .cal-pill-code { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+        .cal-pill-sub  { font-size: 0.6rem; opacity: 0.88; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
-        /* ── Detail Modal ── */
+        /* ── Detail Panel (read-only popup) ── */
         .detail-overlay {
             display: none;
             position: fixed; inset: 0;
@@ -93,80 +96,43 @@
         .detail-box {
             background: white;
             border-radius: 12px;
-            max-width: 400px;
+            padding: 0;
+            max-width: 380px;
             width: 90%;
             box-shadow: 0 12px 40px rgba(0,0,0,0.25);
             overflow: hidden;
         }
-        .detail-header { background: #630100; padding: 18px 22px; color: white; }
+        .detail-header {
+            background: #630100;
+            padding: 18px 22px;
+            color: white;
+        }
         .detail-header h3 { margin: 0; font-size: 1rem; font-weight: 900; letter-spacing: 1px; }
         .detail-header p  { margin: 4px 0 0; font-size: 0.72rem; opacity: 0.8; }
         .detail-body { padding: 20px 22px; }
         .detail-row { display: flex; gap: 10px; margin-bottom: 10px; font-size: 0.82rem; }
-        .detail-label { font-weight: 800; color: #630100; width: 90px; flex-shrink: 0; }
+        .detail-label { font-weight: 800; color: #630100; width: 80px; flex-shrink: 0; }
         .detail-val   { color: #333; }
-        .detail-footer { display: flex; gap: 0; border-top: 1px solid #eee; }
-        .detail-btn {
-            flex: 1; border: none; padding: 12px;
-            font-weight: 800; font-size: 0.78rem;
-            letter-spacing: 1.2px; text-transform: uppercase;
+        .detail-close {
+            display: block; width: 100%;
+            background: #630100; color: white;
+            border: none; padding: 11px;
+            font-weight: 800; font-size: 0.8rem;
+            letter-spacing: 1.5px; text-transform: uppercase;
             cursor: pointer; transition: background 0.18s;
         }
-        .detail-btn.close-btn { background: #f5f5f5; color: #555; }
-        .detail-btn.close-btn:hover { background: #e8e8e8; }
+        .detail-close:hover { background: #7a0100; }
 
         .cal-empty-msg {
-            text-align: center; padding: 40px;
-            color: #999; font-size: 0.85rem;
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-size: 0.85rem;
         }
 
-        /* ── Table badges ── */
-        .badge-pub   { background: #27ae60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
-        .badge-draft { background: #8e9ca0; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
-
-        /* ── Schedule Mode Toggle ── */
-        .schedule-toggle-bar {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        .toggle-label {
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            color: #888;
-            text-transform: uppercase;
-            transition: color 0.2s;
-        }
-        .toggle-label.active-label { color: #630100; }
-
-        .toggle-switch {
-            position: relative;
-            width: 48px;
-            height: 24px;
-            cursor: pointer;
-        }
-        .toggle-switch input { display: none; }
-        .toggle-track {
-            position: absolute;
-            inset: 0;
-            background: #630100;
-            border-radius: 24px;
-            transition: background 0.25s;
-        }
-        .toggle-switch input:not(:checked) ~ .toggle-track { background: #8e9ca0; }
-        .toggle-thumb {
-            position: absolute;
-            top: 3px; left: 3px;
-            width: 18px; height: 18px;
-            background: white;
-            border-radius: 50%;
-            transition: transform 0.25s;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-        }
-        .toggle-switch input:checked ~ .toggle-thumb { transform: translateX(24px); }
+        /* ── Table status badge ── */
+        .badge-pub  { background: #27ae60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
+        .badge-draft{ background: #8e9ca0; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
 
         /* ── TA totals ── */
         .total-units {
@@ -195,36 +161,95 @@
 {% block content %}
 <div class="teaching-assignment-wrapper">
 
-    <!-- Header -->
-    <div class="main-header">
-        <h1>MY TEACHING ASSIGNMENT</h1>
-        <button class="btn-export-pdf">
-            <i class="fa-solid fa-arrow-up-from-bracket"></i> Export as PDF
-        </button>
+    <!-- Page header: icon + title/subtitle, summary cards (per active tab) -->
+    <div class="ta-page-header">
+        <div class="ta-page-title">
+            <i class="fa-regular fa-calendar-days"></i>
+            <div>
+                <h1 id="taPageTitle">MY WEEKLY SCHEDULE</h1>
+                <div class="ta-page-sub">
+                    <span id="taFacName">—</span>
+                    <span class="ta-sub-dot">&bull;</span>
+                    <span id="taAyLabel">{{ active_ay_id }}</span>
+                    <span class="ta-sub-dot">&bull;</span>
+                    <span id="taSemLabel">{{ active_sem }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="ta-stat-row" id="statsWeekly">
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statTotalClasses">0</div><div class="ta-stat-label">Total Classes</div></div>
+                <div class="ta-stat-icon ta-ic-green"><i class="fa-solid fa-chalkboard-user"></i></div>
+            </div>
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statTeachingUnits">0</div><div class="ta-stat-label">Teaching units</div></div>
+                <div class="ta-stat-icon ta-ic-orange"><i class="fa-solid fa-layer-group"></i></div>
+            </div>
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statPrograms">0</div><div class="ta-stat-label">Programs</div></div>
+                <div class="ta-stat-icon ta-ic-blue"><i class="fa-solid fa-graduation-cap"></i></div>
+            </div>
+        </div>
+
+        <div class="ta-stat-row" id="statsAssignment" style="display:none;">
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statTotalUnits">0</div><div class="ta-stat-label">Total units</div></div>
+                <div class="ta-stat-icon ta-ic-blue"><i class="fa-solid fa-layer-group"></i></div>
+            </div>
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statRegularUnits">0</div><div class="ta-stat-label">Regular units</div></div>
+                <div class="ta-stat-icon ta-ic-green"><i class="fa-solid fa-chalkboard-user"></i></div>
+            </div>
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statPtUnits">0</div><div class="ta-stat-label">Part-time units</div></div>
+                <div class="ta-stat-icon ta-ic-orange"><i class="fa-solid fa-user-clock"></i></div>
+            </div>
+            <div class="ta-stat-card">
+                <div class="ta-stat-text"><div class="ta-stat-num" id="statTsUnits">0</div><div class="ta-stat-label">TS units</div></div>
+                <div class="ta-stat-icon ta-ic-maroon"><i class="fa-solid fa-people-arrows"></i></div>
+            </div>
+        </div>
     </div>
 
-    <!-- Tab Navigation -->
-    <div class="tabs-container">
-        <a class="tab-link active" onclick="showTab('weekly', this)">
-            <i class="fa-regular fa-calendar-days"></i> Weekly Schedule
-        </a>
-        <a class="tab-link" onclick="showTab('assignment', this)">
-            <i class="fa-solid fa-table-list"></i> Teaching Assignment
-        </a>
+    <!-- Tab Navigation + shared toolbar (Official/Local + Export) -->
+    <div class="ta-tabs-row">
+        <div class="tabs-container">
+            <a class="tab-link active" onclick="showTab('weekly', this)">
+                <i class="fa-regular fa-calendar-days"></i> Weekly schedule
+            </a>
+            <a class="tab-link" onclick="showTab('assignment', this)">
+                <i class="fa-solid fa-table-list"></i> Teaching Assignment
+            </a>
+        </div>
+        <div class="ta-shared-toolbar">
+            <div class="ta-schedule-toggle" id="scheduleToggleGroup">
+                <button type="button" class="ta-toggle-btn active" id="btnOfficial" onclick="setScheduleMode('official')">Official Schedule</button>
+                <button type="button" class="ta-toggle-btn" id="btnLocal" onclick="setScheduleMode('local')">Local Schedule</button>
+            </div>
+            <button class="btn-export-pdf" onclick="exportActiveTabPdf()">
+                <i class="fa-solid fa-arrow-up-from-bracket"></i> Export
+            </button>
+        </div>
     </div>
 
     <!-- ── WEEKLY SCHEDULE TAB ── -->
     <div id="tab-weekly">
 
-        <!-- LOCAL / OFFICIAL toggle -->
-        <div class="schedule-toggle-bar">
-            <span class="toggle-label" id="lbl-local">LOCAL SCHEDULE</span>
-            <label class="toggle-switch">
-                <input type="checkbox" id="scheduleToggle" checked onchange="onScheduleToggle(this.checked)">
-                <div class="toggle-track"></div>
-                <div class="toggle-thumb"></div>
-            </label>
-            <span class="toggle-label active-label" id="lbl-official">OFFICIAL SCHEDULE</span>
+        <div class="ta-legend-row" id="calLegend"></div>
+
+        <div class="ta-week-toolbar">
+            <div class="ta-nav-group">
+                <button type="button" class="ta-nav-btn" onclick="navWeek(-1)" title="Previous week"><i class="fa-solid fa-chevron-left"></i></button>
+                <button type="button" class="ta-nav-btn ta-nav-today" onclick="navWeek('today')">TODAY</button>
+                <button type="button" class="ta-nav-btn" onclick="navWeek(1)" title="Next week"><i class="fa-solid fa-chevron-right"></i></button>
+                <span class="ta-week-label" id="weekRangeLabel"></span>
+            </div>
+            <div class="ta-program-filter">
+                <select id="programFilter" onchange="onProgramFilterChange()">
+                    <option value="">BY PROGRAM</option>
+                </select>
+            </div>
         </div>
 
         <div class="cal-wrapper" id="calWrapper">
@@ -250,69 +275,85 @@
         </div>
     </div>
 
-    <!-- ── TEACHING ASSIGNMENT TAB (official schedule only) ── -->
+    <!-- ── TEACHING ASSIGNMENT TAB ── -->
     <div id="tab-assignment" style="display:none;">
-        <div class="load-section">
-            <h2>REGULAR LOAD</h2>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>SUBJECT CODE</th>
-                            <th>SUBJECT DESCRIPTION</th>
-                            <th>UNITS</th>
-                            <th>YEAR &amp; SECTION</th>
-                            <th>TIME</th>
-                            <th>DAY/S</th>
-                            <th>ROOM</th>
-                            <th>EFFECTIVITY</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tbl-regular">
-                        <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
-                    </tbody>
-                    <tfoot>
-                        <tr><td colspan="8" class="total-units">TOTAL REGULAR LOAD: <span id="total-regular-units">—</span> units</td></tr>
-                    </tfoot>
-                </table>
+
+        <div class="ta-faculty-box">
+            <div class="ta-faculty-box-name" id="taFacBoxName">—</div>
+            <div class="ta-faculty-box-meta">
+                <span>EMPLOYEE TYPE: <strong id="taEmpType">—</strong></span>
+                <span>TOTAL UNITS: <strong id="taTotalUnitsInline">—</strong></span>
+                <span>AVAILABLE UNITS: <strong id="taAvailableUnitsInline">—</strong></span>
             </div>
         </div>
 
-        <div class="load-section">
-            <h2>PART TIME LOAD</h2>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>SUBJECT CODE</th>
-                            <th>SUBJECT DESCRIPTION</th>
-                            <th>UNITS</th>
-                            <th>YEAR &amp; SECTION</th>
-                            <th>TIME</th>
-                            <th>DAY/S</th>
-                            <th>ROOM</th>
-                            <th>EFFECTIVITY</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tbl-pt">
-                        <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
-                    </tbody>
-                    <tfoot>
-                        <tr><td colspan="8" class="total-units">TOTAL PART-TIME LOAD: <span id="total-pt-units">—</span> units</td></tr>
-                    </tfoot>
-                </table>
-            </div>
+        <div id="taEmptyMsg" class="cal-empty-msg" style="display:none;">
+            No teaching assignments are available for this academic period.
         </div>
 
-        <!-- Overall total bar -->
-        <div class="overall-total-bar" id="overall-total-bar">
-            OVERALL TOTAL TEACHING LOAD: <span id="total-overall-units">—</span> units
+        <div id="taTablesWrap">
+            <div class="load-section">
+                <h2>REGULAR LOAD</h2>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>SUBJECT CODE</th>
+                                <th>SUBJECT DESCRIPTION</th>
+                                <th>UNITS</th>
+                                <th>YEAR &amp; SECTION</th>
+                                <th>TIME</th>
+                                <th>DAY/S</th>
+                                <th>ROOM</th>
+                                <th>EFFECTIVITY</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-regular">
+                            <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
+                        </tbody>
+                        <tfoot>
+                            <tr><td colspan="8" class="total-units">TOTAL REGULAR LOAD: <span id="total-regular-units">—</span> units</td></tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <div class="load-section">
+                <h2>PART TIME LOAD</h2>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>SUBJECT CODE</th>
+                                <th>SUBJECT DESCRIPTION</th>
+                                <th>UNITS</th>
+                                <th>YEAR &amp; SECTION</th>
+                                <th>TIME</th>
+                                <th>DAY/S</th>
+                                <th>ROOM</th>
+                                <th>EFFECTIVITY</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-pt">
+                            <tr><td colspan="8" style="text-align:center;color:#aaa;padding:16px;">Loading...</td></tr>
+                        </tbody>
+                        <tfoot>
+                            <tr><td colspan="8" class="total-units">TOTAL PART-TIME LOAD: <span id="total-pt-units">—</span> units</td></tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Overall total bar -->
+            <div class="overall-total-bar" id="overall-total-bar">
+                OVERALL TOTAL TEACHING LOAD: <span id="total-overall-units">—</span> units
+            </div>
         </div>
     </div>
 
 </div>
 
-<!-- Detail Modal -->
+<!-- Detail Modal (read-only) -->
 <div id="detailModal" class="detail-overlay">
     <div class="detail-box">
         <div class="detail-header">
@@ -327,16 +368,14 @@
             <div class="detail-row"><span class="detail-label">Units</span><span class="detail-val" id="det-units"></span></div>
             <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val" id="det-status"></span></div>
         </div>
-        <div class="detail-footer">
-            <button class="detail-btn close-btn" onclick="closeDetail()">Close</button>
-        </div>
+        <button class="detail-close" onclick="closeDetail()">Close</button>
     </div>
 </div>
 
 <script>
-const OWN_EMP_NUM = '{{ own_emp_num }}';
-const AY_ID       = '{{ active_ay_id }}';
-const SEM         = '{{ active_sem }}';
+const EMP_NUM = '{{ own_emp_num }}';
+const AY_ID  = '{{ active_ay_id }}';
+const SEM    = '{{ active_sem }}';
 </script>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/teachingAssign.acad.js') }}"></script>
 {% endblock %}

@@ -485,7 +485,8 @@ async function onFacultySelect(empNum) {
     _facInfo = null;
     if (empNum) {
         try {
-            const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}`).then(r => r.json());
+            const _subjectCode = (document.getElementById('sel_subj')?.value || '').trim();
+            const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}&subject_code=${encodeURIComponent(_subjectCode)}`).then(r => r.json());
             if (typeof _subjClickToken !== 'undefined' && _subjClickToken !== _mySubjToken) return;
             if (d.success) _facInfo = d;
         } catch(e) { _facInfo = null; }
@@ -530,64 +531,24 @@ function _checkFacultySpecWarning() {
     const container = document.getElementById('fac-spec-warning');
     if (!container) return;
     container.innerHTML = '';
-
     if (!SPEC_CONSTRAINT_ENABLED || !_facInfo || !_subjInfo) return;
 
     const spec     = (_facInfo.specializationname || '').trim();
     const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
-    const compat   = _getSpecCompatibility(spec, subjCode);
+    if (_facInfo.spec_match !== false) return;
 
-    if (compat.level === 'unrestricted' || compat.level === 'exact') return;
-
-    const facName  = (_facInfo.fullname || 'This faculty member').trim();
+    const facName    = (_facInfo.fullname || 'This faculty member').trim();
+    const required   = _facInfo.required_specialization || 'a compatible specialization';
     const isImported = !!window.currentEditSession;
+    const facValNow  = (document.getElementById('sel_faculty')?.value || '').trim();
+    if (isImported && window._specWarnBaselineFacId && facValNow === window._specWarnBaselineFacId) return;
 
-    if (compat.level === 'related') {
-        // Soft informational note — green-tinted
-        container.innerHTML =
-            `<div style="background:#eafaf1;border:1.5px solid #27ae60;border-radius:8px;` +
-            `padding:10px 14px;margin-top:8px;font-size:13px;color:#1a6b3c;` +
-            `display:flex;gap:8px;align-items:flex-start;">` +
-            `<span style="font-size:15px;margin-top:1px">&#10003;</span>` +
-            `<span><strong>${facName}</strong> (${spec}) — <strong>Related Field</strong> for ${subjCode}. ` +
-            `This specialization is acceptable for this subject.</span></div>`;
-        return;
-    }
-
-    if (compat.level === 'mismatch') {
-        // Reopening an already-assigned session with the same faculty still on it means the
-        // mismatch was already acknowledged (or pre-dates the constraint) — don't re-flag it
-        // every time the schedule is reopened. Only re-flag if the faculty is actually changed.
-        const facValNow = (document.getElementById('sel_faculty')?.value || '').trim();
-        if (isImported && window._specWarnBaselineFacId && facValNow === window._specWarnBaselineFacId) {
-            return;
-        }
-        if (isImported) {
-            // Imported/existing session — informational only, never blocking
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            container.innerHTML =
-                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
-                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
-                `display:flex;gap:8px;align-items:flex-start;">` +
-                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
-                `<span>This assignment was imported from an approved official schedule. ` +
-                `Specialization analysis: <strong>Potential Mismatch</strong> — ` +
-                `${facName} (${spec}) vs. expected ${primary}. ` +
-                `No action required unless reviewed by the scheduler.</span></div>`;
-        } else {
-            // New manual assignment — informational note only (no longer a hard block)
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            container.innerHTML =
-                `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
-                `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;` +
-                `display:flex;gap:8px;align-items:flex-start;">` +
-                `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
-                `<span>Specialization note: <strong>${facName}</strong> (${spec}) may not be the ideal fit ` +
-                `for <strong>${subjCode}</strong> (expected: ${primary}). This is for reference only.</span></div>`;
-        }
-    }
+    container.innerHTML =
+        `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
+        `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;display:flex;gap:8px;align-items:flex-start;">` +
+        `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
+        `<span><strong>SC9 — Specialization Advisory:</strong> ${facName} (${spec || 'none on file'}) ` +
+        `may not match ${subjCode}. Expected: ${required}. This is a soft preference and does not block saving.</span></div>`;
 }
 
 async function onDayChange() {
@@ -1394,15 +1355,8 @@ async function triggerDSSLogic() {
         let facRec = data.faculty.recommended;
         let facOth = data.faculty.others;
         if (SPEC_CONSTRAINT_ENABLED && facRec.length === 0) {
-            const _subj = (document.getElementById('sel_subj')?.value || '').trim();
-            facRec = facOth.filter(f => {
-                const c = _getSpecCompatibility(f.specialization || '', _subj);
-                return c.level === 'exact' || c.level === 'related';
-            });
-            facOth = facOth.filter(f => {
-                const c = _getSpecCompatibility(f.specialization || '', _subj);
-                return c.level !== 'exact' && c.level !== 'related';
-            });
+            facRec = facOth.filter(f => f.spec_match === true);
+            facOth = facOth.filter(f => f.spec_match !== true);
             if (facRec.length > 0) console.log('[DSS] spec fallback: no history, using specialization for recommendations');
         }
 
@@ -1744,7 +1698,7 @@ async function confirmAndPlace() {
         }
     }
 
-    // ── HC8: Maximum teaching load ──
+    // ── HC9: Teaching load limit ──
     // Load is measured in actual/nominal HOURS now (faculty_load.py), not credit units.
     // _facLoadData.total_units/scheduled_units already carry hours (from
     // /api/manual/faculty_load); subjectHrs/pendingHrs use each subject's nominal
@@ -1782,21 +1736,9 @@ async function confirmAndPlace() {
         }
     }
 
-    // ── Specialization check — skipped in local mode (intentional overrides allowed) ──
-    if (_sm() !== 'local' && _facInfo) {
-        const facSpec = (_facInfo.specializationname || '').trim();
-        const compat  = _getSpecCompatibility(facSpec, subjSel.value);
-        // 'exact' and 'related' are both acceptable; only true 'mismatch' blocks
-        if (compat.level === 'mismatch') {
-            const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjSel.value.toUpperCase().startsWith(pfx)));
-            const primary = group ? group.primary : 'the required field';
-            await showValidationModal('Specialization Mismatch',
-                `${facName}'s specialization (${facSpec}) does not match what is required ` +
-                `for "${subjSel.value}" (${primary}). ` +
-                `Please select a faculty member with a compatible specialization.`);
-            return;
-        }
-    }
+    // SC9 specialization is intentionally NOT a pre-save blocking gate.
+    // The authoritative backend validator returns legacy HC_SPEC as a warning only,
+    // while final SC9 influences recommendation/fitness preference.
 
     const currentSubjCode = (subjSel.value || '').toUpperCase();
 

@@ -34,14 +34,32 @@
                     <label class="curr-filter-label">CURRICULUM</label>
                     <select id="filterAssignCurr" class="curr-filter-input" onchange="filterAssignments()">
                         <option value="">SELECT</option>
-                        {% for c in all_curriculums %}
-                        <option value="{{ c.curriculumcode }}">{{ c.curriculumcode }}</option>
+                        {% for c in cohorts|map(attribute='curriculumcode')|select|unique %}
+                        <option value="{{ c }}">{{ c }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="curr-filter-group">
                     <label class="curr-filter-label">PROGRAM</label>
-                    <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
+                    <div class="curr-prog-search-wrapper" id="currProgSearchWrapper">
+                        <div class="curr-prog-search-trigger" id="currProgSearchTrigger">
+                            <span id="currProgSearchTriggerText">SELECT</span>
+                            <i class="fas fa-chevron-down curr-prog-search-chevron"></i>
+                        </div>
+                        <div class="curr-prog-search-menu" id="currProgSearchMenu">
+                            <div class="curr-prog-search-box">
+                                <input type="text" id="currProgSearchInput" class="curr-prog-search-input"
+                                       placeholder="Type to search..." autocomplete="off">
+                            </div>
+                            <div class="curr-prog-search-list" id="currProgSearchList">
+                                <div class="curr-prog-search-option" data-value="">SELECT</div>
+                                {% for p in programs %}
+                                <div class="curr-prog-search-option" data-value="{{ p.programcode }}">{{ p.programname }}</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    <select id="filterAssignProg" class="curr-filter-input curr-filter-wide" onchange="filterAssignments()" style="display:none;">
                         <option value="">SELECT</option>
                         {% for p in programs %}
                         <option value="{{ p.programcode }}">{{ p.programname }}</option>
@@ -69,7 +87,6 @@
                         <th>YEAR ENTRY</th>
                         <th>CURRICULUM</th>
                         <th>NO. OF SECTIONS</th>
-                        <th style="width: 50px;"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -80,11 +97,6 @@
                         <td>{{ c.academicyearid }}</td>
                         <td><span class="curr-code-pill">{{ c.curriculumcode or '—' }}</span></td>
                         <td>{{ c.section_count or 0 }}</td>
-                        <td style="text-align:center;">
-                            <button class="btn-edit-icon" onclick="editAssignment('{{ c.curriculumid }}','{{ c.programcode }}','{{ c.curriculumid }}','{{ c.academicyearid }}','{{ c.offeringcode }}')">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -126,7 +138,7 @@
                 <div class="curr-prog-body">
                     {% for c in prog_currs %}
                     <div class="curr-syllabi-row">
-                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }}){% if c.curriculumtype == 'WITH_BRIDGING' %} - BRIDGING{% endif %}</span>
+                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }}{% if c.curriculumtype == 'WITH_BRIDGING' %} - BRIDGING{% endif %}</span>
                         <div class="curr-syllabi-actions">
                             <a href="{{ url_for('admin_view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
                             <button class="btn-del-curr" onclick="confirmDeleteCurriculum('{{ c.curriculumid }}','{{ c.curriculumyear }}')">
@@ -152,50 +164,6 @@
 </div>
 
 <!-- ─── MODALS (unchanged) ─── -->
-
-<!-- 1. ASSIGNMENT EDIT MODAL -->
-<div id="assignModal" class="custom-modal" style="display: none; z-index: 1000;">
-    <div class="modal-content-lg" style="width: 450px; border-radius: 8px;">
-        <div class="modal-header-maroon">
-            <h2 id="assignModalTitle"><i class="fas fa-edit"></i> Edit Assignment</h2>
-            <span class="close-btn" onclick="closeAssignModal()">&times;</span>
-        </div>
-        <form action="/admin/curriculum/assign" method="POST">
-            <input type="hidden" name="pyl_id" id="assignPylId">
-            <input type="hidden" name="program_code" id="hiddenProgramCode">
-            <input type="hidden" name="start_academic_year" id="hiddenStartYear">
-            <div class="modal-body-vertical" style="padding: 25px; gap: 15px;">
-                <div class="form-group-modal">
-                    <label>Academic Year of Entry</label>
-                    <input type="text" id="assignStartYear" disabled class="modal-input-styled modal-readonly-bg">
-                </div>
-                <div class="form-group-modal">
-                    <label>Program</label>
-                    <input type="text" id="assignProgramCode" disabled class="modal-input-styled modal-readonly-bg">
-                </div>
-                <div class="form-group-modal">
-                    <label style="color: #c0392b;">Curriculum Version</label>
-                    <select name="curriculum_id" id="assignCurriculumId" required class="modal-input-styled" style="border: 2px solid #c0392b;">
-                        <option value="" disabled selected>Select Curriculum</option>
-                        {% for c in all_curriculums %}
-                        <option class="curr-opt" value="{{ c.curriculumid }}" data-program="{{ c.offeringcode }}">
-                            {{ c.curriculumcode }} (C.Y {{ c.curriculumyear }})
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group-modal">
-                    <label style="color: #c0392b;">Number of Sections</label>
-                    <input type="number" name="number_of_sections" id="assignSections" required min="1" class="modal-input-styled" style="border: 2px solid #c0392b;">
-                </div>
-            </div>
-            <div class="modal-footer-flex">
-                <button type="button" class="btn-modal btn-cancel" onclick="closeAssignModal()">Cancel</button>
-                <button type="submit" class="btn-modal btn-confirm">Save Assignment</button>
-            </div>
-        </form>
-    </div>
-</div>
 
 <!-- 2. EXPORT WARNING MODAL -->
 <div id="exportWarningModal" class="custom-modal" style="display: none; z-index: 9999;">

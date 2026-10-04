@@ -25,6 +25,10 @@ let _activeBldg      = null;
 let _activeRoom      = null;
 let _floorFilter     = '';
 let _currentConflict = null;  // set by _renderAvailRooms; blocks room card clicks when non-null
+let _availHasTimeFilter = false; // set by _renderAvailRooms: were Day + Start + End chosen?
+let _viewedRoom      = null;  // room whose schedule is currently shown (enables "Request This Room")
+let _roomLoadSeq     = 0;     // ignores stale schedule responses when rooms are clicked quickly
+let _cameFromAvail   = false; // opened from Available Rooms → show the "back" button
 
 /* ── Init ── */
 const _initEl = document.getElementById('frs-init-data');
@@ -40,8 +44,10 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ═══════════════════════════════════════════
    MAIN TAB SWITCH
 ═══════════════════════════════════════════ */
-function frsSetMainTab(tab) {
+function frsSetMainTab(tab, fromAvailable = false) {
     const isSchedule = tab === 'schedule';
+    _cameFromAvail = isSchedule && fromAvailable;
+    document.getElementById('frsBackToAvail').style.display = _cameFromAvail ? '' : 'none';
     document.getElementById('btnFrsSchedView').classList.toggle('active',  isSchedule);
     document.getElementById('btnFrsAvailRooms').classList.toggle('active', !isSchedule);
     document.getElementById('frsScheduleViewPanel').style.display = isSchedule ? 'block' : 'none';
@@ -70,16 +76,16 @@ function _buildBldgTabs() {
     if (_buildings.length) frsSelectBuilding(_buildings[0].id);
 }
 
-function frsSelectBuilding(bid) {
+function frsSelectBuilding(bid, focusRoomId = null) {
     _activeBldg = bid;
     _activeRoom = null;
     document.querySelectorAll('.frs-bldg-tab').forEach(t =>
         t.classList.toggle('active', String(t.dataset.bid) === String(bid))
     );
-    _buildFloorDropdown();   // dynamically populate floors for this building
     _floorFilter = '';
-    _renderRoomList();
+    _buildFloorDropdown();   // dynamically populate floors for this building
     _clearGrid();
+    _renderRoomList(focusRoomId);
 }
 
 /* ═══════════════════════════════════════════
@@ -118,9 +124,10 @@ function frsFilterFloor() {
 /* ═══════════════════════════════════════════
    ROOM LIST (left sidebar)
 ═══════════════════════════════════════════ */
-function _renderRoomList() {
+function _renderRoomList(focusRoomId = null) {
     const list = document.getElementById('frsRoomList');
     list.innerHTML = '';
+    _setViewedRoom(null);
 
     if (_activeBldg === null) {
         list.innerHTML = '<div class="frs-room-empty">Select a building</div>';
@@ -137,22 +144,28 @@ function _renderRoomList() {
         return;
     }
 
-    filtered.forEach((r, idx) => {
+    filtered.forEach(r => {
         const item = document.createElement('div');
         item.className   = 'frs-room-item';
         item.textContent = r.name;
         item.dataset.rid = r.id;
         item.onclick     = () => frsSelectRoom(r.id, r.name, r.bid);
         list.appendChild(item);
-        if (idx === 0) frsSelectRoom(r.id, r.name, r.bid); // auto-select first
     });
+    // Show the requested room (e.g. clicked from Available Rooms), else the first one.
+    const target = filtered.find(r => String(r.id) === String(focusRoomId)) || filtered[0];
+    frsSelectRoom(target.id, target.name, target.bid);
+    const el = list.querySelector(`.frs-room-item[data-rid="${target.id}"]`);
+    if (el && focusRoomId) el.scrollIntoView({ block: 'nearest' });
 }
 
 /* ═══════════════════════════════════════════
    ROOM SELECTION & CALENDAR
 ═══════════════════════════════════════════ */
 async function frsSelectRoom(rid, rname, bid) {
+    const seq = ++_roomLoadSeq;
     _activeRoom = rid;
+    _setViewedRoom(null);   // no request until THIS room's schedule is on screen
     document.querySelectorAll('.frs-room-item').forEach(el =>
         el.classList.toggle('active', String(el.dataset.rid) === String(rid))
     );
@@ -163,10 +176,42 @@ async function frsSelectRoom(rid, rname, bid) {
     try {
         const res  = await fetch(`/api/get_room_schedule/${rid}?scheduler_mode=local`);
         const data = await res.json();
+        if (seq !== _roomLoadSeq) return;   // another room was selected meanwhile
         _renderRoomCalendar(Array.isArray(data) ? data : []);
+        _setViewedRoom({ id: rid, name: rname, building: bldgObj ? bldgObj.name : '' });
     } catch (e) {
         console.error('[frs] room schedule error:', e);
     }
+}
+
+/* "Request This Room" is offered only for the room whose schedule is shown. */
+function _setViewedRoom(room) {
+    _viewedRoom = room;
+    const btn = document.getElementById('frsRequestRoomBtn');
+    if (!btn) return;
+    btn.style.display = room ? '' : 'none';
+    btn.title = room ? `Request room ${room.name} after checking its schedule` : '';
+}
+
+function frsRequestViewedRoom() {
+    if (!_viewedRoom) return;
+    if (typeof frsOpenRequestFromRoom === 'function') {
+        frsOpenRequestFromRoom(_viewedRoom.id, _viewedRoom.name, _viewedRoom.building);
+    }
+}
+
+/* Available Rooms → a room clicked with no filters: show that room's current
+   schedule first (Schedule View), with Request available from there. */
+function frsViewRoomSchedule(roomId) {
+    const room = _rooms.find(r => String(r.id) === String(roomId));
+    if (!room) return;
+    frsSetMainTab('schedule', true);
+    frsSelectBuilding(room.bid, room.id);
+    document.getElementById('frsScheduleViewPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function frsBackToAvailable() {
+    frsSetMainTab('available');   // filters are kept in their inputs
 }
 
 /* ═══════════════════════════════════════════
@@ -488,6 +533,7 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
     const hasConflict = !!(conflicts && hasTimeFilter &&
         (conflicts.faculty_conflict || conflicts.section_conflict));
     _currentConflict = hasConflict ? conflicts : null;
+    _availHasTimeFilter = hasTimeFilter;
 
     if (!rooms.length) {
         const msg = hasTimeFilter
@@ -540,12 +586,18 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
                 : '';
             // When there is a scheduling conflict, style the card as blocked and show a conflict hint
             const cardStyle   = hasConflict ? ' style="opacity:.7;cursor:not-allowed;"' : '';
+            // No Day/Time filter yet → the card first shows the room's schedule;
+            // Request is offered from there, after the schedule has been seen.
             const requestHint = hasConflict
                 ? `<div class="frs-avail-request-hint" style="color:#f0a500;"><i class="fas fa-triangle-exclamation"></i> Conflict — Cannot Request</div>`
-                : `<div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>`;
+                : hasTimeFilter
+                    ? `<div class="frs-avail-request-hint"><i class="fas fa-plus-circle"></i> Request</div>`
+                    : `<div class="frs-avail-request-hint"><i class="fas fa-calendar-alt"></i> View Schedule</div>`;
+            const cardTitle = hasConflict ? 'You have a scheduling conflict at this time'
+                : hasTimeFilter ? 'Request this room' : "View this room's current schedule";
             html += `
             <div class="frs-avail-card frs-avail-card-clickable"${cardStyle}
-                 title="${hasConflict ? 'You have a scheduling conflict at this time' : 'Request this room'}"
+                 title="${cardTitle}"
                  onclick="frsRoomCardClick(${r.roomid}, '${_esc(r.roomname || '')}', '${_esc(r.buildingname || '')}')">
                 ${hasTimeFilter ? `<div class="frs-avail-dot"${hasConflict ? ' style="background:#f0a500;"' : ''}></div>` : ''}
                 <div class="frs-avail-room-name">ROOM ${_esc(r.roomname || '')}</div>
@@ -564,6 +616,11 @@ function _renderAvailRooms(rooms, start, end, hasTimeFilter, conflicts) {
 function frsRoomCardClick(roomId, roomName, buildingName) {
     if (_currentConflict) {
         _showConflictBlock();
+        return;
+    }
+    if (!_availHasTimeFilter) {
+        // No filters chosen: Select Room → View Room Schedule → Request Option
+        frsViewRoomSchedule(roomId);
         return;
     }
     if (typeof frsOpenRequestFromRoom === 'function') {
