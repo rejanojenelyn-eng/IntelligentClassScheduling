@@ -14,16 +14,45 @@ _pool: '_pg_pool.ThreadedConnectionPool | None' = None
 def _get_pool() -> '_pg_pool.ThreadedConnectionPool':
     global _pool
     if _pool is None:
-        _pool = _pg_pool.ThreadedConnectionPool(
-            minconn=3,
-            maxconn=25,
-            dbname=Config.DB_NAME,
-            user=Config.DB_USER,
-            password=Config.DB_PASS,
-            host=Config.DB_HOST,
-            port=Config.DB_PORT,
-        )
+        if Config.DATABASE_URL:
+            # Railway + Neon: one connection string (includes sslmode=require).
+            # Keepalives stop idle pooled connections being dropped silently.
+            _pool = _pg_pool.ThreadedConnectionPool(
+                minconn=1, maxconn=10, dsn=Config.DATABASE_URL, connect_timeout=10,
+                keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5,
+            )
+        else:
+            _pool = _pg_pool.ThreadedConnectionPool(
+                minconn=3,
+                maxconn=25,
+                dbname=Config.DB_NAME,
+                user=Config.DB_USER,
+                password=Config.DB_PASS,
+                host=Config.DB_HOST,
+                port=Config.DB_PORT,
+            )
     return _pool
+
+
+def _checkout(p):
+    """Take a connection from the pool that is still alive. Neon suspends its
+    compute after 5 idle minutes, which closes every pooled connection; hand
+    out a fresh one instead of a dead one."""
+    for _ in range(3):
+        conn = p.getconn()
+        if not Config.DATABASE_URL:
+            return conn
+        try:
+            if not conn.closed:
+                cur = conn.cursor()
+                cur.execute('SELECT 1')
+                cur.close()
+                conn.rollback()
+                return conn
+        except psycopg2.Error:
+            pass
+        p.putconn(conn, close=True)
+    return p.getconn()
 
 
 class _PooledConnection:
@@ -84,7 +113,7 @@ def get_db_connection():
     connection to the pool rather than destroying the TCP socket."""
     try:
         p = _get_pool()
-        conn = p.getconn()
+        conn = _checkout(p)
         return _PooledConnection(conn, p)
     except _pg_pool.PoolError as e:
         # Pool momentarily exhausted — wait briefly and retry once before giving up.
@@ -92,7 +121,7 @@ def get_db_connection():
         _time.sleep(0.3)
         try:
             p = _get_pool()
-            conn = p.getconn()
+            conn = _checkout(p)
             return _PooledConnection(conn, p)
         except Exception as e2:
             print(f"Pool retry also failed: {e2}")
@@ -106,9 +135,10 @@ def query_db(query, args=(), one=False):
     """Run a query and return results as RealDictRow objects (keyed by column name)."""
     conn = get_db_connection()
     if conn is None:
+        where = ('DATABASE_URL' if Config.DATABASE_URL
+                 else f"'{Config.DB_NAME}' at {Config.DB_HOST}:{Config.DB_PORT}")
         raise RuntimeError(
-            f"Could not connect to database '{Config.DB_NAME}' at "
-            f"{Config.DB_HOST}:{Config.DB_PORT}. "
+            f"Could not connect to database {where}. "
             "Check that PostgreSQL is running and the database exists."
         )
     cur = conn.cursor(cursor_factory=RealDictCursor)

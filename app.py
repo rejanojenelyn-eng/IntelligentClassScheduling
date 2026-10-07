@@ -835,11 +835,15 @@ def index():
 # --- 2. ONE-TIME SETUP ROUTE ---
 @app.route('/setup')
 def setup():
+    # Only seeds a brand-new, empty database. It used to TRUNCATE Accounts
+    # (CASCADE), so anyone visiting /setup on the live site wiped every account.
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("TRUNCATE TABLE Accounts RESTART IDENTITY CASCADE")
-        
+        cur.execute("SELECT EXISTS (SELECT 1 FROM Accounts)")
+        if cur.fetchone()[0]:
+            return "Not Found", 404
+
         hashed = generate_password_hash('password123', method='pbkdf2:sha256')
 
         cur.execute("INSERT INTO Accounts (Username, PasswordHash, Role, must_change_password, account_setup_complete) VALUES (%s, %s, %s, TRUE, FALSE)", ('admin', hashed, 'Admin'))
