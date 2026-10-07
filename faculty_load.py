@@ -40,36 +40,58 @@ WEEKDAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'}
 DAY_ORDER = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
              'Friday': 4, 'Saturday': 5, 'Sunday': 6}
 
-# Live query: for a single faculty, every currently-active scheduled time slice
-# (Draft-preferred per subject+section, per the BOOL_OR status-group rule — see
-# project_faculty_load_calc memory) with its REAL elapsed hours computed from the
-# actual assigned timeslots. This is the only true "actual scheduled hours" source
-# in the codebase; every load computation must ultimately run through this.
-FACULTY_SESSIONS_SQL = """
-    WITH scoped AS (
-        SELECT sv.versionid, sv.status,
-               BOOL_OR(sv.status = 'Draft') OVER (
-                   PARTITION BY cs.subjectcode, sc.sectionid
-               ) AS has_draft
-        FROM schedule_version sv
+# ── THE effective (live) schedule ─────────────────────────────────────────────────
+# Effective Schedule = Official Published
+#                      MINUS Official occurrences overridden by an active Local Published
+#                      PLUS  the active Local Published sessions.
+# local_arrangement_sessions.official_sessionid is the authoritative Local -> Official link.
+# Drafts (Official or Local) are never live. Every live reader (faculty load, faculty
+# assignments / blocked times, room report, HC8) selects FROM this one definition so they
+# cannot disagree. Use as `WITH {EFFECTIVE_SESSIONS_CTE} SELECT ... FROM effective_sessions es`.
+#   source          'Official' | 'Local'
+#   sessionid       schedule_sessions.sessionid (Official) / local_arrangement_sessions.sessionid
+#   official_sessionid  the Official occurrence (itself, or the one a Local row replaces)
+#   scheduleid / curriculumsubjectid  the Official subject+section+semester identity
+#   employeenumber  the faculty actually teaching this live occurrence
+EFFECTIVE_SESSIONS_CTE = """
+    effective_sessions AS (
+        SELECT 'Official'::text AS source, ss.sessionid, ss.sessionid AS official_sessionid,
+               sv.versionid, sc.scheduleid, sc.sectionid, sc.semesterid, sc.curriculumsubjectid,
+               COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+               ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-        JOIN semester sem ON sc.semesterid = sem.semesterid
-        WHERE sc.employeenumber = %s
-          AND sem.academicyearid = %s
-          AND sem.semestertype   = %s
-          AND sv.status IN ('Published','Draft')
-    ),
-    ranked AS (
-        SELECT versionid
-        FROM scoped
-        WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM local_arrangement la_x
+            JOIN local_arrangement_sessions las_x ON las_x.arrangementid = la_x.arrangementid
+            WHERE la_x.status = 'Published' AND la_x.is_active = TRUE
+              AND la_x.semesterid = sc.semesterid AND la_x.sectionid = sc.sectionid
+              AND las_x.official_sessionid = ss.sessionid
+        )
+        UNION ALL
+        SELECT 'Local'::text, las.sessionid, las.official_sessionid,
+               osv.versionid, osc.scheduleid, la.sectionid, la.semesterid, osc.curriculumsubjectid,
+               las.faculty_employeenumber,
+               las.daydesc, las.starttimeid, las.endtimeid, las.roomid
+        FROM local_arrangement la
+        JOIN local_arrangement_sessions las ON las.arrangementid = la.arrangementid
+        JOIN schedule_sessions oss ON oss.sessionid = las.official_sessionid
+        JOIN schedule_version osv ON oss.versionid = osv.versionid
+        JOIN schedule osc ON osv.scheduleid = osc.scheduleid AND osc.sectionid = la.sectionid
+        WHERE la.status = 'Published' AND la.is_active = TRUE
     )
-    SELECT
-        cs.subjectcode,
-        cs.subjectname,
-        COALESCE(cs.creditunits,0) AS units,
-        ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
+"""
+
+# Display order for day/time lists (Faculty Load tab, TS panel, etc.) — sessions
+# arrive from FACULTY_SESSIONS_SQL ordered by clock time, not weekday, so a
+# Thursday slice that starts earlier than a Monday one would otherwise print
+# "Thursday, Monday, Saturday" instead of "Monday, Thursday, Saturday".
+DAY_ORDER = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+             'Friday': 4, 'Saturday': 5, 'Sunday': 6}
+
+_YEAR_SECTION_SQL = """
         -- Section names already embed program+year (e.g. "BSIT1") for most sections, so
         -- prefixing with programcode-yearlevel again would print "BSIT-1 BSIT1". Only
         -- prefix when the section name doesn't already start with the program code.
@@ -80,58 +102,72 @@ FACULTY_SESSIONS_SQL = """
                 THEN sec.sectionname
             ELSE COALESCE(pyl.programcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
                      || ' ' || sec.sectionname
-        END AS year_section,
+        END"""
+
+# Live query: for a single faculty, every LIVE time slice (the effective schedule above)
+# with its REAL elapsed hours computed from the actual assigned timeslots. Pending Drafts
+# never change a faculty member's live load; a proposed Publish is validated by adding the
+# candidate rows to the OTHER sections' live load (see app._other_sections_faculty_hours).
+FACULTY_SESSIONS_SQL = """
+    WITH """ + EFFECTIVE_SESSIONS_CTE + """
+    SELECT
+        cs.subjectcode,
+        cs.subjectname,
+        COALESCE(cs.creditunits,0) AS units,
+        ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,""" + _YEAR_SECTION_SQL + """ AS year_section,
         sec.sectionid,
         TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
         LPAD(EXTRACT(HOUR FROM ts_s.timevalue)::text,2,'0') ||
         LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
-        ss.daydesc AS days,
+        es.daydesc AS days,
         COALESCE(r.roomname,'—') AS room,
-        sv.status
-    FROM ranked rk
-    JOIN schedule_sessions ss ON ss.versionid = rk.versionid
-    JOIN schedule_version sv ON sv.versionid = rk.versionid
-    JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-    JOIN semester sem ON sc.semesterid = sem.semesterid
-    LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
+        'Published'::text AS status,
+        es.source
+    FROM effective_sessions es
+    JOIN curriculumsubject cs ON es.curriculumsubjectid = cs.curriculumsubjectid
+    JOIN semester sem ON es.semesterid = sem.semesterid
+    LEFT JOIN sections sec ON es.sectionid = sec.sectionid
     LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-    LEFT JOIN room r ON ss.roomid = r.roomid
-    LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-    LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+    LEFT JOIN room r ON es.roomid = r.roomid
+    LEFT JOIN timeslot ts_s ON es.starttimeid = ts_s.timeid
+    LEFT JOIN timeslot ts_e ON es.endtimeid = ts_e.timeid
+    WHERE es.employeenumber = %s
+      AND sem.academicyearid = %s
+      AND sem.semestertype   = %s
     ORDER BY cs.subjectcode, ts_s.timevalue
 """
 
-# Batch variant: total real scheduled hours per faculty, for a whole set of faculty
-# at once (used where a per-faculty round trip would be too slow — DSS suggest,
-# cross-program overload checks). Same Draft-preferred status-group resolution.
+# Batch variant: total real scheduled hours per faculty, for a whole set of faculty at
+# once (DSS suggest, cross-program overload checks, the GA's existing load). Same live
+# effective schedule. `extra_where` may reference sc (the Official schedule row of the
+# occurrence), cs and c.
 _BATCH_HOURS_SQL_TMPL = """
-    WITH scoped AS (
-        SELECT sv.versionid, sv.status, sc.employeenumber,
-               BOOL_OR(sv.status = 'Draft') OVER (
-                   PARTITION BY sc.employeenumber, cs.subjectcode, sc.sectionid
-               ) AS has_draft
-        FROM schedule_version sv
-        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
-        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-        JOIN semester sem ON sc.semesterid = sem.semesterid
-        JOIN curriculum c ON cs.curriculumid = c.curriculumid
-        WHERE sem.academicyearid = %(ay_id)s AND sem.semestertype = %(sem)s
-          AND sv.status IN ('Published','Draft')
-          {extra_where}
-    ),
-    ranked AS (
-        SELECT DISTINCT versionid, employeenumber
-        FROM scoped
-        WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')
-    )
-    SELECT rk.employeenumber,
-           COALESCE(SUM(ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2)), 0) AS hrs
-    FROM ranked rk
-    JOIN schedule_sessions ss ON ss.versionid = rk.versionid
-    LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
-    LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
-    GROUP BY rk.employeenumber
+    WITH """ + EFFECTIVE_SESSIONS_CTE + """
+    SELECT es.employeenumber,
+           cs.subjectcode,
+           es.sectionid,""" + _YEAR_SECTION_SQL + """ AS year_section,
+           es.daydesc AS days,
+           LPAD(EXTRACT(HOUR FROM ts_s.timevalue)::text,2,'0') ||
+           LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
+           TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
+           ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
+           ts_s.timevalue AS start_time,
+           ts_e.timevalue AS end_time,
+           pyl.programcode AS programcode,
+           sec.sectionname AS sectionname
+    FROM effective_sessions es
+    JOIN schedule sc ON sc.scheduleid = es.scheduleid
+    JOIN curriculumsubject cs ON es.curriculumsubjectid = cs.curriculumsubjectid
+    JOIN curriculum c ON cs.curriculumid = c.curriculumid
+    JOIN semester sem ON es.semesterid = sem.semesterid
+    LEFT JOIN sections sec ON es.sectionid = sec.sectionid
+    LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+    LEFT JOIN timeslot ts_s ON es.starttimeid = ts_s.timeid
+    LEFT JOIN timeslot ts_e ON es.endtimeid = ts_e.timeid
+    WHERE sem.academicyearid = %(ay_id)s AND sem.semestertype = %(sem)s
+      AND es.employeenumber IS NOT NULL
+      {extra_where}
+    ORDER BY es.employeenumber, cs.subjectcode, es.daydesc, ts_s.timevalue
 """
 
 
@@ -269,43 +305,184 @@ def get_faculty_caps(faculty_row):
     return reg_max, pt_max, ts_max
 
 
-_FACULTY_SESSIONS_PUBLISHED_ONLY_SQL = FACULTY_SESSIONS_SQL.replace(
-    "AND sv.status IN ('Published','Draft')", "AND sv.status = 'Published'"
-).replace(
-    "WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')",
-    "WHERE status = 'Published'"
-)
-
-
 def get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=False):
-    sql = _FACULTY_SESSIONS_PUBLISHED_ONLY_SQL if published_only else FACULTY_SESSIONS_SQL
-    cur.execute(sql, (emp_num, ay_id, sem))
+    """One faculty's LIVE sessions (effective schedule). `published_only` is kept for
+    call-site compatibility: the live schedule never includes Drafts, so it no longer
+    changes anything."""
+    cur.execute(FACULTY_SESSIONS_SQL, (emp_num, ay_id, sem))
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
-def get_faculty_scheduled_hours(cur, emp_num, ay_id, sem, published_only=False):
-    """Total real scheduled hours currently committed for one faculty, plus the raw
-    session rows (callers that only need the total can ignore the second value).
-    `published_only=True` mirrors the old scheduler_mode=='local' behavior (Published
-    rows only, no Draft-preferred resolution)."""
+def _default_config(config):
+    if config is None:
+        from database import load_scheduler_config
+        config = load_scheduler_config()
+    return config
+
+
+def get_faculty_scheduled_hours(cur, emp_num, ay_id, sem, published_only=False, config=None):
+    """Total real LIVE scheduled hours for one faculty (effective schedule: Published
+    Official + active Published Local), plus the raw session rows (callers that only need
+    the total can ignore the second value). `published_only` is accepted for compatibility.
+
+    HC17: the total is merge-aware (group_assignments with the live merge policy),
+    so a same-faculty merged class stored once per section counts once -- the
+    same total the Faculty Load tab and CSPValidator's HC9 use. The raw sessions
+    are returned unchanged."""
     sessions = get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=published_only)
-    return round(sum(float(s.get('hrs') or 0) for s in sessions), 2), sessions
+    grouped = group_assignments(sessions, config=_default_config(config))
+    return round(sum(float(g.get('hrs') or 0) for g in grouped), 2), sessions
 
 
-def get_faculty_hours_batch(cur, ay_id, sem, exclude_program=None, exclude_year_level=None):
-    """Total real scheduled hours per faculty (dict: employeenumber -> hours) across ALL
-    faculty for the given AY/semester in one query. Pass exclude_program/exclude_year_level
-    to omit that program+year's own rows (used by cross-program overload checks that need
-    "everything EXCEPT the section currently being saved")."""
+def _fetch_batch_rows(cur, ay_id, sem, exclude_program=None, exclude_year_level=None,
+                      exclude_section_id=None):
+    """Draft-preferred per-slice rows for every faculty this term, minus the
+    schedule being validated. When the current section is known only THAT
+    section is excluded, so sibling sections of the same program/year still
+    count toward a faculty's load; otherwise the legacy program+year exclusion
+    applies (callers that have no section identity)."""
     extra_where = ''
     params = {'ay_id': ay_id, 'sem': sem}
-    if exclude_program and exclude_year_level is not None:
+    if exclude_section_id not in (None, ''):
+        extra_where = 'AND sc.sectionid IS DISTINCT FROM %(excl_sec)s'
+        params['excl_sec'] = int(exclude_section_id)
+    elif exclude_program and exclude_year_level is not None:
         extra_where = 'AND NOT (UPPER(c.programcode) = %(excl_prog)s AND cs.yearlevel = %(excl_yl)s)'
         params['excl_prog'] = exclude_program.upper()
         params['excl_yl'] = int(exclude_year_level)
-    sql = _BATCH_HOURS_SQL_TMPL.format(extra_where=extra_where)
-    cur.execute(sql, params)
-    return {r['employeenumber']: float(r['hrs'] or 0) for r in (cur.fetchall() or [])}
+    cur.execute(_BATCH_HOURS_SQL_TMPL.format(extra_where=extra_where), params)
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
+def summarize_faculty_load(sessions, config=None):
+    """One faculty's HC9 committed load from per-slice session rows, HC17
+    merge-aware and split into the same Regular / PT buckets group_assignments
+    uses:
+
+        {'regular': h, 'pt': h, 'total': h, 'slices': [...]}
+
+    `slices` are the underlying meetings (subject, day, start/end, section
+    identity) so a validator can recognise a gene that is the SAME merged
+    meeting as one of these and not count it a second time."""
+    grouped = group_assignments(sessions, config=_default_config(config))
+    reg = round(sum(float(g.get('_reg_hrs') or 0) for g in grouped), 2)
+    pt = round(sum(float(g.get('_pt_hrs') or 0) for g in grouped), 2)
+    slices = [{
+        'faculty_id':   s.get('employeenumber'),
+        'subject_code': s.get('subjectcode'),
+        'day':          s.get('days'),
+        'start_time':   s.get('start_time'),
+        'end_time':     s.get('end_time'),
+        'programcode':  s.get('programcode'),
+        'section_name': s.get('sectionname'),
+        'sectionid':    s.get('sectionid'),
+    } for s in sessions]
+    return {'regular': reg, 'pt': pt, 'total': round(reg + pt, 2), 'slices': slices}
+
+
+def get_faculty_load_batch(cur, ay_id, sem, exclude_program=None, exclude_year_level=None,
+                           exclude_section_id=None, config=None):
+    """{employeenumber: summarize_faculty_load(...)} for the whole term -- the
+    bucketed, merge-aware `existing_load` CSPValidator's HC9 consumes."""
+    config = _default_config(config)
+    by_faculty = defaultdict(list)
+    for row in _fetch_batch_rows(cur, ay_id, sem, exclude_program, exclude_year_level,
+                                 exclude_section_id):
+        by_faculty[row.get('employeenumber')].append(row)
+    return {emp: summarize_faculty_load(sessions, config)
+            for emp, sessions in by_faculty.items()}
+
+
+def get_faculty_hours_batch(cur, ay_id, sem, exclude_program=None, exclude_year_level=None,
+                            config=None, exclude_section_id=None):
+    """Total real scheduled hours per faculty across the term, HC17 merge-aware.
+
+    The old batch query summed schedule rows directly, which meant a same-faculty
+    merged class represented once per section was double/triple counted here even
+    though CSPValidator._check_load_limits and the Faculty Load detail path counted
+    it once.  Return detailed slices and run them through group_assignments so every
+    HC9 consumer sees the same merged-load total.
+
+    Different-faculty NSTP/OU shared sessions remain independent naturally because
+    rows are grouped by employeenumber before HC17 deduplication.
+    """
+    loads = get_faculty_load_batch(cur, ay_id, sem, exclude_program, exclude_year_level,
+                                   exclude_section_id, config)
+    return {emp: summary['total'] for emp, summary in loads.items()}
+
+
+def load_total(value):
+    """Total committed hours from an existing-load value, which is either the
+    bucketed dict from summarize_faculty_load or a legacy plain number."""
+    if isinstance(value, dict):
+        if value.get('total') is not None:
+            return float(value['total'])
+        return float(value.get('regular') or 0) + float(value.get('pt') or 0)
+    return float(value or 0)
+
+
+def _meeting_days(row):
+    days = row.get('days_list') or [row.get('day')]
+    if not isinstance(days, (list, tuple)):
+        days = [days]
+    return [d for d in days if d]
+
+
+def _meeting_hours(row):
+    start, end = row.get('start_time'), row.get('end_time')
+    if start is None or end is None:
+        return 0.0
+    mins = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)
+    return max(0.0, mins / 60.0)
+
+
+def merge_aware_additional_hours(rows, existing_slices=(), config=None):
+    """Hours that ONE faculty's submitted `rows` add on top of their existing
+    committed load, HC17-aware, one meeting at a time:
+
+      * a meeting that is a valid HC16 merge with a meeting already counted in
+        `existing_slices` (another section) adds 0 -- that physical class is
+        already in the existing total;
+      * several submitted rows forming one valid merged meeting add its hours once;
+      * anything else adds its hours per row.
+
+    Every participant pair must be a valid merge (3+ sections need the full
+    clique, same rule as CSPValidator._check_load_limits/group_assignments).
+    Rows carry subject_code, day/days_list, start_time/end_time (time objects)
+    and optional course/programcode + section_name for section-pair rules."""
+    cfg = config or {}
+    pairs = parse_merge_section_pairs(cfg.get('hc_merge_section_pairs'))
+
+    def _code(r):
+        return (r.get('subject_code') or r.get('subjectcode') or '').upper()
+
+    def _clique(members):
+        return all(is_valid_merge(a, b, cfg, pairs)
+                   for i, a in enumerate(members) for b in members[i + 1:])
+
+    meetings = defaultdict(list)
+    for r in rows or []:
+        for d in _meeting_days(r):
+            meetings[(_code(r), d, r.get('start_time'), r.get('end_time'))].append(r)
+
+    total = 0.0
+    for (code, day, start, end), members in meetings.items():
+        hrs = _meeting_hours(members[0])
+        # Only this faculty's own already-counted meeting can absorb these hours:
+        # a different-faculty NSTP/OU shared session is HC16-valid operationally,
+        # but each instructor keeps their own teaching hours.
+        fid = members[0].get('faculty_id')
+        partners = [s for s in (existing_slices or [])
+                    if s.get('faculty_id') == fid
+                    and (s.get('subject_code') or '').upper() == code and s.get('day') == day
+                    and s.get('start_time') == start and s.get('end_time') == end]
+        if partners and _clique(list(members) + partners):
+            continue
+        if len(members) > 1 and _clique(members):
+            total += hrs
+        else:
+            total += hrs * len(members)
+    return round(total, 2)
 
 
 def get_subject_nominal_hours(subject_row):
@@ -358,15 +535,26 @@ def is_merge_in_scope(subject_code, config=None):
     """Is this subject code within the configured Class Merging Policy scope
     (hc_merge_enabled / hc_merge_scope / hc_merge_scope_subjects)? Shared by
     is_valid_merge() below and group_assignments()'s own merge detection."""
-    from database import parse_merge_scope_subjects, code_in_merge_scope
+    # Keep this pure/load-layer helper independent of database.py so HC16/HC17
+    # can be tested without a PostgreSQL driver and load computation does not
+    # acquire a hidden DB dependency merely to parse configuration JSON.
+    import json as _json
     cfg = config or {}
     if not bool(cfg.get('hc_merge_enabled', 1)):
         return False
     code_u = (subject_code or '').upper()
     is_nstp = code_u.startswith(('NSTP', 'OU'))
-    scope_subjects = parse_merge_scope_subjects(cfg.get('hc_merge_scope_subjects'))
+    raw_scope = cfg.get('hc_merge_scope_subjects')
+    scope_subjects = None
+    if raw_scope:
+        try:
+            parsed = _json.loads(raw_scope) if isinstance(raw_scope, str) else raw_scope
+            if isinstance(parsed, list) and parsed:
+                scope_subjects = {str(c).upper() for c in parsed}
+        except (TypeError, ValueError):
+            scope_subjects = None
     if scope_subjects is not None:
-        return code_in_merge_scope(code_u, scope_subjects)
+        return code_u in scope_subjects or ('NSTP' in scope_subjects and is_nstp)
     merge_scope = str(cfg.get('hc_merge_scope', 'nstp_only'))
     return (
         (merge_scope == 'nstp_only'    and is_nstp) or
@@ -421,6 +609,37 @@ def is_valid_merge(a: dict, b: dict, config: dict = None, merge_section_pairs=No
     )
 
 
+NSTP_SHARED_PREFIXES = ('NSTP', 'OU')
+
+
+def has_assigned_faculty(faculty_id) -> bool:
+    """False for a missing/TBA instructor. An unassigned faculty is not a
+    person and can never be double-booked (HC10), mirroring HC11's TBA-room rule."""
+    return bool(faculty_id) and str(faculty_id).strip().upper() not in ('TBA', 'NONE', 'NULL')
+
+
+def nstp_shared_faculty_exempt(a: dict, b: dict) -> bool:
+    """Long-standing HC10 exemption, independent of merge policy: one faculty
+    may cover two overlapping NSTP/OU groups (even different NSTP/OU subjects).
+    Unlike is_valid_merge it is not gated by hc_merge_enabled/scope."""
+    a_code = (a.get('subject_code') or a.get('subjectcode') or '').upper()
+    b_code = (b.get('subject_code') or b.get('subjectcode') or '').upper()
+    return a_code.startswith(NSTP_SHARED_PREFIXES) and b_code.startswith(NSTP_SHARED_PREFIXES)
+
+
+def faculty_overlap_exempt(a: dict, b: dict, config: dict = None,
+                           merge_section_pairs=None, valid_merge=None) -> bool:
+    """THE shared HC10 exemption used by CSPValidator, the cross-schedule (HC15)
+    check and Local Scheduler validation: an overlap of the same faculty is not
+    a double-booking when the two occurrences are one valid HC16 merged/shared
+    class (merge scope + section-pair rules apply) OR the NSTP/OU shared-faculty
+    exemption applies. Pass `valid_merge` when the caller already computed the
+    HC16 decision. Never exempts HC12: that remains the caller's section check."""
+    if valid_merge is None:
+        valid_merge = is_valid_merge(a, b, config=config, merge_section_pairs=merge_section_pairs)
+    return bool(valid_merge) or nstp_shared_faculty_exempt(a, b)
+
+
 def group_assignments(sessions, config=None):
     """Merge multi-slice rows of the same (subjectcode, year_section) into one assignment,
     tracking hour totals split by Regular-time vs PT-time slices. Mirrors the JS
@@ -446,14 +665,39 @@ def group_assignments(sessions, config=None):
         for (subj_code, _days, _tc), idxs in by_signature.items():
             if len(idxs) < 2 or not is_merge_in_scope(subj_code, config):
                 continue
-            first = idxs[0]
-            first_label = str(sessions[first].get('year_section') or '').upper() or None
-            for other in idxs[1:]:
-                other_section = sessions[other].get('year_section')
-                if other_section == sessions[first].get('year_section'):
-                    continue  # identical row for the SAME section -- not a merge case
-                other_label = str(other_section or '').upper() or None
-                if _section_pair_allowed_by_label(first_label, other_label, merge_section_pairs):
+
+            # HC17 must use the SAME pairwise authorization semantics as HC16.
+            # For 3+ sections this is a clique check: A-B + A-C is NOT enough
+            # when B-C is forbidden.  The old first-vs-rest shortcut could
+            # under-count an invalid three-section overlap as one teaching load.
+            distinct = []
+            seen_sections = set()
+            for idx in idxs:
+                label = str(sessions[idx].get('year_section') or '').upper() or None
+                section_identity = sessions[idx].get('sectionid') or label
+                if section_identity in seen_sections:
+                    continue  # another slice/duplicate for the same section is not a new merge member
+                seen_sections.add(section_identity)
+                distinct.append((idx, label))
+            if len(distinct) < 2:
+                continue
+
+            all_pairs_allowed = all(
+                _section_pair_allowed_by_label(label_a, label_b, merge_section_pairs)
+                for pos, (_idx_a, label_a) in enumerate(distinct)
+                for _idx_b, label_b in distinct[pos + 1:]
+            )
+            if not all_pairs_allowed:
+                continue
+
+            # This function is called with one faculty's sessions.  Therefore a
+            # different-faculty NSTP/OU shared session is naturally counted once
+            # PER FACULTY, while multiple sections taught by this same faculty are
+            # deduplicated to one physical teaching event.
+            keeper = distinct[0][0]
+            member_indexes = {idx for idx, _label in distinct}
+            for other in idxs:
+                if other != keeper and other in member_indexes:
                     skip_hours[other] = True
 
     groups = {}

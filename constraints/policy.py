@@ -12,7 +12,7 @@ from database import load_scheduler_config
 class SchedulingPolicy:
     # Confirmed unused/deprecated keys retained for introspection and backward
     # compatibility only. Do not wire these into behavior from this class.
-    DEAD_KEYS = ("hc_section_conflict_enabled", "hc_program_restrict_enabled")
+    DEAD_KEYS = ("hc_program_restrict_enabled",)
     WRITE_ONLY_KEYS = ("sc2_night",)  # deprecated: old concept folded into final SC1
 
     def __init__(self, config: dict = None):

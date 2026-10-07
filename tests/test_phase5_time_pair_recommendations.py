@@ -35,7 +35,8 @@ def test_only_valid_editor_boundaries_are_recommended():
 
 def test_top_three_complete_pairs():
     assert ").slice(0, 3);" in HTML
-    assert "ts-time-rec-title" in HTML
+    # Recommendations are a section at the top of the Start-time dropdown.
+    assert 'ts-ss-sect-hdr ts-ss-sect-opt ts-rec-gen">RECOMMENDATIONS' in HTML
     assert "${r.start} – ${r.end}" in HTML
 
 def test_click_fills_start_and_end_through_existing_pipeline():
@@ -43,7 +44,7 @@ def test_click_fills_start_and_end_through_existing_pipeline():
     assert "tsSel('tset', rowId, end);" in HTML
 
 def test_manual_controls_are_retained():
-    assert "OTHER / MANUAL TIME" in HTML
+    assert 'ts-rec-gen">OTHERS' in HTML
     assert 'id="tsst-txt-${id}"' in HTML
     assert 'id="tset-txt-${id}"' in HTML
 

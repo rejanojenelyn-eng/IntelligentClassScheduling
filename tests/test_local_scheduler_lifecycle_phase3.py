@@ -58,7 +58,8 @@ def test_editor_publish_sends_reason_json():
     assert "async function publishLocalArrangement(arrId, btn)" in html
     assert "_publishLocalArrangementRequest(arrId, cleanReason)" in html
     assert "expected_updated_at: _localArrUpdatedAt[String(arrId)] || null," in html
-    assert "Reason Required" in html
+    # The reason is optional for the user; a blank one gets an automatic audit reason.
+    assert "|| 'Published from Version History'" in html
 
 def test_editor_publish_explains_archive_behavior():
     html = _read("templates/academic/manualScheduleEditor.html")
@@ -68,7 +69,7 @@ def test_editor_publish_explains_archive_behavior():
 def test_editor_has_explicit_publish_from_editor_flow():
     html = _read("templates/academic/manualScheduleEditor.html")
     assert "publishLocalArrangementFromEditor" in html
-    assert "PUBLISH LOCAL ARRANGEMENT" in html
+    assert "SAVE AS LOCAL ARRANGEMENT" in html
 
 def test_restore_as_draft_wording_is_owned_by_version_history_ui():
     html = _read("templates/academic/manualScheduleEditor.html")

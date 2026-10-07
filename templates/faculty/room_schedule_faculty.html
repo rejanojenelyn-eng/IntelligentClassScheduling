@@ -1,9 +1,11 @@
 {% extends "faculty/base_faculty.html" %}
 
+
 {% block head %}
 {{ super() }}
 <style>
     .frs-wrap { padding: 28px 32px; background: #fff; font-family: 'Inter', sans-serif; }
+
 
     /* ── Page header ── */
     .frs-header-row {
@@ -39,6 +41,7 @@
     .btn-frs-request:hover { background: #5c0000; }
     .btn-frs-request i { font-size: 1rem; }
 
+
     /* ── Main tabs (Schedule View / Available Rooms) ── */
     .frs-main-tabs {
         display: flex;
@@ -67,6 +70,7 @@
     }
     .frs-main-tab-btn.active { background: #800000; color: #fff; }
     .frs-main-tab-btn i { font-size: 0.9rem; }
+
 
     /* ════════════════════════════════════
        SCHEDULE VIEW
@@ -99,12 +103,14 @@
         color: #fff;
     }
 
+
     /* Body: left sidebar + right calendar */
     .frs-body {
         display: flex;
         gap: 20px;
         min-height: 520px;
     }
+
 
     /* Left: floor selector + room list */
     .frs-left {
@@ -153,6 +159,7 @@
     }
     .frs-room-empty { padding: 20px 10px; text-align: center; font-size: 0.75rem; color: #aaa; }
 
+
     /* Right: calendar grid */
     .frs-cal-wrap {
         flex: 1;
@@ -172,6 +179,20 @@
         text-transform: uppercase;
         border-bottom: 1px solid #800000;
     }
+    .frs-cal-title-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        flex-wrap: wrap; border-bottom: 1px solid #800000; background: #fff; padding-right: 12px;
+    }
+    .frs-cal-title-row .frs-cal-title { border-bottom: none; }
+    .frs-cal-actions { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+    .frs-room-request-btn { padding: 7px 14px; font-size: 0.72rem; }
+    .frs-cal-back-btn {
+        display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+        border: 1.5px solid #800000; border-radius: 8px; background: #fff; color: #800000;
+        font-size: 0.7rem; font-weight: 800; cursor: pointer;
+    }
+    .frs-cal-back-btn:hover { background: #fdf2f2; }
+
 
     /* Grid */
     .frs-grid-outer { overflow-x: auto; flex: 1; }
@@ -211,6 +232,7 @@
         border-bottom: 1px solid #eee;
     }
 
+
     /* Pills inside room calendar */
     .frs-pill {
         position: absolute;
@@ -230,7 +252,12 @@
     .frs-pill-name { font-weight: 500; font-size: 0.6rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;}
     .frs-pill-meta { display: flex; align-items: center; gap: 4px; font-size: 0.6rem; opacity: .85; }
     .frs-pill-local { border-left: 3px solid #0056b3 !important; }
+    /* Approved Make-up class pill (one date only) */
+    .frs-pill-makeup { outline: 2px dashed rgba(0,0,0,.35); outline-offset: -3px; }
+    .frs-pill-mu-badge { background: #6a1b9a !important; }
+    .frs-detail-badge-makeup { background: #f3e5f5; color: #6a1b9a; border: 1px solid #ce93d8; }
     .frs-pill-la-badge { display: inline-block; font-size: 0.5rem; font-weight: 900; background: #0056b3; color: #fff; border-radius: 3px; padding: 1px 4px; margin-bottom: 3px; letter-spacing: .5px; }
+
 
     /* Loading state */
     .frs-cal-loading {
@@ -246,10 +273,12 @@
         padding: 60px 20px;
     }
 
+
     /* ════════════════════════════════════
        AVAILABLE ROOMS
     ════════════════════════════════════ */
     .frs-avail-wrap { display: flex; gap: 24px; }
+
 
     /* Filter panel */
     .frs-avail-filters {
@@ -332,6 +361,7 @@
         color: #999;
         text-align: center;
     }
+
 
     /* Results */
     .frs-avail-results { flex: 1; }
@@ -438,6 +468,7 @@
     }
     .frs-avail-card-clickable:hover .frs-avail-request-hint { display: block; }
 
+
     /* ════════════════════════════════════
        REQUEST MODALS
     ════════════════════════════════════ */
@@ -452,36 +483,120 @@
     }
     .req-overlay.open { display: flex; }
 
+
     /* ── Type picker ── */
     .req-picker-box {
-        background: #fff;
-        border-radius: 12px;
-        padding: 36px 32px;
-        display: flex;
-        gap: 24px;
-        box-shadow: 0 8px 32px rgba(0,0,0,.22);
+        background: #fffdf8;
+        border-radius: 14px;
+        padding: 24px 26px 22px;
+        width: min(540px, 94vw);
+        box-shadow: 0 12px 40px rgba(0,0,0,.25);
     }
+    .req-picker-head { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+    .req-picker-icon {
+        width: 50px; height: 50px; border-radius: 50%; background: #7a0000; color: #fff;
+        display: flex; align-items: center; justify-content: center; font-size: 1.25rem; flex-shrink: 0;
+    }
+    .req-picker-title { font-size: 1.12rem; font-weight: 800; color: #7a0000; line-height: 1.25; }
+    .req-picker-sub { font-size: .9rem; color: #666; margin-top: 2px; }
+    .req-picker-x {
+        align-self: flex-start; margin-left: auto; background: none; border: 0; color: #7a0000;
+        font-size: 1.05rem; cursor: pointer; padding: 2px 4px; line-height: 1;
+    }
+    .req-picker-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
     .req-type-card {
-        width: 220px;
-        height: 130px;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        text-align: center;
-        cursor: pointer;
-        border: 2.5px solid transparent;
-        transition: transform 0.15s, box-shadow 0.15s;
-        line-height: 1.4;
-        padding: 20px;
+        position: relative; border: 1.5px solid #8a8a8a; border-radius: 10px; background: #fff;
+        padding: 18px 18px 22px; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s;
+        text-align: left; color: #333;
     }
-    .req-type-card:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(0,0,0,.15); }
-    .req-type-card.makeup    { background: #FDE08B; color: #7a5c00; border-color: #e6c350; }
-    .req-type-card.adjustment { background: #fff; color: #c0392b; border-color: #c0392b; }
+    .req-type-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+    .req-type-card:focus-visible { outline: 2px solid #7a0000; outline-offset: 2px; }
+    .req-type-card.selected { border-color: #7a0000; background: #fbeef0; }
+    .req-type-radio {
+        position: absolute; top: 16px; right: 16px; width: 16px; height: 16px; border-radius: 50%;
+        border: 1.5px solid #9a9a9a; background: #fff;
+    }
+    .req-type-card.selected .req-type-radio { border-color: #7a0000; box-shadow: inset 0 0 0 3px #fff; background: #7a0000; }
+    .req-type-icon {
+        width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        background: #e5e5e5; color: #333; font-size: 1.1rem; margin-bottom: 14px;
+    }
+    .req-type-card.selected .req-type-icon { background: #f3c9cf; color: #7a0000; }
+    .req-type-name { font-size: .95rem; font-weight: 700; color: #333; margin-bottom: 14px; }
+    .req-type-desc { font-size: .8rem; color: #555; line-height: 1.45; }
+    .req-picker-foot { display: flex; justify-content: space-between; margin-top: 30px; }
+    .req-picker-cancel, .req-picker-next {
+        min-width: 102px; padding: 6px 22px; border-radius: 4px; font-weight: 800; font-size: .78rem;
+        letter-spacing: 1.5px; cursor: pointer;
+    }
+    .req-picker-cancel { background: #fff; color: #7a0000; border: 1.5px solid #7a0000; }
+    .req-picker-cancel:hover { background: #fbeef0; }
+    .req-picker-next { background: #7a0000; color: #fff; border: 1.5px solid #7a0000; }
+    .req-picker-next:hover { background: #630000; }
+    @media (max-width: 520px) { .req-picker-cards { grid-template-columns: 1fr; gap: 14px; } }
+
+
+
+    /* ══════════ Make-up Class Request — 2026-10 redesign ══════════ */
+    .req-modal-box.mu-v2 { width: min(560px, 96vw); border-radius: 12px; overflow: hidden; }
+    .mu-hdr { display: flex; align-items: center; gap: 14px; padding: 16px 20px; background: #fdf3d4; border-bottom: 1px solid #f1e3b4; }
+    .mu-hdr-icon {
+        width: 46px; height: 46px; border-radius: 10px; background: #f9d8d8; color: #7a0000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0;
+    }
+    .mu-hdr-title { font-size: 1.35rem; font-weight: 800; color: #7a0000; line-height: 1.2; }
+    .mu-hdr-sub { font-size: .8rem; color: #666; margin-top: 2px; }
+    .mu-hdr-close { margin-left: auto; align-self: flex-start; background: none; border: 0; font-size: 1.05rem; color: #555; cursor: pointer; }
+    .mu-hdr-close:hover { color: #7a0000; }
+    .mu-v2 .mu-body { padding: 14px 20px 10px; }
+    .mu-sec-title {
+        display: flex; align-items: center; gap: 10px; background: #fdecec; color: #7a0000; border-radius: 6px;
+        padding: 7px 12px; font-size: .8rem; font-weight: 800; letter-spacing: .4px; margin: 18px 0 12px;
+    }
+    .mu-body > .mu-sec-title:first-child { margin-top: 2px; }
+    .mu-field { margin-bottom: 12px; }
+    .mu-label { display: block; font-size: .8rem; font-weight: 700; color: #333; margin-bottom: 6px; }
+    .mu-label b { color: #c0392b; font-weight: 700; }
+    .mu-ctl { display: flex; align-items: stretch; gap: 8px; flex: 1; min-width: 0; }
+    .mu-ico {
+        width: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+        background: #fdecec; color: #7a0000; border-radius: 6px; font-size: .85rem; min-height: 36px;
+    }
+    .mu-v2 .mu-ctl > select, .mu-v2 .mu-ctl > input, .mu-v2 .mu-ctl > textarea {
+        flex: 1; min-width: 0; width: auto; height: 36px; padding: 0 10px; border: 1px solid #d6d9de; border-radius: 6px;
+        background: #fff; font: 400 .82rem 'Inter', sans-serif; color: #333; box-sizing: border-box;
+    }
+    .mu-v2 .mu-ctl > select:focus, .mu-v2 .mu-ctl > input:focus, .mu-v2 .mu-ctl > textarea:focus { outline: none; border-color: #7a0000; }
+    .mu-v2 .mu-ctl > select:disabled { background: #f5f6f8; color: #999; cursor: not-allowed; }
+    .mu-ctl-ro { background: #eceef1; border-radius: 6px; }
+    .mu-ctl-ro .mu-ico { background: transparent; color: #444; }
+    .mu-v2 .mu-ctl-ro > input { background: transparent; border: 0; font-weight: 500; }
+    .mu-ctl-area .mu-ico { align-items: flex-start; padding-top: 10px; background: transparent; }
+    .mu-v2 .mu-ctl-area > textarea { height: auto; min-height: 54px; padding: 8px 10px; resize: vertical; }
+    .mu-count { text-align: right; font-size: .7rem; color: #888; margin-top: 2px; }
+    .mu-ctl-room .room-sel-wrap { flex: 1; min-width: 0; }
+    .mu-v2 .mu-ctl-room .room-sel-box { min-height: 36px; border: 1px solid #d6d9de; }
+    .mu-time-row { display: flex; align-items: center; gap: 10px; }
+    .mu-time-row > .mu-ctl { flex: 1 1 0; }
+    .mu-dash { color: #555; }
+    .mu-v2 .mu-ftr { justify-content: flex-end; gap: 12px; padding: 12px 20px; }
+    .mu-v2 .mu-ftr .btn-req-cancel, .mu-v2 .mu-ftr .btn-req-submit { display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; }
+    .mu-v2 .mu-ftr .btn-req-submit { background: #7a0000; }
+
+    /* Schedule Adjustment — same look as the Make-up form, plus 3-column rows + hints */
+    .req-modal-box.adj-v2 { width: min(660px, 96vw); }
+    .adj-v2 .adj-hdr { background: #fdecec; border-bottom-color: #f5d5d5; }
+    .adj-v2 .mu-hdr-title { letter-spacing: .4px; }
+    .adj-v2 .mu-label { font-size: .74rem; font-weight: 800; color: #7a0000; letter-spacing: .3px; }
+    .adj-v2 .mu-label b { margin-right: 2px; }
+    .adj-v2 .mu-label small { font-size: .66rem; font-weight: 600; color: #888; }
+    .adj-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
+    .adj-hint { font-size: .7rem; color: #777; margin-top: 4px; line-height: 1.35; }
+    .adj-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .adj-foot .mu-count { margin: 0; }
+    .adj-v2 .adj-area .mu-ico { background: #fdecec; }
+    .adj-v2 .adj-area > textarea { min-height: 64px; }
+    @media (max-width: 620px) { .adj-grid3 { grid-template-columns: 1fr; } }
 
     /* ── Form modal shared ── */
     .req-modal-box {
@@ -517,6 +632,7 @@
     }
     .req-modal-close:hover { color: #333; }
     .req-modal-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+
 
     /* Form grid */
     .req-form-row  { display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -554,6 +670,7 @@
     }
     .req-form-group textarea { resize: vertical; min-height: 60px; }
 
+
     /* Footer */
     .req-modal-ftr {
         padding: 14px 24px;
@@ -575,6 +692,7 @@
         transition: background .15s;
     }
     .btn-req-submit:hover { background: #5c0000; }
+
 
     /* ── Toast Notifications ── */
     #toast-container {
@@ -609,19 +727,306 @@
     .toast-fade-out { animation: toastOut .3s ease forwards; }
     @keyframes toastIn  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
     @keyframes toastOut { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(8px); } }
+
+
+    /* ══════════════════════════════════════════════════════════════════
+       ROOM SCHEDULE — 2026-10 redesign (cards, chips, week nav, Day/Week)
+       Overrides the rules above; ids/classes used by the JS are unchanged.
+    ══════════════════════════════════════════════════════════════════ */
+    .frs-wrap { background: #f6f7f9; padding: 22px 26px 30px; }
+
+    /* Header card */
+    .frs-header-row {
+        background: #fff; border: 1px solid #eceef2; border-radius: 14px;
+        padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(16,24,40,.04);
+    }
+    .frs-header-left { display: flex; align-items: center; gap: 14px; }
+    .frs-header-icon {
+        width: 48px; height: 48px; border-radius: 12px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.35rem; flex-shrink: 0;
+    }
+    .frs-page-title { font-size: 1.45rem; line-height: 1.15; }
+    .frs-page-sub { margin: 3px 0 0; font-size: .8rem; color: #6b7280; }
+    .btn-frs-request { padding: 12px 22px; border-radius: 10px; box-shadow: 0 4px 12px rgba(128,0,0,.22); }
+
+    /* Main tabs: original bordered bar (rules above), with room before the chips card */
+    .frs-main-tabs { background: #fff; margin-bottom: 14px; }
+
+    /* Building chips */
+    .frs-bldg-tabs {
+        border: 0; border-radius: 12px; background: #fff; gap: 8px; padding: 12px 16px;
+        margin-bottom: 16px; box-shadow: 0 2px 10px rgba(16,24,40,.04); flex-wrap: nowrap;
+    }
+    .frs-bldg-tab {
+        display: inline-flex; align-items: center; gap: 7px; border: 1px solid #ececf0; border-radius: 8px;
+        background: #f6f6f8; color: #800000; padding: 9px 14px; font-size: .74rem;
+    }
+    .frs-bldg-tab:last-child { border-right: 1px solid #ececf0; }
+    .frs-bldg-tab:hover { background: #fdf2f2; }
+    .frs-bldg-tab.active { background: #800000; color: #fff; border-color: #800000; }
+    .frs-bldg-tab i { font-size: .8rem; }
+
+    /* Body */
+    .frs-body { gap: 16px; align-items: stretch; }
+
+    /* Sidebar card */
+    .frs-left {
+        flex: 0 0 210px; background: #fff; border: 1px solid #eceef2; border-radius: 12px;
+        padding: 14px 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); max-height: 640px;
+    }
+    .frs-sidebar-label {
+        display: flex; align-items: center; gap: 6px; font-size: .62rem; color: #800000; margin-bottom: 7px;
+    }
+    .frs-list-label { justify-content: space-between; color: #555; margin-top: 4px; }
+    .frs-room-count { color: #888; font-weight: 700; text-transform: none; letter-spacing: 0; }
+    .frs-floor-select {
+        border: 1px solid #dfe1e6; border-radius: 8px; color: #333; font-weight: 600;
+        padding: 9px 10px; font-size: .8rem; margin-bottom: 10px;
+    }
+    .frs-room-search {
+        display: flex; align-items: center; gap: 8px; border: 1px solid #dfe1e6; border-radius: 8px;
+        padding: 0 10px; height: 38px; margin-bottom: 14px; background: #fff;
+    }
+    .frs-room-search i { color: #9aa0a6; font-size: .8rem; }
+    .frs-room-search input { border: 0; outline: 0; flex: 1; font: 400 .8rem 'Inter', sans-serif; min-width: 0; }
+    .frs-room-search:focus-within, .frs-floor-select:focus { border-color: #800000; outline: none; }
+    .frs-room-list { border: 0; padding: 0 2px 0 0; display: flex; flex-direction: column; gap: 6px; }
+    .frs-room-item {
+        text-align: left; padding: 9px 14px; border: 1px solid #ececf0; border-radius: 8px; background: #fafafb;
+        margin: 0;
+    }
+    .frs-room-item .frs-room-name { display: block; font-size: .9rem; font-weight: 800; color: #222; }
+    .frs-room-item .frs-room-floor { display: block; font-size: .68rem; font-weight: 500; color: #888; margin-top: 1px; }
+    .frs-room-item:hover { background: #fdf2f2; border-color: #f0d4d4; }
+    .frs-room-item.active { background: #800000; border-color: #800000; border-radius: 8px; margin: 0; }
+    .frs-room-item.active .frs-room-name, .frs-room-item.active .frs-room-floor { color: #fff; }
+
+    /* Calendar card */
+    .frs-cal-wrap {
+        border: 1px solid #eceef2; border-radius: 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
+    }
+    .frs-cal-title-row { border-bottom: 1px solid #eceef2; padding: 12px 14px; gap: 12px; }
+    .frs-cal-room { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .frs-cal-room-icon {
+        width: 44px; height: 44px; border-radius: 10px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.15rem; flex-shrink: 0;
+    }
+    .frs-cal-title { padding: 0; border: 0; font-size: 1.3rem; font-weight: 900; color: #222; text-transform: none; }
+    .frs-cal-sub { font-size: .76rem; color: #777; margin-top: 2px; }
+    .frs-cal-actions { flex-wrap: wrap; gap: 10px; padding: 0; }
+    .frs-view-toggle { display: inline-flex; background: #f1f2f4; border-radius: 10px; padding: 3px; }
+    .frs-view-toggle button {
+        border: 0; background: transparent; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+        font: 700 .78rem 'Inter', sans-serif; color: #444; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .frs-view-toggle button.active { background: #800000; color: #fff; }
+
+    /* Grid */
+    .frs-grid { min-width: 0; }
+    .frs-grid.frs-week { grid-template-columns: 74px repeat(7, minmax(118px, 1fr)); min-width: 900px; }
+    .frs-grid.frs-day  { grid-template-columns: 74px 1fr; }
+    .frs-grid-header-cell {
+        background: #800000; padding: 8px 6px; line-height: 1.25; position: sticky; top: 0; z-index: 3;
+        border-right: 1px solid rgba(255,255,255,.12);
+    }
+    .frs-grid-header-cell .frs-hd-date { display: block; font-size: .66rem; font-weight: 600; opacity: .85; text-transform: none; }
+    .frs-grid-header-cell.frs-hd-today { background: #a51c1c; box-shadow: inset 0 -3px 0 #f6c343; }
+    .frs-time-cell { font-size: .66rem; color: #666; border-right: 1px solid #e6e7ea; border-bottom: 1px solid #f0f1f3; }
+    .frs-day-col-cell { border-right: 1px solid #eceef1; border-bottom: 1px solid #f3f4f6; }
+    .frs-day-col-cell.frs-col-today { background: #fffaf0; }
+
+    /* Session cards */
+    .frs-pill {
+        left: 4px; right: 4px; border-radius: 8px; padding: 6px 9px; border-left: 4px solid #999;
+        box-shadow: 0 1px 4px rgba(16,24,40,.12); color: #2a2a2a; line-height: 1.32; cursor: pointer;
+    }
+    .frs-pill:hover { box-shadow: 0 4px 12px rgba(16,24,40,.18); z-index: 4; }
+    .frs-pill-code { font-size: .74rem; font-weight: 900; color: #111; }
+    .frs-pill-name { font-size: .64rem; color: #333; white-space: normal; display: -webkit-box;
+        -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; margin-bottom: 3px; }
+    .frs-pill-meta { font-size: .62rem; color: #444; opacity: 1; }
+    .frs-pill-meta i { width: 11px; text-align: center; color: #555; }
+    .frs-pill-time { font-size: .62rem; color: #555; margin-top: 3px; font-weight: 600; }
+    .frs-pill.frs-pill-compact .frs-pill-name,
+    .frs-pill.frs-pill-compact .frs-pill-meta { display: none; }
+
+    @media (max-width: 1100px) {
+        .frs-body { flex-direction: column; }
+        .frs-left { flex: none; max-height: none; }
+        .frs-room-list { flex-direction: row; flex-wrap: wrap; }
+    }
+
+
+    /* ══════════════════════════════════════════════════════════════════
+       AVAILABLE ROOMS — 2026-10 redesign (filter card, toolbar, groups)
+       Room cards keep their red outline.
+    ══════════════════════════════════════════════════════════════════ */
+    .frs-avail-wrap { gap: 16px; align-items: flex-start; }
+    .frs-avail-filters {
+        flex: 0 0 230px; background: #fff; border: 1px solid #eceef2; border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
+    }
+    .frs-avail-filters-header {
+        background: #fff; color: #800000; border-radius: 0; justify-content: space-between;
+        padding: 14px 16px 6px; font-size: .95rem;
+    }
+    .frs-avail-filters-header i { margin-right: 6px; }
+    .frs-clear-all {
+        border: 0; background: none; color: #800000; font: 700 .76rem 'Inter', sans-serif;
+        cursor: pointer; text-transform: none; padding: 0;
+    }
+    .frs-clear-all:hover { text-decoration: underline; }
+    .frs-avail-filters-body { border: 0; border-radius: 0; padding: 8px 16px 16px; }
+    .frs-avail-filter-group { margin-bottom: 14px; }
+    .frs-avail-filter-label { font-size: .7rem; color: #800000; margin-bottom: 6px; }
+    .frs-avail-filter-group select,
+    .frs-avail-filter-group input {
+        border: 1px solid #dfe1e6; border-radius: 8px; padding: 9px 10px; font-size: .8rem;
+        font-weight: 500; color: #333; height: 38px;
+    }
+    .frs-avail-filter-group select:focus,
+    .frs-avail-filter-group input:focus { border-color: #800000; outline: none; }
+
+    .frs-avail-results { min-width: 0; }
+    .frs-avail-toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .frs-avail-search {
+        flex: 1 1 280px; display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px;
+        background: #fff; border: 1px solid #dfe1e6; border-radius: 10px;
+    }
+    .frs-avail-search i { color: #777; }
+    .frs-avail-search input { flex: 1; border: 0; outline: 0; font: 400 .85rem 'Inter', sans-serif; min-width: 0; }
+    .frs-avail-search:focus-within { border-color: #800000; }
+    .frs-avail-sort { display: flex; flex-direction: column; gap: 3px; font-size: .7rem; font-weight: 700; color: #555; }
+    .frs-avail-sort select {
+        height: 42px; border: 1px solid #dfe1e6; border-radius: 10px; padding: 0 12px; min-width: 190px;
+        font: 500 .82rem 'Inter', sans-serif; color: #333; background: #fff;
+    }
+    .frs-avail-viewtoggle { display: flex; gap: 8px; }
+    .frs-avail-viewtoggle button {
+        height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid #dfe1e6; background: #fff; color: #333;
+        font: 700 .8rem 'Inter', sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+    }
+    .frs-avail-viewtoggle button.active { background: #800000; border-color: #800000; color: #fff; }
+
+    .frs-avail-results-header {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        background: #fdf0f0; border: 1px solid #f3cccc; border-left: 4px solid #800000; border-radius: 10px;
+        padding: 12px 16px; color: #800000; font-size: .85rem; font-weight: 600; text-transform: none; margin-bottom: 14px;
+    }
+    .frs-avail-results-header i { margin-right: 6px; }
+    .frs-avail-count { color: #555; font-weight: 500; font-size: .8rem; white-space: nowrap; }
+
+    /* Building groups */
+    .frs-avail-group {
+        background: #fff; border: 1px solid #f1e3e3; border-radius: 12px; margin-bottom: 14px; overflow: hidden;
+    }
+    .frs-avail-group-head {
+        display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fdf6f6; cursor: pointer;
+    }
+    .frs-avail-group-head i.fa-building-columns { color: #800000; font-size: 1.1rem; }
+    .frs-avail-group-name { font-weight: 800; color: #800000; font-size: .95rem; }
+    .frs-avail-group-pill { background: #fbe1e1; color: #800000; border-radius: 999px; padding: 3px 11px; font-size: .72rem; font-weight: 700; }
+    .frs-avail-group-head .frs-avail-chev { margin-left: auto; color: #800000; transition: transform .15s; }
+    .frs-avail-group.collapsed .frs-avail-chev { transform: rotate(180deg); }
+    .frs-avail-group.collapsed .frs-avail-group-body { display: none; }
+    .frs-avail-group-body { padding: 14px 16px 16px; }
+    .frs-avail-cards {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 0;
+    }
+    /* Room card: red outline kept */
+    .frs-avail-card { border: 1.5px solid #800000; border-radius: 10px; padding: 12px 14px; min-width: 0; }
+    .frs-avail-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .frs-avail-room-name { margin: 0; font-size: 1.1rem; color: #800000; }
+    .frs-avail-badge { margin-right: 0; border-radius: 6px; }
+    .frs-badge-lec { background: #fdf0c4; color: #8a6a00; }
+    .frs-badge-lab { background: #dce7fb; color: #1d4ea3; }
+    .frs-avail-detail { font-size: .72rem; color: #555; margin-top: 8px; }
+    .frs-avail-detail i { margin-right: 4px; }
+    .frs-avail-dot { top: 8px; right: 8px; width: 9px; height: 9px; }
+
+    /* List view */
+    .frs-avail-list { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .frs-avail-list th { text-align: left; padding: 8px 10px; color: #800000; font-size: .7rem; text-transform: uppercase; border-bottom: 1.5px solid #800000; }
+    .frs-avail-list td { padding: 9px 10px; border-bottom: 1px solid #f3e6e6; color: #333; }
+    .frs-avail-list tr.frs-avail-row { cursor: pointer; }
+    .frs-avail-list tr.frs-avail-row:hover td { background: #fdf6f6; }
+    .frs-avail-list .frs-avail-row-name { font-weight: 800; color: #800000; }
+
+
+    /* ── Room schedule popup (Available Rooms → room card, no filters) ── */
+    .frs-rp-overlay {
+        display: none; position: fixed; inset: 0; z-index: 9000; background: rgba(20,20,20,.45);
+        align-items: center; justify-content: center; padding: 20px;
+    }
+    .frs-rp-overlay.open { display: flex; }
+    .frs-rp-box {
+        background: #fff; border-radius: 14px; width: min(1000px, 96vw); max-height: 92vh;
+        display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(0,0,0,.25); overflow: hidden;
+    }
+    .frs-rp-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #eee; }
+    .frs-rp-icon {
+        width: 42px; height: 42px; border-radius: 10px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0;
+    }
+    .frs-rp-titles { flex: 1; min-width: 0; }
+    .frs-rp-title { font-size: 1.25rem; font-weight: 900; color: #222; }
+    .frs-rp-sub { font-size: .76rem; color: #777; margin-top: 2px; }
+    .frs-rp-close { border: 0; background: none; font-size: 1.6rem; line-height: 1; color: #888; cursor: pointer; padding: 0 4px; }
+    .frs-rp-close:hover { color: #800000; }
+    .frs-rp-body { overflow: auto; padding: 12px 16px; }
+    .frs-rp-empty {
+        background: #eafaf1; color: #1a6b3c; border: 1px solid #bfe6cf; border-radius: 8px;
+        padding: 8px 12px; font-size: .8rem; font-weight: 600; margin-bottom: 10px;
+    }
+    .frs-rp-grid { display: grid; grid-template-columns: 70px repeat(7, minmax(95px, 1fr)); min-width: 760px;
+        border: 1px solid #eee; border-radius: 8px; overflow: hidden; }
+    .frs-rp-dayhead {
+        background: #800000; color: #fff; font-size: .68rem; font-weight: 800; text-align: center;
+        padding: 7px 4px; position: sticky; top: 0; z-index: 2;
+    }
+    .frs-rp-time { font-size: .6rem; color: #777; text-align: right; padding: 2px 6px 0 0;
+        border-bottom: 1px solid #f2f2f2; box-sizing: border-box; }
+    .frs-rp-col { border-right: 1px solid #f0f0f0; }
+    .frs-rp-col:last-child { border-right: 0; }
+    .frs-rp-colbody {
+        position: relative;
+        background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #f3f3f3 21px, #f3f3f3 22px);
+    }
+    .frs-rp-block {
+        position: absolute; left: 3px; right: 3px; border-radius: 6px; border-left: 4px solid #999;
+        padding: 3px 6px; font-size: .62rem; color: #222; overflow: hidden; line-height: 1.3;
+        box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    }
+    .frs-rp-block b { display: block; font-size: .68rem; }
+    .frs-rp-block span { display: block; color: #444; }
+    .frs-rp-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid #eee; }
+    .frs-rp-note { flex: 1; font-size: .74rem; color: #888; }
+    .frs-rp-cancel {
+        border: 1.5px solid #ccc; background: #fff; color: #555; border-radius: 8px; padding: 9px 18px;
+        font: 700 .78rem 'Inter', sans-serif; cursor: pointer;
+    }
 </style>
 {% endblock %}
+
 
 {% block content %}
 <div class="frs-wrap">
 
-    <!-- Page header -->
+
+    <!-- Page header card -->
     <div class="frs-header-row">
-        <h1 class="frs-page-title">ROOM SCHEDULE</h1>
+        <div class="frs-header-left">
+            <div class="frs-header-icon"><i class="fas fa-building-columns"></i></div>
+            <div>
+                <h1 class="frs-page-title">ROOM SCHEDULE</h1>
+                <p class="frs-page-sub">View and request room schedules by building and floor.</p>
+            </div>
+        </div>
         <button class="btn-frs-request" onclick="frsOpenRequest()">
-            <i class="fas fa-plus-circle"></i> SUBMIT REQUEST
+            <i class="fas fa-circle-plus"></i> SUBMIT REQUEST
         </button>
     </div>
+
 
     <!-- Main tabs -->
     <div class="frs-main-tabs">
@@ -633,29 +1038,61 @@
         </button>
     </div>
 
+
     <!-- ══ SCHEDULE VIEW panel ══ -->
     <div id="frsScheduleViewPanel">
-        <!-- Building tabs (populated by JS) -->
+        <!-- Building chips (populated by JS) -->
         <div class="frs-bldg-tabs" id="frsBldgTabs"></div>
+
 
         <!-- Body -->
         <div class="frs-body">
-            <!-- Left: floor + rooms -->
+            <!-- Left: floor + search + rooms -->
             <div class="frs-left">
-                <div class="frs-sidebar-label">Select Floor</div>
+                <div class="frs-sidebar-label"><i class="fas fa-building"></i> Select Floor</div>
                 <select class="frs-floor-select" id="frsFloorSel" onchange="frsFilterFloor()">
-                    <option value="">ALL FLOORS</option>
+                    <option value="">All Floors</option>
                 </select>
-
-                <div class="frs-sidebar-label">Room List</div>
+                <label class="frs-room-search">
+                    <i class="fas fa-magnifying-glass"></i>
+                    <input type="text" id="frsRoomSearch" placeholder="Search all rooms..." oninput="frsSearchRooms()" autocomplete="off">
+                </label>
+                <div class="frs-sidebar-label frs-list-label">
+                    <span>Room List</span><span class="frs-room-count" id="frsRoomCount"></span>
+                </div>
                 <div class="frs-room-list" id="frsRoomList">
                     <div class="frs-room-empty">Select a building</div>
                 </div>
             </div>
 
+
             <!-- Right: calendar -->
             <div class="frs-cal-wrap">
-                <div class="frs-cal-title" id="frsCalTitle">BUILDING: HEALTH AND SCIENCE – ROOM LQ101</div>
+                <!-- Room title + actions. "Request This Room" only appears once the
+                     selected room's current schedule has loaded (view first, then request). -->
+                <div class="frs-cal-title-row">
+                    <div class="frs-cal-room">
+                        <div class="frs-cal-room-icon"><i class="fas fa-building-columns"></i></div>
+                        <div>
+                            <div class="frs-cal-title" id="frsCalTitle">Select a room</div>
+                            <div class="frs-cal-sub" id="frsCalSub">Choose a room to view its schedule</div>
+                        </div>
+                    </div>
+                    <div class="frs-cal-actions">
+                        <button type="button" class="frs-cal-back-btn" id="frsBackToAvail" style="display:none;"
+                                onclick="frsBackToAvailable()">
+                            <i class="fas fa-arrow-left"></i> AVAILABLE ROOMS
+                        </button>
+                        <button type="button" class="btn-frs-request frs-room-request-btn" id="frsRequestRoomBtn"
+                                style="display:none;" onclick="frsRequestViewedRoom()">
+                            <i class="fas fa-plus-circle"></i> REQUEST THIS ROOM
+                        </button>
+                        <div class="frs-view-toggle">
+                            <button type="button" id="frsViewDay" onclick="frsSetView('day')"><i class="far fa-calendar"></i> Day</button>
+                            <button type="button" id="frsViewWeek" class="active" onclick="frsSetView('week')"><i class="fas fa-table-cells"></i> Week</button>
+                        </div>
+                    </div>
+                </div>
                 <div class="frs-grid-outer">
                     <div class="frs-grid" id="frsGrid">
                         <!-- Populated by JS -->
@@ -665,24 +1102,27 @@
         </div>
     </div>
 
+
     <!-- ══ AVAILABLE ROOMS panel ══ -->
     <div id="frsAvailPanel" style="display:none">
         <div class="frs-avail-wrap">
 
+
             <!-- Filters -->
             <div class="frs-avail-filters">
                 <div class="frs-avail-filters-header">
-                    <i class="fas fa-filter"></i> FILTERS
+                    <span><i class="fas fa-filter"></i> FILTERS</span>
+                    <button type="button" class="frs-clear-all" onclick="frsClearAvailFilters()">Clear All</button>
                 </div>
                 <div class="frs-avail-filters-body">
                     <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Date <span style="font-weight:500;color:#aaa;">(for Make-up)</span></label>
-                        <input type="date" id="frsAvailDate" onchange="frsDateChanged()" style="width:100%;padding:6px 8px;border:1px solid #800000;border-radius:4px;font-size:0.75rem;font-weight:700;color:#800000;background:#fff;box-sizing:border-box;">
+                        <label class="frs-avail-filter-label">Date</label>
+                        <input type="date" id="frsAvailDate" onchange="frsDateChanged()">
                     </div>
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Day</label>
-                        <select id="frsAvailDay" onchange="frsFindAvailable()">
-                            <option value="">SELECT</option>
+                        <select id="frsAvailDay" onchange="frsDayChanged()">
+                            <option value="">Select day</option>
                             <option>Monday</option>
                             <option>Tuesday</option>
                             <option>Wednesday</option>
@@ -692,6 +1132,7 @@
                             <option>Sunday</option>
                         </select>
                     </div>
+
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
@@ -703,6 +1144,7 @@
                         </div>
                     </div>
 
+
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
                         <div class="frs-combo" id="frsEndCombo">
@@ -713,14 +1155,16 @@
                         </div>
                     </div>
 
+
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Room Type</label>
                         <select id="frsAvailType" onchange="frsFindAvailable()">
-                            <option value="">SELECT</option>
+                            <option value="">Select type</option>
                             <option value="Lecture">Lecture</option>
                             <option value="Laboratory">Laboratory</option>
                         </select>
                     </div>
+
 
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Building</label>
@@ -732,11 +1176,12 @@
                         </div>
                     </div>
 
+
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Room Number</label>
                         <div class="frs-combo" id="frsRoomNumCombo">
                             <input type="text" id="frsAvailRoomNum" class="frs-combo-input"
-                                   placeholder="All rooms" autocomplete="off"
+                                   placeholder="e.g. LQ117" autocomplete="off"
                                    oninput="frsRoomNumTyped()" onfocus="_frsComboFilter('frsRoomNumCombo')">
                             <div class="frs-combo-menu" id="frsRoomNumComboMenu"></div>
                         </div>
@@ -744,10 +1189,31 @@
                 </div>
             </div>
 
+
             <!-- Results -->
             <div class="frs-avail-results">
-                <div class="frs-avail-results-header" id="frsAvailHeader">
-                    HERE ARE THE AVAILABLE ROOMS FOR (ALL BUILDINGS)
+                <!-- Toolbar: search · sort · Card/List (all applied to the loaded results) -->
+                <div class="frs-avail-toolbar">
+                    <label class="frs-avail-search">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input type="text" id="frsAvailSearch" placeholder="Search room number or building..."
+                               autocomplete="off" oninput="frsAvailRerender()">
+                    </label>
+                    <label class="frs-avail-sort">
+                        <span>Sort by</span>
+                        <select id="frsAvailSort" onchange="frsAvailRerender()">
+                            <option value="name-asc">Room Number (A - Z)</option>
+                            <option value="name-desc">Room Number (Z - A)</option>
+                        </select>
+                    </label>
+                    <div class="frs-avail-viewtoggle">
+                        <button type="button" id="frsAvailCardBtn" class="active" onclick="frsAvailSetView('card')"><i class="fas fa-table-cells-large"></i> Card View</button>
+                        <button type="button" id="frsAvailListBtn" onclick="frsAvailSetView('list')"><i class="fas fa-list"></i> List View</button>
+                    </div>
+                </div>
+                <div class="frs-avail-results-header">
+                    <span><i class="fas fa-circle-info"></i> <span id="frsAvailHeader">Here are the available rooms for the selected filters (All buildings).</span></span>
+                    <span class="frs-avail-count" id="frsAvailCount"></span>
                 </div>
                 <div id="frsAvailContent">
                     <div class="frs-cal-loading" style="padding: 20px;">
@@ -759,7 +1225,9 @@
         </div>
     </div>
 
+
 </div>
+
 
 <!-- ══════════════════════════════════════════
      SCHEDULE DETAIL MODAL
@@ -855,6 +1323,7 @@
     .frs-detail-field.full { grid-column: 1 / -1; }
 </style>
 
+
 <div class="frs-detail-overlay" id="frsDetailOverlay">
     <div class="frs-detail-box">
         <div class="frs-detail-accent" id="frsDetailAccent"></div>
@@ -896,19 +1365,43 @@
     </div>
 </div>
 
+
 <!-- ══════════════════════════════════════════
      MODAL 1 — Type Picker
 ══════════════════════════════════════════ -->
 <div class="req-overlay" id="reqPickerOverlay">
-    <div class="req-picker-box">
-        <div class="req-type-card makeup" onclick="frsOpenForm('makeup')">
-            MAKE UP CLASS<br>REQUEST
+    <div class="req-picker-box" role="dialog" aria-labelledby="reqPickerTitle">
+        <div class="req-picker-head">
+            <div class="req-picker-icon"><i class="fas fa-file-signature"></i></div>
+            <div>
+                <div class="req-picker-title" id="reqPickerTitle">What type of request would you like to submit?</div>
+                <div class="req-picker-sub">Select an option to continue.</div>
+            </div>
+            <button type="button" class="req-picker-x" onclick="frsClosePicker()" aria-label="Close">&#10005;</button>
         </div>
-        <div class="req-type-card adjustment" onclick="frsOpenForm('adjustment')">
-            SCHEDULE<br>ADJUSTMENT
+        <div class="req-picker-cards">
+            <div class="req-type-card selected" data-type="makeup" role="radio" tabindex="0"
+                 onclick="frsPickType('makeup')" ondblclick="frsPickerNext()">
+                <span class="req-type-radio"></span>
+                <span class="req-type-icon"><i class="far fa-calendar-check"></i></span>
+                <div class="req-type-name">Make-up class</div>
+                <div class="req-type-desc">Request a room and schedule for a class that needs to be conducted on another date.</div>
+            </div>
+            <div class="req-type-card" data-type="adjustment" role="radio" tabindex="0"
+                 onclick="frsPickType('adjustment')" ondblclick="frsPickerNext()">
+                <span class="req-type-radio"></span>
+                <span class="req-type-icon"><i class="fas fa-arrows-rotate"></i></span>
+                <div class="req-type-name">Schedule Adjustment</div>
+                <div class="req-type-desc">Request a change to the assigned room or class schedule.</div>
+            </div>
+        </div>
+        <div class="req-picker-foot">
+            <button type="button" class="req-picker-cancel" onclick="frsClosePicker()">CANCEL</button>
+            <button type="button" class="req-picker-next" onclick="frsPickerNext()">NEXT</button>
         </div>
     </div>
 </div>
+
 
 <style>
 /* ── Room status label ── */
@@ -968,35 +1461,73 @@
 .room-item.sel .room-item-badge { background:rgba(255,255,255,0.25); color:#fff; }
 </style>
 
+
 <!-- ══════════════════════════════════════════
      MODAL 2 — Make Up Class Request
 ══════════════════════════════════════════ -->
 <div class="req-overlay" id="reqMakeupOverlay">
-    <div class="req-modal-box">
-        <div class="req-modal-hdr makeup">
-            <span class="req-modal-title">Make Up Class Request</span>
-            <button class="req-modal-close" onclick="frsCloseForm('makeup')">✕</button>
+    <div class="req-modal-box mu-v2">
+        <div class="mu-hdr">
+            <div class="mu-hdr-icon"><i class="far fa-calendar-check"></i></div>
+            <div>
+                <div class="mu-hdr-title">Make a Request</div>
+                <div class="mu-hdr-sub">Submit a request for a make-up class.</div>
+            </div>
+            <button type="button" class="mu-hdr-close" onclick="frsCloseForm('makeup')" aria-label="Close">&#10005;</button>
         </div>
-        <div class="req-modal-body">
-            <!-- Row 1: Date · Start · End -->
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Date</label>
-                    <input type="date" id="muDate" onchange="muOnDateTimeChange()">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*Start Time</label>
-                    <select id="muStart" onchange="muTimeSelectChanged()"><option value="">SELECT</option></select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*End Time</label>
-                    <select id="muEnd" onchange="muTimeSelectChanged()"><option value="">SELECT</option></select>
+        <div class="req-modal-body mu-body">
+
+            <div class="mu-sec-title"><i class="fas fa-book"></i> CLASS INFORMATION</div>
+            <div class="mu-field">
+                <label class="mu-label">Faculty</label>
+                <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-user"></i></span>
+                    <input type="text" id="muFaculty" readonly placeholder="Loading..."></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muProgSel">Program <b>*</b></label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-graduation-cap"></i></span>
+                    <select id="muProgSel" onchange="muCascade('prog')"><option value="">Select program</option></select></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muYlSel">Year level <b>*</b></label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-signal"></i></span>
+                    <select id="muYlSel" onchange="muCascade('yl')"><option value="">Select year level</option></select></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muSectionSel">Section <b>*</b></label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-users"></i></span>
+                    <select id="muSectionSel" onchange="muCascade('sec')"><option value="">Select section</option></select></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muSubjectSel">Subject <b>*</b></label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-book-open"></i></span>
+                    <select id="muSubjectSel" onchange="muCascade('subj')"><option value="">Select subject</option></select></div>
+                <input type="hidden" id="muSubject">
+                <input type="hidden" id="muSection">
+                <input type="hidden" id="muProgram">
+                <input type="hidden" id="muYl">
+            </div>
+
+            <div class="mu-sec-title"><i class="far fa-calendar-alt"></i> REQUESTED SCHEDULE</div>
+            <div class="mu-field">
+                <label class="mu-label" for="muDate">Date <b>*</b></label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="far fa-calendar"></i></span>
+                    <input type="date" id="muDate" onchange="muOnDateTimeChange()"></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muStart">Time <b>*</b></label>
+                <div class="mu-time-row">
+                    <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
+                        <select id="muStart" onchange="muTimeSelectChanged()"><option value="">Start time</option></select></div>
+                    <span class="mu-dash">-</span>
+                    <div class="mu-ctl">
+                        <select id="muEnd" onchange="muTimeSelectChanged()"><option value="">End time</option></select></div>
                 </div>
             </div>
-            <!-- Row 2: Room (filtered by date+time) -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*Room <span class="req-room-status" id="muRoomStatus"></span></label>
+
+            <div class="mu-field">
+                <label class="mu-label">Room <b>*</b> <span class="req-room-status" id="muRoomStatus"></span></label>
+                <div class="mu-ctl mu-ctl-room"><span class="mu-ico"><i class="fas fa-door-open"></i></span>
                     <div class="room-sel-wrap" id="muRoomWrap">
                         <div class="room-sel-box" onclick="roomDropToggle('mu')">
                             <span class="room-sel-text ph" id="muRoomDisplay">— Select date &amp; time first —</span>
@@ -1010,106 +1541,79 @@
                     </div>
                 </div>
             </div>
-            <!-- Row 3: Faculty Name -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*Faculty Name</label>
-                    <input type="text" id="muFaculty" placeholder="Loading...">
-                </div>
-            </div>
-            <!-- Row 4: Subject (faculty's assigned subjects only) -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*Subject</label>
-                    <div class="req-subj-wrap">
-                        <select id="muSubjectSel" onchange="reqSubjectChanged('mu')">
-                            <option value="">— Select your assigned subject —</option>
-                        </select>
-                    </div>
-                    <input type="hidden" id="muSubject">
-                    <input type="hidden" id="muSection">
-                    <input type="hidden" id="muProgram">
-                    <input type="hidden" id="muYl">
-                </div>
-            </div>
-            <!-- Row 5: Section select + Program/Year auto-fill -->
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Section <span style="font-weight:400;color:#aaa;font-size:0.6rem;">(select subject first)</span></label>
-                    <select id="muSectionSel" onchange="reqSectionChanged('mu')">
-                        <option value="">— Select subject first —</option>
-                    </select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Program</label>
-                    <input type="text" id="muProgramDisplay" readonly placeholder="Auto-filled">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Year Level</label>
-                    <input type="text" id="muYlDisplay" readonly placeholder="Auto-filled">
-                </div>
-            </div>
+
             <!-- Conflict Warning Banner -->
             <div id="muConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
                 <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
                 <div id="muConflictText"></div>
-                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">This request will still be submitted for admin review. The academic head can override if necessary.</div>
+                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">A make-up class can't be submitted while it conflicts. Choose another date, time, or room.</div>
             </div>
-            <!-- Row 6: Reason -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">Reason for Request</label>
-                    <textarea id="muReason" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea>
-                </div>
+
+            <div class="mu-sec-title"><i class="fas fa-file-lines"></i> ADDITIONAL INFO</div>
+            <div class="mu-field">
+                <label class="mu-label" for="muReason">Reason for request <b>*</b></label>
+                <div class="mu-ctl mu-ctl-area"><span class="mu-ico"><i class="far fa-file-lines"></i></span>
+                    <textarea id="muReason" required maxlength="500" oninput="muCount(this)" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea></div>
+                <div class="mu-count" id="muReasonCount">0/500</div>
             </div>
-            <!-- Row 7: Note -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">Note</label>
-                    <textarea id="muNote" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea>
-                </div>
+            <div class="mu-field">
+                <label class="mu-label" for="muNote">Additional notes</label>
+                <div class="mu-ctl mu-ctl-area"><span class="mu-ico"><i class="far fa-note-sticky"></i></span>
+                    <textarea id="muNote" maxlength="500" oninput="muCount(this)" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea></div>
+                <div class="mu-count" id="muNoteCount">0/500</div>
             </div>
         </div>
-        <div class="req-modal-ftr">
-            <button class="btn-req-cancel" onclick="frsCloseForm('makeup')">CANCEL</button>
-            <button class="btn-req-submit" onclick="reqSubmit('makeup')">SUBMIT REQUEST</button>
+        <div class="req-modal-ftr mu-ftr">
+            <button class="btn-req-cancel" onclick="frsCloseForm('makeup')"><i class="fas fa-xmark"></i> CANCEL</button>
+            <button class="btn-req-submit" onclick="reqSubmit('makeup')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
         </div>
     </div>
 </div>
+
 
 <!-- ══════════════════════════════════════════
      MODAL 3 — Schedule Adjustment
 ══════════════════════════════════════════ -->
 <div class="req-overlay" id="reqAdjOverlay">
-    <div class="req-modal-box">
-        <div class="req-modal-hdr adjustment">
-            <span class="req-modal-title">Schedule Adjustment</span>
-            <button class="req-modal-close" onclick="frsCloseForm('adjustment')">✕</button>
+    <div class="req-modal-box mu-v2 adj-v2">
+        <div class="mu-hdr adj-hdr">
+            <div class="mu-hdr-icon"><i class="far fa-calendar-alt"></i></div>
+            <div>
+                <div class="mu-hdr-title">SCHEDULE ADJUSTMENT</div>
+                <div class="mu-hdr-sub">Request a change to an existing class schedule.</div>
+            </div>
+            <button type="button" class="mu-hdr-close" onclick="frsCloseForm('adjustment')" aria-label="Close">&#10005;</button>
         </div>
-        <div class="req-modal-body">
-            <!-- Row 1: New Day · Start · End -->
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*New Day</label>
-                    <select id="adjDay" onchange="adjOnDayTimeChange()">
-                        <option value="">SELECT</option>
-                        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-                        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
-                    </select>
+        <div class="req-modal-body mu-body">
+
+            <div class="mu-sec-title"><i class="far fa-calendar-alt"></i> NEW SCHEDULE DETAILS</div>
+            <div class="adj-grid3">
+                <div class="mu-field">
+                    <label class="mu-label" for="adjDay"><b>*</b> NEW DAY</label>
+                    <div class="mu-ctl"><span class="mu-ico"><i class="far fa-calendar"></i></span>
+                        <select id="adjDay" onchange="adjOnDayTimeChange()">
+                            <option value="">Select day</option>
+                            <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                            <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                        </select></div>
+                    <div class="adj-hint">Choose the new day for the class.</div>
                 </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*New Start Time</label>
-                    <select id="adjStart" onchange="adjTimeSelectChanged()"><option value="">SELECT</option></select>
+                <div class="mu-field">
+                    <label class="mu-label" for="adjStart"><b>*</b> NEW START TIME</label>
+                    <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
+                        <select id="adjStart" onchange="adjTimeSelectChanged()"><option value="">Select time</option></select></div>
+                    <div class="adj-hint">Choose the new start time.</div>
                 </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">*New End Time</label>
-                    <select id="adjEnd" onchange="adjTimeSelectChanged()"><option value="">SELECT</option></select>
+                <div class="mu-field">
+                    <label class="mu-label" for="adjEnd"><b>*</b> NEW END TIME</label>
+                    <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
+                        <select id="adjEnd" onchange="adjTimeSelectChanged()"><option value="">Select time</option></select></div>
+                    <div class="adj-hint">Choose the new end time.</div>
                 </div>
             </div>
-            <!-- Row 2: Room (filtered by day+time) -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*New Room <span class="req-room-status" id="adjRoomStatus"></span></label>
+            <div class="mu-field">
+                <label class="mu-label"><b>*</b> NEW ROOM <span class="req-room-status" id="adjRoomStatus"></span></label>
+                <div class="mu-ctl mu-ctl-room"><span class="mu-ico"><i class="fas fa-building"></i></span>
                     <div class="room-sel-wrap" id="adjRoomWrap">
                         <div class="room-sel-box" onclick="roomDropToggle('adj')">
                             <span class="room-sel-text ph" id="adjRoomDisplay">— Select day &amp; time first —</span>
@@ -1122,66 +1626,73 @@
                         <input type="hidden" id="adjRoom">
                     </div>
                 </div>
+                <div class="adj-hint">Room options will be available after selecting day and time.</div>
             </div>
-            <!-- Row 3: Faculty Name -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*Faculty Name</label>
-                    <input type="text" id="adjFaculty" placeholder="Loading...">
+
+            <div class="mu-sec-title"><i class="fas fa-user"></i> CLASS INFORMATION</div>
+            <div class="mu-field">
+                <label class="mu-label"><b>*</b> FACULTY NAME</label>
+                <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-user"></i></span>
+                    <input type="text" id="adjFaculty" readonly placeholder="Loading..."></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="adjSubjectSel"><b>*</b> SUBJECT</label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-book-open"></i></span>
+                    <select id="adjSubjectSel" onchange="reqSubjectChanged('adj')">
+                        <option value="">— Select your assigned subject —</option>
+                    </select></div>
+                <div class="adj-hint">Choose the subject for this schedule adjustment.</div>
+                <input type="hidden" id="adjSubject">
+                <input type="hidden" id="adjSection">
+                <input type="hidden" id="adjProgram">
+                <input type="hidden" id="adjYl">
+            </div>
+            <div class="adj-grid3">
+                <div class="mu-field">
+                    <label class="mu-label" for="adjSectionSel"><b>*</b> SECTION <small>(SELECT SUBJECT FIRST)</small></label>
+                    <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-users"></i></span>
+                        <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
+                            <option value="">— Select subject first —</option>
+                        </select></div>
+                    <div class="adj-hint">Section options will appear after selecting a subject.</div>
+                </div>
+                <div class="mu-field">
+                    <label class="mu-label">PROGRAM</label>
+                    <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-graduation-cap"></i></span>
+                        <input type="text" id="adjProgramDisplay" readonly placeholder="Auto-filled"></div>
+                    <div class="adj-hint">This will be filled automatically.</div>
+                </div>
+                <div class="mu-field">
+                    <label class="mu-label">YEAR LEVEL</label>
+                    <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-signal"></i></span>
+                        <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled"></div>
+                    <div class="adj-hint">This will be filled automatically.</div>
                 </div>
             </div>
-            <!-- Row 5: Subject -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">*Subject</label>
-                    <div class="req-subj-wrap">
-                        <select id="adjSubjectSel" onchange="reqSubjectChanged('adj')">
-                            <option value="">— Select your assigned subject —</option>
-                        </select>
-                    </div>
-                    <input type="hidden" id="adjSubject">
-                    <input type="hidden" id="adjSection">
-                    <input type="hidden" id="adjProgram">
-                    <input type="hidden" id="adjYl">
-                </div>
-            </div>
-            <!-- Row 6: Section select + Program/Year auto-fill -->
-            <div class="req-form-row">
-                <div class="req-form-group">
-                    <label class="req-form-label">*Section <span style="font-weight:400;color:#aaa;font-size:0.6rem;">(select subject first)</span></label>
-                    <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
-                        <option value="">— Select subject first —</option>
-                    </select>
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Program</label>
-                    <input type="text" id="adjProgramDisplay" readonly placeholder="Auto-filled">
-                </div>
-                <div class="req-form-group">
-                    <label class="req-form-label">Year Level</label>
-                    <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled">
-                </div>
-            </div>
+
             <!-- Conflict Warning Banner -->
-            <div id="adjConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
+            <div id="adjConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;margin-bottom:6px;">
                 <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
                 <div id="adjConflictText"></div>
                 <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">This request will still be submitted for admin review. The academic head can override if necessary.</div>
             </div>
-            <!-- Row 7: Reason -->
-            <div class="req-form-row">
-                <div class="req-form-group full">
-                    <label class="req-form-label">Reason for Request</label>
-                    <textarea id="adjReason" placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea>
-                </div>
+
+            <div class="mu-sec-title"><i class="fas fa-file-lines"></i> REASON FOR REQUEST</div>
+            <div class="mu-field">
+                <div class="mu-ctl mu-ctl-area adj-area"><span class="mu-ico"><i class="fas fa-file-lines"></i></span>
+                    <textarea id="adjReason" maxlength="500" oninput="muCount(this)" aria-label="Reason for request"
+                        placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea></div>
+                <div class="adj-foot"><span class="adj-hint">Provide a clear reason for the schedule adjustment.</span>
+                    <span class="mu-count" id="adjReasonCount">0/500</span></div>
             </div>
         </div>
-        <div class="req-modal-ftr">
-            <button class="btn-req-cancel" onclick="frsCloseForm('adjustment')">CANCEL</button>
-            <button class="btn-req-submit" onclick="reqSubmit('adjustment')">SUBMIT REQUEST</button>
+        <div class="req-modal-ftr mu-ftr">
+            <button class="btn-req-cancel" onclick="frsCloseForm('adjustment')"><i class="fas fa-xmark"></i> CANCEL</button>
+            <button class="btn-req-submit" onclick="reqSubmit('adjustment')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
         </div>
     </div>
 </div>
+
 
 <script>
 /* ══════════════════════════════════════════
@@ -1194,12 +1705,14 @@ const _REQ_SLOTS = [
     '06:00 PM','06:30 PM','07:00 PM','07:30 PM','08:00 PM','08:30 PM','09:00 PM'
 ];
 
+
 let _myAssignments = [];   // faculty's published schedule assignments
 let _pendingRoom   = null; // room pre-selected from Available Rooms click
 let _muRoomChosen  = null; // { id, name, building } explicitly chosen for makeup
 let _adjRoomChosen = null; // { id, name, building } explicitly chosen for adjustment
 let _muBlockedSlots  = []; // blocked {start,end} pairs for the selected makeup date/day
 let _adjBlockedSlots = []; // blocked pairs for adjustment day
+
 
 /* Populate time selects with ALL slots initially */
 function _populateTimeSelects() {
@@ -1210,10 +1723,12 @@ function _populateTimeSelects() {
     });
 }
 
+
 /* Build time select, marking blocked slots with "(occupied)" and disabling them */
 function _fillTimeSelect(sel, blocked) {
     const cur = sel.value;
-    sel.innerHTML = '<option value="">SELECT</option>';
+    const ph  = { muStart: 'Start time', muEnd: 'End time', adjStart: 'Select time', adjEnd: 'Select time' }[sel.id] || 'SELECT';
+    sel.innerHTML = `<option value="">${ph}</option>`;
     _REQ_SLOTS.forEach(t => {
         const occupied = _isTimeBlocked(t, blocked);
         const o = document.createElement('option');
@@ -1224,7 +1739,59 @@ function _fillTimeSelect(sel, blocked) {
         sel.appendChild(o);
     });
     if (cur) sel.value = cur;
+    if (sel.id === 'muStart' || sel.id === 'muEnd') _muApplyTimeRules();
 }
+
+
+/* Make-up times are HARD-blocked (a conflicting make-up can't be submitted anyway):
+   - Start: disabled when its first 30 min overlap the faculty's / section's / room's class.
+   - End:   disabled when it isn't after Start, or [Start, End) would run into an occupied slot.
+   A selection that becomes invalid is cleared. Returns true if anything was cleared. */
+function _muApplyTimeRules() {
+    const startSel = document.getElementById('muStart');
+    const endSel   = document.getElementById('muEnd');
+    if (!startSel || !endSel) return false;
+    const blocks   = (_muBlockedSlots || []).map(b => [_amPmToMins(b.start_time), _amPmToMins(b.end_time)]);
+    const overlaps = (s, e) => blocks.some(([bs, be]) => s < be && e > bs);
+    const mark = (o, bad, tag) => {
+        o.disabled      = bad;
+        o.textContent   = bad && tag ? `${o.value}  — ${tag}` : o.value;
+        o.style.color   = bad ? '#b5b5b5' : '';
+    };
+    let cleared = false;
+    const clearIfDisabled = sel => {
+        const o = sel.options[sel.selectedIndex];
+        if (o && o.value && o.disabled) { sel.value = ''; cleared = true; }
+    };
+
+    [...startSel.options].forEach(o => {
+        if (!o.value) return;
+        const m = _amPmToMins(o.value);
+        mark(o, overlaps(m, m + 30), 'occupied');
+    });
+    clearIfDisabled(startSel);
+
+    const st = startSel.value ? _amPmToMins(startSel.value) : null;
+    [...endSel.options].forEach(o => {
+        if (!o.value) return;
+        const m = _amPmToMins(o.value);
+        if (st === null)  mark(o, overlaps(m - 30, m), 'occupied');
+        else if (m <= st) mark(o, true, '');
+        else              mark(o, overlaps(st, m), 'occupied');
+    });
+    clearIfDisabled(endSel);
+    return cleared;
+}
+
+/* After a make-up time was cleared by _muApplyTimeRules: drop the stale room list + banner. */
+function _muTimeWasCleared(msg) {
+    _resetRoomDisplay('mu', '— Select date & time first —');
+    const st = document.getElementById('muRoomStatus');
+    if (st) st.textContent = '';
+    _hideConflictBanner('mu');
+    if (msg && typeof showToast === 'function') showToast(msg, 'warning', 5000);
+}
+
 
 /* Returns true if the given "HH:MM AM/PM" slot falls within any blocked range */
 function _isTimeBlocked(slotStr, blocked) {
@@ -1237,6 +1804,7 @@ function _isTimeBlocked(slotStr, blocked) {
     });
 }
 
+
 function _amPmToMins(t) {
     if (!t) return 0;
     const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i);
@@ -1248,6 +1816,7 @@ function _amPmToMins(t) {
     return h * 60 + min;
 }
 
+
 /* Load faculty name + assignments on init */
 async function _reqInitFacultyData() {
     try {
@@ -1258,6 +1827,7 @@ async function _reqInitFacultyData() {
             document.getElementById('adjFaculty').value = me.fullname.trim();
         }
     } catch(e) {}
+
 
     try {
         const r2   = await fetch('/api/faculty/my_assignments');
@@ -1283,6 +1853,7 @@ async function _reqInitFacultyData() {
     }
 }
 
+
 /* Build subject <select> — unique by subjectcode only (section chosen separately) */
 function _buildSubjectSelects() {
     const seen = new Set();
@@ -1293,7 +1864,8 @@ function _buildSubjectSelects() {
             opts.push(a);
         }
     });
-    ['muSubjectSel','adjSubjectSel'].forEach(id => {
+    muCascade('reset');   // Make-up form: Program → Year level → Section → Subject
+    ['adjSubjectSel'].forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
         sel.innerHTML = '<option value="">— Select your assigned subject —</option>';
@@ -1306,8 +1878,72 @@ function _buildSubjectSelects() {
     });
 }
 
+
+/* Make-up form: cascading Program → Year level → Section → Subject, all drawn from the
+   faculty's own assignments. Each pick rebuilds the dropdowns below it (auto-picking a
+   single choice); the hidden muProgram/muYl/muSection/muSubject fields used by the
+   conflict check and submit are filled only once the Subject is chosen. */
+function _muFillSel(id, ph, items) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '';
+    const first = document.createElement('option');
+    first.value = ''; first.textContent = ph;
+    sel.appendChild(first);
+    items.forEach(it => {
+        const o = document.createElement('option');
+        o.value = it.v; o.textContent = it.t;
+        sel.appendChild(o);
+    });
+    sel.disabled = !items.length;
+    if (items.length === 1) sel.value = items[0].v;
+}
+function _muUniq(rows, key, label) {
+    const seen = new Map();
+    rows.forEach(a => {
+        const v = String(a[key] ?? '');
+        if (v && !seen.has(v)) seen.set(v, label(a));
+    });
+    return [...seen].map(([v, t]) => ({ v, t }))
+        .sort((x, y) => x.t.localeCompare(y.t, undefined, { numeric: true }));
+}
+function muCascade(level) {
+    const val = id => document.getElementById(id)?.value || '';
+    const order = ['reset', 'prog', 'yl', 'sec', 'subj'];
+    const at = order.indexOf(level);
+    const rows = _myAssignments.filter(a => a.sectionid);
+
+    if (at <= 0) _muFillSel('muProgSel', 'Select program', _muUniq(rows, 'programcode', a => a.programcode));
+    const prog = val('muProgSel');
+    if (at <= 1) _muFillSel('muYlSel', 'Select year level',
+        prog ? _muUniq(rows.filter(a => a.programcode === prog), 'yearlevel', a => `Year ${a.yearlevel}`) : []);
+    const yl = val('muYlSel');
+    if (at <= 2) _muFillSel('muSectionSel', 'Select section',
+        yl ? _muUniq(rows.filter(a => a.programcode === prog && String(a.yearlevel) === yl), 'sectionid',
+                     a => a.sectionname || `Section ${a.sectionid}`) : []);
+    const sec = val('muSectionSel');
+    if (at <= 3) _muFillSel('muSubjectSel', 'Select subject',
+        sec ? _muUniq(rows.filter(a => String(a.sectionid) === sec), 'subjectcode',
+                      a => `${a.subjectcode} — ${a.subjectname || ''}`) : []);
+    const subj = val('muSubjectSel');
+
+    const done = !!(prog && yl && sec && subj);
+    document.getElementById('muProgram').value = done ? prog : '';
+    document.getElementById('muYl').value      = done ? yl   : '';
+    document.getElementById('muSection').value = done ? sec  : '';
+    document.getElementById('muSubject').value = done ? subj : '';
+    if (!done) { _hideConflictBanner('mu'); return; }
+    // Block the section's existing class slots first; check conflicts only if the picked time survived.
+    Promise.resolve(_muRefreshTimeDropdowns()).then(cleared => { if (!cleared) _checkConflicts('mu'); });
+}
+function muCount(el) {
+    const c = document.getElementById(el.id + 'Count');
+    if (c) c.textContent = `${el.value.length}/${el.maxLength > 0 ? el.maxLength : 500}`;
+}
+
 /* Called when subject dropdown changes — populate section select */
 function reqSubjectChanged(p) {
+    if (p === 'mu') { muCascade('reset'); return; }
     const code = document.getElementById(p + 'SubjectSel').value;
     // Clear hidden fields & displays
     ['Subject','Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
@@ -1316,8 +1952,10 @@ function reqSubjectChanged(p) {
     if (secSel) { secSel.innerHTML = '<option value="">— Select subject first —</option>'; }
     if (!code) return;
 
+
     // Set subject code
     document.getElementById(p + 'Subject').value = code;
+
 
     // Build section dropdown with all sections for this subject
     const sections = _myAssignments.filter(a => a.subjectcode === code);
@@ -1345,6 +1983,7 @@ function reqSubjectChanged(p) {
     }
 }
 
+
 /* Called when section dropdown changes */
 function reqSectionChanged(p) {
     const secSel = document.getElementById(p + 'SectionSel');
@@ -1367,6 +2006,7 @@ function reqSectionChanged(p) {
     else            _adjRefreshTimeDropdowns();
 }
 
+
 /* ══════════════════════════════════════════
    CONFLICT CHECK
 ══════════════════════════════════════════ */
@@ -1374,6 +2014,7 @@ function _hideConflictBanner(p) {
     const banner = document.getElementById(p + 'ConflictBanner');
     if (banner) banner.style.display = 'none';
 }
+
 
 async function _checkConflicts(p) {
     const isMakeup = p === 'mu';
@@ -1386,12 +2027,15 @@ async function _checkConflicts(p) {
     const subjCode  = document.getElementById(p + 'Subject')?.value || '';
     if (!start || !end || (!date && !day)) { _hideConflictBanner(p); return; }
 
-    const params = new URLSearchParams({ start_time: start, end_time: end });
+
+    const params = new URLSearchParams({ start_time: start, end_time: end,
+                                         request_type: isMakeup ? 'makeup' : 'adjustment' });
     if (date)      params.set('date',         date);
     if (day)       params.set('day',          day);
     if (sectionId) params.set('section_id',   sectionId);
     if (roomId)    params.set('room_id',      roomId);
     if (subjCode)  params.set('subject_code', subjCode);
+
 
     try {
         const res  = await fetch('/api/faculty/check_request_conflicts?' + params.toString());
@@ -1405,6 +2049,7 @@ async function _checkConflicts(p) {
         if (data.faculty_conflict)  lines.push(`<b>Faculty conflict:</b> ${data.faculty_detail}`);
         if (data.section_conflict) lines.push(`<b>Section conflict:</b> ${data.section_detail}`);
         if (data.duration_conflict) lines.push(`<b>Duration mismatch:</b> ${data.duration_detail}`);
+        if (data.makeup_notice)     lines.push(`<b>Upcoming make-up class:</b> ${data.makeup_notice}`);
         if (lines.length) {
             textEl.innerHTML = lines.join('<br>');
             banner.style.display = '';
@@ -1413,6 +2058,7 @@ async function _checkConflicts(p) {
         }
     } catch(e) { /* non-blocking */ }
 }
+
 
 /* ══════════════════════════════════════════
    AVAILABLE ROOM LOADERS FOR FORM
@@ -1433,6 +2079,7 @@ function roomDropToggle(p) {
     }
 }
 
+
 function roomSearchFilter(p) {
     const q    = (document.getElementById(p + 'RoomSearch').value || '').toLowerCase().trim();
     const list = document.getElementById(p + 'RoomList');
@@ -1448,6 +2095,7 @@ function roomSearchFilter(p) {
         lbl.classList.toggle('hidden', !any);
     });
 }
+
 
 function roomSelectItem(p, id, name, building, typ) {
     document.getElementById(p + 'Room').value = String(id);
@@ -1469,6 +2117,7 @@ function roomSelectItem(p, id, name, building, typ) {
     if (p === 'mu') _muRefreshTimeDropdowns();
     else            _adjRefreshTimeDropdowns();
 }
+
 
 function _buildRoomDropdown(p, rooms) {
     const list = document.getElementById(p + 'RoomList');
@@ -1530,6 +2179,7 @@ function _buildRoomDropdown(p, rooms) {
     });
 }
 
+
 async function _loadFormRooms(p, statusId, params) {
     const status  = document.getElementById(statusId);
     const chosen  = p === 'mu' ? _muRoomChosen : _adjRoomChosen;
@@ -1581,6 +2231,7 @@ async function _loadFormRooms(p, statusId, params) {
     }
 }
 
+
 /* Make-up: re-fetch blocked times (incl. chosen room + section occupancy) and rebuild time selects.
    Call this whenever the date, selected room, or section changes. Does NOT reload the room list. */
 async function _muRefreshTimeDropdowns() {
@@ -1595,14 +2246,21 @@ async function _muRefreshTimeDropdowns() {
         _muBlockedSlots = d.success ? (d.blocked || []) : [];
     } catch(e) { _muBlockedSlots = []; }
 
+
     const prevStart = document.getElementById('muStart').value;
     const prevEnd   = document.getElementById('muEnd').value;
     _fillTimeSelect(document.getElementById('muStart'), _muBlockedSlots);
     _fillTimeSelect(document.getElementById('muEnd'),   _muBlockedSlots);
-    // Restore previous selection — occupied slots are advisory only, not hard-blocked
+    // Restore the previous picks, then drop any that are now occupied (hard-blocked).
     if (prevStart) document.getElementById('muStart').value = prevStart;
     if (prevEnd)   document.getElementById('muEnd').value   = prevEnd;
+    if (_muApplyTimeRules()) {
+        _muTimeWasCleared('The selected time is already occupied for this class. Please choose another time.');
+        return true;
+    }
+    return false;
 }
+
 
 /* Make-up: when DATE changes — update blocked times + rebuild time selects (preserve room) */
 async function muOnDateTimeChange() {
@@ -1617,8 +2275,10 @@ async function muOnDateTimeChange() {
     }
 }
 
+
 /* Make-up: when START or END time changes — reload available rooms only */
 async function muTimeSelectChanged() {
+    if (_muApplyTimeRules()) _muTimeWasCleared();   // e.g. Start moved past the chosen End
     const date  = document.getElementById('muDate').value;
     const start = document.getElementById('muStart').value;
     const end   = document.getElementById('muEnd').value;
@@ -1627,6 +2287,7 @@ async function muTimeSelectChanged() {
     await _loadFormRooms('mu', 'muRoomStatus', p);
     _checkConflicts('mu');
 }
+
 
 /* Adjustment: re-fetch blocked times (incl. chosen room + section occupancy) and rebuild time selects.
    Does NOT reload the room list — avoids roomSelectItem → adjOnDayTimeChange infinite loop. */
@@ -1643,6 +2304,7 @@ async function _adjRefreshTimeDropdowns() {
         _adjBlockedSlots = d.success ? (d.blocked || []) : [];
     } catch(e) { _adjBlockedSlots = []; }
 
+
     const prevStart = document.getElementById('adjStart').value;
     const prevEnd   = document.getElementById('adjEnd').value;
     _fillTimeSelect(document.getElementById('adjStart'), _adjBlockedSlots);
@@ -1651,6 +2313,7 @@ async function _adjRefreshTimeDropdowns() {
     if (prevStart) document.getElementById('adjStart').value = prevStart;
     if (prevEnd)   document.getElementById('adjEnd').value   = prevEnd;
 }
+
 
 /* Adjustment: when DAY changes — update blocked times + rebuild time selects */
 async function adjOnDayTimeChange() {
@@ -1664,6 +2327,7 @@ async function adjOnDayTimeChange() {
     }
 }
 
+
 /* Adjustment: when START or END time changes — reload available rooms only */
 async function adjTimeSelectChanged() {
     const day   = document.getElementById('adjDay').value;
@@ -1675,21 +2339,75 @@ async function adjTimeSelectChanged() {
     _checkConflicts('adj');
 }
 
+
 /* ══════════════════════════════════════════
    PICKER / OPEN / CLOSE
 ══════════════════════════════════════════ */
-function frsOpenRequest() {
-    _pendingRoom = null;
+/* Request Again deep link: pick the request's section + subject in the opened form.
+   Waits (up to ~6 s) for /api/faculty/my_assignments; a class that is no longer
+   assigned to the faculty simply leaves the form blank. */
+async function _frsPrefillRequestClass(type, sectionId, subjectCode, tries = 0) {
+    if (!sectionId || !subjectCode) return;
+    if (!_myAssignments.length) {
+        if (tries < 30) setTimeout(() => _frsPrefillRequestClass(type, sectionId, subjectCode, tries + 1), 200);
+        return;
+    }
+    const subj = String(subjectCode).toUpperCase();
+    const a = _myAssignments.find(x => String(x.sectionid) === String(sectionId)
+                                    && String(x.subjectcode || '').toUpperCase() === subj);
+    if (!a) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = String(v); return el && el.value === String(v); };
+    if (type === 'makeup') {
+        if (set('muProgSel', a.programcode))  muCascade('prog');
+        if (set('muYlSel', a.yearlevel))      muCascade('yl');
+        if (set('muSectionSel', a.sectionid)) muCascade('sec');
+        if (set('muSubjectSel', a.subjectcode)) muCascade('subj');
+    } else {
+        if (set('adjSubjectSel', a.subjectcode)) reqSubjectChanged('adj');
+        if (set('adjSectionSel', a.sectionid))   reqSectionChanged('adj');
+    }
+}
+
+/* Picker: a card only selects the type; NEXT opens that form (Make-up selected by default). */
+let _reqPickedType = 'makeup';
+function frsPickType(type) {
+    _reqPickedType = type;
+    document.querySelectorAll('#reqPickerOverlay .req-type-card').forEach(c => {
+        const on = c.dataset.type === type;
+        c.classList.toggle('selected', on);
+        c.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+}
+function _frsShowPicker() {
+    frsPickType('makeup');
     document.getElementById('reqPickerOverlay').classList.add('open');
 }
+function frsClosePicker() {
+    document.getElementById('reqPickerOverlay').classList.remove('open');
+}
+function frsPickerNext() {
+    frsOpenForm(_reqPickedType);
+}
+document.getElementById('reqPickerOverlay').addEventListener('keydown', e => {
+    const card = e.target.closest && e.target.closest('.req-type-card');
+    if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); frsPickType(card.dataset.type); }
+    if (e.key === 'Escape') frsClosePicker();
+});
+
+function frsOpenRequest() {
+    _pendingRoom = null;
+    _frsShowPicker();
+}
+
 
 /* Called from Available Rooms card click — pre-select room */
 function frsOpenRequestFromRoom(roomId, roomName, buildingName) {
     _pendingRoom = String(roomId);
     // Pre-fill date/time from current filter values
     window._preRoom = { id: roomId, name: roomName, building: buildingName };
-    document.getElementById('reqPickerOverlay').classList.add('open');
+    _frsShowPicker();
 }
+
 
 function _resetRoomDisplay(p, msg) {
     document.getElementById(p + 'Room').value = '';
@@ -1701,6 +2419,7 @@ function _resetRoomDisplay(p, msg) {
     else            _adjRoomChosen = null;
 }
 
+
 /* Fully blank a request form's fields — called before every fresh open so a
    cancelled/closed attempt never leaves stale values (or a disabled room
    picker) behind for the next time the modal is opened. */
@@ -1709,10 +2428,12 @@ function _resetReqForm(p) {
     if (daySel) daySel.value = '';
     if (p === 'mu') { const d = document.getElementById('muDate'); if (d) d.value = ''; }
 
+
     const startSel = document.getElementById(p + 'Start');
     const endSel   = document.getElementById(p + 'End');
     if (startSel) { _fillTimeSelect(startSel, []); startSel.value = ''; }
     if (endSel)   { _fillTimeSelect(endSel,   []); endSel.value   = ''; }
+
 
     _resetRoomDisplay(p, p === 'mu' ? '— Select date & time first —' : '— Select day & time first —');
     const wrap = document.getElementById(p + 'RoomWrap');
@@ -1720,22 +2441,29 @@ function _resetReqForm(p) {
     if (wrap) wrap.classList.remove('no-rooms', 'open');
     if (box)  { box.style.pointerEvents = ''; box.style.opacity = ''; box.style.borderColor = ''; }
 
+
     const overlay   = document.getElementById(p === 'mu' ? 'reqMakeupOverlay' : 'reqAdjOverlay');
     const submitBtn = overlay ? overlay.querySelector('.btn-req-submit') : null;
     if (submitBtn) { submitBtn.disabled = false; submitBtn.title = ''; }
+
 
     const subjSel = document.getElementById(p + 'SubjectSel');
     if (subjSel) subjSel.value = '';
     reqSubjectChanged(p); // clears Subject/Section/Program/Yl hidden fields + section select placeholder
 
+
     const reasonEl = document.getElementById(p + 'Reason');
     if (reasonEl) reasonEl.value = '';
+    ['muReason', 'muNote', 'adjReason'].forEach(id => { const el = document.getElementById(id); if (el) muCount(el); });
+
 
     if (p === 'adj') _adjBlockedSlots = [];
     else             _muBlockedSlots  = [];
 
+
     _hideConflictBanner(p);
 }
+
 
 function frsOpenForm(type) {
     document.getElementById('reqPickerOverlay').classList.remove('open');
@@ -1787,6 +2515,7 @@ function frsOpenForm(type) {
     window._preRoom = null;
 }
 
+
 function frsCloseForm(type) {
     if (type === 'makeup') {
         document.getElementById('reqMakeupOverlay').classList.remove('open');
@@ -1798,6 +2527,7 @@ function frsCloseForm(type) {
     document.querySelectorAll('.room-sel-wrap.open').forEach(el => el.classList.remove('open'));
 }
 
+
 /* Close room dropdown when clicking outside */
 document.addEventListener('click', function(e) {
     if (!e.target.closest('.room-sel-wrap')) {
@@ -1805,12 +2535,14 @@ document.addEventListener('click', function(e) {
     }
 });
 
+
 /* ══════════════════════════════════════════
    SUBMIT
 ══════════════════════════════════════════ */
 async function reqSubmit(type) {
     const isMakeup = type === 'makeup';
     const p = isMakeup ? 'mu' : 'adj';
+
 
     const payload = {
         request_type: type,
@@ -1825,6 +2557,7 @@ async function reqSubmit(type) {
         reason:       document.getElementById(p + 'Reason').value,
     };
 
+
     if (isMakeup) {
         payload.request_date = document.getElementById('muDate').value;
         payload.note         = document.getElementById('muNote').value;
@@ -1832,18 +2565,28 @@ async function reqSubmit(type) {
         payload.day = document.getElementById('adjDay').value;
     }
 
+
     // Basic validation
     if (!payload.room_id)      return showToast('Please select a room.', 'warning');
     if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
     if (!payload.section_id)   return showToast('Please select a section.', 'warning');
     if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
+    if (isMakeup && (!payload.start_time || !payload.end_time)) {
+        return showToast('Please select both a start and an end time.', 'warning');
+    }
+    if (isMakeup && !(payload.reason || '').trim()) {
+        document.getElementById('muReason').focus();
+        return showToast('Please provide a reason for the make-up class request.', 'warning');
+    }
     if (payload.start_time && payload.end_time &&
         _REQ_SLOTS.indexOf(payload.end_time) <= _REQ_SLOTS.indexOf(payload.start_time)) {
         return showToast('End Time must be later than Start Time.', 'warning');
     }
 
+
     const submitBtn = document.querySelector(`#req${isMakeup ? 'Makeup' : 'Adj'}Overlay .btn-req-submit`);
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'SUBMITTING...'; }
+
 
     try {
         const res  = await fetch('/api/faculty/submit_request', {
@@ -1854,15 +2597,27 @@ async function reqSubmit(type) {
         if (data.success) {
             frsCloseForm(type);
             showToast('Request submitted successfully! The academic head will review your request.', 'success', 5000);
+        } else if (data.error === 'schedule_conflict' && Array.isArray(data.conflicts)) {
+            // Server is authoritative — show exactly which conflict(s) blocked the request
+            const labels = { faculty: 'Faculty conflict', section: 'Section conflict', room: 'Room conflict' };
+            const banner = document.getElementById(p + 'ConflictBanner');
+            const textEl = document.getElementById(p + 'ConflictText');
+            if (banner && textEl) {
+                textEl.innerHTML = data.conflicts
+                    .map(c => `<b>${labels[c.type] || 'Conflict'}:</b> ${c.message}`).join('<br>');
+                banner.style.display = '';
+            }
+            showToast(data.message || 'The requested period conflicts with an existing schedule.', 'error', 6000);
         } else {
-            showToast(data.error || 'Could not submit request.', 'error');
+            showToast(data.message || data.error || 'Could not submit request.', 'error');
         }
     } catch(e) {
         showToast('Network error. Please try again.', 'error');
     } finally {
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'SUBMIT REQUEST'; }
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> SUBMIT REQUEST'; }
     }
 }
+
 
 /* ══════════════════════════════════════════
    HELPERS
@@ -1876,8 +2631,9 @@ function _toAmPm(t) {
     let h = parseInt(hStr, 10), m = parseInt(mStr, 10);
     const ap = h >= 12 ? 'PM' : 'AM';
     if (h === 0) h = 12; else if (h > 12) h -= 12;
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`;
+    return `String(h).padStart(2,'0'):{String(m).padStart(2,'0')} ${ap}`;
 }
+
 
 /* Set a <select> value by option text or value */
 function _setSelectVal(id, val) {
@@ -1888,12 +2644,14 @@ function _setSelectVal(id, val) {
     }
 }
 
+
 /* Close overlays on backdrop click */
 ['reqPickerOverlay','reqMakeupOverlay','reqAdjOverlay'].forEach(id => {
     document.getElementById(id).addEventListener('click', function(e) {
         if (e.target === this) this.classList.remove('open');
     });
 });
+
 
 /* Init on DOMContentLoaded */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1907,7 +2665,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const muDateEl = document.getElementById('muDate');
     if (muDateEl) muDateEl.min = today;
 });
+
+/* Dashboard deep links: ?view=available opens the Available Rooms tab; ?request=1 also
+   opens the request-type picker (Make Up Class / Schedule Adjustment) — the dashboard's
+   SUBMIT REQUEST button uses both. Deferred one tick so the room page's own
+   DOMContentLoaded setup (building tabs, filters, grid) has run first. */
+document.addEventListener('DOMContentLoaded', () => {
+    const q = new URLSearchParams(window.location.search);
+    setTimeout(() => {
+        if (q.get('view') === 'available' && typeof frsSetMainTab === 'function') frsSetMainTab('available');
+        if (q.get('request') === '1' && typeof frsOpenRequest === 'function') {
+            const t = q.get('type');
+            if (t === 'makeup' || t === 'adjustment') {
+                // "Request Again" from My Request: skip the type picker, open that form
+                // and pre-fill the class once the faculty's assignments have loaded.
+                _pendingRoom = null;
+                frsOpenForm(t);
+                _frsPrefillRequestClass(t, q.get('section') || '', q.get('subject') || '');
+            } else {
+                frsOpenRequest();
+            }
+        }
+    }, 0);
+});
 </script>
+
 
 <!-- Seed data -->
 <div id="frs-init-data"
@@ -1916,10 +2698,13 @@ document.addEventListener('DOMContentLoaded', () => {
      data-programs="{{ programs_json | e }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}"></script>
+
+<script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}?v=20261007a"></script>
+
 
 <!-- Toast Container -->
 <div id="toast-container"></div>
+
 
 <script>
 /* ══ Toast Notification System ══ */
@@ -1930,6 +2715,7 @@ const _TOAST_ICONS = {
     info:    'fa-circle-info'
 };
 const _TOAST_TITLES = { success:'Success', error:'Error', warning:'Notice', info:'Info' };
+
 
 function showToast(msg, type='info', duration=4000) {
     const container = document.getElementById('toast-container');

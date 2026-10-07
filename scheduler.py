@@ -132,6 +132,23 @@ DAY_PAIRS = {
 SUNDAY_ALLOWED_PREFIXES = ('NSTP', 'OU')
 
 
+def restricted_day_prefixes(subject_rule):
+    """Final HC5: subject prefixes allowed on a restricted day for the configured
+    hc_weekend_subject rule, or None when every subject is allowed. The ONE
+    definition shared by CSPValidator and Local Scheduler validation."""
+    return None if subject_rule == 'all_allowed' else SUNDAY_ALLOWED_PREFIXES
+
+
+def subject_allowed_on_restricted_day(subject_code, subject_rule) -> bool:
+    prefixes = restricted_day_prefixes(subject_rule)
+    return prefixes is None or (subject_code or '').upper().startswith(prefixes)
+
+
+def is_laboratory_room_type(room_type) -> bool:
+    """Final HC13: a room recognised as a Laboratory room (shared by CSP and Local)."""
+    return (room_type or '').strip().lower() == 'laboratory'
+
+
 _SUBJ_SPEC_MAP = [
     (
         ['COMP', 'INTE', 'ICTE', 'ITEC', 'ELEC IT', 'ELECT IT'],
@@ -224,6 +241,16 @@ def _parse_day_pairs(raw) -> list:
     except Exception:
         return [list(p) for p in DAY_PAIRS.values()]
 
+def _parse_time_slot_pairs(raw) -> set:
+    """Configured hc_time_slots JSON ([[sh, sm, eh, em], ...]) -> {(start, end)}.
+    Unparsable/empty -> empty set (the built-in STANDARD_BLOCKS still apply)."""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        return {(time(s[0], s[1]), time(s[2], s[3])) for s in (data or [])}
+    except Exception:
+        return set()
+
+
 def _parse_time_slots(raw) -> tuple:
     """Convert JSON string → (set of start times, set of end times)."""
     try:
@@ -233,6 +260,23 @@ def _parse_time_slots(raw) -> tuple:
         return starts, ends
     except Exception:
         return VALID_START_TIMES, VALID_END_TIMES
+
+# A program's Regular and Bridging curricula can share the same curriculumyear
+# (e.g. both "2022-2023"). Generation / Retrieve Previous schedule the REGULAR
+# curriculum only — Bridging subjects are scheduled solely when the Academic Head
+# explicitly switches a section to Bridging in the Manual Editor. Selecting by
+# (program, curriculumyear) alone pulled the Bridging-only subjects in as "ghost"
+# rows (and could duplicate shared ones). The Bridging curriculum is used only when
+# the program has no Regular curriculum for that year. Expects alias `c` = curriculum.
+REGULAR_CURRICULUM_SQL = """(
+    c.curriculumtype IS DISTINCT FROM 'WITH_BRIDGING'
+    OR NOT EXISTS (
+        SELECT 1 FROM curriculum c_reg
+        WHERE UPPER(c_reg.programcode) = UPPER(c.programcode)
+          AND c_reg.curriculumyear = c.curriculumyear
+          AND c_reg.curriculumtype IS DISTINCT FROM 'WITH_BRIDGING'
+    )
+)"""
 
 STANDARD_BLOCKS = [
     # 1-hour blocks (60 min) — subjects with exactly 1 contact hour (e.g. a 1-unit
@@ -353,6 +397,34 @@ def duration_hours(start: time, end: time) -> float:
     return (minutes(end) - minutes(start)) / 60.0
 
 
+# SC5 Avoid Excessive Consecutive Teaching
+SC5_CONTIGUITY_GAP_MINUTES = 15    # a gap of 15 min or less keeps the same run
+SC5_EXCESSIVE_RUN_MINUTES  = 240   # a continuous run of 4 h or more is excessive
+
+
+def teaching_runs(classes, max_gap=SC5_CONTIGUITY_GAP_MINUTES):
+    """[(start_minute, end_minute, class_count), ...] continuous teaching runs
+    of ONE faculty's classes: same-day classes whose gap from the run so far is
+    <= max_gap minutes join the same run; a larger gap (or another day) starts a
+    new run. Classes are taken in (day, start) order, so any number of
+    back-to-back classes form one run."""
+    runs = []
+    cur_day = run_start = run_end = None
+    count = 0
+    for cls in sorted(classes, key=lambda c: (c['day'], minutes(c['start_time']))):
+        s, e = minutes(cls['start_time']), minutes(cls['end_time'])
+        if cls['day'] == cur_day and s - run_end <= max_gap:
+            run_end = max(run_end, e)
+            count += 1
+            continue
+        if cur_day is not None:
+            runs.append((run_start, run_end, count))
+        cur_day, run_start, run_end, count = cls['day'], s, e, 1
+    if cur_day is not None:
+        runs.append((run_start, run_end, count))
+    return runs
+
+
 def format_time_12h(t_obj: time) -> str:
     return t_obj.strftime('%I:%M %p')
 
@@ -387,6 +459,17 @@ def get_blocks_for_hours(target_hours: float, is_lab: bool = False) -> list:
             if abs(duration_hours(s, e) - target_hours) < 0.26]
     if blks:
         return blks
+
+    # Longer than any single block (lecture 4, 5, 6, 12h): meet several times a week
+    # with the LONGEST standard block that divides the hours evenly — 6h = 3h x 2,
+    # 12h = 3h x 4, 4h = 2h x 2, 5h = 1h x 5. The caller schedules one meeting per day
+    # on hours / block-length distinct days (see ScheduleGenerator._meetings_needed).
+    _max_blk = max(duration_hours(s, e) for (s, e) in STANDARD_BLOCKS)
+    if target_hours > _max_blk + 0.01:
+        for _d in sorted({round(duration_hours(s, e), 2) for (s, e) in STANDARD_BLOCKS}, reverse=True):
+            _n = round(target_hours / _d)
+            if abs(_n * _d - target_hours) < 0.01 and _n <= len(WEEKDAYS) + 1:
+                return [(s, e) for (s, e) in STANDARD_BLOCKS if abs(duration_hours(s, e) - _d) < 0.01]
 
     # No block is even close (e.g. lecturehours of 1, 4, 5, or 12 — none of which
     # STANDARD_BLOCKS has an exact or near-exact duration for). This used to fall through
@@ -745,16 +828,16 @@ class CSPValidator:
         ]
 
         # ── Valid time blocks (HC6) ────────────────────────────
+        # Final HC6 validates whole start-end BLOCKS: the built-in STANDARD_BLOCKS
+        # (always included, so generator-produced blocks are never flagged) plus
+        # any block an admin configured in Settings (hc_time_slots). A start and
+        # an end that each exist in SOME block are not enough on their own.
+        # Fresh sets are built here -- never mutate the module-level constants.
         raw_slots = cfg.get('hc_time_slots', '')
-        if raw_slots:
-            self._valid_starts, self._valid_ends = _parse_time_slots(raw_slots)
-            # Always include the module-level standard blocks so 2hr/3hr
-            # lab blocks are never flagged as invalid by HC5.
-            self._valid_starts |= VALID_START_TIMES
-            self._valid_ends   |= VALID_END_TIMES
-        else:
-            self._valid_starts = VALID_START_TIMES
-            self._valid_ends   = VALID_END_TIMES
+        configured = _parse_time_slot_pairs(raw_slots) if raw_slots else set()
+        self._valid_pairs  = set(STANDARD_BLOCKS) | configured
+        self._valid_starts = {s for (s, _) in self._valid_pairs}
+        self._valid_ends   = {e for (_, e) in self._valid_pairs}
 
         # ── AM/PM PT window bounds (HC1/HC2/HC3/HC4/HC8) ───────
         # Phase B checkpoint 1: these were previously the hardcoded module
@@ -778,11 +861,8 @@ class CSPValidator:
         self._designee_pm_end   = _parse_hhmm(cfg.get('hc4_pt_pm_end'),   time(18, 0))
 
         # ── Restricted-day subject requirement (HC5) ──────────
-        subj_restr = cfg.get('hc_weekend_subject', 'nstp_only')
-        if subj_restr == 'all_allowed':
-            self._sunday_prefixes = None          # no restriction
-        else:
-            self._sunday_prefixes = ('NSTP', 'OU')
+        # None = no restriction; shared with Local validation (restricted_day_prefixes).
+        self._sunday_prefixes = restricted_day_prefixes(cfg.get('hc_weekend_subject', 'nstp_only'))
 
         # Which day(s) are subject-restricted — any admin-picked combination, not just Sunday
         self._weekend_restricted_days = _parse_weekend_days(cfg.get('hc_weekend_day'))
@@ -806,10 +886,12 @@ class CSPValidator:
     def validate(self, schedule: list, faculty_map: dict, skip_rules: set = None,
                  existing_load: dict = None, rooms_by_id: dict = None) -> list:
         """
-        existing_load: {faculty_id: units_already_committed_in_other_sections}
-            When supplied, HC8 adds these cross-section units to each faculty's
-            intra-schedule total before checking limits.  This makes the validation
-            match what the Manual Editor shows (total load across all sections).
+        existing_load: {faculty_id: hours_already_committed_in_other_sections}
+            Either faculty_load.summarize_faculty_load's bucketed dict (preferred:
+            Regular/PT buckets + merged-meeting slices) or a legacy plain number.
+            HC9 adds these cross-section hours to each faculty's intra-schedule
+            load before checking limits, so validation matches the Manual Editor
+            total across all sections (see _check_load_limits).
         rooms_by_id: {room_id: room_row} — optional, used by final HC14 room-capacity validation.
             Omitting it simply skips the capacity check (see its own docstring
             for why it's a no-op today regardless).
@@ -842,14 +924,15 @@ class CSPValidator:
         # HC5  Sunday / NSTP restriction (Restricted-Day Subject Requirement)
         if self._enabled('hc_weekend_enabled'):
             violations += self._check_sunday_restriction(schedule)
-        # HC6  30-minute standard time-block grid (Standard Time-Slot Compliance)
-        # (was implemented but never dispatched — restored per architecture spec
-        # section requiring "the approved 30-minute scheduling grid" be enforced
-        # at final CSP validation; CBR/GA already only ever place STANDARD_BLOCKS
-        # values, so this mainly guards manual-editor and CBR-repaired entries)
+        # HC6  Standard Time-Slot Compliance: each class time must be one whole
+        # valid start-end block (STANDARD_BLOCKS + configured hc_time_slots).
+        # CBR/GA already only place STANDARD_BLOCKS values, so this mainly guards
+        # manual-editor, retrieved-history and Local entries.
         if self._enabled('hc_time_blocks_enabled') and 'HC6' not in skip_rules:
             violations += self._check_standard_slots(schedule)
-        # HC7  Day pairing — skipped during draft saves; only enforced at publish time
+        # HC7  Day pairing — callers may pass skip_rules={'HC7'}; Save Draft reports
+        # it as a non-blocking warning and Publish blocks on it. Never applied to
+        # Local Scheduler adjustments (intentional workflow exception).
         if self._enabled('hc_day_pairing_enabled') and 'HC7' not in skip_rules:
             violations += self._check_day_pairing(schedule)
         # HC8  Night PT cap (designees) — Designee PT Teaching-Night Limit
@@ -865,15 +948,17 @@ class CSPValidator:
         # HC10 Faculty double-booking (Faculty Schedule Conflict)
         if self._enabled('hc_faculty_conflict_enabled'):
             violations += self._check_faculty_overlaps(schedule)
-        # HC12 Section time conflict — always enforced; two subjects cannot share a time slot
-        violations += self._check_section_overlaps(schedule)
+        # HC12 Section time conflict — two subjects of one section cannot share a time slot
+        if self._enabled('hc_section_conflict_enabled'):
+            violations += self._check_section_overlaps(schedule)
         # HC_SPEC  Faculty specialization restriction (advisory/warning — not in final HC1-17)
         if self._enabled('hc_faculty_spec_enabled'):
             violations += self._check_faculty_specialization(schedule, faculty_map)
         # HC13  Lab subjects must be in Laboratory rooms (Laboratory Room Requirement)
         if self._enabled('hc_lab_session_enabled'):
             violations += self._check_lab_room(schedule)
-        # HC14  Room capacity (no-op until class-size data exists — see docstring)
+        # HC14  Room capacity — INACTIVE: no class-size/enrollment data exists, so
+        # this never emits a violation today (see _check_room_capacity / registry).
         if self._enabled('hc_capacity_enabled'):
             violations += self._check_room_capacity(schedule, rooms_by_id)
         # Attach a formal "type" label (e.g. "Conflict: Faculty Schedule") to every
@@ -1187,6 +1272,15 @@ class CSPValidator:
                     'subject': subj,
                     'detail': f'"{subj}" — invalid end time ({format_time_12h(end)}). Please select a standard time block.'
                 })
+            if (start and end and start in v_starts and end in v_ends
+                    and (start, end) not in self._valid_pairs):
+                violations.append({
+                    'rule': 'HC6',
+                    'subject': subj,
+                    'detail': (f'"{subj}" — {format_time_12h(start)}–{format_time_12h(end)} is not a '
+                               f'standard time block (its start and end belong to different blocks). '
+                               f'Please select a standard time block.')
+                })
         return violations
 
     # ── HC7 Day pairing ─────────────────────────────────────────
@@ -1241,18 +1335,31 @@ class CSPValidator:
         # Groups single-day entries (e.g. from the manual editor) so that a
         # subject placed on Mon by one entry and Tue by another is caught.
         # Lecture and Lab are kept separate to avoid combining their days.
+        # IMPORTANT: HC7 is a requirement of one section's subject occurrence,
+        # not a relationship between every section that happens to offer the same
+        # subject code.  Multi-section/effective-schedule validation can contain
+        # BSIT1A:NSTP on Monday and BSCS1A:NSTP on Friday; those two independent
+        # sections must NOT be combined into a fictitious Monday-Friday pair.
+        # Use section_id when available, otherwise the normal program/section label.
+        # In the traditional single-section generation context no identity is stamped,
+        # so all rows intentionally fall into one implicit section as before.
         subj_type_days: dict = defaultdict(set)
         for cls in schedule:
             code  = (cls.get('subject_code') or cls.get('subjectcode') or '').strip()
             if not code:
                 continue
             ctype = cls.get('class_type', 'Lecture')
+            section_key = (
+                cls.get('section_id') or cls.get('sectionid')
+                or self._section_label(cls)
+                or '__implicit_single_section__'
+            )
             days_list = cls.get('days_list') or [cls.get('day', '')]
             for d in days_list:
                 if d:
-                    subj_type_days[(code, ctype)].add(d)
+                    subj_type_days[(code, ctype, section_key)].add(d)
 
-        for (code, ctype), days_set in subj_type_days.items():
+        for (code, ctype, _section_key), days_set in subj_type_days.items():
             if len(days_set) != 2:
                 continue   # single-day or 3+-day groups are outside HC6 scope
             sorted_days = _sort_day_pair(list(days_set))
@@ -1302,17 +1409,58 @@ class CSPValidator:
 
     # ── HC9 Teaching load limits ────────────────────────────────
 
+    def _merged_with_existing_days(self, cls, schedule, slices):
+        """Days on which `cls` is the SAME physical merged meeting as one already
+        counted in the faculty's existing (other-section) load. Every
+        participant pair -- this schedule's members of that meeting plus the
+        existing partner(s) -- must be a valid HC16 merge (full clique)."""
+        if not slices:
+            return []
+        fnum = cls.get('faculty_id')
+        code = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
+        start, end = cls.get('start_time'), cls.get('end_time')
+        covered = []
+        for day in _entry_days(cls):
+            # Same faculty only: a different-faculty NSTP/OU shared session keeps
+            # each instructor's own hours (HC17 deduplicates per faculty).
+            partners = [s for s in slices
+                        if s.get('faculty_id') == fnum
+                        and (s.get('subject_code') or '').upper() == code and s.get('day') == day
+                        and s.get('start_time') == start and s.get('end_time') == end]
+            if not partners:
+                continue
+            members = [o for o in schedule
+                       if o.get('faculty_id') == fnum
+                       and (o.get('subject_code') or o.get('subjectcode') or '').upper() == code
+                       and day in _entry_days(o)
+                       and o.get('start_time') == start and o.get('end_time') == end]
+            group = members + partners
+            if all(self.is_valid_merge(a, b)
+                   for pos, a in enumerate(group) for b in group[pos + 1:]):
+                covered.append(day)
+        return covered
+
     def _check_load_limits(self, schedule, faculty_map, existing_load: dict = None):
         """
         existing_load: HOURS already committed by each faculty in OTHER sections/programs
-            this term (from fetch_current_faculty_loads — real scheduled hours). Added to
-            the intra-schedule hours so the check matches the total load visible in the
-            Manual Editor (faculty_load.py is the shared source of truth for both).
+            this term. Two shapes are accepted per faculty:
+              * bucketed dict from faculty_load.summarize_faculty_load
+                ({'regular', 'pt', 'total', 'slices'}) -- the Regular and PT parts
+                are added to their OWN bucket, and a gene that is the same valid
+                merged meeting as an existing slice is not counted again (HC17
+                across sections);
+              * a plain number (legacy/unbucketed total) -- it cannot be split, so
+                it is counted ONCE against the faculty's total capacity instead of
+                being added to both buckets (which double-counted it).
         """
         violations = []
         regular_hrs = defaultdict(float)
         pt_hrs      = defaultdict(float)
         _cross = existing_load or {}
+
+        def _cross_bucket(fnum, bucket):
+            v = _cross.get(fnum)
+            return float(v.get(bucket) or 0) if isinstance(v, dict) else 0.0
         # Final HC17 (Merged-Class Faculty Load): a valid merged/shared
         # session (final HC16 — self.is_valid_merge) must contribute its
         # teaching hours to the faculty's load ONCE, not once per
@@ -1340,20 +1488,39 @@ class CSPValidator:
             if hrs == 0:
                 continue
 
+            # HC17 across sections: meeting days already counted in this
+            # faculty's existing load (a valid merge with another section's
+            # identical meeting) must not be counted a second time here.
+            _existing = _cross.get(fnum)
+            _covered = self._merged_with_existing_days(
+                cls, schedule, _existing.get('slices') if isinstance(_existing, dict) else None)
+            if _covered:
+                _gene_days = _entry_days(cls)
+                hrs = hrs * (len(_gene_days) - len(_covered)) / len(_gene_days)
+                if hrs <= 0:
+                    continue
+
             _subj = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
             _merge_key = (fnum, _subj, cls.get('day'), cls.get('start_time'), cls.get('end_time'))
             if _merge_key in _counted_merge_groups:
                 continue  # this physical session's hours were already counted once
-            _siblings = [
+            _merge_members = [
                 other for other in schedule
-                if other is not cls
-                and other.get('faculty_id') == fnum
+                if other.get('faculty_id') == fnum
                 and (other.get('subject_code') or other.get('subjectcode') or '').upper() == _subj
                 and other.get('day') == cls.get('day')
                 and other.get('start_time') == cls.get('start_time')
                 and other.get('end_time') == cls.get('end_time')
             ]
-            if _siblings and all(self.is_valid_merge(cls, sib) for sib in _siblings):
+            # HC17 follows HC16 pairwise authorization for the ENTIRE merge
+            # group.  For 3+ sections every pair must be a valid merge; checking
+            # only the current row against its siblings could incorrectly count
+            # A/B/C once when A-B and A-C are allowed but B-C is forbidden.
+            if len(_merge_members) > 1 and all(
+                self.is_valid_merge(a, b)
+                for pos, a in enumerate(_merge_members)
+                for b in _merge_members[pos + 1:]
+            ):
                 _counted_merge_groups.add(_merge_key)
 
             # Phase B checkpoint 1 (final HC9 fix): bucket via the ONE shared
@@ -1384,8 +1551,8 @@ class CSPValidator:
                 pt_hrs[fnum] += hrs
 
         for fnum, hrs in regular_hrs.items():
-            # Add cross-section committed hours so the check matches the Manual Editor total
-            hrs += _cross.get(fnum, 0)
+            # Add cross-section committed REGULAR hours so the check matches the Manual Editor total
+            hrs += _cross_bucket(fnum, 'regular')
             et         = faculty_map[fnum].get('employeetype', {})
             emp_status = faculty_map[fnum].get('employeestatus', '')
             ts_hours   = float(et.get('teachingsubstitution', 0) or 0)
@@ -1416,7 +1583,7 @@ class CSPValidator:
                         })
 
         for fnum, hrs in pt_hrs.items():
-            hrs += _cross.get(fnum, 0)
+            hrs += _cross_bucket(fnum, 'pt')
             et     = faculty_map[fnum].get('employeetype', {})
             max_pt = _cap_or_default(et.get('parttimeload'), 99)
             if hrs > max_pt:
@@ -1431,6 +1598,30 @@ class CSPValidator:
                                   + (f' (TS {ts_hours:.1f}h available, short {excess - ts_hours:.1f}h)' if ts_hours else ''),
                         'faculty_id': fnum,
                     })
+
+        # Legacy unbucketed existing load (a plain number): counted ONCE against
+        # the faculty's total capacity, never added into both buckets.
+        flagged = {v.get('faculty_id') for v in violations}
+        for fnum in set(regular_hrs) | set(pt_hrs):
+            cross = _cross.get(fnum)
+            if isinstance(cross, dict) or not cross or fnum in flagged:
+                continue
+            et        = faculty_map[fnum].get('employeetype', {})
+            ts_hours  = float(et.get('teachingsubstitution', 0) or 0)
+            max_pt    = _cap_or_default(et.get('parttimeload'), 99)
+            is_pt_fac = 'part' in (faculty_map[fnum].get('employeestatus', '') or '').lower()
+            max_reg   = 0 if is_pt_fac else _cap_or_default(et.get('regularload'), 99)
+            capacity  = max_reg + max_pt + ts_hours
+            total     = regular_hrs.get(fnum, 0) + pt_hrs.get(fnum, 0) + float(cross)
+            if total > capacity:
+                fac_name = (faculty_map[fnum].get('fullname') or fnum)
+                violations.append({
+                    'rule': 'HC9',
+                    'subject': 'multiple',
+                    'detail': (f'{fac_name} total load {total:.1f} hrs (including {float(cross):.1f} hrs '
+                               f'in other sections) exceeds total limit {capacity:.1f} hrs.'),
+                    'faculty_id': fnum,
+                })
 
         return violations
 
@@ -1572,12 +1763,17 @@ class CSPValidator:
         — disabling merge policy would incorrectly also disable this
         long-standing faculty exemption. See the Phase B checkpoint 2
         report for the full characterization.
+
+        Delegates to faculty_load.nstp_shared_faculty_exempt, the single
+        definition shared with the cross-schedule and Local checks.
         """
-        a_code = (a.get('subject_code') or '').upper()
-        b_code = (b.get('subject_code') or '').upper()
-        a_nstp = any(a_code.startswith(p) for p in SUNDAY_ALLOWED_PREFIXES)
-        b_nstp = any(b_code.startswith(p) for p in SUNDAY_ALLOWED_PREFIXES)
-        return a_nstp and b_nstp
+        return faculty_load.nstp_shared_faculty_exempt(a, b)
+
+    def faculty_overlap_exempt(self, a, b):
+        """Final HC10 exemption (shared rule, faculty_load.faculty_overlap_exempt):
+        a valid HC16 merge OR the NSTP/OU shared-faculty exemption."""
+        return faculty_load.faculty_overlap_exempt(
+            a, b, config=self._cfg, merge_section_pairs=self._merge_section_pairs)
 
     def _check_room_overlaps(self, schedule):
         violations = []
@@ -1610,10 +1806,16 @@ class CSPValidator:
         violations = []
         for i, a in enumerate(schedule):
             for b in schedule[i+1:]:
+                # A missing/TBA instructor is not a person and cannot be
+                # double-booked (two unassigned rows used to match None == None).
+                if not faculty_load.has_assigned_faculty(a.get('faculty_id')):
+                    continue
                 if a.get('faculty_id') != b.get('faculty_id'):
                     continue
 
-                if self._nstp_shared_faculty_exempt(a, b):
+                # Shared HC10 exemption: valid HC16 merge (scope + section pairs)
+                # or the NSTP/OU shared-faculty rule. HC12 is checked separately.
+                if self.faculty_overlap_exempt(a, b):
                     continue
 
                 shared_days = self._shared_overlap_days(a, b)
@@ -1669,7 +1871,7 @@ class CSPValidator:
         violations = []
         for code, sessions in subj_sessions.items():
             has_lab_room = any(
-                (cls.get('room_type') or cls.get('roomtype') or '').strip().lower() == 'laboratory'
+                is_laboratory_room_type(cls.get('room_type') or cls.get('roomtype'))
                 for cls in sessions
             )
             # A session with room TBA means the room isn't decided yet — defer the lab-room
@@ -2438,6 +2640,7 @@ class IntelligentScheduler:
               AND c.curriculumyear = %s
               AND cs.yearlevel     = %s
               AND cs.semester      = %s
+              AND """ + REGULAR_CURRICULUM_SQL + """
         """
         subjects = query_db(subjects_query, (program, curriculum_year, year_level, term))
 
@@ -2944,7 +3147,7 @@ class IntelligentScheduler:
     def fetch_published_room_faculty_slots(
         self, term: str, acad_year_id: str,
         exclude_program: str = '', exclude_year_level: int = None,
-        exclude_subject_codes: list = None,
+        exclude_subject_codes: list = None, exclude_section_id: int = None,
     ) -> tuple:
         """
         Load existing Published AND Draft room/faculty occupancies for the semester.
@@ -2954,6 +3157,11 @@ class IntelligentScheduler:
         a previous curriculum that are not being regenerated) are kept as occupied so
         the generator does not double-book those rooms/faculty.
 
+        exclude_section_id: the section being generated. When given, ONLY that section's
+            own sessions (for the subjects being regenerated) are skipped -- every OTHER
+            section of the same program + year level still blocks its rooms/faculty.
+            (Matching on program + year level alone let a sibling section's room look
+            free, so generation double-booked it.)
         exclude_subject_codes: subject codes being regenerated in the current run.
             When supplied, only sessions whose subjectcode is in this list are excluded
             for the current program+year. Sessions for OTHER subjects in the same section
@@ -2969,7 +3177,8 @@ class IntelligentScheduler:
                    ts_e.timevalue             AS end_time,
                    UPPER(c.programcode)       AS programcode,
                    cs.yearlevel,
-                   UPPER(cs.subjectcode)      AS subjectcode
+                   UPPER(cs.subjectcode)      AS subjectcode,
+                   sc.sectionid               AS sectionid
             FROM   schedule_sessions ss
             JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
             JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
@@ -2981,11 +3190,53 @@ class IntelligentScheduler:
             WHERE  sem.academicyearid          = %s
               AND  UPPER(sem.semestertype)     = UPPER(%s)
               AND  sv.status                  IN ('Published', 'Draft')
-              AND  ss.roomid                  IS NOT NULL
+              -- HC15 effective occupancy: only a Published Official occurrence can
+              -- be displaced by an active Published Local override. Official Draft
+              -- rows remain blocking while they are under review.
+              AND (sv.status <> 'Published' OR NOT EXISTS (
+                    SELECT 1
+                    FROM public.local_arrangement la_x
+                    JOIN public.local_arrangement_sessions las_x
+                      ON las_x.arrangementid = la_x.arrangementid
+                    WHERE la_x.status = 'Published'
+                      AND la_x.is_active = TRUE
+                      AND la_x.semesterid = sc.semesterid
+                      AND la_x.sectionid = sc.sectionid
+                      AND las_x.official_sessionid = ss.sessionid
+              ))
+              -- Faculty occupancy is independent of room assignment, so a TBA
+              -- room must not make an otherwise valid faculty slot disappear.
               AND  ss.daydesc                 IS NOT NULL
               AND  ts_s.timevalue             IS NOT NULL
               AND  ts_e.timevalue             IS NOT NULL
         """, (acad_year_id, term))
+
+        # Active Published Local overrides are part of the same effective state.
+        # Local Drafts are deliberately excluded: they do not reserve/vacate slots.
+        local_rows = query_db("""
+            SELECT las.roomid,
+                   las.faculty_employeenumber AS faculty_id,
+                   las.daydesc                AS day,
+                   ts_s.timevalue             AS start_time,
+                   ts_e.timevalue             AS end_time,
+                   UPPER(la.programcode)      AS programcode,
+                   la.yearlevel               AS yearlevel,
+                   UPPER(las.subjectcode)     AS subjectcode,
+                   la.sectionid               AS sectionid
+            FROM public.local_arrangement la
+            JOIN public.local_arrangement_sessions las ON las.arrangementid = la.arrangementid
+            JOIN public.semester sem ON la.semesterid = sem.semesterid
+            LEFT JOIN public.timeslot ts_s ON las.starttimeid = ts_s.timeid
+            LEFT JOIN public.timeslot ts_e ON las.endtimeid = ts_e.timeid
+            WHERE sem.academicyearid = %s
+              AND UPPER(sem.semestertype) = UPPER(%s)
+              AND la.status = 'Published'
+              AND la.is_active = TRUE
+              AND las.daydesc IS NOT NULL
+              AND ts_s.timevalue IS NOT NULL
+              AND ts_e.timevalue IS NOT NULL
+        """, (acad_year_id, term))
+        rows = list(rows or []) + list(local_rows or [])
 
         excl_prog  = (exclude_program or '').strip().upper()
         excl_codes = {c.upper() for c in (exclude_subject_codes or [])}
@@ -3003,11 +3254,17 @@ class IntelligentScheduler:
             # Skip only sessions that ARE being regenerated for the current section.
             # Residual sessions for OTHER subjects in the same section must still block
             # so the new schedule does not reuse a room that will remain Published.
-            if excl_prog and row_prog == excl_prog \
+            if exclude_section_id is not None:
+                # Section-precise: only THIS section's sessions for the subjects being
+                # regenerated are replaced; sibling sections keep blocking.
+                if str(r.get('sectionid')) == str(exclude_section_id) \
+                        and (not excl_codes or row_sc in excl_codes):
+                    continue
+            elif excl_prog and row_prog == excl_prog \
                     and exclude_year_level is not None \
                     and row_yr == exclude_year_level:
                 if not excl_codes or row_sc in excl_codes:
-                    continue   # this subject is being replaced — don't block
+                    continue   # legacy (no section known): this subject is being replaced
             day   = r['day']
             start = r['start_time']
             end   = r['end_time']
@@ -3023,17 +3280,22 @@ class IntelligentScheduler:
 
     def fetch_current_faculty_loads(self, term: str, acad_year_id: str,
                                     exclude_program: str = '',
-                                    exclude_year_level: int = None) -> dict:
+                                    exclude_year_level: int = None,
+                                    exclude_section_id: int = None) -> dict:
         """
-        #9: Return {faculty_id: total_hours_already_committed} for the given term across
-        ALL programs/sections that have Published or Draft schedules — REAL scheduled
-        hours via the shared live-hours query (faculty_load.py), not credit units. This
-        allows the builder to exclude faculty who have already hit their load cap.
+        #9: Return {faculty_id: faculty_load.summarize_faculty_load(...)} -- the
+        bucketed (Regular/PT), HC17 merge-aware hours already committed this term
+        across ALL programs/sections with Published or Draft schedules. REAL
+        scheduled hours via the shared live-hours query (faculty_load.py), not credit
+        units. Use faculty_load.load_total() where only the total matters (builder
+        capacity filters); CSPValidator's HC9 consumes the buckets directly.
 
-        exclude_program + exclude_year_level: skip sessions for the section currently
-        being regenerated.  Those records (Draft from a previous run, or the Published
-        schedule being superseded) will be replaced, so counting them would inflate load
-        figures and prevent the same faculty from being re-used in the new schedule.
+        exclude_section_id (preferred) / exclude_program + exclude_year_level: skip
+        sessions for the section currently being regenerated. Those records (Draft
+        from a previous run, or the Published schedule being superseded) will be
+        replaced, so counting them would inflate load figures and prevent the same
+        faculty from being re-used in the new schedule. With a section id, sibling
+        sections of the same program/year still count.
         """
         if not term or not acad_year_id:
             return {}
@@ -3044,10 +3306,12 @@ class IntelligentScheduler:
         try:
             import psycopg2.extras
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            loads = faculty_load.get_faculty_hours_batch(
+            loads = faculty_load.get_faculty_load_batch(
                 cur, acad_year_id, term,
                 exclude_program=(exclude_program or '').strip().upper() or None,
-                exclude_year_level=exclude_year_level)
+                exclude_year_level=exclude_year_level,
+                exclude_section_id=exclude_section_id,
+                config=self._hc_cfg)
             cur.close()
             return loads
         finally:
@@ -3067,6 +3331,7 @@ class IntelligentScheduler:
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
             WHERE c.programcode = %s AND c.curriculumyear = %s
               AND cs.yearlevel = %s AND cs.semester = %s
+              AND """ + REGULAR_CURRICULUM_SQL + """
         """, (program, curriculum_year, year_level, term))
         curr_subjects = {r['subjectcode']: r for r in (curr_rows or [])}
         if not curr_subjects:
@@ -3281,6 +3546,17 @@ class IntelligentScheduler:
 
             any_full = False
             for ct in class_types:
+                # One historical time slot is offered to EVERY part of the subject, but it
+                # only fits a part whose required hours it covers exactly (block length x
+                # days). Reusing a 3-hour slot for a 1- or 2-hour lecture part over-
+                # scheduled it (e.g. STAT 203's 2h lecture on 10:30-1:30). A misfit time is
+                # simply not reused for that part — the GA picks one; faculty/room may
+                # still be reused.
+                _part_hrs = (float(subj.get('laboratoryhours') or 0) if ct == 'Lab'
+                             else float(subj.get('lecturehours') or 0) or 3.0)
+                part_time_ok = bool(
+                    time_ok and a.start_time and a.end_time and a.days_list
+                    and abs(duration_hours(a.start_time, a.end_time) * len(a.days_list) - _part_hrs) < 0.01)
                 fac  = faculty_map.get(a.faculty_id, {}) if fac_ok else {}
                 gene = {
                     'subject_code': a.subject_code, 'class_type': ct, 'course': subj.get('offeringcode'),
@@ -3289,10 +3565,10 @@ class IntelligentScheduler:
                     'room_id': a.room_id if room_ok else None,
                     'room':    a.room    if room_ok else None,
                     'room_type': a.room_type if room_ok else '',
-                    'days_list': list(a.days_list) if time_ok else [],
-                    'day':       (a.days_list[0] if time_ok and a.days_list else None),
-                    'start_time': a.start_time if time_ok else None,
-                    'end_time':   a.end_time   if time_ok else None,
+                    'days_list': list(a.days_list) if part_time_ok else [],
+                    'day':       (a.days_list[0] if part_time_ok and a.days_list else None),
+                    'start_time': a.start_time if part_time_ok else None,
+                    'end_time':   a.end_time   if part_time_ok else None,
                 }
 
                 # CSP's rules (room/faculty overlap, time windows, load) are all
@@ -3306,7 +3582,7 @@ class IntelligentScheduler:
                 # partial reuse). It is deliberately never added to placed_genes —
                 # doing so with a None start/end time would crash the pairwise
                 # time-window checks that assume every gene has a real time.
-                fully_resolved = fac_ok and room_ok and time_ok
+                fully_resolved = fac_ok and room_ok and part_time_ok
                 bad_flags = set()
                 if fully_resolved:
                     if not _published_free(gene['room_id'], gene['faculty_id'],
@@ -3320,7 +3596,7 @@ class IntelligentScheduler:
                 lock_flags = {
                     'faculty':  fac_ok  and 'faculty'  not in bad_flags,
                     'room':     room_ok and 'room'     not in bad_flags,
-                    'schedule': time_ok and 'schedule' not in bad_flags,
+                    'schedule': part_time_ok and 'schedule' not in bad_flags,
                 }
                 if not any(lock_flags.values()):
                     continue
@@ -3672,7 +3948,7 @@ class IntelligentScheduler:
                 max_pt    = et.get('parttimeload') or 0
                 ts_sub    = et.get('teachingsubstitution') or 0
                 max_total = max_reg + max_pt + ts_sub
-                committed = _existing_load.get(fid, 0) + _sched_units.get(fid, 0)
+                committed = faculty_load.load_total(_existing_load.get(fid)) + _sched_units.get(fid, 0)
                 return (committed + hrs) <= max_total
 
             with_capacity = [f for f in qualified_faculty if _has_load_capacity(f, nominal_hrs)]
@@ -3941,13 +4217,12 @@ class IntelligentScheduler:
                     # actual target) only ever produced ONE such meeting no matter how many
                     # hours were really required, silently under-scheduling the rest — e.g. a
                     # 6-hour lab landed in the final schedule as just 3 real hours.
-                    if is_lab_part and abs(_dur - 3) < 0.1 and target_hrs > 3.1:
-                        _n_meetings = max(1, round(target_hrs / 3))
+                    # Same for ANY part longer than one block (a 6-hour lecture = 3h x 2,
+                    # 12h = 3h x 4, 4h = 2h x 2): one meeting per day on hours/block days.
+                    _n_meetings = self._meetings_needed(target_hrs, _dur)
+                    if _n_meetings and _n_meetings > 1:
                         _lab_day_pool = ['Sunday'] if (is_nstp_ou and self._nstp_force_sunday) else _avail_days
-                        _n_meetings = min(_n_meetings, len(_lab_day_pool))  # can't exceed days actually available
-                        if _random:
-                            return [random.sample(_lab_day_pool, _n_meetings)]
-                        return [list(c) for c in itertools.combinations(_lab_day_pool, _n_meetings)]
+                        return self._multi_meeting_day_sets(_n_meetings, _lab_day_pool, one=_random)
                     if is_lab_part and _lec_day_chosen and _day_pair_on:
                         _paired = None
                         for _p in self._builder_pairs:
@@ -4292,25 +4567,26 @@ class IntelligentScheduler:
                 elif _day_pair_on and not is_lab and lh >= 3:
                     slot_triples = []
                     for s, e in cands:
+                        _nm = self._meetings_needed(target, duration_hours(s, e))
                         if abs(duration_hours(s, e) - 1.5) < 0.1:
                             for pair in self._builder_pairs:
                                 slot_triples.append((list(pair), s, e))
+                        elif _nm and _nm > 1:
+                            slot_triples += [(ds, s, e) for ds in self._multi_meeting_day_sets(_nm, avail)]
                         else:
                             for d in avail:
                                 slot_triples.append(([d], s, e))
-                elif is_lab and target > 3.1:
-                    # Multi-meeting lab (target hours is an exact multiple of the 3-hour
-                    # block > 3 — 6, 9, 12, 18) must keep meeting on that many distinct
-                    # days — a single-day candidate here would silently repair it back
-                    # down to one meeting and under-schedule the subject's real hours.
-                    _n_meetings = min(max(1, round(target / 3)), len(avail))
-                    slot_triples = [
-                        (list(day_combo), s, e)
-                        for (s, e) in cands
-                        for day_combo in itertools.combinations(avail, _n_meetings)
-                    ]
                 else:
-                    slot_triples = [([d], s, e) for d in avail for (s, e) in cands]
+                    # Multi-meeting part (a lab of 6/9/12/18h, a lecture of 4/5/6/12h) must
+                    # keep meeting on hours/block distinct days — a single-day candidate
+                    # here would silently repair it down to one meeting (under-scheduled).
+                    slot_triples = []
+                    for (s, e) in cands:
+                        _nm = self._meetings_needed(target, duration_hours(s, e))
+                        if _nm and _nm > 1:
+                            slot_triples += [(ds, s, e) for ds in self._multi_meeting_day_sets(_nm, avail)]
+                        else:
+                            slot_triples += [([d], s, e) for d in avail]
 
                 # Try the current days first to minimise unnecessary changes
                 cur_first  = [t for t in slot_triples if t[0] == cur_days]
@@ -4477,27 +4753,29 @@ class IntelligentScheduler:
             if is_nstp and self._nstp_force_sunday:
                 for s, e in blks:
                     triples.append((['Sunday'], s, e))
-            elif _day_pair_on and not is_lab and lh >= 3:
+            elif _day_pair_on and not is_lab and lh >= 3 and any(
+                    abs(duration_hours(s, e) - 1.5) < 0.1 for s, e in blks):
                 for s, e in blks:
                     dur = duration_hours(s, e)
+                    _nm = self._meetings_needed(target, dur)
                     if abs(dur - 1.5) < 0.1:
                         for pair in self._builder_pairs:
                             triples.append((list(pair), s, e))
+                    elif _nm and _nm > 1:
+                        triples += [(ds, s, e) for ds in self._multi_meeting_day_sets(_nm, _avail_days)]
                     else:
                         for d in _avail_days:
                             triples.append(([d], s, e))
-            elif is_lab and target > 3.1:
-                # Multi-meeting lab (target is an exact multiple of the 3-hour block > 3 —
-                # 6, 9, 12, 18) must keep meeting on that many distinct days — repairing it
-                # onto a single day here would silently under-schedule the subject's hours.
-                _n_meetings = min(max(1, round(target / 3)), len(_avail_days))
-                for s, e in blks:
-                    for day_combo in itertools.combinations(_avail_days, _n_meetings):
-                        triples.append((list(day_combo), s, e))
             else:
-                for d in _avail_days:
-                    for s, e in blks:
-                        triples.append(([d], s, e))
+                # Multi-meeting part (lab 6/9/12/18h, lecture 4/5/6/12h) keeps meeting on
+                # hours/block distinct days; anything else is one meeting on one day.
+                for s, e in blks:
+                    _nm = self._meetings_needed(target, duration_hours(s, e))
+                    if _nm and _nm > 1:
+                        triples += [(ds, s, e) for ds in self._multi_meeting_day_sets(_nm, _avail_days)]
+                    else:
+                        for d in _avail_days:
+                            triples.append(([d], s, e))
             random.shuffle(triples)
             return triples
 
@@ -4901,11 +5179,7 @@ class IntelligentScheduler:
                     # unchanged -- >90 minutes on the same day).
                     if gap > 90:
                         score -= sc2_weight
-                    consec = minutes(cls['end_time']) - minutes(sorted_cls[i-1]['start_time'])
-                    # SC5 — Avoid Excessive Consecutive Teaching (unchanged
-                    # -- >=240 minutes/4 hours back-to-back on the same day).
-                    if consec >= 240:
-                        score -= sc5_weight
+                    # (SC5 is evaluated per continuous run after this loop.)
                     # SC7 — Minimize Room/Building Movement (unchanged). Only
                     # fires for genuinely tight (<=15 min) transitions; if
                     # building metadata is unavailable for either room, this
@@ -4917,6 +5191,19 @@ class IntelligentScheduler:
                         cur_bldg  = (cur_room or {}).get('buildingid')
                         if prev_bldg is not None and cur_bldg is not None and prev_bldg != cur_bldg:
                             score -= sc7_weight
+
+            # SC5 — Avoid Excessive Consecutive Teaching. Evaluated per
+            # CONTINUOUS RUN, not per adjacent pair: same-day classes whose gap
+            # is <= SC5_CONTIGUITY_GAP_MINUTES join one run; a larger gap starts
+            # a new run. A run of two or more classes spanning >=
+            # SC5_EXCESSIVE_RUN_MINUTES (first start to last end) costs the weight
+            # once. A single class is not "consecutive teaching" (its length is
+            # governed by the HC6 time blocks). The old pairwise form charged two
+            # classes hours apart as "consecutive" and never saw three or more
+            # back-to-back classes whose individual pairs stayed under 4h.
+            for run_start, run_end, run_classes in teaching_runs(sorted_cls):
+                if run_classes >= 2 and run_end - run_start >= SC5_EXCESSIVE_RUN_MINUTES:
+                    score -= sc5_weight
 
             # SC3 — Balance Teaching-Day Distribution (unchanged).
             if day_counts:
@@ -4960,6 +5247,56 @@ class IntelligentScheduler:
         return score, len(hard_violations)
 
     # ── Mutation ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _meetings_needed(target_hrs, block_hrs):
+        """How many distinct meeting days a class part needs for `block_hrs`-long
+        meetings to total exactly `target_hrs` (None if it doesn't divide evenly)."""
+        try:
+            target_hrs, block_hrs = float(target_hrs or 0), float(block_hrs or 0)
+        except (TypeError, ValueError):
+            return None
+        if target_hrs <= 0 or block_hrs <= 0:
+            return None
+        n = round(target_hrs / block_hrs)
+        return n if n >= 1 and abs(n * block_hrs - target_hrs) < 0.01 else None
+
+    def _multi_meeting_day_sets(self, n, pool, one=False):
+        """Day sets for a class part meeting n (>= 2) times a week, one meeting per day:
+        a configured valid day pair when n == 2 and Day Pairing is on (HC7), else any n
+        distinct days of `pool`. one=True returns a single random choice."""
+        pool = list(pool)
+        n = max(1, min(int(n), len(pool)))
+        sets = []
+        if n == 2 and bool(self._hc_cfg.get('hc_day_pairing_enabled', 1)) and self._builder_pairs:
+            sets = [list(p) for p in self._builder_pairs if all(d in pool for d in p)]
+        if not sets:
+            sets = [list(c) for c in itertools.combinations(pool, n)]
+        return [random.choice(sets)] if one else sets
+
+    def _sync_days_to_hours(self, gene, target_hrs, avail_days, prefer_pairs=False):
+        """Make len(days_list) == required hours / block length for this gene. Extra days
+        are dropped (keeping the existing ones in order); missing days are added — as a
+        valid day pair when pairing applies and 2 days are needed, else random distinct
+        days. Leaves the gene alone when the block doesn't divide the hours evenly."""
+        st, et = gene.get('start_time'), gene.get('end_time')
+        if not (st and et):
+            return
+        need = self._meetings_needed(target_hrs, duration_hours(st, et))
+        days = list(gene.get('days_list') or ([gene['day']] if gene.get('day') else []))
+        if not need or len(days) == need:
+            return
+        if len(days) > need:
+            days = days[:need]
+        elif need == 2 and prefer_pairs and self._builder_pairs:
+            days = list(random.choice(self._builder_pairs))
+        else:
+            pool = [d for d in avail_days if d not in days]
+            random.shuffle(pool)
+            days = days + pool[:need - len(days)]
+        gene['days_list'] = days
+        gene['day']  = days[0] if days else None
+        gene['days'] = '/'.join(d[:3].upper() for d in days)
 
     def _mutate(self, child, subjects_by_code, faculty_list, faculty_map, rooms,
                 historical_faculty: dict = None, preferences: dict = None,
@@ -5097,25 +5434,17 @@ class IntelligentScheduler:
             gene['end_time']   = end_t
             gene['time']       = f"{format_time_12h(start_t)} – {format_time_12h(end_t)}"
             gene['hours'] = str(gene.get('lec_hours', 0) + gene.get('lab_hours', 0))
-            # Sync days_list with the new block's duration so paired/single stays consistent.
-            if _day_pair_on and not is_lab_part and lec_hrs >= 3:
-                _new_dur = duration_hours(start_t, end_t)
+            # Keep the number of meeting days consistent with the new block, whether or not
+            # Day Pairing is on: days = required hours / block length. (Syncing only when
+            # pairing was on let a paired lecture keep both days on a full-length block —
+            # e.g. a 3-hour lecture scheduled 3h x 2 days = 6h.)
+            if not (is_nstp_ou and self._nstp_force_sunday):
                 _mut_avail = (
                     [d for d in ALL_DAYS if d not in self._weekend_day_scope]
                     if self._nstp_force_sunday
                     else WEEKDAYS + ['Saturday']
                 )
-                if abs(_new_dur - 1.5) < 0.1:
-                    # New block is 1.5h → must be on paired days
-                    _pair = random.choice(self._builder_pairs)
-                    gene['days_list'] = list(_pair)
-                    gene['day']  = gene['days_list'][0]
-                    gene['days'] = '/'.join(d[:3].upper() for d in gene['days_list'])
-                elif len(gene.get('days_list') or []) > 1:
-                    # New block is full-length but gene still carries paired days → single day
-                    gene['days_list'] = [random.choice(_mut_avail)]
-                    gene['day']  = gene['days_list'][0]
-                    gene['days'] = gene['days_list'][0][:3].upper()
+                self._sync_days_to_hours(gene, target_hrs, _mut_avail, _day_pair_on and not is_lab_part)
 
         elif mutation_type == 'day':
             _avail_days = (
@@ -5129,6 +5458,7 @@ class IntelligentScheduler:
             _gene_e = gene.get('end_time')
             _cur_dur = (duration_hours(_gene_s, _gene_e)
                         if _gene_s and _gene_e else target_hrs)
+            _need = self._meetings_needed(target_hrs, _cur_dur)
             if is_nstp_ou and self._nstp_force_sunday:
                 days_list = ['Sunday']
             elif (_day_pair_on and not is_lab_part and lec_hrs >= 3
@@ -5136,6 +5466,11 @@ class IntelligentScheduler:
                 # Gene is a 1.5h paired block — must keep paired days
                 _pair = random.choice(self._builder_pairs)
                 days_list = list(_pair)
+            elif _need and _need > 1:
+                # A part meeting several times a week (1.5h of a 3h lecture with Day Pairing
+                # off, a 6h lecture or lab = 3h x 2, ...) still needs that many distinct
+                # days — moving it to ONE day would under-schedule it.
+                days_list = self._multi_meeting_day_sets(_need, _avail_days, one=True)[0]
             elif is_lab_part and target_hrs > 3.1:
                 # Multi-meeting lab (laboratoryhours 6/9/12/18 — always an exact multiple
                 # of the single 3-hour block) must keep meeting on the same NUMBER of
@@ -5274,7 +5609,7 @@ class IntelligentScheduler:
 
     def generate_draft(self, program, year_level, term, curriculum,
                        use_historical=False, acad_year_id: str = '',
-                       locked_sessions=None, seed: int = None):
+                       locked_sessions=None, seed: int = None, section_id: int = None):
         try:
             # Optional, for reproducible A/B comparisons (e.g. the CBR diagnostics
             # script) — production callers never pass this, so behavior is unchanged
@@ -5468,6 +5803,7 @@ class IntelligentScheduler:
                 term, current_ay,
                 exclude_program=program,
                 exclude_year_level=year_level,
+                exclude_section_id=section_id,
             )
 
             # Pre-load existing Published/Draft room/faculty occupancies for conflict blocking.
@@ -5479,6 +5815,7 @@ class IntelligentScheduler:
                     term, current_ay,
                     exclude_program=program, exclude_year_level=year_level,
                     exclude_subject_codes=all_subject_codes,
+                    exclude_section_id=section_id,
                 )
 
             # Pre-filter rooms that have zero free standard time slots for this semester.
@@ -5496,7 +5833,7 @@ class IntelligentScheduler:
             # faculty referenced in historical preferences that happen to be at max load.
             fully_loaded = {
                 fid for fid, committed in existing_load.items()
-                if _faculty_is_at_max_load(faculty_map.get(fid, {}), committed)
+                if _faculty_is_at_max_load(faculty_map.get(fid, {}), faculty_load.load_total(committed))
             }
             if fully_loaded:
                 faculty_list = [f for f in faculty_list
@@ -5823,6 +6160,29 @@ class IntelligentScheduler:
             # out exactly as they went in, whatever any pass above did.
             self._enforce_user_locks(best_schedule_global, locked_parts)
 
+            # ── Hours guard (last word on days) ───────────────────────────────────
+            # Never ship a session meeting on more days than its hours need — e.g. a
+            # 3-hour lecture on a 3-hour block x 2 days = 6h. This can come from a
+            # historical (CBR) assignment re-applied above whose pattern no longer
+            # fits, so it runs AFTER every re-apply pass. Trimming only frees slots,
+            # so it can never create a conflict. A schedule the USER locked is left
+            # exactly as chosen.
+            for _g in best_schedule_global:
+                if self._user_lock_flags(_g, locked_parts).get('schedule'):
+                    continue
+                _st, _et = _g.get('start_time'), _g.get('end_time')
+                _days = list(_g.get('days_list') or [])
+                if not (_st and _et and len(_days) > 1):
+                    continue
+                _tgt = _g.get('lab_hours') if _g.get('class_type') == 'Lab' else _g.get('lec_hours')
+                _need = self._meetings_needed(_tgt, duration_hours(_st, _et))
+                if _need and len(_days) > _need:
+                    print(f"[HOURS GUARD] {_g.get('subject_code')} [{_g.get('class_type')}] "
+                          f"{len(_days)} days x {duration_hours(_st, _et)}h > {_tgt}h -> {_need} day(s)")
+                    _g['days_list'] = _days[:_need]
+                    _g['day']  = _g['days_list'][0]
+                    _g['days'] = '/'.join(d[:3].upper() for d in _g['days_list'])
+
             # ── Post-generation hours/day validation ──────────────────────────────
             # No hard constraint above (HC1-HC11) ever checks that a subject's real
             # scheduled hours — summed across its lecture + lab genes — actually match
@@ -5880,6 +6240,15 @@ class IntelligentScheduler:
             # DID complete, so the Generation tab always has something usable to
             # show instead of a bare error.
             still_incomplete = self._find_incomplete_genes(best_schedule_global)
+            # A gene stripped by an earlier pass may have been fully re-filled by a
+            # later repair pass (e.g. the cross-section repair gave it a free room).
+            # Its stale 'incomplete' tag would make the Generate page treat a complete
+            # row as incomplete (and disagree with incomplete_count) — clear it.
+            _still_ids = {id(g) for g, _ in still_incomplete}
+            for cls in best_schedule_global:
+                if cls.get('incomplete') and id(cls) not in _still_ids:
+                    cls.pop('incomplete', None)
+                    cls.pop('incomplete_reason', None)
             for cls, missing in still_incomplete:
                 sc = (cls.get('subject_code') or '?').upper()
                 if not cls.get('incomplete_reason'):

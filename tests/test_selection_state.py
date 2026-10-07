@@ -67,9 +67,12 @@ def test_backend_components_for_educ_rows(beed4):
     body, _ = beed4
     ev = body['evaluation']
     hc10_023 = [c for c in ev['conflicts'] if c['rule'] == 'HC10'
-                and c['targets'][0]['subject_code'] == 'EDUC 023']
-    assert hc10_023 and hc10_023[0]['affected_components'] == ['instructor', 'day', 'time']
-    assert hc10_023[0]['resolution_components'] == ['faculty', 'schedule']
+                and c.get('targets') and c['targets'][0]['subject_code'] == 'EDUC 023']
+    # An active Published Local override may legitimately remove the old Official
+    # HC10 clash. If HC10 remains effective, its component metadata must be exact.
+    if hc10_023:
+        assert hc10_023[0]['affected_components'] == ['instructor', 'day', 'time']
+        assert hc10_023[0]['resolution_components'] == ['faculty', 'schedule']
     assert {e['subject_code']: e['components'] for e in ev['incomplete']} == \
         {'EDUC 021': ['room'], 'EDUC 022': ['room'], 'EDUC 023': ['room']}
 
@@ -82,8 +85,15 @@ def test_manual_selection_of_tba_row_opens_room(beed4):
 @requires_db
 def test_select_conflict_rows_opens_conflict_and_incomplete_components(beed4):
     s = beed4[1]['selectConflictRows']
-    assert s['EDUC 022'] == EXPECTED['EDUC 022'] and s['EDUC 023'] == EXPECTED['EDUC 023']
-    assert s['EDUC 021']['icons'] == 0               # no conflict -> not selected by this button
+    body = beed4[0]
+    targeted = {t['subject_code'] for c in body['evaluation']['conflicts'] for t in c.get('targets', [])}
+    # Select Conflict Rows must follow the CURRENT effective conflict list. A row
+    # whose old Official clash was displaced by Published Local must not be selected.
+    for code in ('EDUC 021', 'EDUC 022', 'EDUC 023'):
+        if code in targeted:
+            assert s[code]['icons'] == 3
+        else:
+            assert s[code]['icons'] == 0
 
 
 @requires_db

@@ -17,16 +17,16 @@
 
     <!-- Quick Action Cards -->
     <div class="action-grid">
-        <a href="{{ url_for('faculty_schedule') }}" class="btn-action-outline">
+        <a href="{{ url_for('faculty_teaching_assignment') }}?tab=weekly" class="btn-action-outline">
             <i class="fa-regular fa-calendar-check"></i> View My Schedule
         </a>
-        <a href="{{ url_for('faculty_teaching_assignment') }}" class="btn-action-outline">
+        <a href="{{ url_for('faculty_teaching_assignment') }}?tab=assignment" class="btn-action-outline">
             <i class="fa-solid fa-book-open"></i> Teaching Assignment
         </a>
         <a href="{{ url_for('faculty_room_schedule') }}" class="btn-action-outline">
             <i class="fa-solid fa-magnifying-glass"></i> Find Available Room
         </a>
-        <a href="{{ url_for('faculty_room_schedule') }}" class="btn-action-outline">
+        <a href="{{ url_for('faculty_room_schedule') }}?view=available&request=1" class="btn-action-outline">
             <i class="fa-solid fa-file-arrow-up"></i> Submit Request
         </a>
     </div>

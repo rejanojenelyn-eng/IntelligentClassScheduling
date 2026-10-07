@@ -2,7 +2,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}?v=20260519">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20260527d">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20261005a">
 <style>
     /* ── DSS dropdown styles ── */
     .dss-select-wrapper { position: relative; width: 100%; }
@@ -177,6 +177,110 @@
         padding:10px; border-radius:6px; font-weight:900; font-size:0.82rem; letter-spacing:2px;
         text-transform:uppercase; cursor:pointer; transition:all 0.18s; text-align:center; }
     .validation-btn:hover { background:#630100; color:white; }
+
+    /* Plain notices: readable weight; the violation card below supplies its own structure. */
+    .validation-message { font-weight:500; color:#3a3a3a; }
+
+    /* ── Violation card (_showFirstViolation): chip · subject · problem · info · fix ── */
+    .viol-intro { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        font-size:0.8rem; font-weight:600; color:#666; margin:0 0 10px; }
+    .viol-count { font-size:0.7rem; font-weight:800; color:#630100; background:#fbeeee;
+        padding:2px 9px; border-radius:999px; white-space:nowrap; }
+    .viol-card { background:#fcfcfc; border:1px solid #ececec; border-radius:10px; padding:14px 16px; }
+    .viol-chip { display:inline-block; background:#630100; color:#fff; font-size:0.62rem; font-weight:800;
+        letter-spacing:0.8px; text-transform:uppercase; padding:3px 9px; border-radius:999px; margin-bottom:8px; }
+    .viol-subject { font-size:0.95rem; font-weight:800; color:#222; margin-bottom:4px; }
+    .viol-what { font-size:0.86rem; color:#333; line-height:1.55; }
+    .viol-info { font-size:0.8rem; color:#777; line-height:1.5; margin-top:6px; }
+    .viol-fix { display:flex; gap:9px; align-items:flex-start; margin-top:12px; padding:10px 12px;
+        background:#fff8e6; border:1px solid #f6e2a8; border-radius:8px;
+        font-size:0.8rem; color:#5c4400; line-height:1.5; }
+    .viol-fix i { color:#d4a017; margin-top:2px; }
+    .viol-fix strong { color:#5c4400; }
+    .viol-nav { display:flex; gap:8px; margin-top:12px; }
+    .viol-nav-btn { flex:1; padding:7px 10px; border:1.5px solid #630100; background:#fff; color:#630100;
+        border-radius:6px; font-weight:700; font-size:0.78rem; cursor:pointer; transition:all .15s; }
+    .viol-nav-btn:hover:not(:disabled) { background:#630100; color:#fff; }
+    .viol-nav-btn:disabled { border-color:#ddd; color:#bbb; cursor:default; }
+    body:has(.schedule-container.local-mode) .viol-chip { background:#e4812d; }
+    body:has(.schedule-container.local-mode) .viol-count { color:#c56a1c; background:#fdf0e3; }
+    body:has(.schedule-container.local-mode) .viol-nav-btn { border-color:#e4812d; color:#c56a1c; }
+    body:has(.schedule-container.local-mode) .viol-nav-btn:hover:not(:disabled) { background:#e4812d; color:#fff; }
+
+    /* ── Save as Local Arrangement: list of slices being saved ── */
+    .lr-slices { margin:0 0 16px; padding:12px 14px; background:#fff7ef; border:1px solid #f5d3b3; border-radius:10px;
+        max-height:220px; overflow-y:auto; }
+    .lr-slices-title { font-size:0.62rem; font-weight:900; letter-spacing:1px; text-transform:uppercase; color:#c56a1c; margin-bottom:8px; }
+    .lr-slice { background:#fff; border:1px solid #f0e2d4; border-radius:8px; padding:8px 12px; }
+    .lr-slice + .lr-slice { margin-top:6px; }
+    .lr-slice-name { font-size:0.8rem; font-weight:800; color:#222; margin-bottom:3px; }
+    .lr-slice-from { font-size:0.74rem; color:#999; text-decoration:line-through; }
+    .lr-slice-arrow { display:block; font-size:0.6rem; color:#e4812d; margin:2px 0; }
+    .lr-slice-to { font-size:0.8rem; font-weight:700; color:#c56a1c; }
+    .lr-slice-none { font-size:0.78rem; color:#777; font-style:italic; }
+
+    /* ── Local Scheduler palette for the shared modals ──
+       The modals sit outside .schedule-container, so .local-mode can't reach them;
+       :has() keys them off the page being in Local mode. */
+    body:has(.schedule-container.local-mode) .validation-box { border-color:#f5d3b3; box-shadow:0 12px 50px rgba(197,106,28,0.22); }
+    body:has(.schedule-container.local-mode) .validation-header { background:linear-gradient(135deg,#e4812d 0%,#c56a1c 100%); }
+    body:has(.schedule-container.local-mode) .validation-body { border-left-color:#e4812d; }
+    body:has(.schedule-container.local-mode) .validation-btn { border-color:#e4812d; color:#c56a1c; }
+    body:has(.schedule-container.local-mode) .validation-btn:hover { background:#e4812d; color:#fff; }
+    body:has(.schedule-container.local-mode) .confirm-box { border-top-color:#e4812d; }
+    body:has(.schedule-container.local-mode) .confirm-icon { color:#e4812d; }
+    body:has(.schedule-container.local-mode) .confirm-btn-ok { background:#e4812d; border-color:#e4812d; }
+    body:has(.schedule-container.local-mode) .confirm-btn-ok:hover { background:#c56a1c; border-color:#c56a1c; }
+    body:has(.schedule-container.local-mode) .conflict-icon-wrap { background:#fdf0e3; }
+    body:has(.schedule-container.local-mode) .conflict-icon-wrap i { color:#c56a1c; }
+    body:has(.schedule-container.local-mode) .conflict-btn { background:#e4812d; }
+    body:has(.schedule-container.local-mode) .conflict-btn:hover { background:#c56a1c; }
+    body:has(.schedule-container.local-mode) .existing-sched-box { border-color:#f5d3b3; }
+    body:has(.schedule-container.local-mode) .existing-sched-header { background:linear-gradient(135deg,#e4812d 0%,#c56a1c 100%); }
+
+    /* ── Publish: "Local Arrangements Will Be Removed" (_showLocalImpactModal) ── */
+    .lim-overlay { display:none; position:fixed; inset:0; z-index:10004; background:rgba(0,0,0,0.45);
+        backdrop-filter:blur(3px); align-items:center; justify-content:center; padding:16px; }
+    .lim-overlay.open { display:flex; }
+    .lim-box { background:#fff; border-radius:16px; width:min(620px, 96vw); max-height:92vh; overflow-y:auto;
+        padding:26px 24px 20px; border-top:6px solid #630100; box-shadow:0 18px 50px rgba(0,0,0,.28);
+        animation:conflictPop 0.2s ease-out; text-align:center; }
+    .lim-icon { width:64px; height:64px; margin:0 auto 12px; border-radius:50%; background:#fbe3e3;
+        display:flex; align-items:center; justify-content:center; }
+    .lim-icon i { width:40px; height:40px; border-radius:50%; background:#8b1a1a; color:#fff;
+        display:flex; align-items:center; justify-content:center; font-size:1.05rem; }
+    .lim-title { margin:0 0 8px; color:#630100; font-size:1.2rem; font-weight:900; letter-spacing:.4px; }
+    .lim-sub { margin:0 auto 16px; max-width:470px; color:#555; font-size:.86rem; line-height:1.5; }
+    .lim-card { display:flex; gap:14px; text-align:left; border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+    .lim-card-pink { background:#fdf0f0; border:1px solid #f5d5d5; }
+    .lim-card-white { background:#fff; border:1px solid #ececec; display:block; }
+    .lim-card-head { display:flex; gap:14px; align-items:center; margin-bottom:10px; }
+    .lim-card-icon { width:40px; height:40px; border-radius:50%; background:#fbe3e3; color:#8b1a1a; flex-shrink:0;
+        display:flex; align-items:center; justify-content:center; font-size:1rem; }
+    .lim-card-icon-solid i { width:24px; height:24px; border-radius:50%; background:#8b1a1a; color:#fff;
+        display:flex; align-items:center; justify-content:center; font-size:.75rem; }
+    .lim-card-title { color:#630100; font-weight:800; font-size:.95rem; margin-bottom:4px; }
+    .lim-card-note, .lim-card-text { color:#555; font-size:.8rem; line-height:1.5; }
+    .lim-list { margin:0; padding-left:18px; color:#444; font-size:.8rem; line-height:1.6; }
+    .lim-table-wrap { border:1px solid #f0e0e0; border-radius:10px; overflow:hidden; }
+    .lim-table { width:100%; border-collapse:collapse; font-size:.8rem; }
+    .lim-table thead th { background:#fbeaea; color:#555; font-size:.66rem; font-weight:800; letter-spacing:.4px;
+        text-transform:uppercase; text-align:left; padding:9px 10px; }
+    .lim-table td { padding:10px; border-top:1px solid #f1e6e6; vertical-align:top; color:#333; }
+    .lim-table td.lim-code { font-weight:900; color:#222; white-space:nowrap; }
+    .lim-draft { display:block; font-size:.62rem; font-weight:700; color:#b45309; margin-top:2px; }
+    .lim-time { color:#555; }
+    .lim-room { display:inline-block; background:#f0f0f2; border-radius:6px; padding:3px 9px; font-weight:700; font-size:.75rem; }
+    .lim-back { margin-top:6px; font-size:.7rem; color:#1a6b3c; font-weight:700; line-height:1.4; }
+    .lim-back i { margin-right:3px; }
+    .lim-back-same { color:#555; font-weight:600; }
+    .lim-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+    .lim-btn-cancel { min-width:120px; padding:11px 18px; border:2px solid #cfd3d8; background:#fff; color:#444;
+        border-radius:8px; font-weight:800; font-size:.85rem; cursor:pointer; }
+    .lim-btn-cancel:hover { background:#f5f5f7; }
+    .lim-btn-ok { min-width:140px; padding:11px 18px; border:0; background:#630100; color:#fff;
+        border-radius:8px; font-weight:800; font-size:.85rem; cursor:pointer; }
+    .lim-btn-ok:hover { background:#7a0100; }
 
     /* ── General Confirm Modal ── */
     .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45);
@@ -399,13 +503,21 @@
     }
 
 
+    /* Text color follows each pill's background: Official-colored pills are dark (white
+       text), some Local palette shades are light — the renderer tags those .pill-light-bg. */
     .local-mode .schedule-pill {
         border: 1px solid rgba(0,0,0,0.12) !important;
-        color: #333 !important;
+        color: #fff !important;
     }
     .local-mode .schedule-pill .pill-subject,
     .local-mode .schedule-pill .pill-instructor,
     .local-mode .schedule-pill .pill-room {
+        color: #fff !important;
+    }
+    .local-mode .schedule-pill.pill-light-bg,
+    .local-mode .schedule-pill.pill-light-bg .pill-subject,
+    .local-mode .schedule-pill.pill-light-bg .pill-instructor,
+    .local-mode .schedule-pill.pill-light-bg .pill-room {
         color: #222 !important;
     }
 
@@ -414,9 +526,9 @@
         outline: 2.5px solid #e4812d !important;
         box-shadow: 0 0 0 4px rgba(228, 129, 45, 0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
     }
-    .local-mode .schedule-pill.pill-slice-active .pill-subject,
-    .local-mode .schedule-pill.pill-slice-active .pill-instructor,
-    .local-mode .schedule-pill.pill-slice-active .pill-room {
+    .local-mode .schedule-pill.pill-slice-active.pill-light-bg .pill-subject,
+    .local-mode .schedule-pill.pill-slice-active.pill-light-bg .pill-instructor,
+    .local-mode .schedule-pill.pill-slice-active.pill-light-bg .pill-room {
         color: #111 !important;
     }
 
@@ -647,7 +759,7 @@
                 </button>
             </div>
             <button class="btn-hdr-autogen"
-                    onclick="window.location.href=this.dataset.href"
+                    onclick="_guardedNavigate(this.dataset.href)"
                     data-href="{{ url_for('schedule_generation_view') }}">
                 <i class="fas fa-robot"></i> GO TO AUTO-GENERATE
             </button>
@@ -854,7 +966,10 @@
                     <a href="#" class="mnav-tab mnav-active" id="tab-room" onclick="switchEditorTab('room',this);return false;">ROOM VIEW</a>
                     <a href="#" class="mnav-tab" id="tab-main" onclick="switchEditorTab('main',this);return false;">PROGRAM VIEW</a>
                     <a href="#" class="mnav-tab" id="tab-faculty" onclick="switchEditorTab('faculty',this);return false;">FACULTY LOAD</a>
+                    {# Local Scheduler saves and publishes in one step (no separate Drafts), so no tab there. #}
+                    {% if scheduler_mode != 'local' %}
                     <a href="#" class="mnav-tab" id="tab-drafts" onclick="switchEditorTab('drafts',this);return false;">DRAFTS</a>
+                    {% endif %}
                     <a href="#" class="mnav-tab" id="tab-history" onclick="switchEditorTab('history',this);return false;">VERSION HISTORY</a>
                 </div>
             </div>
@@ -914,10 +1029,44 @@
                     </div>
                 </div>
 
+                {% if scheduler_mode == 'local' %}
+                <!-- Local Scheduler: this faculty's active Local Arrangement sessions -->
+                <div class="fl-card fl-local-card">
+                    <div class="fl-card-head">
+                        <div class="fl-card-icon"><i class="fas fa-people-arrows"></i></div>
+                        <div>
+                            <h2 class="fl-card-title">LOCAL SCHEDULE</h2>
+                            <p class="fl-card-sub">Local adjustments for this faculty (does not change the official load).</p>
+                        </div>
+                    </div>
+                    <div class="fl-table-wrap">
+                        <table class="fl-table fl-local-table">
+                            <thead><tr>
+                                <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>SECTION</th>
+                                <th>DAY</th><th>TIME</th><th>ROOM</th><th class="fl-actions-col">ACTIONS</th>
+                            </tr></thead>
+                            <tbody id="fl-local-body">
+                                <tr><td colspan="7" class="fl-no-data">Select a faculty member above</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- Main content area -->
-                <div class="fl-content">
+                <div class="fl-content{{ ' fl-card fl-official-card' if scheduler_mode == 'local' else '' }}">
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                        {% if scheduler_mode == 'local' %}
+                        <div class="fl-card-head" style="margin:0;">
+                            <div class="fl-card-icon fl-card-icon-muted"><i class="far fa-calendar"></i></div>
+                            <div>
+                                <h2 class="fl-card-title fl-card-title-dark" id="fl-view-heading">OFFICIAL TEACHING ASSIGNMENTS</h2>
+                                <p class="fl-card-sub">Assigned subjects and schedules from the official class schedule.</p>
+                            </div>
+                        </div>
+                        {% else %}
                         <h2 class="fl-main-title" style="border:none;margin:0;padding:0;" id="fl-view-heading">TEACHING ASSIGNMENTS</h2>
+                        {% endif %}
                         <div class="sched-mode-toggle">
                             <button class="btn-sched-mode sched-mode-active" id="btnFlTeaching" onclick="_setFlView('teaching')">TEACHING ASSIGNMENT</button>
                             <button class="btn-sched-mode" id="btnFlCalendar" onclick="_setFlView('calendar')">CALENDAR VIEW</button>
@@ -1254,19 +1403,16 @@
             <!-- Save actions — rendered per scheduler mode + role -->
             <div class="right-save-section">
                 {% if scheduler_mode == 'local' %}
-                    {# Local Scheduler buttons #}
-                    <button class="btn-save-outlined" id="btnSaveLocalArr" onclick="saveLocalArrangement()">
+                    {# Local Scheduler: one action — saves the edits and makes them the active
+                       Local Arrangement (publishLocalArrangementFromEditor saves, then publishes).
+                       Unpublished Drafts can still be published from Version History. #}
+                    <button type="button" class="btn-save-outlined btn-approve" id="btnPublishLocalArr" onclick="publishLocalArrangementFromEditor()">
                         SAVE AS LOCAL ARRANGEMENT
                     </button>
-                    <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="saveLocalArrangement(true)">
-                        SAVE AS DRAFT
-                    </button>
-                    <button type="button" class="btn-save-outlined btn-approve" id="btnPublishLocalArr" onclick="publishLocalArrangementFromEditor()">
-                        PUBLISH LOCAL ARRANGEMENT
-                    </button>
-                    {# MAKE UP CLASS: Academic Head only #}
+                    {# MAKE UP CLASS: only when the open subject is the Academic Head's own
+                       schedule — shown/hidden by _updateMakeupClassBtn. #}
                     {% if is_acad_head %}
-                    <button class="btn-save-outlined" id="btnSaveMakeupClass" onclick="saveAsMakeupClass()">
+                    <button class="btn-save-outlined" id="btnSaveMakeupClass" onclick="saveAsMakeupClass()" style="display:none;">
                         SAVE AS MAKE UP CLASS
                     </button>
                     {% endif %}
@@ -1292,7 +1438,7 @@
 <!-- ── Local Arrangement Reason Modal ── -->
 <div id="localReasonModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:center;justify-content:center;">
     <div style="background:#fff;border-radius:12px;width:min(480px,94vw);box-shadow:0 8px 32px rgba(0,0,0,0.22);">
-        <div style="background:#1b5e20;color:#fff;padding:16px 22px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;">
+        <div style="background:#e4812d;color:#fff;padding:16px 22px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;">
             <div>
                 <div style="font-size:0.58rem;font-weight:900;letter-spacing:2px;opacity:0.75;margin-bottom:3px;">LOCAL SCHEDULER</div>
                 <div style="font-size:0.95rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;">Save as Local Arrangement</div>
@@ -1300,8 +1446,10 @@
             <button onclick="document.getElementById('localReasonCancelBtn').click()" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;opacity:0.7;line-height:1;">✕</button>
         </div>
         <div style="padding:20px 22px 14px;">
+            <!-- Which slices this save changes (filled by _showLocalReasonModal) -->
+            <div id="localReasonSlices" class="lr-slices" style="display:none;"></div>
             <label style="font-size:0.65rem;font-weight:900;letter-spacing:1px;color:#666;text-transform:uppercase;display:block;margin-bottom:6px;">
-                Reason / Description <span style="font-weight:400;letter-spacing:0;text-transform:none;color:#aaa;">(optional)</span>
+                Reason / Description <span style="font-weight:400;letter-spacing:0;text-transform:none;color:#aaa;">(optional — you can leave this blank)</span>
             </label>
             <textarea id="localReasonInput" rows="3" autocomplete="off"
                 placeholder="e.g. Part-time faculty temporary morning slot, room substitution for specific section…"
@@ -1313,7 +1461,7 @@
                 CANCEL
             </button>
             <button id="localReasonOkBtn"
-                style="padding:9px 20px;border-radius:6px;border:none;background:#1b5e20;color:#fff;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
+                style="padding:9px 20px;border-radius:6px;border:none;background:#e4812d;color:#fff;font-weight:800;font-size:0.76rem;letter-spacing:0.5px;cursor:pointer;">
                 <i class="fas fa-save"></i>&nbsp; SAVE ARRANGEMENT
             </button>
         </div>
@@ -1383,9 +1531,10 @@
      data-day-pairing-enabled="{{ 'true' if day_pairing_enabled else 'false' }}"
      data-day-pairs="{{ day_pairs_json | e }}"
      data-from-generator="{{ init_from_generator }}"
+     data-my-emp-num="{{ my_emp_num or '' }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20260927a"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261008b"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -1397,8 +1546,8 @@ const MSE_BASE_URL = "{{ url_for('manual_schedule_editor') }}";
 // of dropping back to that mode's defaults — read live from the form, not the page's
 // original load-time values, so a filter changed after load still comes along.
 function _switchSchedulerMode(mode) {
-    document.getElementById('gridWrapper')?.querySelectorAll('.schedule-pill').forEach(p => p.remove());
-
+    // (Calendar pills are no longer cleared here up front: with unsaved changes the user
+    // may cancel the Unsaved Changes prompt and stay, and the grid must still be intact.)
     const params   = new URLSearchParams();
     params.set('scheduler', mode);
 
@@ -1417,7 +1566,7 @@ function _switchSchedulerMode(mode) {
     if (sectName) params.set('sect_name', sectName);
     if (typeof currentMode !== 'undefined' && currentMode === 'program') params.set('mode', 'program');
 
-    window.location.href = `${MSE_BASE_URL}?${params.toString()}`;
+    _guardedNavigate(`${MSE_BASE_URL}?${params.toString()}`);
 }
 
 const SCHED_CONFIG = {
@@ -1506,6 +1655,21 @@ window._deletedVersionIds   = window._deletedVersionIds   || new Set();
 let _activeSliceId = null;
 const _dirtySliceIds = new Set();
 
+// Calendar pill key (subject_day_startSlot) of the currently selected slice, read live from
+// its row so it follows edits. Pill renderers (renderGrid / _renderProgPills) call this to
+// re-apply the highlight themselves — otherwise any re-render after selection (Program View
+// always re-fetches) wiped the gold ring.
+function _activeSlicePillKey() {
+    if (_activeSliceId == null) return '';
+    const row = document.getElementById(`ts-row-${_activeSliceId}`);
+    if (!row) return '';
+    const day      = row.querySelector('.ts-day-sel')?.value || '';
+    const startStr = row.querySelector('.ts-start-hidden')?.value || '';
+    const startIdx = _TS_TIMES.indexOf(startStr) + 1; // 1-based like starttimeid
+    const subjCode = _currentSubjectCode || '';
+    return (subjCode && day && startIdx > 0) ? `${subjCode}_${day}_${startIdx}` : '';
+}
+
 function _selectSlice(id, event) {
     if (event && event.target.closest('.ts-action-icon')) return;
     _activeSliceId = id;
@@ -1513,12 +1677,7 @@ function _selectSlice(id, event) {
     const row = document.getElementById(`ts-row-${id}`);
     if (row) row.classList.add('ts-row-active');
 
-    // Compute pill key for this slice
-    const day      = row?.querySelector('.ts-day-sel')?.value || '';
-    const startStr = row?.querySelector('.ts-start-hidden')?.value || '';
-    const startIdx = _TS_TIMES.indexOf(startStr) + 1; // 1-based like starttimeid
-    const subjCode = _currentSubjectCode || '';
-    const pillKey  = (subjCode && day && startIdx > 0) ? `${subjCode}_${day}_${startIdx}` : '';
+    const pillKey = _activeSlicePillKey();
 
     // Auto-select the room from this slice's pending entry so the grid renders the right view
     const roomId = row?.querySelector('.ts-room-hidden')?.value || '';
@@ -1556,9 +1715,11 @@ function _markSliceDirty(id) {
 }
 
 /* Promise-based modal: lists candidate slices as checkboxes; returns selected subset */
-function _showSliceSaveModal(candidates) {
+function _showSliceSaveModal(candidates, ctx = {}) {
     return new Promise(resolve => {
         const isSingle = candidates.length === 1;
+        const _n = candidates.length;
+        const _subj = ctx.subject ? `${ctx.subject}: ` : '';
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;';
 
@@ -1567,14 +1728,17 @@ function _showSliceSaveModal(candidates) {
 
         const title = document.createElement('div');
         title.style.cssText = 'font-size:0.82rem;font-weight:900;color:#8b1a1a;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:10px;';
-        title.textContent = isSingle ? 'Save Schedule' : 'Save Schedules';
+        title.textContent = `Save ${_n} Slice${_n === 1 ? '' : 's'}`;
         box.appendChild(title);
 
         const msg = document.createElement('div');
         msg.style.cssText = 'font-size:0.83rem;color:#444;margin-bottom:16px;line-height:1.5;';
-        msg.textContent = isSingle
-            ? 'You are about to save this schedule.'
-            : 'You are about to save the following schedules. Select which ones to include:';
+        msg.textContent = ctx.isNew
+            ? `${_subj}new schedule — ${_n} slice${_n === 1 ? '' : 's'} will be saved.` +
+              (isSingle ? '' : ' Uncheck any you don’t want to include yet.')
+            : isSingle
+                ? `${_subj}this slice will be saved.`
+                : `${_subj}these slices will be saved. Uncheck any you don’t want to include:`;
         box.appendChild(msg);
 
         const checkboxes = [];
@@ -1587,10 +1751,12 @@ function _showSliceSaveModal(candidates) {
             cb.checked = true;
             cb.style.cssText = 'margin-top:3px;accent-color:#8b1a1a;flex-shrink:0;';
 
-            const sliceNum = i + 1;
+            const sliceNum = c.sliceNum || (i + 1);   // the card's own "SLICE n", not the list position
+            const _tagClr = { New: '#1a7f37', Edited: '#b06000', Selected: '#1a56c4' }[c.tag] || '#555';
             const info = document.createElement('div');
             info.style.cssText = 'font-size:0.81rem;line-height:1.5;';
             info.innerHTML = `<strong style="color:#2c3e50;">Slice ${sliceNum}</strong>`
+                + (c.tag ? ` <span style="font-size:0.66rem;font-weight:800;color:${_tagClr};border:1px solid ${_tagClr};border-radius:10px;padding:0 7px;margin-left:4px;">${c.tag.toUpperCase()}</span>` : '')
                 + ` &nbsp;<span style="color:#555;">${c.day || '—'} &nbsp; ${c.start || '—'} – ${c.end || '—'}</span>`
                 + `<br><span style="color:#888;font-size:0.74rem;">Room: ${c.roomName || 'TBA'}</span>`;
 
@@ -1619,7 +1785,7 @@ function _showSliceSaveModal(candidates) {
         cancelBtn.onclick = () => { overlay.remove(); resolve([]); };
 
         const saveBtn = document.createElement('button');
-        saveBtn.textContent = isSingle ? 'Save' : 'Save Selected';
+        saveBtn.textContent = isSingle ? 'Save' : 'Save Checked';
         saveBtn.style.cssText = 'padding:8px 22px;background:#8b1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;font-family:inherit;';
         saveBtn.onclick = () => {
             const selected = checkboxes.filter(({cb}) => cb.checked).map(({candidate}) => candidate);
@@ -1640,7 +1806,7 @@ function _showSliceSaveModal(candidates) {
 }
 
 /* ── Publish slice-selection modal ── */
-function _showPublishSelectModal(candidates) {
+function _showPublishSelectModal(candidates, kept = []) {
     return new Promise(resolve => {
         const isSingle = candidates.length === 1;
         const overlay = document.createElement('div');
@@ -1692,6 +1858,13 @@ function _showPublishSelectModal(candidates) {
                 ? `<br><span style="color:#666;font-size:0.76rem;font-style:italic;">${subjectDesc}</span>`
                 : '';
 
+            // Faculty is normally one per subject — show it once in the header. If the slices
+            // disagree (rare), each slice row shows its own faculty instead.
+            const _facOf = c => c.facultyName || 'TBA';
+            const sameFaculty = slices.every(c => _facOf(c) === _facOf(slices[0]));
+            const facultyHtml = name =>
+                `<br><span style="color:#555;font-size:0.74rem;"><i class="fas fa-user" style="margin-right:4px;color:#8b1a1a;"></i>${name}</span>`;
+
             const headerInfo = document.createElement('div');
             headerInfo.style.cssText = 'flex:1;font-size:0.81rem;line-height:1.5;';
             if (slices.length === 1) {
@@ -1700,11 +1873,13 @@ function _showPublishSelectModal(candidates) {
                 headerInfo.innerHTML = `<strong style="color:#2c3e50;">${subjectCode}</strong>`
                     + ` &nbsp;<span style="color:#555;">${c.day || '—'} &nbsp; ${c.start || '—'} – ${c.end || '—'}</span>`
                     + descHtml
+                    + facultyHtml(_facOf(c))
                     + `<br><span style="color:#888;font-size:0.74rem;">Room: ${c.roomName || 'TBA'}</span>`;
             } else {
                 headerInfo.innerHTML = `<strong style="color:#2c3e50;">${subjectCode}</strong>`
                     + ` <span style="color:#888;font-size:0.74rem;">(${slices.length} time slices)</span>`
-                    + descHtml;
+                    + descHtml
+                    + (sameFaculty ? facultyHtml(_facOf(slices[0])) : '');
             }
             header.appendChild(groupCb);
             header.appendChild(headerInfo);
@@ -1745,6 +1920,7 @@ function _showPublishSelectModal(candidates) {
                     const info = document.createElement('div');
                     info.style.cssText = 'font-size:0.81rem;line-height:1.5;';
                     info.innerHTML = `<span style="color:#555;">${c.day || '—'} &nbsp; ${c.start || '—'} – ${c.end || '—'}</span>`
+                        + (sameFaculty ? '' : facultyHtml(_facOf(c)))
                         + `<br><span style="color:#888;font-size:0.74rem;">Room: ${c.roomName || 'TBA'}</span>`;
                     lbl.appendChild(cb);
                     lbl.appendChild(info);
@@ -1774,6 +1950,17 @@ function _showPublishSelectModal(candidates) {
 
             groupWrap.appendChild(header);
             if (body) groupWrap.appendChild(body);
+            // Unchanged already-Published slices of this subject: not choices — they stay
+            // published as they are (and are sent along so they aren't dropped).
+            const _keptHere = (kept || []).filter(k => (k.subject || '—') === subjectCode);
+            if (_keptHere.length) {
+                const note = document.createElement('div');
+                note.style.cssText = 'padding:8px 12px 9px 34px;border-top:1px dashed rgba(26,127,55,0.35);background:#f3faf5;font-size:0.76rem;color:#1a5e33;line-height:1.5;';
+                note.innerHTML = `<i class="fas fa-lock" style="margin-right:5px;"></i><strong>Stays published (unchanged):</strong>`
+                    + _keptHere.map(k => `<br><span style="color:#555;">${k.day || '—'} &nbsp; ${k.start || '—'} – ${k.end || '—'}`
+                        + ` &nbsp;·&nbsp; ${k.roomName || 'TBA'}</span>`).join('');
+                groupWrap.appendChild(note);
+            }
             box.appendChild(groupWrap);
         });
 
@@ -2124,6 +2311,7 @@ window.onFacultySelect = async function(empNum) {
 
             if (blocked) {
                 const modalPromise = showValidationModal('Faculty Load Exceeded', '');
+                document.getElementById('validationModalMessage').style.whiteSpace = 'normal';
                 document.getElementById('validationModalMessage').innerHTML = errorMsg;
                 await modalPromise;
 
@@ -2146,6 +2334,22 @@ window.onFacultySelect = async function(empNum) {
     // misassign this faculty (and persist it via /api/manual/assign_faculty) to
     // whichever subject the user has since switched to instead.
     if (_currentSubjectCode !== _facSelectSubject) return;
+
+    // Faculty timetable conflict with this subject's slices — block before anything below
+    // auto-reserves (/api/manual/assign_faculty) or auto-saves a reassignment.
+    if (empNum && empNum !== 'TBA' && !_lockedFacultyId) {
+        const _fcName = document.getElementById('fac_display_name')?.value || 'This faculty';
+        const _fcMsg  = await _findFacultySliceConflict(empNum, _fcName);
+        if (_currentSubjectCode !== _facSelectSubject) return;
+        if (_fcMsg) {
+            if (window._pendingFacultyReassignSubject === _currentSubjectCode) {
+                window._pendingFacultyReassignSubject = null;
+            }
+            window._facultyReassignInfo = null;
+            await _rejectConflictingFaculty(_fcMsg);
+            return;
+        }
+    }
 
     if (empNum && typeof triggerDSSLogic === 'function') {
         _skipExistingCheck = true;
@@ -2200,7 +2404,14 @@ window.onFacultySelect = async function(empNum) {
     // covering both the Draft-only and the Published reassignment case end-to-end.
     if (_selFacId && window._pendingFacultyReassignSubject === _currentSubjectCode) {
         window._pendingFacultyReassignSubject = null;
-        if (typeof confirmAllSlots === 'function') await confirmAllSlots({ auto: true });
+        if (window._facultyReassignInfo && window._facultyReassignInfo.code === _currentSubjectCode) {
+            window._facultyReassignInfo.toName = _selFacName || 'TBA';
+        }
+        try {
+            if (typeof confirmAllSlots === 'function') await confirmAllSlots({ auto: true });
+        } finally {
+            window._facultyReassignInfo = null;   // never leaks into a later manual save
+        }
     }
 
     const _flEid  = _lockedFacultyId || _selFacId || '';
@@ -2331,6 +2542,79 @@ window.handlePillClick = async function(sessJson) {
     }, 500);
 };
 
+/* ── Sibling-slice overlap: another occurrence of the SAME subject for the SAME section ──
+   One class can never meet twice at the same time, so this is never merge-exempt.
+   Sources: every pending entry of this subject+section (loaded mirrors, placed and preview
+   slices), then the section's DB rows of this subject that pending does not already
+   represent (a mirror carries its row's sessionid; an edited mirror's DB row is stale).
+   Returns { start, end } of the first overlapping sibling, or null. */
+function _fmtSliceTime(t) { return String(t || '').replace(/^0(\d)/, '$1'); }
+
+async function _findSiblingSliceOverlap(o) {
+    const ed    = window.currentEditSession || null;
+    const edIds = ed ? [ed.temp_id, ed._localTempId].filter(Boolean) : [];
+    const subjOf = c => String(c.subject_code || c.subjectcode || '').toUpperCase();
+    const inSection = c => {
+        if (c.section_id) return String(c.section_id) === String(o.sectionId);
+        const nm = c.sectionname || c.section_name;
+        if (nm && o.sectionName) return nm === o.sectionName;
+        return (!c.course || c.course === o.prog) && (!c.year_level || String(c.year_level) === String(o.yl));
+    };
+
+    for (const c of pendingManualSchedule) {
+        if (edIds.includes(c.temp_id)) continue;
+        if (subjOf(c) !== o.subjCode || c.ay !== o.ay || c.sem !== o.sem || !inSection(c)) continue;
+        if ((c.day || c.daydesc) !== o.dayVal) continue;
+        const cs = getTimeSlotIndex(c.start_time), ce = getTimeSlotIndex(c.end_time);
+        // A preview identical to this placement is this placement's own live mirror.
+        if (c.isPreview && cs === o.startIdx && ce === o.endIdx && String(c.room_id) === String(o.roomVal)) continue;
+        if (o.startIdx < ce && o.endIdx > cs) return { start: c.start_time, end: c.end_time };
+    }
+
+    try {
+        const resp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(o.prog)}&year_level=${encodeURIComponent(o.yl)}&ay_id=${encodeURIComponent(o.ay)}&semester=${encodeURIComponent(o.sem)}&section_id=${encodeURIComponent(o.sectionId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
+        const rows = await resp.json();
+        const mine = (Array.isArray(rows) ? rows : []).filter(s => String(s.subjectcode || '').toUpperCase() === o.subjCode);
+        // A Draft is the definitive replacement for the subject's Published rows.
+        const hasDraft  = mine.some(s => s.status === 'Draft');
+        const inPending = new Set(pendingManualSchedule
+            .map(c => c.sessionid || c.official_sessionid).filter(Boolean).map(String));
+        const edSid = ed ? String(ed.sessionid || ed.official_sessionid || '') : '';
+        for (const s of mine) {
+            if (hasDraft && s.status !== 'Draft') continue;
+            if (s.daydesc !== o.dayVal) continue;
+            const sid = String(s.official_sessionid || s.sessionid || '');
+            if (sid && (sid === edSid || inPending.has(sid))) continue;
+            if (ed && s.daydesc === ed.daydesc && s.starttimeid === ed.starttimeid) continue;
+            if (o.startIdx < s.endtimeid && o.endIdx > s.starttimeid) {
+                const _ts = typeof timeSlots !== 'undefined' ? timeSlots : [];
+                return { start: _ts[s.starttimeid - 1] || s.starttimeid, end: _ts[s.endtimeid - 1] || s.endtimeid };
+            }
+        }
+    } catch (e) { console.error('Sibling slice check failed:', e); }
+    return null;
+}
+
+/* HC10/HC11/HC12/HC15 switches from Admin Settings — OFFICIAL mode only. Local mode
+   (and any failure to read the settings) keeps every conflict rule on. */
+let _officialConflictRulesCache = null;
+async function _officialConflictRules() {
+    const allOn = { faculty: true, room: true, section: true, cross: true };
+    if (typeof SCHED_MODE !== 'undefined' && SCHED_MODE === 'local') return allOn;
+    if (_officialConflictRulesCache) return _officialConflictRulesCache;
+    try {
+        const cfg = await (await fetch('/api/hc_config')).json();
+        const on = k => !(k in cfg) || Number(cfg[k]) !== 0;
+        _officialConflictRulesCache = {
+            faculty: on('hc_faculty_conflict_enabled'),
+            room:    on('hc_room_conflict_enabled'),
+            section: on('hc_section_conflict_enabled'),
+            cross:   on('hc_cross_schedule_enabled'),
+        };
+        return _officialConflictRulesCache;
+    } catch (_) { return allOn; }
+}
+
 window.confirmAndPlace = async function() {
     const ay   = document.getElementById('sel_ay').value;
     const sem  = document.getElementById('sel_sem').value;
@@ -2357,6 +2641,15 @@ window.confirmAndPlace = async function() {
     const dayVal   = document.getElementById('sel_day').value;
     const startVal = document.getElementById('sel_start_time').value;
     const endVal   = document.getElementById('sel_end_time').value;
+
+    // The local mirror this placement REPLACES (editing an existing slice). Captured
+    // before anything is removed: its occurrence identity is carried forward unchanged
+    // instead of being rebuilt from the row's raw existingJson (which never carried
+    // fromExisting) or from the edited day/time/room.
+    const _editTempId = window.currentEditSession && window.currentEditSession._localTempId;
+    const _replacedEntry = _editTempId
+        ? pendingManualSchedule.find(c => c.temp_id === _editTempId) || null
+        : null;
 
     // If sel_faculty was cleared by a panel reset but TBA is still the stored assignment, restore it
     if (!facVal && _currentSubjectCode) {
@@ -2453,6 +2746,9 @@ window.confirmAndPlace = async function() {
     }
 
     // --- CONFLICT CHECKS (in-memory + DB) ---
+    // Admin Settings can switch HC10/HC11/HC12/HC15 off for OFFICIAL scheduling only;
+    // the Local Scheduler always enforces every conflict rule.
+    const _ruleOn = await _officialConflictRules();
 
     const _curSubjCode = (subjSel.value || '').toUpperCase();
     let _mergeConfirmed = false; // set to true if user confirms a merge
@@ -2468,8 +2764,23 @@ window.confirmAndPlace = async function() {
         return 'none';
     })();
 
+    // Sibling slice — another occurrence of THIS subject for THIS section. Checked before the
+    // room/faculty checks so the overlap is reported as what it is, instead of as a Room or
+    // Faculty conflict with a seemingly unrelated class. Never merge-exempt.
+    const _sib = await _findSiblingSliceOverlap({
+        ay, sem, prog, yl, sectionId, sectionName, subjCode: _curSubjCode,
+        dayVal, roomVal, startIdx: newStartIdx, endIdx: newEndIdx,
+    });
+    if (_sib) {
+        await showConflictModal(
+            `${subjSel.value} Slice overlaps another slice of the same subject ` +
+            `(${dayVal} ${_fmtSliceTime(_sib.start)}–${_fmtSliceTime(_sib.end)}).`
+        );
+        return;
+    }
+
     // Room conflict — DB sessions (skip for TBA — no specific room assigned yet)
-    if (roomVal && roomVal !== 'TBA') {
+    if (_ruleOn.room && _ruleOn.cross && roomVal && roomVal !== 'TBA') {
         try {
             const rResp = await fetch(`/api/get_room_schedule/${roomVal}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
             const rSessions = await rResp.json();
@@ -2513,7 +2824,7 @@ window.confirmAndPlace = async function() {
     }
 
     // Room conflict — in-memory pending (skip for TBA)
-    if (!_mergeConfirmed) {
+    if (_ruleOn.room && !_mergeConfirmed) {
         for (const c of pendingManualSchedule) {
             if (roomVal === 'TBA' || c.room_id === 'TBA') continue; // TBA has no specific room to conflict over
             if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
@@ -2546,9 +2857,9 @@ window.confirmAndPlace = async function() {
     }
 
     // Faculty conflict — DB sessions (skip for TBA — no specific faculty assigned)
-    if (facVal && facVal !== 'TBA') {
+    if (_ruleOn.faculty && _ruleOn.cross && facVal && facVal !== 'TBA') {
         try {
-            const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+            const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
             const fSessions = await fResp.json();
             for (const s of fSessions) {
                 if (s.daydesc !== dayVal) continue;
@@ -2573,7 +2884,7 @@ window.confirmAndPlace = async function() {
     }
 
     // Faculty conflict — in-memory pending (skip for TBA)
-    for (const c of pendingManualSchedule) {
+    for (const c of (_ruleOn.faculty ? pendingManualSchedule : [])) {
         if (facVal === 'TBA' || c.faculty_id === 'TBA') continue; // TBA has no specific faculty to conflict
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (String(c.faculty_id) === String(facVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -2590,11 +2901,16 @@ window.confirmAndPlace = async function() {
     }
 
     // Section conflict — DB sessions (filtered to the selected section so two different sections don't cross-conflict)
-    try {
+    if (_ruleOn.section) try {
         const _sectId = document.getElementById('sel_section')?.value || '';
-        const sResp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(_sectId)}`);
+        const sResp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(_sectId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
         const sSessions = await sResp.json();
+        // A subject's Draft supersedes its Published rows as one complete replacement —
+        // those stale Published rows must not raise false Section conflicts.
+        const _draftedSubj = new Set(sSessions.filter(s => s.status === 'Draft')
+            .map(s => String(s.subjectcode || '').toUpperCase()));
         for (const s of sSessions) {
+            if (s.status === 'Published' && _draftedSubj.has(String(s.subjectcode || '').toUpperCase())) continue;
             if (s.daydesc !== dayVal) continue;
             if (window.currentEditSession &&
                 s.subjectcode === window.currentEditSession.subjectcode &&
@@ -2615,7 +2931,7 @@ window.confirmAndPlace = async function() {
     // program+year-level — two different sections of the same program+year (e.g. BSCE1-1 and
     // BSCE1-2) are allowed to have classes at the same day/time; matching on program+year alone
     // (as this used to) falsely flagged a "conflict" against an unrelated section's pending entry.
-    for (const c of pendingManualSchedule) {
+    for (const c of (_ruleOn.section ? pendingManualSchedule : [])) {
         if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
         if (c.section_id && String(c.section_id) !== String(sectionId)) continue;
         if (c.course === prog && String(c.year_level) === String(yl) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -2663,26 +2979,57 @@ window.confirmAndPlace = async function() {
         fromExisting:      (window.currentEditSession && window.currentEditSession.fromExisting) || false,
         status:            (window.currentEditSession && window.currentEditSession.status) || 'Draft'
     };
+    Object.assign(newClass, _preservedOccurrenceIdentity(_replacedEntry, window.currentEditSession));
 
     pendingManualSchedule.push(newClass);
     window.currentEditSession = null;
 };
 
-/* ── Curriculum year tag ── */
-function _updateCurrYearTag() {
-    const raw = document.getElementById('curr_year_hidden')?.value || '';
-    let fmt = '--';
-    if (raw) {
-        const p = raw.split('-');
-        fmt = p.length >= 2 ? `${String(p[0]).slice(-2)}-${String(p[1]).slice(-2)}` : raw;
+/* Stable identity of the occurrence an edited slice stands for. The replaced local
+   mirror is authoritative (it was built from the DB row by _loadExistingSessionsIntoSlices);
+   the row's existingJson snapshot is only a fallback. Edited day/time/room never feed
+   identity — they are the placement, not the occurrence. */
+function _preservedOccurrenceIdentity(prev, sess) {
+    if (prev) {
+        const out = {
+            fromExisting:       !!prev.fromExisting,
+            versionid:          prev.versionid ?? null,
+            sessionid:          prev.sessionid ?? null,
+            official_sessionid: prev.official_sessionid ?? null,
+            status:             prev.status || 'Draft',
+        };
+        ['fromGenerator', 'isLocal', '_loaded', 'section_id', 'sectionname', 'section_name']
+            .forEach(k => { if (prev[k] !== undefined) out[k] = prev[k]; });
+        return out;
     }
-    document.getElementById('curr-year-tag').textContent = raw ? `C.Y ${fmt}` : 'C.Y --';
+    if (sess && (sess.versionid || sess.sessionid || sess.official_sessionid)) {
+        return {
+            versionid:          sess.versionid || null,
+            sessionid:          sess.versionid ? (sess.sessionid || sess.official_sessionid || null) : null,
+            official_sessionid: sess.official_sessionid || sess.sessionid || null,
+        };
+    }
+    return {};
+}
+
+/* ── Curriculum year tag ── */
+// "C.Y 22-23" from curr_year_hidden ("2022-2023"), or '' when no curriculum is resolved.
+// Read straight from the hidden input (not a cached copy) so the label is never one
+// cascade behind — triggerCascade renders the badge before _updateCurrYearTag runs,
+// which left a fresh page load (e.g. arriving from Schedule Generation) on "C.Y --".
+function _currYearLabel() {
+    const raw = document.getElementById('curr_year_hidden')?.value || '';
+    if (!raw) return '';
+    const p = raw.split('-');
+    return `C.Y ${p.length >= 2 ? `${String(p[0]).slice(-2)}-${String(p[1]).slice(-2)}` : raw}`;
+}
+function _updateCurrYearTag() {
+    const label = _currYearLabel();
+    document.getElementById('curr-year-tag').textContent = label || 'C.Y --';
     const cgWrap = document.getElementById('cg-cy-wrap');
-    if (cgWrap) cgWrap.style.display = raw ? '' : 'none';
-    // Text itself is finalized by _updateCurriculumModeSelectVisibility (below), which runs
-    // right after this in triggerCascade and knows whether to append the mode + caret.
-    const cgCy = document.getElementById('cg-cy-label');
-    if (cgCy) cgCy.dataset.cyFmt = raw ? `C.Y ${fmt}` : '';
+    if (cgWrap) cgWrap.style.display = label ? '' : 'none';
+    // Badge text (with Bridging suffix / lock icon) is owned by this function.
+    _updateCurriculumModeSelectVisibility();
 }
 
 /* ── Curriculum picker (Regular / Bridging) — the C.Y badge itself is the trigger. Only
@@ -2695,7 +3042,7 @@ function _updateCurrYearTag() {
 function _updateCurriculumModeSelectVisibility() {
     const cgCy = document.getElementById('cg-cy-label');
     if (!cgCy) return;
-    const cyFmt = cgCy.dataset.cyFmt || 'C.Y --';
+    const cyFmt = _currYearLabel() || 'C.Y --';
     // Dropdown options show the actual curriculum each choice resolves to — same "CY YYYY-YYYY
     // - BRIDGING" convention used in the Admin syllabi list — not a generic "Regular"/"Bridging"
     // label, so the Academic Head can see exactly which curriculum they're switching to.
@@ -2857,7 +3204,8 @@ async function _updateSubjectList() {
         } else if (savedStatus === 'Draft') {
             badgeText = 'DRAFT'; badgeCls += ' badge-draft';
         } else if (savedStatus === 'Published/Draft') {
-            badgeText = 'PUB/DRAFT'; badgeCls += ' badge-pub-draft';
+            // A pending Draft replaces the Published version; it goes live on approval.
+            badgeText = 'DRAFT'; badgeCls += ' badge-draft';
         } else if (hasNoPublished) {
             badgeText = 'NO PUB'; badgeCls += ' badge-no-pub';
         }
@@ -2883,7 +3231,8 @@ async function _updateSubjectList() {
                         <span class="subj-hrs-text">${sched}/${hours}h</span>
                     </div>
                 </div>
-                ${badgeText ? `<span class="${badgeCls}">${badgeText}</span>` : ''}
+                ${badgeText ? `<span class="${badgeCls}"${savedStatus === 'Published/Draft'
+                    ? ' title="Pending Draft — the current Published schedule stays live until this Draft is approved."' : ''}>${badgeText}</span>` : ''}
             </div>`;
         item.onclick = () => _onSubjectClick(code, name, units, hours);
         container.appendChild(item);
@@ -2954,7 +3303,7 @@ function _syncSubjectCardBars() {
                 let bt = '', bc = 'subj-badge';
                 if (savedSt === 'Published')       { bt = 'PUBLISHED'; bc += ' badge-published'; }
                 else if (savedSt === 'Draft')      { bt = 'DRAFT';     bc += ' badge-draft'; }
-                else if (savedSt === 'Published/Draft') { bt = 'PUB/DRAFT'; bc += ' badge-pub-draft'; }
+                else if (savedSt === 'Published/Draft') { bt = 'DRAFT'; bc += ' badge-draft'; }
                 badgeEl.textContent = bt;
                 badgeEl.className   = bc;
             }
@@ -3120,8 +3469,16 @@ function _getScheduledHoursForCode(code, ay, sem) {
     // Count unsaved pending hours first
     let pendingHours = 0;
     if (typeof pendingManualSchedule !== 'undefined') {
+        // A generated result REPLACES the subject's saved sessions (saving it writes one new
+        // Draft for the subject). If this section has generator slices for the subject, its
+        // saved Published/Draft mirrors must not be added on top — that showed e.g. "10 / 5 hrs"
+        // (5h Published + 5h generated) for a subject that is really scheduled 5h.
+        const _hasGen = pendingManualSchedule.some(c =>
+            c.fromGenerator && c.subject_code === code && c.ay === ay && c.sem === sem
+            && (!sect || !c.section_id || String(c.section_id) === String(sect)));
         for (const c of pendingManualSchedule) {
             if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) continue;
+            if (_hasGen && c.fromExisting) continue;
             // Scope to the currently selected year level so the same subject code
             // in a different year level doesn't inflate the count.
             if (yl && c.year_level && String(c.year_level) !== String(yl)) continue;
@@ -3194,7 +3551,9 @@ function _localSetBlockPanel(blocked) {
     const block      = document.getElementById('localNoPubBlock');
     const slotsWrap  = document.getElementById('time-slots-container');
     const addTsBtn   = document.getElementById('btnAddTimeSlot');
-    const saveLA     = document.getElementById('btnSaveLocalArr');
+    // Local mode has a single save action (save + publish); btnSaveDraftRight only
+    // exists in Official mode, so saveDraft is null here.
+    const saveLA     = document.getElementById('btnPublishLocalArr');
     const saveDraft  = document.getElementById('btnSaveDraftRight');
     const saveMakeup = document.getElementById('btnSaveMakeupClass');
 
@@ -3256,10 +3615,15 @@ async function _onSubjectClick(code, name, units, hours) {
             }
             return true; // new row with content is always unsaved
         });
-        const _hasPendingSlices  = pendingForCurrent.length > 0 || _hasFilledRows;
+        const _switchSect        = document.getElementById('sel_section')?.value || '';
+        const _hasBoardRemoval   = _touchedCodesForSection(_switchSect)
+            .includes(String(_currentSubjectCode).toUpperCase());
+        const _hasPendingSlices  = pendingForCurrent.length > 0 || _hasFilledRows || _hasBoardRemoval;
         const _hasPendingFaculty = !!window._pendingFacultyAssignment;
         if ((_hasPendingSlices || _hasPendingFaculty) &&
             !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
+        // Discarding: un-hide any Published slice of the old subject removed on the board.
+        if (_hasBoardRemoval) _forgetRemovedPublished(_switchSect, _currentSubjectCode);
 
         // A reassignment in progress on the old subject is being discarded (switching away
         // without saving) — clear its auto-publish flag so a later, unrelated save of this
@@ -3555,6 +3919,8 @@ async function _onSubjectClick(code, name, units, hours) {
             // Freshly rebuilt list — drop any cached baseline from _applyDayAvailabilityFilter
             // so it re-caches from THIS (possibly different) subject's day set, not a stale one.
             delete sel.dataset.baseOptionsHtml;
+            const _rid = Number(String(sel.id).replace('ts-day-', ''));
+            if (Number.isFinite(_rid)) _renderDayRecommendations(_rid);
         });
     }
 
@@ -4160,7 +4526,84 @@ function startReassignFaculty() {
 
 // Confirms the currently-selected faculty for this subject.
 // Persists to DB so the assignment survives page refresh, and refreshes the Currently Assigned list.
-function assignFacultyToSubject() {
+// HC — a faculty can't teach two classes at once. Checks every filled slice of the open
+// subject against the faculty's saved timetable (Published + Draft) and their unsaved
+// placements. Returns a conflict message, or '' when the faculty is free. Used before ANY
+// faculty assignment is persisted (auto-reserve on pick, Assign button) — the slice-level
+// check in confirmAndPlace only runs on save, so an assignment used to slip through it.
+async function _findFacultySliceConflict(facId, facName) {
+    if (!facId || facId === 'TBA' || !_currentSubjectCode) return '';
+    const ay   = document.getElementById('sel_ay')?.value  || '';
+    const sem  = document.getElementById('sel_sem')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    const code = String(_currentSubjectCode).toUpperCase();
+    const mergeOk = typeof _isSubjectMergeEligible === 'function' && _isSubjectMergeEligible(code);
+
+    const slices = Array.from(document.querySelectorAll('.ts-row')).map(row => ({
+        day:   row.querySelector('.ts-day-sel')?.value || '',
+        start: _TS_TIMES.indexOf(row.querySelector('.ts-start-hidden')?.value || '') + 1,
+        end:   _TS_TIMES.indexOf(row.querySelector('.ts-end-hidden')?.value   || '') + 1,
+    })).filter(sl => sl.day && sl.start > 0 && sl.end > sl.start);
+    if (!slices.length) return '';
+
+    const fmt = idx => _TS_TIMES[idx - 1] || '';
+    const hit = (sl, day, s, e) => sl.day === day && sl.start < e && sl.end > s;
+
+    // Saved timetable. A failed lookup blocks the assignment — never persist unvalidated.
+    let saved;
+    try {
+        const r = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facId)}` +
+            `&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}` +
+            `&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
+        saved = await r.json();
+        if (!Array.isArray(saved)) throw new Error('bad response');
+    } catch (e) {
+        return `Could not verify ${facName}'s schedule for conflicts. Please try again.`;
+    }
+    for (const s of saved) {
+        const sCode = String(s.subjectcode || '').toUpperCase();
+        // This subject's own sessions in this section are what's being (re)assigned.
+        if (sCode === code && String(s.section_id || '') === String(sect)) continue;
+        // Same subject, another section, same slot: a merged class, allowed by merge policy.
+        if (sCode === code && mergeOk) continue;
+        const sl = slices.find(x => hit(x, s.daydesc, s.starttimeid, s.endtimeid));
+        if (sl) {
+            return `${facName} already has "${s.subjectname || s.subjectcode}"` +
+                `${s.sectionname ? ` (${s.sectionname})` : ''} on ${s.daydesc} — ` +
+                `${fmt(s.starttimeid)} to ${fmt(s.endtimeid)}, which overlaps this subject's ` +
+                `${sl.day} ${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
+        }
+    }
+
+    // Unsaved placements of this faculty for other subjects.
+    for (const c of (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])) {
+        if (String(c.faculty_id) !== String(facId) || c.ay !== ay || c.sem !== sem || c.isPreview) continue;
+        const cCode = String(c.subject_code || '').toUpperCase();
+        if (cCode === code) continue;
+        const cs = getTimeSlotIndex(c.start_time), ce = getTimeSlotIndex(c.end_time);
+        const sl = slices.find(x => hit(x, c.day, cs, ce));
+        if (sl) {
+            return `${facName} is already placed in "${c.subject_name || c.subject_code}" on ${c.day} — ` +
+                `${c.start_time} to ${c.end_time}, which overlaps this subject's ${sl.day} ` +
+                `${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
+        }
+    }
+    return '';
+}
+
+// Shows the conflict and drops the faculty pick, so nothing is persisted.
+async function _rejectConflictingFaculty(msg) {
+    await showConflictModal(msg);
+    document.getElementById('sel_faculty').value = '';
+    document.getElementById('fac_display_name').value = '';
+    document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+    window._pendingFacultyAssignment = false;
+    if (typeof _facInfo !== 'undefined') _facInfo = null;
+    await _updateFacultyUnitDisplay(null);
+    if (typeof _updateAssignFacultyBtn === 'function') _updateAssignFacultyBtn();
+}
+
+async function assignFacultyToSubject() {
     const code    = _currentSubjectCode || document.getElementById('sel_subj').value;
     const facId   = document.getElementById('sel_faculty').value;
     const facName = document.getElementById('fac_display_name').value;
@@ -4168,6 +4611,9 @@ function assignFacultyToSubject() {
         showValidationModal('No Faculty Selected', 'Please select a faculty before assigning.');
         return;
     }
+
+    const _conflictMsg = await _findFacultySliceConflict(facId, facName);
+    if (_conflictMsg) { await _rejectConflictingFaculty(_conflictMsg); return; }
 
     const ay   = document.getElementById('sel_ay').value;
     const sem  = document.getElementById('sel_sem').value;
@@ -4319,6 +4765,14 @@ window.unlockFacultyChoice = async function() {
     // moment the new faculty is picked — no separate manual save/approve click. Flagged here
     // (regardless of publish status) and consumed once the new pick lands in onFacultySelect.
     if (code) window._pendingFacultyReassignSubject = code;
+    // What the auto-save notice reports: who it was, and the status it must keep.
+    // toName is filled in once the new faculty is actually picked (onFacultySelect).
+    window._facultyReassignInfo = code ? {
+        code,
+        fromName: _lockedFacultyName || document.getElementById('fac_display_name')?.value || 'TBA',
+        toName: '',
+        wasPublished,
+    } : null;
 
     // Mark all existing rows as dirty so they get re-processed with the new faculty on the next save.
     // This converts Published fromExisting slices into editable Draft entries.
@@ -4382,8 +4836,22 @@ function _facInitialsFromName(name) {
 // (e.g. to the empty-state dashes) — the old response would otherwise silently re-stamp
 // the MAX/ASSIGNED/REMAINING numbers of the faculty that was picked for a different subject.
 let _facUnitDisplayToken = 0;
+// faculty_info (type + designation) per employee number, for the faculty panel's type line.
+const _facTypeCache = {};
+
+// Make Up Class is offered only for the Academic Head's own schedule: the open subject's
+// faculty must be the logged-in user. (The recursive locked-faculty call below re-runs
+// this with the real id when empNum is null.)
+function _updateMakeupClassBtn(empNum) {
+    const btn = document.getElementById('btnSaveMakeupClass');
+    if (!btn) return;
+    const myEmpNum = document.querySelector('[data-my-emp-num]')?.dataset.myEmpNum || '';
+    const mine = !!myEmpNum && !!empNum && String(empNum) === String(myEmpNum);
+    btn.style.display = mine ? '' : 'none';
+}
 
 async function _updateFacultyUnitDisplay(empNum) {
+    _updateMakeupClassBtn(empNum);
     const _myFacUnitToken = ++_facUnitDisplayToken;
     const statsPanel = document.getElementById('fac-stats-panel');
     const alertEl    = document.getElementById('facultyAlert');
@@ -4436,12 +4904,19 @@ async function _updateFacultyUnitDisplay(empNum) {
     }
 
     // --- WHEN A FACULTY IS SELECTED ---
-    const facName = (_lockedFacultyId && _lockedFacultyName)
+    // Name/type always come from THIS faculty (empNum): the master faculty list for the
+    // full name + employment type, and a per-faculty faculty_info lookup for the
+    // designation. (_facInfo is only filled when a faculty is picked from the dropdown,
+    // so a subject opened with an already-assigned/locked faculty used to show a blank
+    // type line and the shorter session instructor name.)
+    const _facRow = (typeof allFaculty !== 'undefined')
+        ? allFaculty.find(f => String(f.id) === String(empNum)) : null;
+    const facName = (_facRow && _facRow.name) || ((_lockedFacultyId && _lockedFacultyName)
         ? _lockedFacultyName
-        : (document.getElementById('fac_display_name').value || '');
-        
+        : (document.getElementById('fac_display_name').value || ''));
+
     if (facName) document.getElementById('fac_display_name').value = facName;
-    
+
     if (statsPanel) {
         const avatarEl = document.getElementById('fac-stats-avatar');
         const nameEl   = document.getElementById('fac-stats-name');
@@ -4450,10 +4925,24 @@ async function _updateFacultyUnitDisplay(empNum) {
         if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = _facInitialsFromName(facName); }
         if (nameEl)   { nameEl.textContent = facName; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
         if (typeEl) {
-            const _typeName = (_facInfo && _facInfo.typename) || '';
-            const _desigName = (_facInfo && _facInfo.has_designation && _facInfo.designation_name) ? _facInfo.designation_name : '';
-            typeEl.textContent = _desigName ? `${_typeName} · ${_desigName}` : _typeName;
+            const _label = info => {
+                const t = (info && info.typename) || (_facRow && _facRow.typename) || '';
+                const d = (info && info.has_designation && info.designation_name) ? info.designation_name : '';
+                return d ? `${t} · ${d}` : t;
+            };
+            typeEl.textContent = _label(_facTypeCache[empNum]);
             typeEl.style.color = ''; typeEl.style.textTransform = '';
+            if (!_facTypeCache[empNum]) {
+                fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d || !d.success) return;
+                        _facTypeCache[empNum] = d;
+                        // Only if the panel still shows this faculty.
+                        if (_myFacUnitToken === _facUnitDisplayToken) typeEl.textContent = _label(d);
+                    })
+                    .catch(() => {});
+            }
         }
         if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }
         const statsBody = document.getElementById('fac-stats-body');
@@ -4964,42 +5453,62 @@ function _buildRoomOpts(selRoomId='') {
         ).join('');
 }
 
+// Builds the Day dropdown list (room-style: RECOMMENDATIONS section, then OTHERS) from
+// the hidden <select>, and keeps the visible text box in sync with the select's value.
 function _renderDayRecommendations(rowId) {
-    const row = document.getElementById(`ts-row-${rowId}`);
-    const box = document.getElementById(`ts-day-rec-${rowId}`);
-    const sel = row?.querySelector('.ts-day-sel');
-    if (!row || !box || !sel) return;
+    const row  = document.getElementById(`ts-row-${rowId}`);
+    const list = document.getElementById(`tsd-list-${rowId}`);
+    const txt  = document.getElementById(`tsd-txt-${rowId}`);
+    const sel  = row?.querySelector('.ts-day-sel');
+    if (!row || !list || !sel) return;
+
+    if (txt && txt.value !== sel.value) txt.value = sel.value;
 
     // The select is already the source of truth for restricted-day rules AND, when
     // room+time are known, current availability. Never recommend a day absent from it.
     const feasibleDays = new Set(Array.from(sel.options).map(o => o.value).filter(Boolean));
-    const recs = (window._dssRecommendedDays || [])
+    const feasible = [...feasibleDays];
+    // Local Scheduler: no Day recommendations. They are ranked from scheduling history,
+    // not from the effective Local occupancy, so they could point at a day that the Local
+    // save then rejects (e.g. a slot the section already has an Official class in).
+    const recs = (typeof IS_LOCAL !== 'undefined' && IS_LOCAL) ? [] : (window._dssRecommendedDays || [])
         .filter(r => r && feasibleDays.has(r.day))
         .slice(0, 3);
+    const recDays = new Set(recs.map(r => r.day));
+    const others = feasible.filter(d => !recDays.has(d));
 
-    if (!recs.length) {
-        box.innerHTML = '';
-        box.hidden = true;
-        return;
+    const item = d => `<div class="ts-ss-item${d === sel.value ? ' active' : ''}" data-val="${d}"` +
+        ` onmousedown="_chooseRecommendedDay(${rowId}, '${d}')">${d}</div>`;
+    let nextHtml = '';
+    if (recs.length) {
+        nextHtml += `<div class="ts-ss-sect-hdr ts-ss-sect-opt ts-day-rec-title">RECOMMENDATIONS</div>`;
+        nextHtml += recs.map(r => item(r.day)).join('');
+        if (others.length) nextHtml += `<div class="ts-ss-sect-hdr">OTHERS</div>`;
     }
+    nextHtml += others.map(item).join('');
+    if (list.innerHTML !== nextHtml) list.innerHTML = nextHtml;
+}
 
-    box.hidden = false;
-    const nextHtml = `
-        <div class="ts-rec-section-title ts-day-rec-title">RECOMMENDATIONS</div>
-        ${recs.map((r, i) => `
-            <button type="button" class="ts-day-rec-item" data-day="${r.day}"
-                    onclick="_chooseRecommendedDay(${rowId}, '${r.day}')">
-                <span class="ts-day-rec-rank">#${i + 1}</span>
-                <span>${r.day}</span>
-            </button>`).join('')}`;
-    if (box.innerHTML !== nextHtml) box.innerHTML = nextHtml;
+function _openDayList(rowId) {
+    _renderDayRecommendations(rowId);
+    tsOpen('tsd', rowId);
+}
+
+// Clicking the already-focused box toggles the list, like a native select.
+function _toggleDayList(rowId) {
+    const list = document.getElementById(`tsd-list-${rowId}`);
+    if (list?.classList.contains('open')) list.classList.remove('open');
+    else _openDayList(rowId);
 }
 
 function _chooseRecommendedDay(rowId, day) {
     const sel = document.getElementById(`ts-day-${rowId}`);
     if (!sel || !Array.from(sel.options).some(o => o.value === day)) return;
+    const changed = sel.value !== day;
     sel.value = day;
-    onTsDayChange(rowId);
+    document.getElementById(`tsd-list-${rowId}`)?.classList.remove('open');
+    _renderDayRecommendations(rowId);
+    if (changed) onTsDayChange(rowId);
 }
 
 window._refreshDayRecommendations = function() {
@@ -5040,11 +5549,14 @@ function _sliceRequiredMinutes(rowId) {
     return remaining > 0 ? Math.round(remaining * 60) : null;
 }
 
+// Time recommendations live at the top of the Start-time dropdown (room-style):
+// RECOMMENDATIONS (complete start–end pairs), then OTHERS (the regular start times).
+// Generated nodes are tagged .ts-rec-gen and are siblings of the regular items, so
+// tsFilter's search and section-header hiding work on them unchanged.
 function _renderTimeRecommendations(rowId) {
-    const row = document.getElementById(`ts-row-${rowId}`);
-    const box = document.getElementById(`ts-time-rec-${rowId}`);
-    const manualLabel = document.getElementById(`ts-time-manual-label-${rowId}`);
-    if (!row || !box) return;
+    const row  = document.getElementById(`ts-row-${rowId}`);
+    const list = document.getElementById(`tsst-list-${rowId}`);
+    if (!row || !list) return;
 
     const requiredMinutes = _sliceRequiredMinutes(rowId);
     const recs = (window._dssRecommendedTimes || []).filter(r => {
@@ -5055,24 +5567,17 @@ function _renderTimeRecommendations(rowId) {
         return _TS_TIMES.includes(r.start) && _TS_TIMES.includes(r.end);
     }).slice(0, 3);
 
-    if (!recs.length) {
-        box.innerHTML = '';
-        box.hidden = true;
-        if (manualLabel) manualLabel.hidden = true;
-        return;
-    }
+    const sig = recs.map(r => `${r.start}-${r.end}`).join('|');
+    if (list.dataset.recSig === sig) return;   // identical markup — don't replace
+    list.dataset.recSig = sig;
 
-    box.hidden = false;
-    if (manualLabel) manualLabel.hidden = false;
-    const nextHtml = `
-        <div class="ts-rec-section-title ts-time-rec-title">RECOMMENDATIONS</div>
-        ${recs.map((r, i) => `
-            <button type="button" class="ts-time-rec-item"
-                    onclick="_chooseRecommendedTime(${rowId}, '${r.start}', '${r.end}')">
-                <span class="ts-time-rec-rank">#${i + 1}</span>
-                <span class="ts-time-rec-range">${r.start} – ${r.end}</span>
-            </button>`).join('')}`;
-    if (box.innerHTML !== nextHtml) box.innerHTML = nextHtml;
+    list.querySelectorAll('.ts-rec-gen').forEach(n => n.remove());
+    if (!recs.length) return;
+    const nextHtml = `<div class="ts-ss-sect-hdr ts-ss-sect-opt ts-rec-gen">RECOMMENDATIONS</div>` +
+        recs.map(r => `<div class="ts-ss-item ts-rec-gen"` +
+            ` onmousedown="_chooseRecommendedTime(${rowId}, '${r.start}', '${r.end}')">${r.start} – ${r.end}</div>`).join('') +
+        `<div class="ts-ss-sect-hdr ts-rec-gen">OTHERS</div>`;
+    list.insertAdjacentHTML('afterbegin', nextHtml);
 }
 
 function _chooseRecommendedTime(rowId, start, end) {
@@ -5171,12 +5676,17 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             <div class="ts-field-icon"><i class="fas fa-calendar-days"></i></div>
             <div class="ts-field-body">
                 <div class="ts-label">DAY</div>
-                <div class="ts-sel-wrap">
-                    <select class="ts-day-sel ts-sel" id="ts-day-${id}"
+                <div class="ts-ss-wrap ts-day-wrap">
+                    <!-- Hidden native select stays the source of truth (restricted-day rules,
+                         availability filtering, every reader of .ts-day-sel). The searchable
+                         list below is a room-style view of its options. -->
+                    <select class="ts-day-sel ts-sel" id="ts-day-${id}" hidden tabindex="-1"
                         onchange="onTsDayChange(${id})">${_buildDayOpts(dayVal)}</select>
-                    <span class="ts-caret">▼</span>
+                    <input type="text" id="tsd-txt-${id}" class="ts-ss-input ts-day-input"
+                        placeholder="-- Day --" autocomplete="one-time-code" data-lpignore="true" data-form-type="other" readonly value="${dayVal}"
+                        onmousedown="if (document.activeElement === this) _toggleDayList(${id})" onfocus="_openDayList(${id})" onblur="tsClose('tsd',${id})">
+                    <div class="ts-ss-list" id="tsd-list-${id}"></div>
                 </div>
-                <div class="ts-rec-section ts-day-rec-box" id="ts-day-rec-${id}" hidden></div>
             </div>
         </div>
 
@@ -5184,8 +5694,6 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             <div class="ts-field-icon"><i class="fas fa-clock"></i></div>
             <div class="ts-field-body">
                 <div class="ts-label">TIME</div>
-                <div class="ts-rec-section ts-time-rec-box" id="ts-time-rec-${id}" hidden></div>
-                <div class="ts-time-manual-label" id="ts-time-manual-label-${id}" hidden>OTHER / MANUAL TIME</div>
                 <div class="ts-time-pair">
                     <div class="ts-time-field">
                         <div class="ts-ss-wrap">
@@ -5360,6 +5868,22 @@ async function removeTimeSlot(id) {
         const status    = sess.status || 'Draft';
         const sliceDesc = `${sess.subjectcode || 'Unknown'} — ${sess.daydesc || ''} (${status})`;
 
+        // Published content is immutable outside Publish (api_delete_session refuses it).
+        // Removing a Published slice is a board edit that goes live through Save as Draft +
+        // Publish; removing a subject's LAST slice publishes the subject's removal.
+        const _isPublishedSlice = String(status).toLowerCase() === 'published';
+        let _publishedOutcome = null;
+        if (_isPublishedSlice) {
+            if (IS_LOCAL) {
+                await showValidationModal('Official Session',
+                    'This is an Official Published session. In the Local Scheduler, change its day, ' +
+                    'time or room instead; Official sessions cannot be deleted here.');
+                return;
+            }
+            _publishedOutcome = await _removePublishedSlice(row, sess, sliceDesc);
+            if (!_publishedOutcome) return;
+        } else {
+
         const ok1 = await showConfirmModal(
             `You are about to delete this schedule:\n\n${sliceDesc}`,
             'Delete Schedule'
@@ -5404,9 +5928,11 @@ async function removeTimeSlot(id) {
                 return;
             }
         }
+        } // end: Draft slice deleted server-side
 
         const localTempId = sess._localTempId;
         if (localTempId) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== localTempId);
+
 
         const dbKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
         if (dbKey && typeof hiddenDbSchedules !== 'undefined') hiddenDbSchedules.add(dbKey);
@@ -5506,6 +6032,35 @@ async function removeTimeSlot(id) {
         const rId = parseInt(r.id.replace('ts-row-', ''));
         if (!isNaN(rId) && typeof _applyRoomAvailabilityFilter === 'function') _applyRoomAvailabilityFilter(rId);
     });
+}
+
+/* Remove a Published slice. Never deletes or publishes anything: Published data is
+   immutable outside Publish (api_delete_session refuses it). The removal is a board edit;
+   Save as Draft records it (remaining slices, or — for a subject's last slice — an explicit
+   removal-marker Draft), and only an explicit Publish makes it live.
+   Returns 'board' (removed on the board) or null (cancelled). */
+async function _removePublishedSlice(row, sess, sliceDesc) {
+    const code      = String(sess.subjectcode || _currentSubjectCode || '').toUpperCase();
+    const sectionId = document.getElementById('sel_section')?.value || '';
+    const otherRows = Array.from(document.querySelectorAll('.ts-row')).filter(r => r !== row &&
+        (r.querySelector('.ts-day-sel')?.value || r.querySelector('.ts-start-hidden')?.value));
+
+    const ok = await showConfirmModal(
+        otherRows.length
+            ? `Remove this slice from the board?\n\n${sliceDesc}\n\n` +
+              'The live Published schedule changes only after you Save as Draft and then Publish.'
+            : `This is the last time slice of ${code}.\n\n` +
+              `Removing it removes ${code} from this section's schedule on the board. ` +
+              'Save as Draft records the removal; the live Published schedule changes only ' +
+              'after you Publish.',
+        otherRows.length ? 'Remove Published Slice' : 'Remove Subject'
+    );
+    if (!ok) return null;
+    const hideKey = (typeof _dbHideKeyForEntry === 'function') ? _dbHideKeyForEntry(sess) : null;
+    if (hideKey) {
+        window._removedPublishedOccurrences.set(hideKey, { sectionId: String(sectionId), code });
+    }
+    return 'board';
 }
 
 function _sliceStatusHtmlFor(existingJson) {
@@ -5694,11 +6249,31 @@ function _syncSliceToPending(id) {
 }
 
 /* ── Auto-load existing sessions into slice rows ── */
-window._loadExistingSessionsIntoSlices = async function(sessions) {
+window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
+    if (!sessions || !sessions.length) return;
+    // Validate BEFORE touching any state. A late existing_sessions response (a newer
+    // request started, or the user already moved to another subject/section) must never
+    // purge or rebuild mirrors — doing so used to wipe the old subject's mirrors while
+    // its DB rows stayed hidden, making its pills vanish from the calendar.
+    const _loadSubjCode = sessions[0].subjectcode;
+    const _stillCurrent = () =>
+        (typeof _existingLoadTokenIsCurrent !== 'function' || _existingLoadTokenIsCurrent(loadToken)) &&
+        document.getElementById('sel_subj').value === _loadSubjCode;
+    if (!_stillCurrent()) return;
+
     // Reset selection and dirty tracking — loaded sessions are clean
     _activeSliceId = null;
     _dirtySliceIds.clear();
 
+    const incomingCodes = new Set(sessions.map(s => s.subjectcode));
+    const ay   = document.getElementById('sel_ay').value;
+    const sem  = document.getElementById('sel_sem').value;
+    const prog = document.getElementById('sel_prog').value;
+    const yl   = document.getElementById('sel_year').value;
+
+    // (The purge of this context's stale mirrors runs further below, only once all the
+    // awaits have settled and the load is confirmed to still be current.)
+    const _purgeStaleMirrors = () => {
     // Purge stale fromExisting entries for the CURRENT program+year context (ay+sem+course+
     // year_level), not just for the incoming subject. Stale fromExisting entries from
     // previously-viewed subjects IN THIS SAME CONTEXT linger in pendingManualSchedule and
@@ -5709,11 +6284,6 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
     // showing on the grid — a blanket ay+sem purge would delete their only client-side copy
     // and make them vanish from the grid even though they're unrelated to this save context.
     // Genuinely-new (not fromExisting) entries for other subjects are preserved intact.
-    const incomingCodes = new Set(sessions.map(s => s.subjectcode));
-    const ay   = document.getElementById('sel_ay').value;
-    const sem  = document.getElementById('sel_sem').value;
-    const prog = document.getElementById('sel_prog').value;
-    const yl   = document.getElementById('sel_year').value;
     pendingManualSchedule = pendingManualSchedule.filter(c => {
         if (c.ay !== ay || c.sem !== sem) return true;
         if (c.fromExisting) {
@@ -5731,6 +6301,7 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         if (c.isPreview && incomingCodes.has(c.subject_code)) return false;  // clear preview for incoming subject
         return true;
     });
+    };
 
     // Deduplicate by subjectcode+day+starttime key — prefer Published over Draft for same slot
     // (slots that exist in both Published and Draft were already approved and keep green color)
@@ -5750,19 +6321,23 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
 
     // Pre-fill faculty from first session — prefer ID match, fall back to name match
     const firstSess = uniqueSessions[0];
+    if (!firstSess) return;
     // This function is reached through a long async chain (triggerDSSLogic's own several
     // fetches, then onFacultySelect's chain below) — if the user clicks a DIFFERENT subject
     // while any of that is still in flight, _onSubjectClick's own reset for that new subject
     // already ran, but this call keeps going in the background for the OLD subject and can
-    // still write its faculty/time-slots onto whatever subject is now showing. Recorded here
-    // so it can be checked before each risky write below.
-    const _loadSubjCode = firstSess.subjectcode;
+    // still write its faculty/time-slots onto whatever subject is now showing. _loadSubjCode
+    // (declared at the top) is checked before each risky write below.
     const empNumFromSess = firstSess.employeenumber || firstSess.faculty_id || '';
     const facStr = (firstSess.instructor || '').split(',')[0].trim();
+    // Name fallback only with a real name: ''.includes('') is true for EVERY faculty, which
+    // used to silently pre-fill the first faculty in the list for an unknown/empty instructor.
+    const _byName = facStr
+        ? allFaculty.find(f => f.name && f.name.toLowerCase().includes(facStr.toLowerCase()))
+        : null;
     const fac = empNumFromSess
-        ? (allFaculty.find(f => String(f.id) === String(empNumFromSess)) ||
-           allFaculty.find(f => f.name && f.name.toLowerCase().includes(facStr.toLowerCase())))
-        : (facStr ? allFaculty.find(f => f.name && f.name.toLowerCase().includes(facStr.toLowerCase())) : null);
+        ? (allFaculty.find(f => String(f.id) === String(empNumFromSess)) || _byName || null)
+        : _byName;
     if (fac) {
         document.getElementById('sel_faculty').value = fac.id;
         document.getElementById('fac_display_name').value = fac.name;
@@ -5798,7 +6373,10 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
     // pendingManualSchedule below with THIS (now-stale) subject's data, which would overwrite
     // whatever the user is actually looking at now — including re-locking its faculty picker
     // to a faculty that belongs to this old subject, not theirs.
-    if (document.getElementById('sel_subj').value !== _loadSubjCode) return;
+    if (!_stillCurrent()) return;   // nothing has been purged or rebuilt yet — state untouched
+
+    // Only now, with the load confirmed current, drop this context's stale mirrors.
+    _purgeStaleMirrors();
 
     // Clear the container here — after all async work — so existing slices stay visible
     // during the faculty fetch instead of showing a blank flash.
@@ -5831,6 +6409,9 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
         const newClass = {
             temp_id:      localTempId,
             versionid:    sess.versionid || null,
+            // Stable occurrence identity of the Official schedule_sessions row this mirror
+            // stands for (drives occurrence-level hiding). Local rows have no own session.
+            sessionid:    sess.versionid ? (sess.sessionid || sess.official_sessionid || null) : null,
             // PHASE 5 — exact Official occurrence replaced by this Local slice.
             official_sessionid: sess.official_sessionid || sess.sessionid || null,
             ay, sem,
@@ -5895,6 +6476,8 @@ window._loadExistingSessionsIntoSlices = async function(sessions) {
             // Freshly rebuilt list — drop any cached baseline from _applyDayAvailabilityFilter
             // so it re-caches from THIS (possibly different) subject's day set, not a stale one.
             delete sel.dataset.baseOptionsHtml;
+            const _rid = Number(String(sel.id).replace('ts-day-', ''));
+            if (Number.isFinite(_rid)) _renderDayRecommendations(_rid);
         });
     }
 
@@ -6085,6 +6668,8 @@ async function selectBcSect(id, name) {
     const _prevSectId = document.getElementById('sel_section').value;
     document.getElementById('sel_section').value = id;
     if (_prevSectId && _prevSectId !== id) {
+        // Board-only removals belong to the section being left (its panel is reset below).
+        if (typeof _forgetRemovedPublished === 'function') _forgetRemovedPublished(_prevSectId);
         // The right panel (active subject, its faculty, and its TIME ALLOTMENT slices)
         // belongs entirely to the section being left — a subject clicked/loaded under the
         // previous section must never stay open while a different section is now selected,
@@ -6247,9 +6832,10 @@ async function approveAllSchedules() {
     );
     if (_pendingDrafts.length === 0) {
         try {
-            const _drRes  = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+            const _drRes  = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(document.getElementById('sel_section')?.value || '')}`);
             const _drData = await _drRes.json();
-            if (!(_drData.success && _drData.sessions && _drData.sessions.length > 0)) {
+            if (!(_drData.success && ((_drData.sessions && _drData.sessions.length > 0) ||
+                                      (_drData.removed_subjects && _drData.removed_subjects.length > 0)))) {
                 await showValidationModal('Already Published',
                     `All schedules for ${prog} Year ${yl} are already published for this term, or no draft sessions exist.`);
                 return;
@@ -6304,6 +6890,39 @@ function _syncBcFromSelects() {
 }
 
 /* ── Save-as-draft helper (called after all slices validated) ── */
+/* ── A Draft is the COMPLETE schedule of every subject+section it touches ──
+   The server treats a subject's Draft as one replacement of its Published schedule
+   (existing_sessions and Approve read the Draft alone). So for each subject with a changed
+   or new entry being saved, its unchanged Published mirrors for the same section are added
+   — otherwise editing Mon of a Mon+Thu subject saved a Mon-only Draft and Thu was lost on
+   reload/Approve. Untouched subjects stay out (no Draft is created for them). A mirror the
+   changed set already represents (same sessionid, i.e. the edited occurrence, or the same
+   slot) is not added again. Removed slices are already deleted server-side (removeTimeSlot)
+   and have no mirror left. */
+function _completeSubjectDrafts(changed, ay, sem, sectionId, extraTouched = []) {
+    const subj   = c => String(c.subject_code || c.subjectcode || '').toUpperCase();
+    const sectOk = c => !c.section_id || !sectionId || String(c.section_id) === String(sectionId);
+    const occId  = c => String(c.sessionid || c.official_sessionid || '');
+    const slot   = c => `${subj(c)}|${c.day || c.daydesc}|${c.start_time}|${c.end_time}`;
+    // extraTouched: subjects whose Published slices were removed on the board — their
+    // remaining Published slices become the Draft even when nothing else changed.
+    const touched = new Set([...changed.filter(sectOk).map(subj),
+                             ...extraTouched.map(c => String(c).toUpperCase())]);
+    const ids     = new Set(changed.map(occId).filter(Boolean));
+    const slots   = new Set(changed.map(slot));
+    const siblings = [];
+    for (const c of pendingManualSchedule) {
+        if (c.ay !== ay || c.sem !== sem || c.isPreview || !c.fromExisting) continue;
+        if ((c.status || '').toLowerCase() !== 'published' || changed.includes(c)) continue;
+        if (!touched.has(subj(c)) || !sectOk(c)) continue;
+        if ((occId(c) && ids.has(occId(c))) || slots.has(slot(c))) continue;
+        if (occId(c)) ids.add(occId(c));
+        slots.add(slot(c));
+        siblings.push(c);
+    }
+    return [...changed, ...siblings];
+}
+
 window._triggerSaveDraft = async function _triggerSaveDraft() {
     // Captured before any await below — used after the save round trip to detect
     // whether the user has since switched to a different subject (see its use further
@@ -6311,27 +6930,39 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
     const _savingSubj = document.getElementById('sel_subj').value;
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
-    // Exclude preview entries and already-Published unchanged sessions.
-    // Sessions that are fromExisting+Published are already saved as Published and must NOT
-    // be re-saved into the Draft snapshot (that would pollute Draft history with Published content).
-    // If a Published session was modified, confirmAllSlots removed it from pending and re-added it
-    // WITHOUT fromExisting, so it will pass through correctly as a new Draft entry.
-    const contextDrafts = pendingManualSchedule.filter(c =>
+    // Set when this save is the automatic one triggered by a faculty reassignment.
+    const _reassign = (window._facultyReassignInfo && window._facultyReassignInfo.toName &&
+                       window._facultyReassignInfo.code === _savingSubj) ? window._facultyReassignInfo : null;
+    // Changed/new entries: exclude previews and unchanged fromExisting+Published sessions.
+    // A modified Published session was re-placed by confirmAllSlots WITHOUT fromExisting, so
+    // it passes through as a Draft entry. Unchanged Published slices of a subject that IS
+    // being saved are added back below (_completeSubjectDrafts) so its Draft is complete;
+    // untouched subjects never get a Draft.
+    let contextDrafts = pendingManualSchedule.filter(c =>
         c.ay === ay && c.sem === sem && !c.isPreview &&
         !(c.fromExisting && (c.status || '').toLowerCase() === 'published')
     );
 
+    const _saveSectionId = document.getElementById('sel_section').value;
+    const _removedCodes  = _saveSectionId ? _touchedCodesForSection(_saveSectionId) : [];
+
     // --- FIX: Bypass blocking kung may na-delete na subject ---
-    if (!contextDrafts.length && window._deletedSubjectCodes.size === 0) {
+    if (!contextDrafts.length && window._deletedSubjectCodes.size === 0 && !_removedCodes.length) {
         await showValidationModal('Nothing to Save', 'No sessions to save for the selected term.');
         return;
     }
 
-    const _saveSectionId = document.getElementById('sel_section').value;
     if (!_saveSectionId) {
         await showValidationModal('Section Required', 'Please select a Section from the left panel before saving.');
         return;
     }
+    // The Draft replaces each touched subject's Published schedule as a whole, so it must
+    // carry that subject's unchanged Published slices too (see _completeSubjectDrafts).
+    contextDrafts = _completeSubjectDrafts(contextDrafts, ay, sem, _saveSectionId, _removedCodes);
+    // A subject whose every Published slice was removed on the board has no rows left: the
+    // Draft records its removal explicitly (removal-marker Draft; Published stays live).
+    const _subjectRemovals = _removedCodes.filter(code =>
+        !contextDrafts.some(c => String(c.subject_code || c.subjectcode || '').toUpperCase() === code));
 
     const btn = document.getElementById('btnSaveDraftRight');
     if (btn) { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating...'; btn.disabled = true; }
@@ -6414,12 +7045,15 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
                 schedule_data:     contextDrafts,
                 context:           context,
                 deleted_subjects:  Array.from(window._deletedSubjectCodes),
+                removed_subjects:  _subjectRemovals,
                 scheduler_mode:    SCHED_MODE
             }),
             signal: _saveAbort.signal
         });
         clearTimeout(_saveTimeout);
-        const data = await res.json();
+        let data;
+        try { data = await res.json(); }
+        catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was saved.` }; }
 
         if (data.success) {
             // Reset button immediately — don't make the user wait for post-save refreshes
@@ -6440,13 +7074,24 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
 
             const deletedCount = window._deletedSubjectCodes.size;
             window._deletedSubjectCodes.clear();
+            if (typeof _invalidateOccupancyCaches === 'function') _invalidateOccupancyCaches(ay, sem);
+            // Board removals of Published slices are now part of the saved Draft.
+            _forgetRemovedPublished(_saveSectionId);
+            // A faculty pick that was just saved with this subject is no longer pending.
+            const _savedFac = document.getElementById('sel_faculty')?.value || '';
+            if (window._pendingFacultyAssignment && _savingSubj && _savedFac &&
+                contextDrafts.some(c => (c.subject_code || c.subjectcode) === _savingSubj &&
+                    String(c.faculty_id || c.employeenumber || '') === String(_savedFac))) {
+                window._pendingFacultyAssignment = false;
+            }
 
             const newSliceCount = contextDrafts.filter(c => !c.fromExisting).length;
             const deletedNote = deletedCount > 0 ? ' Any removed sessions were deleted from the Draft.' : '';
             const savedMsg = newSliceCount > 0
                 ? `${newSliceCount} new session${newSliceCount !== 1 ? 's' : ''} saved to draft.`
                 : 'Draft updated successfully.';
-            await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
+            // A faculty reassignment explains itself once, after the status is settled below.
+            if (!_reassign) await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
 
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
@@ -6505,12 +7150,29 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             // Faculty reassignment on a previously-Published subject (see unlockFacultyChoice):
             // immediately publish this Draft too, so the new faculty goes live without a
             // separate manual Approve step.
+            const _reasonLine = _reassign
+                ? `The faculty of ${_savingSubj} was changed from ${_reassign.fromName} to ${_reassign.toName}, ` +
+                  `so its schedule was saved automatically.`
+                : '';
             if (window._reassignAutoPublishSubjects && currentSubj &&
                 window._reassignAutoPublishSubjects.has(currentSubj)) {
                 window._reassignAutoPublishSubjects.delete(currentSubj);
-                if (typeof window._runManualApprove === 'function') {
-                    await window._runManualApprove({ auto: true });
+                // Published stays Published: re-publish right away. The publish step shows
+                // the success notice (with _reasonLine) itself.
+                const _republished = typeof window._runManualApprove === 'function'
+                    ? (await window._runManualApprove({ auto: true, reasonLine: _reasonLine })) === true
+                    : false;
+                if (!_republished) {
+                    await showValidationModal('Faculty Changed — Not Yet Republished',
+                        `${_reasonLine || 'The faculty was changed and the schedule was saved.'}\n\n` +
+                        `It could not be republished automatically, so the new faculty is saved as a Draft ` +
+                        `and the previously Published schedule is still the live one. ` +
+                        `Click Approve Schedule to publish the change.`);
                 }
+            } else if (_reassign) {
+                // Draft stays Draft.
+                await showValidationModal('Faculty Changed — Auto-saved',
+                    `${_reasonLine}\n\nStatus: Draft (unchanged). Approve it when you're ready to publish.`);
             }
 
             return true;
@@ -6560,18 +7222,20 @@ async function confirmAllSlots(opts = {}) {
     }
 
     const rows = Array.from(document.querySelectorAll('.ts-row'));
+    const _hasBoardRemovals = _touchedCodesForSection(document.getElementById('sel_section')?.value || '').length > 0;
 
-    if (!rows.length && window._deletedSubjectCodes.size === 0) {
+    if (!rows.length && window._deletedSubjectCodes.size === 0 && !_hasBoardRemovals) {
         await showValidationModal('No Time Slots', 'Add at least one time slot using the + button.');
         return;
     }
 
     // Collect all rows with dirty / active flags
-    const allRowData = rows.map(row => {
+    const allRowData = rows.map((row, rowIdx) => {
         const rowId  = parseInt(row.id.replace('ts-row-', ''));
         const roomId = row.querySelector('.ts-room-hidden')?.value || '';
         return {
             row, rowId,
+            sliceNum: rowIdx + 1,        // the number shown on the slice card ("SLICE n")
             hasExisting: !!row.dataset.existingJson,
             day:      row.querySelector('.ts-day-sel').value,
             start:    row.querySelector('.ts-start-hidden')?.value || '',
@@ -6587,10 +7251,19 @@ async function confirmAllSlots(opts = {}) {
         };
     });
 
-    // Candidates = dirty slices + the active (selected) slice
-    const candidates = allRowData.filter(r => r.isDirty || r.isActive);
+    // Which slices this save is about:
+    //  - a NEW subject schedule (none of its slices saved yet): every filled-in slice, so
+    //    the confirmation shows how many slices are being saved;
+    //  - editing an already-saved subject: the SELECTED slice plus any slice actually edited.
+    const _isNewSubject = allRowData.length > 0 && allRowData.every(r => !r.hasExisting);
+    const candidates = _isNewSubject
+        ? allRowData.filter(r => r.isDirty || r.isActive || (r.day && r.start && r.end))
+        : allRowData.filter(r => r.isDirty || r.isActive);
+    candidates.forEach(r => {
+        r.tag = !r.hasExisting ? 'New' : r.isDirty ? 'Edited' : 'Selected';
+    });
 
-    if (!candidates.length && window._deletedSubjectCodes.size === 0) {
+    if (!candidates.length && window._deletedSubjectCodes.size === 0 && !_hasBoardRemovals) {
         await showValidationModal('Nothing to Save',
             'Click on a time slice to select it, or edit a slice\'s fields before saving.');
         return;
@@ -6601,7 +7274,11 @@ async function confirmAllSlots(opts = {}) {
     // this save is for (a faculty reassignment), so there's nothing to pick.
     let rowsToSave = candidates;
     if (candidates.length > 0 && !auto) {
-        const selected = await _showSliceSaveModal(candidates);
+        const selected = await _showSliceSaveModal(candidates, {
+            subject: document.getElementById('sel_subj')?.value || '',
+            isNew:   _isNewSubject,
+            total:   allRowData.length,
+        });
         if (!selected.length) return; // user cancelled or deselected all
         rowsToSave = selected;
     }
@@ -6627,16 +7304,17 @@ async function confirmAllSlots(opts = {}) {
     // Validate only the rows being saved
     for (let i = 0; i < rowsToSave.length; i++) {
         const { row, day, start, end, roomId } = rowsToSave[i];
+        const _sn = rowsToSave[i].sliceNum || (i + 1);
         if (!day || !start || !end) {
             await showValidationModal('Incomplete Slot',
-                `Slice ${i + 1}: fill in Day, Start Time, and End Time.`);
+                `Slice ${_sn}: fill in Day, Start Time, and End Time.`);
             return;
         }
         if (!roomId) {
             const typedRoom = row.querySelector('.ts-room-field .ts-ss-input')?.value.trim() || '';
             await showValidationModal('Room Required', typedRoom
-                ? `Slice ${i + 1}: "${typedRoom}" not found — pick a room from the list.`
-                : `Slice ${i + 1}: please select a room.`);
+                ? `Slice ${_sn}: "${typedRoom}" not found — pick a room from the list.`
+                : `Slice ${_sn}: please select a room.`);
             return;
         }
     }
@@ -6654,13 +7332,42 @@ async function confirmAllSlots(opts = {}) {
             const bE = typeof getTimeSlotIndex === 'function' ? getTimeSlotIndex(b.end)   : 0;
             if (aS < bE && aE > bS) {
                 await showValidationModal('Duplicate Schedule Detected',
-                    `Slice ${i + 1} and Slice ${j + 1} conflict: both use room "${a.roomName}" ` +
+                    `Slice ${a.sliceNum || i + 1} and Slice ${b.sliceNum || j + 1} conflict: both use room "${a.roomName}" ` +
                     `on ${a.day} with overlapping times. ` +
                     `Change the time, day, or room before saving.`);
                 return;
             }
         }
     }
+
+    // Snapshot the exact editor state BEFORE anything below mutates it (preview purge,
+    // mirror removal, placement, dirty flags, form fields). Any failure restores it and
+    // redraws, so the panel rows and calendar pills stay in sync and the attempted edit
+    // (including a new slice's preview pill) remains visible for correction.
+    const _saveSnap = {
+        pending:  [...pendingManualSchedule],
+        hidden:   new Set(hiddenDbSchedules),
+        dirty:    new Set(_dirtySliceIds),
+        rowDirty: rows.map(r => [r, r.dataset.dirty]),
+        edit:     window.currentEditSession,
+        form:     ['sel_day', 'sel_start_time', 'sel_end_time', 'sel_room', 'room_display_name']
+                      .map(k => [k, document.getElementById(k)?.value]),
+        roomInfo: _roomInfo,
+    };
+    const _restoreSaveState = async () => {
+        pendingManualSchedule = [..._saveSnap.pending];
+        hiddenDbSchedules     = new Set(_saveSnap.hidden);
+        _dirtySliceIds.clear(); _saveSnap.dirty.forEach(id => _dirtySliceIds.add(id));
+        _saveSnap.rowDirty.forEach(([r, d]) => { if (d === undefined) delete r.dataset.dirty; else r.dataset.dirty = d; });
+        window.currentEditSession = _saveSnap.edit;
+        _saveSnap.form.forEach(([k, v]) => { const el = document.getElementById(k); if (el && v !== undefined) el.value = v; });
+        _roomInfo = _saveSnap.roomInfo;
+        const _ay = document.getElementById('sel_ay').value;
+        const _sem = document.getElementById('sel_sem').value;
+        if (currentMode === 'program') renderProgramTimetable();
+        else renderGrid(document.getElementById('sel_room').value, _ay, _sem);
+        await _updateSubjectList();
+    };
 
     // Remove all preview entries before processing to avoid double-counting
     pendingManualSchedule = pendingManualSchedule.filter(c => !c.isPreview);
@@ -6681,11 +7388,6 @@ async function confirmAllSlots(opts = {}) {
             (c.sectionname && _curSect && c.sectionname !== _curSect)
         );
     }
-
-    // Snapshot state before modifying — used to roll back if the save fails so that
-    // progress and grid do not count unsaved entries.
-    const _pmSnapshot  = [...pendingManualSchedule];
-    const _hdbSnapshot = new Set(hiddenDbSchedules);
 
     // Process each selected row into pendingManualSchedule
     for (const { row, rowId, hasExisting, day, start, end, roomId, roomName } of rowsToSave) {
@@ -6763,11 +7465,9 @@ async function confirmAllSlots(opts = {}) {
         // (in preparation for confirmAndPlace to re-add it), the slot ended up with
         // neither the old nor the new data: the schedule appeared to just vanish.
         if (pendingManualSchedule.length <= prevLen) {
-            window.currentEditSession = null;
-            // Roll back any entries added by earlier slices in this loop so a partial
-            // failure doesn't leave stale data that could be silently published later.
-            pendingManualSchedule = _pmSnapshot;
-            hiddenDbSchedules     = _hdbSnapshot;
+            // Roll back everything (including entries added by earlier slices in this loop,
+            // so a partial failure can't be silently published later) and redraw.
+            await _restoreSaveState();
             return;
         }
         window.currentEditSession = null;
@@ -6785,16 +7485,9 @@ async function confirmAllSlots(opts = {}) {
     const _saveOk = await _triggerSaveDraft();
 
     if (!_saveOk) {
-        // Save failed — roll back in-memory state so the grid doesn't count unsaved hours.
-        // Leave the DOM time slices intact so the user can fix the issue and retry.
-        pendingManualSchedule = _pmSnapshot;
-        hiddenDbSchedules     = _hdbSnapshot;
-        const _ay  = document.getElementById('sel_ay').value;
-        const _sem = document.getElementById('sel_sem').value;
-        const _rm  = document.getElementById('sel_room').value;
-        if (currentMode === 'program') renderProgramTimetable();
-        else renderGrid(_rm, _ay, _sem);
-        await _updateSubjectList();
+        // Save failed — restore the exact pre-save state (DOM time slices were never
+        // touched) so the user can fix the issue and retry.
+        await _restoreSaveState();
         return;
     }
 
@@ -6891,8 +7584,10 @@ async function saveIndividualSlice(id) {
                 await showNochangeModal();
                 return;
             }
-            pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== sessData._localTempId);
-            hiddenDbSchedules.delete(`${sessData.subjectcode}_${sessData.daydesc}_${sessData.starttimeid}`);
+            // Keep the mirror in place: confirmAndPlace replaces it by _localTempId and
+            // carries its occurrence identity (fromExisting, versionid, sessionid, _loaded,
+            // section) forward. Removing it here used to strip that identity, so the slice
+            // became a "new" entry and its sibling slices could be left hidden.
         }
         window.currentEditSession = sessData;
     } else {
@@ -6929,10 +7624,9 @@ async function saveIndividualSlice(id) {
     }
 
     // Update the existingJson to reflect the new values
-    if (sessData) {
-        const updatedSess = { ...sessData, daydesc: day, _localTempId: sessData._localTempId };
-        row.dataset.existingJson = JSON.stringify(updatedSess);
-    }
+    // row.dataset.existingJson is deliberately NOT rewritten: it is the full ORIGINAL
+    // occurrence snapshot (discard-revert and DB self-exclusion rely on it). Rewriting only
+    // its day used to produce a hybrid "original" (new day + old time/room) that never existed.
 
     // Refresh progress display
     const code = _currentSubjectCode;
@@ -7164,11 +7858,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load section options if program + year level are known, then auto-select if coming from Schedule Generation
     if (initProg && initYl && typeof _loadSectionOptions === 'function') {
+        // The program/year cascade (started above) and the URL section below both rebuild
+        // the subject list. Hold the subject auto-select until the section is applied, or
+        // the cascade picks a subject that the section switch then resets mid-load — leaving
+        // its panel on "No Published Official Schedule" with an empty slice.
+        if (initSect && initSectName) window._autoSelectHold = true;
         _loadSectionOptions()
-            .then(() => {
+            .then(async () => {
                 if (initSect && initSectName && typeof selectBcSect === 'function') {
                     // Auto-select the section passed via URL — triggers _updateSubjectList (curriculum guide)
-                    selectBcSect(initSect, initSectName);
+                    await selectBcSect(initSect, initSectName);
                     if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
                     // When coming from Schedule Generation (mode=program), switch to Program View tab
                     // so the generator-transferred timetable is immediately visible.
@@ -7184,7 +7883,8 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(() => {
                 if (typeof _syncBcFromSelects === 'function') _syncBcFromSelects();
                 triggerCascade(true);
-            });
+            })
+            .finally(() => _releaseAutoSelectHold());
     } else if (initAy || initSem || initProg || initYl) {
         // No section loading needed — fire cascade normally
         setTimeout(() => {
@@ -7286,9 +7986,36 @@ window.triggerCascade = async function(skipGridRender) {
  * Falls back to any scheduled subject, then to the first in the list.
  * Only fires in local mode after a full context (ay+sem+prog+yl) is ready.
  */
+// Startup hold (see the URL-section init): the auto-select is deferred until released.
+function _releaseAutoSelectHold() {
+    if (!window._autoSelectHold) return;
+    window._autoSelectHold = false;
+    // Whatever subject list is current now; if it is still rebuilding, its own completion
+    // (_updateSubjectList) calls the auto-select again.
+    _localAutoSelectFirstSubject().catch(() => {});
+}
+
+// Local Scheduler: once the auto-picked subject has loaded, select its first slice so the
+// panel and calendar open on something concrete. Slices load asynchronously — wait briefly.
+async function _autoSelectFirstSlice(subjectCode) {
+    for (let i = 0; i < 20; i++) {
+        if (_currentSubjectCode !== subjectCode) return;          // user moved on
+        if (_activeSliceId != null) return;                       // user already picked one
+        const rows = Array.from(document.querySelectorAll('.ts-row'));
+        const first = rows.find(r => r.dataset.existingJson) || null;
+        if (first) {
+            const id = Number(String(first.id).replace('ts-row-', ''));
+            if (Number.isFinite(id) && typeof _selectSlice === 'function') _selectSlice(id, null);
+            return;
+        }
+        await new Promise(r => setTimeout(r, 150));
+    }
+}
+
 async function _localAutoSelectFirstSubject() {
     const subjSel = document.getElementById('sel_subj');
     if (!subjSel) return;
+    if (window._autoSelectHold) return;   // startup context still settling — released later
 
     // Never auto-select without a section — the right panel can't know whose schedule to load.
     if (!(document.getElementById('sel_section')?.value || '')) return;
@@ -7300,25 +8027,48 @@ async function _localAutoSelectFirstSubject() {
     const opts = Array.from(subjSel.options).filter(o => o.value);
     if (!opts.length) return;
 
+    // A subject requested in the URL (Faculty Load → Local Schedule → Edit) wins, once.
+    const _urlSubj = (new URLSearchParams(window.location.search).get('subj') || '').toUpperCase();
+    const _wanted = (_urlSubj && !window._urlSubjUsed)
+        ? opts.find(o => o.value.toUpperCase() === _urlSubj) : null;
+    if (_wanted) window._urlSubjUsed = true;
+
     // Priority: Published → Published/Draft → any saved status → first subject.
     // In Local mode ONLY subjects with a Published Official schedule are valid — never
     // fall back to opts[0] for a subject with no schedule.
-    const pick = IS_LOCAL
+    const pick = _wanted || (IS_LOCAL
         ? (opts.find(o => o.dataset.savedStatus === 'Published') ||
            opts.find(o => o.dataset.savedStatus === 'Published/Draft'))
         : (opts.find(o => o.dataset.savedStatus === 'Published') ||
            opts.find(o => o.dataset.savedStatus === 'Published/Draft') ||
            opts.find(o => o.dataset.savedStatus && o.dataset.savedStatus !== '') ||
-           opts[0]);
+           opts[0]));
 
     if (pick && typeof _onSubjectClick === 'function') {
-        subjSel.value = pick.value;
-        await _onSubjectClick(
+        const _clickPick = () => _onSubjectClick(
             pick.value,
             pick.text,
             parseFloat(pick.dataset.units || 0),
             parseFloat(pick.dataset.hours || 0)
         );
+        subjSel.value = pick.value;
+        await _clickPick();
+
+        if (IS_LOCAL) {
+            // A pick with a Published schedule must never be left on the "No Published
+            // Official Schedule" block — that only happens when a concurrent rebuild raced
+            // the load. Retry once on the now-settled context.
+            const _blocked = () => {
+                const b = document.getElementById('localNoPubBlock');
+                return !!b && b.style.display !== 'none' &&
+                       !document.querySelector('.ts-row[data-existing-json]');
+            };
+            if (_currentSubjectCode === pick.value && _blocked()) {
+                subjSel.value = pick.value;
+                await _clickPick();
+            }
+            await _autoSelectFirstSlice(pick.value);
+        }
     }
 }
 
@@ -7462,10 +8212,14 @@ _filterEndTimeItems = function(id, startVal) {
         try { thisSliceTempId = JSON.parse(row.dataset.existingJson)._localTempId; } catch(e) {}
     }
 
-    // Sum hours of all OTHER slices for this subject
+    // Sum hours of all OTHER slices for this subject — in THIS section only. Slices of the
+    // same subject kept for another section must not eat this section's remaining hours
+    // (that hid valid end times, sometimes all of them).
+    const _capSect = String(document.getElementById('sel_section')?.value || '');
     let otherScheduled = 0;
     (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : []).forEach(c => {
         if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) return;
+        if (_capSect && c.section_id && String(c.section_id) !== _capSect) return;
         if (c.isPreview) return;
         if (c.temp_id === thisSliceTempId) return;
         const si = _TS_TIMES.indexOf(c.start_time);
@@ -7495,11 +8249,19 @@ _filterEndTimeItems = function(id, startVal) {
         const _occAy     = document.getElementById('sel_ay')?.value       || '';
         const _occSem    = document.getElementById('sel_sem')?.value      || '';
         let _occExcId = 'PREVIEW_' + id;
+        let _occExcVer = null;
         if (_occRow.dataset.existingJson) {
-            try { _occExcId = JSON.parse(_occRow.dataset.existingJson)._localTempId; } catch(e) {}
+            try {
+                const _oej = JSON.parse(_occRow.dataset.existingJson);
+                _occExcId  = _oej._localTempId;
+                _occExcVer = _oej.versionid || null;
+            } catch(e) {}
         }
         if (_occRoomId && _occDay && startIdx >= 0) {
-            const _occRanges = _getOccupiedRanges(_occRoomId, _occDay, _occAy, _occSem, _occExcId);
+            // Exclude this slice's OWN saved booking (by versionid), exactly like the start
+            // filter does — otherwise moving an existing slice's start earlier made its own
+            // old time look "occupied" and hid every end time after it.
+            const _occRanges = _getOccupiedRanges(_occRoomId, _occDay, _occAy, _occSem, _occExcId, _occExcVer);
             let _minOccAfter = Infinity;
             _occRanges.forEach(r => { if (r.startIdx >= startIdx && r.startIdx < _minOccAfter) _minOccAfter = r.startIdx; });
             if (_minOccAfter < Infinity) {
@@ -7999,7 +8761,7 @@ function _viewAllReports() {
     const prog = document.getElementById('sel_prog')?.value || '';
     let url = '/reports?type=assignments';
     if (prog) url += '&program=' + encodeURIComponent(prog);
-    window.location.href = url;
+    _guardedNavigate(url);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -8099,20 +8861,31 @@ function _rememberLocalUpdatedAt(arrId, updatedAt) {
 
 // Classify a Local Scheduler API call. Only a rejected fetch() means the server was
 // unreachable; HTTP errors and unreadable bodies are reported as what they are.
+const LOCAL_API_TIMEOUT_MS = 120000;
 async function _localApiRequest(url, options = {}) {
+    // A request that never answers must not leave a Local button spinning forever.
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), LOCAL_API_TIMEOUT_MS);
     let res;
     try {
-        res = await fetch(url, options);
+        res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
     } catch (err) {
+        clearTimeout(timer);
         console.error(`Local Scheduler request to ${url} failed:`, err);
-        return { kind: 'network', error: 'Could not reach the server. Please try again.' };
+        return { kind: 'network', error: err && err.name === 'AbortError'
+            ? 'The server took too long to respond. Nothing was changed; please try again.'
+            : 'Could not reach the server. Please try again.' };
     }
+    clearTimeout(timer);
     let data = null;
     try { data = await res.json(); } catch (_) { data = null; }
     if (res.status >= 500 || !data || typeof data !== 'object') {
         console.error(`Local Scheduler server error from ${url}: HTTP ${res.status}`, data);
+        // The server logs the real exception; show its safe message when it sent one.
+        const _srvMsg = data && typeof data === 'object' && data.error ? data.error : null;
         return { kind: 'server', status: res.status, data,
-                 error: 'The server could not complete the Local Scheduler request. Please try again or contact the administrator.' };
+                 error: (_srvMsg || 'The server could not complete the Local Scheduler request.')
+                        + ' Nothing was changed. The error was recorded on the server; please try again or contact the administrator.' };
     }
     if (!res.ok || !data.success) {
         return { kind: 'rejected', status: res.status, data,
@@ -8124,6 +8897,8 @@ async function _localApiRequest(url, options = {}) {
 function _showLocalApiFailure(result, rejectedTitle) {
     if (result.kind === 'network') return showValidationModal('Network Error', result.error);
     if (result.kind === 'server')  return showValidationModal('Server Error', result.error);
+    if (result.data && result.data.code === 'UPCOMING_MAKEUP_CLASS')
+        return showValidationModal('Make-up Class Not Yet Done', result.error);
     return showValidationModal(rejectedTitle, result.error);
 }
 
@@ -8357,13 +9132,75 @@ async function saveLocalArrangement(skipModal = false, options = {}) {
     }
 }
 
-function _showLocalReasonModal() {
+// The slices a Local save changes, for the save prompt and the automatic reason:
+// [{ subject, slice, from, to }] — 'from' is the Official/loaded slot, 'to' the new one
+// (from is '' for a new slice). Same "changed" test the save itself applies.
+function _localChangedSlices() {
+    const ay  = document.getElementById('sel_ay')?.value  || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    const roomName = id => id === 'TBA' ? 'TBA'
+        : ((typeof allRooms !== 'undefined' && allRooms.find(r => String(r.id) === String(id))?.name) || '');
+    const fmt = (d, st, en, room) => `${d || '—'} ${st || '—'}–${en || '—'}${room ? ' · ' + room : ''}`;
+    const rows = Array.from(document.querySelectorAll('.ts-row'));
+    const sliceNo = tempId => {
+        const idx = rows.findIndex(r => {
+            try { return JSON.parse(r.dataset.existingJson || '{}')._localTempId === tempId; } catch (e) { return false; }
+        });
+        return idx >= 0 ? idx + 1 : null;
+    };
+    return (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])
+        .filter(c => !c.isPreview && c.ay === ay && c.sem === sem &&
+                     (!c.section_id || String(c.section_id) === String(sect)) &&
+                     c.day && c.start_time && c.end_time)
+        .filter(c => {
+            const o = c._loaded;
+            if (!c.fromExisting || !o) return true;                    // new slice
+            return String(c.day || '') !== String(o.day || '')
+                || String(c.start_time || '') !== String(o.start_time || '')
+                || String(c.end_time || '') !== String(o.end_time || '')
+                || String(c.room_id ?? '') !== String(o.room_id ?? '');
+        })
+        .map(c => ({
+            subject: String(c.subject_code || c.subjectcode || '').toUpperCase(),
+            slice:   sliceNo(c.temp_id),
+            from:    c._loaded ? fmt(c._loaded.day, c._loaded.start_time, c._loaded.end_time, roomName(c._loaded.room_id)) : '',
+            to:      fmt(c.day, c.start_time, c.end_time, c.room || roomName(c.room_id)),
+        }));
+}
+
+// Used when the user leaves the reason blank: the backend keeps a reason for the audit
+// trail, so record what actually changed instead of asking for one.
+function _localAutoReason(changes) {
+    if (!changes || !changes.length) return 'Local schedule adjustment';
+    const parts = changes.slice(0, 4).map(c =>
+        `${c.subject}${c.slice ? ' Slice ' + c.slice : ''}: ${c.from ? c.from + ' → ' : ''}${c.to}`);
+    return 'Local adjustment — ' + parts.join('; ') + (changes.length > 4 ? ` (+${changes.length - 4} more)` : '');
+}
+
+function _showLocalReasonModal(changes) {
     return new Promise(resolve => {
         const modal   = document.getElementById('localReasonModal');
         const input   = document.getElementById('localReasonInput');
         const btnOk   = document.getElementById('localReasonOkBtn');
         const btnCancel = document.getElementById('localReasonCancelBtn');
         if (!modal) { resolve(''); return; }
+
+        const box = document.getElementById('localReasonSlices');
+        if (box) {
+            const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            if (Array.isArray(changes)) {
+                box.innerHTML = `<div class="lr-slices-title">Slices to save</div>` + (changes.length
+                    ? changes.map(c => `<div class="lr-slice">
+                        <div class="lr-slice-name">${esc(c.subject)}${c.slice ? ` · Slice ${c.slice}` : ''}</div>
+                        ${c.from ? `<div class="lr-slice-from">${esc(c.from)}</div><i class="fas fa-arrow-down lr-slice-arrow"></i>` : '<div class="lr-slice-from">New slice</div>'}
+                        <div class="lr-slice-to">${esc(c.to)}</div></div>`).join('')
+                    : `<div class="lr-slice-none">No changed slices — the current Local schedule will be saved as is.</div>`);
+                box.style.display = '';
+            } else {
+                box.innerHTML = ''; box.style.display = 'none';
+            }
+        }
 
         input.value = '';
         modal.style.display = 'flex';
@@ -8727,9 +9564,91 @@ async function selectFlFaculty(empNum, name) {
         // between Teaching Assignment / Calendar View is instant (no re-fetch needed).
         _flCurrentSessions = data.sessions || [];
         renderFlCalendar(_flCurrentSessions);
+        if (IS_LOCAL) _flLoadLocalSchedule(empNum, name, ayId, sem);
     } catch(e) {
         _flShowMsg('Failed to load: ' + e.message);
     }
+}
+
+/* ── Faculty Load (Local Scheduler): LOCAL SCHEDULE card ──────────────────
+   The faculty's active Published Local Arrangement sessions. Edit opens that
+   section + subject in the Local editor; Delete archives the arrangement, which
+   reverts ALL of its subjects to the Official schedule (said in the prompt). */
+let _flLocalRows = [];
+let _flLocalFaculty = { emp: '', name: '' };
+function _flEsc(t) {
+    return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function _flLoadLocalSchedule(empNum, name, ayId, sem) {
+    const body = document.getElementById('fl-local-body');
+    if (!body) return;
+    _flLocalFaculty = { emp: empNum, name: name || empNum };
+    body.innerHTML = '<tr><td colspan="7" class="fl-no-data">Loading…</td></tr>';
+    try {
+        const r = await fetch(`/api/local/faculty_sessions?emp_num=${encodeURIComponent(empNum)}` +
+            `&ay_id=${encodeURIComponent(ayId)}&sem=${encodeURIComponent(sem)}`);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Could not load');
+        _flLocalRows = d.sessions || [];
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="7" class="fl-no-data">${_flEsc(e.message)}</td></tr>`;
+        return;
+    }
+    _flLocalRows.forEach(x => _rememberLocalUpdatedAt(x.arrangementid, x.updated_at));
+    body.innerHTML = _flLocalRows.length
+        ? _flLocalRows.map((x, i) => `<tr>
+            <td>${_flEsc(x.subjectcode)}</td>
+            <td>${_flEsc(x.subjectname)}</td>
+            <td>${_flEsc(x.sectionname || '—')}</td>
+            <td>${_flEsc(x.daydesc)}</td>
+            <td>${_flEsc(x.start_time)} - ${_flEsc(x.end_time)}</td>
+            <td>${_flEsc(x.roomname || 'TBA')}</td>
+            <td class="fl-actions-col">
+                <button class="fl-act-btn" title="Edit in the Local Scheduler" onclick="_flEditLocal(${i})"><i class="fas fa-pen"></i></button>
+                <button class="fl-act-btn fl-act-del" title="Remove (revert to Official)" onclick="_flDeleteLocal(${i})"><i class="fas fa-trash-can"></i></button>
+            </td></tr>`).join('')
+        : '<tr><td colspan="7" class="fl-no-data">No local schedule for this faculty</td></tr>';
+}
+
+// Open the row's section + subject in the Local editor (same URL scheme as the mode switch).
+function _flEditLocal(i) {
+    const x = _flLocalRows[i];
+    if (!x) return;
+    const params = new URLSearchParams({
+        scheduler: 'local',
+        ay:   document.getElementById('sel_ay')?.value  || '',
+        sem:  document.getElementById('sel_sem')?.value || '',
+        prog: x.programcode || '', yl: String(x.yearlevel || ''),
+        sect: String(x.sectionid || ''), sect_name: x.sectionname || '',
+        subj: x.subjectcode || '',
+    });
+    _guardedNavigate(`${MSE_BASE_URL}?${params.toString()}`);
+}
+
+async function _flDeleteLocal(i) {
+    const x = _flLocalRows[i];
+    if (!x) return;
+    const subjects = String(x.arrangement_subjects || x.subjectcode);
+    const several = subjects.includes(',');
+    const ok = await showConfirmModal(
+        `Remove the Local Arrangement for ${x.sectionname || 'this section'}?\n\n` +
+        (several
+            ? `This arrangement covers: ${subjects}. All of them go back to their Official schedule.`
+            : `${x.subjectcode} goes back to its Official schedule.`),
+        'Remove Local Schedule');
+    if (!ok) return;
+    const result = await _localApiRequest(`/api/local/arrangement/${x.arrangementid}/deactivate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expected_updated_at: _localArrUpdatedAt[String(x.arrangementid)] || null }),
+    });
+    if (result.kind !== 'ok') { await _showLocalApiFailure(result, 'Cannot Remove'); return; }
+    await showValidationModal('Local Schedule Removed',
+        `${several ? subjects + ' are' : x.subjectcode + ' is'} back on the Official schedule.`);
+    // Refresh this tab and the editor's view of the section.
+    selectFlFaculty(_flLocalFaculty.emp, _flLocalFaculty.name);
+    if (typeof refreshScheduleGrid === 'function') refreshScheduleGrid();
+    if (typeof _updateSubjectList === 'function') _updateSubjectList().catch(() => {});
 }
 
 function _flShowMsg(msg) {
@@ -8737,6 +9656,8 @@ function _flShowMsg(msg) {
     const pt  = document.getElementById('fl-parttime-body');
     if (reg) reg.innerHTML = `<tr><td colspan="7" class="fl-no-data">${msg}</td></tr>`;
     if (pt)  pt.innerHTML  = `<tr><td colspan="7" class="fl-no-data">—</td></tr>`;
+    const loc = document.getElementById('fl-local-body');
+    if (loc && msg !== 'Loading…') loc.innerHTML = `<tr><td colspan="7" class="fl-no-data">${msg}</td></tr>`;
     _flCurrentSessions = [];
     renderFlCalendar([]);
 }
@@ -8762,14 +9683,14 @@ function _setFlView(mode) {
         if (calView)   calView.style.display   = '';
         if (btnT) btnT.classList.remove('sched-mode-active');
         if (btnC) btnC.classList.add('sched-mode-active');
-        if (heading) heading.textContent = 'WEEKLY CALENDAR';
+        if (heading) heading.textContent = IS_LOCAL ? 'OFFICIAL WEEKLY CALENDAR' : 'WEEKLY CALENDAR';
         renderFlCalendar(_flCurrentSessions);
     } else {
         if (tableView) tableView.style.display = '';
         if (calView)   calView.style.display   = 'none';
         if (btnC) btnC.classList.remove('sched-mode-active');
         if (btnT) btnT.classList.add('sched-mode-active');
-        if (heading) heading.textContent = 'TEACHING ASSIGNMENTS';
+        if (heading) heading.textContent = IS_LOCAL ? 'OFFICIAL TEACHING ASSIGNMENTS' : 'TEACHING ASSIGNMENTS';
     }
 }
 
@@ -8826,13 +9747,14 @@ function renderFlCalendar(sessions) {
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
             pill.style.backgroundColor = (typeof getSubjectColor === 'function')
-                ? getSubjectColor(sess.subjectcode) : '#630100';
+                ? getSubjectColor(sess.subjectcode, String(sess.schedule_source || '').toLowerCase() === 'local') : '#630100';
 
             const w     = (colWidth - 6) / (overlapCount || 1);
             const pillH = Math.max((sess.e - sess.s) * rowHeight - 6, 20);
             pill.style.width  = (w - 2) + 'px';
             pill.style.height = pillH + 'px';
             pill.style.left   = (leftOffset + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
+            pill.dataset.dayIdx = dayIdx; pill.dataset.ovIdx = overlapIndex; pill.dataset.ovCnt = overlapCount || 1;  // for _reflowPills
             pill.style.top    = (topOffset + (sess.s - 1) * rowHeight + 3) + 'px';
             pill.style.cursor = 'default';
             pill.title = `${sess.subjectcode} — ${sess.subjectname || ''}\n${sess.time_range}\n${sess.year_section || ''}\n${sess.room || 'TBA'}`;
@@ -9425,16 +10347,14 @@ async function publishLocalArrangementFromEditor() {
     // Save the current Local Scheduler state as a Draft first. Publishing is a
     // separate lifecycle transition so the active Published Local Arrangement
     // is never edited in place.
+    const _changes = _localChangedSlices();
     const reason = (typeof _showLocalReasonModal === 'function')
-        ? await _showLocalReasonModal()
-        : window.prompt('Reason for publishing this Local Arrangement:');
+        ? await _showLocalReasonModal(_changes)
+        : window.prompt('Reason for publishing this Local Arrangement (optional):');
     if (reason === null) return;
 
-    const cleanReason = String(reason || '').trim();
-    if (!cleanReason) {
-        await showValidationModal('Reason Required', 'Enter a reason before publishing the Local Arrangement.');
-        return;
-    }
+    // Reason is optional: a blank one records what changed instead.
+    const cleanReason = String(reason || '').trim() || _localAutoReason(_changes);
 
     const btn = document.getElementById('btnPublishLocalArr');
     if (btn?.disabled) return;
@@ -9519,6 +10439,13 @@ async function _publishLocalArrangementRequest(arrId, reason) {
     try {
         if (typeof _loadVersionHistoryPanel === 'function') _loadVersionHistoryPanel();
         if (typeof refreshScheduleGrid === 'function') await refreshScheduleGrid();
+        // The open subject's slices must show the new effective (Local Published) state,
+        // exactly as a fresh open would — same reload Local Save performs.
+        if (_currentSubjectCode && typeof triggerDSSLogic === 'function') {
+            _skipExistingCheck = false;
+            await triggerDSSLogic();
+        }
+        if (typeof _updateSubjectList === 'function') _updateSubjectList().catch(() => {});
     } catch (uiErr) {
         console.error('Local Arrangement published, but refreshing the editor failed:', uiErr);
     }
@@ -9533,17 +10460,14 @@ async function publishLocalArrangement(arrId, btn) {
     if (!ok) return;
 
     // PHASE 3 — the publication reason belongs to the Draft -> Published
-    // transition and is required by the backend for audit/history.
+    // transition and is kept by the backend for audit/history. Optional for the
+    // user: a blank one is recorded as a plain Version History publish.
     const reason = (typeof _showLocalReasonModal === 'function')
         ? await _showLocalReasonModal()
-        : window.prompt('Reason for publishing this Local Arrangement:');
+        : window.prompt('Reason for publishing this Local Arrangement (optional):');
     if (reason === null) return;
 
-    const cleanReason = String(reason || '').trim();
-    if (!cleanReason) {
-        await showValidationModal('Reason Required', 'Enter a reason before publishing the Local Arrangement.');
-        return;
-    }
+    const cleanReason = String(reason || '').trim() || 'Published from Version History';
 
     const btnLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
@@ -10093,21 +11017,21 @@ async function restoreVersion(versionId, btn) {
 
     // Step 1 — first confirmation
     const step1 = await showConfirmModal(
-        `You are about to restore Revision ${_rLabel}.\n\nThis will replace the current active ${isPub ? 'Published' : 'Draft'} schedule with the selected revision.`,
+        `You are about to restore Revision ${_rLabel} as a new Draft.\n\nIt replaces this section's current Draft. The Published schedule stays live until you publish the restored Draft.`,
         `Restore Revision ${_rLabel}`
     );
     if (!step1) return;
 
-    // Step 2 — final confirmation (cannot be undone)
+    // Step 2 — final confirmation
     const step2 = await showConfirmModal(
-        `Are you sure you want to restore Revision ${_rLabel}?\n\nThis action cannot be undone.`,
+        `Are you sure you want to restore Revision ${_rLabel} as the new Draft?`,
         'Final Confirmation'
     );
     if (!step2) return;
 
-    // Published revisions always restore as Published (no "Restore as Draft" option).
-    // Draft revisions always restore as Draft.
-    const mode = isPub ? 'replace' : 'draft';
+    // Every revision restores as a new Draft. Only Publish may replace the live Published
+    // schedule (with its validation, conflict checks and Local Scheduler sync).
+    const mode = 'draft';
 
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
     try {
@@ -10118,10 +11042,9 @@ async function restoreVersion(versionId, btn) {
         });
         const data = await res.json();
         if (data.success) {
-            const restoredAs = data.restore_as || origStatus;
             await showValidationModal('Restore Complete',
-                `Revision ${_rLabel} has been restored as the new active ${restoredAs} schedule. ` +
-                `The previous version has been archived.`);
+                `Revision ${_rLabel} has been restored as the new Draft. ` +
+                `The Published schedule is unchanged until you publish this Draft.`);
             await _loadVersionHistoryPanel();
             _loadDraftListPanel();
             if (typeof _updateSubjectList === 'function') await _updateSubjectList();
@@ -10331,9 +11254,13 @@ function _presentLocalEffectiveConflicts(conflicts) {
         parts.push(`${type} conflict${rows.length === 1 ? '' : 's'} (${rows.length})\n${examples.join('\n')}`);
     });
 
+    const draftNote = items.some(c => c.source === 'Official Draft')
+        ? '\n\n"Official Draft" = the faculty\'s pending Official schedule. It is not live yet, ' +
+          'but approving it would double-book the faculty, so this slot is not available.'
+        : '';
     const message =
         'This Local Arrangement cannot be published because it conflicts with the effective schedule.\n\n' +
-        parts.join('\n\n');
+        parts.join('\n\n') + draftNote;
 
     if (typeof showValidationModal === 'function') {
         showValidationModal('Local Schedule Conflict', message);

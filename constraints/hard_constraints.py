@@ -11,9 +11,11 @@ from .registry import HARD_CONSTRAINT_IDS, get_hard_constraints
 
 CURRENT_HARD_CONSTRAINT_IDS = HARD_CONSTRAINT_IDS
 
-# Only rules that CSPValidator can currently emit directly as final HC
-# violations. HC15 is still distributed; HC16 is a decision primitive; HC17 is
-# folded into HC9. Former HC_SPEC is intentionally not a final hard constraint.
+# Rules CSPValidator can emit directly as final HC violations. HC15 is still
+# distributed; HC16 is a decision primitive; HC17 is folded into HC9. HC14 is
+# listed because its check exists, but it is INACTIVE in practice: no
+# class-size/enrollment data exists, so it never emits today. Former HC_SPEC is
+# intentionally not a final hard constraint.
 VIOLATION_EMITTING_IDS = (
     "HC1", "HC2", "HC3", "HC4", "HC5", "HC6", "HC7",
     "HC8", "HC9", "HC10", "HC11", "HC12", "HC13", "HC14",

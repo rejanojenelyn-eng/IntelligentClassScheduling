@@ -1,11 +1,12 @@
 {% extends "faculty/base_faculty.html" %}
 
+
 {% block head %}
     {{ super() }}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/teaching_faculty.css') }}">
+    <!-- Shared export dialog (same one as Faculty List / Reports exports) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/export_modal.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <style>
         /* ── Calendar Grid ── */
         .cal-wrapper {
@@ -55,6 +56,7 @@
         }
         .cal-table tbody tr:nth-child(even) td:not(.tc) { background: #fafafa; }
 
+
         /* ── Pills ── */
         .cal-pill {
             position: absolute;
@@ -81,6 +83,7 @@
         .cal-pill.local-pill { border: 2px dashed rgba(255,255,255,0.7); }
         .cal-pill-code { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
         .cal-pill-sub  { font-size: 0.6rem; opacity: 0.88; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
 
         /* ── Detail Panel (read-only popup) ── */
         .detail-overlay {
@@ -123,6 +126,7 @@
         }
         .detail-close:hover { background: #7a0100; }
 
+
         .cal-empty-msg {
             text-align: center;
             padding: 40px;
@@ -130,9 +134,11 @@
             font-size: 0.85rem;
         }
 
+
         /* ── Table status badge ── */
         .badge-pub  { background: #27ae60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
         .badge-draft{ background: #8e9ca0; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; }
+
 
         /* ── TA totals ── */
         .total-units {
@@ -158,8 +164,10 @@
     </style>
 {% endblock %}
 
+
 {% block content %}
 <div class="teaching-assignment-wrapper">
+
 
     <!-- Page header: icon + title/subtitle, summary cards (per active tab) -->
     <div class="ta-page-header">
@@ -167,15 +175,9 @@
             <i class="fa-regular fa-calendar-days"></i>
             <div>
                 <h1 id="taPageTitle">MY WEEKLY SCHEDULE</h1>
-                <div class="ta-page-sub">
-                    <span id="taFacName">—</span>
-                    <span class="ta-sub-dot">&bull;</span>
-                    <span id="taAyLabel">{{ active_ay_id }}</span>
-                    <span class="ta-sub-dot">&bull;</span>
-                    <span id="taSemLabel">{{ active_sem }}</span>
-                </div>
             </div>
         </div>
+
 
         <div class="ta-stat-row" id="statsWeekly">
             <div class="ta-stat-card">
@@ -191,6 +193,7 @@
                 <div class="ta-stat-icon ta-ic-blue"><i class="fa-solid fa-graduation-cap"></i></div>
             </div>
         </div>
+
 
         <div class="ta-stat-row" id="statsAssignment" style="display:none;">
             <div class="ta-stat-card">
@@ -211,6 +214,7 @@
             </div>
         </div>
     </div>
+
 
     <!-- Tab Navigation + shared toolbar (Official/Local + Export) -->
     <div class="ta-tabs-row">
@@ -233,17 +237,24 @@
         </div>
     </div>
 
+
     <!-- ── WEEKLY SCHEDULE TAB ── -->
     <div id="tab-weekly">
 
+
         <div class="ta-legend-row" id="calLegend"></div>
 
+
         <div class="ta-week-toolbar">
-            <div class="ta-nav-group">
-                <button type="button" class="ta-nav-btn" onclick="navWeek(-1)" title="Previous week"><i class="fa-solid fa-chevron-left"></i></button>
-                <button type="button" class="ta-nav-btn ta-nav-today" onclick="navWeek('today')">TODAY</button>
-                <button type="button" class="ta-nav-btn" onclick="navWeek(1)" title="Next week"><i class="fa-solid fa-chevron-right"></i></button>
-                <span class="ta-week-label" id="weekRangeLabel"></span>
+            <div class="ta-nav-group" role="group" aria-label="Week navigation">
+                <button type="button" class="ta-nav-btn" id="weekPrevBtn" onclick="navWeek(-1)"
+                        title="Previous week" aria-label="Previous week"><i class="fa-solid fa-chevron-left"></i></button>
+                <button type="button" class="ta-nav-btn ta-nav-today" id="weekTodayBtn" onclick="navWeek('today')"
+                        title="Go to the current week">TODAY</button>
+                <button type="button" class="ta-nav-btn" id="weekNextBtn" onclick="navWeek(1)"
+                        title="Next week" aria-label="Next week"><i class="fa-solid fa-chevron-right"></i></button>
+                <span class="ta-week-label" id="weekRangeLabel" aria-live="polite"></span>
+                <span class="ta-week-badge" id="weekRelBadge"></span>
             </div>
             <div class="ta-program-filter">
                 <select id="programFilter" onchange="onProgramFilterChange()">
@@ -252,13 +263,19 @@
             </div>
         </div>
 
+
+        <div class="cal-week-note" id="calWeekNote" style="display:none;"></div>
+
+
         <div class="cal-wrapper">
             <div class="cal-inner" id="calInner">
                 <table class="cal-table" id="calTable">
                     <thead>
                         <tr>
                             <th class="tc">TIME</th>
-                            <th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
+                            {% for d in ['MON','TUE','WED','THU','FRI','SAT','SUN'] %}
+                            <th class="cal-day-th"><span class="cal-th-day">{{ d }}</span><span class="cal-th-date"></span></th>
+                            {% endfor %}
                         </tr>
                     </thead>
                     <tbody>
@@ -275,8 +292,10 @@
         </div>
     </div>
 
+
     <!-- ── TEACHING ASSIGNMENT TAB (official schedule only) ── -->
     <div id="tab-assignment" style="display:none;">
+
 
         <div class="ta-faculty-box">
             <div class="ta-faculty-box-name" id="taFacBoxName">—</div>
@@ -287,9 +306,11 @@
             </div>
         </div>
 
+
         <div id="taEmptyMsg" class="cal-empty-msg" style="display:none;">
             No published teaching assignments are available for this academic period.
         </div>
+
 
         <div id="taTablesWrap">
             <div class="load-section">
@@ -318,6 +339,7 @@
                 </div>
             </div>
 
+
             <div class="load-section">
                 <h2>PART TIME LOAD</h2>
                 <div class="table-container">
@@ -344,6 +366,7 @@
                 </div>
             </div>
 
+
             <!-- Overall total bar -->
             <div class="overall-total-bar" id="overall-total-bar">
                 OVERALL TOTAL TEACHING LOAD: <span id="total-overall-units">—</span> units
@@ -351,7 +374,9 @@
         </div>
     </div>
 
+
 </div>
+
 
 <!-- Detail Modal (read-only) -->
 <div id="detailModal" class="detail-overlay">
@@ -372,10 +397,109 @@
     </div>
 </div>
 
+
+<!-- EXPORT MODAL — same dialog as Reports > Subject/Faculty Assignment Export
+     (emp-export-* in css/export_modal.css). Shared by both tabs: Teaching
+     Assignment export, or Weekly Schedule export of the week on screen. -->
+<div id="taExportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeTaExportModal()">
+    <div class="emp-export-dialog">
+        <div class="emp-export-header">
+            <div class="emp-export-header-icon"><i class="fas fa-chalkboard-teacher" id="taExpHeaderIcon"></i></div>
+            <div>
+                <h2 id="taExpTitle">Teaching Assignment Export</h2>
+                <p>Choose one or more formats, then click Export</p>
+            </div>
+            <button class="emp-export-close" onclick="closeTaExportModal()">&#215;</button>
+        </div>
+        <div class="emp-export-summary">
+            <div class="emp-export-summary-icon"><i class="fas fa-list-alt"></i></div>
+            <div>
+                <span class="emp-export-count" id="taExpCount">0</span>
+                <span class="emp-export-count-label" id="taExpCountLabel">Assignments to Export</span>
+            </div>
+            <div class="emp-export-summary-info" id="taExpScopeLabel">—</div>
+        </div>
+
+
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Export Format</span>
+                <button type="button" class="emp-export-select-all" id="taExpFmtAllBtn" onclick="_toggleTaAllFmts()">Select All</button>
+            </div>
+            <div class="emp-export-format-grid">
+                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="_selectTaFmt(this)">
+                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
+                    <div class="emp-format-name">PDF</div>
+                    <div class="emp-format-desc">Portable document format</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="_selectTaFmt(this)">
+                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
+                    <div class="emp-format-name">Excel (XLSX)</div>
+                    <div class="emp-format-desc">Microsoft Excel workbook</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="_selectTaFmt(this)">
+                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
+                    <div class="emp-format-name">CSV</div>
+                    <div class="emp-format-desc">Comma separated values</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="_selectTaFmt(this)">
+                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
+                    <div class="emp-format-name">Word (DOCX)</div>
+                    <div class="emp-format-desc">Microsoft Word document</div>
+                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
+                </div>
+            </div>
+            <div class="emp-export-format-error" id="taExpFmtError" style="display:none;">
+                Please select at least one export format.
+            </div>
+        </div>
+
+
+        <div class="emp-export-section">
+            <label class="emp-export-label">Export Filename</label>
+            <div class="emp-filename-input-wrapper">
+                <i class="fas fa-file-signature"></i>
+                <input type="text" id="taExpFilenameInput" class="emp-filename-input" value="Teaching_Assignment" placeholder="Enter filename...">
+            </div>
+        </div>
+
+
+        <div class="emp-export-footer">
+            <button class="emp-export-cancel" onclick="closeTaExportModal()">Cancel</button>
+            <button class="emp-export-confirm" id="taExpConfirmBtn" onclick="executeTaExport()" disabled>
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<div id="taExportLoadingOverlay" style="display:none;" class="emp-export-loading">
+    <div class="emp-export-loading-card">
+        <div class="emp-export-spinner"></div>
+        <div class="emp-export-loading-text" id="taExportLoadingText">Preparing export...</div>
+        <div class="emp-export-loading-sub" id="taExportLoadingSubText">Please wait</div>
+    </div>
+</div>
+<div id="taExportToast" class="emp-export-toast" style="display:none;">
+    <div class="emp-export-toast-icon" id="taExportToastIcon"></div>
+    <div class="emp-export-toast-body">
+        <div class="emp-export-toast-title" id="taExportToastTitle"></div>
+        <div class="emp-export-toast-msg" id="taExportToastMsg"></div>
+    </div>
+    <button class="emp-export-toast-close" onclick="document.getElementById('taExportToast').style.display='none'">&#215;</button>
+</div>
+
+
 <script>
 const EMP_NUM = '{{ emp_num }}';
 const AY_ID  = '{{ active_ay_id }}';
 const SEM    = '{{ active_sem }}';
+const SEM_START = '{{ sem_start or "" }}';   // YYYY-MM-DD, '' when not set
+const SEM_END   = '{{ sem_end or "" }}';
 </script>
-<script src="{{ url_for('static', filename='js/FACULTY/teaching.faculty.js') }}"></script>
+<script src="{{ url_for('static', filename='js/FACULTY/teaching.faculty.js') }}?v=20261005a"></script>
 {% endblock %}

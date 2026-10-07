@@ -51,35 +51,69 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // ── Assignment table filter + sort ────────────────────────────────────────────
 function filterAssignments() {
-    const search     = (document.getElementById('searchAssign')?.value    || '').toLowerCase();
+    const search     = (document.getElementById('searchAssign')?.value     || '').toLowerCase();
     const currFilter = (document.getElementById('filterAssignCurr')?.value || '').toLowerCase();
     const progFilter = (document.getElementById('filterAssignProg')?.value || '').toLowerCase();
+    const ayFilter   = (document.getElementById('filterAssignAy')?.value   || '');
+    const visibleProgs = new Set();
+    let visible = 0;
     document.querySelectorAll('#assignmentTable tbody tr').forEach(row => {
-        const currText = (row.dataset.curr || row.cells[0]?.textContent || '').toLowerCase().trim();
-        const progCode = (row.dataset.prog || '').toLowerCase().trim();
-        const progText = (row.cells[1]?.textContent || '').toLowerCase().trim();
+        const currText = (row.dataset.curr || '').toLowerCase().trim();
+        const progText = (row.dataset.prog || '').toLowerCase().trim();
+        const progCode = (row.dataset.progcode || '').toLowerCase().trim();
         const matchSearch = !search     || currText.includes(search) || progText.includes(search);
         const matchCurr   = !currFilter || currText === currFilter;
-        const matchProg   = !progFilter || progCode.startsWith(progFilter);
-        row.style.display = (matchSearch && matchCurr && matchProg) ? '' : 'none';
+        const matchProg   = !progFilter || progCode === progFilter;
+        const matchAy     = !ayFilter   || (row.dataset.ay || '') === ayFilter;
+        const show = matchSearch && matchCurr && matchProg && matchAy;
+        row.style.display = show ? '' : 'none';
+        if (show) { visible++; visibleProgs.add(progCode || progText); }
     });
+    const countEl = document.getElementById('assignProgCount');
+    if (countEl) countEl.textContent = visibleProgs.size;
+    const empty = document.getElementById('assignEmptyMsg');
+    if (empty) empty.style.display = visible ? 'none' : '';
 }
 
-let _sortAssignAsc = true;
-function sortAssignTable() {
+// Column sort: Sort dropdown (program A–Z / Z–A) and clickable column headers.
+// Clicking the active column again flips its direction.
+let _assignSort = { key: 'prog', asc: true };
+function setAssignSort(key, asc) {
+    if (asc === undefined) asc = _assignSort.key === key ? !_assignSort.asc : true;
+    _assignSort = { key, asc };
     const tbody = document.querySelector('#assignmentTable tbody');
     if (!tbody) return;
+    const val = (r) => {
+        if (key === 'yl' || key === 'sect') return Number(r.dataset[key] || 0);
+        return String(r.dataset[key] || '').trim().toLowerCase();
+    };
     const rows = Array.from(tbody.querySelectorAll('tr'));
     rows.sort((a, b) => {
-        const pa = (a.dataset.prog || a.cells[1]?.textContent || '').trim().toLowerCase();
-        const pb = (b.dataset.prog || b.cells[1]?.textContent || '').trim().toLowerCase();
-        return _sortAssignAsc ? pa.localeCompare(pb) : pb.localeCompare(pa);
+        const va = val(a), vb = val(b);
+        let c = typeof va === 'number' ? va - vb : va.localeCompare(vb);
+        if (c === 0 && key !== 'prog') c = String(a.dataset.prog || '').localeCompare(String(b.dataset.prog || ''));
+        if (c === 0 && key === 'prog') c = Number(a.dataset.yl || 0) - Number(b.dataset.yl || 0);
+        return asc ? c : -c;
     });
-    _sortAssignAsc = !_sortAssignAsc;
     rows.forEach(r => tbody.appendChild(r));
-    const btn = document.getElementById('sortAssignBtn');
-    if (btn) btn.innerHTML = `<i class="fas fa-sort-amount-${_sortAssignAsc ? 'down' : 'up'}-alt"></i> SORT: ${_sortAssignAsc ? 'A-Z' : 'Z-A'}`;
+    document.querySelectorAll('#assignmentTable th.cm-sortable').forEach(th => {
+        const on = th.dataset.sort === key;
+        th.classList.toggle('cm-sorted', on);
+        const ic = th.querySelector('i');
+        if (ic) ic.className = on ? `fas fa-sort-${asc ? 'up' : 'down'}` : 'fas fa-sort';
+    });
+    const sel = document.getElementById('sortAssignSel');
+    if (sel && key === 'prog') sel.value = asc ? 'asc' : 'desc';
+    if (sel && typeof _cmDdSync === 'function') _cmDdSync(sel);
 }
+// Back-compat for any old caller: toggle program A–Z / Z–A.
+function sortAssignTable() { setAssignSort('prog', !(_assignSort.key === 'prog' && _assignSort.asc)); }
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!document.getElementById('assignmentTable')) return;
+    setAssignSort('prog', true);
+    filterAssignments();
+});
 
 // ── Syllabi program filter ────────────────────────────────────────────────────
 function filterSyllabiByProgram(code) {
@@ -1633,3 +1667,109 @@ function _doImportConfirm(override) {
     document.getElementById('pdfConfirmHasBridging').value = _pdfHasBridging ? '1' : '0';
     document.getElementById('pdfConfirmForm').submit();
 }
+
+// ── Roomy custom dropdowns for the .cm-select toolbar filters ────────────────
+// The native <select> list can't be styled (cramped rows), so each .cm-select gets a
+// custom panel. The hidden <select> stays the source of truth: picking an item sets its
+// value and fires its normal 'change' handler (filterAssignments, setAssignSort, ...).
+// Long lists (> 8 options) get a search box.
+function _cmDdSync(sel) {
+    const wrap = sel && sel.closest('.cm-select');
+    const out = wrap && wrap.querySelector('.cm-dd-value');
+    if (out) out.textContent = sel.options[sel.selectedIndex]?.text || '';
+}
+
+function _cmDdClose(except) {
+    document.querySelectorAll('.cm-select.cm-dd-open').forEach(w => {
+        if (w !== except) w.classList.remove('cm-dd-open');
+    });
+}
+
+function _cmDdInit(wrap) {
+    const sel = wrap.querySelector('select');
+    if (!sel || wrap.dataset.cmDd) return;
+    wrap.dataset.cmDd = '1';
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('role', 'combobox');
+    wrap.setAttribute('aria-haspopup', 'listbox');
+    sel.classList.add('cm-dd-native');
+    sel.setAttribute('tabindex', '-1');
+    sel.setAttribute('aria-hidden', 'true');
+
+    const value = document.createElement('span');
+    value.className = 'cm-dd-value';
+    sel.insertAdjacentElement('afterend', value);
+
+    const menu = document.createElement('div');
+    menu.className = 'cm-dd-menu';
+    menu.setAttribute('role', 'listbox');
+    const withSearch = sel.options.length > 8;
+    menu.innerHTML = (withSearch
+        ? '<div class="cm-dd-search"><i class="fas fa-magnifying-glass"></i><input type="text" placeholder="Search..."></div>'
+        : '') + '<div class="cm-dd-list"></div><div class="cm-dd-empty" style="display:none;">No matches</div>';
+    wrap.appendChild(menu);
+    const list   = menu.querySelector('.cm-dd-list');
+    const search = menu.querySelector('.cm-dd-search input');
+    const empty  = menu.querySelector('.cm-dd-empty');
+
+    const render = () => {
+        list.innerHTML = '';
+        Array.from(sel.options).forEach(o => {
+            const it = document.createElement('div');
+            it.className = 'cm-dd-item' + (o.value === sel.value ? ' active' : '');
+            it.setAttribute('role', 'option');
+            it.dataset.value = o.value;
+            it.innerHTML = '<span></span><i class="fas fa-check"></i>';
+            it.firstChild.textContent = o.text;
+            list.appendChild(it);
+        });
+    };
+    const filter = q => {
+        let shown = 0;
+        list.querySelectorAll('.cm-dd-item').forEach(it => {
+            const ok = !q || it.textContent.toLowerCase().includes(q);
+            it.style.display = ok ? '' : 'none';
+            if (ok) shown++;
+        });
+        empty.style.display = shown ? 'none' : '';
+    };
+    const open = () => {
+        _cmDdClose(wrap);
+        render();
+        wrap.classList.add('cm-dd-open');
+        if (search) { search.value = ''; filter(''); setTimeout(() => search.focus(), 0); }
+        list.querySelector('.cm-dd-item.active')?.scrollIntoView({ block: 'nearest' });
+    };
+    const pick = v => {
+        wrap.classList.remove('cm-dd-open');
+        if (sel.value !== v) {
+            sel.value = v;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        _cmDdSync(sel);
+        wrap.focus();
+    };
+
+    wrap.addEventListener('click', e => {
+        if (e.target.closest('.cm-dd-search')) return;
+        const item = e.target.closest('.cm-dd-item');
+        if (item) { pick(item.dataset.value); return; }
+        e.preventDefault();   // the wrapper is a <label>: never open the hidden native list
+        wrap.classList.contains('cm-dd-open') ? wrap.classList.remove('cm-dd-open') : open();
+    });
+    wrap.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { wrap.classList.remove('cm-dd-open'); wrap.focus(); return; }
+        if ((e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') && !wrap.classList.contains('cm-dd-open')
+            && e.target === wrap) { e.preventDefault(); open(); }
+    });
+    if (search) search.addEventListener('input', () => filter(search.value.trim().toLowerCase()));
+    sel.addEventListener('change', () => _cmDdSync(sel));
+    _cmDdSync(sel);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.curriculum-ui .cm-select').forEach(_cmDdInit);
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.cm-select')) _cmDdClose();
+    });
+});

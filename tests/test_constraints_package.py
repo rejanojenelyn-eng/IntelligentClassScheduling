@@ -98,7 +98,10 @@ def test_get_constraint_details_reports_final_hc_and_sc_inventory():
         'SC1', 'SC2', 'SC3', 'SC4', 'SC5', 'SC6', 'SC7', 'SC8', 'SC9',
     ]
 
-    assert 'hc_section_conflict_enabled' in details['dead_config_keys']
+    # hc_section_conflict_enabled is live now (HC12 Settings switch); only the
+    # program-restrict key remains dead.
+    assert 'hc_section_conflict_enabled' not in details['dead_config_keys']
+    assert 'hc_program_restrict_enabled' in details['dead_config_keys']
 
     # sc1_daytime is ACTIVE as final SC1's weight.
     # sc2_night is deprecated because the old night-class concept

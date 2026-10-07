@@ -28,10 +28,14 @@ def test_publish_retains_server_side_completeness_gate():
 
 
 def test_publish_retains_hc15_cross_schedule_gate_and_hc16_merge_adapter():
+    # Publish delegates HC15/HC16 to the centralized cross-schedule helper;
+    # it must not duplicate the merge adapter inside the endpoint.
     src = _src('api_approve_schedule')
+    cross = _src('_check_cross_schedule_conflicts')
     assert 'HC15 cross-schedule validation' in src
-    assert 'hard_constraints as _hc_adapter' in src
-    assert '_hc_adapter.is_valid_merge' in src
+    assert '_check_cross_schedule_conflicts' in src
+    assert 'hard_constraints as _hc_adapter' in cross
+    assert '_hc_adapter.is_valid_merge' in cross
 
 
 def test_save_draft_comment_uses_final_hc7_number_for_day_pairing():

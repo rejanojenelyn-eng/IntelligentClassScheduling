@@ -1,0 +1,11 @@
+{# Step indicator: Change Password (required) → Email → Profile Picture → Contact Number → Review & Complete #}
+<div class="setup-steps" aria-label="Account setup steps">
+    {% for key, label, _endpoint in steps %}
+    <div class="setup-step {{ 'done' if loop.index0 < step_index else ('current' if loop.index0 == step_index else '') }}"
+         {% if loop.index0 == step_index %}aria-current="step"{% endif %}>
+        <span class="dot">{% if loop.index0 < step_index %}<i class="fas fa-check"></i>{% else %}{{ loop.index }}{% endif %}</span>
+        <span class="label">{{ label }}{% if key == 'password' %}<span class="req">*</span>{% endif %}</span>
+        {% if not loop.last %}<span class="bar"></span>{% endif %}
+    </div>
+    {% endfor %}
+</div>

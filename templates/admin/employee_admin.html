@@ -94,9 +94,27 @@
             </div>
 
             <!-- Specialization -->
-            <div class="filter-group">
+                        <div class="filter-group">
                 <label>Specialization</label>
-                <select id="specFilter" onchange="filterTable()">
+                <div class="spec-search-wrapper" id="specSearchWrapper">
+                    <div class="spec-search-trigger" id="specSearchTrigger">
+                        <span id="specSearchTriggerText">SELECT</span>
+                        <i class="fas fa-chevron-down spec-search-chevron"></i>
+                    </div>
+                    <div class="spec-search-menu" id="specSearchMenu">
+                        <div class="spec-search-box">
+                            <input type="text" id="specSearchInput" class="spec-search-input"
+                                   placeholder="Type to search..." autocomplete="off">
+                        </div>
+                        <div class="spec-search-list" id="specSearchList">
+                            <div class="spec-search-option" data-value="">SELECT</div>
+                            {% for spec in specializations %}
+                            <div class="spec-search-option" data-value="{{ spec.specializationname }}">{{ spec.specializationname }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <select id="specFilter" onchange="filterTable()" style="display:none;">
                     <option value="">SELECT</option>
                     {% for spec in specializations %}
                     <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
@@ -110,7 +128,7 @@
             <button class="btn-secondary" onclick="sortTable()">
                 <i id="sortIcon" class="fas fa-sort-alpha-down"></i> <span id="sortDirection">SORT: A-Z</span> <i class="fas fa-chevron-down" style="font-size:10px; margin-left:4px;"></i>
             </button>
-            <button class="btn-secondary" onclick="openExportModal()">
+            <button class="btn-outline-action" onclick="openExportModal()">
                 <i class="fas fa-upload"></i> EXPORT
             </button>
             <button class="btn-secondary" onclick="openImportTypeModal()">
@@ -132,6 +150,7 @@
             <thead>
                 <tr>
                     <th style="width: 40px; text-align:center;"><input type="checkbox" id="selectAll" class="custom-checkbox"></th>
+                    <th>Employee ID</th>
                     <th>Faculty Name</th>
                     <th>Specialization</th>
                     <th>Email</th>
@@ -141,11 +160,11 @@
                     <th style="text-align: center;">Actions</th>
                 </tr>
             </thead>
-            <tbody>
+         <tbody>
                 {% for emp in employees %}
                 <tr data-emp="{{ emp | tojson | forceescape }}">
                     <td style="text-align:center;"><input type="checkbox" class="row-check custom-checkbox" value="{{ emp.employeenumber }}"></td>
-                    
+                    <td class="emp-id">{{ emp.employeenumber }}</td>
                     <td class="emp-name">
                         <strong>{{ emp.lastname }}, {{ emp.firstname }}</strong>
                     </td>
@@ -170,7 +189,7 @@
                         <i class="far fa-edit edit" 
                             data-emp="{{ emp | tojson | forceescape }}"
                             onclick="openEditFromEl(this)"></i>
-                        <i class="far fa-trash-alt archive" onclick="openArchiveModal('{{ emp.employeenumber }}')"></i>
+                         <i class="fas fa-box-archive archive" title="Archive" onclick="openArchiveModal('{{ emp.employeenumber }}')"></i>
                     </td>
                 </tr>
                 {% endfor %}
@@ -188,7 +207,8 @@
             <h2><i class="fas fa-user-plus"></i> ADD NEW FACULTY</h2>
             <span class="close-btn" onclick="closeAddModal()">&times;</span>
         </div>
-        <form id="addEmployeeForm" action="{{ url_for('admin_add_employee') }}" method="POST">
+        <form id="addEmployeeForm" data-api-action="{{ url_for('admin_api_add_employee') }}">
+            <div id="addFacultyErrorBanner" class="form-error-banner" style="display:none; margin:16px 24px 0;"></div>
             <div class="form-grid">
                 <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" name="first_name" required></div>
@@ -249,8 +269,9 @@
             <h2><i class="fas fa-user-edit"></i> EDIT FACULTY</h2>
             <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
-        <form id="editEmployeeForm" action="{{ url_for('admin_edit_employee') }}" method="POST">
+       <form id="editEmployeeForm" data-api-action="{{ url_for('admin_api_edit_employee') }}">
             <input type="hidden" id="edit_emp_num_original" name="original_employee_number">
+            <div id="editFacultyErrorBanner" class="form-error-banner" style="display:none; margin:16px 24px 0;"></div>
             <div class="form-grid">
                 <div class="form-group full-width"><label>FACULTY NUMBER</label><input type="text" id="edit_emp_num" name="employee_number" required></div>
                 <div class="form-group"><label>FIRST NAME</label><input type="text" id="edit_f_name" name="first_name" required></div>

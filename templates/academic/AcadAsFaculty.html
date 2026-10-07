@@ -17,10 +17,10 @@
 
     <!-- Quick Action Cards -->
     <div class="action-grid">
-        <a href="{{ url_for('schedule') }}" class="btn-action-outline">
+        <a href="{{ url_for('academic_my_teaching_assignment') }}?tab=weekly" class="btn-action-outline">
             <i class="fa-regular fa-calendar-check"></i> View My Schedule
         </a>
-        <a href="{{ url_for('academic_my_teaching_assignment') }}" class="btn-action-outline">
+        <a href="{{ url_for('academic_my_teaching_assignment') }}?tab=assignment" class="btn-action-outline">
             <i class="fa-solid fa-book-open"></i> Teaching Assignment
         </a>
         <a href="{{ url_for('room_schedule_view') }}" class="btn-action-outline">

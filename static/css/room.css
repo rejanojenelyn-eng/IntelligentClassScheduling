@@ -252,16 +252,49 @@
     gap: 6px;
 }
 .btn-outline-action:hover { background: #fdf5f5; border-color: #800000; }
-
-/* Text Banner */
-.available-banner {
-    text-align: center;
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: #800000;
-    letter-spacing: 6px;
-    padding: 5px 0;
+.export-btn-group { position: relative; display: inline-block; }
+.export-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    z-index: 50;
+    min-width: 210px;
+    overflow: hidden;
 }
+.export-dropdown.open { display: block; }
+.export-dropdown-item {
+    padding: 10px 14px;
+    font-size: 0.82rem;
+    color: #444;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.export-dropdown-item:hover { background: #fdf5f5; color: #800000; }
+
+/* Stat cards: double-click to show the room-type list */
+.stat-clickable { cursor: pointer; }
+.rtl-table-wrap { max-height: 360px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; }
+.rtl-table { width: 100%; border-collapse: collapse; }
+.rtl-table th {
+    background: #800000;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+}
+.rtl-table td { padding: 9px 14px; border-bottom: 1px solid #f0eeee; font-size: 0.85rem; color: #444; }
+.rtl-empty { padding: 24px; text-align: center; color: #888; font-size: 0.85rem; }
+
 
 /* --- TABLE CONTAINER --- */
 .table-container {

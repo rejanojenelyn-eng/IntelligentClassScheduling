@@ -32,9 +32,6 @@ function _buildDraftCard(d) {
     const source    = d.source || 'official';
     const isLocal   = source === 'local';
 
-    const sectBadge = sect
-        ? `<span class="dc-badge" style="background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;"><i class="fas fa-users"></i> ${sect}</span>`
-        : '';
 
     const editorUrl = `${MANUAL_EDITOR_URL}?mode=program`
         + `&prog=${encodeURIComponent(d.programcode||'')}`
@@ -63,17 +60,15 @@ function _buildDraftCard(d) {
             <i class="fas ${isLocal ? 'fa-tools' : 'fa-calendar-alt'}"></i>
         </div>
         <div class="draft-card-info">
-            <div class="draft-card-eyebrow">${prog} &bull; Year ${yr}${sect ? ` &bull; ${sect}` : ''}
-                ${isLocal ? '<span style="margin-left:6px;font-size:0.55rem;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:10px;padding:1px 7px;font-weight:900;letter-spacing:0.8px;">LOCAL</span>' : ''}
-            </div>
             <div class="draft-card-title">${label}</div>
             <div class="draft-card-badges">
-                <span class="dc-badge dc-badge-draft"><i class="fas fa-file-alt"></i> Draft</span>
                 <span class="dc-badge dc-badge-ay"><i class="fas fa-graduation-cap"></i> AY ${ayDisplay}</span>
                 <span class="dc-badge dc-badge-sem"><i class="fas fa-book-open"></i> ${semLabel}</span>
-                ${sectBadge}
             </div>
-            <div class="draft-card-date"><i class="fas fa-clock" style="margin-right:4px;"></i>Saved ${dateStr}</div>
+        </div>
+        <div class="draft-card-updated">
+            <i class="far fa-calendar"></i>
+            <div><small>Last updated</small><b>${dateStr}</b></div>
         </div>
         <div class="draft-card-actions">
             <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-view">
@@ -110,9 +105,17 @@ function _renderDrafts(rawData) {
         if (!groups[key] || (d.datecreated || '') > (groups[key].datecreated || '')) groups[key] = d;
     });
 
-    const sorted = Object.values(groups).sort((a, b) =>
+    let sorted = Object.values(groups).sort((a, b) =>
         (b.datecreated || '').localeCompare(a.datecreated || ''));
+    const totalDrafts = sorted.length;
+    _drfPopulateFilters(sorted);
+    sorted = _drfFilterSort(sorted);
 
+    if (!sorted.length && totalDrafts) {
+        setSubtitle(`0 of ${totalDrafts} saved drafts`);
+        container.innerHTML = `<div class="drafts-noresult"><i class="fas fa-filter"></i> No drafts match your filters.</div>`;
+        return;
+    }
     if (!sorted.length) {
         const modeLabel = _currentDraftFilter === 'local' ? 'Local Scheduler' : 'Official Scheduler';
         container.innerHTML = `
@@ -127,7 +130,9 @@ function _renderDrafts(rawData) {
         return;
     }
 
-    setSubtitle(`${sorted.length} saved draft${sorted.length !== 1 ? 's' : ''}`);
+    setSubtitle(sorted.length === totalDrafts
+        ? `${totalDrafts} saved draft${totalDrafts !== 1 ? 's' : ''}`
+        : `${sorted.length} of ${totalDrafts} saved drafts`);
 
     const firstProg = sorted[0]?.programcode || '';
     window._draftPrograms  = sorted.map(d => d.programcode).filter(Boolean);
@@ -225,3 +230,48 @@ window.viewAllDraftsReport = function() {
     if (prog) url += '&program=' + encodeURIComponent(prog);
     window.location.href = url;
 };
+
+
+/* ── Filter bar (search · Academic Year · Semester · Program · Sort) ── */
+const _DRF_SEM = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
+function _drfLabel(d) {
+    const prog = d.programcode || '', sect = d.sectionname || '';
+    return sect ? (sect.toUpperCase().startsWith(prog.toUpperCase()) ? sect : `${prog} ${sect}`) : `${prog} – Year ${d.yearlevel || ''}`;
+}
+function _drfFill(id, values, labelOf) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const cur = sel.value;
+    const first = sel.options[0] ? sel.options[0].outerHTML : '';
+    sel.innerHTML = first + values.map(v => `<option value="${v}">${labelOf(v)}</option>`).join('');
+    if (values.includes(cur)) sel.value = cur;
+}
+function _drfPopulateFilters(drafts) {
+    const uniq = arr => [...new Set(arr.filter(Boolean))];
+    _drfFill('drfAy', uniq(drafts.map(d => String(d.acadyear || ''))).sort().reverse(),
+             v => `AY ${v.replace(/^AY/, '')}`);
+    _drfFill('drfSem', uniq(drafts.map(d => d.term)).sort(), v => _DRF_SEM[v] || v);
+    _drfFill('drfProg', uniq(drafts.map(d => d.programcode)).sort(), v => v);
+}
+function _drfFilterSort(drafts) {
+    const q    = (document.getElementById('drfSearch')?.value || '').trim().toLowerCase();
+    const ay   = document.getElementById('drfAy')?.value   || '';
+    const sem  = document.getElementById('drfSem')?.value  || '';
+    const prog = document.getElementById('drfProg')?.value || '';
+    const sort = document.getElementById('drfSort')?.value || 'latest';
+    const out = drafts.filter(d => {
+        if (ay && String(d.acadyear || '') !== ay) return false;
+        if (sem && d.term !== sem) return false;
+        if (prog && d.programcode !== prog) return false;
+        if (!q) return true;
+        const hay = `${_drfLabel(d)} ${d.programcode || ''} year ${d.yearlevel || ''} ${d.sectionname || ''}`.toLowerCase();
+        return q.split(/\s+/).every(t => hay.includes(t));
+    });
+    const byDate = (a, b) => (b.datecreated || '').localeCompare(a.datecreated || '');
+    const byName = (a, b) => _drfLabel(a).localeCompare(_drfLabel(b), undefined, { numeric: true });
+    return out.sort(sort === 'oldest' ? (a, b) => byDate(b, a)
+                  : sort === 'name-asc' ? byName
+                  : sort === 'name-desc' ? (a, b) => byName(b, a)
+                  : byDate);
+}
+window.drfApply = function () { _renderDrafts(_allDrafts); };

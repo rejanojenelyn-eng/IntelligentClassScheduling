@@ -6,6 +6,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
 
+
 {% block content %}
 <div class="employee-container">
     <!-- TOP HEADER SECTION -->
@@ -18,6 +19,7 @@
         </div>
     </div>
 
+
     <!-- WHITE FILTER CARD -->
     <div class="filter-container">
         <div class="filter-inputs-row">
@@ -29,6 +31,7 @@
                 </div>
             </div>
 
+
             <div class="filter-group">
                 <label>EMPLOYEE TYPE</label>
                 <select id="typeFilter" onchange="filterTable()">
@@ -38,6 +41,7 @@
                     {% endfor %}
                 </select>
             </div>
+
 
             <div class="filter-group">
                 <label>EMPLOYEE STATUS</label>
@@ -49,9 +53,30 @@
                 </select>
             </div>
 
+
+            <!-- Specialization — typeable/searchable combo over the real
+                 #specFilter select (kept hidden, filterTable() unchanged) -->
             <div class="filter-group">
                 <label>SPECIALIZATION</label>
-                <select id="specFilter" onchange="filterTable()">
+                <div class="spec-search-wrapper" id="specSearchWrapper">
+                    <div class="spec-search-trigger" id="specSearchTrigger">
+                        <span id="specSearchTriggerText">SELECT</span>
+                        <i class="fas fa-chevron-down spec-search-chevron"></i>
+                    </div>
+                    <div class="spec-search-menu" id="specSearchMenu">
+                        <div class="spec-search-box">
+                            <input type="text" id="specSearchInput" class="spec-search-input"
+                                   placeholder="Type to search..." autocomplete="off">
+                        </div>
+                        <div class="spec-search-list" id="specSearchList">
+                            <div class="spec-search-option" data-value="">SELECT</div>
+                            {% for spec in specializations %}
+                            <div class="spec-search-option" data-value="{{ spec.specializationname }}">{{ spec.specializationname }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <select id="specFilter" onchange="filterTable()" style="display:none;">
                     <option value="">SELECT</option>
                     {% for spec in specializations %}
                         <option value="{{ spec.specializationname }}">{{ spec.specializationname }}</option>
@@ -60,15 +85,17 @@
             </div>
         </div>
 
+
         <div class="filter-secondary-actions">
             <button class="btn-secondary" onclick="sortTable()">
                 <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
             </button>
-            <button class="btn-secondary" onclick="openExportModal()">
-                <i class="fas fa-external-link-alt"></i> EXPORT
+            <button class="btn-outline-action" onclick="openExportModal()">
+                <i class="fas fa-upload"></i> EXPORT
             </button>
         </div>
     </div>
+
 
     <!-- BULK SELECTION ACTION BAR -->
     <div id="selectionBar" class="bulk-actions-row" style="display: none; margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 8px;">
@@ -81,6 +108,7 @@
         </button>
     </div>
 
+
     <!-- ARCHIVE TABLE -->
     <div class="employee-table-wrapper">
         <table class="employee-table" id="archiveTable">
@@ -89,6 +117,7 @@
                     <th style="width: 40px; text-align: center;">
                         <input type="checkbox" id="selectAll" class="custom-checkbox">
                     </th>
+                    <th>EMPLOYEE ID</th>
                     <th>EMPLOYEE NAME</th>
                     <th>SPECIALIZATION</th>
                     <th>EMAIL</th>
@@ -105,6 +134,7 @@
                     <td style="text-align: center;">
                         <input type="checkbox" class="row-check custom-checkbox" value="{{ emp.facultyarchiveid }}">
                     </td>
+                    <td class="emp-id">{{ emp.employeenumber }}</td>
                     <td class="emp-name" style="font-weight: 600;">
                         {{ emp.lastname }}, {{ emp.firstname }}
                     </td>
@@ -135,6 +165,7 @@
     </div>
 </div>
 
+
 <!-- SINGLE RESTORE MODAL -->
 <div id="restoreConfirmModal" class="modal">
     <div class="modal-content" style="width: 400px;">
@@ -152,6 +183,7 @@
     </div>
 </div>
 
+
 <!-- BULK RESTORE MODAL -->
 <div id="bulkRestoreConfirmModal" class="modal">
     <div class="modal-content" style="width: 450px;">
@@ -168,6 +200,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- EXPORT MODAL -->
 <div id="exportModal" class="emp-export-overlay" style="display:none;" onclick="if(event.target===this)closeExportModal()">
@@ -251,6 +284,7 @@
     </div>
 </div>
 
+
 <!-- Export Loading Overlay -->
 <div id="exportLoadingOverlay" style="display:none;" class="emp-export-loading">
     <div class="emp-export-loading-card">
@@ -259,6 +293,7 @@
         <div class="emp-export-loading-sub" id="exportLoadingSubText">Please wait</div>
     </div>
 </div>
+
 
 <!-- Export Toast -->
 <div id="exportToast" class="emp-export-toast" style="display:none;">
@@ -269,6 +304,7 @@
     </div>
     <button class="emp-export-toast-close" onclick="closeExportToast()">&#215;</button>
 </div>
+
 
 <script src="{{ url_for('static', filename='js/ADMIN/archivedEmployees.admin.js') }}"></script>
 {% endblock %}

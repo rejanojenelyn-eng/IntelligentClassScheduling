@@ -202,6 +202,22 @@ def test_hc7_can_be_disabled_via_config():
     assert 'HC7' not in _rules(v)
 
 
+
+def test_hc7_different_sections_same_subject_are_not_combined_into_day_pair():
+    # Multi-section/effective-schedule validation must not invent a day pair
+    # across two different sections merely because the subject code matches.
+    a = _gene(subject_code='NSTP001', section_id=101, day='Monday', days_list=['Monday'])
+    b = _gene(subject_code='NSTP001', section_id=202, day='Friday', days_list=['Friday'])
+    v = CSPValidator(config={}).validate([a, b], {})
+    assert 'HC7' not in _rules(v)
+
+
+def test_hc7_same_section_cross_entries_still_form_and_validate_pair():
+    a = _gene(subject_code='IT101', section_id=101, day='Monday', days_list=['Monday'])
+    b = _gene(subject_code='IT101', section_id=101, day='Friday', days_list=['Friday'])
+    v = CSPValidator(config={}).validate([a, b], {})
+    assert 'HC7' in _rules(v)
+
 # ── HC8 Designee PT Teaching-Night Limit (per-designation distinct days) ────
 # The cap is the designation's PT/Night Teaching Service value = max DISTINCT
 # days/week inside 6:00-9:00 PM. See tests/test_designee_night_teaching_day_limit.py
@@ -389,17 +405,16 @@ def test_hc12_different_sections_same_room_still_violates_hc11():
     assert 'HC11' in _rules(v)
 
 
-def test_hc12_is_always_enforced_regardless_of_hc_section_conflict_enabled_config():
-    # AUDIT FINDING (still true post-renumbering): hc_section_conflict_enabled
-    # exists in scheduler_config defaults but validate() never checks it --
-    # HC12 has no `if self._enabled(...)` gate at all. This pins that down:
-    # the toggle has zero effect.
+def test_hc12_follows_the_hc_section_conflict_enabled_switch():
+    # HC12 now has an Admin Settings switch (Official scheduling only; the Local
+    # Scheduler and requests never read it). On by default.
     a = _gene(subject_code='IT101', faculty_id='F1', room_id=1,
               start_time=time(9, 0), end_time=time(10, 30))
     b = _gene(subject_code='MATH201', faculty_id='F2', room_id=2,
               start_time=time(9, 0), end_time=time(10, 30))
+    assert 'HC12' in _rules(CSPValidator(config={}).validate([a, b], {}))
     v = CSPValidator(config={'hc_section_conflict_enabled': 0}).validate([a, b], {})
-    assert 'HC12' in _rules(v)
+    assert 'HC12' not in _rules(v)
 
 
 # ── HC_SPEC Faculty specialization (advisory/warning; not in final HC1-17) ─

@@ -1,0 +1,33 @@
+_setup_steps_css.html        /* ── Setup step indicator + Back / Skip / Continue (shared by every setup page) ── */
+        .setup-steps { display: flex; justify-content: center; gap: 4px; margin: 0 0 26px; flex-wrap: wrap; }
+        .setup-step { display: flex; align-items: center; gap: 5px; font-size: 0.6rem; font-weight: 700;
+            letter-spacing: 0.3px; color: #bbb; text-transform: uppercase; white-space: nowrap; }
+        .setup-step .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #ddd; color: #bbb;
+            display: flex; align-items: center; justify-content: center; font-size: 0.62rem; background: #fff; flex-shrink: 0; }
+        .setup-step.done { color: #800000; }
+        .setup-step.done .dot { background: #800000; border-color: #800000; color: #fff; }
+        .setup-step.current { color: #800000; }
+        .setup-step.current .dot { border-color: #800000; color: #800000; }
+        .setup-step .bar { width: 10px; height: 2px; background: #e5e5e5; margin-left: 1px; }
+        .setup-step .req { color: #b22222; }
+
+
+        .setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 30px; }
+        .setup-actions-right { display: flex; gap: 12px; }
+        .btn-back, .btn-skip, .btn-continue {
+            padding: 13px 28px; border-radius: 8px; font-weight: 800; font-size: 1rem; cursor: pointer;
+            transition: 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-back { border: 2px solid #ccc; background: #fff; color: #777; }
+        .btn-back:hover { background: #f3f3f3; }
+        .btn-skip { border: 2px solid #ccc; background: #fff; color: #777; }
+        .btn-skip:hover { background: #f3f3f3; }
+        .btn-continue { padding: 13px 40px; border: 2px solid #800000; background: #fff; color: #800000; }
+        .btn-continue:hover { background: #800000; color: #fff; }
+        @media (max-width: 520px) {
+            .setup-actions { flex-direction: column-reverse; align-items: stretch; }
+            .setup-actions-right { justify-content: stretch; }
+            .setup-actions-right > * { flex: 1; justify-content: center; }
+            .btn-back { justify-content: center; }
+            .setup-step .label { display: none; }
+        }

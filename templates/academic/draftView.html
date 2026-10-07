@@ -286,6 +286,78 @@
     .dv-loading i { font-size: 2rem; display: block; margin-bottom: 10px; }
 
     .hidden { display: none !important; }
+
+    /* ══════════ View Draft — 2026-10 redesign ══════════ */
+    .dv-header {
+        align-items: center; background: #fff; border: 1px solid #eceef2; border-radius: 14px;
+        padding: 18px 22px; box-shadow: 0 2px 10px rgba(16,24,40,.04); margin-bottom: 14px;
+    }
+    .dv-head-left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .dv-head-icon {
+        width: 56px; height: 56px; border-radius: 14px; background: #fbe6e6; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0;
+    }
+    .dv-title {
+        font-size: 1.45rem; font-weight: 800; color: #800000; letter-spacing: .6px;
+        text-transform: uppercase; margin: 0 0 4px;
+    }
+    .dv-date { font-size: .82rem; color: #6b7280; font-weight: 500; letter-spacing: 0; white-space: pre; }
+    .btn-dv-back { border-width: 1.5px; border-radius: 8px; padding: 9px 16px; }
+
+    .dv-context-bar {
+        align-items: center; gap: 0; border: 1px solid #eceef2; border-radius: 14px; padding: 14px 8px;
+        box-shadow: 0 2px 10px rgba(16,24,40,.04); margin-bottom: 16px;
+    }
+    .dv-context-item {
+        flex-direction: row; align-items: center; gap: 12px; padding: 4px 22px; min-width: 0;
+        border-right: 1px solid #eceef2;
+    }
+    .dv-context-item:nth-last-of-type(1) { border-right: 0; }
+    .dv-context-item > div { display: flex; flex-direction: column; gap: 2px; }
+    .dv-context-icon {
+        width: 38px; height: 38px; border-radius: 50%; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: .9rem; flex-shrink: 0;
+    }
+    .dv-context-label { font-size: .72rem; font-weight: 500; letter-spacing: 0; color: #6b7280; text-transform: none; }
+    .dv-context-value { font-size: .95rem; font-weight: 700; color: #800000; }
+    .dv-status-badge {
+        display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 0 auto;
+        background: #fff7e0; color: #b7791f; border: 1px solid #f6d48a; border-radius: 8px;
+        padding: 7px 14px; font-size: .74rem; font-weight: 800; letter-spacing: .8px;
+    }
+
+    .dv-toolbar { margin-bottom: 14px; }
+    .dv-view-toggles {
+        display: inline-flex; gap: 0; border: 1px solid #dfe1e6; border-radius: 10px; overflow: hidden; background: #fff;
+    }
+    .dv-view-toggles button {
+        display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border: 0; border-radius: 0;
+        background: #fff; color: #444; font: 600 .85rem 'Inter', sans-serif; cursor: pointer; box-shadow: none;
+    }
+    .dv-view-toggles button.active-btn { background: #800000; color: #fff; }
+    .dv-view-toggles button.outline-btn:hover { background: #fbeeee; color: #800000; }
+
+    .dv-calendar-wrapper, .dv-table-wrapper { border-color: #eceef2; border-radius: 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); }
+    .dv-timetable thead th { background: #fff; color: #333; border: 1px solid #eceef2; font-weight: 700; letter-spacing: .5px; }
+    .dv-timetable td { border-color: #f0f1f4; }
+    .dv-time-cell { background: #fff; color: #555; font-weight: 600; width: 84px; }
+
+    .dv-pill { border-radius: 8px; padding: 6px 8px; justify-content: flex-start; gap: 3px; line-height: 1.25; }
+    .dv-pill-subj { font-weight: 800; font-size: .7rem; text-transform: uppercase; margin-bottom: 1px; }
+    .dv-pill-line {
+        display: flex; align-items: center; gap: 5px; font-size: .62rem; opacity: .95; min-width: 0;
+    }
+    .dv-pill-line i { width: 10px; text-align: center; flex-shrink: 0; font-size: .58rem; }
+    .dv-pill-line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .dv-action-bar { padding-top: 6px; }
+    .dv-btn { border-radius: 8px; padding: 12px 22px; font-size: .85rem; }
+    .dv-btn-solid { background: #800000; }
+
+    @media (max-width: 900px) {
+        .dv-context-item { border-right: 0; padding: 6px 14px; }
+        .dv-status-badge { margin: 6px 14px; }
+    }
 </style>
 {% endblock %}
 
@@ -295,37 +367,41 @@
 
     <!-- ── Header ── -->
     <div class="dv-header">
-        <div class="dv-title-block">
-            <div class="dv-eyebrow">Schedule Draft</div>
-            <h1 class="dv-title" id="dvTitle">Loading...</h1>
-            <div class="dv-date" id="dvDate"></div>
+        <div class="dv-head-left">
+            <div class="dv-head-icon"><i class="far fa-calendar-alt"></i></div>
+            <div>
+                <h1 class="dv-title">Schedule Draft</h1>
+                <div class="dv-date" id="dvDate">Loading&hellip;</div>
+            </div>
         </div>
-        <div class="dv-top-actions">
-            <a href="{{ url_for('schedule_drafts_list') }}" class="btn-dv-back">
-                <i class="fas fa-arrow-left"></i> All Drafts
-            </a>
-        </div>
+        <a href="{{ url_for('schedule_drafts_list') }}" class="btn-dv-back">
+            <i class="fas fa-arrow-left"></i> All Drafts
+        </a>
     </div>
 
-    <!-- ── Context Bar ── -->
+    <!-- ── Info Bar ── -->
     <div class="dv-context-bar" id="dvContextBar" style="display:none;">
         <div class="dv-context-item">
-            <span class="dv-context-label">Academic Year</span>
-            <span class="dv-context-value" id="dvAcadYear">—</span>
+            <span class="dv-context-icon"><i class="fas fa-graduation-cap"></i></span>
+            <div><span class="dv-context-label">Academic Year</span>
+                 <span class="dv-context-value" id="dvAcadYear">—</span></div>
         </div>
         <div class="dv-context-item">
-            <span class="dv-context-label">Term</span>
-            <span class="dv-context-value" id="dvTerm">—</span>
+            <span class="dv-context-icon"><i class="far fa-calendar"></i></span>
+            <div><span class="dv-context-label">Semester</span>
+                 <span class="dv-context-value" id="dvTerm">—</span></div>
         </div>
         <div class="dv-context-item">
-            <span class="dv-context-label">Program</span>
-            <span class="dv-context-value" id="dvProgram">—</span>
+            <span class="dv-context-icon"><i class="fas fa-book-open"></i></span>
+            <div><span class="dv-context-label">Program</span>
+                 <span class="dv-context-value" id="dvProgram">—</span></div>
         </div>
         <div class="dv-context-item">
-            <span class="dv-context-label">Year Level</span>
-            <span class="dv-context-value" id="dvYearLevel">—</span>
+            <span class="dv-context-icon"><i class="fas fa-layer-group"></i></span>
+            <div><span class="dv-context-label">Year Level</span>
+                 <span class="dv-context-value" id="dvYearLevel">—</span></div>
         </div>
-        <span class="dv-status-badge" id="dvVersionBadge">DRAFT</span>
+        <span class="dv-status-badge" id="dvVersionBadge"><i class="fas fa-lock"></i> DRAFT</span>
     </div>
 
     <!-- ── Loading State ── -->
@@ -340,15 +416,12 @@
         <div class="dv-toolbar">
             <div class="dv-view-toggles">
                 <button class="active-btn" id="dvBtnCal" onclick="showCalView()">
-                    <i class="far fa-calendar-alt"></i> Calendar view
+                    <i class="far fa-calendar-alt"></i> Calendar View
                 </button>
                 <button class="outline-btn" id="dvBtnTbl" onclick="showTblView()">
-                    <i class="fas fa-table"></i> Table view
+                    <i class="fas fa-table"></i> Table View
                 </button>
             </div>
-            <button class="outline-btn" id="dvBtnExport" onclick="exportDraft()">
-                <i class="fas fa-file-export"></i> Export Schedule
-            </button>
         </div>
 
         <!-- Calendar View -->
@@ -444,5 +517,5 @@ const VERSION_ID        = parseInt(document.getElementById('dv-init-data').datas
 const SCHEDULE_GEN_URL  = "{{ url_for('schedule_generation_view') }}";
 const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";
 </script>
-<script src="{{ url_for('static', filename='js/ACAD HEAD/draftView.acad.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/draftView.acad.js') }}?v=20261005a"></script>
 {% endblock %}

@@ -1614,7 +1614,62 @@
     min-width: 130px;
 }
 .curr-filter-input:focus { border-color: #800000; }
+.curr-filter-wide { min-width: 200px; }
 .curr-filter-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ═══════════════════════════════════════════════════════════════
+   ASSIGNMENTS PROGRAM SEARCH COMBO — typeable/searchable filter,
+   mirrors the Specialization search-combo pattern (spec-search-* in
+   employee.css). The real value still lives in the existing hidden
+   #filterAssignProg <select>, so filterAssignments() needs no changes.
+═══════════════════════════════════════════════════════════════ */
+.curr-prog-search-wrapper { position: relative; width: 200px; }
+.curr-prog-search-trigger {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    color: #333;
+    padding: 7px 11px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    box-sizing: border-box;
+    transition: 0.2s;
+}
+.curr-prog-search-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curr-prog-search-trigger:hover,
+.curr-prog-search-wrapper.open .curr-prog-search-trigger { border-color: #800000; }
+.curr-prog-search-chevron { font-size: 0.65rem; color: #999; flex-shrink: 0; transition: transform 0.15s; }
+.curr-prog-search-wrapper.open .curr-prog-search-chevron { transform: rotate(180deg); }
+.curr-prog-search-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 260px;
+    background: white;
+    border: 1px solid #800000;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    z-index: 500;
+    display: none;
+    overflow: hidden;
+}
+.curr-prog-search-wrapper.open .curr-prog-search-menu { display: block; }
+.curr-prog-search-box { padding: 7px 8px; border-bottom: 1px solid #e8e8e8; background: #fafafa; }
+.curr-prog-search-input {
+    width: 100%; box-sizing: border-box;
+    padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+    font-size: 0.75rem; color: #333; outline: none;
+}
+.curr-prog-search-input:focus { border-color: #800000; }
+.curr-prog-search-input::placeholder { color: #bbb; font-style: italic; }
+.curr-prog-search-list { max-height: 220px; overflow-y: auto; }
+.curr-prog-search-option { padding: 8px 12px; cursor: pointer; font-size: 0.78rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+.curr-prog-search-option:last-child { border-bottom: none; }
+.curr-prog-search-option:hover { background: #fdf5f5; color: #800000; }
 
 .curr-btn-sort {
     padding: 8px 14px;
@@ -1978,3 +2033,211 @@
     align-items: center;
     gap: 8px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   CURRICULUM MANAGEMENT — 2026-10 layout (Academic Head /curriculum)
+   Underline tabs · card toolbar · section heading + summary pill ·
+   maroon-header table. All selectors are .cm-* scoped under .curriculum-ui
+   so the other pages that load curriculum.css are unaffected.
+   ══════════════════════════════════════════════════════════════════════ */
+.curriculum-ui {
+    --cm-maroon: #7a0c0c;
+    --cm-maroon-dark: #5c0808;
+    --cm-ink: #1f2430;
+    --cm-muted: #6b7280;
+    --cm-line: #e7e9ee;
+    --cm-soft: #f6f7f9;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Header + underline tabs */
+.curriculum-ui .cm-header { margin: 4px 0 22px; }
+.curriculum-ui .cm-title {
+    color: var(--cm-maroon); font-weight: 900; font-size: 1.9rem; letter-spacing: .3px; margin: 0 0 18px;
+}
+.curriculum-ui .cm-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--cm-line); }
+.curriculum-ui .cm-tab {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
+    padding: 12px 22px 13px; font: 600 .95rem 'Inter', sans-serif; color: var(--cm-muted); cursor: pointer;
+    transition: color .15s, border-color .15s;
+}
+.curriculum-ui .cm-tab i { font-size: 1rem; }
+.curriculum-ui .cm-tab:hover { color: var(--cm-maroon); }
+.curriculum-ui .cm-tab.active { color: var(--cm-maroon); border-bottom-color: var(--cm-maroon); font-weight: 700; }
+
+/* Toolbar card */
+.curriculum-ui .cm-toolbar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: #fff; border: 1px solid var(--cm-line); border-radius: 14px;
+    padding: 14px 18px; box-shadow: 0 2px 10px rgba(16, 24, 40, .04); margin-bottom: 26px;
+}
+.curriculum-ui .cm-search {
+    flex: 1 1 320px; min-width: 220px; display: flex; align-items: center; gap: 12px;
+    height: 46px; padding: 0 16px; border: 1px solid var(--cm-line); border-radius: 10px; background: #fff;
+}
+.curriculum-ui .cm-search i { color: var(--cm-muted); }
+.curriculum-ui .cm-search input {
+    flex: 1; border: 0; outline: 0; background: transparent; font: 400 .92rem 'Inter', sans-serif; color: var(--cm-ink);
+}
+.curriculum-ui .cm-search:focus-within,
+.curriculum-ui .cm-select:focus-within { border-color: var(--cm-maroon); box-shadow: 0 0 0 3px rgba(122, 12, 12, .08); }
+
+.curriculum-ui .cm-select {
+    position: relative; display: flex; align-items: center; gap: 12px;
+    height: 46px; min-width: 220px; padding: 0 14px; cursor: pointer;
+    border: 1px solid var(--cm-line); border-radius: 10px; background: #fff;
+}
+.curriculum-ui .cm-select-wide { min-width: 240px; }
+.curriculum-ui .cm-select-sort { min-width: 160px; }
+.curriculum-ui .cm-select > i:first-child { color: var(--cm-ink); font-size: 1rem; }
+.curriculum-ui .cm-select-body { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.15; }
+.curriculum-ui .cm-select-label { font-size: .7rem; color: var(--cm-muted); font-weight: 500; }
+.curriculum-ui .cm-select select {
+    appearance: none; -webkit-appearance: none; border: 0; outline: 0; background: transparent;
+    padding: 0 18px 0 0; margin: 0; width: 100%; cursor: pointer;
+    font: 600 .82rem 'Inter', sans-serif; color: var(--cm-ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.curriculum-ui .cm-caret { position: absolute; right: 14px; font-size: .72rem; color: var(--cm-ink); pointer-events: none; }
+.curriculum-ui .cm-divider { width: 1px; height: 30px; background: var(--cm-line); }
+.curriculum-ui .cm-spacer { flex: 1; }
+.curriculum-ui .cm-btn-export {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    height: 46px; padding: 0 30px; border: 0; border-radius: 10px; cursor: pointer;
+    background: var(--cm-maroon); color: #fff; font: 600 .95rem 'Inter', sans-serif;
+    box-shadow: 0 4px 12px rgba(122, 12, 12, .22); transition: background .15s;
+}
+.curriculum-ui .cm-btn-export:hover { background: var(--cm-maroon-dark); }
+
+/* Section heading + summary pill */
+.curriculum-ui .cm-section-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 16px;
+}
+.curriculum-ui .cm-section-title { border-left: 4px solid var(--cm-maroon); padding: 2px 0 2px 18px; }
+.curriculum-ui .cm-section-title h2 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 700; color: var(--cm-ink); }
+.curriculum-ui .cm-section-title p { margin: 0; font-size: .85rem; color: var(--cm-muted); }
+.curriculum-ui .cm-summary {
+    display: inline-flex; align-items: center; gap: 16px;
+    padding: 9px 18px; border: 1px solid var(--cm-line); border-radius: 999px; background: #fff;
+}
+.curriculum-ui .cm-summary-item { display: inline-flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--cm-ink); }
+.curriculum-ui .cm-summary-item i { color: var(--cm-muted); }
+.curriculum-ui .cm-summary-item strong { font-weight: 700; }
+.curriculum-ui .cm-summary-sep { width: 1px; height: 18px; background: var(--cm-line); }
+.curriculum-ui .cm-summary-ay select {
+    appearance: none; -webkit-appearance: none; border: 0; outline: 0; background: transparent;
+    font: 500 .9rem 'Inter', sans-serif; color: var(--cm-ink); cursor: pointer; padding: 0;
+}
+
+/* Table */
+.curriculum-ui .cm-table-card {
+    background: #fff; border: 1px solid var(--cm-line); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(16, 24, 40, .04);
+}
+.curriculum-ui .cm-table { width: 100%; border-collapse: collapse; }
+.curriculum-ui .cm-table thead th {
+    background: var(--cm-maroon); color: #fff; text-align: left; white-space: nowrap;
+    padding: 13px 26px; font: 600 .9rem 'Inter', sans-serif; letter-spacing: .1px; user-select: none;
+}
+.curriculum-ui .cm-table th.cm-sortable { cursor: pointer; }
+.curriculum-ui .cm-table th.cm-sortable i { margin-left: 6px; font-size: .72rem; opacity: .75; }
+.curriculum-ui .cm-table th.cm-sorted i { opacity: 1; }
+.curriculum-ui .cm-table tbody td {
+    padding: 9px 26px; border-bottom: 1px solid #f0f1f4; font-size: .92rem; color: var(--cm-ink); vertical-align: middle;
+}
+.curriculum-ui .cm-table tbody tr:last-child td { border-bottom: 0; }
+.curriculum-ui .cm-table tbody tr:hover td { background: #fcf7f7; }
+.curriculum-ui .cm-table .cm-center { text-align: center; }
+.curriculum-ui .cm-table th.cm-center { text-align: center; }
+.curriculum-ui .cm-code-pill {
+    display: inline-block; padding: 4px 14px; border-radius: 999px;
+    background: #fde7e7; color: var(--cm-maroon); font-weight: 700; font-size: .82rem;
+}
+.curriculum-ui .cm-chip {
+    display: inline-block; min-width: 54px; padding: 4px 12px; border-radius: 6px;
+    background: #f1f2f4; color: var(--cm-ink); font-size: .85rem; text-align: center;
+}
+.curriculum-ui .cm-none { color: #b0b4bc; }
+.curriculum-ui .cm-empty { padding: 34px; text-align: center; color: var(--cm-muted); font-size: .9rem; }
+.curriculum-ui .cm-empty i { margin-right: 8px; }
+
+/* Narrow screens: stack the toolbar */
+@media (max-width: 900px) {
+    .curriculum-ui .cm-toolbar > * { flex: 1 1 100%; }
+    .curriculum-ui .cm-divider { display: none; }
+    .curriculum-ui .cm-table thead th, .curriculum-ui .cm-table tbody td { padding-left: 14px; padding-right: 14px; }
+}
+
+/* Toolbar stays on ONE line (sidebar expanded or collapsed): the search box and the
+   Program filter absorb the width change; Sort and Export keep a fixed size, so Export
+   never wraps to its own row. Below 900px the toolbar stacks (rule above). */
+/* If it ever has to wrap (narrow window + open sidebar), Export stays right-aligned. */
+.curriculum-ui .cm-btn-export { margin-left: auto; }
+@media (min-width: 1150px) {
+    .curriculum-ui .cm-toolbar { flex-wrap: nowrap; }
+    .curriculum-ui .cm-search { flex: 1 1 260px; min-width: 150px; }
+    .curriculum-ui .cm-select { flex: 0 1 220px; min-width: 150px; }
+    .curriculum-ui .cm-select-wide { flex: 1 1 260px; min-width: 170px; }
+    .curriculum-ui .cm-select-sort { flex: 0 0 150px; min-width: 0; }
+    .curriculum-ui .cm-btn-export,
+    .curriculum-ui .cm-divider { flex: 0 0 auto; }
+    .curriculum-ui .cm-btn-export { white-space: nowrap; }
+}
+
+/* ── Custom dropdown panel for .cm-select (replaces the cramped native list) ── */
+.curriculum-ui .cm-select select.cm-dd-native { display: none; }
+.curriculum-ui .cm-select { outline: none; }
+.curriculum-ui .cm-select:focus-visible { border-color: var(--cm-maroon); box-shadow: 0 0 0 3px rgba(122, 12, 12, .08); }
+.curriculum-ui .cm-select.cm-dd-open { border-color: var(--cm-maroon); box-shadow: 0 0 0 3px rgba(122, 12, 12, .08); }
+.curriculum-ui .cm-select.cm-dd-open .cm-caret { transform: rotate(180deg); }
+.curriculum-ui .cm-caret { transition: transform .15s; }
+.curriculum-ui .cm-dd-value {
+    display: block; padding-right: 18px; font: 600 .82rem 'Inter', sans-serif; color: var(--cm-ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.curriculum-ui .cm-dd-menu {
+    display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 60;
+    min-width: 100%; width: max-content; max-width: min(560px, 90vw);
+    background: #fff; border: 1px solid var(--cm-line); border-radius: 12px;
+    box-shadow: 0 14px 34px rgba(16, 24, 40, .14); padding: 8px; cursor: default;
+}
+.curriculum-ui .cm-select.cm-dd-open .cm-dd-menu { display: block; }
+/* Sort sits at the right edge: open its panel right-aligned. */
+.curriculum-ui .cm-select-sort .cm-dd-menu { left: auto; right: 0; }
+.curriculum-ui .cm-dd-search {
+    display: flex; align-items: center; gap: 10px; margin: 0 0 6px; padding: 0 12px; height: 40px;
+    border: 1px solid var(--cm-line); border-radius: 8px; background: var(--cm-soft);
+}
+.curriculum-ui .cm-dd-search i { color: var(--cm-muted); font-size: .85rem; }
+.curriculum-ui .cm-dd-search input {
+    flex: 1; border: 0; outline: 0; background: transparent; font: 400 .88rem 'Inter', sans-serif; color: var(--cm-ink);
+}
+.curriculum-ui .cm-dd-list { max-height: 340px; overflow-y: auto; padding-right: 2px; }
+.curriculum-ui .cm-dd-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 10px 14px; border-radius: 8px; cursor: pointer;
+    font: 500 .88rem/1.35 'Inter', sans-serif; color: var(--cm-ink);
+}
+.curriculum-ui .cm-dd-item + .cm-dd-item { margin-top: 2px; }
+.curriculum-ui .cm-dd-item:hover { background: var(--cm-soft); }
+.curriculum-ui .cm-dd-item i { visibility: hidden; color: var(--cm-maroon); font-size: .8rem; }
+.curriculum-ui .cm-dd-item.active { background: #fbeeee; color: var(--cm-maroon); font-weight: 700; }
+.curriculum-ui .cm-dd-item.active i { visibility: visible; }
+.curriculum-ui .cm-dd-empty { padding: 14px; text-align: center; color: var(--cm-muted); font-size: .85rem; }
+
+/* Syllabi row: "C.Y 2022-2023" (code in the tooltip), Bridging curricula tagged so two
+   curricula of the same year stay distinguishable. */
+.curriculum-ui .cm-bridging-tag {
+    display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; vertical-align: middle;
+    background: #fff3e0; color: #b45309; font-size: .68rem; font-weight: 800; letter-spacing: .4px;
+}
+
+/* Admin: Import Curriculum button beside Export (outlined maroon, same size) */
+.curriculum-ui .cm-btn-import {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px; flex: 0 0 auto;
+    height: 46px; padding: 0 24px; border: 1.5px solid var(--cm-maroon); border-radius: 10px; cursor: pointer;
+    background: #fff; color: var(--cm-maroon); font: 600 .95rem 'Inter', sans-serif; white-space: nowrap;
+    transition: background .15s;
+}
+.curriculum-ui .cm-btn-import:hover { background: #fbeeee; }

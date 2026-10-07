@@ -410,6 +410,58 @@
         text-decoration: none;
         box-shadow: 0 3px 10px rgba(99,1,0,0.25);
     }
+
+    /* ══════════ Draft List — 2026-10 redesign ══════════ */
+    .drafts-header-row { align-items: center; margin-bottom: 16px; }
+    .drafts-head-left { display: flex; align-items: center; gap: 14px; }
+    .drafts-head-icon {
+        width: 54px; height: 54px; border-radius: 14px; background: #fbe6e6; color: #8b1a1a;
+        display: flex; align-items: center; justify-content: center; font-size: 1.35rem; flex-shrink: 0;
+    }
+    .drafts-title { margin: 0; font-size: 1.7rem; }
+    .drafts-lead { margin: 2px 0 0; color: #6b7280; font-size: .88rem; }
+    .drafts-subtitle { margin: 0; color: #6b7280; font-size: .85rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+    .drafts-filters {
+        display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; background: #fff;
+        border: 1px solid #eceef2; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+        box-shadow: 0 2px 10px rgba(16,24,40,.04);
+    }
+    .drf-search {
+        flex: 1 1 320px; display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px;
+        border: 1px solid #dfe1e6; border-radius: 8px; background: #fff;
+    }
+    .drf-search i { color: #6b7280; }
+    .drf-search input { flex: 1; border: 0; outline: 0; font: 400 .88rem 'Inter', sans-serif; min-width: 0; background: transparent; }
+    .drf-search:focus-within { border-color: #8b1a1a; }
+    .drf-field { display: flex; flex-direction: column; gap: 4px; font-size: .74rem; color: #444; font-weight: 600; }
+    .drf-field select {
+        height: 42px; min-width: 170px; padding: 0 12px; border: 1px solid #dfe1e6; border-radius: 8px;
+        background: #fff; font: 500 .85rem 'Inter', sans-serif; color: #222; cursor: pointer;
+    }
+    .drf-field select:focus { outline: none; border-color: #8b1a1a; }
+
+    .draft-card { align-items: center; gap: 18px; padding: 16px 18px; border-left-width: 4px; }
+    .draft-card-icon { width: 54px; height: 54px; border-radius: 50%; }
+    .draft-card-title { font-size: 1.2rem; margin: 0 0 8px; }
+    .dc-badge-ay  { background: #e8f0fe; color: #1a56c4; border: 1px solid #b9cdf7; }
+    .dc-badge-sem { background: #e6f6ec; color: #18794e; border: 1px solid #b3dfc4; }
+    .draft-card-updated {
+        display: flex; align-items: center; gap: 10px; padding-right: 22px; margin-right: 4px;
+        border-right: 1px solid #eceef2; color: #555; white-space: nowrap;
+    }
+    .draft-card-updated i { font-size: 1rem; color: #555; }
+    .draft-card-updated small { display: block; font-size: .72rem; color: #888; }
+    .draft-card-updated b { display: block; font-size: .9rem; font-weight: 600; color: #333; }
+    .draft-card-actions { align-items: center; gap: 10px; }
+    .btn-dc-edit-editor { background: #fff; color: #8b1a1a; border: 1.5px solid #8b1a1a; }
+    .btn-dc-edit-editor:hover { background: #fdf2f2; color: #8b1a1a; }
+    .drafts-noresult { padding: 28px; text-align: center; color: #888; background: #fff; border: 1px dashed #e3e3e3; border-radius: 12px; }
+
+    @media (max-width: 1100px) {
+        .draft-card { flex-wrap: wrap; }
+        .draft-card-updated { border-right: 0; padding-right: 0; }
+    }
 </style>
 {% endblock %}
 
@@ -417,22 +469,38 @@
 <div class="drafts-container">
 
     <div class="drafts-header-row">
-        <div>
-            <h1 class="drafts-title">Draft List</h1>
-            <p class="drafts-subtitle" id="draftsSubtitle">Loading&hellip;</p>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <div class="drafts-mode-toggle">
-                <button class="drafts-mode-btn active" id="btnDraftOfficial"
-                        onclick="setDraftSchedulerFilter('official',this)">
-                    <i class="fas fa-university" style="margin-right:5px;"></i> Official Scheduler
-                </button>
-                <button class="drafts-mode-btn" id="btnDraftLocal"
-                        onclick="setDraftSchedulerFilter('local',this)">
-                    <i class="fas fa-tools" style="margin-right:5px;"></i> Local Scheduler
-                </button>
+        <div class="drafts-head-left">
+            <div class="drafts-head-icon"><i class="fas fa-calendar-alt"></i></div>
+            <div>
+                <h1 class="drafts-title">Draft List</h1>
+                <p class="drafts-lead">Manage your saved schedule drafts.</p>
             </div>
         </div>
+        {# Official drafts only: the Local Scheduler saves and publishes in one step, so
+           it has no drafts to list here (drafts.acad.js stays on the 'official' filter). #}
+        <p class="drafts-subtitle" id="draftsSubtitle">Loading&hellip;</p>
+    </div>
+
+    <!-- Filters: applied client-side to the loaded drafts -->
+    <div class="drafts-filters">
+        <label class="drf-search">
+            <i class="fas fa-magnifying-glass"></i>
+            <input type="text" id="drfSearch" placeholder="Search draft (e.g. BSARCH, BSA Year 1, etc.)"
+                   autocomplete="off" oninput="drfApply()">
+        </label>
+        <label class="drf-field"><span>Academic Year</span>
+            <select id="drfAy" onchange="drfApply()"><option value="">All Years</option></select></label>
+        <label class="drf-field"><span>Semester</span>
+            <select id="drfSem" onchange="drfApply()"><option value="">All Semesters</option></select></label>
+        <label class="drf-field"><span>Program</span>
+            <select id="drfProg" onchange="drfApply()"><option value="">All Programs</option></select></label>
+        <label class="drf-field"><span>Sort by</span>
+            <select id="drfSort" onchange="drfApply()">
+                <option value="latest">Latest Updated</option>
+                <option value="oldest">Oldest Updated</option>
+                <option value="name-asc">Name (A - Z)</option>
+                <option value="name-desc">Name (Z - A)</option>
+            </select></label>
     </div>
 
     <div id="draftsList">
@@ -463,5 +531,5 @@
 <script>
 const MANUAL_EDITOR_URL = "{{ url_for('manual_schedule_editor') }}";
 </script>
-<script src="{{ url_for('static', filename='js/ACAD HEAD/drafts.acad.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/drafts.acad.js') }}?v=20261005a"></script>
 {% endblock %}

@@ -1,5 +1,6 @@
 {% extends "academic/base.html" %}
 
+
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/room.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -7,8 +8,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 {% endblock %}
 
+
 {% block content %}
 <div class="room-container">
+
 
     <!-- PAGE HEADER -->
     <div class="page-header-hub">
@@ -18,6 +21,7 @@
             <button class="btn-solid-maroon"   onclick="openRoomModal('modalRoom')"><i class="fas fa-plus"></i> ADD NEW ROOM</button>
         </div>
     </div>
+
 
     <!-- STATS CARDS -->
     <div class="stats-row">
@@ -51,7 +55,9 @@
         </div>
     </div>
 
+
     <div class="room-grid">
+
 
         <!-- LEFT SIDEBAR: BUILDINGS -->
         <div class="building-sidebar">
@@ -75,8 +81,10 @@
             </div>
         </div>
 
+
         <!-- RIGHT AREA -->
         <div class="room-content-area">
+
 
             <!-- FILTERS -->
             <div class="filter-card">
@@ -126,6 +134,7 @@
                 </div>
             </div>
 
+
             <!-- TABLE -->
             <div class="table-container">
                 <table class="room-table" id="roomTable">
@@ -170,7 +179,9 @@
     </div>
 </div>
 
+
 <!-- ═══ MODALS ═══ -->
+
 
 <!-- ADD BUILDING -->
 <div id="modalBldg" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalBldg')">
@@ -194,6 +205,7 @@
     </div>
 </div>
 
+
 <!-- EDIT BUILDING -->
 <div id="modalEditBldg" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalEditBldg')">
     <div class="rm-box">
@@ -216,6 +228,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- ADD ROOM -->
 <div id="modalRoom" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalRoom')">
@@ -261,6 +274,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- EDIT ROOM -->
 <div id="modalEditRoom" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomModal('modalEditRoom')">
@@ -309,6 +323,7 @@
     </div>
 </div>
 
+
 <!-- ROOM SCHEDULE (VIEW) MODAL — popup only, never navigates away from this page -->
 <div id="modalRoomSchedule" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomScheduleModal()">
     <div class="rm-box rm-box-wide" style="max-width:1100px;">
@@ -322,6 +337,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- ROOM TYPE LIST MODAL (double-click Total Laboratories / Total Lecture) -->
 <div id="modalRoomTypeList" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomTypeModal()">
@@ -348,6 +364,7 @@
     </div>
 </div>
 
+
 <!-- DELETE CONFIRMATION MODAL -->
 <div id="modalDeleteConfirm" class="rm-overlay" style="display:none;" onclick="if(event.target===this)_closeDeleteConfirm()">
     <div class="rm-del-box">
@@ -363,6 +380,7 @@
     </div>
 </div>
 
+
 <!-- STANDALONE EXPORT LOADING OVERLAY -->
 <div id="rmExpLoading" class="rm-exp-loading-overlay" style="display:none;">
     <div class="rm-exp-loading-card">
@@ -372,11 +390,13 @@
     </div>
 </div>
 
+
 <!-- Building right-click context menu -->
 <div id="buildingMenu" class="context-menu">
     <div class="context-menu-item" id="ctxEditBldg"><i class="fas fa-edit"></i> Edit Name</div>
     <div class="context-menu-item delete" id="ctxDeleteBldg"><i class="fas fa-trash"></i> Delete Building</div>
 </div>
+
 
 <!-- Toast -->
 <div id="roomCrudToast" class="rm-toast">
@@ -386,6 +406,7 @@
         <div class="rm-toast-msg"   id="roomCrudToastMsg"></div>
     </div>
 </div>
+
 
 <!-- ROOM EXPORT MODAL -->
 <div id="roomExportModal" class="room-exp-overlay" style="display:none;">
@@ -456,6 +477,7 @@
     <div class="room-exp-toast-msg"   id="roomExpToastMsg"></div>
   </div>
 </div>
+
 
 <!-- ROOM SCHEDULE EXPORT MODAL (Calendar View per room) -->
 <div id="roomSchedExpModal" class="room-exp-overlay" style="display:none;">
@@ -547,6 +569,7 @@
     </div>
   </div>
 </div>
+
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/room.acad.js') }}"></script>
 {% endblock %}

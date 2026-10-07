@@ -4,17 +4,6 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
     <style>
-        /* ══════════════════════════════════════════════════════════════
-           CLASS SCHEDULE (SIS) — visual redesign only.
-           Every rule below is scoped under .sis-schedule-page (added to
-           this page's own wrapper div) so none of it leaks into the other
-           pages that share schedule_acad.css (Academic Head / Faculty
-           schedule, Room Schedule). No ids/classes were renamed and no
-           markup structure changed, so existing JS (getElementById /
-           classList / querySelector) keeps working exactly as before —
-           only color, spacing, border, radius and typography values
-           change from here down.
-        ══════════════════════════════════════════════════════════════ */
         .sis-schedule-page {
             --maroon:        #630100;
             --maroon-deep:   #440000;
@@ -904,5 +893,5 @@
 })();
 </script>
 
-{% include "_schedule_import_wizard.html" %}
+{% include "shared/_schedule_import_wizard.html" %}
 {% endblock %}

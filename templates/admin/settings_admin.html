@@ -1,7 +1,7 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=20261006a">
 {% endblock %}
 
 {% block content %}
@@ -378,39 +378,57 @@
         </div>
 
         <!-- Card: Standard Time Slots (HC6) -->
-        <div class="constraint-card constraint-card-system">
+        <div class="constraint-card">
           <div class="card-head">
-            <div class="card-toprow"><span class="card-category"><b>HC6</b> · STANDARD TIME SLOTS</span><span class="rule-lock"><i class="fas fa-lock"></i> ENFORCED</span></div>
+            <div class="card-toprow">
+              <span class="card-category"><b>HC6</b> · STANDARD TIME SLOTS</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-time-blocks" onchange="saveConstraint('time_blocks',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
             <h3 class="card-title">Standard Time-Slot Compliance</h3>
-            <p class="card-desc">Class start and end times must use the configured scheduling grid. The current policy uses the standard time-slot configuration maintained by the scheduler.</p>
+            <p class="card-desc">When enabled, class start and end times must form one whole block of the configured scheduling grid. When disabled, any start and end time on the grid may be used.</p>
           </div>
-          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-clock ic-green"></i><span>System validation uses the configured <code>hc_time_slots</code> grid; this rule is not independently disabled from this screen.</span></div></div>
+          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-clock ic-green"></i><span>Uses the configured <code>hc_time_slots</code> grid during generation, manual assignment and Local Scheduler adjustments.</span></div></div>
         </div>
 
         <!-- Card: Room Capacity (HC14) -->
-        <div class="constraint-card constraint-card-system">
+        <div class="constraint-card">
           <div class="card-head">
-            <div class="card-toprow"><span class="card-category"><b>HC14</b> · ROOM CAPACITY</span><span class="rule-lock"><i class="fas fa-lock"></i> ENFORCED</span></div>
+            <div class="card-toprow">
+              <span class="card-category"><b>HC14</b> · ROOM CAPACITY</span>
+              <label class="tog">
+                <input type="checkbox" id="tog-capacity" onchange="saveConstraint('capacity',this.checked)">
+                <span class="tog-slider"></span>
+              </label>
+            </div>
             <h3 class="card-title">Room Capacity Requirement</h3>
-            <p class="card-desc">Assigned rooms must accommodate the expected class size when reliable section-size and room-capacity data are available.</p>
+            <p class="card-desc">When enabled, assigned rooms must accommodate the expected class size when reliable section-size and room-capacity data are available.</p>
           </div>
-          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-check-circle ic-green"></i><span>Missing capacity data remains non-blocking under the frozen HC14 policy.</span></div></div>
+          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-circle-info ic-green"></i><span>Missing capacity data is never treated as a violation, so this check only applies once class-size data exists.</span></div></div>
         </div>
 
-        <!-- Card: Conflict Validation (HC10-HC12 + HC15) -->
-        <div class="constraint-card constraint-card-wide constraint-card-system">
+        <!-- Card: Conflict Validation (HC10-HC12 + HC15) — one switch per rule -->
+        <div class="constraint-card constraint-card-wide">
           <div class="card-head">
-            <div class="card-toprow"><span class="card-category">CONFLICT VALIDATION</span><span class="rule-lock"><i class="fas fa-lock"></i> SYSTEM ENFORCED</span></div>
+            <div class="card-toprow"><span class="card-category">CONFLICT VALIDATION</span></div>
             <h3 class="card-title">Core Conflict Validation</h3>
-            <p class="card-desc">Core double-booking protection is always enforced. Configured merge/shared-session exemptions are evaluated by the centralized constraint layer.</p>
+            <p class="card-desc">Double-booking protection for Official scheduling (generation, Manual Editor, Save Draft and Publish). A rule that is switched off is no longer reported or enforced there. Configured merge/shared-session exemptions still apply while a rule is on.</p>
           </div>
           <div class="card-body">
-            <div class="enforced-rule-list">
-              <div><strong>HC10</strong><span>Faculty Schedule Conflict</span><em>Enforced</em></div>
-              <div><strong>HC11</strong><span>Room Schedule Conflict</span><em>Enforced</em></div>
-              <div><strong>HC12</strong><span>Section Schedule Conflict</span><em>Enforced</em></div>
-              <div><strong>HC15</strong><span>Cross-Schedule Conflict Validation</span><em>Enforced</em></div>
+            <div class="enforced-rule-list conflict-rule-list">
+              <div><strong>HC10</strong><span>Faculty Schedule Conflict</span>
+                <label class="tog tog-sm"><input type="checkbox" id="tog-faculty-conflict" onchange="saveConflictRule('faculty_conflict',this)"><span class="tog-slider"></span></label></div>
+              <div><strong>HC11</strong><span>Room Schedule Conflict</span>
+                <label class="tog tog-sm"><input type="checkbox" id="tog-room-conflict" onchange="saveConflictRule('room_conflict',this)"><span class="tog-slider"></span></label></div>
+              <div><strong>HC12</strong><span>Section Schedule Conflict</span>
+                <label class="tog tog-sm"><input type="checkbox" id="tog-section-conflict" onchange="saveConflictRule('section_conflict',this)"><span class="tog-slider"></span></label></div>
+              <div><strong>HC15</strong><span>Cross-Schedule Conflict Validation</span>
+                <label class="tog tog-sm"><input type="checkbox" id="tog-cross-schedule" onchange="saveConflictRule('cross_schedule',this)"><span class="tog-slider"></span></label></div>
             </div>
+            <div class="status-row conflict-local-note"><i class="fas fa-shield-halved"></i><span>The Local Scheduler, Make-up and Schedule Adjustment requests and their approvals always check room, faculty and section conflicts, whatever these switches say.</span></div>
+            <div class="status-row conflict-off-warn" id="conflict-off-warn" hidden><i class="fas fa-triangle-exclamation"></i><span id="conflict-off-text"></span></div>
           </div>
         </div>
 
@@ -1144,5 +1162,5 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}?v=20261006a"></script>
 {% endblock %}

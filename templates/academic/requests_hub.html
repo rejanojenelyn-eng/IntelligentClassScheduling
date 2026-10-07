@@ -592,7 +592,23 @@
         <textarea id="rejectRemarks" placeholder="Reason for rejection..." autocomplete="off"></textarea>
         <div class="rhub-modal-actions">
             <button class="btn-modal-cancel" onclick="rhubCloseReject()">CANCEL</button>
-            <button class="btn-modal-confirm" onclick="rhubConfirmReject()">CONFIRM REJECT</button>
+            <button class="btn-modal-confirm" onclick="rhubAskRejectConfirm()">REJECT</button>
+        </div>
+    </div>
+</div>
+
+<!-- REJECT — FINAL "ARE YOU SURE?" CONFIRMATION -->
+<div class="rhub-modal-overlay" id="rejectConfirmModal">
+    <div class="rhub-modal-box">
+        <div class="rhub-modal-title"><i class="fas fa-triangle-exclamation"></i> Reject this request?</div>
+        <p id="rejectConfirmBody" style="font-size:0.88rem;color:#333;margin:12px 0 10px;line-height:1.5;"></p>
+        <div id="rejectConfirmRemarks" style="display:none;font-size:0.8rem;color:#555;background:#fdf3f3;border-left:3px solid #c0392b;border-radius:4px;padding:8px 12px;margin:0 0 12px;white-space:pre-wrap;"></div>
+        <p style="font-size:0.78rem;color:#8a1c1c;background:#fdecec;border:1px solid #f3c1c1;border-radius:6px;padding:8px 12px;margin:0 0 20px;">
+            <i class="fas fa-info-circle" style="margin-right:5px;"></i>This can't be undone. The faculty will see the request as Rejected.
+        </p>
+        <div class="rhub-modal-actions">
+            <button class="btn-modal-cancel" onclick="rhubCloseRejectConfirm()">NO, GO BACK</button>
+            <button class="btn-modal-confirm" id="rejectConfirmBtn" onclick="rhubConfirmReject()"><i class="fas fa-times"></i> YES, REJECT</button>
         </div>
     </div>
 </div>
@@ -704,7 +720,10 @@ function rhubRenderDetail(req, v) {
             : `<span class="rhub-chip chip-bad"><i class="fas fa-times-circle"></i> ROOM CONFLICT</span>`;
         const fBadge = v.faculty_free
             ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> FACULTY FREE</span>`
-            : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> FACULTY CONFLICT</span>`;
+            : `<span class="rhub-chip ${v.section_free === undefined ? 'chip-warn' : 'chip-bad'}"><i class="fas fa-exclamation-circle"></i> FACULTY CONFLICT</span>`;
+        const sBadge = v.section_free === undefined ? '' : (v.section_free
+            ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> SECTION FREE</span>`
+            : `<span class="rhub-chip chip-bad"><i class="fas fa-times-circle"></i> SECTION CONFLICT</span>`);
         const pBadge = v.program_ok
             ? `<span class="rhub-chip chip-ok"><i class="fas fa-check-circle"></i> PROGRAM OKAY</span>`
             : `<span class="rhub-chip chip-warn"><i class="fas fa-exclamation-circle"></i> PROGRAM CONFLICT</span>`;
@@ -712,14 +731,24 @@ function rhubRenderDetail(req, v) {
             ? 'CONSTRAINT VALIDATION SUCCESSFUL, THERE ARE NO CONFLICTS TO THIS REQUEST'
             : (v.conflicts || []).join(' | ') || 'Conflicts detected.';
         const msgColor = v.all_ok ? '#1a6b3c' : '#c0392b';
+        const warnHtml = (v.warnings || []).length
+            ? `<div class="rhub-analytics-msg" style="color:#856404">Advisory: ${v.warnings.map(w => w.message).join(' | ')}</div>`
+            : '';
         analyticsHtml = `
-            <div class="rhub-chips">${rBadge}${fBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>`;
+            <div class="rhub-chips">${rBadge}${fBadge}${sBadge}${pBadge}</div>
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}`;
+        // The server may know a newer status than the list (another reviewer decided it)
+        if (v.status && v.status !== req.status) req.status = v.status;
     }
 
+
+    // Make-up requests with hard conflicts can't be approved (the server re-checks
+    // and refuses), so don't offer the button — rejecting is still possible.
+    const blocked = !!(v && req.req_type === 'makeup' && !v.all_ok);
     const actionBtns = req.status === 'Pending' ? `
         <div class="rhub-actions">
-            <button class="btn-rhub-approve" onclick="rhubApprove()">
+            <button class="btn-rhub-approve" onclick="rhubApprove()" ${blocked
+                ? 'disabled data-blocked="1" title="Resolve the conflicts above before approving" style="opacity:.5;cursor:not-allowed"' : ''}>
                 <i class="fas fa-check-circle"></i> APPROVE
             </button>
             <button class="btn-rhub-reject" onclick="rhubReject()">
@@ -859,10 +888,30 @@ function rhubReject() {
 function rhubCloseReject() {
     document.getElementById('rejectModal').classList.remove('open');
 }
+/* Step 2: "Are you sure?" before the rejection is sent (remarks are kept if they go back). */
+function rhubAskRejectConfirm() {
+    const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
+    if (!req) return;
+    const remarks = document.getElementById('rejectRemarks').value.trim();
+    document.getElementById('rejectConfirmBody').textContent =
+        `Are you sure you want to reject the ${req.req_type_label} request from ${req.faculty_name}?`;
+    const rm = document.getElementById('rejectConfirmRemarks');
+    rm.textContent = remarks ? `Remarks: ${remarks}` : '';
+    rm.style.display = remarks ? '' : 'none';
+    document.getElementById('rejectModal').classList.remove('open');
+    document.getElementById('rejectConfirmModal').classList.add('open');
+}
+function rhubCloseRejectConfirm() {
+    document.getElementById('rejectConfirmModal').classList.remove('open');
+    document.getElementById('rejectModal').classList.add('open');   // back to the remarks step
+}
 async function rhubConfirmReject() {
     const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
     if (!req) return;
     const remarks = document.getElementById('rejectRemarks').value.trim();
+    const btn = document.getElementById('rejectConfirmBtn');
+    if (btn) btn.disabled = true;
+    document.getElementById('rejectConfirmModal').classList.remove('open');
     try {
         const res  = await fetch('/api/requests/decide', {
             method: 'POST',
@@ -880,6 +929,7 @@ async function rhubConfirmReject() {
             alert('Error: ' + (data.error || 'Could not reject.'));
         }
     } catch(e) { alert('Network error.'); }
+    finally { if (btn) btn.disabled = false; }
 }
 
 /* Close modals on backdrop click */
@@ -888,6 +938,9 @@ document.getElementById('approveModal').addEventListener('click', function(e) {
 });
 document.getElementById('rejectModal').addEventListener('click', function(e) {
     if (e.target === this) rhubCloseReject();
+});
+document.getElementById('rejectConfirmModal').addEventListener('click', function(e) {
+    if (e.target === this) rhubCloseRejectConfirm();
 });
 
 /* Init */

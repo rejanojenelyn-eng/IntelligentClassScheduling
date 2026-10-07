@@ -407,6 +407,18 @@ body {
     font-size: .82rem; color: #c0392b;
 }
 
+/* Password change: verification-code step */
+.up-code-input { letter-spacing: .5em; font-size: 1.1rem; text-align: center; font-weight: 700; }
+.up-code-input::placeholder { letter-spacing: normal; font-size: .85rem; font-weight: 400; }
+.up-pw-hint { font-size: .78rem; color: #666; margin: -4px 0 8px; line-height: 1.45; }
+.up-link-btn {
+    background: none; border: none; padding: 0; margin: 0 0 12px;
+    color: #8b1a1a; font-size: .8rem; font-weight: 600; cursor: pointer; text-decoration: underline;
+}
+.up-link-btn:disabled { color: #aaa; cursor: not-allowed; text-decoration: none; }
+.up-panel-notice.up-notice-warn { background: #fff8e1; color: #7a5200; }
+.up-panel-notice.up-notice-warn i { color: #f0a500; }
+
 /* ═══════════════════════════════════════════════════════
    SUB-HEADER (Toggle Bar)
    ═══════════════════════════════════════════════════════ */

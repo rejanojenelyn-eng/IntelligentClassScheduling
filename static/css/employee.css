@@ -1,3 +1,6 @@
+@import url('export_modal.css');
+
+
 /* --- EMPLOYEE PAGE LAYOUT --- */
 .employee-container { 
     max-width: 100%; /* Take full width of dashboard area */
@@ -135,61 +138,65 @@
 .card-maroon .stat-icon { background: var(--tot-bg); color: var(--tot-color); }
 
 
-/* FILTER SECTION */
+/* FILTER SECTION
+   Metrics ported from the Room Management filter design
+   (static/css/room.css .filter-card/.filter-item/.filter-input-wrap) so
+   Faculty Management's filter boxes match it exactly — same class names and
+   ids kept so no JS (filterTable(), etc.) needed to change. */
 .filter-container {
     background: white;
-    padding: 20px 24px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+    padding: 15px 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
     margin-bottom: 20px;
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: center;
     gap: 15px;
 }
 
+
 .filter-inputs-row {
     display: flex;
-    gap: 15px;
+    gap: 20px;
+    flex-wrap: wrap;
     flex: 1;
 }
 
 .filter-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    flex: 1;
-    max-width: 250px;
+    gap: 5px;
 }
 
 .filter-group label {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 800;
-    color: var(--text-dark);
+    color: #555;
     text-transform: uppercase;
 }
 
 .filter-group select, .search-wrapper input {
-    width: 100%;
-    height: 38px;
-    background: white;
-    border: 1px solid var(--border-color);
+    width: 180px;
+    background-color: #fafafa;
+    border: 1px solid #ddd;
     border-radius: 6px;
-    color: var(--text-muted);
-    padding: 0 12px;
-    font-size: 13px;
+    color: #333;
+    padding: 8px 12px;
+    font-size: 0.8rem;
     outline: none;
+    box-sizing: border-box;
     transition: 0.2s;
 }
 
 .filter-group select:focus, .search-wrapper input:focus {
-    border-color: var(--pup-maroon);
+    border-color: #800000;
 }
 
 .search-wrapper {
     position: relative;
-    width: 100%;
 }
+.search-wrapper input { padding-right: 30px; }
 .search-wrapper i {
     position: absolute;
     right: 12px;
@@ -198,11 +205,13 @@
     color: #999;
 }
 
-/* Secondary Actions (Sort/Export) */
+/* Secondary Actions (Sort/Export/Import) */
 .filter-secondary-actions {
     display: flex;
     gap: 10px;
 }
+
+
 
 .btn-secondary {
     height: 38px;
@@ -220,6 +229,23 @@
     transition: 0.2s;
 }
 .btn-secondary:hover { background: #fdf4f4; }
+
+.btn-outline-action {
+    background: white;
+    border: 1px solid #c0a0a0;
+    color: #800000;
+    padding: 8px 15px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.btn-outline-action:hover { background: #fdf5f5; border-color: #800000; }
+
+
 
 /* BULK ACTIONS ROW */
 .bulk-actions-row {
@@ -320,7 +346,9 @@
     font-size: 14px;
     color: #a0aec0;
     transition: 0.2s;
+    user-select: none;
 }
+
 .action-icons i:hover { color: var(--pup-maroon); }
 
 /* Checkbox Styling */
@@ -891,236 +919,62 @@
     transition: width .35s ease;
 }
 
-/* ── EXPORT MODAL ──────────────────────────────────────────────────────────── */
-.emp-export-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55);
-    z-index: 9900;
-    display: flex; align-items: center; justify-content: center;
-    animation: empExportFadeIn .2s ease;
-}
-@keyframes empExportFadeIn { from { opacity:0; } to { opacity:1; } }
 
-.emp-export-dialog {
-    background: #fff; border-radius: 18px;
-    width: 100%; max-width: 510px;
-    box-shadow: 0 24px 60px rgba(0,0,0,0.22);
-    animation: empExportSlideIn .25s cubic-bezier(.34,1.56,.64,1);
-    max-height: 92vh; overflow-y: auto; overflow-x: hidden;
+.spec-search-wrapper { position: relative; width: 180px; }
+.spec-search-trigger {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    color: #333;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    box-sizing: border-box;
+    transition: 0.2s;
 }
-@keyframes empExportSlideIn {
-    from { transform: translateY(30px); opacity: 0; }
-    to   { transform: none; opacity: 1; }
+.spec-search-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spec-search-trigger:hover,
+.spec-search-wrapper.open .spec-search-trigger { border-color: #800000; }
+.spec-search-chevron { font-size: 0.65rem; color: #999; flex-shrink: 0; transition: transform 0.15s; }
+.spec-search-wrapper.open .spec-search-chevron { transform: rotate(180deg); }
+.spec-search-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 220px;
+    background: white;
+    border: 1px solid #800000;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    z-index: 500;
+    display: none;
+    overflow: hidden;
 }
+.spec-search-wrapper.open .spec-search-menu { display: block; }
+.spec-search-box { padding: 7px 8px; border-bottom: 1px solid #e8e8e8; background: #fafafa; }
+.spec-search-input {
+    width: 100%; box-sizing: border-box;
+    padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+    font-size: 0.75rem; color: #333; outline: none;
+}
+.spec-search-input:focus { border-color: #800000; }
+.spec-search-input::placeholder { color: #bbb; font-style: italic; }
+.spec-search-list { max-height: 220px; overflow-y: auto; }
+.spec-search-option { padding: 8px 12px; cursor: pointer; font-size: 0.78rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+.spec-search-option:last-child { border-bottom: none; }
+.spec-search-option:hover { background: #fdf5f5; color: #800000; }
 
-.emp-export-header {
-    display: flex; align-items: flex-start; gap: 14px;
-    padding: 24px 24px 18px; border-bottom: 1px solid #f0f0f0;
-}
-.emp-export-header-icon {
-    width: 44px; height: 44px; flex-shrink: 0;
-    background: linear-gradient(135deg, #800000, #b22222);
-    border-radius: 12px; display: flex; align-items: center;
-    justify-content: center; color: white; font-size: 18px;
-}
-.emp-export-header h2 { font-size: 1.05rem; font-weight: 800; color: #1a1a1a; margin: 0 0 3px; }
-.emp-export-header p  { font-size: 0.8rem; color: #888; margin: 0; }
-.emp-export-close {
-    margin-left: auto; background: none; border: none;
-    font-size: 22px; color: #aaa; cursor: pointer; padding: 0 4px;
-    line-height: 1; flex-shrink: 0;
-}
-.emp-export-close:hover { color: #555; }
-
-.emp-export-summary {
-    margin: 16px 24px;
-    background: linear-gradient(135deg, #800000, #9e0000);
-    border-radius: 12px; padding: 14px 18px;
-    display: flex; align-items: center; gap: 14px; color: white;
-}
-.emp-export-summary-icon { font-size: 22px; opacity: 0.9; }
-.emp-export-count { font-size: 1.7rem; font-weight: 900; line-height: 1; }
-.emp-export-count-label {
-    font-size: 0.72rem; text-transform: uppercase;
-    letter-spacing: 0.5px; opacity: 0.85; display: block; margin-top: 2px;
-}
-.emp-export-summary-info {
-    margin-left: auto; font-size: 0.75rem; opacity: 0.85;
-    background: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 20px;
-    white-space: nowrap;
-}
-
-.emp-export-section { padding: 0 24px 16px; }
-
-.emp-export-section-header {
-    display: flex; align-items: center;
-    justify-content: space-between; margin-bottom: 12px;
-}
-.emp-export-section-title {
-    font-size: 0.78rem; font-weight: 700; color: #555;
-    text-transform: uppercase; letter-spacing: 0.5px;
-}
-.emp-export-select-all {
-    background: none; border: 1.5px solid #800000; color: #800000;
-    border-radius: 20px; font-size: 0.72rem; font-weight: 700;
-    padding: 3px 12px; cursor: pointer; transition: .2s;
-}
-.emp-export-select-all:hover, .emp-export-select-all.all-selected {
-    background: #800000; color: white;
+/* ── Inline form error banner (Add/Edit Faculty) ──────────────────────────
+   Matches this app's existing inline-error convention (e.g. the Rooms
+   modals' .rm-error) so a failed submit reads the same way everywhere. */
+.form-error-banner {
+    background: #fff5f5; border: 1px solid #f5c0c0; color: #9b0000;
+    border-radius: 6px; padding: 10px 14px; font-size: 0.83rem;
+    margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
 }
 
-.emp-export-format-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-.emp-export-format-card {
-    border: 2px solid #e8e8e8; border-radius: 12px;
-    padding: 14px 14px 12px; cursor: pointer;
-    position: relative; transition: border-color .2s, box-shadow .2s, background .2s;
-    user-select: none;
-}
-.emp-export-format-card:hover:not(.selected) {
-    border-color: #ccc; box-shadow: 0 4px 14px rgba(0,0,0,0.08); background: #fafafa;
-}
-.emp-format-icon  { font-size: 24px; margin-bottom: 8px; }
-.csv-color  { color: #2a7a2a; }
-.xlsx-color { color: #107c41; }
-.pdf-color  { color: #c62828; }
-.docx-color { color: #1a56b0; }
-.emp-format-name  { font-size: 0.85rem; font-weight: 800; color: #1a1a1a; margin-bottom: 3px; }
-.emp-format-desc  { font-size: 0.72rem; color: #999; }
-.emp-format-check {
-    position: absolute; top: 10px; right: 10px;
-    font-size: 15px; color: #ddd; transition: color .2s;
-}
-.emp-export-format-card.selected { border-color: #800000; background: #fff8f8; }
-.emp-export-format-card.selected .emp-format-check { color: #800000; }
-.emp-export-format-card.csv-sel.selected  { border-color: #2a7a2a; background: #f3fff3; }
-.emp-export-format-card.csv-sel.selected  .emp-format-check { color: #2a7a2a; }
-.emp-export-format-card.xlsx-sel.selected { border-color: #107c41; background: #f0faf5; }
-.emp-export-format-card.xlsx-sel.selected .emp-format-check { color: #107c41; }
-.emp-export-format-card.pdf-sel.selected  { border-color: #c62828; background: #fff5f5; }
-.emp-export-format-card.pdf-sel.selected  .emp-format-check { color: #c62828; }
-.emp-export-format-card.docx-sel.selected { border-color: #1a56b0; background: #f0f5ff; }
-.emp-export-format-card.docx-sel.selected .emp-format-check { color: #1a56b0; }
-.emp-export-format-error { font-size: 0.78rem; color: #c0392b; margin-top: 8px; }
 
-.emp-export-label {
-    font-size: 0.78rem; font-weight: 700; color: #555;
-    text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 8px;
-}
-.emp-export-sublabel { font-size: 0.7rem; color: #aaa; display: block; margin-top: 2px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-
-.emp-filename-input-wrapper {
-    display: flex; align-items: center;
-    border: 1.5px solid #e0e0e0; border-radius: 10px;
-    padding: 0 12px; gap: 8px; background: #fafafa; transition: border-color .2s;
-}
-.emp-filename-input-wrapper:focus-within { border-color: #800000; background: #fff; }
-.emp-filename-input-wrapper i { color: #bbb; font-size: 14px; }
-.emp-filename-input {
-    border: none; background: transparent; padding: 10px 0;
-    font-size: 0.88rem; color: #333; outline: none; flex: 1;
-}
-
-.emp-export-date-row {
-    display: flex; align-items: center; justify-content: space-between;
-    background: #fafafa; border: 1.5px solid #e8e8e8;
-    border-radius: 10px; padding: 12px 14px; gap: 12px;
-}
-.emp-toggle-switch {
-    position: relative; display: inline-block;
-    width: 42px; height: 24px; flex-shrink: 0;
-}
-.emp-toggle-switch input { opacity: 0; width: 0; height: 0; }
-.emp-toggle-slider {
-    position: absolute; cursor: pointer; inset: 0;
-    background: #ccc; border-radius: 34px; transition: .3s;
-}
-.emp-toggle-slider::before {
-    content: ''; position: absolute;
-    width: 18px; height: 18px; left: 3px; bottom: 3px;
-    background: white; border-radius: 50%; transition: .3s;
-}
-.emp-toggle-switch input:checked + .emp-toggle-slider { background: #800000; }
-.emp-toggle-switch input:checked + .emp-toggle-slider::before { transform: translateX(18px); }
-
-.emp-export-footer {
-    display: flex; gap: 10px; justify-content: flex-end;
-    padding: 14px 24px 22px; border-top: 1px solid #f0f0f0;
-}
-.emp-export-cancel {
-    padding: 10px 22px; border: 1.5px solid #e0e0e0;
-    border-radius: 10px; background: white; color: #666;
-    font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: .2s;
-}
-.emp-export-cancel:hover { border-color: #aaa; background: #f5f5f5; }
-.emp-export-confirm {
-    padding: 10px 22px; background: #800000; color: white;
-    border: none; border-radius: 10px; font-weight: 800;
-    font-size: 0.85rem; cursor: pointer; transition: .2s;
-    display: flex; align-items: center; gap: 7px;
-}
-.emp-export-confirm:hover { background: #a00000; }
-.emp-export-confirm:disabled { background: #ccc; cursor: not-allowed; }
-
-/* Export loading overlay */
-.emp-export-loading {
-    position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0,0,0,0.5);
-    display: flex; align-items: center; justify-content: center;
-}
-.emp-export-loading-card {
-    background: white; border-radius: 16px;
-    padding: 32px 36px; text-align: center; min-width: 220px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.2);
-}
-.emp-export-spinner {
-    width: 48px; height: 48px; margin: 0 auto 16px;
-    border: 4px solid #f0e6e6; border-top-color: #800000;
-    border-radius: 50%; animation: empSpin .8s linear infinite;
-}
-@keyframes empSpin { to { transform: rotate(360deg); } }
-.emp-export-loading-text { font-weight: 800; font-size: 0.95rem; color: #1a1a1a; margin-bottom: 4px; }
-.emp-export-loading-sub  { font-size: 0.78rem; color: #888; }
-
-/* Export toast */
-.emp-export-toast {
-    position: fixed; bottom: 28px; right: 28px; z-index: 10000;
-    background: white; border-radius: 14px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-    display: flex; align-items: center; gap: 14px;
-    padding: 14px 18px; min-width: 280px; max-width: 360px;
-    animation: empToastIn .3s cubic-bezier(.34,1.56,.64,1);
-}
-@keyframes empToastIn { from { transform: translateX(120%); } to { transform: none; } }
-.emp-export-toast.success { border-left: 4px solid #2e7d32; }
-.emp-export-toast.error   { border-left: 4px solid #c62828; }
-.emp-export-toast-icon { font-size: 20px; flex-shrink: 0; }
-.emp-export-toast.success .emp-export-toast-icon { color: #2e7d32; }
-.emp-export-toast.error   .emp-export-toast-icon { color: #c62828; }
-.emp-export-toast-body { flex: 1; min-width: 0; }
-.emp-export-toast-title { font-weight: 800; font-size: 0.85rem; color: #1a1a1a; margin-bottom: 2px; }
-.emp-export-toast-msg   { font-size: 0.78rem; color: #666; }
-.emp-export-toast-close {
-    margin-left: auto; background: none; border: none;
-    font-size: 16px; color: #bbb; cursor: pointer; flex-shrink: 0;
-}
-.emp-export-toast-close:hover { color: #666; }
-
-/* ── Subject/Faculty Assignment Export — checkbox lists ── */
-.emp-cb-list {
-    border: 1px solid #f0e0e0; border-radius: 8px;
-    max-height: 160px; overflow-y: auto; background: #fafafa;
-}
-.emp-cb-list::-webkit-scrollbar { width: 4px; }
-.emp-cb-list::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
-.emp-cb-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px; cursor: pointer;
-    border-bottom: 1px solid #f5eeee; transition: background .15s;
-}
-.emp-cb-item:last-child { border-bottom: none; }
-.emp-cb-item:hover { background: #fff5f5; }
-.emp-cb-item.selected { background: #fff0f0; }
-.emp-cb-item input[type=checkbox] { accent-color: #800000; flex-shrink: 0; pointer-events: none; }
-.emp-cb-item span { flex: 1; font-size: .85rem; font-weight: 600; color: #333; }

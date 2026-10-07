@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS public.sections
     programyearlevelid    INTEGER NOT NULL,
     sectionname           VARCHAR(10) NOT NULL,
     isactive              BOOLEAN DEFAULT true,
+    start_semestertype    VARCHAR(5),   -- A/B/C: first semester of its AY it exists in; NULL = whole AY
     CONSTRAINT uq_section
         UNIQUE ( programyearlevelid, sectionname ),
     CONSTRAINT fk_section_programyearlevel
@@ -346,42 +347,76 @@ CREATE TABLE IF NOT EXISTS public.room
 );
 -----------------------------------------------------------------------
 --SCHEDULE
+-- One row per subject + section + semester. Every Draft / Published / Archive version of
+-- that subject shares this scheduleid (the app finds-or-creates it with
+-- INSERT ... ON CONFLICT on uq_schedule_subject_section_semester).
 
 CREATE TABLE IF NOT EXISTS public.schedule
 (
     scheduleid integer NOT NULL GENERATED ALWAYS AS IDENTITY,
     curriculumsubjectid integer NOT NULL,
     sectionid integer NOT NULL,
+    -- Mirrors the faculty of the current Published version (per-version faculty lives in
+    -- schedule_version.employeenumber).
     employeenumber character varying(30),
     semesterid INT NOT NULL,
-    datecreated timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    datecreated timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT schedule_pkey PRIMARY KEY (scheduleid),
     CONSTRAINT fk_group_curriculumsubject FOREIGN KEY (curriculumsubjectid)
         REFERENCES public.curriculumsubject (curriculumsubjectid),
+    CONSTRAINT fk_group_section FOREIGN KEY (sectionid)
+        REFERENCES public.sections (sectionid),
     CONSTRAINT fk_group_faculty FOREIGN KEY (employeenumber)
         REFERENCES public.faculty (employeenumber),
     CONSTRAINT fk_group_semester FOREIGN KEY (semesterid)
-        REFERENCES public.semester (semesterid)
+        REFERENCES public.semester (semesterid),
+    CONSTRAINT uq_schedule_subject_section_semester
+        UNIQUE (curriculumsubjectid, sectionid, semesterid)
 );
+CREATE INDEX IF NOT EXISTS idx_schedule_section  ON public.schedule (sectionid);
+CREATE INDEX IF NOT EXISTS idx_schedule_semester ON public.schedule (semesterid);
+CREATE INDEX IF NOT EXISTS idx_schedule_faculty  ON public.schedule (employeenumber);
 -----------------------------------------------------------------------
+-- SCHEDULE VERSION
+-- Official lifecycle: Draft -> Published -> Archive. There is NO 'Approved' version status
+-- (Approve is the Publish action). Draft and Published may coexist for one subject; only a
+-- successful Publish archives the previous Published version.
 CREATE TABLE IF NOT EXISTS public.schedule_version
 (
     versionid integer NOT NULL GENERATED ALWAYS AS IDENTITY,
     scheduleid integer NOT NULL,
+    -- Batch stamp shared by every subject of one Publish/Save; counted across ALL sources.
     version_number integer NOT NULL,
     status character varying(20) NOT NULL,
-    datecreated timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    datecreated timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    original_status character varying(20),
+    source character varying(50) DEFAULT 'official',      -- manual_editor | import | official
+    employeenumber character varying(30),                 -- this version's own faculty
+    is_incomplete boolean NOT NULL DEFAULT false,         -- Draft with unresolved components
+    incomplete_components jsonb,
+    -- A Draft that REMOVES its subject: is_removal = true and no schedule_sessions.
+    -- Published stays live until a Publish consumes the marker.
+    is_removal boolean NOT NULL DEFAULT false,
     CONSTRAINT schedule_version_pkey PRIMARY KEY (versionid),
     CONSTRAINT fk_version_group FOREIGN KEY (scheduleid)
         REFERENCES public.schedule (scheduleid)
         ON DELETE CASCADE,
-    CONSTRAINT chk_schedule_status CHECK (status IN ('Published','Draft','Archive', 'Approved')),
+    CONSTRAINT fk_version_faculty FOREIGN KEY (employeenumber)
+        REFERENCES public.faculty (employeenumber),
+    CONSTRAINT chk_schedule_status CHECK (status IN ('Published','Draft','Archive')),
+    CONSTRAINT chk_version_number CHECK (version_number > 0),
 	CONSTRAINT uq_schedule_version
         UNIQUE (scheduleid, version_number)
 );
+CREATE INDEX IF NOT EXISTS idx_scheduleversion_schedule ON public.schedule_version (scheduleid);
+-- At most one Published and one Draft version per subject+section+semester.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_one_published
+    ON public.schedule_version (scheduleid) WHERE status = 'Published';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_one_draft
+    ON public.schedule_version (scheduleid) WHERE status = 'Draft';
 
 -----------------------------------------------------------------------
--- SCHEDULE SESSIONS
+-- SCHEDULE SESSIONS-- SCHEDULE SESSIONS
 CREATE TABLE IF NOT EXISTS public.schedule_sessions
 (
     sessionid integer NOT NULL GENERATED ALWAYS AS IDENTITY,
@@ -430,6 +465,10 @@ CREATE TABLE IF NOT EXISTS public.historical_data
 );
 ----------------------------------------------------------------------
 -- makeup class request
+-- Request lifecycle: Pending -> Approved | Rejected (reviewed by the Academic Head)
+--                    Pending -> Cancelled (withdrawn by the submitting faculty; never reviewed).
+-- An approved Make-up is ONE meeting on requested_date: it never creates an Official version
+-- or a Local override.
 
 CREATE TABLE IF NOT EXISTS public.class_meeting_request
 (
@@ -439,13 +478,17 @@ CREATE TABLE IF NOT EXISTS public.class_meeting_request
     new_starttimeid  integer                     NOT NULL,
     new_endtimeid    integer                     NOT NULL,
     new_roomid       integer,
-    reason           text,
+    reason           text                        NOT NULL,
     csp_flags        jsonb                       NOT NULL DEFAULT '{}'::jsonb,
     submitted_by     character varying(30)       NOT NULL,
     status           character varying(20)       NOT NULL DEFAULT 'Pending',
     reviewed_by      character varying(30),
     reviewed_at      timestamp without time zone,
-    created_at       timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    created_at       timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    decided_at       timestamp without time zone,
+    decided_by       character varying(100),
+    notes            text,
+    remarks          text,
 
     CONSTRAINT makeupclass_request_pkey   PRIMARY KEY (requestid),
 
@@ -467,11 +510,19 @@ CREATE TABLE IF NOT EXISTS public.class_meeting_request
     CONSTRAINT fk_mkup_reviewed_by        FOREIGN KEY (reviewed_by)
         REFERENCES public.faculty (employeenumber),
 
-    CONSTRAINT chk_mkup_status            CHECK (status IN ('Pending','Approved','Rejected'))
+    CONSTRAINT chk_cmr_reason             CHECK (TRIM(reason) <> ''),
+    CONSTRAINT chk_cmr_different_times    CHECK (new_starttimeid <> new_endtimeid),
+    CONSTRAINT chk_cmr_status             CHECK (status IN ('Pending','Approved','Rejected','Cancelled')),
+    CONSTRAINT chk_cmr_review             CHECK (
+        (status IN ('Pending','Cancelled') AND reviewed_by IS NULL AND reviewed_at IS NULL)
+        OR (status IN ('Approved','Rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 
 -----------------------------------------------------------------------
 -- Schedule_change_request
+-- Schedule Adjustment request for ONE exact Official occurrence (official_sessionid).
+-- Same request lifecycle as above. Approval publishes it into the section's Local
+-- Published snapshot (local_arrangement); it never creates an Official version.
 CREATE TABLE IF NOT EXISTS public.schedule_change_request
 (
     requestid        integer                     NOT NULL GENERATED ALWAYS AS IDENTITY,
@@ -483,13 +534,18 @@ CREATE TABLE IF NOT EXISTS public.schedule_change_request
     new_endtimeid    integer,
     new_roomid       integer,
     effective_from   date                        NOT NULL,
-    reason           text,
+    reason           text                        NOT NULL,
     has_hc_violation boolean                     NOT NULL DEFAULT false,
     submitted_by     character varying(30)       NOT NULL,
     status           character varying(20)       NOT NULL DEFAULT 'Pending',
     reviewed_by      character varying(30),
     reviewed_at      timestamp without time zone,
-    created_at       timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    created_at       timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    decided_at       timestamp without time zone,
+    decided_by       character varying(100),
+    end_date         date,
+    remarks          text,
+    official_sessionid integer,
 
     CONSTRAINT schedule_change_request_pkey  PRIMARY KEY (requestid),
 
@@ -498,6 +554,9 @@ CREATE TABLE IF NOT EXISTS public.schedule_change_request
 
     CONSTRAINT fk_scr_version                FOREIGN KEY (versionid)
         REFERENCES public.schedule_version (versionid),
+
+    CONSTRAINT fk_scr_official_session       FOREIGN KEY (official_sessionid)
+        REFERENCES public.schedule_sessions (sessionid),
 
     CONSTRAINT fk_scr_starttime              FOREIGN KEY (new_starttimeid)
         REFERENCES public.timeslot (timeid),
@@ -517,7 +576,13 @@ CREATE TABLE IF NOT EXISTS public.schedule_change_request
     CONSTRAINT chk_scr_change_type           CHECK (change_type IN (
         'Day','Time','Room','Day+Time','Day+Room','Time+Room','Day+Time+Room')),
 
-    CONSTRAINT chk_scr_status                CHECK (status IN ('Pending','Approved','Rejected')),
+    CONSTRAINT chk_scr_reason                CHECK (TRIM(reason) <> ''),
+
+    CONSTRAINT chk_scr_status                CHECK (status IN ('Pending','Approved','Rejected','Cancelled')),
+
+    CONSTRAINT chk_scr_review                CHECK (
+        (status IN ('Pending','Cancelled') AND reviewed_by IS NULL AND reviewed_at IS NULL)
+        OR (status IN ('Approved','Rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)),
 
     CONSTRAINT chk_scr_daydesc               CHECK (
         new_daydesc IN ('Monday','Tuesday','Wednesday','Thursday',
@@ -525,7 +590,7 @@ CREATE TABLE IF NOT EXISTS public.schedule_change_request
 );
 
 -----------------------------------------------------------------------
--- Schedule_exception_log
+-- Schedule_exception_log-- Schedule_exception_log
 
 CREATE TABLE IF NOT EXISTS public.schedule_exception_log
 (
@@ -553,6 +618,8 @@ CREATE TABLE IF NOT EXISTS public.schedule_exception_log
 
 -----------------------------------------------------------------------
 -- Local_schedule_adjustment
+-- LEGACY: not used by the application. Local overrides live in local_arrangement /
+-- local_arrangement_sessions below. Kept only so older databases keep loading.
 
 CREATE TABLE IF NOT EXISTS public.local_schedule_adjustment
 (
@@ -599,6 +666,138 @@ CREATE TABLE IF NOT EXISTS public.local_schedule_adjustment
     CONSTRAINT chk_lsa_source_type           CHECK (source_type IN (
         'class_session','schedule_change'))
 );
+
+-----------------------------------------------------------------------
+-- LOCAL SCHEDULER (override layer over the Published Official schedule)
+-- Local lifecycle: Draft (editable, inactive) -> Published (the section's ONE active override
+-- snapshot) -> Archived (immutable history). Local never writes schedule / schedule_version /
+-- schedule_sessions.
+-- Effective schedule = Official Published
+--                      MINUS occurrences replaced by the active Local Published snapshot
+--                      PLUS  its local_arrangement_sessions.
+CREATE TABLE IF NOT EXISTS public.local_arrangement
+(
+    arrangementid    SERIAL PRIMARY KEY,
+    description      character varying(200),
+    programcode      character varying(20),
+    yearlevel        integer,
+    sectionid        integer,
+    semesterid       integer,
+    -- Snapshot/audit anchor: a versionid of the Official Published snapshot the overrides
+    -- were made against. NOT the occurrence identity (see official_sessionid).
+    ref_versionid    integer,
+    has_hc_violation boolean DEFAULT false,
+    violated_rules   jsonb DEFAULT '[]'::jsonb,
+    override_reason  text,
+    reason           text,
+    is_active        boolean DEFAULT true,
+    status           character varying(20) DEFAULT 'Draft',
+    draft_fingerprint character varying(64),
+    archive_reason   text,
+    archived_at      timestamp without time zone,
+    restored_from_arrangementid integer,
+    created_by       character varying(100),
+    created_at       timestamp without time zone DEFAULT now(),
+    updated_at       timestamp without time zone DEFAULT now(),
+    CONSTRAINT local_arrangement_sectionid_fkey FOREIGN KEY (sectionid)
+        REFERENCES public.sections (sectionid),
+    CONSTRAINT fk_local_arrangement_semester FOREIGN KEY (semesterid)
+        REFERENCES public.semester (semesterid),
+    CONSTRAINT local_arrangement_restored_from_arrangementid_fkey FOREIGN KEY (restored_from_arrangementid)
+        REFERENCES public.local_arrangement (arrangementid),
+    CONSTRAINT chk_local_arrangement_status CHECK (status IN ('Draft','Published','Archived'))
+);
+CREATE INDEX IF NOT EXISTS idx_local_arrangement_section_context
+    ON public.local_arrangement (programcode, yearlevel, sectionid, semesterid, status, is_active);
+-- Identical Draft submissions collapse into one Draft.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_local_active_draft_fingerprint
+    ON public.local_arrangement (draft_fingerprint)
+    WHERE status = 'Draft' AND draft_fingerprint IS NOT NULL;
+-- ONE active Published Local snapshot per section scope.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_local_one_active_published_scope
+    ON public.local_arrangement (UPPER(programcode), yearlevel, sectionid, semesterid)
+    WHERE status = 'Published' AND is_active = true;
+
+CREATE TABLE IF NOT EXISTS public.local_arrangement_sessions
+(
+    sessionid              SERIAL PRIMARY KEY,
+    arrangementid          integer,
+    subjectcode            character varying(50),
+    daydesc                character varying(20),
+    starttimeid            integer,
+    endtimeid              integer,
+    roomid                 integer,
+    faculty_employeenumber character varying(50),
+    -- Authoritative link: the exact Official occurrence this Local session replaces.
+    official_sessionid     integer,
+    CONSTRAINT local_arrangement_sessions_arrangementid_fkey FOREIGN KEY (arrangementid)
+        REFERENCES public.local_arrangement (arrangementid),
+    CONSTRAINT local_arrangement_sessions_official_sessionid_fkey FOREIGN KEY (official_sessionid)
+        REFERENCES public.schedule_sessions (sessionid)
+);
+CREATE INDEX IF NOT EXISTS idx_local_session_official_source
+    ON public.local_arrangement_sessions (official_sessionid);
+
+-- LEGACY: created by older versions; no longer written or read by the application.
+CREATE TABLE IF NOT EXISTS public.local_displaced_subjects
+(
+    id            SERIAL PRIMARY KEY,
+    programcode   character varying(20) NOT NULL,
+    yearlevel     integer NOT NULL,
+    sectionid     integer,
+    semesterid    integer NOT NULL,
+    subjectcode   character varying(50) NOT NULL,
+    displaced_by  integer,
+    is_active     boolean DEFAULT true,
+    displaced_at  timestamp without time zone DEFAULT now(),
+    CONSTRAINT local_displaced_subjects_programcode_yearlevel_semesterid_s_key
+        UNIQUE (programcode, yearlevel, semesterid, subjectcode),
+    CONSTRAINT local_displaced_subjects_displaced_by_fkey FOREIGN KEY (displaced_by)
+        REFERENCES public.local_arrangement (arrangementid),
+    CONSTRAINT local_displaced_subjects_sectionid_fkey FOREIGN KEY (sectionid)
+        REFERENCES public.sections (sectionid)
+);
+CREATE INDEX IF NOT EXISTS idx_local_displaced_section_context
+    ON public.local_displaced_subjects (programcode, yearlevel, sectionid, semesterid, subjectcode, is_active);
+
+-- Archived Local history is immutable; a Published Local is never reverted to Draft in place.
+CREATE OR REPLACE FUNCTION public.guard_local_arrangement_history()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND OLD.status = 'Archived' THEN
+        RAISE EXCEPTION 'Archived Local Arrangement history is immutable';
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.status = 'Archived' THEN
+        RAISE EXCEPTION 'Archived Local Arrangement history is immutable';
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.status = 'Published' AND NEW.status = 'Draft' THEN
+        RAISE EXCEPTION 'Published Local Arrangement cannot be reverted in place';
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_local_archive_immutable ON public.local_arrangement;
+CREATE TRIGGER trg_local_archive_immutable
+    BEFORE UPDATE OR DELETE ON public.local_arrangement
+    FOR EACH ROW EXECUTE FUNCTION public.guard_local_arrangement_history();
+
+CREATE OR REPLACE FUNCTION public.guard_local_archived_sessions()
+RETURNS trigger AS $$
+DECLARE parent_status VARCHAR(20);
+BEGIN
+    SELECT status INTO parent_status
+    FROM public.local_arrangement
+    WHERE arrangementid = OLD.arrangementid;
+    IF parent_status = 'Archived' THEN
+        RAISE EXCEPTION 'Sessions belonging to Archived Local history are immutable';
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_local_archived_sessions_immutable ON public.local_arrangement_sessions;
+CREATE TRIGGER trg_local_archived_sessions_immutable
+    BEFORE UPDATE OR DELETE ON public.local_arrangement_sessions
+    FOR EACH ROW EXECUTE FUNCTION public.guard_local_archived_sessions();
 ----------------------------------------------------------------------
 -- CURRICULUM VIEW-
 CREATE OR REPLACE VIEW public.curriculum_view AS

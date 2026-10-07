@@ -1,0 +1,389 @@
+/* room_schedule_v2.css — Room Schedule redesign shared by the Academic Head
+   (academic/roomScheduleView.html) and Admin (admin/room_schedule_admin.html) pages,
+   via templates/shared/_room_schedule_body.html. Mirrors the Faculty page's redesign;
+   every rule is scoped under .frs-v2 so it overrides the pages' older inline styles
+   without touching any other page. Generated from the Faculty page's styles. */
+/* ══════════════════════════════════════════════════════════════════
+       ROOM SCHEDULE — 2026-10 redesign (cards, chips, week nav, Day/Week)
+       Overrides the rules above; ids/classes used by the JS are unchanged.
+    ══════════════════════════════════════════════════════════════════ */
+
+.frs-v2.frs-wrap { background: #f6f7f9; padding: 22px 26px 30px; }
+/* Header card */
+
+.frs-v2 .frs-header-row {
+        background: #fff; border: 1px solid #eceef2; border-radius: 14px;
+        padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(16,24,40,.04);
+    }
+
+.frs-v2 .frs-header-left { display: flex; align-items: center; gap: 14px; }
+
+.frs-v2 .frs-header-icon {
+        width: 48px; height: 48px; border-radius: 12px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.35rem; flex-shrink: 0;
+    }
+
+.frs-v2 .frs-page-title { font-size: 1.45rem; line-height: 1.15; }
+
+.frs-v2 .frs-page-sub { margin: 3px 0 0; font-size: .8rem; color: #6b7280; }
+
+.frs-v2 .btn-frs-request { padding: 12px 22px; border-radius: 10px; box-shadow: 0 4px 12px rgba(128,0,0,.22); }
+/* Main tabs: original bordered bar (rules above), with room before the chips card */
+
+.frs-v2 .frs-main-tabs { background: #fff; margin-bottom: 14px; }
+/* Building chips */
+
+.frs-v2 .frs-bldg-tabs {
+        border: 0; border-radius: 12px; background: #fff; gap: 8px; padding: 12px 16px;
+        margin-bottom: 16px; box-shadow: 0 2px 10px rgba(16,24,40,.04); flex-wrap: nowrap;
+    }
+
+.frs-v2 .frs-bldg-tab {
+        display: inline-flex; align-items: center; gap: 7px; border: 1px solid #ececf0; border-radius: 8px;
+        background: #f6f6f8; color: #800000; padding: 9px 14px; font-size: .74rem;
+    }
+
+.frs-v2 .frs-bldg-tab:last-child { border-right: 1px solid #ececf0; }
+
+.frs-v2 .frs-bldg-tab:hover { background: #fdf2f2; }
+
+.frs-v2 .frs-bldg-tab.active { background: #800000; color: #fff; border-color: #800000; }
+
+.frs-v2 .frs-bldg-tab i { font-size: .8rem; }
+/* Body */
+
+.frs-v2 .frs-body { gap: 16px; align-items: stretch; }
+/* Sidebar card */
+
+.frs-v2 .frs-left {
+        flex: 0 0 210px; background: #fff; border: 1px solid #eceef2; border-radius: 12px;
+        padding: 14px 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); max-height: 640px;
+    }
+
+.frs-v2 .frs-sidebar-label {
+        display: flex; align-items: center; gap: 6px; font-size: .62rem; color: #800000; margin-bottom: 7px;
+    }
+
+.frs-v2 .frs-list-label { justify-content: space-between; color: #555; margin-top: 4px; }
+
+.frs-v2 .frs-room-count { color: #888; font-weight: 700; text-transform: none; letter-spacing: 0; }
+
+.frs-v2 .frs-floor-select {
+        border: 1px solid #dfe1e6; border-radius: 8px; color: #333; font-weight: 600;
+        padding: 9px 10px; font-size: .8rem; margin-bottom: 10px;
+    }
+
+.frs-v2 .frs-room-search {
+        display: flex; align-items: center; gap: 8px; border: 1px solid #dfe1e6; border-radius: 8px;
+        padding: 0 10px; height: 38px; margin-bottom: 14px; background: #fff;
+    }
+
+.frs-v2 .frs-room-search i { color: #9aa0a6; font-size: .8rem; }
+
+.frs-v2 .frs-room-search input { border: 0; outline: 0; flex: 1; font: 400 .8rem 'Inter', sans-serif; min-width: 0; }
+
+.frs-v2 .frs-room-search:focus-within,
+.frs-v2 .frs-floor-select:focus { border-color: #800000; outline: none; }
+
+.frs-v2 .frs-room-list { border: 0; padding: 0 2px 0 0; display: flex; flex-direction: column; gap: 6px; }
+
+.frs-v2 .frs-room-item {
+        text-align: left; padding: 9px 14px; border: 1px solid #ececf0; border-radius: 8px; background: #fafafb;
+        margin: 0;
+    }
+
+.frs-v2 .frs-room-item .frs-room-name { display: block; font-size: .9rem; font-weight: 800; color: #222; }
+
+.frs-v2 .frs-room-item .frs-room-floor { display: block; font-size: .68rem; font-weight: 500; color: #888; margin-top: 1px; }
+
+.frs-v2 .frs-room-item:hover { background: #fdf2f2; border-color: #f0d4d4; }
+
+.frs-v2 .frs-room-item.active { background: #800000; border-color: #800000; border-radius: 8px; margin: 0; }
+
+.frs-v2 .frs-room-item.active .frs-room-name,
+.frs-v2 .frs-room-item.active .frs-room-floor { color: #fff; }
+/* Calendar card */
+
+.frs-v2 .frs-cal-wrap {
+        border: 1px solid #eceef2; border-radius: 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
+    }
+
+.frs-v2 .frs-cal-title-row { border-bottom: 1px solid #eceef2; padding: 12px 14px; gap: 12px; }
+
+.frs-v2 .frs-cal-room { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+.frs-v2 .frs-cal-room-icon {
+        width: 44px; height: 44px; border-radius: 10px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.15rem; flex-shrink: 0;
+    }
+
+.frs-v2 .frs-cal-title { padding: 0; border: 0; font-size: 1.3rem; font-weight: 900; color: #222; text-transform: none; }
+
+.frs-v2 .frs-cal-sub { font-size: .76rem; color: #777; margin-top: 2px; }
+
+.frs-v2 .frs-cal-actions { flex-wrap: wrap; gap: 10px; padding: 0; }
+
+.frs-v2 .frs-view-toggle { display: inline-flex; background: #f1f2f4; border-radius: 10px; padding: 3px; }
+
+.frs-v2 .frs-view-toggle button {
+        border: 0; background: transparent; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+        font: 700 .78rem 'Inter', sans-serif; color: #444; display: inline-flex; align-items: center; gap: 6px;
+    }
+
+.frs-v2 .frs-view-toggle button.active { background: #800000; color: #fff; }
+/* Grid */
+
+.frs-v2 .frs-grid { min-width: 0; }
+
+.frs-v2 .frs-grid.frs-week { grid-template-columns: 74px repeat(7, minmax(118px, 1fr)); min-width: 900px; }
+
+.frs-v2 .frs-grid.frs-day { grid-template-columns: 74px 1fr; }
+
+.frs-v2 .frs-grid-header-cell {
+        background: #800000; padding: 8px 6px; line-height: 1.25; position: sticky; top: 0; z-index: 3;
+        border-right: 1px solid rgba(255,255,255,.12);
+    }
+
+.frs-v2 .frs-grid-header-cell .frs-hd-date { display: block; font-size: .66rem; font-weight: 600; opacity: .85; text-transform: none; }
+
+.frs-v2 .frs-grid-header-cell.frs-hd-today { background: #a51c1c; box-shadow: inset 0 -3px 0 #f6c343; }
+
+.frs-v2 .frs-time-cell { font-size: .66rem; color: #666; border-right: 1px solid #e6e7ea; border-bottom: 1px solid #f0f1f3; }
+
+.frs-v2 .frs-day-col-cell { border-right: 1px solid #eceef1; border-bottom: 1px solid #f3f4f6; }
+
+.frs-v2 .frs-day-col-cell.frs-col-today { background: #fffaf0; }
+/* Session cards */
+
+.frs-v2 .frs-pill {
+        left: 4px; right: 4px; border-radius: 8px; padding: 6px 9px; border-left: 4px solid #999;
+        box-shadow: 0 1px 4px rgba(16,24,40,.12); color: #2a2a2a; line-height: 1.32; cursor: pointer;
+    }
+
+.frs-v2 .frs-pill:hover { box-shadow: 0 4px 12px rgba(16,24,40,.18); z-index: 4; }
+
+.frs-v2 .frs-pill-code { font-size: .74rem; font-weight: 900; color: #111; }
+
+.frs-v2 .frs-pill-name { font-size: .64rem; color: #333; white-space: normal; display: -webkit-box;
+        -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; margin-bottom: 3px; }
+
+.frs-v2 .frs-pill-meta { font-size: .62rem; color: #444; opacity: 1; }
+
+.frs-v2 .frs-pill-meta i { width: 11px; text-align: center; color: #555; }
+
+.frs-v2 .frs-pill-time { font-size: .62rem; color: #555; margin-top: 3px; font-weight: 600; }
+
+.frs-v2 .frs-pill.frs-pill-compact .frs-pill-name,
+.frs-v2 .frs-pill.frs-pill-compact .frs-pill-meta { display: none; }
+@media (max-width: 1100px) {
+.frs-v2 .frs-body { flex-direction: column; }
+
+.frs-v2 .frs-left { flex: none; max-height: none; }
+
+.frs-v2 .frs-room-list { flex-direction: row; flex-wrap: wrap; }}
+/* ══════════════════════════════════════════════════════════════════
+       AVAILABLE ROOMS — 2026-10 redesign (filter card, toolbar, groups)
+       Room cards keep their red outline.
+    ══════════════════════════════════════════════════════════════════ */
+
+.frs-v2 .frs-avail-wrap { gap: 16px; align-items: flex-start; }
+
+.frs-v2 .frs-avail-filters {
+        flex: 0 0 230px; background: #fff; border: 1px solid #eceef2; border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
+    }
+
+.frs-v2 .frs-avail-filters-header {
+        background: #fff; color: #800000; border-radius: 0; justify-content: space-between;
+        padding: 14px 16px 6px; font-size: .95rem;
+    }
+
+.frs-v2 .frs-avail-filters-header i { margin-right: 6px; }
+
+.frs-v2 .frs-clear-all {
+        border: 0; background: none; color: #800000; font: 700 .76rem 'Inter', sans-serif;
+        cursor: pointer; text-transform: none; padding: 0;
+    }
+
+.frs-v2 .frs-clear-all:hover { text-decoration: underline; }
+
+.frs-v2 .frs-avail-filters-body { border: 0; border-radius: 0; padding: 8px 16px 16px; }
+
+.frs-v2 .frs-avail-filter-group { margin-bottom: 14px; }
+
+.frs-v2 .frs-avail-filter-label { font-size: .7rem; color: #800000; margin-bottom: 6px; }
+
+.frs-v2 .frs-avail-filter-group select,
+.frs-v2 .frs-avail-filter-group input {
+        border: 1px solid #dfe1e6; border-radius: 8px; padding: 9px 10px; font-size: .8rem;
+        font-weight: 500; color: #333; height: 38px;
+    }
+
+.frs-v2 .frs-avail-filter-group select:focus,
+.frs-v2 .frs-avail-filter-group input:focus { border-color: #800000; outline: none; }
+
+.frs-v2 .frs-avail-results { min-width: 0; }
+
+.frs-v2 .frs-avail-toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+
+.frs-v2 .frs-avail-search {
+        flex: 1 1 280px; display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 14px;
+        background: #fff; border: 1px solid #dfe1e6; border-radius: 10px;
+    }
+
+.frs-v2 .frs-avail-search i { color: #777; }
+
+.frs-v2 .frs-avail-search input { flex: 1; border: 0; outline: 0; font: 400 .85rem 'Inter', sans-serif; min-width: 0; }
+
+.frs-v2 .frs-avail-search:focus-within { border-color: #800000; }
+
+.frs-v2 .frs-avail-sort { display: flex; flex-direction: column; gap: 3px; font-size: .7rem; font-weight: 700; color: #555; }
+
+.frs-v2 .frs-avail-sort select {
+        height: 42px; border: 1px solid #dfe1e6; border-radius: 10px; padding: 0 12px; min-width: 190px;
+        font: 500 .82rem 'Inter', sans-serif; color: #333; background: #fff;
+    }
+
+.frs-v2 .frs-avail-viewtoggle { display: flex; gap: 8px; }
+
+.frs-v2 .frs-avail-viewtoggle button {
+        height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid #dfe1e6; background: #fff; color: #333;
+        font: 700 .8rem 'Inter', sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+    }
+
+.frs-v2 .frs-avail-viewtoggle button.active { background: #800000; border-color: #800000; color: #fff; }
+
+.frs-v2 .frs-avail-results-header {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        background: #fdf0f0; border: 1px solid #f3cccc; border-left: 4px solid #800000; border-radius: 10px;
+        padding: 12px 16px; color: #800000; font-size: .85rem; font-weight: 600; text-transform: none; margin-bottom: 14px;
+    }
+
+.frs-v2 .frs-avail-results-header i { margin-right: 6px; }
+
+.frs-v2 .frs-avail-count { color: #555; font-weight: 500; font-size: .8rem; white-space: nowrap; }
+/* Building groups */
+
+.frs-v2 .frs-avail-group {
+        background: #fff; border: 1px solid #f1e3e3; border-radius: 12px; margin-bottom: 14px; overflow: hidden;
+    }
+
+.frs-v2 .frs-avail-group-head {
+        display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #fdf6f6; cursor: pointer;
+    }
+
+.frs-v2 .frs-avail-group-head i.fa-building-columns { color: #800000; font-size: 1.1rem; }
+
+.frs-v2 .frs-avail-group-name { font-weight: 800; color: #800000; font-size: .95rem; }
+
+.frs-v2 .frs-avail-group-pill { background: #fbe1e1; color: #800000; border-radius: 999px; padding: 3px 11px; font-size: .72rem; font-weight: 700; }
+
+.frs-v2 .frs-avail-group-head .frs-avail-chev { margin-left: auto; color: #800000; transition: transform .15s; }
+
+.frs-v2 .frs-avail-group.collapsed .frs-avail-chev { transform: rotate(180deg); }
+
+.frs-v2 .frs-avail-group.collapsed .frs-avail-group-body { display: none; }
+
+.frs-v2 .frs-avail-group-body { padding: 14px 16px 16px; }
+
+.frs-v2 .frs-avail-cards {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 0;
+    }
+/* Room card: red outline kept */
+
+.frs-v2 .frs-avail-card { border: 1.5px solid #800000; border-radius: 10px; padding: 12px 14px; min-width: 0; }
+
+.frs-v2 .frs-avail-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+.frs-v2 .frs-avail-room-name { margin: 0; font-size: 1.1rem; color: #800000; }
+
+.frs-v2 .frs-avail-badge { margin-right: 0; border-radius: 6px; }
+
+.frs-v2 .frs-badge-lec { background: #fdf0c4; color: #8a6a00; }
+
+.frs-v2 .frs-badge-lab { background: #dce7fb; color: #1d4ea3; }
+
+.frs-v2 .frs-avail-detail { font-size: .72rem; color: #555; margin-top: 8px; }
+
+.frs-v2 .frs-avail-detail i { margin-right: 4px; }
+
+.frs-v2 .frs-avail-dot { top: 8px; right: 8px; width: 9px; height: 9px; }
+/* List view */
+
+.frs-v2 .frs-avail-list { width: 100%; border-collapse: collapse; font-size: .8rem; }
+
+.frs-v2 .frs-avail-list th { text-align: left; padding: 8px 10px; color: #800000; font-size: .7rem; text-transform: uppercase; border-bottom: 1.5px solid #800000; }
+
+.frs-v2 .frs-avail-list td { padding: 9px 10px; border-bottom: 1px solid #f3e6e6; color: #333; }
+
+.frs-v2 .frs-avail-list tr.frs-avail-row { cursor: pointer; }
+
+.frs-v2 .frs-avail-list tr.frs-avail-row:hover td { background: #fdf6f6; }
+
+.frs-v2 .frs-avail-list .frs-avail-row-name { font-weight: 800; color: #800000; }
+    /* ── Room schedule popup (Available Rooms → room card, no filters) ── */
+    .frs-rp-overlay {
+        display: none; position: fixed; inset: 0; z-index: 9000; background: rgba(20,20,20,.45);
+        align-items: center; justify-content: center; padding: 20px;
+    }
+    .frs-rp-overlay.open { display: flex; }
+    .frs-rp-box {
+        background: #fff; border-radius: 14px; width: min(1000px, 96vw); max-height: 92vh;
+        display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(0,0,0,.25); overflow: hidden;
+    }
+    .frs-rp-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #eee; }
+    .frs-rp-icon {
+        width: 42px; height: 42px; border-radius: 10px; background: #fbeeee; color: #800000;
+        display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0;
+    }
+    .frs-rp-titles { flex: 1; min-width: 0; }
+    .frs-rp-title { font-size: 1.25rem; font-weight: 900; color: #222; }
+    .frs-rp-sub { font-size: .76rem; color: #777; margin-top: 2px; }
+    .frs-rp-close { border: 0; background: none; font-size: 1.6rem; line-height: 1; color: #888; cursor: pointer; padding: 0 4px; }
+    .frs-rp-close:hover { color: #800000; }
+    .frs-rp-body { overflow: auto; padding: 12px 16px; }
+    .frs-rp-empty {
+        background: #eafaf1; color: #1a6b3c; border: 1px solid #bfe6cf; border-radius: 8px;
+        padding: 8px 12px; font-size: .8rem; font-weight: 600; margin-bottom: 10px;
+    }
+    .frs-rp-grid { display: grid; grid-template-columns: 70px repeat(7, minmax(95px, 1fr)); min-width: 760px;
+        border: 1px solid #eee; border-radius: 8px; overflow: hidden; }
+    .frs-rp-dayhead {
+        background: #800000; color: #fff; font-size: .68rem; font-weight: 800; text-align: center;
+        padding: 7px 4px; position: sticky; top: 0; z-index: 2;
+    }
+    .frs-rp-time { font-size: .6rem; color: #777; text-align: right; padding: 2px 6px 0 0;
+        border-bottom: 1px solid #f2f2f2; box-sizing: border-box; }
+    .frs-rp-col { border-right: 1px solid #f0f0f0; }
+    .frs-rp-col:last-child { border-right: 0; }
+    .frs-rp-colbody {
+        position: relative;
+        background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #f3f3f3 21px, #f3f3f3 22px);
+    }
+    .frs-rp-block {
+        position: absolute; left: 3px; right: 3px; border-radius: 6px; border-left: 4px solid #999;
+        padding: 3px 6px; font-size: .62rem; color: #222; overflow: hidden; line-height: 1.3;
+        box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    }
+    .frs-rp-block b { display: block; font-size: .68rem; }
+    .frs-rp-block span { display: block; color: #444; }
+    .frs-rp-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid #eee; }
+    .frs-rp-note { flex: 1; font-size: .74rem; color: #888; }
+    .frs-rp-cancel {
+        border: 1.5px solid #ccc; background: #fff; color: #555; border-radius: 8px; padding: 9px 18px;
+        font: 700 .78rem 'Inter', sans-serif; cursor: pointer;
+    }
+
+
+/* Term badge (Academic Head / Admin header) */
+.frs-v2 .frs-active-term-badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px;
+    background: #fbeeee; color: #800000; font-weight: 800; font-size: .76rem; letter-spacing: .3px;
+}
+
+/* Approved Make-up class pill (one date only) */
+.frs-v2 .frs-pill-makeup { outline: 2px dashed rgba(0,0,0,.35); outline-offset: -3px; }
+.frs-v2 .frs-pill-la-badge { display: inline-block; font-size: .5rem; font-weight: 900; background: #0056b3; color: #fff;
+    border-radius: 3px; padding: 1px 4px; margin-bottom: 3px; letter-spacing: .5px; }
+.frs-v2 .frs-pill-mu-badge { background: #6a1b9a; }
+.frs-detail-badge-makeup { background: #f3e5f5; color: #6a1b9a; border: 1px solid #ce93d8; }

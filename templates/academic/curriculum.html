@@ -1,7 +1,7 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}?v=20261005e">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
@@ -9,100 +9,144 @@
 {% block content %}
 <div class="curriculum-ui">
 
-    <!-- ── PAGE HEADER WITH TOGGLE TABS ── -->
-    <div class="curr-mgmt-header">
-        <h1 class="curr-mgmt-title">CURRICULUM MANAGEMENT</h1>
-        <div class="curr-tab-group">
-            <button class="curr-tab-btn active" id="tabBtnAssignments" onclick="switchCurrTab('assignments')">Active Assignments</button>
-            <button class="curr-tab-btn" id="tabBtnSyllabi" onclick="switchCurrTab('syllabi')">Curriculum Syllabi</button>
+    <!-- ── PAGE HEADER WITH UNDERLINE TABS ── -->
+    <div class="cm-header">
+        <h1 class="cm-title">CURRICULUM MANAGEMENT</h1>
+        <div class="cm-tabs" role="tablist">
+            <button class="cm-tab active" id="tabBtnAssignments" onclick="switchCurrTab('assignments')" role="tab">
+                <i class="fas fa-graduation-cap"></i> Active Assignments
+            </button>
+            <button class="cm-tab" id="tabBtnSyllabi" onclick="switchCurrTab('syllabi')" role="tab">
+                <i class="far fa-file-lines"></i> Curriculum Syllabi
+            </button>
         </div>
     </div>
 
     <!-- ═══ TAB 1: ACTIVE ASSIGNMENTS ═══ -->
     <div id="currPanelAssignments" class="curr-tab-panel">
 
-        <!-- Filter Bar -->
-        <div class="curr-filter-bar">
-            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
-                <div class="curr-filter-group">
-                    <label class="curr-filter-label">SEARCH</label>
-                    <input type="text" id="searchAssign" class="curr-filter-input" placeholder=".." oninput="filterAssignments()">
-                </div>
-                <div class="curr-filter-group">
-                    <label class="curr-filter-label">CURRICULUM</label>
-                    <select id="filterAssignCurr" class="curr-filter-input" onchange="filterAssignments()">
-                        <option value="">SELECT</option>
-                        {% for c in cohorts|map(attribute='curriculumcode')|unique %}
+        <!-- Toolbar: search · curriculum · program | sort · export -->
+        <div class="cm-toolbar">
+            <label class="cm-search">
+                <i class="fas fa-magnifying-glass"></i>
+                <input type="text" id="searchAssign" placeholder="Search program or curriculum..." oninput="filterAssignments()">
+            </label>
+            <label class="cm-select">
+                <i class="fas fa-book-open"></i>
+                <span class="cm-select-body">
+                    <span class="cm-select-label">Curriculum</span>
+                    <select id="filterAssignCurr" onchange="filterAssignments()">
+                        <option value="">All Curricula</option>
+                        {% for c in cohorts|map(attribute='curriculumcode')|reject('none')|unique|sort %}
                         <option value="{{ c }}">{{ c }}</option>
                         {% endfor %}
                     </select>
-                </div>
-                <div class="curr-filter-group">
-                    <label class="curr-filter-label">PROGRAM</label>
-                    <select id="filterAssignProg" class="curr-filter-input" onchange="filterAssignments()" style="min-width:200px;">
-                        <option value="">SELECT</option>
+                </span>
+                <i class="fas fa-chevron-down cm-caret"></i>
+            </label>
+            <label class="cm-select cm-select-wide">
+                <i class="fas fa-building-columns"></i>
+                <span class="cm-select-body">
+                    <span class="cm-select-label">Program</span>
+                    <select id="filterAssignProg" onchange="filterAssignments()">
+                        <option value="">All Programs</option>
                         {% for p in programs %}
                         <option value="{{ p.programname }}">{{ p.programname }}</option>
                         {% endfor %}
                     </select>
-                </div>
+                </span>
+                <i class="fas fa-chevron-down cm-caret"></i>
+            </label>
+            <span class="cm-divider" aria-hidden="true"></span>
+            <label class="cm-select cm-select-sort">
+                <i class="fas fa-arrow-up-arrow-down"></i>
+                <span class="cm-select-body">
+                    <span class="cm-select-label">Sort</span>
+                    <select id="sortAssignSel" onchange="setAssignSort('prog', this.value === 'asc')">
+                        <option value="asc">A - Z</option>
+                        <option value="desc">Z - A</option>
+                    </select>
+                </span>
+                <i class="fas fa-chevron-down cm-caret"></i>
+            </label>
+            <button class="cm-btn-export" onclick="location.href='/admin/export/assignments'">
+                <i class="fas fa-download"></i> Export
+            </button>
+        </div>
+
+        <!-- Section heading + summary pill (program count · academic year of entry filter) -->
+        {% set _entry_years = cohorts|map(attribute='startacademicyear')|reject('none')|unique|sort|list %}
+        <div class="cm-section-head">
+            <div class="cm-section-title">
+                <h2>Active Assignments</h2>
+                <p>List of academic programs with their assigned curriculum, year level, and section(s).</p>
             </div>
-            <div class="curr-filter-actions">
-                <button class="curr-btn-sort" id="sortAssignBtn" onclick="sortAssignTable()">
-                    <i class="fas fa-sort-amount-down-alt"></i> SORT: A-Z
-                </button>
-                <button class="curr-btn-export" onclick="location.href='/admin/export/assignments'">
-                    <i class="fas fa-upload"></i> EXPORT
-                </button>
+            <div class="cm-summary">
+                <span class="cm-summary-item"><i class="fas fa-users"></i> <strong id="assignProgCount">0</strong>&nbsp;programs</span>
+                <span class="cm-summary-sep" aria-hidden="true"></span>
+                <label class="cm-summary-item cm-summary-ay" title="Academic year of entry">
+                    <i class="far fa-calendar"></i>
+                    <select id="filterAssignAy" onchange="filterAssignments()">
+                        {% for ay in _entry_years|reverse %}
+                        <option value="{{ ay }}">{{ ay[:2] }} {{ ay[2:] }}</option>
+                        {% endfor %}
+                        <option value="">All years</option>
+                    </select>
+                </label>
             </div>
         </div>
 
         <!-- Assignments Table -->
-        <div class="curr-table-wrapper">
-            <table class="curr-assign-table" id="assignmentTable">
+        <div class="cm-table-card">
+            <table class="cm-table" id="assignmentTable">
                 <thead>
                     <tr>
-                        <th>CURRICULUM CODE</th>
-                        <th>ACADEMIC PROGRAM</th>
-                        <th>YEAR LEVEL</th>
-                        <th>NO. OF SECTION</th>
-                        <th>ACAD YEAR OF ENTRY</th>
+                        <th class="cm-sortable" data-sort="curr" onclick="setAssignSort('curr')">Curriculum <i class="fas fa-sort"></i></th>
+                        <th class="cm-sortable" data-sort="prog" onclick="setAssignSort('prog')">Academic Program <i class="fas fa-sort"></i></th>
+                        <th class="cm-sortable cm-center" data-sort="yl" onclick="setAssignSort('yl')">Year Level <i class="fas fa-sort"></i></th>
+                        <th class="cm-sortable cm-center" data-sort="sect" onclick="setAssignSort('sect')">Sections <i class="fas fa-sort"></i></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in cohorts %}
-                    <tr data-curr="{{ c.curriculumcode }}" data-prog="{{ c.programname }}">
-                        <td><span class="curr-code-pill">{{ c.curriculumcode }}</span></td>
-                        <td>{{ c.programname }}</td>
-                        <td>{{ c.year_level }}</td>
-                        <td>{{ c.numberofsections }}</td>
-                        <td>{{ c.startacademicyear }}</td>
+                    <tr data-curr="{{ c.curriculumcode or '' }}" data-prog="{{ c.programname }}"
+                        data-ay="{{ c.startacademicyear or '' }}" data-yl="{{ c.year_level }}" data-sect="{{ c.numberofsections }}">
+                        <td>{% if c.curriculumcode %}<span class="cm-code-pill">{{ c.curriculumcode }}</span>{% else %}<span class="cm-none">&mdash;</span>{% endif %}</td>
+                        <td class="cm-prog">{{ c.programname }}</td>
+                        <td class="cm-center"><span class="cm-chip">{{ c.year_level }}</span></td>
+                        <td class="cm-center"><span class="cm-chip">{{ c.numberofsections }}</span></td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+            <div id="assignEmptyMsg" class="cm-empty" style="display:none;">
+                <i class="fas fa-folder-open"></i> No assignments match the current filters.
+            </div>
         </div>
     </div>
 
     <!-- ═══ TAB 2: CURRICULUM SYLLABI ═══ -->
     <div id="currPanelSyllabi" class="curr-tab-panel" style="display:none;">
 
-        <!-- Syllabi header: program filter left, Export right -->
-        <div class="curr-syllabi-header">
-            <div class="curr-filter-group">
-                <label class="curr-filter-label">PROGRAM</label>
-                <select class="curr-filter-input" id="syllabiProgramFilter" onchange="filterSyllabiByProgram(this.value)" style="min-width:260px;">
-                    <option value="All">ALL PROGRAMS</option>
-                    {% for p in programs %}
-                    <option value="{{ p.programcode }}">{{ p.programname }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="curr-filter-actions">
-                <button class="curr-btn-export" onclick="openCurrExportModal()">
-                    <i class="fas fa-upload"></i> EXPORT
-                </button>
-            </div>
+        <!-- Syllabi toolbar: program filter left, Export right -->
+        <div class="cm-toolbar">
+            <label class="cm-select cm-select-wide">
+                <i class="fas fa-building-columns"></i>
+                <span class="cm-select-body">
+                    <span class="cm-select-label">Program</span>
+                    <select id="syllabiProgramFilter" onchange="filterSyllabiByProgram(this.value)">
+                        <option value="All">All Programs</option>
+                        {% for p in programs %}
+                        <option value="{{ p.programcode }}">{{ p.programname }}</option>
+                        {% endfor %}
+                    </select>
+                </span>
+                <i class="fas fa-chevron-down cm-caret"></i>
+            </label>
+            <span class="cm-spacer"></span>
+            <button class="cm-btn-export" onclick="openCurrExportModal()">
+                <i class="fas fa-download"></i> Export
+            </button>
         </div>
 
         <!-- Grouped curriculum list: only programs WITH curricula are rendered -->
@@ -115,7 +159,7 @@
                 <div class="curr-prog-body">
                     {% for c in prog_currs %}
                     <div class="curr-syllabi-row">
-                        <span class="curr-syllabi-name">C.Y {{ c.curriculumyear }} ({{ c.curriculumcode }})</span>
+                        <span class="curr-syllabi-name" title="{{ c.curriculumcode }}">C.Y {{ c.curriculumyear }}{% if c.curriculumtype == 'WITH_BRIDGING' %} <span class="cm-bridging-tag">BRIDGING</span>{% endif %}</span>
                         <div class="curr-syllabi-actions">
                             <a href="{{ url_for('view_curriculum', curriculum_id=c.curriculumid) }}?from=syllabi" class="btn-view-curr">VIEW CURRICULUM</a>
                         </div>
@@ -232,5 +276,5 @@
     <button class="curr-exp-toast-close" onclick="document.getElementById('currExpToast').style.display='none'">&#215;</button>
 </div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/curriculum.acad.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/curriculum.acad.js') }}?v=20261005b"></script>
 {% endblock %}

@@ -42,34 +42,39 @@ def test_merge_happens_after_effective_resolution():
     assert "combined = norm_timed + hist_extra + norm_untimed" in b
     assert "return _sch_merge_session_rows(combined) if merge else combined" in b
 
-def test_room_report_uses_exact_occurrence_displacement():
-    b=block("_room_report_fetch","def _room_report_groups")
-    assert "las_x.official_sessionid = ss.sessionid" in b
-    assert "la_x.status = 'Published'" in b
-    assert "la_x.is_active = TRUE" in b
+import faculty_load as _fl
 
-def test_room_report_keeps_official_drafts_for_preview():
+
+def test_room_report_uses_exact_occurrence_displacement():
+    # Room occupancy reads the ONE shared effective-schedule definition.
     b=block("_room_report_fetch","def _room_report_groups")
-    assert "sv.status IN ('Published','Draft')" in b
-    assert "sv.status = 'Draft'" in b
+    assert "faculty_load.EFFECTIVE_SESSIONS_CTE" in b
+    cte=_fl.EFFECTIVE_SESSIONS_CTE
+    assert "las_x.official_sessionid = ss.sessionid" in cte
+    assert "la_x.status = 'Published' AND la_x.is_active = TRUE" in cte
+
+def test_room_report_is_live_occupancy_without_drafts():
+    # Pending Drafts are not room occupancy (Phase 9.3).
+    b=block("_room_report_fetch","def _room_report_groups")
+    assert "'Draft'" not in b
+    assert "sv.status = 'Published'" in _fl.EFFECTIVE_SESSIONS_CTE
+    assert "'Draft'" not in _fl.EFFECTIVE_SESSIONS_CTE
 
 def test_room_report_adds_only_active_published_local():
-    b=block("_room_report_fetch","def _room_report_groups")
-    assert 'lwhere, lp = ["la.status = \'Published\'", "la.is_active = TRUE"]' in b
-    assert "'Local' AS \"ScheduleSource\"" in b
+    cte=_fl.EFFECTIVE_SESSIONS_CTE
+    assert "WHERE la.status = 'Published' AND la.is_active = TRUE" in cte
+    assert 'es.source AS "ScheduleSource"' in block("_room_report_fetch","def _room_report_groups")
 
-def test_room_report_local_side_respects_filters():
+def test_room_report_filters_apply_to_both_sources():
     b=block("_room_report_fetch","def _room_report_groups")
-    assert "sem_l.academicyearid IN" in b
-    assert "sem_l.semestertype IN" in b
-    assert "b_l.buildingid = %s" in b
-    assert "r_l.roomtype = %s" in b
-    assert "r_l.roomid = %s" in b
+    for f in ("sem.academicyearid IN", "sem.semestertype IN", "b.buildingid = %s",
+              "r.roomtype = %s", "r.roomid = %s"):
+        assert f in b
 
-def test_room_report_combines_effective_sources():
-    b=block("_room_report_fetch","def _room_report_groups")
-    assert "effective = official_rows + local_rows" in b
-    assert "return effective" in b
+def test_admin_room_report_data_uses_the_same_live_rows():
+    b=block("_fetch_report_data","# ─── Report title mapping")
+    start=b.index("elif report_type == 'room_schedule':")
+    assert "_room_report_fetch(cur" in b[start:start+600]
 
 def test_teaching_assignment_report_remains_official_assignment_based():
     b=block("_fetch_report_data","# ─── Report title mapping")

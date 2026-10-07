@@ -1381,6 +1381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // re-evaluation), so the button re-enables by itself once fixed. The server
     // enforces the same rule on /api/schedule/approve.
     const APPROVE_LABEL = '<i class="fas fa-check-circle"></i> Approve Schedule';
+    const APPROVE_TIMEOUT_MS = 120000;
     function _approvalState() {
         const ev = currentEvaluation;
         if (!currentScheduleData.length) return { eligible: false, reason: '' };
@@ -2177,10 +2178,41 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // One persistence request with a timeout and a safe JSON parse. Never throws:
+    // resolves to { ok, status, data, error } so callers always reset their loading state.
+    const SAVE_TIMEOUT_MS = 120000;
+    async function _postJson(url, body, timeoutMs = SAVE_TIMEOUT_MS) {
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body), signal: ctrl.signal,
+            });
+            let data = null;
+            try { data = await res.json(); } catch (_pe) { data = null; }
+            if (!data || typeof data !== 'object') {
+                return { ok: false, status: res.status, data: null,
+                         error: `Server error (HTTP ${res.status}). Nothing was saved.` };
+            }
+            return { ok: !!data.success, status: res.status, data, error: data.error || null };
+        } catch (e) {
+            return { ok: false, status: 0, data: null,
+                     error: e && e.name === 'AbortError'
+                        ? 'The server took too long to respond. Nothing was changed; please try again.'
+                        : 'Could not reach the server. Nothing was changed; please try again.' };
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     btnSaveDraft.addEventListener('click', async () => {
-        if (!currentScheduleData.length) return;
+        if (!currentScheduleData.length || btnSaveDraft.disabled) return;
 
         const ctx = getContext();
+        btnSaveDraft.disabled = true;     // no second save while this one is deciding
+        let saved = false;
+        try {
 
         // ── Ask for consent before silently replacing an existing Draft/Published ──
         let existingCheck = { exists: false };
@@ -2199,48 +2231,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? ` with <strong>${existingCheck.subject_count}</strong> subject(s)`
                 : '';
 
-            const _confirmBtn = document.getElementById('infoModalConfirmBtn');
-            const _prevLabel  = _confirmBtn.textContent;
-            _confirmBtn.textContent = 'Continue';
-
             const _proceed = await showInfo(
                 'Existing Schedule Detected',
                 `This section already has a <strong>${_statusLabel}</strong> schedule${_countStr}.<br><br>`
                 + '<strong>Cancel</strong> &mdash; stop and keep the existing schedule as is.<br>'
-                + '<strong>Continue</strong> &mdash; archive it and save this as the new Draft.',
-                'confirm'
+                + '<strong>Continue</strong> &mdash; save this as the new Draft (it replaces any existing Draft). '
+                + 'The Published schedule stays live until you publish.',
+                'confirm',
+                { confirmLabel: 'Continue' }
             );
-            _confirmBtn.textContent = _prevLabel;
 
             if (!_proceed) return;
-
-            // Override replaces the entire schedule — archive both the old Draft AND the
-            // old Published so this subject shows as DRAFT only, not a stale PUB/DRAFT combo.
-            try {
-                await fetch('/api/schedule/archive-draft-for-editor', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify(ctx),
-                });
-            } catch (_ae) { /* archive failure is non-blocking */ }
         }
 
-        btnSaveDraft.disabled = true;
         btnSaveDraft.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
-        try {
-            const res  = await fetch('/api/schedule/save-draft', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    batch_id:      currentBatchId,
-                    schedule_data: currentScheduleData,
-                    context:       ctx,
-                }),
+        {
+            // replace_draft: the server retires the section's existing Draft inside the SAME
+            // transaction as this save, so a failed save leaves the old Draft intact. The
+            // Published schedule is never touched by Save as Draft.
+            const result = await _postJson('/api/schedule/save-draft', {
+                batch_id:      currentBatchId,
+                schedule_data: currentScheduleData,
+                context:       ctx,
+                replace_draft: !!existingCheck.exists,
             });
-            const data = await res.json();
+            const data = result.data || { success: false, error: result.error };
 
-            if (data.success) {
+            if (result.ok) {
                 // A draft is work in progress: incomplete components and hard
                 // violations are saved with it — they only block approval.
                 const _issues = [];
@@ -2260,9 +2278,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 // confirmation, not a full page reset. Same behavior Approve already
                 // has (see _submitApproval above). Selecting a different Program to
                 // generate for still clears/replaces this normally via Generate Schedule.
+                saved = true;
                 btnSaveDraft.disabled  = true;
                 btnSaveDraft.innerHTML = '<i class="fas fa-check-circle"></i> Saved as Draft';
-                return; // skip finally re-enable below — button intentionally stays "Saved"
             } else {
                 // #11: Load violations get a dedicated message listing each faculty
                 const lvs = data.load_violations || [];
@@ -2275,14 +2293,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         + 'across all assigned sections this term:<br><br>' + details,
                         'error');
                 } else {
-                    await showInfo('Save Failed', data.error || 'Could not save draft.', 'error');
+                    await showInfo('Save Failed', data.error || result.error || 'Could not save draft.', 'error');
                 }
             }
-        } catch (e) {
-            await showInfo('Error', 'Connection error. Please try again.', 'error');
+        }
         } finally {
-            btnSaveDraft.disabled = false;
-            btnSaveDraft.innerHTML = '<i class="fas fa-save"></i> Save as Draft';
+            // Saved: the button keeps showing "Saved as Draft". Otherwise always restore it —
+            // the generated schedule on screen is untouched either way.
+            if (!saved) {
+                btnSaveDraft.disabled = false;
+                btnSaveDraft.innerHTML = '<i class="fas fa-save"></i> Save as Draft';
+            }
         }
     });
 
@@ -2292,6 +2313,31 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const ctx = getContext();
+
+        // The generated/retrieved schedule isn't eligible for publishing: say so and ask
+        // before carrying it into the Manual Editor (it would arrive with the same issues).
+        const _elig = _approvalState();
+        if (!_elig.eligible) {
+            const ev = currentEvaluation || {};
+            const issues = [];
+            if ((ev.hardViolationCount || 0) > 0) {
+                issues.push(`<li><strong>${ev.hardViolationCount}</strong> hard-constraint violation${ev.hardViolationCount === 1 ? '' : 's'}</li>`);
+            }
+            if ((ev.incompleteCount || 0) > 0) {
+                issues.push(`<li><strong>${ev.incompleteCount}</strong> incomplete assignment${ev.incompleteCount === 1 ? '' : 's'}</li>`);
+            }
+            const _go = await showInfo(
+                'Schedule Not Eligible for Publishing',
+                `${_elig.reason || 'This schedule is not eligible for publishing yet.'}`
+                + (issues.length ? `<ul style="text-align:left;margin:10px 0 0 18px;">${issues.join('')}</ul>` : '')
+                + '<br>You haven\'t re-generated or fixed it. It will open in the Manual Editor '
+                + 'with these issues, and you\'ll need to fix them there before it can be approved.'
+                + '<br><br><strong>Continue to the Manual Editor anyway?</strong>',
+                'confirm',
+                { confirmLabel: 'Continue to Manual Editor' }
+            );
+            if (!_go) return;
+        }
 
         btnManualEditor.disabled = true;
         btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
@@ -2314,33 +2360,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? ` with <strong>${existingCheck.subject_count}</strong> subject(s)`
                     : '';
 
-                const _confirmBtn = document.getElementById('infoModalConfirmBtn');
-                const _prevLabel  = _confirmBtn.textContent;
-                _confirmBtn.textContent = 'Override';
-
                 const _doOverride = await showInfo(
                     'Existing Schedule Detected',
                     `This section already has a <strong>${_statusLabel}</strong> schedule${_countStr}.<br><br>`
                     + '<strong>Cancel</strong> &mdash; stay on Generate Schedule and keep the existing schedule.<br>'
-                    + '<strong>Override</strong> &mdash; archive the existing schedule and open Manual Editor with the generated schedule.',
-                    'confirm'
+                    + '<strong>Override</strong> &mdash; replace the existing Draft with the generated schedule and open Manual Editor. '
+                    + 'The Published schedule stays live until you publish.',
+                    'confirm',
+                    { confirmLabel: 'Override' }
                 );
-                _confirmBtn.textContent = _prevLabel;
 
                 if (!_doOverride) {
                     btnManualEditor.disabled = false;
                     btnManualEditor.innerHTML = '<i class="fas fa-edit"></i> Go to Manual Editor';
                     return;
                 }
-
-                // Archive the existing Draft for this section before navigating
-                try {
-                    await fetch('/api/schedule/archive-draft-for-editor', {
-                        method:  'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body:    JSON.stringify(ctx),
-                    });
-                } catch (_ae) { /* archive failure is non-blocking */ }
+                // The existing Draft is replaced by the save below, in the same transaction.
             }
 
             // ── Step 2: save generator sessions as Draft to DB ──
@@ -2350,21 +2385,21 @@ document.addEventListener('DOMContentLoaded', () => {
             btnManualEditor.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving Draft...';
             let _savedAsDraft = false;
             let _saveDraftResult = null;
-            try {
-                const _sr = await fetch('/api/schedule/save-draft', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({
-                        batch_id:      currentBatchId,
-                        schedule_data: currentScheduleData,
-                        context:       ctx,
-                    }),
-                });
-                _saveDraftResult = await _sr.json();
-                _savedAsDraft = !!_saveDraftResult.success;
-            } catch (_se) {
-                _savedAsDraft = false;
-                _saveDraftResult = null;
+            const _handoff = await _postJson('/api/schedule/save-draft', {
+                batch_id:      currentBatchId,
+                schedule_data: currentScheduleData,
+                context:       ctx,
+                replace_draft: !!existingCheck.exists,
+            });
+            _saveDraftResult = _handoff.data;
+            _savedAsDraft = _handoff.ok;
+            if (!_savedAsDraft) {
+                // Nothing was replaced (the server rolled back). The editor still opens with
+                // the generated schedule as UNSAVED changes so no work is lost.
+                await showInfo('Not Saved as Draft',
+                    `${_handoff.error || 'The draft could not be saved.'}<br><br>`
+                    + 'The Manual Editor will open with the generated schedule as unsaved changes.',
+                    'error');
             }
 
             // Handoff rule:
@@ -2433,6 +2468,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btnApprove.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
 
         const ctx = getContext();
+        // A publish that never answers must not leave the button spinning forever.
+        const _approveAbort   = new AbortController();
+        const _approveTimeout = setTimeout(() => _approveAbort.abort(), APPROVE_TIMEOUT_MS);
+        let published = false;
         try {
             const res  = await fetch('/api/schedule/approve', {
                 method: 'POST',
@@ -2443,8 +2482,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     context:       ctx,
                     override:      override,
                 }),
+                signal: _approveAbort.signal,
             });
-            const data = await res.json();
+            clearTimeout(_approveTimeout);
+            let data;
+            try { data = await res.json(); }
+            catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was published.` }; }
 
             if (data.success) {
                 const draftNote = data.draft_version
@@ -2455,14 +2498,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     `Schedule published as <strong>V${data.published_version}</strong>.${draftNote}`,
                     'success'
                 );
+                published = true;
                 btnApprove.disabled = true;
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
 
                 // Same end state as Draft List → Approve: the DB Published snapshot is now
-                // authoritative, so open the Manual Editor on it directly. Do NOT leave this
-                // generated result on the page for the Go-to-Manual-Editor handoff — its
-                // Override step (archive-draft-for-editor) archives Draft AND Published, which
-                // retired the version just published and left only a Draft copy behind.
+                // authoritative, so open the Manual Editor on it directly instead of leaving
+                // this generated result on the page to be re-saved as a new Draft.
                 try { localStorage.removeItem(_LS_KEY); } catch (e) {}
                 const sectName = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
                 window.location.href = MANUAL_EDITOR_URL
@@ -2490,6 +2532,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     'info'
                 );
 
+                published = true;   // the nested call owns the button state from here
                 await _submitApproval(true);
 
             } else {
@@ -2506,13 +2549,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     await showInfo('Publish Failed', data.error || 'Could not publish schedule.', 'error');
                 }
+            }
+        } catch (e) {
+            const msg = e && e.name === 'AbortError'
+                ? 'The server took too long to respond. The previous published schedule is unchanged; please try again.'
+                : 'Connection error. Please try again.';
+            await showInfo('Error', msg, 'error');
+        } finally {
+            clearTimeout(_approveTimeout);
+            if (!published) {
                 btnApprove.innerHTML = APPROVE_LABEL;
                 _refreshApprovalGate();
             }
-        } catch (e) {
-            await showInfo('Error', 'Connection error. Please try again.', 'error');
-            btnApprove.innerHTML = APPROVE_LABEL;
-            _refreshApprovalGate();
         }
     }
 

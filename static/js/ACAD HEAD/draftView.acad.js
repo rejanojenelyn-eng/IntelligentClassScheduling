@@ -88,7 +88,8 @@ function _sortDaysStr(daysStr) {
                 code:  cls.subject_code || '',
                 name:  cls.description || cls.subject_name || cls.subjectname || cls.subject_code || '',
                 instr: cls.instructor || 'TBA',
-                room:  cls.room || 'TBA'
+                room:  cls.room || 'TBA',
+                time:  cls.time || ''
             }));
         });
 
@@ -137,8 +138,9 @@ function _sortDaysStr(daysStr) {
                 pill.title = `${sess.code}\n${sess.name}\n${sess.instr}\n${sess.room}`;
                 pill.innerHTML = `
                     <div class="dv-pill-subj">${sess.name}</div>
-                    <div class="dv-pill-instr">${sess.instr}</div>
-                    <div class="dv-pill-room">${sess.room}</div>`;
+                    <div class="dv-pill-line"><i class="fas fa-user"></i><span>${sess.instr}</span></div>
+                    <div class="dv-pill-line"><i class="fas fa-location-dot"></i><span>${sess.room}</span></div>
+                    ${sess.time ? `<div class="dv-pill-line"><i class="far fa-clock"></i><span>${sess.time}</span></div>` : ''}`;
                 wrapper.appendChild(pill);
             });
         });
@@ -369,10 +371,6 @@ function _sortDaysStr(daysStr) {
         }
     };
 
-    window.exportDraft = function() {
-        alert('Export feature coming soon.');
-    };
-
     // ── Load the draft ──────────────────────────────────────────────────
     try {
         const res  = await fetch(`/api/schedule/load-draft/${VERSION_ID}`);
@@ -393,11 +391,12 @@ function _sortDaysStr(daysStr) {
         const ctx = draftContext;
         const termLabel = ctx.term === 'A' ? '1st Semester' : ctx.term === 'B' ? '2nd Semester' : ctx.term === 'C' ? 'Summer' : ctx.term || '';
         const yearLabel = ctx.yearLevel ? `Year ${ctx.yearLevel}` : '';
-        const dateStr   = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }).toUpperCase();
-
-        document.getElementById('dvTitle').textContent =
-            `${ctx.program || ''} ${yearLabel} SCHEDULE`;
-        document.getElementById('dvDate').textContent = `SAVED: ${dateStr}`;
+        // Program / section already appear in the info bar, so the header only carries the dates.
+        const fmtDate = iso => iso
+            ? new Date(iso).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' })
+            : '—';
+        document.getElementById('dvDate').textContent =
+            `Saved: ${fmtDate(ctx.savedAt)}  •  Last edited: ${fmtDate(ctx.lastEdited)}`;
 
         const ayRaw = String(ctx.acadYear || '');
         const ayDigits = ayRaw.startsWith('AY') ? ayRaw.slice(2) : ayRaw;
@@ -408,17 +407,6 @@ function _sortDaysStr(daysStr) {
         document.getElementById('dvTerm').textContent      = termLabel || '—';
         document.getElementById('dvProgram').textContent   = ctx.program    || '—';
         document.getElementById('dvYearLevel').textContent = yearLabel       || '—';
-        document.getElementById('dvVersionBadge').textContent = 'DRAFT';
-
-        // Show scheduler type badge
-        const srcLabel = (draftContext.source === 'local') ? 'LOCAL SCHEDULER' : 'OFFICIAL SCHEDULER';
-        const srcColor = (draftContext.source === 'local') ? '#e65100' : '#1a56db';
-        const srcBg    = (draftContext.source === 'local') ? '#fff3e0' : '#e8f0fe';
-        const srcBorder= (draftContext.source === 'local') ? '#ffcc80' : '#b6ccfc';
-        const badge = document.getElementById('dvVersionBadge');
-        badge.insertAdjacentHTML('beforebegin',
-            `<span style="display:inline-block;background:${srcBg};color:${srcColor};border:1.5px solid ${srcBorder};border-radius:12px;padding:3px 12px;font-size:0.68rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;align-self:center;">${srcLabel}</span>`
-        );
 
         document.getElementById('dvContextBar').style.display = 'flex';
 

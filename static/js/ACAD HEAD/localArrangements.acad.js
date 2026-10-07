@@ -270,7 +270,7 @@ function laCloseModal() {
 
 /* ── Deactivate ── */
 async function laDeactivate(arrId) {
-    if (!confirm(`Remove Local Arrangement #${arrId}? This cannot be undone.`)) return;
+    if (!confirm(`Archive Local Arrangement #${arrId}? It stops being an active override and moves to Local history.`)) return;
     let res;
     try {
         res = await fetch(`/api/local/arrangement/${arrId}/deactivate`, {
@@ -286,7 +286,7 @@ async function laDeactivate(arrId) {
     try { data = await res.json(); } catch (_) { data = null; }
     if (res.status >= 500 || !data) {
         console.error(`[localArrangements] deactivate #${arrId}: HTTP ${res.status}`, data);
-        alert('Server error. The arrangement could not be removed. Please try again.');
+        alert(((data && data.error) || 'Server error.') + ' The arrangement was not changed. Please try again.');
         return;
     }
     try {

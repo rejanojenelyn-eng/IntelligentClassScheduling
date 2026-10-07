@@ -32,7 +32,7 @@ def _slice(text, start, end):
 
 def _editor_code():
     helpers_and_save = _slice(HTML, '// Latest server-issued updated_at per Local Arrangement',
-                              'function _showLocalReasonModal()')
+                              'function _showLocalReasonModal(')
     publish_restore = _slice(HTML, 'async function publishLocalArrangementFromEditor()',
                              '/* ══════')
     slice_edit = _slice(HTML, 'function _syncSliceToPending(id)',
@@ -212,10 +212,11 @@ def _button(id_):
     return m.group(0)
 
 
-def test_buttons_have_unique_ids_and_separate_handlers():
-    assert HTML.count('id="btnSaveLocalArr"') == 1
+def test_local_mode_has_a_single_save_and_publish_button():
+    # One Local action: save the edits, then publish them. No separate Draft/Save buttons.
+    assert HTML.count('id="btnSaveLocalArr"') == 0
     assert HTML.count('id="btnPublishLocalArr"') == 1
-    assert 'onclick="saveLocalArrangement()"' in _button('btnSaveLocalArr')
+    assert 'onclick="saveLocalArrangement(true)"' not in HTML
     assert 'onclick="publishLocalArrangementFromEditor()"' in _button('btnPublishLocalArr')
     assert HTML.count('onclick="publishLocalArrangementFromEditor()"') == 1
 
@@ -227,7 +228,7 @@ def test_publish_button_uses_existing_action_button_styling():
 
 
 def test_editor_no_longer_depends_on_missing_selectors_or_show_toast():
-    save = _slice(HTML, 'async function saveLocalArrangement(', 'function _showLocalReasonModal()')
+    save = _slice(HTML, 'async function saveLocalArrangement(', 'function _showLocalReasonModal(')
     assert "getElementById('section')" not in save
     assert "getElementById('subject')" not in save
     assert 'showToast(' not in save
@@ -425,3 +426,12 @@ def test_publish_without_changes_or_draft_explains(harness):
     r = harness('no_changes_no_draft')
     assert _titles(r) == ['No Draft to Publish']
     assert not any('/publish' in u for u in _urls(r))
+
+
+def test_makeup_class_only_for_the_academic_heads_own_schedule():
+    tag = _button('btnSaveMakeupClass')
+    assert 'style="display:none;"' in tag          # hidden until the faculty matches
+    assert "data-my-emp-num=" in HTML
+    s = HTML.index("function _updateMakeupClassBtn")
+    assert "String(empNum) === String(myEmpNum)" in HTML[s:s + 600]
+    assert "_updateMakeupClassBtn(empNum);" in HTML

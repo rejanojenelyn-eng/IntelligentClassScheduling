@@ -34,57 +34,70 @@ def test_faculty_makeup_submission_checks_local_faculty_commitment():
     assert "employee_number=submitted_by" in b
     assert "Local Schedule commitment" in b
 
-def test_makeup_stays_additional_but_adjustment_now_uses_local_override():
+# Constraint-fix Phase 5: a Make-up is ONE meeting on requested_date. The four
+# tests below used to pin the obsolete behavior where approval inserted a
+# recurring weekly schedule_sessions row into the Published Official schedule
+# (which also added teaching load). They now pin the approved requirement.
+
+def test_makeup_is_one_date_but_adjustment_uses_local_override():
     b=block("api_requests_decide","api_faculty_my_requests")
-    assert "INSERT INTO schedule_sessions" in b
+    m=b[:b.index("elif req_type == 'adjustment':")]
+    assert "INSERT INTO schedule_sessions" not in m
     adjustment=b[b.index("elif req_type == 'adjustment':"):]
     assert "UPDATE schedule_sessions SET" not in adjustment
     assert "INSERT INTO public.local_arrangement" in adjustment
     assert "INSERT INTO public.local_arrangement_sessions" in adjustment
 
-def test_approved_makeup_is_additional_official_session_not_local_override():
+def test_approved_makeup_adds_no_official_session_and_no_local_override():
     b=block("api_requests_decide","api_faculty_my_requests")
     m=b[:b.index("elif req_type == 'adjustment':")]
-    assert "INSERT INTO schedule_sessions" in m
+    assert "INSERT INTO schedule_sessions" not in m
     assert "INSERT INTO local_arrangement" not in m
+    assert "INSERT INTO public.local_arrangement" not in m
     assert "UPDATE schedule_sessions SET" not in m
 
-def test_makeup_approval_uses_requested_date_day_and_requested_slot():
+def test_makeup_approval_revalidates_its_requested_date_and_slot():
     b=block("api_requests_decide","api_faculty_my_requests")
     m=b[:b.index("elif req_type == 'adjustment':")]
-    assert "day_of_week = mk['requested_date'].strftime('%A')" in m
-    assert "mk['new_starttimeid']" in m
-    assert "mk['new_endtimeid']" in m
-    assert "mk.get('new_roomid')" in m
+    assert "_request_conflict_summary('makeup', req_id)" in m
+    assert "REQUEST_NO_LONGER_VALID" in m
+    assert "mk.get('requested_date')" in m
+    assert "mk.get('new_starttimeid')" in m
 
-def test_makeup_approval_is_idempotent_for_same_version_slot_room():
+def test_makeup_approval_only_records_the_decision_on_the_request_row():
     b=block("api_requests_decide","api_faculty_my_requests")
     m=b[:b.index("elif req_type == 'adjustment':")]
-    assert "SELECT 1 FROM schedule_sessions" in m
-    assert "roomid IS NOT DISTINCT FROM %s" in m
-    assert "if not _cur.fetchone():" in m
+    assert "UPDATE class_meeting_request" in m
+    assert "schedule_sessions" not in m
 
 def test_local_displacement_only_targets_sessions_explicitly_linked_by_occurrence():
     assert "las_x.official_sessionid = ss.sessionid" in APP
 
-def test_makeup_is_visible_to_effective_views_as_published_official_session():
+def test_makeup_is_not_a_recurring_published_official_session():
+    # Phase 5: previously pinned that the make-up became a weekly Official row.
     approval=block("api_requests_decide","api_faculty_my_requests")
     makeup=approval[:approval.index("elif req_type == 'adjustment':")]
-    assert "INSERT INTO schedule_sessions" in makeup
+    assert "INSERT INTO schedule_sessions" not in makeup
     # Effective schedule integrations throughout the app source Published Official sessions.
     assert "sv.status = 'Published'" in APP
     assert "las_x.official_sessionid = ss.sessionid" in APP
 
-def test_makeup_flows_into_room_and_class_schedule_reports_through_official_source():
+def test_room_and_class_schedule_reports_read_the_official_schedule_source():
+    # Renamed in Phase 5 (was "..._makeup_flows_into_room_and_class_schedule_reports_...");
+    # the assertions below never involved make-ups and are unchanged.
     rs=APP.index("def _room_report_fetch")
     re_=APP.index("def _room_report_groups",rs)
     room=APP[rs:re_]
     cs=APP.index("def _sch_exp_fetch")
     ce=APP.index("_SCH_WEEKDAY_ORDER",cs)
     cls=APP[cs:ce]
-    assert "schedule_sessions ss" in room
+    import faculty_load as _fl
+    # Room report = LIVE occupancy via the shared effective schedule (Phase 9.3);
+    # the class-schedule export keeps its Official Draft preview.
+    assert "faculty_load.EFFECTIVE_SESSIONS_CTE" in room
+    assert "schedule_sessions ss" in _fl.EFFECTIVE_SESSIONS_CTE
+    assert "'Draft'" not in room
     assert "schedule_sessions ss" in cls
-    assert "sv.status IN ('Published','Draft')" in room
     assert "sv.status IN ('Published', 'Draft')" in cls
 
 def test_adjustment_request_table_has_occurrence_identity_column():
@@ -115,8 +128,10 @@ def test_adjustment_request_persists_official_sessionid():
 
 def test_actual_faculty_assignment_source_exposes_occurrence_identity():
     b=block("api_faculty_my_assignments","api_faculty_blocked_times")
-    assert "sv.versionid" in b
-    assert "ss.sessionid AS official_sessionid" in b
+    # Live effective rows still expose the Official occurrence + version a request binds to.
+    assert "faculty_load.EFFECTIVE_SESSIONS_CTE" in b
+    assert "es.versionid" in b
+    assert "es.official_sessionid" in b
 
 def test_adjustment_approval_never_mutates_official_session():
     b=block("api_requests_decide","api_faculty_my_requests")
@@ -199,12 +214,15 @@ def test_request_adjustment_is_consumed_by_effective_class_export():
     assert "Published" in b
 
 def test_request_adjustment_is_consumed_by_effective_room_report():
+    import faculty_load as _fl
     s=APP.index("def _room_report_fetch")
     e=APP.index("def _room_report_groups",s)
     b=APP[s:e]
-    assert "local_arrangement_sessions" in b
-    assert "official_sessionid" in b
-    assert "Published" in b
+    assert "faculty_load.EFFECTIVE_SESSIONS_CTE" in b
+    cte=_fl.EFFECTIVE_SESSIONS_CTE
+    assert "local_arrangement_sessions" in cte
+    assert "official_sessionid" in cte
+    assert "Published" in cte
 
 def test_request_conflict_validation_reads_published_local_occupancy():
     b=block("_request_local_conflict","api_requests_validate")
@@ -347,14 +365,22 @@ def test_official_publish_reconciles_local_before_archiving_old_official():
     s=APP.index("def api_approve_schedule")
     e=APP.index("@app.route",s+20)
     b=APP[s:e]
-    assert "_archive_local_for_official_republish(" in b
+    # Local state is reconciled (per subject) before the old Official snapshot is archived.
+    assert "_plan_local_for_official_republish(" in b
     assert "UPDATE public.schedule_version sv" in b
-    assert b.index("_archive_local_for_official_republish(") < b.index("UPDATE public.schedule_version sv")
+    assert b.index("_plan_local_for_official_republish(") < b.index("UPDATE public.schedule_version sv")
+    # ...and kept Local sessions are re-linked only after the new snapshot exists.
+    assert b.index("_insert_batch(cur, complete_snapshot") < b.index("_rebind_local_after_official_republish(")
 
-def test_official_republish_does_not_rebind_old_local_session_ids():
-    b=block("_archive_local_for_official_republish","_archive_local_for_academic_year")
-    assert "UPDATE public.local_arrangement_sessions" not in b
-    assert "official_sessionid =" not in b
+def test_official_republish_rebinds_only_exact_unique_matches():
+    # Kept Local sessions (subjects NOT in the publish) are re-linked to the new Official
+    # occurrence with the identical subject/day/time/room — and only when that match is
+    # unique; otherwise the arrangement is archived instead of being silently re-bound.
+    b=block("_rebind_local_after_official_republish","_archive_local_arrangements")
+    assert "(code, r['o_day'], r['o_start'], r['o_end'], r['o_room'])" in b
+    assert "if len(hits) != 1:" in b
+    assert "failed.append(arr_id)" in b
+    assert "SET ref_versionid = %s" in b
 
 def test_official_republish_local_cleanup_is_section_scoped():
     b=block("_archive_local_for_official_republish","_archive_local_for_academic_year")
@@ -389,7 +415,7 @@ def test_republish_notice_explains_why_local_was_archived():
     e=APP.index("@app.route", s+20)
     b=APP[s:e]
     assert "because" in b
-    assert "Official schedule for this section was republished" in b
+    assert "their subjects were republished in the Official schedule" in b
 
 def test_local_archive_history_schema_records_reason_and_time():
     s=APP.index("def _ensure_local_tables")
@@ -828,8 +854,8 @@ def test_phase_z_conflict_preview_uses_resolved_semester_id():
     try: e=APP.index("@app.route", s+20)
     except ValueError: e=len(APP)
     b=APP[s:e]
-    assert "(program, year_level, sem_id, section_id)" in b
-    assert "(program, year_level, semester_id, section_id)" not in b
+    assert "_current_official_anchor(cur, program, year_level, section_id, sem_id)" in b
+    assert "semester_id, section_id)" not in b
 
 def test_phase_z_effective_conflicts_use_official_and_active_published_local_only():
     s=APP.index("def api_local_check_room_conflicts")
@@ -867,7 +893,8 @@ def test_phase_68a_publish_locks_draft_and_scope():
 
 def test_phase_68a_publish_rejects_stale_official_reference():
     b=block("api_publish_local_arrangement","api_restore_local_arrangement")
-    assert "arr.get('ref_versionid') != latest_official_versionid" in b
+    # Stale = a different Official SNAPSHOT, not merely another subject's versionid.
+    assert "_same_official_snapshot(cur, arr.get('ref_versionid'), latest_official_versionid)" in b
     assert "STALE_OFFICIAL_SCHEDULE" in b
     assert "create a new Draft from the current Official Schedule" in b
 
@@ -876,7 +903,7 @@ def test_phase_68a_restore_uses_same_scope_lock_and_current_official():
     assert "restore_scope_lock_key" in b
     assert "local-scope|" in b
     assert "pg_advisory_xact_lock(hashtext(%s))" in b
-    assert "ORDER BY sv.version_number DESC" in b
+    assert "_current_official_anchor(cur, src['programcode']" in b
     assert "ref_versionid = pub_row['versionid']" in b
 
 def test_phase_68a_draft_insert_and_restore_keep_unique_race_recovery():
@@ -897,7 +924,7 @@ def test_phase_68b_official_republish_archives_local_and_displacement_state():
 
 def test_phase_68b_official_publish_uses_same_local_scope_lock_before_archive():
     s=APP.index("def api_approve_schedule")
-    p=APP.index("archived_local_count = _archive_local_for_official_republish", s)
+    p=APP.index("_local_plan = _plan_local_for_official_republish(", s)
     b=APP[s:p]
     assert "official_scope_lock_key" in b
     assert "local-scope|" in b
@@ -906,7 +933,7 @@ def test_phase_68b_official_publish_uses_same_local_scope_lock_before_archive():
 
 def test_phase_68b_official_publish_requires_exact_section_for_safe_sync():
     s=APP.index("def api_approve_schedule")
-    p=APP.index("archived_local_count = _archive_local_for_official_republish", s)
+    p=APP.index("_local_plan = _plan_local_for_official_republish(", s)
     b=APP[s:p]
     assert "if not _ctx_section_id:" in b
     assert "OFFICIAL_SECTION_REQUIRED" in b

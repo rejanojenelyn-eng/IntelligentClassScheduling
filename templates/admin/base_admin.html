@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,13 +9,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
+
     <!-- This one file now handles ALL the design -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
 
     {% block head %}{% endblock %}
 </head>
 
+
 <body>
+
 
     <header class="top-nav">
         <div class="nav-left">
@@ -75,9 +80,11 @@
         </div>
     </header>
 
+
     <div class="sub-header">
         <i class="fas fa-bars toggle-btn" id="toggleBtn"></i>
     </div>
+
 
     <div class="main-container">
         <aside class="sidebar" id="sidebar">
@@ -175,6 +182,7 @@
                 </ul>
             </nav>
 
+
             <div class="signout-container">
                 <a href="#" class="nav-link" onclick="openLogoutModal(event)">
                     <i class="fas fa-sign-out-alt"></i><span class="nav-label">Sign out</span>
@@ -182,12 +190,14 @@
             </div>
         </aside>
 
+
         <main class="main-wrapper">
             <section class="content-body">
                 {% block content %}{% endblock %}
             </section>
         </main>
     </div>
+
 
     <!-- Custom Logout Modal -->
     <div id="logoutModal" class="logout-modal">
@@ -239,6 +249,7 @@
     });
     </script>
 
+
     <!-- Profile / Email / Password Panels -->
     <div id="profilePanel" class="up-panel" style="display:none;">
         <div class="up-panel-box">
@@ -276,29 +287,66 @@
         </div>
     </div>
 
+
     <div id="passwordPanel" class="up-panel" style="display:none;">
         <div class="up-panel-box">
             <div class="up-panel-hd">
-                <button class="up-panel-back" onclick="closePasswordPanel()"><i class="fas fa-arrow-left"></i> Back</button>
-                <button class="up-panel-close" onclick="closePasswordPanel()"><i class="fas fa-times"></i></button>
+                <button type="button" class="up-panel-back" onclick="closePasswordPanel()"><i class="fas fa-arrow-left"></i> Back</button>
+                <button type="button" class="up-panel-close" onclick="closePasswordPanel()"><i class="fas fa-times"></i></button>
             </div>
             <h2 class="up-panel-title">Change Password</h2>
-            <p class="up-panel-sub">Update your account password.</p>
-            <!-- Scoped in its own <form> so Chrome's password-manager association stays
-                 confined to these 3 fields instead of bleeding onto unrelated plain-text
-                 inputs elsewhere on the page (which has no other <form> wrapping them). -->
-            <form class="up-form" autocomplete="off" onsubmit="return false;">
-                <div class="up-field"><label>Current Password</label><input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password"></div>
-                <div class="up-field"><label>New Password</label><input type="password" id="pwNew" class="up-input" placeholder="At least 6 characters" autocomplete="new-password"></div>
-                <div class="up-field"><label>Confirm New Password</label><input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password"></div>
-                <div id="pwError" class="up-error" style="display:none;"></div>
-            </form>
-            <div class="up-panel-ft">
-                <button class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
-                <button class="up-btn-save" onclick="savePassword()">Update Password</button>
+            <p class="up-panel-sub" id="pwSub">Update your account password.</p>
+
+
+            <!-- Step 1: once-a-month eligibility check, then send the code -->
+            <div id="pwStepCheck">
+                <div class="up-panel-notice" id="pwCheckNotice"><i class="fas fa-info-circle"></i><span id="pwCheckMsg">Checking eligibility…</span></div>
+                <div id="pwCheckError" class="up-error" style="display:none;margin-top:12px;"></div>
+                <div class="up-panel-ft" style="margin-top:16px;">
+                    <button type="button" class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
+                    <button type="button" class="up-btn-save" id="pwSendBtn" onclick="requestPasswordCode()" style="display:none;">Send Verification Code</button>
+                    <button type="button" class="up-btn-save" id="pwAddEmailBtn" onclick="openEmailPanel();" style="display:none;">Add Email Address</button>
+                </div>
+            </div>
+
+
+            <!-- Step 2: enter the emailed verification code -->
+            <div id="pwStepCode" style="display:none;">
+                <form class="up-form" autocomplete="off" onsubmit="verifyPasswordCode(); return false;">
+                    <div class="up-field">
+                        <label>Verification Code</label>
+                        <input type="text" id="pwCode" class="up-input up-code-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+                    </div>
+                    <div class="up-pw-hint" id="pwCodeHint"></div>
+                    <button type="button" class="up-link-btn" id="pwResendBtn" onclick="requestPasswordCode(true)">Resend code</button>
+                    <div id="pwCodeError" class="up-error" style="display:none;"></div>
+                </form>
+                <div class="up-panel-ft">
+                    <button type="button" class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
+                    <button type="button" class="up-btn-save" id="pwVerifyBtn" onclick="verifyPasswordCode()">Verify Code</button>
+                </div>
+            </div>
+
+
+            <!-- Step 3: current / new / confirm (unchanged fields) -->
+            <div id="pwStepForm" style="display:none;">
+                <!-- Scoped in its own <form> so Chrome's password-manager association stays
+                     confined to these 3 fields instead of bleeding onto unrelated plain-text
+                     inputs elsewhere on the page (which has no other <form> wrapping them). -->
+                <form class="up-form" autocomplete="off" onsubmit="savePassword(); return false;">
+                    <div class="up-field"><label>Current Password</label><input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password"></div>
+                    <div class="up-field"><label>New Password</label><input type="password" id="pwNew" class="up-input" placeholder="8+ characters, letters and numbers" autocomplete="new-password"></div>
+                    <div class="up-field"><label>Confirm New Password</label><input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password"></div>
+                    <div id="pwError" class="up-error" style="display:none;"></div>
+                </form>
+                <div class="up-panel-ft">
+                    <button type="button" class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
+                    <button type="button" class="up-btn-save" id="pwSaveBtn" onclick="savePassword()">Update Password</button>
+                </div>
             </div>
         </div>
     </div>
+
 
     <div id="emailPanel" class="up-panel" style="display:none;">
         <div class="up-panel-box">
@@ -319,6 +367,7 @@
         </div>
     </div>
 
+
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ADMIN/base.admin.js') }}"></script>
     <script>
@@ -338,5 +387,4 @@
     });
     </script>
 </body>
-
 </html>

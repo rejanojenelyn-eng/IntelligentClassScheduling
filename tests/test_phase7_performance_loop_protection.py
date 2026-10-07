@@ -19,7 +19,8 @@ def test_refresh_has_no_fetch_or_selection():
     b=HTML[s:e]
     assert "fetch(" not in b and "tsSel(" not in b and "dispatchEvent" not in b
 def test_identical_markup_not_replaced():
-    assert HTML.count("if (box.innerHTML !== nextHtml) box.innerHTML = nextHtml;") >= 2
+    assert "if (list.dataset.recSig === sig) return;" in HTML                   # time recs
+    assert "if (list.innerHTML !== nextHtml) list.innerHTML = nextHtml;" in HTML  # day dropdown
 def test_no_recommendation_mutation_observer():
     s=HTML.index("function _renderDayRecommendations"); e=HTML.index("function addNewTimeSlot")
     assert "MutationObserver" not in HTML[s:e]

@@ -113,7 +113,7 @@ SESSION_ROW = {'subjectcode': 'COMP 001', 'daydesc': 'Monday', 'starttimeid': 19
 
 SAVE_SCRIPT = [
     ('SELECT 1 FROM public.sections sec', [{'x': 1}]),
-    ('SELECT DISTINCT sv.versionid', [{'versionid': 7}]),
+    ('SELECT sv.versionid, sv.version_number', [{'versionid': 7, 'version_number': 3}]),
     ('SELECT UPPER(cs.subjectcode) AS subjectcode, s.employeenumber',
      [{'subjectcode': 'COMP 001', 'employeenumber': 'E1'}]),
     ("INSERT INTO public.local_arrangement (programcode",
@@ -174,7 +174,7 @@ def _publish_script():
            'has_hc_violation': False, 'override_reason': None}
     return [
         ('SELECT * FROM public.local_arrangement WHERE arrangementid', [arr]),
-        ('SELECT sv.versionid FROM schedule_version sv', [{'versionid': 7}]),
+        ('SELECT sv.versionid, sv.version_number', [{'versionid': 7, 'version_number': 3}]),
         ('FROM public.local_arrangement_sessions WHERE arrangementid', [dict(SESSION_ROW)]),
         ("SET status = 'Published'", [{'updated_at': DT_PUBLISHED}]),
     ]
@@ -216,7 +216,7 @@ def _restore_script():
     return [
         ('SELECT * FROM public.local_arrangement WHERE arrangementid', [src]),
         ('FROM public.local_arrangement_sessions WHERE arrangementid', [dict(SESSION_ROW)]),
-        ('SELECT sv.versionid FROM schedule_version sv', [{'versionid': 7}]),
+        ('SELECT sv.versionid, sv.version_number', [{'versionid': 7, 'version_number': 3}]),
         ('INSERT INTO public.local_arrangement (description',
          [{'arrangementid': 42, 'updated_at': DT_RESTORED}]),
     ]
@@ -371,12 +371,12 @@ def test_save_inserts_only_submitted_occurrence_when_nothing_is_published(local_
 
 def test_save_carries_forward_published_local_overrides_it_does_not_replace(local_env):
     client, use, log = local_env
-    use([("AND la.status = 'Published' AND la.is_active = TRUE AND la.ref_versionid = %s",
-          CARRY_ROWS)] + SAVE_SCRIPT)
+    use([("AND las.official_sessionid IS NOT NULL AND EXISTS", CARRY_ROWS)] + SAVE_SCRIPT)
     assert client.post('/api/local/save_arrangement', json=SAVE_PAYLOAD).status_code == 200
     assert _inserted_occurrences(log) == [900, 2272]          # 900 from payload, not the old copy
-    carried = next(p for s, p in log.params if 'la.ref_versionid = %s' in s)
-    assert carried == ('DIT', 1, 552, 1, 7)                   # same section + current snapshot only
+    carried = next(p for s, p in log.params if 'AND las.official_sessionid IS NOT NULL AND EXISTS' in s)
+    # Same section, bound by official_sessionid to the current snapshot (anchor 7).
+    assert carried == ('DIT', 1, 552, 1, 7)
     _no_official_writes(log)
 
 

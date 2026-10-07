@@ -87,16 +87,20 @@ def test_evaluation_counts_tba_room_even_without_a_client_flag():
 
 
 @requires_db
-def test_approve_rejects_tba_and_nonexistent_references_before_writing():
+def test_approve_rejects_nonexistent_references_but_accepts_tba_room_and_faculty():
+    # Room / Faculty "TBA" (to be announced) are publishable; a nonexistent room / faculty is not.
     rows = [app_module._serialize_class(_row(room_id=None, room='TBA')),
-            app_module._serialize_class(_row(subject_code='GEED 003', faculty_id='NOPE-1'))]
+            app_module._serialize_class(_row(subject_code='GEED 003', faculty_id='NOPE-1')),
+            app_module._serialize_class(_row(subject_code='GEED 004', room_id='99999999', room='ZZ999')),
+            app_module._serialize_class(_row(subject_code='GEED 005', faculty_id='TBA', instructor='TBA'))]
     resp = app_module.app.test_client().post('/api/schedule/approve', json={
         'schedule_data': rows,
         'context': {'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627'}})
     body = resp.get_json()
     assert resp.status_code == 400 and body['success'] is False
-    assert body['incomplete_subjects'] == ['GEED 002', 'GEED 003']
-    assert 'GEED 002 (Room)' in body['error'] and 'GEED 003 (Instructor)' in body['error']
+    assert body['incomplete_subjects'] == ['GEED 003', 'GEED 004']
+    assert 'GEED 003 (Instructor)' in body['error'] and 'GEED 004 (Room)' in body['error']
+    assert 'GEED 002' not in body['error'] and 'GEED 005' not in body['error']
 
 
 # ── Progressive regeneration: scripted solver (deterministic rounds) ─────────
@@ -109,7 +113,7 @@ class _ScriptedSolver:
         self.b_needs, self.calls = set(b_needs), []
 
     def __call__(self, program, year_level, term, curriculum, use_historical=False,
-                 acad_year_id='', locked_sessions=None, seed=None):
+                 acad_year_id='', locked_sessions=None, seed=None, section_id=None):
         self.calls.append(copy.deepcopy(locked_sessions))
         out = []
         for ls in locked_sessions:
@@ -268,3 +272,16 @@ def test_educ_022_user_locked_time_is_named_not_released(beed4):
                        {'EDUC 022': {'schedule': True}})
     assert body['result_status'] == 'REGENERATION_INFEASIBLE' and 'schedule_data' not in body
     assert body['error'] == 'EDUC 022 could not be resolved while Time/Days is locked by you.'
+
+
+def test_tba_room_and_faculty_are_allowed_at_save_and_publish_but_still_flagged_for_generation():
+    refs = {'faculty': {'F1'}, 'timeslot': set(), 'room': {'1'}, 'subjects': None}
+    row = {'room_id': None, 'room': 'TBA', 'faculty_id': 'TBA', 'instructor': 'TBA'}
+    comps, reasons = app_module._unresolved_components(row, refs)
+    assert {'room', 'faculty'} <= set(comps)                  # Generation / Regeneration
+    comps2, reasons2 = app_module._without_tba_components(row, comps, reasons)
+    assert 'room' not in comps2 and 'faculty' not in comps2
+    assert 'Room is TBA (not assigned).' not in reasons2 and 'Instructor is not assigned.' not in reasons2
+    bad = {'room_id': '42', 'room': 'ZZ42', 'faculty_id': 'NOPE-1'}   # nonexistent records stay unresolved
+    left = app_module._without_tba_components(bad, *app_module._unresolved_components(bad, refs))[0]
+    assert {'room', 'faculty'} <= set(left)

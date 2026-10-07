@@ -1,0 +1,224 @@
+{#- Class Schedule export dialog (se-*), shared by Academic Head > Class Schedule
+    and Faculty > Class Schedule. Needs static/css/schedule_export_modal.css and
+    static/js/schedule_export_modal.js. Context: programs, and either acad_years
+    (Academic Head: any Academic Year / Semester) or se_fixed_term
+    {ay_id, yearstart, yearend, sem} (Faculty: the active term, shown checked
+    and not changeable). -#}
+<!-- ═══════════════════════════════════════════════════════════
+     SCHEDULE EXPORT MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="seModal" class="se-overlay">
+  <div class="se-dialog">
+
+
+    <!-- Loading overlay -->
+    <div class="se-loading" id="seLoading">
+      <div class="se-load-rings">
+        <div class="se-ring"></div>
+        <div class="se-ring"></div>
+        <div class="se-ring"></div>
+      </div>
+      <span class="se-spin-lbl" id="seLoadLbl">Generating export…</span>
+      <span class="se-spin-sub">This may take a few seconds</span>
+    </div>
+
+
+    <!-- Header -->
+    <div class="se-hdr">
+      <div class="se-hdr-title">
+        <i class="fas fa-file-export"></i>
+        Export Schedule
+      </div>
+      <button class="se-hdr-close" onclick="seClose()"><i class="fas fa-times"></i></button>
+    </div>
+
+
+    <!-- Body -->
+    <div class="se-body">
+
+
+      <!-- Summary panel -->
+      <div class="se-summary">
+        <div class="se-sum-stat">
+          <span class="se-sum-num" id="seCountRows">—</span>
+          <span class="se-sum-lbl">Rows</span>
+        </div>
+        <div class="se-sum-div"></div>
+        <div class="se-sum-stat">
+          <span class="se-sum-num" id="seCountProgs">—</span>
+          <span class="se-sum-lbl">Programs</span>
+        </div>
+        <div class="se-sum-div"></div>
+        <span class="se-sum-msg" id="seSumMsg">Apply filters and select a format to begin.</span>
+      </div>
+
+
+      <!-- Filters -->
+      <div class="se-sec-lbl">Filters</div>
+      <div class="se-filter-grid">
+
+
+        <!-- Academic Year + Semester in one box -->
+        <div class="se-filter-box">
+          <h4><i class="fas fa-calendar-alt"></i> Academic Year</h4>
+          <div class="se-cb-list" id="seAyList">
+            {% if se_fixed_term %}
+            <label class="se-cb-item se-fixed">
+              <input type="checkbox" class="se-ay-cb se-fixed-cb" value="{{ se_fixed_term.ay_id }}" checked tabindex="-1" onclick="return false">
+              <label>AY {{ se_fixed_term.yearstart }}-{{ se_fixed_term.yearend }}</label>
+            </label>
+            {% else %}
+            {% for ay in acad_years %}
+            <label class="se-cb-item">
+              <input type="checkbox" class="se-ay-cb" value="{{ ay.academicyearid }}" onchange="seUpdateCount()">
+              <label>AY {{ ay.yearstart }}-{{ ay.yearend }}</label>
+            </label>
+            {% endfor %}
+            {% endif %}
+          </div>
+          <hr class="se-filter-divider">
+          <h4><i class="fas fa-book-open"></i> Semester</h4>
+          <div class="se-cb-list">
+            {% if se_fixed_term %}
+            <label class="se-cb-item se-fixed">
+              <input type="checkbox" class="se-sem-cb se-fixed-cb" value="{{ se_fixed_term.sem }}" checked tabindex="-1" onclick="return false">
+              <label>{{ {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}.get(se_fixed_term.sem, se_fixed_term.sem) }}</label>
+            </label>
+            {% else %}
+            <label class="se-cb-item">
+              <input type="checkbox" class="se-sem-cb" value="A" onchange="seUpdateCount()">
+              <label>1st Semester</label>
+            </label>
+            <label class="se-cb-item">
+              <input type="checkbox" class="se-sem-cb" value="B" onchange="seUpdateCount()">
+              <label>2nd Semester</label>
+            </label>
+            <label class="se-cb-item">
+              <input type="checkbox" class="se-sem-cb" value="C" onchange="seUpdateCount()">
+              <label>Summer</label>
+            </label>
+            {% endif %}
+          </div>
+          <hr class="se-filter-divider">
+          <h4><i class="fas fa-layer-group"></i> Year Level</h4>
+          <div class="se-prog-actions">
+            <button type="button" onclick="seSelectAllYL(true)">Select All</button>
+            <button type="button" onclick="seSelectAllYL(false)">Clear All</button>
+          </div>
+          <div class="se-cb-list">
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="1" onchange="seUpdateCount()"><label>1st Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="2" onchange="seUpdateCount()"><label>2nd Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="3" onchange="seUpdateCount()"><label>3rd Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="4" onchange="seUpdateCount()"><label>4th Year</label></label>
+            <label class="se-cb-item"><input type="checkbox" class="se-yl-cb" value="5" onchange="seUpdateCount()"><label>5th Year</label></label>
+          </div>
+        </div>
+
+
+        <!-- Program -->
+        <div class="se-filter-box">
+          <h4><i class="fas fa-graduation-cap"></i> Program</h4>
+          <div class="se-prog-actions">
+            <button onclick="seSelectAllProgs(true)">Select All</button>
+            <button onclick="seSelectAllProgs(false)">Clear All</button>
+          </div>
+          <input type="text" class="se-prog-search" id="seProgSearch" placeholder="Search program…" oninput="seFilterProgs()">
+          <div class="se-prog-list" id="seProgList">
+            {% for p in programs %}
+            <div class="se-prog-item" data-prog="{{ p.programcode }}">
+              <input type="checkbox" class="se-prog-cb" value="{{ p.programcode }}" id="seProg_{{ p.programcode }}" onchange="seUpdateCount()">
+              <label for="seProg_{{ p.programcode }}">{{ p.programcode }} &mdash; {{ p.programname }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+
+      </div><!-- /.se-filter-grid -->
+
+
+      <!-- Format -->
+      <div class="se-sec-lbl">Export Format <span style="font-size:.68rem;font-weight:500;color:#888;text-transform:none;border:none;padding:0;margin-left:6px;">(select one or more)</span></div>
+      <div class="se-fmt-grid">
+        <div class="se-fmt-card se-fmt-pdf" id="seFmtPdf" onclick="seToggleFmt('pdf')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-pdf"></i></span>
+          <div class="se-fmt-name">PDF</div>
+          <div class="se-fmt-desc">Official document</div>
+        </div>
+        <div class="se-fmt-card se-fmt-docx" id="seFmtDocx" onclick="seToggleFmt('docx')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-word"></i></span>
+          <div class="se-fmt-name">DOCX</div>
+          <div class="se-fmt-desc">Editable document</div>
+        </div>
+        <div class="se-fmt-card se-fmt-xlsx" id="seFmtXlsx" onclick="seToggleFmt('xlsx')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-excel"></i></span>
+          <div class="se-fmt-name">XLSX</div>
+          <div class="se-fmt-desc">Spreadsheet</div>
+        </div>
+        <div class="se-fmt-card se-fmt-csv" id="seFmtCsv" onclick="seToggleFmt('csv')">
+          <span class="se-fmt-chk"><i class="fas fa-check"></i></span>
+          <span class="se-fmt-icon"><i class="fas fa-file-csv"></i></span>
+          <div class="se-fmt-name">CSV</div>
+          <div class="se-fmt-desc">Flat table data</div>
+        </div>
+      </div>
+
+
+      <!-- Filename -->
+      <div class="se-fn-row">
+        <div class="se-fn-field">
+          <label>Filename</label>
+          <input type="text" class="se-fn-input" id="seFilename" placeholder="schedule_export">
+        </div>
+      </div>
+
+
+    </div><!-- /.se-body -->
+
+
+    <!-- Footer -->
+    <div class="se-footer">
+      <button class="se-btn-cancel" onclick="seClose()"><i class="fas fa-times"></i> Cancel</button>
+      <button class="se-btn-export" id="seBtnExport" onclick="seDoExport()" disabled>
+        <i class="fas fa-download"></i> <span id="seBtnLbl">Export</span>
+      </button>
+    </div>
+
+
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     EXPORT LAYOUT PICKER MODAL (Table View / Calendar View)
+════════════════════════════════════════════════════════════ -->
+<div id="seLayoutModal" class="se-overlay se-overlay-layout">
+  <div class="se-dialog" style="width:min(560px,96vw);">
+    <div class="se-hdr">
+      <div class="se-hdr-title"><i class="fas fa-th-large"></i> Choose Export Layout</div>
+      <button class="se-hdr-close" onclick="seCloseLayout()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="se-body">
+      <div class="se-sec-lbl">Layout</div>
+      <div class="se-layout-grid">
+        <div class="se-fmt-card se-fmt-table" onclick="seChooseLayout('table')">
+          <span class="se-fmt-icon"><i class="fas fa-table"></i></span>
+          <div class="se-fmt-name">Table View</div>
+          <div class="se-fmt-desc">Official subject-offerings list, grouped by program and year level.</div>
+        </div>
+        <div class="se-fmt-card se-fmt-calendar" onclick="seChooseLayout('calendar')">
+          <span class="se-fmt-icon"><i class="fas fa-calendar-week"></i></span>
+          <div class="se-fmt-name">Calendar View</div>
+          <div class="se-fmt-desc">Weekly timetable (Mon&ndash;Sun) with subjects placed by day and time slot.</div>
+        </div>
+      </div>
+    </div>
+    <div class="se-footer">
+      <button class="se-btn-cancel" onclick="seCloseLayout()"><i class="fas fa-arrow-left"></i> Back</button>
+      <span></span>
+    </div>
+  </div>
+</div>

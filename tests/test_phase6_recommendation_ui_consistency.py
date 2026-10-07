@@ -5,19 +5,19 @@ CSS=(ROOT/"static/css/manualSchedule.css").read_text(encoding="utf-8")
 JS=(ROOT/"static/js/ACAD HEAD/manualEditor.acad2.js").read_text(encoding="utf-8")
 
 def test_day_and_time_share_one_recommendation_ui_language():
-    assert 'class="ts-rec-section ts-day-rec-box"' in HTML
-    assert 'class="ts-rec-section ts-time-rec-box"' in HTML
-    assert HTML.count("ts-rec-section-title") >= 2
+    # Day and Time recommendations both live inside their dropdowns, room-style.
+    assert 'ts-ss-sect-hdr ts-ss-sect-opt ts-day-rec-title">RECOMMENDATIONS' in HTML
+    assert 'ts-ss-sect-hdr ts-ss-sect-opt ts-rec-gen">RECOMMENDATIONS' in HTML
 
 def test_both_sections_use_same_heading_wording():
-    assert 'ts-day-rec-title">RECOMMENDATIONS' in HTML
-    assert 'ts-time-rec-title">RECOMMENDATIONS' in HTML
+    assert 'ts-day-rec-title">RECOMMENDATIONS' in HTML  # dropdown section header
+    assert 'ts-rec-gen">RECOMMENDATIONS' in HTML
 
 def test_time_pair_remains_visible_as_complete_range():
-    assert 'class="ts-time-rec-range">${r.start} – ${r.end}' in HTML
+    assert "${r.start} – ${r.end}</div>" in HTML
 
 def test_manual_start_end_controls_are_preserved():
-    assert "OTHER / MANUAL TIME" in HTML
+    assert 'ts-rec-gen">OTHERS' in HTML
     assert 'id="tsst-txt-${id}"' in HTML
     assert 'id="tset-txt-${id}"' in HTML
 

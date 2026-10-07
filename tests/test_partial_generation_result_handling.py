@@ -135,7 +135,8 @@ def _approve(rows):
 
 @requires_db
 def test_16_approving_an_incomplete_schedule_is_rejected():
-    resp = _approve([_row(), _row(subject_code='GEED 003', room_id=None, room='TBA',
+    # A nonexistent room is incomplete (Room "TBA" alone is publishable).
+    resp = _approve([_row(), _row(subject_code='GEED 003', room_id='99999999', room='ZZ999',
                                   start_time=time(13, 30), end_time=time(16, 30), time='1:30 PM - 4:30 PM')])
     body = resp.get_json()
     assert resp.status_code == 400 and body['success'] is False

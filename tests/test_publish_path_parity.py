@@ -109,7 +109,9 @@ class _Conn:
         pass
 
 
-def test_editor_override_archives_published_rows(monkeypatch):
+def test_editor_override_archives_draft_only(monkeypatch):
+    # Save Draft / Go to Manual Editor replace the section's Draft; the Published schedule
+    # stays live until a successful Publish replaces it.
     log = []
     monkeypatch.setattr(app, 'get_db_connection', lambda: _Conn(log))
     resp = app.app.test_client().post('/api/schedule/archive-draft-for-editor', json={
@@ -117,5 +119,6 @@ def test_editor_override_archives_published_rows(monkeypatch):
     })
     assert resp.get_json()['success'] is True
     update = next(s for s in log if s.startswith('UPDATE schedule_version'))
-    assert "sv.status IN ('Draft', 'Published')" in update
+    assert "sv.status = 'Draft'" in update
+    assert 'Published' not in update
     assert 's.sectionid = %s' in update

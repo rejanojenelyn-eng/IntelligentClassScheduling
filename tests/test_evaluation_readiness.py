@@ -121,7 +121,9 @@ def test_9_usable_but_incomplete_generation_is_a_partial_result(monkeypatch):
 
 @requires_db
 def test_10_backend_approval_and_evaluation_use_the_same_completeness_result():
-    rows = [CLEAN[0], dict(CLEAN[1], **TBA_ROOM)]
+    # A nonexistent room: incomplete for both evaluation and approval. (Room "TBA" is
+    # flagged by evaluation so Generation can fill it, but is publishable.)
+    rows = [CLEAN[0], dict(CLEAN[1], room_id='99999999', room='ZZ999')]
     ev = _eval(rows)
     assert [(e['subject_code'], e['components']) for e in ev['incomplete']] == [('GEED 003', ['room'])]
     assert ev['incompleteComponentCount'] == 1 and ev['incompleteCount'] == 1

@@ -58,8 +58,12 @@ def test_occurrence_set_validation_uses_the_snapshot():
 
 
 def test_restore_anchor_matches_publish_anchor_ordering():
-    src = inspect.getsource(app.api_restore_local_arrangement)
-    assert 'ORDER BY sv.version_number DESC, sv.versionid DESC' in src
+    # Restore, Publish (and Save / conflict preview) share ONE anchor definition.
+    for fn in (app.api_restore_local_arrangement, app.api_publish_local_arrangement,
+               app.api_save_local_arrangement):
+        assert '_current_official_anchor(' in inspect.getsource(fn)
+    assert 'ORDER BY sv.version_number DESC, sv.versionid DESC' in \
+        inspect.getsource(app._current_official_anchor)
 
 
 # ── Live DB (read-only): real multi-subject snapshot ───────────────────────

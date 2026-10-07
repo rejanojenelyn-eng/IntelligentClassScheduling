@@ -1,10 +1,17 @@
 {% extends "academic/base.html" %}
 
+
 {% block head %}
 {{ super() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_grid.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_v2.css') }}?v=20261007a">
 <style>
-    .frs-wrap { padding: 28px 32px; background: #fff; font-family: 'Inter', sans-serif; }
+    .frs-wrap {
+        padding: 28px 32px;
+        background: #fff;
+        font-family: 'Inter', sans-serif;
+    }
+
 
     /* ── Page header ── */
     .frs-header-row {
@@ -13,6 +20,7 @@
         justify-content: space-between;
         margin-bottom: 20px;
     }
+
     .frs-page-title {
         font-size: 1.8rem;
         font-weight: 900;
@@ -21,6 +29,7 @@
         margin: 0;
         text-transform: uppercase;
     }
+
     .frs-active-term-badge {
         font-size: .8rem;
         font-weight: 700;
@@ -34,6 +43,7 @@
         white-space: nowrap;
     }
 
+
     /* ── Main tabs ── */
     .frs-main-tabs {
         display: flex;
@@ -44,6 +54,7 @@
         width: 100%;
         margin-bottom: 20px;
     }
+
     .frs-main-tab-btn {
         display: flex;
         align-items: center;
@@ -60,8 +71,16 @@
         border-right: 1px solid #800000;
         transition: all 0.2s;
     }
-    .frs-main-tab-btn.active { background: #800000; color: #fff; }
-    .frs-main-tab-btn i { font-size: 0.9rem; }
+
+    .frs-main-tab-btn.active {
+        background: #800000;
+        color: #fff;
+    }
+
+    .frs-main-tab-btn i {
+        font-size: 0.9rem;
+    }
+
 
     /* ── Building tabs ── */
     .frs-bldg-tabs {
@@ -72,6 +91,7 @@
         margin-bottom: 20px;
         overflow-x: auto;
     }
+
     .frs-bldg-tab {
         padding: 10px 18px;
         border: none;
@@ -82,11 +102,19 @@
         text-transform: uppercase;
         cursor: pointer;
         white-space: nowrap;
-        border-right: 1px solid rgba(128,0,0,0.2);
+        border-right: 1px solid rgba(128, 0, 0, 0.2);
         transition: background 0.12s;
     }
-    .frs-bldg-tab:last-child { border-right: none; }
-    .frs-bldg-tab.active { background: #800000; color: #fff; }
+
+    .frs-bldg-tab:last-child {
+        border-right: none;
+    }
+
+    .frs-bldg-tab.active {
+        background: #800000;
+        color: #fff;
+    }
+
 
     /* ── Body ── */
     /* Fixed (not min-) height so the room list and calendar grid below can
@@ -100,6 +128,7 @@
         min-height: 0;
     }
 
+
     /* Left sidebar */
     .frs-left {
         flex: 0 0 140px;
@@ -107,6 +136,7 @@
         flex-direction: column;
         min-height: 0;
     }
+
     .frs-sidebar-label {
         font-size: 0.55rem;
         font-weight: 800;
@@ -115,6 +145,7 @@
         margin-bottom: 5px;
         letter-spacing: 0.5px;
     }
+
     .frs-floor-select {
         padding: 6px 8px;
         border: 1px solid #800000;
@@ -127,7 +158,17 @@
         margin-bottom: 15px;
         background: #fff;
     }
-    .frs-room-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid #800000; border-radius: 6px; padding: 5px 0; background: #fff; }
+
+    .frs-room-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        border: 1px solid #800000;
+        border-radius: 6px;
+        padding: 5px 0;
+        background: #fff;
+    }
+
     .frs-room-item {
         display: block;
         padding: 10px 15px;
@@ -139,14 +180,25 @@
         text-align: center;
         transition: all 0.1s;
     }
-    .frs-room-item:hover { background: #f8f2f2; }
+
+    .frs-room-item:hover {
+        background: #f8f2f2;
+    }
+
     .frs-room-item.active {
         background: #800000;
         color: #fff;
         border-radius: 6px;
         margin: 0 5px;
     }
-    .frs-room-empty { padding: 20px 10px; text-align: center; font-size: 0.75rem; color: #aaa; }
+
+    .frs-room-empty {
+        padding: 20px 10px;
+        text-align: center;
+        font-size: 0.75rem;
+        color: #aaa;
+    }
+
 
     /* Calendar */
     .frs-cal-wrap {
@@ -159,6 +211,7 @@
         border-radius: 6px;
         background: #fff;
     }
+
     .frs-cal-title {
         padding: 12px 16px;
         background: #fff;
@@ -168,13 +221,22 @@
         text-transform: uppercase;
         border-bottom: 1px solid #800000;
     }
+
     /* .frs-grid*, .frs-pill*, .frs-cal-loading rules moved to
        static/css/room_schedule_grid.css so the Reports module's Room
        Schedule preview can reuse them too. */
 
+
     /* ── Available Rooms ── */
-    .frs-avail-wrap { display: flex; gap: 24px; }
-    .frs-avail-filters { flex: 0 0 220px; }
+    .frs-avail-wrap {
+        display: flex;
+        gap: 24px;
+    }
+
+    .frs-avail-filters {
+        flex: 0 0 220px;
+    }
+
     .frs-avail-filters-header {
         background: #5C0A0A;
         color: #fff;
@@ -187,6 +249,7 @@
         gap: 8px;
         text-transform: uppercase;
     }
+
     .frs-avail-filters-body {
         border: 1px solid #800000;
         border-top: none;
@@ -194,7 +257,11 @@
         padding: 15px;
         background: #fff;
     }
-    .frs-avail-filter-group { margin-bottom: 12px; }
+
+    .frs-avail-filter-group {
+        margin-bottom: 12px;
+    }
+
     .frs-avail-filter-label {
         font-size: 0.65rem;
         font-weight: 800;
@@ -203,6 +270,7 @@
         display: block;
         margin-bottom: 5px;
     }
+
     .frs-avail-filter-group select,
     .frs-avail-filter-group input {
         width: 100%;
@@ -215,11 +283,18 @@
         background: #fff;
         box-sizing: border-box;
     }
+
     /* Custom-styled searchable combo (Building / Room Number) — a native <datalist>
        renders the browser's own unstyled popup, which looks completely out of place
        here, so this draws its own dropdown instead. */
-    .frs-combo { position: relative; }
-    .frs-combo-input[readonly] { cursor: pointer; }
+    .frs-combo {
+        position: relative;
+    }
+
+    .frs-combo-input[readonly] {
+        cursor: pointer;
+    }
+
     .frs-combo-menu {
         position: absolute;
         top: calc(100% + 4px);
@@ -230,11 +305,15 @@
         background: #fff;
         border: 1px solid #800000;
         border-radius: 6px;
-        box-shadow: 0 6px 18px rgba(0,0,0,.18);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
         z-index: 500;
         display: none;
     }
-    .frs-combo-menu.open { display: block; }
+
+    .frs-combo-menu.open {
+        display: block;
+    }
+
     .frs-combo-option {
         padding: 7px 10px;
         font-size: 0.75rem;
@@ -243,8 +322,15 @@
         cursor: pointer;
         border-bottom: 1px solid #f4f4f4;
     }
-    .frs-combo-option:last-child { border-bottom: none; }
-    .frs-combo-option:hover { background: #FFF3F3; }
+
+    .frs-combo-option:last-child {
+        border-bottom: none;
+    }
+
+    .frs-combo-option:hover {
+        background: #FFF3F3;
+    }
+
     .frs-combo-empty {
         padding: 10px;
         font-size: 0.72rem;
@@ -252,7 +338,11 @@
         color: #999;
         text-align: center;
     }
-    .frs-avail-results { flex: 1; }
+
+    .frs-avail-results {
+        flex: 1;
+    }
+
     .frs-avail-results-header {
         background: #FFF9ED;
         border: 1px solid #800000;
@@ -264,6 +354,7 @@
         margin-bottom: 20px;
         text-transform: uppercase;
     }
+
     .frs-avail-building-title {
         font-size: 0.8rem;
         font-weight: 900;
@@ -273,7 +364,14 @@
         padding-bottom: 6px;
         margin: 0 0 15px;
     }
-    .frs-avail-cards { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 25px; }
+
+    .frs-avail-cards {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-bottom: 25px;
+    }
+
     .frs-avail-card {
         background: #fff;
         border: 1px solid #800000;
@@ -282,19 +380,58 @@
         min-width: 160px;
         position: relative;
     }
+
     .frs-avail-dot {
         position: absolute;
-        top: 12px; right: 12px;
-        width: 12px; height: 12px;
+        top: 12px;
+        right: 12px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
         background: #84C784;
     }
-    .frs-avail-room-name { font-size: 1.1rem; font-weight: 900; color: #5C0A0A; margin: 0 0 10px; }
-    .frs-avail-badge { display: inline-block; font-size: 0.6rem; font-weight: 900; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; margin-right: 6px; }
-    .frs-badge-lec { background: #FDE08B; color: #333; }
-    .frs-badge-lab { background: #A9C2F0; color: #333; }
-    .frs-avail-time { font-size: 0.65rem; color: #333; font-weight: 800; display: block; margin-top: 6px; }
-    .frs-avail-detail { font-size: 0.62rem; color: #666; margin-top: 4px; }
+
+    .frs-avail-room-name {
+        font-size: 1.1rem;
+        font-weight: 900;
+        color: #5C0A0A;
+        margin: 0 0 10px;
+    }
+
+    .frs-avail-badge {
+        display: inline-block;
+        font-size: 0.6rem;
+        font-weight: 900;
+        padding: 3px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        margin-right: 6px;
+    }
+
+    .frs-badge-lec {
+        background: #FDE08B;
+        color: #333;
+    }
+
+    .frs-badge-lab {
+        background: #A9C2F0;
+        color: #333;
+    }
+
+    .frs-avail-time {
+        font-size: 0.65rem;
+        color: #333;
+        font-weight: 800;
+        display: block;
+        margin-top: 6px;
+    }
+
+    .frs-avail-detail {
+        font-size: 0.62rem;
+        color: #666;
+        margin-top: 4px;
+    }
+
     .frs-avail-status-chip {
         display: inline-block;
         margin-top: 8px;
@@ -308,26 +445,36 @@
         text-transform: uppercase;
     }
 
+
     /* ── Detail Modal ── */
     .frs-detail-overlay {
         display: none;
         position: fixed;
         inset: 0;
-        background: rgba(0,0,0,.45);
+        background: rgba(0, 0, 0, .45);
         z-index: 9500;
         align-items: center;
         justify-content: center;
     }
-    .frs-detail-overlay.open { display: flex; }
+
+    .frs-detail-overlay.open {
+        display: flex;
+    }
+
     .frs-detail-box {
         background: #fff;
         border-radius: 12px;
         width: min(480px, 96vw);
-        box-shadow: 0 10px 36px rgba(0,0,0,.25);
+        box-shadow: 0 10px 36px rgba(0, 0, 0, .25);
         overflow: hidden;
         position: relative;
     }
-    .frs-detail-accent { height: 6px; width: 100%; }
+
+    .frs-detail-accent {
+        height: 6px;
+        width: 100%;
+    }
+
     .frs-detail-hdr {
         padding: 18px 22px 10px;
         display: flex;
@@ -335,203 +482,102 @@
         justify-content: space-between;
         gap: 12px;
     }
-    .frs-detail-code { font-size: 1.35rem; font-weight: 900; color: #5c0000; letter-spacing: .5px; line-height: 1.2; }
-    .frs-detail-name { font-size: 0.8rem; font-weight: 600; color: #555; margin-top: 3px; }
-    .frs-detail-close { background: none; border: none; font-size: 1.1rem; cursor: pointer; color: #888; padding: 0; flex-shrink: 0; line-height: 1; }
-    .frs-detail-close:hover { color: #333; }
-    .frs-detail-badge { display: inline-block; font-size: 0.6rem; font-weight: 900; padding: 3px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 14px; margin-left: 22px; }
-    .frs-detail-badge-pub   { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .frs-detail-badge-draft { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-    .frs-detail-badge-local { background: #cce5ff; color: #004085; border: 1px solid #b8daff; }
-    .frs-detail-divider { border: none; border-top: 1px solid #eee; margin: 0 22px 14px; }
-    .frs-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; padding: 0 22px 20px; }
-    .frs-detail-label { font-size: 0.58rem; font-weight: 900; text-transform: uppercase; letter-spacing: .8px; color: #800000; margin-bottom: 3px; }
-    .frs-detail-value { font-size: 0.82rem; font-weight: 700; color: #222; }
-    .frs-detail-field.full { grid-column: 1 / -1; }
+
+    .frs-detail-code {
+        font-size: 1.35rem;
+        font-weight: 900;
+        color: #5c0000;
+        letter-spacing: .5px;
+        line-height: 1.2;
+    }
+
+    .frs-detail-name {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #555;
+        margin-top: 3px;
+    }
+
+    .frs-detail-close {
+        background: none;
+        border: none;
+        font-size: 1.1rem;
+        cursor: pointer;
+        color: #888;
+        padding: 0;
+        flex-shrink: 0;
+        line-height: 1;
+    }
+
+    .frs-detail-close:hover {
+        color: #333;
+    }
+
+    .frs-detail-badge {
+        display: inline-block;
+        font-size: 0.6rem;
+        font-weight: 900;
+        padding: 3px 10px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        margin-bottom: 14px;
+        margin-left: 22px;
+    }
+
+    .frs-detail-badge-pub {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+
+    .frs-detail-badge-draft {
+        background: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
+    }
+
+    .frs-detail-badge-local {
+        background: #cce5ff;
+        color: #004085;
+        border: 1px solid #b8daff;
+    }
+
+    .frs-detail-divider {
+        border: none;
+        border-top: 1px solid #eee;
+        margin: 0 22px 14px;
+    }
+
+    .frs-detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 20px;
+        padding: 0 22px 20px;
+    }
+
+    .frs-detail-label {
+        font-size: 0.58rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: .8px;
+        color: #800000;
+        margin-bottom: 3px;
+    }
+
+    .frs-detail-value {
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #222;
+    }
+
+    .frs-detail-field.full {
+        grid-column: 1 / -1;
+    }
 </style>
 {% endblock %}
 
+
 {% block content %}
-<div class="frs-wrap">
-
-    <!-- Page header -->
-    <div class="frs-header-row">
-        <h1 class="frs-page-title">ROOM SCHEDULE</h1>
-        <span class="frs-active-term-badge">{{ current_ay_label }} &middot; {{ current_sem_label }}</span>
-    </div>
-
-    <!-- Main tabs -->
-    <div class="frs-main-tabs">
-        <button class="frs-main-tab-btn active" id="btnFrsSchedView" onclick="frsSetMainTab('schedule')">
-            <i class="fas fa-calendar-alt"></i> SCHEDULE VIEW
-        </button>
-        <button class="frs-main-tab-btn" id="btnFrsAvailRooms" onclick="frsSetMainTab('available')">
-            <i class="fas fa-search"></i> AVAILABLE ROOMS
-        </button>
-    </div>
-
-    <!-- ══ SCHEDULE VIEW ══ -->
-    <div id="frsScheduleViewPanel">
-        <div class="frs-bldg-tabs" id="frsBldgTabs"></div>
-        <div class="frs-body">
-            <div class="frs-left">
-                <div class="frs-sidebar-label">Select Floor</div>
-                <select class="frs-floor-select" id="frsFloorSel" onchange="frsFilterFloor()">
-                    <option value="">ALL FLOORS</option>
-                </select>
-                <div class="frs-sidebar-label">Room List</div>
-                <div class="frs-room-list" id="frsRoomList">
-                    <div class="frs-room-empty">Select a building</div>
-                </div>
-            </div>
-            <div class="frs-cal-wrap">
-                <div class="frs-cal-title" id="frsCalTitle">Select a room to view its schedule</div>
-                <div class="frs-grid-outer">
-                    <div class="frs-grid" id="frsGrid"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ══ AVAILABLE ROOMS ══ -->
-    <div id="frsAvailPanel" style="display:none">
-        <div class="frs-avail-wrap">
-            <div class="frs-avail-filters">
-                <div class="frs-avail-filters-header">
-                    <i class="fas fa-filter"></i> FILTERS
-                </div>
-                <div class="frs-avail-filters-body">
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Day</label>
-                        <select id="frsAvailDay" onchange="frsFindAvailable()">
-                            <option value="">SELECT</option>
-                            <option>Monday</option>
-                            <option>Tuesday</option>
-                            <option>Wednesday</option>
-                            <option>Thursday</option>
-                            <option>Friday</option>
-                            <option>Saturday</option>
-                            <option>Sunday</option>
-                        </select>
-                    </div>
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Start Time</label>
-                        <div class="frs-combo" id="frsStartCombo">
-                            <input type="text" id="frsAvailStartTxt" class="frs-combo-input" readonly
-                                   placeholder="Start time…" onclick="_frsComboFilter('frsStartCombo')">
-                            <input type="hidden" id="frsAvailStart" value="">
-                            <div class="frs-combo-menu" id="frsStartComboMenu"></div>
-                        </div>
-                    </div>
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">End Time</label>
-                        <div class="frs-combo" id="frsEndCombo">
-                            <input type="text" id="frsAvailEndTxt" class="frs-combo-input" readonly
-                                   placeholder="End time…" onclick="_frsComboFilter('frsEndCombo')">
-                            <input type="hidden" id="frsAvailEnd" value="">
-                            <div class="frs-combo-menu" id="frsEndComboMenu"></div>
-                        </div>
-                    </div>
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Room Type</label>
-                        <select id="frsAvailType" onchange="frsFindAvailable()">
-                            <option value="">ALL TYPES</option>
-                            <option value="Lecture">Lecture</option>
-                            <option value="Laboratory">Laboratory</option>
-                        </select>
-                    </div>
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Building</label>
-                        <div class="frs-combo" id="frsBuildingCombo">
-                            <input type="text" id="frsAvailBuilding" class="frs-combo-input"
-                                   placeholder="All buildings" autocomplete="off"
-                                   oninput="frsBuildingChanged()" onfocus="_frsComboFilter('frsBuildingCombo')">
-                            <div class="frs-combo-menu" id="frsBuildingComboMenu"></div>
-                        </div>
-                    </div>
-                    <div class="frs-avail-filter-group">
-                        <label class="frs-avail-filter-label">Room Number</label>
-                        <div class="frs-combo" id="frsRoomNumCombo">
-                            <input type="text" id="frsAvailRoomNum" class="frs-combo-input"
-                                   placeholder="All rooms" autocomplete="off"
-                                   oninput="frsRoomNumTyped()" onfocus="_frsComboFilter('frsRoomNumCombo')">
-                            <div class="frs-combo-menu" id="frsRoomNumComboMenu"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="frs-avail-results">
-                <div class="frs-avail-results-header" id="frsAvailHeader">
-                    HERE ARE THE AVAILABLE ROOMS FOR (ALL BUILDINGS)
-                </div>
-                <div id="frsAvailContent">
-                    <div class="frs-cal-loading">
-                        <i class="fas fa-search"></i>
-                        Set filters to view available rooms.
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-</div>
-
-<!-- ══ DETAIL MODAL ══ -->
-<div class="frs-detail-overlay" id="frsDetailOverlay">
-    <div class="frs-detail-box">
-        <div class="frs-detail-accent" id="frsDetailAccent"></div>
-        <div class="frs-detail-hdr">
-            <div>
-                <div class="frs-detail-code" id="frsDetailSubjCode">—</div>
-                <div class="frs-detail-name" id="frsDetailSubjName">—</div>
-            </div>
-            <button class="frs-detail-close" onclick="frsCloseDetail()">&#10005;</button>
-        </div>
-        <span class="frs-detail-badge" id="frsDetailStatus">—</span>
-        <hr class="frs-detail-divider">
-        <div class="frs-detail-grid">
-            <div class="frs-detail-field full">
-                <div class="frs-detail-label"><i class="fas fa-chalkboard-teacher"></i>&nbsp; Instructor</div>
-                <div class="frs-detail-value" id="frsDetailInstr">—</div>
-            </div>
-            <div class="frs-detail-field">
-                <div class="frs-detail-label"><i class="fas fa-calendar-day"></i>&nbsp; Day</div>
-                <div class="frs-detail-value" id="frsDetailDay">—</div>
-            </div>
-            <div class="frs-detail-field">
-                <div class="frs-detail-label"><i class="fas fa-clock"></i>&nbsp; Time</div>
-                <div class="frs-detail-value" id="frsDetailTime">—</div>
-            </div>
-            <div class="frs-detail-field">
-                <div class="frs-detail-label"><i class="fas fa-door-open"></i>&nbsp; Room</div>
-                <div class="frs-detail-value" id="frsDetailRoom">—</div>
-            </div>
-            <div class="frs-detail-field">
-                <div class="frs-detail-label"><i class="fas fa-graduation-cap"></i>&nbsp; Program</div>
-                <div class="frs-detail-value" id="frsDetailProg">—</div>
-            </div>
-            <div class="frs-detail-field">
-                <div class="frs-detail-label"><i class="fas fa-layer-group"></i>&nbsp; Year Level</div>
-                <div class="frs-detail-value" id="frsDetailYr">—</div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Seed data -->
-<div id="frs-init-data"
-     data-buildings="{{ buildings_json | e }}"
-     data-rooms="{{ rooms_json | e }}"
-     data-active-ay-id="{{ active_ay_id }}"
-     data-active-sem="{{ active_sem }}"
-     hidden></div>
-
-<script src="{{ url_for('static', filename='js/ACAD HEAD/room_schedule.acad.js') }}"></script>
-
-<!-- Close detail on backdrop click -->
-<script>
-document.getElementById('frsDetailOverlay').addEventListener('click', function(e) {
-    if (e.target === this) frsCloseDetail();
-});
-</script>
+{% include "shared/_room_schedule_body.html" %}
 {% endblock %}

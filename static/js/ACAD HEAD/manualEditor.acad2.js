@@ -94,6 +94,29 @@ const timeSlots = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '
 let pendingManualSchedule = [];
 let hiddenDbSchedules = new Set();
 
+// True when a loaded (already saved) session has been moved in the editor — its day,
+// time or room no longer matches what was loaded. Such pills render gray until saved;
+// a save reloads the entry with a fresh _loaded snapshot, restoring its status color.
+const EDITED_PILL_COLOR = '#8e9ca0';
+// A row from the server is Local when its schedule_source says so. A pending (editor)
+// entry is Local unless it mirrors an Official occurrence (fromExisting + versionid —
+// Local rows carry no versionid); new slices placed in the Local Scheduler are Local.
+function _isLocalSourceRow(s) {
+    return String(s.schedule_source || '').toLowerCase() === 'local';
+}
+function _isLocalSourcePending(c) {
+    return _IS_LOCAL_MODE && !(c.fromExisting && c.versionid);
+}
+
+function _isPendingEdited(c) {
+    if (!c || !c.fromExisting || !c._loaded) return false;
+    const o = c._loaded;
+    return String(c.day || '') !== String(o.day || '')
+        || String(c.start_time || '') !== String(o.start_time || '')
+        || String(c.end_time || '') !== String(o.end_time || '')
+        || String(c.room_id ?? '') !== String(o.room_id ?? '');
+}
+
 // Single source of truth for which raw DB rows should stay hidden from the room calendar
 // (because a local pendingManualSchedule copy already renders them instead, while their
 // slices are being edited). hiddenDbSchedules used to be mutated ad hoc — cleared in one
@@ -104,16 +127,84 @@ let hiddenDbSchedules = new Set();
 // randomly vanish or duplicate across subject/section switches. Calling this after any
 // change to pendingManualSchedule (instead of hand-editing hiddenDbSchedules directly)
 // guarantees the two always agree.
+// Published slices removed on the board but not yet saved/published: hide key
+// (`s:<sessionid>`) -> { sectionId, code }. Published data is never deleted directly;
+// the removal goes live only through Save as Draft + Publish. Their subjects count as
+// changed (unsaved) until then, and their DB rows stay hidden on the calendar.
+window._removedPublishedOccurrences = window._removedPublishedOccurrences || new Map();
+
+// After a confirmed Save/Publish every saved/published row has a NEW versionid. The room
+// occupancy caches still hold the previous rows, so a slice's own old copy would "occupy" its
+// own new day/room and be filtered out of its dropdowns. Drop them for the term; they are
+// re-fetched on demand by _applyDayAvailabilityFilter / _applyRoomAvailabilityFilter.
+function _invalidateOccupancyCaches(ay, sem) {
+    const suffix = `|${ay}|${sem}`;
+    if (window._roomDbCache) {
+        Object.keys(window._roomDbCache).forEach(k => { if (k.endsWith(suffix)) delete window._roomDbCache[k]; });
+    }
+    window._roomsByDayCache = {};
+}
+
+function _touchedCodesForSection(sectionId) {
+    const out = new Set();
+    window._removedPublishedOccurrences.forEach(v => {
+        if (String(v.sectionId) === String(sectionId)) out.add(v.code);
+    });
+    return Array.from(out);
+}
+
+function _forgetRemovedPublished(sectionId, code) {
+    const want = code ? String(code).toUpperCase() : null;
+    Array.from(window._removedPublishedOccurrences.entries()).forEach(([k, v]) => {
+        if (String(v.sectionId) === String(sectionId) && (!want || v.code === want)) {
+            window._removedPublishedOccurrences.delete(k);
+        }
+    });
+}
+
 function _rebuildHiddenDbSchedules() {
     hiddenDbSchedules = new Set();
     pendingManualSchedule.forEach(c => {
         if (!c.fromExisting && !c.fromGenerator) return;
-        if (c.versionid) {
-            hiddenDbSchedules.add(`v:${c.versionid}`);
-        } else if (c.day && c.start_time) {
-            hiddenDbSchedules.add(`${c.subject_code}_${c.day}_${getTimeSlotIndex(c.start_time)}`);
-        }
+        const key = _dbHideKeyForEntry(c);
+        if (key) hiddenDbSchedules.add(key);
     });
+    window._removedPublishedOccurrences.forEach((_v, key) => hiddenDbSchedules.add(key));
+}
+
+// Hide key for the ONE raw DB occurrence a local mirror replaces. Occurrence-level
+// (`s:<sessionid>`) whenever the mirror knows its Official schedule_sessions id, so
+// editing one slice never hides its sibling slices that share the same version
+// (a subject's slices usually live in one schedule_version). Falls back to the
+// version key only for mirrors without a session id, then to the legacy slot key.
+// An existing_sessions load token ({subject, section, seq}) is current only while the
+// same subject+section is on screen and no newer existing_sessions request has started.
+// A late response for subject A must never mutate state after the user moved to B.
+function _existingLoadTokenIsCurrent(token) {
+    if (!token) return true;
+    if (token.seq !== window._existingSessionsSeq) return false;
+    const subj = document.getElementById('sel_subj')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    return subj === token.subject && String(sect) === String(token.section);
+}
+
+function _dbHideKeyForEntry(c) {
+    const sid = c.sessionid || (c.versionid ? c.official_sessionid : null);
+    if (sid) return `s:${sid}`;
+    if (c.versionid) return `v:${c.versionid}`;
+    if (c.day && c.start_time) return `${c.subject_code}_${c.day}_${getTimeSlotIndex(c.start_time)}`;
+    return null;
+}
+
+// Is this raw DB row (from get_room_schedule / get_offerings_schedule) replaced by a
+// local mirror? Only Official rows (with a versionid) are matched by session id: a
+// Local row's official_sessionid names the Official occurrence it overrides, not itself.
+function _isDbRowHidden(s) {
+    const sid = s.versionid ? (s.sessionid || s.official_sessionid) : null;
+    if (sid && hiddenDbSchedules.has(`s:${sid}`)) return true;
+    if (s.versionid && hiddenDbSchedules.has(`v:${s.versionid}`)) return true;
+    const idx = s.starttimeid || getTimeSlotIndex(s.start_fmt || s.start_time || '');
+    return hiddenDbSchedules.has(`${s.subjectcode}_${s.daydesc}_${idx}`);
 }
 let currentBldgId = 'ALL';
 window.currentEditSession = null;
@@ -639,9 +730,29 @@ function hasUnsavedChanges() {
     // Only count confirmed new/modified entries — exclude fromExisting (already in DB),
     // isPreview (tentative UI state), and fromGenerator (unsaved transfer from the generator,
     // shown as a visual reference but not yet edited by the user).
-    return pendingManualSchedule.some(s => !s.fromExisting && !s.isPreview && !s.fromGenerator) || !!window._pendingFacultyAssignment;
+    return pendingManualSchedule.some(s => !s.fromExisting && !s.isPreview && !s.fromGenerator)
+        || _boardHasUnsavedRows()
+        || window._removedPublishedOccurrences.size > 0
+        || !!window._pendingFacultyAssignment;
 }
 
+// A board row the user changed but has not saved. Editing an existing slice mutates its
+// fromExisting mirror in place, so only the row's dirty mark reveals the edit. Blank rows
+// (e.g. the placeholder added after a save) start dirty but hold nothing, so they never
+// count — the same rule _onSubjectClick's switch prompt uses.
+function _boardHasUnsavedRows() {
+    if (typeof _dirtySliceIds === 'undefined') return false;
+    return Array.from(document.querySelectorAll('.ts-row')).some(row => {
+        const id = parseInt(String(row.id || '').replace('ts-row-', ''), 10);
+        const dirty = _dirtySliceIds.has(id) || (row.dataset && row.dataset.dirty === 'true');
+        if (!dirty) return false;
+        return !!(row.querySelector('.ts-day-sel')?.value || row.querySelector('.ts-start-hidden')?.value);
+    });
+}
+
+// Browser fallback only (closing the tab, typing a URL, reload): its "Leave site?" dialog
+// is drawn by the browser and cannot be styled. Every in-app navigation goes through
+// _guardedNavigate below instead, which shows the app's own Unsaved Changes popup.
 window.addEventListener('beforeunload', function (e) {
     if (window.isLeavingIntentionally) return;
     if (hasUnsavedChanges()) {
@@ -649,6 +760,35 @@ window.addEventListener('beforeunload', function (e) {
         e.returnValue = '';
     }
 });
+
+// In-app navigation with the styled Unsaved Changes confirmation.
+async function _guardedNavigate(url) {
+    if (window.isLeavingIntentionally || !hasUnsavedChanges()) {
+        window.location.href = url;
+        return;
+    }
+    const ok = await showConfirmModal(
+        'You have unsaved changes on this page.\nLeave and discard them?', 'Unsaved Changes');
+    if (!ok) return;
+    window.isLeavingIntentionally = true;   // skip the browser's own dialog
+    window.location.href = url;
+}
+
+// Ordinary links (sidebar, header) → styled guard. Skips in-page links ("#", JS-only),
+// new-tab / download links and modifier-clicks, which don't leave this page.
+document.addEventListener('click', function (e) {
+    if (window.isLeavingIntentionally || e.defaultPrevented) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const link = e.target.closest && e.target.closest('a[href]');
+    if (!link) return;
+    const href = link.getAttribute('href') || '';
+    if (!href || href.startsWith('#') || /^javascript:/i.test(href) || link.hasAttribute('download')) return;
+    if (link.target && link.target !== '_self') return;
+    if (!hasUnsavedChanges()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _guardedNavigate(link.href);
+}, true);
 
 
 function formAyFilter()  { return document.getElementById('sel_ay').value  || ''; }
@@ -882,10 +1022,19 @@ async function renderProgramTimetable() {
     const yrLabels  = { '1':'1ST YEAR','2':'2ND YEAR','3':'3RD YEAR','4':'4TH YEAR','5':'5TH YEAR' };
     const progName  = document.getElementById('prog_trigger_text').innerText || prog;
     const _sectNameHdr = document.getElementById('bc-sect-text')?.textContent?.trim() || '';
-    const sectSuffix   = (_sectNameHdr && _sectNameHdr !== '-Select Section-') ? ` &nbsp;|&nbsp; ${_sectNameHdr}` : '';
-    const headerTxt = `${progName.toUpperCase()} &mdash; ${yrLabels[yl] || yl} &nbsp;|&nbsp; A.Y ${ay} &nbsp;|&nbsp; ${semLabels[sem] || sem}${sectSuffix}`;
+    const _hasSect     = !!_sectNameHdr && _sectNameHdr !== '-Select Section-';
+    const _ayDisp      = _fmtAyLabel(ay);
+    // No repeats: a section named after its program (e.g. "DCVET-2") already says the
+    // program and year, so the header is just "DCVET-2 | A.Y 2026-2027 | 1ST SEMESTER".
+    const _norm        = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const _sectHasProg = _hasSect && _norm(_sectNameHdr).startsWith(_norm(prog));
+    const _who = _sectHasProg
+        ? _escHdr(_sectNameHdr.toUpperCase())
+        : `${_escHdr(progName.toUpperCase())} &mdash; ${yrLabels[yl] || yl}` +
+          (_hasSect ? ` &nbsp;|&nbsp; ${_escHdr(_sectNameHdr.toUpperCase())}` : '');
+    const headerTxt = `${_who} &nbsp;|&nbsp; A.Y ${_ayDisp} &nbsp;|&nbsp; ${semLabels[sem] || sem}`;
     if (pvLabelEl) pvLabelEl.innerHTML  = headerTxt;
-    if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${ay}  |  ${semLabels[sem] || sem}`;
+    if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${_ayDisp}  |  ${semLabels[sem] || sem}`;
 
     try {
         const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&_t=${Date.now()}`;
@@ -913,10 +1062,12 @@ async function renderProgramTimetable() {
             // pendingManualSchedule mirror is being actively edited (fromExisting=true) stays
             // hidden here too, so its moved/edited local copy (added below) doesn't render
             // twice — once at its old DB position and once at its new one.
-            if (s.versionid && hiddenDbSchedules.has(`v:${s.versionid}`)) return;
+            if (_isDbRowHidden(s)) return;   // occurrence-level (s:<sessionid>) or version fallback
             const _sIdx = timeStrToSlotIdx(s.start_time);
             if (hiddenDbSchedules.has(`${s.subjectcode}_${s.daydesc}_${_sIdx}`)) return;
-            const key = `${s.subjectcode}|${s.daydesc}|${s.start_time}`;
+            // Slot index, not raw text: the API returns "16:30" while local entries hold
+            // "04:30 PM", so a text key never matched and the same session drew twice.
+            const key = `${s.subjectcode}|${s.daydesc}|${_sIdx}`;
             const existing = sessByKey.get(key);
             // Prefer Published over Draft for the same slot; otherwise keep first seen
             if (!existing || s.status === 'Published') sessByKey.set(key, s);
@@ -924,7 +1075,7 @@ async function renderProgramTimetable() {
 
         // Add generator entries — always overwrite, never skip (they already won above)
         for (const _ge of _genEntries) {
-            const _key = `${_ge.subject_code}|${_ge.day}|${_ge.start_time}`;
+            const _key = `${_ge.subject_code}|${_ge.day}|${timeStrToSlotIdx(_ge.start_time)}`;
             sessByKey.set(_key, {
                 subjectcode:  _ge.subject_code,
                 subjectname:  _ge.subject_name || _ge.subject_code,
@@ -956,7 +1107,7 @@ async function renderProgramTimetable() {
             e.day && e.start_time && e.end_time
         );
         for (const _le of _localEntries) {
-            const _key = `${_le.subject_code}|${_le.day}|${_le.start_time}`;
+            const _key = `${_le.subject_code}|${_le.day}|${timeStrToSlotIdx(_le.start_time)}`;
             sessByKey.set(_key, {
                 subjectcode:  _le.subject_code,
                 subjectname:  _le.subject_name || _le.subject_code,
@@ -977,6 +1128,8 @@ async function renderProgramTimetable() {
                 year_level:   _le.year_level || yl,
                 section_id:   _le.section_id || _pvSectId,
                 isPreview:    _le.isPreview || false,
+                isEdited:     _isPendingEdited(_le),
+                localSource:  _isLocalSourcePending(_le),
             });
         }
 
@@ -1020,6 +1173,8 @@ function _renderProgPills(sessions, prog, yl) {
     const leftOff   = timeCol.offsetWidth;
     const topOff    = thead.offsetHeight;
 
+    const _activeKey = typeof _activeSlicePillKey === 'function' ? _activeSlicePillKey() : '';
+
     const dayGroups = {};
     sessions.forEach(s => { if (s.daydesc) (dayGroups[s.daydesc] = dayGroups[s.daydesc] || []).push(s); });
 
@@ -1049,11 +1204,13 @@ function _renderProgPills(sessions, prog, yl) {
 
             // Generator pills use the same subject color as published sessions; dashed border marks
             // them as unsaved. This keeps the timetable color-consistent with normal sessions.
-            pill.style.backgroundColor = (isDraft && sess.isPreview)             ? '#c8d6da'
+            pill.style.backgroundColor = sess.isEdited                          ? EDITED_PILL_COLOR
+                : (isDraft && sess.isPreview)                                     ? '#c8d6da'
                 : (isDraft && !_IS_LOCAL_MODE && !isGenTransfer)                  ? '#8e9ca0'
-                : getSubjectColor(sess.subjectcode);
+                : getSubjectColor(sess.subjectcode, sess.localSource ?? _isLocalSourceRow(sess));
+            if (_isLightColor(pill.style.backgroundColor)) pill.classList.add('pill-light-bg');
             if (isGenTransfer)    pill.style.border = '2px dashed #264653';
-            else if (isDraft)     pill.style.border = '2px dashed #2c3e50';
+            else if (isDraft || sess.isEdited) pill.style.border = '2px dashed #2c3e50';
 
             // pill-merged class only when actually merged (multiple sections, data from server)
             const _pvMergedSects = sess._mergedSections || [];
@@ -1071,9 +1228,11 @@ function _renderProgPills(sessions, prog, yl) {
             pill.style.width  = (w - 2) + 'px';
             pill.style.height = pillH + 'px';
             pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
+            pill.dataset.dayIdx = dayIdx; pill.dataset.ovIdx = overlapIndex; pill.dataset.ovCnt = overlapCount || 1;  // for _reflowPills
             pill.style.top    = (topOff  + (startIdx - 1) * rowHeight + 3) + 'px';
             pill.style.cursor = 'pointer';
             pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+            if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
 
             const _resolvedInstr = _resolveInstructorName(sess);
             const instrLast = (_resolvedInstr || 'TBA').split(',')[0].trim();
@@ -1264,8 +1423,13 @@ async function triggerDSSLogic() {
         if (ay && sem && prog && yl) {
             try {
                 const _sectId1 = document.getElementById('sel_section')?.value || '';
+                // Request identity: a response is only applied if it still belongs to the
+                // subject+section on screen AND no newer existing_sessions request started.
+                const _loadToken = { subject: subjCode, section: _sectId1,
+                                     seq: (window._existingSessionsSeq = (window._existingSessionsSeq || 0) + 1) };
                 const url = `/api/manual/existing_sessions?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId1)}`;
                 const er = await fetch(url).then(r => r.json());
+                if (!_existingLoadTokenIsCurrent(_loadToken)) return;   // stale: never touch state
                 if (er.success && er.sessions && er.sessions.length > 0) {
                     // Exclude any version the user deleted this session
                     const filteredSessions = er.sessions.filter(
@@ -1274,7 +1438,7 @@ async function triggerDSSLogic() {
                     if (filteredSessions.length > 0) {
                         _hasExistingSchedule = true;
                         if (typeof window._loadExistingSessionsIntoSlices === 'function') {
-                            await window._loadExistingSessionsIntoSlices(filteredSessions);
+                            await window._loadExistingSessionsIntoSlices(filteredSessions, _loadToken);
                         } else {
                             showExistingSchedModal(filteredSessions);
                         }
@@ -1682,7 +1846,8 @@ async function confirmAndPlace() {
             const nRes  = await fetch('/api/manual/designee_night_check', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ ay, sem, program: prog, year_level: yl, schedule_data: nightRows })
+                body:    JSON.stringify({ ay, sem, program: prog, year_level: yl, schedule_data: nightRows,
+                                          section_id: document.getElementById('sel_section')?.value || '' })
             });
             const nData = await nRes.json();
             if (nData.has_violations) nightViol = nData.violations[0];
@@ -1826,7 +1991,7 @@ async function confirmAndPlace() {
 
     if (facVal) {
         try {
-            const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
+            const fResp = await fetch(`/api/manual/faculty_schedule?emp_num=${encodeURIComponent(facVal)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}`);
             const fSessions = await fResp.json();
             for (const s of fSessions) {
                 if (s.daydesc !== dayVal) continue;
@@ -1876,7 +2041,7 @@ async function confirmAndPlace() {
     if (prog && yl) {
         try {
             const sResp = await fetch(
-                `/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}`
+                `/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(document.getElementById('sel_section')?.value || '')}`
             );
             const sSessions = await sResp.json();
             for (const s of sSessions) {
@@ -2275,12 +2440,202 @@ window._runManualApprove = async function(opts = {}) {
     // recoverable only with a full page reload.
     if (window._approveInFlight) return false;
     window._approveInFlight = true;
+    // Client-side transaction: approval temporarily promotes slice rows into
+    // pendingManualSchedule (removing/re-creating mirrors) before the server decides.
+    // Anything but a confirmed publish (violations, declined replace, error, network,
+    // cancelled slice picker, local validation failure) restores the exact prior state,
+    // so the Published baseline and the user's proposed edits stay as they were and
+    // can still be corrected and re-approved.
+    const snapshot = _snapshotApproveState();
+    let published = false;
     try {
-        return await window._runManualApproveImpl(opts);
+        published = (await window._runManualApproveImpl(opts)) === true;
+        return published;
     } finally {
+        if (!published) _restoreApproveState(snapshot);
         window._approveInFlight = false;
     }
 };
+
+function _snapshotApproveState() {
+    return {
+        pending: pendingManualSchedule.map(c => ({
+            ...c,
+            days_list: Array.isArray(c.days_list) ? [...c.days_list] : c.days_list,
+            _loaded: c._loaded ? { ...c._loaded } : c._loaded,
+        })),
+        hidden: new Set(hiddenDbSchedules),
+        editSession: window.currentEditSession,
+    };
+}
+
+function _restoreApproveState(snap) {
+    pendingManualSchedule = snap.pending;
+    hiddenDbSchedules = snap.hidden;
+    window.currentEditSession = snap.editSession;
+    try {
+        if (currentMode === 'program') {
+            if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
+        } else if (typeof renderGrid === 'function') {
+            renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+        }
+    } catch (e) { /* repaint is best-effort; state is already restored */ }
+}
+
+// Before an Official publish: list the section's active Local Arrangement sessions and
+// what publishing does to each. Returns true to continue, false if the user cancels.
+//   • same      — the Official slot being published equals the Local one: it simply
+//                 becomes Official, so the Local copy is no longer needed.
+//   • different — this publish changes the subject differently: the Local move was based
+//                 on the Official slot before this change, so it is removed.
+//   • other     — subject not in this publish: still removed (the whole section's Official
+//                 snapshot is republished); re-create it in Local Scheduler if needed.
+async function _confirmLocalRepublishImpact(selectedDrafts, prog, yl, ay, sem, sectionId, removedSubjects = []) {
+    if (!sectionId) return true;
+    let sessions = [];
+    try {
+        const r = await fetch(`/api/schedule/local_republish_impact?program=${encodeURIComponent(prog)}` +
+            `&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}` +
+            `&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(sectionId)}`);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'lookup failed');
+        sessions = d.sessions || [];
+    } catch (e) {
+        // Can't tell what would be archived — ask rather than publish blind.
+        return await showConfirmModal(
+            'Could not check whether this section has Local Scheduler arrangements.\n\n' +
+            'If it does, publishing will archive them. Publish anyway?',
+            'Local Scheduler Arrangements');
+    }
+    if (!sessions.length) return true;
+
+    const norm = v => String(v || '').trim().toUpperCase();
+    const pubBySubj = new Map();
+    (selectedDrafts || []).forEach(c => {
+        const code = norm(c.subject_code || c.subjectcode);
+        if (!pubBySubj.has(code)) pubBySubj.set(code, []);
+        pubBySubj.get(code).push(c);
+    });
+    // Same rule as the server (_plan_local_for_official_republish): removal is per SUBJECT —
+    // only Local sessions of subjects this publish changes (published or removed) are
+    // removed; every other Local adjustment in the section is kept (re-linked to the new
+    // Official snapshot). Nothing affected → no prompt.
+    const affectedCodes = new Set([...pubBySubj.keys(), ...(removedSubjects || []).map(norm)]);
+    sessions = sessions.filter(s => affectedCodes.has(norm(s.subjectcode)));
+    if (!sessions.length) return true;
+
+    // One row per Local session: what is removed and the Official slot the class goes back to.
+    //   • subject in this publish → back to the slot(s) being published now
+    //     (same as the Local slot → it simply becomes Official, nothing moves)
+    //   • subject not in this publish → back to its current Official slot
+    const rows = sessions.map(s => {
+        const code = norm(s.subjectcode);
+        const pubs = pubBySubj.get(code);
+        const sameAsPublish = !!pubs && pubs.some(c =>
+            (c.day || c.daydesc) === s.daydesc &&
+            norm(c.start_time) === norm(s.start_time) && norm(c.end_time) === norm(s.end_time) &&
+            String(c.room_id ?? c.roomid ?? '') === String(s.roomid ?? ''));
+        const backTo = pubs
+            ? pubs.map(c => ({ day: c.day || c.daydesc, start: c.start_time, end: c.end_time,
+                               room: c.room || c.roomname || '' }))
+            : (s.official_day ? [{ day: s.official_day, start: s.official_start, end: s.official_end,
+                                   room: s.official_roomname || '' }] : []);
+        return { code, name: s.subjectname || '', day: s.daydesc, start: s.start_time, end: s.end_time,
+                 room: s.roomname || '', draft: s.status === 'Draft', sameAsPublish, inPublish: !!pubs, backTo };
+    });
+
+    const ok = await _showLocalImpactModal(rows);
+    // 'confirmed' = the user explicitly agreed to publish here (no second prompt needed).
+    return ok ? 'confirmed' : false;
+}
+
+// Styled confirmation for _confirmLocalRepublishImpact. Resolves true (Yes, Publish) / false.
+function _showLocalImpactModal(rows) {
+    return new Promise(resolve => {
+        const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const when = (d, s, e) => `${esc(d)}<br><span class="lim-time">${esc(s)} – ${esc(e)}</span>`;
+        let el = document.getElementById('localImpactModal');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'localImpactModal';
+            el.className = 'lim-overlay';
+            document.body.appendChild(el);
+        }
+        const tableRows = rows.map(r => {
+            const back = r.sameAsPublish
+                ? `<div class="lim-back lim-back-same"><i class="fas fa-check"></i> Same as what you're publishing — it simply becomes Official</div>`
+                : r.backTo.length
+                    ? `<div class="lim-back"><i class="fas fa-rotate-left"></i> Back to Official: ` +
+                      r.backTo.map(b => `${esc(b.day)} ${esc(b.start)} – ${esc(b.end)}${b.room ? ' · ' + esc(b.room) : ''}`).join('; ') +
+                      `</div>`
+                    : '';
+            return `<tr>
+                <td class="lim-code">${esc(r.code)}${r.draft ? '<span class="lim-draft">Local draft</span>' : ''}</td>
+                <td>${esc(r.name || '—')}</td>
+                <td>${when(r.day, r.start, r.end)}${back}</td>
+                <td>${r.room ? `<span class="lim-room">${esc(r.room)}</span>` : '—'}</td>
+            </tr>`;
+        }).join('');
+        el.innerHTML = `
+            <div class="lim-box" role="dialog" aria-modal="true">
+                <div class="lim-icon"><i class="fas fa-exclamation"></i></div>
+                <h3 class="lim-title">LOCAL ARRANGEMENTS WILL BE REMOVED</h3>
+                <p class="lim-sub">Some subjects you are publishing have Local Scheduler arrangements. Publishing the Official schedule will remove those Local arrangements.</p>
+
+                <div class="lim-card lim-card-pink">
+                    <div class="lim-card-icon"><i class="far fa-calendar"></i></div>
+                    <div>
+                        <div class="lim-card-title">What will happen?</div>
+                        <ul class="lim-list">
+                            <li>Only the Local adjustments listed below are removed. Every other Local adjustment in this section (other subjects) is <b>kept</b>.</li>
+                            <li>Each class below goes <b>back to its Official schedule</b> — the one you are publishing now.</li>
+                            <li>No class is deleted; only the Local adjustment is removed.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="lim-card lim-card-white">
+                    <div class="lim-card-head">
+                        <div class="lim-card-icon"><i class="far fa-file-lines"></i></div>
+                        <div>
+                            <div class="lim-card-title">Local arrangements to be removed</div>
+                            <div class="lim-card-note">Re-create these in the Local Scheduler if still needed.</div>
+                        </div>
+                    </div>
+                    <div class="lim-table-wrap">
+                        <table class="lim-table">
+                            <thead><tr><th>Subject Code</th><th>Subject Description</th><th>Day &amp; Time</th><th>Room</th></tr></thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="lim-card lim-card-pink">
+                    <div class="lim-card-icon lim-card-icon-solid"><i class="fas fa-question"></i></div>
+                    <div>
+                        <div class="lim-card-title">Continue publishing?</div>
+                        <div class="lim-card-text">The Local arrangements listed above will be archived and these classes will follow their Official schedule.</div>
+                    </div>
+                </div>
+
+                <div class="lim-actions">
+                    <button type="button" class="lim-btn-cancel" data-act="cancel">Cancel</button>
+                    <button type="button" class="lim-btn-ok" data-act="ok">Yes, Publish</button>
+                </div>
+            </div>`;
+        const done = v => {
+            el.classList.remove('open');
+            document.removeEventListener('keydown', onKey);
+            resolve(v);
+        };
+        const onKey = e => { if (e.key === 'Escape') done(false); };
+        el.querySelector('[data-act="cancel"]').onclick = () => done(false);
+        el.querySelector('[data-act="ok"]').onclick = () => done(true);
+        el.onclick = e => { if (e.target === el) done(false); };
+        document.addEventListener('keydown', onKey);
+        el.classList.add('open');
+    });
+}
 
 window._runManualApproveImpl = async function(opts = {}) {
     const auto = !!opts.auto;
@@ -2311,6 +2666,9 @@ window._runManualApproveImpl = async function(opts = {}) {
     );
 
     let _usedDbFallbackDrafts = false;
+    // Subject removals waiting for Publish: saved removal-marker Drafts (draft_sessions'
+    // removed_subjects) plus unsaved board removals of a subject's last Published slice.
+    let _dbRemovedSubjects = [];
     // "Publish all" mode (currentSubj === '') must always reconcile against the DB, not
     // only when the in-memory list is completely empty — pendingManualSchedule commonly
     // holds just whichever subject is currently open in the editor (e.g. the last one
@@ -2321,8 +2679,11 @@ window._runManualApproveImpl = async function(opts = {}) {
     if (contextDrafts.length === 0 || !currentSubj) {
         // Try loading saved Draft sessions from DB (scoped to current subject)
         try {
-            const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+            const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(document.getElementById('sel_section')?.value || '')}`);
             const dbData = await dbResp.json();
+            if (dbData.success && Array.isArray(dbData.removed_subjects)) {
+                _dbRemovedSubjects = dbData.removed_subjects.map(c => String(c).toUpperCase());
+            }
             if (dbData.success && dbData.sessions && dbData.sessions.length > 0) {
                 if (currentSubj) {
                     // dbData.sessions covers the whole program/year, not just this subject —
@@ -2371,7 +2732,9 @@ window._runManualApproveImpl = async function(opts = {}) {
             return day && start && end && room;
         });
 
-        if (contextDrafts.length === 0 && !filledRows.length) {
+        const _pendingRemovals = _dbRemovedSubjects.length > 0 ||
+            _touchedCodesForSection(document.getElementById('sel_section')?.value || '').length > 0;
+        if (contextDrafts.length === 0 && !filledRows.length && !_pendingRemovals) {
             await showValidationModal('Nothing to Publish', 'No sessions are scheduled for the selected context. Fill in time slices or save a draft first.');
             return;
         }
@@ -2410,7 +2773,11 @@ window._runManualApproveImpl = async function(opts = {}) {
                     (c.subject_code || c.subjectcode) === _sc && c.ay === _ayV && c.sem === _semV &&
                     (c.day || c.daydesc) === day && c.start_time === start && c.end_time === end
                 );
-                if (_dup) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
+                // Never pre-remove the row's OWN mirror: confirmAndPlace replaces it by
+                // _localTempId and needs it to carry the occurrence identity forward
+                // (fromExisting, versionid, sessionid, _loaded, section).
+                const _ownMirror = _dup && _sessData && _dup.temp_id === _sessData._localTempId;
+                if (_dup && !_ownMirror) pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== _dup.temp_id);
 
                 document.getElementById('sel_day').value = day;
                 if (typeof _injectTimeOpt === 'function') { _injectTimeOpt('sel_start_time', start); _injectTimeOpt('sel_end_time', end); }
@@ -2423,7 +2790,11 @@ window._runManualApproveImpl = async function(opts = {}) {
 
                 const prevLen = pendingManualSchedule.length;
                 await confirmAndPlace();
-                if (pendingManualSchedule.length <= prevLen) {
+                // A new row grows the array; an existing row REPLACES its own mirror
+                // (same length) and confirmAndPlace clears currentEditSession only on success.
+                const _placed = pendingManualSchedule.length > prevLen ||
+                                (_sessData && window.currentEditSession === null);
+                if (!_placed) {
                     // Validation failed — roll back everything added in this loop so a
                     // partial failure cannot be silently published on the next attempt.
                     pendingManualSchedule = _pmBeforeLoop;
@@ -2444,9 +2815,26 @@ window._runManualApproveImpl = async function(opts = {}) {
         }
     }
 
-    if (contextDrafts.length === 0) {
+    const _apSect = document.getElementById('sel_section')?.value || '';
+    const _subjU  = c => String(c.subject_code || c.subjectcode || '').toUpperCase();
+    const _inScope = code => !currentSubj || code === String(currentSubj).toUpperCase();
+    const _boardRemovals = _touchedCodesForSection(_apSect).filter(code =>
+        !contextDrafts.some(c => _subjU(c) === code) &&
+        !pendingManualSchedule.some(c => _subjU(c) === code && c.ay === ay && c.sem === sem &&
+                                         !c.isPreview && (!c.section_id || String(c.section_id) === String(_apSect))));
+    const removedSubjects = Array.from(new Set([..._dbRemovedSubjects, ..._boardRemovals]))
+        .filter(code => _inScope(code) && !contextDrafts.some(c => _subjU(c) === code));
+
+    if (contextDrafts.length === 0 && !removedSubjects.length) {
         await showValidationModal('Nothing to Publish', 'No sessions to publish for the selected context.');
         return;
+    }
+    if (removedSubjects.length && !auto) {
+        const okRemove = await showConfirmModal(
+            `Publishing will remove ${removedSubjects.join(', ')} from this section's live schedule.\n\nContinue?`,
+            'Publish Subject Removal'
+        );
+        if (!okRemove) return;
     }
 
     // Show publish slice-selection modal
@@ -2460,14 +2848,36 @@ window._runManualApproveImpl = async function(opts = {}) {
             start:    c.start_time || (c.time ? c.time.split(' - ')[0] : '') || '—',
             end:      c.end_time   || (c.time ? c.time.split(' - ')[1] : '') || '—',
             roomName: c.room || c.roomname || 'TBA',
+            facultyName: _resolveInstructorName(c) || c.faculty_name || 'TBA',
             _raw:     c
         };
     });
 
+    // Only CHANGED slices are publish choices. A slice that is already Published and was not
+    // edited is not "being published" — but a subject is published as a whole version made of
+    // the slices sent, so it must still be SENT along (else it would drop out of the live
+    // schedule). It is shown as "stays published" and added back automatically.
+    const _keptPub = c => !!c && c.fromExisting && String(c.status || '').toLowerCase() === 'published'
+                          && !(typeof _isPendingEdited === 'function' && _isPendingEdited(c));
+    const _changedCands = publishCandidates.filter(p => !_keptPub(p._raw));
+    const _keptCands    = publishCandidates.filter(p => _keptPub(p._raw));
+    if (!auto && publishCandidates.length && !_changedCands.length && !removedSubjects.length) {
+        await showValidationModal('Nothing to Publish',
+            'Every slice here is already published and unchanged. Edit a slice (or save a new one) first.');
+        return;
+    }
+
     // Auto mode (e.g. faculty reassignment on an already-Published subject) publishes
     // everything just saved without making the user pick slices again.
-    const selectedCandidates = auto ? publishCandidates : await _showPublishSelectModal(publishCandidates);
-    if (!selectedCandidates.length) return auto ? false : undefined;
+    let selectedCandidates;
+    if (auto || !publishCandidates.length) {
+        selectedCandidates = publishCandidates;
+    } else {
+        const _picked = _changedCands.length ? await _showPublishSelectModal(_changedCands, _keptCands) : [];
+        const _pickedSubjects = new Set(_picked.map(p => p.subject));
+        selectedCandidates = _picked.concat(_keptCands.filter(k => _pickedSubjects.has(k.subject)));
+    }
+    if (!selectedCandidates.length && !removedSubjects.length) return auto ? false : undefined;
 
     const selectedDrafts = selectedCandidates.map(c => c._raw);
 
@@ -2482,6 +2892,14 @@ window._runManualApproveImpl = async function(opts = {}) {
     // stays correct in both single-subject and publish-all flows.
     const _uiSubjAtApproveStart = document.getElementById('sel_subj').value;
 
+    // Publishing a section's Official schedule archives ALL of that section's Local
+    // Arrangements (they are bound to the Official sessions this publish replaces).
+    // Never let that happen silently — confirm first, saying what happens to each.
+    const _localAnswer = await _confirmLocalRepublishImpact(selectedDrafts, prog, yl, ay, sem, _approveSecId, removedSubjects);
+    if (!_localAnswer) return false;
+    // The user already answered "Continue publishing?" there — don't ask a second time below.
+    const _publishConfirmed = _localAnswer === 'confirmed';
+
     const btn = document.getElementById('btnManualApprove');
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
     btn.disabled = true;
@@ -2489,18 +2907,44 @@ window._runManualApproveImpl = async function(opts = {}) {
     try {
         let overrideFlag = false;
         while (true) {
-            const res = await fetch('/api/schedule/approve', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ schedule_data: selectedDrafts, context, override: overrideFlag })
-            });
-            const data = await res.json();
+            // A publish that never answers must not leave the button spinning forever.
+            const _approveAbort   = new AbortController();
+            const _approveTimeout = setTimeout(() => _approveAbort.abort(), 120000);
+            let res;
+            try {
+                res = await fetch('/api/schedule/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ schedule_data: selectedDrafts, context, override: overrideFlag,
+                                           removed_subjects: removedSubjects }),
+                    signal: _approveAbort.signal
+                });
+            } finally {
+                clearTimeout(_approveTimeout);
+            }
+            let data;
+            try { data = await res.json(); }
+            catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was published.` }; }
 
             if (data.success) {
                 window.isLeavingIntentionally = true;
-                await showValidationModal('Schedule Published',
-                    auto ? 'The faculty reassignment is now live — the published schedule has been updated.'
-                         : 'The schedule has been published successfully.');
+                // Confirmed by the server: board removals of the published subjects are live
+                // now, and a faculty pick published with the open subject is no longer pending.
+                const _publishedCodes = new Set([...selectedDrafts.map(c =>
+                    String(c.subject_code || c.subjectcode || '').toUpperCase()), ...removedSubjects]);
+                _publishedCodes.forEach(code => _forgetRemovedPublished(_approveSecId, code));
+                if (_publishedCodes.has(String(_uiSubjAtApproveStart || '').toUpperCase())) {
+                    window._pendingFacultyAssignment = false;
+                }
+                _invalidateOccupancyCaches(ay, sem);
+                const _localNote = data.archived_local_arrangements
+                    ? `\n\n${data.archived_local_arrangements} Local Scheduler arrangement` +
+                      `${data.archived_local_arrangements === 1 ? ' was' : 's were'} archived for this section.`
+                    : '';
+                await showValidationModal(auto ? 'Faculty Changed — Auto-saved' : 'Schedule Published',
+                    (auto ? (opts.reasonLine ? opts.reasonLine + '\n\n' : '') +
+                           'Status: Published (unchanged). The new faculty is now live on the published schedule.'
+                         : 'The schedule has been published successfully.') + _localNote);
                 pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
                 if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
                 else hiddenDbSchedules.clear();
@@ -2542,11 +2986,12 @@ window._runManualApproveImpl = async function(opts = {}) {
                 setTimeout(() => window.isLeavingIntentionally = false, 100);
                 return true;
             } else if (data.violations && data.violations.length) {
-                let errorMsg = `Cannot publish — constraint violation(s):\n\n`;
-                // Formal "type" label (e.g. "Conflict: Faculty Schedule") ahead of the
-                // plain-language detail, so each item names what kind of problem it is.
-                data.violations.forEach(v => errorMsg += `• ${v.type || 'Conflict: Schedule'} — ${v.detail}\n`);
-                await showValidationModal('Constraint Violations', errorMsg);
+                // Same readable card view as Save (type chip · subject · problem · how to fix).
+                await _showFirstViolation(data.violations, {
+                    title: 'Cannot Publish',
+                    intro: data.violations.length > 1
+                        ? 'Fix these issues before publishing:' : 'Fix this issue before publishing:',
+                });
                 return false;
             } else if (data.needs_confirmation) {
                 // A published schedule from the generator (or a prior approval) already exists.
@@ -2554,16 +2999,14 @@ window._runManualApproveImpl = async function(opts = {}) {
                 // Published schedule, so replacing it is the expected, already-confirmed outcome
                 // (the "Changing the faculty will reassign..." prompt already covered this) —
                 // no need to ask again.
-                if (auto) {
+                // Also skipped when the Local Arrangements prompt already got an explicit
+                // "Continue publishing?" — one confirmation per publish is enough.
+                if (auto || _publishConfirmed) {
                     overrideFlag = true;
                 } else {
-                    const info = data.existing_info || {};
-                    const dateStr  = info.date          ? `, last approved on ${info.date}` : '';
-                    const subCount = info.subject_count  ? `${info.subject_count} subject(s)` : 'subjects';
                     const ok = await showConfirmModal(
-                        `A published schedule already exists for this program and year level (${subCount}${dateStr}).\n\n` +
-                        `Approving will replace it with the sessions you are submitting now. Do you want to continue?`,
-                        'Replace Published Schedule'
+                        'This will update the published schedule for this section with the selected sessions.',
+                        'Publish Schedule?'
                     );
                     if (!ok) return false;
                     overrideFlag = true;
@@ -2574,7 +3017,10 @@ window._runManualApproveImpl = async function(opts = {}) {
             }
         }
     } catch (e) {
-        if (!auto) await showValidationModal('Connection Error', 'Could not reach the server. Please try again.');
+        if (!auto) await showValidationModal('Connection Error',
+            e && e.name === 'AbortError'
+                ? 'The server took too long to respond. The previous published schedule is unchanged; please try again.'
+                : 'Could not reach the server. Please try again.');
         return false;
     } finally {
         btn.innerHTML = '<i class="fas fa-check-circle"></i> APPROVE SCHEDULE';
@@ -2624,13 +3070,9 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     .map(c => `${c.subject_code}/${c.day}/v:${c.versionid}`));
         }
 
-        sessions = sessions.filter(s => {
-            // Versionid-scoped hide (only hides this specific section's row)
-            if (s.versionid && hiddenDbSchedules.has(`v:${s.versionid}`)) return false;
-            // Legacy slot-based hide (fallback for sessions without versionid)
-            const dbKey = `${s.subjectcode}_${s.daydesc}_${s.starttimeid}`;
-            return !hiddenDbSchedules.has(dbKey);
-        });
+        // Occurrence-level hide (s:<sessionid>), with version / legacy slot fallbacks —
+        // hides only the exact DB row a local mirror replaces, never its sibling slices.
+        sessions = sessions.filter(s => !_isDbRowHidden(s));
 
         if (window._DEBUG_RENDERGRID) {
             console.log('[renderGrid] after hide-filter:', sessions.length, 'sessions remain:',
@@ -2662,6 +3104,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             isLocal:      true,
             fromExisting: c.fromExisting || false,
             status:       c.status || 'Draft',
+            isEdited:     _isPendingEdited(c),
+            localSource:  _isLocalSourcePending(c),
             isPreview:    c.isPreview || false
         }));
 
@@ -2718,6 +3162,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         const _ctxSectName = _ctxSectNameRaw === '-Select Section-' ? '' : _ctxSectNameRaw;
         const uniq = Array.from(slotMap.values()).map(group => {
             const rep = { ...group[0] };
+            rep.isEdited = group.some(s => s.isEdited);
+            rep.localSource = group.some(s => s.localSource ?? _isLocalSourceRow(s));
 
             // Dedupe by section identity — a raw DB row and its local pendingManualSchedule
             // mirror copy (added while that session's slices are being edited) both represent
@@ -2791,6 +3237,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         const leftOffset = timeCol.offsetWidth;
         const topOffset  = thead.offsetHeight;
 
+        const _activeKey = typeof _activeSlicePillKey === 'function' ? _activeSlicePillKey() : '';
+
         const dayGroups = {};
         uniq.forEach(s => { (dayGroups[s.daydesc] = dayGroups[s.daydesc] || []).push(s); });
 
@@ -2820,10 +3268,12 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
 
                 const isDraft = !sess.status || String(sess.status).toLowerCase() !== 'published';
                 // Local mode: always use subject color so pills are varied; draft gets dashed border only
-                pill.style.backgroundColor = (isDraft && sess.isPreview) ? '#c8d6da'
+                pill.style.backgroundColor = sess.isEdited ? EDITED_PILL_COLOR
+                    : (isDraft && sess.isPreview) ? '#c8d6da'
                     : (isDraft && !_IS_LOCAL_MODE) ? '#8e9ca0'
-                    : getSubjectColor(sess.subjectcode);
-                if (isDraft) pill.style.border = "2px dashed #2c3e50";
+                    : getSubjectColor(sess.subjectcode, sess.localSource);
+                if (_isLightColor(pill.style.backgroundColor)) pill.classList.add('pill-light-bg');
+                if (isDraft || sess.isEdited) pill.style.border = "2px dashed #2c3e50";
 
                 const _mergedSects = sess._mergedSections || [];
                 const isMerged = _mergedSects.length > 1;
@@ -2840,9 +3290,11 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 pill.style.width  = (w - 2) + 'px';
                 pill.style.height = pillH + 'px';
                 pill.style.left   = (leftOffset + (dayIdx * colWidth) + (overlapIndex * w) + 3) + 'px';
+                pill.dataset.dayIdx = dayIdx; pill.dataset.ovIdx = overlapIndex; pill.dataset.ovCnt = overlapCount || 1;  // for _reflowPills
                 pill.style.top    = (topOffset + ((start - 1) * rowHeight) + 3) + 'px';
                 pill.style.cursor = 'pointer';
                 pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
+                if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
 
                 const instrLast = (_resolveInstructorName(sess) || 'TBA').split(',')[0].trim();
 
@@ -3162,11 +3614,28 @@ const localColorPalette = [
 // palette slot in the order it first appears, guaranteeing maximum variety
 const _localSubjectColorMap = new Map();
 let _localColorIdx = 0;
-function getSubjectColor(code) {
+// True when a CSS color ("#rrggbb" or "rgb(r, g, b)") is light enough that white text
+// on it would be hard to read (perceived luminance, ITU-R BT.601 weights).
+function _isLightColor(color) {
+    const c = String(color || '').trim();
+    let r, g, b;
+    const hex = c.match(/^#([0-9a-f]{6})$/i);
+    const rgb = c.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    if (hex)      [r, g, b] = [0, 2, 4].map(i => parseInt(hex[1].substr(i, 2), 16));
+    else if (rgb) [r, g, b] = [rgb[1], rgb[2], rgb[3]].map(Number);
+    else return false;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 170;
+}
+
+// isLocalSource: the session is a Local Arrangement (not the Official schedule it
+// overrides). In the Local Scheduler only those take the orange Local palette — an
+// Official session with no Local Arrangement keeps its Official color, so the board
+// shows at a glance which classes have been locally rearranged.
+function getSubjectColor(code, isLocalSource = false) {
     const str = (code || '').toUpperCase();
     // Local scheduler: sequential assignment — every unique subject gets a distinct
     // palette color regardless of its code prefix, preventing clustering
-    if (_IS_LOCAL_MODE) {
+    if (_IS_LOCAL_MODE && isLocalSource) {
         if (!_localSubjectColorMap.has(str)) {
             _localSubjectColorMap.set(str, localColorPalette[_localColorIdx % localColorPalette.length]);
             _localColorIdx++;
@@ -3192,7 +3661,16 @@ function updateSummary() {
     document.getElementById('sum_prog').innerText   = (progName && yearVal) ? `${progName} - ${yrLabels[yearVal] || 'Yr '+yearVal}` : '-';
     document.getElementById('sum_course').innerText = subjSelect.selectedIndex > 0 ? subjSelect.options[subjSelect.selectedIndex].text : '-';
     document.getElementById('sum_inst').innerText   = document.getElementById('fac_display_name').value || '-';
-    document.getElementById('summary_period').innerText = `A.Y ${ayVal || '----'} | ${semLabels[semVal] || '-'}`;
+    document.getElementById('summary_period').innerText = `A.Y ${ayVal ? _fmtAyLabel(ayVal) : '----'} | ${semLabels[semVal] || '-'}`;
+}
+
+/* "AY2627" -> "2026-2027" (leaves anything else as-is), so labels never read "A.Y AY2627". */
+function _fmtAyLabel(ay) {
+    const m = String(ay || '').trim().match(/^AY\s*(\d{2})(\d{2})$/i);
+    return m ? `20${m[1]}-20${m[2]}` : String(ay || '').replace(/^AY\s*/i, '');
+}
+function _escHdr(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 document.getElementById('sel_year').addEventListener('change', triggerCascade);
@@ -3202,7 +3680,9 @@ document.getElementById('sel_faculty').addEventListener('change', updateSummary)
 function showValidationModal(title, message) {
     return new Promise(resolve => {
         document.getElementById('validationModalTitle').textContent   = title;
-        document.getElementById('validationModalMessage').textContent = message;
+        const _vm = document.getElementById('validationModalMessage');
+        _vm.style.whiteSpace = 'pre-line';   // keep the message's own line breaks
+        _vm.textContent = message;
         document.getElementById('validationModal').classList.add('active');
         window._validationResolve = resolve;
     });
@@ -3212,68 +3692,64 @@ function closeValidationModal() {
     if (window._validationResolve) { window._validationResolve(); window._validationResolve = null; }
 }
 
-// Shows violations one at a time with prev/next navigation.
-async function _showFirstViolation(violations) {
+// Shows violations one at a time with prev/next navigation, as a readable card:
+// type chip · subject · what is wrong · extra info · "How to fix".
+// opts: { title, intro } — e.g. the publish path uses title 'Cannot Publish'.
+function _violEsc(t) {
+    return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function _violParse(v) {
+    const rawType = v.type || (v.rule ? `Conflict: ${v.rule}` : 'Schedule Conflict');
+    const type = rawType.replace(/^Conflict:\s*/i, '');
+    let subject = v.subject || '';
+    let detail = String(v.detail || '').trim();
+    // Many details start with the subject: '"COMP 015": The day ...' — lift it out.
+    const lead = detail.match(/^"([^"]+)"\s*[:—-]\s*/);
+    if (lead) { if (!subject) subject = lead[1]; detail = detail.slice(lead[0].length); }
+    // Python-style lists ("['Monday', 'Tuesday']") read as "Monday + Tuesday".
+    detail = detail.replace(/\[((?:\s*'[^']*'\s*,?)+)\]/g,
+        (_, inner) => inner.split(',').map(x => x.trim().replace(/^'|'$/g, '')).filter(Boolean).join(' + '));
+    // Split into sentences: the first says what is wrong, "Please ..." is the fix,
+    // the rest (e.g. "Allowed pairings are: ...") is supporting info.
+    const sentences = (detail.match(/[^.!?]+[.!?]*(?:\s+|$)/g) || [detail]).map(x => x.trim()).filter(Boolean);
+    const fixIdx = sentences.findIndex(x => /^(please|try|choose|select|adjust|move|change|assign)\b/i.test(x));
+    const fix = fixIdx >= 0 ? sentences[fixIdx].replace(/^please\s+/i, '').replace(/^\w/, c => c.toUpperCase()) : '';
+    const rest = sentences.filter((_, i) => i !== fixIdx);
+    return { type, subject, what: rest[0] || '', info: rest.slice(1).join(' '), fix };
+}
+
+async function _showFirstViolation(violations, opts = {}) {
     if (!violations || !violations.length) return;
     const total = violations.length;
     let current = 0;
+    const msgEl = document.getElementById('validationModalMessage');
 
     function _renderViol(idx) {
-        const v      = violations[idx];
-        const rule   = v.rule    || '';
-        const type   = v.type    || (rule ? `Conflict: ${rule}` : '');
-        const subj   = v.subject || '';
-        const detail = v.detail  || '';
-
-        const counter = total > 1
-            ? `<p style="font-size:12px;color:#888;margin:0 0 10px;">Issue ${idx + 1} of ${total} — fix all issues to save successfully.</p>`
-            : '';
-
-        // Formal type label (e.g. "Conflict: Faculty Schedule") instead of the raw
-        // internal rule code (e.g. "HC10"), so the badge names the KIND of problem
-        // in plain language, not an opaque constraint ID.
-        const badge = type
-            ? `<span style="display:inline-block;background:#7b1a1a;color:#fff;font-size:10px;font-weight:700;` +
-              `letter-spacing:0.5px;padding:2px 7px;border-radius:4px;margin-bottom:6px;">${type}</span> `
-            : '';
-
-        const subjLine = subj
-            ? `<span style="font-weight:600;font-size:13px;color:#222;">${subj}</span><br>`
-            : '';
-
-        const prevStyle = idx === 0
-            ? 'background:#ddd;color:#999;cursor:default;'
-            : 'background:#7b1a1a;color:#fff;cursor:pointer;';
-        const nextStyle = idx === total - 1
-            ? 'background:#ddd;color:#999;cursor:default;'
-            : 'background:#7b1a1a;color:#fff;cursor:pointer;';
-
-        const nav = total > 1 ? `
-            <div style="display:flex;gap:8px;margin-top:12px;">
-                <button ${idx === 0 ? 'disabled' : ''} onclick="window._violNavPrev()"
-                    style="flex:1;padding:6px 10px;border:none;border-radius:6px;font-weight:700;font-size:12px;${prevStyle}">
-                    ← Previous
-                </button>
-                <button ${idx === total - 1 ? 'disabled' : ''} onclick="window._violNavNext()"
-                    style="flex:1;padding:6px 10px;border:none;border-radius:6px;font-weight:700;font-size:12px;${nextStyle}">
-                    Next →
-                </button>
-            </div>` : '';
-
-        document.getElementById('validationModalMessage').innerHTML =
-            counter +
-            `<div style="background:#fafafa;border:1px solid #e0e0e0;border-radius:8px;padding:12px 14px;">` +
-            badge + subjLine +
-            `<span style="font-size:13px;color:#333;line-height:1.5;">${detail}</span>` +
+        const p = _violParse(violations[idx]);
+        const intro = opts.intro || (total > 1 ? 'Fix these issues to continue:' : 'Fix this issue to continue:');
+        const counter = total > 1 ? `<span class="viol-count">${idx + 1} of ${total}</span>` : '';
+        const nav = total > 1 ? `<div class="viol-nav">` +
+            `<button class="viol-nav-btn" ${idx === 0 ? 'disabled' : ''} onclick="window._violNavPrev()"><i class="fas fa-chevron-left"></i> Previous</button>` +
+            `<button class="viol-nav-btn" ${idx === total - 1 ? 'disabled' : ''} onclick="window._violNavNext()">Next <i class="fas fa-chevron-right"></i></button>` +
+            `</div>` : '';
+        msgEl.style.whiteSpace = 'normal';
+        msgEl.innerHTML =
+            `<div class="viol-intro">${_violEsc(intro)}${counter}</div>` +
+            `<div class="viol-card">` +
+                `<span class="viol-chip">${_violEsc(p.type)}</span>` +
+                (p.subject ? `<div class="viol-subject">${_violEsc(p.subject)}</div>` : '') +
+                (p.what ? `<div class="viol-what">${_violEsc(p.what)}</div>` : '') +
+                (p.info ? `<div class="viol-info">${_violEsc(p.info)}</div>` : '') +
+                (p.fix ? `<div class="viol-fix"><i class="fas fa-lightbulb"></i><span><strong>How to fix:</strong> ${_violEsc(p.fix)}</span></div>` : '') +
             `</div>` + nav;
     }
 
     window._violNavPrev = () => { if (current > 0) { current--; _renderViol(current); } };
     window._violNavNext = () => { if (current < total - 1) { current++; _renderViol(current); } };
 
-    const p = showValidationModal('Cannot Save', '');
+    const pr = showValidationModal(opts.title || 'Cannot Save', '');
     _renderViol(0);
-    await p;
+    await pr;
 }
 
 function showNochangeModal() {
@@ -3305,3 +3781,49 @@ function closeConflictModal() {
     document.getElementById('conflictModal').classList.remove('active');
     if (window._conflictResolve) { window._conflictResolve(); window._conflictResolve = null; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════
+   Keep calendar pills aligned while the layout width changes
+   Pills are absolutely positioned from measured column widths. Toggling the sidebar
+   (☰) or resizing the window changes those widths; instead of re-rendering (fetch +
+   redraw, which lagged and flickered), each pill carries its day column and overlap
+   slot (data-day-idx / data-ov-idx / data-ov-cnt) and only its left/width are
+   recomputed — the same formula the renderers use — on every observed size change,
+   so pills move in step with the animation. Top/height don't depend on width.
+   ══════════════════════════════════════════════════════════════ */
+function _reflowPills(wrapper, table) {
+    if (!wrapper || !table) return;
+    const firstCell = table.querySelector('tbody td:nth-child(2)');
+    const timeCol   = table.querySelector('.time-col');
+    if (!firstCell || !timeCol || !firstCell.offsetWidth) return;
+    const colWidth = firstCell.offsetWidth;
+    const leftOff  = timeCol.offsetWidth;
+    wrapper.querySelectorAll('.schedule-pill').forEach(p => {
+        if (p.dataset.dayIdx === undefined) return;
+        const dayIdx = +p.dataset.dayIdx, ovIdx = +p.dataset.ovIdx || 0, ovCnt = +p.dataset.ovCnt || 1;
+        const w = (colWidth - 6) / ovCnt;
+        p.style.width = (w - 2) + 'px';
+        p.style.left  = (leftOff + dayIdx * colWidth + ovIdx * w + 3) + 'px';
+    });
+}
+
+(function _watchCalendarWidths() {
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = (wrapperId, tableId) => {
+        const wrapper = document.getElementById(wrapperId);
+        const table   = document.getElementById(tableId);
+        if (!wrapper || !table) return;
+        let frame = 0;
+        new ResizeObserver(() => {
+            if (frame) return;                       // at most once per animation frame
+            frame = requestAnimationFrame(() => { frame = 0; _reflowPills(wrapper, table); });
+        }).observe(table);
+    };
+    const ready = () => {
+        watch('gridWrapper',   'mainTimetable');   // Room View / Program View
+        watch('flGridWrapper', 'flTimetable');     // Faculty Load → Calendar View
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
+    else ready();
+})();

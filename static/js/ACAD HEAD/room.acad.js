@@ -12,6 +12,28 @@ function closeRoomModal(id) {
     el.querySelectorAll('.rm-error').forEach(e => { e.style.display = 'none'; });
 }
 
+let _pendingDeleteFn = null;
+function _showDeleteConfirm(title, bodyHtml, onConfirm) {
+    document.getElementById('delConfirmTitle').textContent = title;
+    document.getElementById('delConfirmMsg').innerHTML    = bodyHtml;
+    _pendingDeleteFn = onConfirm;
+    const btn = document.getElementById('btnDeleteConfirm');
+    if (btn) btn.disabled = false;
+    openRoomModal('modalDeleteConfirm');
+}
+function _closeDeleteConfirm() {
+    closeRoomModal('modalDeleteConfirm');
+    _pendingDeleteFn = null;
+}
+function _confirmDeleteAction() {
+    const btn = document.getElementById('btnDeleteConfirm');
+    if (btn) btn.disabled = true;
+    const fn = _pendingDeleteFn;
+    _pendingDeleteFn = null;
+    closeRoomModal('modalDeleteConfirm');
+    if (fn) fn();
+}
+
 function _rmErr(errId, msg) {
     const el = document.getElementById(errId);
     if (!el) return;
@@ -31,8 +53,6 @@ function closeRoomScheduleModal() {
     const frame = document.getElementById('roomScheduleFrame');
     if (frame) frame.src = 'about:blank';
 }
-
-// ── Export menu (single EXPORT button, choose Room List vs Room Schedule) ─────
 function toggleExportMenu(e) {
     if (e) e.stopPropagation();
     document.getElementById('exportMenu')?.classList.toggle('open');
@@ -91,10 +111,6 @@ function _rmToast(type, title, msg) {
     clearTimeout(_toastTimer);
     _toastTimer = setTimeout(() => t.classList.remove('rm-show'), 4000);
 }
-
-// ── Sidebar filter ────────────────────────────────────────────────────────────
-// NOTE: buildings are tracked by ID (not name) everywhere below so that renaming
-// or adding a building never desyncs the filter from what's on screen.
 let _activeSidebarBldgId = '';
 
 function filterBySidebar(buildingId) {

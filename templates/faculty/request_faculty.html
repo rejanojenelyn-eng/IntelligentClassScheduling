@@ -2,7 +2,7 @@
 
 {% block head %}
     {{ super() }}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/request_faculty.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/request_faculty.css') }}?v=20261007a">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
     <style>
     #toast-container {
@@ -44,7 +44,41 @@
 
     <!-- Header -->
     <div class="requests-header">
-        <h1>MY REQUEST</h1>
+        <div>
+            <h1>MY REQUEST</h1>
+            <p class="requests-sub">View and manage your submitted class requests.</p>
+        </div>
+        <a class="btn-new-request" href="{{ url_for('faculty_room_schedule') }}?request=1">
+            <i class="fas fa-plus"></i> NEW REQUEST
+        </a>
+    </div>
+
+    <!-- Filters (client-side) -->
+    <div class="req-filters">
+        <label class="req-search">
+            <i class="fas fa-magnifying-glass"></i>
+            <input type="text" id="rfSearch" placeholder="Search request (e.g. subject, room, type)"
+                   autocomplete="off" oninput="rfApplyFilters()">
+        </label>
+        <label class="req-field"><span>Request Type</span>
+            <select id="rfType" onchange="rfApplyFilters()">
+                <option value="">All Types</option>
+                <option value="makeup">Make-up Class</option>
+                <option value="adjustment">Schedule Adjustment</option>
+            </select></label>
+        <label class="req-field"><span>Status</span>
+            <select id="rfStatus" onchange="rfApplyFilters()">
+                <option value="">All Status</option>
+                <option>Pending</option><option>Approved</option>
+                <option>Rejected</option><option>Cancelled</option>
+            </select></label>
+        <label class="req-field"><span>Sort by</span>
+            <select id="rfSort" onchange="rfApplyFilters()">
+                <option value="latest">Latest Request</option>
+                <option value="oldest">Oldest Request</option>
+                <option value="req-soon">Requested Date (Earliest)</option>
+                <option value="req-late">Requested Date (Latest)</option>
+            </select></label>
     </div>
 
     <!-- Table -->
@@ -186,17 +220,24 @@
      VIEW MODAL (double-click)
 ══════════════════════════════════════════ -->
 <div class="rfeq-overlay" id="viewReqOverlay">
-    <div class="rfeq-modal">
-        <div class="rfeq-hdr" id="viewReqHdr">
-            <span id="viewReqTitle">Request Details</span>
-            <button onclick="rfCloseView()" class="rfeq-close">✕</button>
+    <div class="rfeq-modal rv-modal">
+        <div class="rv-hdr" id="viewReqHdr">
+            <div class="rv-hdr-icon"><i class="far fa-calendar-alt" id="viewReqIcon"></i></div>
+            <div class="rv-hdr-text">
+                <div class="rv-hdr-title" id="viewReqTitle">Request Details</div>
+                <div class="rv-hdr-sub" id="viewReqSub">View the details of your request.</div>
+            </div>
+            <button onclick="rfCloseView()" class="rv-close" aria-label="Close">&#10005;</button>
         </div>
-        <div class="rfeq-body" id="viewReqBody"></div>
-        <div class="rfeq-ftr" id="viewReqFtr">
-            <button class="rfeq-btn-cancel" onclick="rfCloseView()">CLOSE</button>
-            <button class="rfeq-btn-submit" id="viewReqEditBtn" style="display:none;" onclick="rfOpenEditFromView()">
-                <i class="fas fa-edit"></i> EDIT
+        <div class="rfeq-body rv-body" id="viewReqBody"></div>
+        <div class="rfeq-ftr rv-ftr" id="viewReqFtr">
+            <button class="rv-btn rv-btn-outline" onclick="rfCloseView()"><i class="fas fa-xmark"></i> CLOSE</button>
+            <button class="rv-btn rv-btn-solid" id="viewReqEditBtn" style="display:none;" onclick="rfOpenEditFromView()">
+                <i class="fas fa-pen"></i> EDIT
             </button>
+            <a class="rv-btn rv-btn-solid" id="viewReqAgainBtn" style="display:none;" href="#">
+                <i class="fas fa-paper-plane"></i> REQUEST AGAIN
+            </a>
         </div>
     </div>
 </div>
@@ -236,6 +277,61 @@
 .rfeq-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
     z-index:9500; align-items:center; justify-content:center; }
 .rfeq-overlay.open { display:flex; }
+/* ══════════ Request details (view) — 2026-10 redesign ══════════ */
+.rv-modal { width: min(520px, 95vw); border-radius: 12px; overflow: hidden; }
+.rv-hdr { display: flex; align-items: center; gap: 14px; background: #6e0000; color: #fff; padding: 14px 18px; }
+.rv-hdr-icon { width: 42px; height: 42px; border-radius: 8px; background: rgba(255,255,255,.14);
+    display: flex; align-items: center; justify-content: center; font-size: 1.15rem; flex-shrink: 0; }
+.rv-hdr-text { min-width: 0; }
+.rv-hdr-title { font-size: 1.12rem; font-weight: 800; letter-spacing: .3px; line-height: 1.2; }
+.rv-hdr-sub { font-size: .78rem; opacity: .85; margin-top: 2px; }
+.rv-close { margin-left: auto; align-self: flex-start; background: none; border: 0; color: #fff; font-size: 1.05rem; cursor: pointer; opacity: .85; }
+.rv-close:hover { opacity: 1; }
+.rv-body { padding: 14px 18px 8px !important; display: block !important; }
+.rv-sec-title { display: flex; align-items: center; gap: 10px; background: #fdecec; color: #7a0000; border-radius: 6px;
+    padding: 8px 12px; font-size: .8rem; font-weight: 800; letter-spacing: .4px; margin: 14px 0 10px; }
+.rv-body > .rv-sec-title:first-child { margin-top: 2px; }
+.rv-status-box { border-bottom: 1px solid #eee; padding: 0 0 12px; }
+.rv-status { display: inline-flex; align-items: center; gap: 10px; padding: 7px 22px 7px 12px; border-radius: 999px;
+    font-weight: 700; font-size: .85rem; }
+.rv-status i { font-size: 1.1rem; }
+.rv-status.rejected  { background: #fbdcdc; color: #7a0000; }
+.rv-status.approved  { background: #dff3e6; color: #157a3c; }
+.rv-status.approved i { color: #1e8e4a; }
+.rv-done { display: flex; gap: 14px; align-items: center; margin-top: 12px; padding: 12px 16px;
+    background: #eaf3fe; border: 1px solid #c9def7; border-radius: 8px; font-size: .78rem; color: #555; line-height: 1.45; }
+.rv-done b { color: #1d3557; font-size: .86rem; }
+.rv-done-icon { width: 30px; height: 30px; border-radius: 50%; background: #1f6fd1; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: .85rem; flex-shrink: 0; }
+.rv-status.pending   { background: #ececf0; color: #4a5160; }
+.rv-status.cancelled { background: #eeeeee; color: #777; }
+.rv-remarks { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; padding: 10px 14px;
+    background: #fdf3f3; border-left: 3px solid #7a0000; border-radius: 4px; }
+.rv-remarks.approved { background: #f1faf4; border-left-color: #146c34; }
+.rv-remarks > i { color: #7a0000; font-size: 1.05rem; margin-top: 2px; }
+.rv-remarks.approved > i, .rv-remarks.approved .rv-remarks-label { color: #146c34; }
+.rv-remarks-label { font-size: .68rem; font-weight: 800; color: #7a0000; letter-spacing: .4px; }
+.rv-remarks-text { font-size: .85rem; color: #333; margin-top: 2px; white-space: pre-wrap; }
+.rv-field { display: flex; gap: 12px; align-items: stretch; margin-bottom: 10px; }
+.rv-ico { width: 38px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    background: #fdecec; color: #7a0000; border-radius: 6px; font-size: .95rem; }
+.rv-field-main { flex: 1; min-width: 0; }
+.rv-label { font-size: .66rem; font-weight: 700; color: #555; letter-spacing: .4px; margin-bottom: 4px; }
+.rv-value { background: #f0f1f3; border: 1px solid #e3e5e8; border-radius: 6px; padding: 7px 10px; font-size: .85rem; color: #222;
+    white-space: pre-wrap; word-break: break-word; }
+.rv-again { display: flex; gap: 14px; align-items: center; margin: 14px 0 6px; padding: 12px 14px;
+    background: #fff5df; border: 1px solid #f6dfa6; border-radius: 8px; font-size: .78rem; color: #555; line-height: 1.4; }
+.rv-again b { color: #222; font-size: .85rem; }
+.rv-again-icon { width: 40px; height: 40px; border-radius: 50%; background: #fde5ab; color: #b07800;
+    display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
+.rv-ftr { justify-content: flex-end !important; gap: 12px !important; padding: 12px 18px !important; }
+.rv-btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 20px; border-radius: 6px; font-weight: 800;
+    font-size: .76rem; letter-spacing: .5px; cursor: pointer; text-decoration: none; }
+.rv-btn-outline { background: #fff; color: #7a0000; border: 1.5px solid #7a0000; }
+.rv-btn-outline:hover { background: #fdf3f3; }
+.rv-btn-solid { background: #7a0000; color: #fff !important; border: 1.5px solid #7a0000; }
+.rv-btn-solid:hover { background: #5e0000; text-decoration: none; }
+
 .rfeq-modal { background:#fff; border-radius:10px; width:min(620px,95vw);
     max-height:90vh; overflow-y:auto; box-shadow:0 8px 40px rgba(0,0,0,.25);
     font-family:'Inter',sans-serif; }
@@ -311,45 +407,86 @@ function _rfPopulateTimeSelects() {
 /* ═══════════════════════════════════════════
    LOAD & RENDER TABLE
 ═══════════════════════════════════════════ */
+let _rfAll = [];   // every request from /api/faculty/my_requests (filtered client-side)
+
 async function rfLoadRequests() {
     const tbody = document.getElementById('reqTableBody');
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:30px;">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="req-empty">Loading...</td></tr>';
     try {
         const res  = await fetch('/api/faculty/my_requests');
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Failed');
-        const reqs = data.requests || [];
-        if (!reqs.length) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:30px;">No requests yet.</td></tr>';
-            return;
-        }
-        tbody.innerHTML = reqs.map(r => {
-            const prog    = `${r.programcode || ''}${r.yearlevel ? ' - ' + r.yearlevel : ''}${r.sectionname ? ' (' + r.sectionname + ')' : ''}`;
-            const typeChip = r.req_type === 'makeup'
-                ? '<span class="req-type-chip chip-makeup">MAKE-UP CLASS</span>'
-                : '<span class="req-type-chip chip-adj">SCHEDULE ADJUSTMENT</span>';
-            const statusBadge = _rfStatusBadge(r.status, r.remarks);
-            const room   = r.roomname ? `ROOM ${r.roomname}` : '—';
-            const isPending = r.status === 'Pending';
-            const editBtn   = `<button class="action-btn edit" title="Edit" ${isPending ? '' : 'disabled'}
-                onclick="rfOpenEdit(${JSON.stringify(r).replace(/"/g,'&quot;')})"><i class="fas fa-edit"></i></button>`;
-            const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
-                onclick="rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-times"></i></button>`;
-            const rJson = JSON.stringify(r).replace(/"/g,'&quot;');
-            return `<tr style="cursor:pointer;" ondblclick="rfOpenView(JSON.parse(this.dataset.req))" data-req="${rJson}">
-                <td class="prog-cell">${_rfEsc(prog)}</td>
-                <td>${statusBadge}</td>
-                <td>${_rfEsc(r.subjectcode)}${r.subjectname ? ' — ' + _rfEsc(r.subjectname) : ''}</td>
-                <td>${typeChip}</td>
-                <td>${_rfEsc(room)}</td>
-                <td>${_rfEsc(r.requested_date || '—')}</td>
-                <td>${_rfEsc(r.date_submitted || '—')}</td>
-                <td class="actions-cell">${editBtn}${cancelBtn}</td>
-            </tr>`;
-        }).join('');
+        _rfAll = data.requests || [];
+        rfApplyFilters();
     } catch(e) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:red;padding:30px;">${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="req-empty" style="color:#c0392b;">${_rfEsc(e.message)}</td></tr>`;
     }
+}
+
+/* MM/DD/YYYY -> sortable number (missing dates sort last) */
+function _rfDateKey(s) {
+    const m = String(s || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? Number(m[3] + m[1] + m[2]) : null;
+}
+
+function rfApplyFilters() {
+    const tbody  = document.getElementById('reqTableBody');
+    const q      = (document.getElementById('rfSearch')?.value || '').trim().toLowerCase();
+    const type   = document.getElementById('rfType')?.value   || '';
+    const status = document.getElementById('rfStatus')?.value || '';
+    const sort   = document.getElementById('rfSort')?.value   || 'latest';
+    if (!_rfAll.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="req-empty">No requests yet.</td></tr>';
+        return;
+    }
+    const rows = _rfAll.filter(r => {
+        if (type && r.req_type !== type) return false;
+        if (status && (r.status || 'Pending') !== status) return false;
+        if (!q) return true;
+        const hay = [r.programcode, r.sectionname, r.subjectcode, r.subjectname, r.roomname,
+                     r.req_type === 'makeup' ? 'make-up makeup class' : 'schedule adjustment',
+                     r.status, r.requested_date, r.date_submitted].join(' ').toLowerCase();
+        return q.split(/\s+/).every(t => hay.includes(t));
+    });
+    const by = (key, dir) => (x, y) => {
+        const a = _rfDateKey(x[key]), b = _rfDateKey(y[key]);
+        if (a === null && b === null) return 0;
+        if (a === null) return 1;
+        if (b === null) return -1;
+        return dir * (a - b) || (y.requestid - x.requestid);
+    };
+    rows.sort(sort === 'oldest'   ? by('date_submitted', 1)
+            : sort === 'req-soon' ? by('requested_date', 1)
+            : sort === 'req-late' ? by('requested_date', -1)
+            :                       by('date_submitted', -1));
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="req-empty"><i class="fas fa-filter"></i> No requests match your filters.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(r => {
+        const prog    = `${r.programcode || ''}${r.yearlevel ? ' - ' + r.yearlevel : ''}${r.sectionname ? ' (' + r.sectionname + ')' : ''}`;
+        const typeChip = r.req_type === 'makeup'
+            ? '<span class="req-type-chip chip-makeup">MAKE-UP CLASS</span>'
+            : '<span class="req-type-chip chip-adj">SCHEDULE ADJUSTMENT</span>';
+        const room      = r.roomname ? `ROOM ${r.roomname}` : '—';
+        const isPending = r.status === 'Pending';
+        const rJson     = JSON.stringify(r).replace(/"/g,'&quot;');
+        const editBtn   = `<button class="action-btn edit" title="Edit" ${isPending ? '' : 'disabled'}
+            onclick="event.stopPropagation(); rfOpenEdit(${rJson})"><i class="fas fa-pen"></i></button>`;
+        const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
+            onclick="event.stopPropagation(); rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-xmark"></i></button>`;
+        const dateCell  = d => d ? `<span class="req-date"><i class="far fa-calendar"></i> ${_rfEsc(d)}</span>` : '—';
+        return `<tr ondblclick="rfOpenView(JSON.parse(this.dataset.req))" data-req="${rJson}">
+            <td class="prog-cell">${_rfEsc(prog)}</td>
+            <td>${_rfStatusBadge(r.status, r.remarks)}</td>
+            <td class="subj-cell">${_rfEsc(r.subjectcode)}${r.subjectname ? ' — ' + _rfEsc(r.subjectname) : ''}</td>
+            <td>${typeChip}</td>
+            <td>${_rfEsc(room)}</td>
+            <td>${dateCell(r.requested_date)}</td>
+            <td>${dateCell(r.date_submitted)}</td>
+            <td><div class="actions-cell">${editBtn}${cancelBtn}</div></td>
+        </tr>`;
+    }).join('');
 }
 
 function _rfStatusBadge(status, remarks) {
@@ -362,7 +499,8 @@ function _rfStatusBadge(status, remarks) {
     const cls = map[status] || 'pending';
     let extra = '';
     if (remarks && (status === 'Rejected' || status === 'Approved')) {
-        extra = `<div class="req-remark">${_rfEsc(remarks)}</div>`;
+        extra = `<a href="#" class="req-remark-link" title="${_rfEsc(remarks)}"
+            onclick="event.preventDefault(); event.stopPropagation(); rfOpenView(JSON.parse(this.closest('tr').dataset.req))">View remarks</a>`;
     }
     return `<div class="req-status-wrap"><span class="status-badge ${cls}">${status || 'Pending'}</span>${extra}</div>`;
 }
@@ -601,68 +739,95 @@ let _rfViewReq = null;
 
 function rfOpenView(req) {
     _rfViewReq = req;
-    const isMakeup  = req.req_type === 'makeup';
-    const isLocked  = req.status === 'Rejected' || req.status === 'Approved' || req.status === 'Cancelled';
+    const isMakeup = req.req_type === 'makeup';
+    const status   = req.status || 'Pending';
+    const typeName = isMakeup ? 'Make-up Class' : 'Schedule Adjustment';
 
-    /* Header colour */
-    const hdr = document.getElementById('viewReqHdr');
-    hdr.className = 'rfeq-hdr ' + (isMakeup ? 'makeup' : 'adjustment');
-    document.getElementById('viewReqTitle').textContent =
-        (isMakeup ? 'Make-up Class' : 'Schedule Adjustment') + ' — ' + (req.status || 'Pending');
+    document.getElementById('viewReqTitle').textContent = `${typeName} — ${status}`.toUpperCase();
+    document.getElementById('viewReqSub').textContent =
+        `View the details of your ${typeName.toLowerCase()} request.`;
+    document.getElementById('viewReqIcon').className = isMakeup ? 'far fa-calendar-alt' : 'fas fa-arrows-rotate';
 
-    /* Edit button */
-    const editBtn = document.getElementById('viewReqEditBtn');
-    editBtn.style.display = isLocked ? 'none' : 'inline-flex';
-
-    /* Build body */
-    const statusColors = { Pending:'#856404', Approved:'#155724', Rejected:'#721c24', Cancelled:'#6c757d' };
-    const statusBg     = { Pending:'#fff3cd', Approved:'#d4edda', Rejected:'#f8d7da', Cancelled:'#e9ecef' };
-    const sc = statusColors[req.status] || '#333';
-    const sb = statusBg[req.status]     || '#f8f9fa';
-
-    let rows = `
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
-            <span style="font-size:.72rem;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;">Status</span>
-            <span style="background:${sb};color:${sc};border:1.5px solid ${sc};padding:4px 16px;border-radius:20px;font-size:.78rem;font-weight:800;letter-spacing:.5px;">${req.status || 'Pending'}</span>
-        </div>`;
-
-    if (req.remarks && (req.status === 'Rejected' || req.status === 'Approved')) {
-        rows += `<div style="background:#fff8f8;border-left:3px solid #800000;border-radius:4px;padding:10px 14px;margin:4px 0;">
-            <div style="font-size:.68rem;font-weight:700;color:#800000;margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;">Remarks</div>
-            <div style="font-size:.82rem;color:#333;">${_rfEsc(req.remarks)}</div>
-        </div>`;
+    /* Footer: Edit while Pending; Request Again once Rejected / Cancelled */
+    const canAgain = status === 'Rejected' || status === 'Cancelled';
+    document.getElementById('viewReqEditBtn').style.display = status === 'Pending' ? 'inline-flex' : 'none';
+    const again = document.getElementById('viewReqAgainBtn');
+    again.style.display = canAgain ? 'inline-flex' : 'none';
+    if (canAgain) {
+        const q = new URLSearchParams({ view: 'available', request: '1', type: isMakeup ? 'makeup' : 'adjustment' });
+        if (req.sectionid)   q.set('section', req.sectionid);
+        if (req.subjectcode) q.set('subject', req.subjectcode);
+        again.href = '/faculty_room_schedule?' + q.toString();
     }
 
-    rows += `<hr style="border:none;border-top:1px solid #eee;margin:4px 0;">`;
+    const ST = {
+        Pending:   { cls: 'pending',   icon: 'far fa-hourglass-half' },
+        Approved:  { cls: 'approved',  icon: 'fas fa-circle-check' },
+        Rejected:  { cls: 'rejected',  icon: 'far fa-circle-xmark' },
+        Cancelled: { cls: 'cancelled', icon: 'fas fa-ban' },
+    }[status] || { cls: 'pending', icon: 'far fa-hourglass-half' };
 
-    const field = (label, val) => `
-        <div class="rfeq-row">
-            <div class="rfeq-group full">
-                <label>${label}</label>
-                <input type="text" class="up-input" value="${_rfEsc(val || '—')}" readonly
-                    style="background:#f9f9f9;border-color:#e0e0e0;color:#444;cursor:default;">
+    let html = `
+        <div class="rv-sec-title"><i class="fas fa-circle-info"></i> STATUS</div>
+        <div class="rv-status-box">
+            <span class="rv-status ${ST.cls}"><i class="${ST.icon}"></i> ${_rfEsc(status)}</span>`;
+    if (status === 'Approved') {
+        html += `
+            <div class="rv-done">
+                <span class="rv-done-icon"><i class="fas fa-info"></i></span>
+                <div><b>Request Completed</b>
+                    <div>Your ${typeName.toLowerCase()} request has been approved. No further action is required.
+                    ${isMakeup ? 'Please attend the scheduled session.' : 'The new schedule applies from its effective date.'}</div></div>
+            </div>`;
+    }
+    if (req.remarks && (status === 'Rejected' || status === 'Approved')) {
+        html += `
+            <div class="rv-remarks ${ST.cls}">
+                <i class="far fa-comment-dots"></i>
+                <div><div class="rv-remarks-label">REMARKS</div><div class="rv-remarks-text">${_rfEsc(req.remarks)}</div></div>
+            </div>`;
+    }
+    html += `</div>
+        <div class="rv-sec-title"><i class="fas fa-clipboard-list"></i> REQUEST DETAILS</div>`;
+
+    const field = (icon, label, val) => `
+        <div class="rv-field">
+            <span class="rv-ico"><i class="${icon}"></i></span>
+            <div class="rv-field-main">
+                <div class="rv-label">${label}</div>
+                <div class="rv-value">${_rfEsc(val || '—')}</div>
             </div>
         </div>`;
 
     const prog = `${req.programcode||''}${req.yearlevel?' - '+req.yearlevel:''}${req.sectionname?' ('+req.sectionname+')':''}`;
-    rows += field('Program / Year Level', prog);
-    rows += field('Subject', `${req.subjectcode||''}${req.subjectname?' — '+req.subjectname:''}`);
-    rows += field('Room', req.roomname ? 'ROOM ' + req.roomname : '—');
-
+    const time = (req.start_time || req.end_time) ? `${req.start_time || ''} — ${req.end_time || ''}` : '—';
+    html += field('fas fa-graduation-cap', 'PROGRAM / YEAR LEVEL', prog);
+    html += field('fas fa-book-open', 'SUBJECT', `${req.subjectcode||''}${req.subjectname?' — '+req.subjectname:''}`);
+    html += field('fas fa-building', 'ROOM', req.roomname ? 'ROOM ' + req.roomname : '—');
     if (isMakeup) {
-        rows += field('Date', req.requested_date || '—');
-        rows += field('Time', `${req.start_time || ''} — ${req.end_time || ''}`);
+        html += field('far fa-calendar', 'DATE', req.requested_date);
+        html += field('far fa-clock', 'TIME', time);
     } else {
-        rows += field('New Day', req.new_daydesc || '—');
-        rows += field('Time', `${req.start_time || ''} — ${req.end_time || ''}`);
-        rows += field('Effective From', req.effective_from || '—');
-        if (req.end_date) rows += field('End Date', req.end_date);
+        html += field('far fa-calendar', 'NEW DAY', req.new_daydesc);
+        html += field('far fa-clock', 'TIME', time);
+        html += field('far fa-calendar-check', 'EFFECTIVE FROM', req.effective_from || req.requested_date);
+        if (req.end_date) html += field('far fa-calendar-xmark', 'END DATE', req.end_date);
+    }
+    if (req.reason) html += field('far fa-file-lines', 'REASON', req.reason);
+    if (req.notes)  html += field('far fa-note-sticky', 'ADDITIONAL NOTES', req.notes);
+    html += field('far fa-calendar-check', 'DATE SUBMITTED', req.date_submitted);
+
+    if (canAgain) {
+        html += `
+        <div class="rv-again">
+            <span class="rv-again-icon"><i class="fas fa-arrows-rotate"></i></span>
+            <div><b>Request Again</b>
+                <div>You can submit a new ${typeName.toLowerCase()} request for this ${isMakeup ? 'session' : 'class'}
+                as long as the schedule is still available.</div></div>
+        </div>`;
     }
 
-    if (req.reason) rows += field('Reason', req.reason);
-    rows += field('Date Submitted', req.date_submitted || '—');
-
-    document.getElementById('viewReqBody').innerHTML = rows;
+    document.getElementById('viewReqBody').innerHTML = html;
     document.getElementById('viewReqOverlay').classList.add('open');
 }
 

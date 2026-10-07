@@ -42,8 +42,8 @@ def test_multiple_occurrences_are_hydrated():
 
 def test_day_and_time_recommendations_are_top_three_and_clickable():
     assert ".filter(r => r && feasibleDays.has(r.day))" in HTML
-    assert "onclick=\"_chooseRecommendedDay" in HTML
-    assert "onclick=\"_chooseRecommendedTime" in HTML
+    assert "onmousedown=\"_chooseRecommendedDay" in HTML
+    assert "onmousedown=\"_chooseRecommendedTime" in HTML
     assert "${r.start} – ${r.end}" in HTML
 
 def test_recommendations_do_not_auto_mutate_on_dss_response():
@@ -63,7 +63,7 @@ def test_coalesced_refresh_has_no_feedback_loop():
     assert "fetch(" not in b and "dispatchEvent" not in b and "tsSel(" not in b
 
 def test_manual_time_controls_remain_available():
-    assert "OTHER / MANUAL TIME" in HTML
+    assert 'ts-rec-gen">OTHERS' in HTML
     assert 'id="tsst-txt-${id}"' in HTML
     assert 'id="tset-txt-${id}"' in HTML
 

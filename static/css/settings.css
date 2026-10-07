@@ -2809,3 +2809,12 @@
 .policy-progress{display:flex;justify-content:center;align-items:center;gap:7px}.policy-progress button{width:8px;height:8px;padding:0;border:0;border-radius:50%;background:#d3d8df;cursor:pointer}.policy-progress button.active{width:22px;border-radius:8px;background:#990d11}.policy-progress span{font-size:10px;font-weight:750;color:#7c8593;margin-left:5px}
 @media(max-width:980px){.settings-policy-stepper{grid-template-columns:repeat(2,1fr)}.settings-policy-footer{grid-template-columns:120px 1fr 120px}}
 @media(max-width:620px){.settings-policy-stepper{grid-template-columns:1fr}.policy-step small{white-space:normal}.settings-policy-footer{grid-template-columns:1fr 1fr}.policy-progress{grid-column:1/-1;grid-row:1}.policy-prev{grid-column:1}.policy-next{grid-column:2}}
+
+/* Core Conflict Validation — per-rule switches */
+.conflict-rule-list>div{grid-template-columns:50px 1fr auto}
+.tog.tog-sm{transform:scale(.82);transform-origin:right center}
+.conflict-local-note{margin-top:10px;font-size:12px;color:#536176}
+.conflict-local-note i{color:#14894b}
+.conflict-off-warn{margin-top:8px;padding:8px 10px;border-radius:7px;background:#fff7e6;border:1px solid #f3d08a;color:#8a5a00;font-size:12px}
+.conflict-off-warn i{color:#d48806}
+.conflict-off-warn[hidden]{display:none}

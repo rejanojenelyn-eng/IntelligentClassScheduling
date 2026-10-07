@@ -1022,6 +1022,7 @@ window.onclick = function (event) {
 function openFacultyPopup(empNum, name) {
     const modal = document.getElementById('facultyPopupModal');
     if (!modal) return;
+    if (modal.style.display === 'block' && modal.dataset.empNum === String(empNum)) return;
     document.getElementById('facPopupName').textContent = name || 'Faculty';
     modal.dataset.empNum = empNum;
     _facSwitchTab('schedule');
@@ -1029,7 +1030,6 @@ function openFacultyPopup(empNum, name) {
     _loadFacultySchedule(empNum);
     _loadFacultyLoad(empNum);
 }
-
 function closeFacultyPopup() {
     const modal = document.getElementById('facultyPopupModal');
     if (modal) modal.style.display = 'none';
@@ -1119,5 +1119,93 @@ async function _loadFacultyLoad(empNum) {
     }
 }
 
-// Subject/Faculty Assignment Export moved to Reports > Teaching Assignment
-// (see reports.html / reports_admin.html) — no longer lives on this page.
+
+function _initSpecSearchDropdown() {
+    const wrapper     = document.getElementById('specSearchWrapper');
+    const trigger     = document.getElementById('specSearchTrigger');
+    const triggerText = document.getElementById('specSearchTriggerText');
+    const search       = document.getElementById('specSearchInput');
+    const list         = document.getElementById('specSearchList');
+    const hiddenSel    = document.getElementById('specFilter');
+    if (!wrapper || !trigger || !list || !hiddenSel) return;
+
+
+    function openDropdown() {
+        wrapper.classList.add('open');
+        search.value = '';
+        filterOptions('');
+        search.focus();
+    }
+    function closeDropdown() { wrapper.classList.remove('open'); }
+    function filterOptions(q) {
+        list.querySelectorAll('.spec-search-option').forEach(opt => {
+            const name = (opt.dataset.value || opt.textContent || '').toLowerCase();
+            opt.style.display = (!q || name.includes(q)) ? '' : 'none';
+        });
+    }
+
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        wrapper.classList.contains('open') ? closeDropdown() : openDropdown();
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+    search.addEventListener('input', function() { filterOptions(this.value.trim().toLowerCase()); });
+    list.addEventListener('click', e => {
+        const opt = e.target.closest('.spec-search-option');
+        if (!opt) return;
+        const val = opt.dataset.value || '';
+        hiddenSel.value = val;
+        triggerText.textContent = val || 'SELECT';
+        triggerText.title = val;
+        closeDropdown();
+        hiddenSel.dispatchEvent(new Event('change'));
+    });
+    document.addEventListener('click', e => {
+        if (!wrapper.contains(e.target)) closeDropdown();
+    });
+}
+_initSpecSearchDropdown();
+
+function _bindFacultyFormSubmit(formId, bannerId) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const banner = document.getElementById(bannerId);
+        if (banner) { banner.style.display = 'none'; banner.textContent = ''; }
+
+
+        const payload = {};
+        new FormData(form).forEach((val, key) => { payload[key] = val; });
+
+
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+            const res  = await fetch(form.dataset.apiAction, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!data.success) {
+                if (banner) {
+                    banner.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Unable to save faculty. Please try again.'}`;
+                    banner.style.display = 'flex';
+                }
+                return;
+            }
+            location.reload();
+        } catch (err) {
+            if (banner) {
+                banner.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network error. Please try again.';
+                banner.style.display = 'flex';
+            }
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+        }
+    });
+}
+_bindFacultyFormSubmit('addEmployeeForm', 'addFacultyErrorBanner');
+_bindFacultyFormSubmit('editEmployeeForm', 'editFacultyErrorBanner');

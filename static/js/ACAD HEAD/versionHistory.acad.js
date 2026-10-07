@@ -287,17 +287,17 @@
 
         if (isCurrentlyPublished && hasActiveDraft) {
             title        = 'Active Schedule Conflict';
-            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and unpublish the current schedule.';
+            message      = 'This schedule has an active Published version and an existing Draft. Restoring this revision replaces the Draft only; the Published schedule stays live until you publish the restored Draft.';
             primaryLabel = 'Continue Restore';
             showWarning  = true;
         } else if (isCurrentlyPublished) {
             title        = 'Restore Published Revision';
-            message      = 'This revision is currently Published. Restoring it will automatically unpublish the current schedule. Do you want to continue?';
+            message      = 'This revision is currently Published. Restoring it creates a new Draft copy; the Published schedule stays live until you publish that Draft. Do you want to continue?';
             primaryLabel = 'Continue Restore';
             showWarning  = true;
         } else if (hasActiveDraft && hasActivePublished) {
             title        = 'Active Schedule Conflict';
-            message      = 'This schedule currently has an active Published version and an existing Draft. Restoring this revision may replace the Draft and affect the current schedule.';
+            message      = 'This schedule has an active Published version and an existing Draft. Restoring this revision replaces the Draft only; the Published schedule stays live until you publish the restored Draft.';
             primaryLabel = 'Continue Restore';
             showWarning  = true;
         } else if (hasActiveDraft) {

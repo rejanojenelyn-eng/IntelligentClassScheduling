@@ -624,7 +624,40 @@ const TOGGLE_MAP = [
   { id:'tog-faculty-spec',key:'hc_faculty_spec_enabled'  },
   { id:'tog-merge',       key:'hc_merge_enabled'         },
   { id:'tog-sem-span',    key:'hc_sem_span_enabled'      },
+  { id:'tog-time-blocks', key:'hc_time_blocks_enabled'   },
+  { id:'tog-capacity',    key:'hc_capacity_enabled'      },
+  { id:'tog-faculty-conflict', key:'hc_faculty_conflict_enabled' },
+  { id:'tog-room-conflict',    key:'hc_room_conflict_enabled'    },
+  { id:'tog-section-conflict', key:'hc_section_conflict_enabled' },
+  { id:'tog-cross-schedule',   key:'hc_cross_schedule_enabled'   },
 ];
+
+/* Core Conflict Validation: one switch per rule (Official scheduling only). Turning a
+   rule OFF asks for confirmation because Official schedules may then double-book. */
+const _CONFLICT_RULES = [
+  { id:'tog-faculty-conflict', label:'HC10 Faculty' },
+  { id:'tog-room-conflict',    label:'HC11 Room' },
+  { id:'tog-section-conflict', label:'HC12 Section' },
+  { id:'tog-cross-schedule',   label:'HC15 Cross-Schedule' },
+];
+function _refreshConflictWarning() {
+  const off = _CONFLICT_RULES.filter(r => { const el = document.getElementById(r.id); return el && !el.checked; });
+  const warn = document.getElementById('conflict-off-warn');
+  const text = document.getElementById('conflict-off-text');
+  if (!warn || !text) return;
+  warn.hidden = !off.length;
+  text.textContent = off.length
+    ? `${off.map(r => r.label).join(', ')} ${off.length === 1 ? 'is' : 'are'} OFF — Official schedules can be saved and published with ${off.length === 1 ? 'this kind of' : 'these kinds of'} double-booking.`
+    : '';
+}
+function saveConflictRule(key, el) {
+  if (!el.checked && !window.confirm('Turn this conflict rule off? Official schedules will no longer be blocked by this kind of double-booking (the Local Scheduler and requests stay protected).')) {
+    el.checked = true;
+    return;
+  }
+  saveConstraint(key, el.checked);
+  _refreshConflictWarning();
+}
 
 /* In-memory cache so saves batch nicely */
 let _hcState = {};
@@ -763,6 +796,7 @@ async function initHCToggles() {
     /* Default to 1 (enabled) if key not yet in DB */
     el.checked = (key in data) ? (Number(data[key]) !== 0) : true;
   });
+  _refreshConflictWarning();
 
   /* Weekend/day-restriction params */
   const ws = document.getElementById('param-weekend-subj');

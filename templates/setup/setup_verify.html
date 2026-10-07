@@ -15,13 +15,17 @@
         .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.2rem; letter-spacing: 0.5px; }
         .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.72rem; letter-spacing: 1px; margin-bottom: 20px; }
 
+
         h1.step-title { color: #800000; font-weight: 800; font-size: 1.8rem; text-align: center; margin-bottom: 24px; }
+
 
         .error-msg { color: #b22222; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
         .success-msg { color: #2e7d32; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
 
+
         .section-card { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 22px 26px; margin-bottom: 22px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
         .section-title { color: #800000; font-weight: 800; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f3e5e5; }
+
 
         .field-row {
             display: flex; justify-content: space-between; align-items: flex-start;
@@ -33,10 +37,12 @@
         .field-value.muted { color: #aaa; font-weight: 500; font-style: italic; }
         .field-main { flex: 1; }
 
+
         .name-block .field-value.full-name { font-size: 1.3rem; color: #4b0a0a; font-weight: 800; margin-bottom: 10px; }
         .name-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
         .name-part-label { color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
         .name-part-value { color: #333; font-size: 0.92rem; font-weight: 600; }
+
 
         .btn-request-correction {
             background: none; border: 1px solid #800000; color: #800000; border-radius: 6px;
@@ -44,6 +50,7 @@
             letter-spacing: 0.3px; cursor: pointer; white-space: nowrap; margin-left: 16px; transition: 0.15s;
         }
         .btn-request-correction:hover { background: #800000; color: #fff; }
+
 
         .correction-panel {
             display: none; margin-top: 14px; padding: 18px 20px; border: 1px solid #e8c8c8;
@@ -63,6 +70,7 @@
         .btn-cp-add { background: #800000; color: #fff; border: none; border-radius: 6px; padding: 9px 18px; font-weight: 800; font-size: 0.8rem; cursor: pointer; }
         .btn-cp-add:hover { background: #5c0000; }
 
+
         .summary-section { display: none; }
         .summary-section.open { display: block; }
         .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
@@ -77,6 +85,7 @@
             font-size: 0.9rem; font-family: inherit; resize: vertical; margin-bottom: 16px;
         }
 
+
         .actions-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
         .btn-outline {
             padding: 12px 26px; border: 2px solid #800000; border-radius: 6px; background: #fff;
@@ -85,6 +94,11 @@
         .btn-outline:hover { background: #800000; color: #fff; }
         .btn-outline.secondary { border-color: #ccc; color: #888; }
         .btn-outline.secondary:hover { background: #f3f3f3; color: #888; }
+
+
+        {% include "setup/_setup_steps_css.html" %}
+        .confirm-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 26px; }
+        .confirm-row .btn-back { font-size: 0.85rem; padding: 12px 22px; border-radius: 6px; }
     </style>
 </head>
 <body>
@@ -93,15 +107,19 @@
             <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
             <div class="brand-title">PUP LOPEZ</div>
             <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
+            {% include "setup/_setup_steps.html" %}
         </div>
 
+
         <h1 class="step-title">Check Your Information</h1>
+
 
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <p class="{{ 'success-msg' if category == 'success' else 'error-msg' }}">{{ message }}</p>
             {% endfor %}
         {% endwith %}
+
 
         <!-- ACCOUNT INFORMATION -->
         <div class="section-card">
@@ -126,13 +144,15 @@
                 </div>
             </div>
             <p style="font-size: 0.75rem; color: #999; margin-top: 8px; font-style: italic;">
-                Email and Contact Number can be updated from the account information step, not here.
+                To change your Email or Contact Number, use Back.
             </p>
         </div>
+
 
         <!-- OFFICIAL FACULTY INFORMATION -->
         <div class="section-card">
             <div class="section-title">Official Faculty Information</div>
+
 
             <div class="field-row name-block">
                 <div class="field-main">
@@ -147,6 +167,7 @@
                 <button type="button" class="btn-request-correction" onclick="openCorrection('name')">Request Correction</button>
             </div>
 
+
             <div class="field-row">
                 <div class="field-main">
                     <div class="field-label">Designation</div>
@@ -155,6 +176,7 @@
                 <button type="button" class="btn-request-correction" onclick="openCorrection('designation')">Request Correction</button>
             </div>
 
+
             <div class="field-row">
                 <div class="field-main">
                     <div class="field-label">Specialization</div>
@@ -162,6 +184,7 @@
                 </div>
                 <button type="button" class="btn-request-correction" onclick="openCorrection('specialization')">Request Correction</button>
             </div>
+
 
             <!-- CORRECTION PANELS -->
             <div class="correction-panel" id="panel-name">
@@ -194,6 +217,7 @@
                 </div>
             </div>
 
+
             <div class="correction-panel" id="panel-designation">
                 <div class="cp-title">Correct Designation</div>
                 <div class="cp-field" style="margin-bottom:14px;">
@@ -211,6 +235,7 @@
                     <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Designation', 'cp-designation')">Add to Request</button>
                 </div>
             </div>
+
 
             <div class="correction-panel" id="panel-specialization">
                 <div class="cp-title">Correct Specialization</div>
@@ -230,6 +255,7 @@
                 </div>
             </div>
 
+
             <div class="correction-panel" id="panel-empid">
                 <div class="cp-title">Correct Employee ID</div>
                 <p style="font-size:0.78rem; color:#a15c00; background:#fff8e1; border-radius:6px; padding:10px 12px; margin-bottom:14px;">
@@ -246,6 +272,7 @@
                 </div>
             </div>
         </div>
+
 
         <!-- REQUEST SUMMARY -->
         <div class="section-card summary-section" id="summarySection">
@@ -264,12 +291,16 @@
             </div>
         </div>
 
-        <form method="POST" id="confirmForm">
+
+        <form method="POST" id="confirmForm" onsubmit="clearSavedCart()">
             <input type="hidden" name="action" value="confirm">
-            <div class="actions-row">
+            <div class="confirm-row">
+                <!-- Back keeps any pending corrections (saved for this browser tab). -->
+                <a href="{{ back_url }}" class="btn-back"><i class="fas fa-arrow-left"></i> BACK</a>
                 <button type="submit" class="btn-outline">SAVE AND CONFIRM</button>
             </div>
         </form>
+
 
         <form method="POST" id="correctionForm" style="display:none;">
             <input type="hidden" name="action" value="correction">
@@ -278,9 +309,33 @@
         </form>
     </div>
 
+
 <script>
     const CURRENT = {{ info | tojson }};
+    // Pending corrections survive Back → Contact Number → Continue (this browser tab only).
+    const CART_KEY = 'setupCorrectionCart:' + (CURRENT['Employee ID'] || '');
     let cart = [];
+    function _loadCart() {
+        try {
+            const saved = JSON.parse(sessionStorage.getItem(CART_KEY) || 'null');
+            if (saved && Array.isArray(saved.cart)) {
+                cart = saved.cart;
+                document.getElementById('summaryRemarks').value = saved.remarks || '';
+            }
+        } catch (e) { cart = []; }
+    }
+    function _saveCart() {
+        try {
+            sessionStorage.setItem(CART_KEY, JSON.stringify({
+                cart, remarks: document.getElementById('summaryRemarks').value }));
+        } catch (e) {}
+    }
+    function clearSavedCart() { try { sessionStorage.removeItem(CART_KEY); } catch (e) {} }
+    document.addEventListener('DOMContentLoaded', () => {
+        _loadCart(); renderSummary();
+        document.getElementById('summaryRemarks').addEventListener('input', _saveCart);
+    });
+
 
     function openCorrection(key) {
         document.querySelectorAll('.correction-panel').forEach(p => p.classList.remove('open'));
@@ -289,6 +344,7 @@
     function closeCorrection(key) {
         document.getElementById('panel-' + key).classList.remove('open');
     }
+
 
     function addNameCorrection() {
         const parts = [
@@ -310,6 +366,7 @@
         closeCorrection('name');
     }
 
+
     function addSimpleCorrection(field, inputId) {
         const el = document.getElementById(inputId);
         const value = el.value.trim();
@@ -321,6 +378,7 @@
         closeCorrection(key);
     }
 
+
     function addCartItem(field, current, value) {
         // Replace any existing pending entry for the same field rather than duplicating it.
         cart = cart.filter(c => c.field_name !== field);
@@ -328,10 +386,12 @@
         renderSummary();
     }
 
+
     function removeCartItem(index) {
         cart.splice(index, 1);
         renderSummary();
     }
+
 
     function renderSummary() {
         const section = document.getElementById('summarySection');
@@ -339,9 +399,11 @@
         if (cart.length === 0) {
             section.classList.remove('open');
             body.innerHTML = '';
+            _saveCart();
             return;
         }
         section.classList.add('open');
+        _saveCart();
         body.innerHTML = cart.map((c, i) => `
             <tr>
                 <td><strong>${c.field_name}</strong></td>
@@ -352,16 +414,19 @@
         `).join('');
     }
 
+
     function clearCart() {
         cart = [];
         renderSummary();
         document.getElementById('summaryRemarks').value = '';
     }
 
+
     function submitCorrections() {
         if (cart.length === 0) return;
         document.getElementById('correctionsJsonInput').value = JSON.stringify(cart);
         document.getElementById('remarksInput').value = document.getElementById('summaryRemarks').value.trim();
+        clearSavedCart();
         document.getElementById('correctionForm').submit();
     }
 </script>

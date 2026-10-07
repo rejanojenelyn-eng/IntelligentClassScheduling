@@ -3,12 +3,9 @@
 // as own_emp_num — this page is their personal "My Teaching Assignment" self-view,
 // the exact mirror of the Faculty page at static/js/FACULTY/teaching.faculty.js).
 //
-// The one real difference from that file: the Official-data fetches below pass
-// prefer_draft=1. This is the editor's own view of their own assignments, so it
-// should show their latest SAVED work immediately — including an in-progress
-// Draft they haven't published yet — the same Draft-preferred resolution the
-// Manual Editor's own Faculty Load tab already uses (api_faculty_teaching_assignments).
-// Faculty's page never passes this flag and stays strictly Published-only.
+// Like the Faculty page, this is a teaching schedule as it is actually in effect:
+// Published only. Drafts are work in progress in the Manual Editor (its Faculty Load
+// tab shows them) and never appear here — so no prefer_draft flag is passed.
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const PALETTE = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
@@ -92,7 +89,18 @@ function navWeek(delta) {
 }
 
 // ── Data loading ─────────────────────────────────────────────────────────────
+// Dashboard quick actions deep-link a tab: ?tab=weekly (View My Schedule) or
+// ?tab=assignment (Teaching Assignment). Applied before data loads.
+function _applyTabFromUrl() {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t !== 'weekly' && t !== 'assignment') return;
+    const link = Array.from(document.querySelectorAll('.tab-link'))
+        .find(a => (a.getAttribute('onclick') || '').includes(`'${t}'`));
+    showTab(t, link || null);
+}
+
 async function loadData() {
+    _applyTabFromUrl();
     if (!EMP_NUM) return;
     navWeek('today'); // seed the week label on first load
     await Promise.all([
@@ -107,7 +115,7 @@ async function loadData() {
 
 async function loadOfficialData() {
     try {
-        const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}&prefer_draft=1`;
+        const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}`;
         const resp = await fetch(url);
         _sessions = await resp.json();
     } catch(e) {
@@ -130,8 +138,7 @@ async function loadLocalData() {
 
 async function loadMyTeachingLoad(source) {
     try {
-        const draftParam = source === 'official' ? '&prefer_draft=1' : '';
-        const url = `/api/faculty/my_teaching_load?ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}&source=${source}${draftParam}`;
+        const url = `/api/faculty/my_teaching_load?ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}&source=${source}`;
         const resp = await fetch(url);
         const data = await resp.json();
         const result = data && data.success ? data : null;

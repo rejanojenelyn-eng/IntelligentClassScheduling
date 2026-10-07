@@ -43,6 +43,6 @@ def test_click_uses_existing_day_change_pipeline():
     assert "function _chooseRecommendedDay" in HTML
     assert "onTsDayChange(rowId);" in HTML
 
-def test_day_ui_is_compact_and_below_day_select():
-    assert 'id="ts-day-rec-${id}"' in HTML
-    assert ".ts-day-rec-box" in CSS
+def test_day_recommendations_live_inside_room_style_dropdown():
+    assert 'id="tsd-list-${id}"' in HTML
+    assert 'ts-ss-sect-hdr ts-ss-sect-opt ts-day-rec-title">RECOMMENDATIONS' in HTML

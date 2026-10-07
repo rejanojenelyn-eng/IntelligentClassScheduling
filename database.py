@@ -140,9 +140,10 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'sc7_building':   15,  # NEW -> final SC7 (Minimize Room/Building Movement; was fully hardcoded)
     'sc9_specialization': 15,  # NEW -> final SC9 (Faculty Specialization Match; was HC_SPEC, no weight before)
     # ── Hard constraint limits ──────────────────────────────
-    # Phase B checkpoint 1: now ACTIVE (final HC8 flat max-PT-teaching-nights
-    # cap for designees) — previously write-only. See scheduler.py's
-    # _check_night_pt_cap.
+    # LEGACY / UNUSED: final HC8 reads each designee's own
+    # designation.nightteachingservice (max distinct night-teaching days), not this
+    # flat global cap. Kept only so existing saved configs stay loadable. See
+    # scheduler.py's _check_night_pt_cap.
     'hc7_max_night':   2,
     # ── AM/PM PT window bounds (final HC1/HC2/HC3/HC4/HC8) ──
     # Shared by BOTH full-time and designee faculty (one authorized morning
@@ -161,7 +162,8 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'hc_faculty_load_enabled':     1,
     'hc_room_conflict_enabled':    1,
     'hc_faculty_conflict_enabled': 1,
-    'hc_section_conflict_enabled': 1,
+    'hc_section_conflict_enabled': 1,   # HC12 (Official scheduling only)
+    'hc_cross_schedule_enabled':   1,   # HC15 (Official scheduling only)
     'hc_lab_session_enabled':      1,
     'hc_program_restrict_enabled': 1,
     'hc_publish_gate_enabled':     1,
@@ -178,7 +180,10 @@ _SCHEDULER_CONFIG_DEFAULTS = {
         '[15,0,16,30],[16,30,18,0],[18,0,19,30],[19,30,21,0],'
         '[7,30,9,30],[9,0,11,0],[10,30,12,30],[12,0,14,0],[13,30,15,30],[14,30,16,30],'
         '[16,30,18,30],[18,0,20,0],[19,0,21,0],'
-        '[10,30,13,30],[13,30,16,30],[7,30,10,30],[9,0,12,0],[16,30,19,30],[18,0,21,0]]',
+        '[10,30,13,30],[13,30,16,30],[7,30,10,30],[9,0,12,0],[16,30,19,30],[18,0,21,0],'
+        # 3:00-6:00 PM: confirmed institutional block (not a generator block;
+        # valid for HC6 through this configuration only).
+        '[15,0,18,0]]',
     'hc_weekend_subject': 'nstp_only',
     'hc_weekend_day':     'sunday_only',
 }

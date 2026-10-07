@@ -22,6 +22,10 @@ let _rooms      = [];
 let _activeBldg = null;
 let _activeRoom = null;
 let _floorFilter = '';
+let _frsView       = 'week';   // 'week' | 'day' (Day = today)
+let _frsSessions   = [];       // last loaded room sessions (redrawn on view change)
+let _frsRoomSearch = '';
+function _frsToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 
 const _initEl = document.getElementById('frs-init-data');
 _buildings    = JSON.parse(_initEl.dataset.buildings || '[]');
@@ -60,7 +64,9 @@ function _buildBldgTabs() {
     _buildings.forEach((b, i) => {
         const btn = document.createElement('button');
         btn.className   = 'frs-bldg-tab' + (i === 0 ? ' active' : '');
-        btn.textContent = b.name.toUpperCase();
+        const icon = /lab/i.test(b.name) ? 'fa-flask' : /gym/i.test(b.name) ? 'fa-dumbbell'
+                   : /quad|stand/i.test(b.name) ? 'fa-landmark' : 'fa-building';
+        btn.innerHTML   = `<i class="fas ${icon}"></i> ${_esc(b.name.toUpperCase())}`;
         btn.dataset.bid = b.id;
         btn.onclick     = () => frsSelectBuilding(b.id);
         container.appendChild(btn);
@@ -68,32 +74,35 @@ function _buildBldgTabs() {
     if (_buildings.length) frsSelectBuilding(_buildings[0].id);
 }
 
-function frsSelectBuilding(bid) {
+function frsSelectBuilding(bid, focusRoomId = null) {
     _activeBldg = bid;
+    _frsRoomSearch = '';   // a building pick ends any all-buildings room search
+    const _rs = document.getElementById('frsRoomSearch'); if (_rs) _rs.value = '';
     _activeRoom = null;
     document.querySelectorAll('.frs-bldg-tab').forEach(t =>
         t.classList.toggle('active', String(t.dataset.bid) === String(bid))
     );
-    _buildFloorDropdown();
     _floorFilter = '';
-    _renderRoomList();
+    _buildFloorDropdown();
     _clearGrid();
+    _renderRoomList(focusRoomId);
 }
 
 /* ═══════════════════════════════════════════
    FLOOR DROPDOWN
 ═══════════════════════════════════════════ */
-const _FLOOR_LABELS = { '1': '1ST FLOOR', '2': '2ND FLOOR', '3': '3RD FLOOR', 'other': 'OTHER' };
+const _FLOOR_LABELS = { '1': '1st Floor', '2': '2nd Floor', '3': '3rd Floor', 'other': 'Other' };
+function _floorLabel(f) { return _FLOOR_LABELS[f || 'other'] || `${f} Floor`; }
 
 function _buildFloorDropdown() {
     const sel = document.getElementById('frsFloorSel');
-    sel.innerHTML = '<option value="">ALL FLOORS</option>';
+    sel.innerHTML = '<option value="">All Floors</option>';
     const bldgRooms = _rooms.filter(r => String(r.bid) === String(_activeBldg));
     const floors    = [...new Set(bldgRooms.map(r => r.floor || 'other'))].sort();
     floors.forEach(f => {
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = _FLOOR_LABELS[f] || f.toUpperCase();
+        opt.textContent = _floorLabel(f);
         sel.appendChild(opt);
     });
     if (floors.length === 1) {
@@ -101,6 +110,49 @@ function _buildFloorDropdown() {
         _floorFilter = floors[0];
     }
 }
+
+function frsSearchRooms() {
+    _frsRoomSearch = (document.getElementById('frsRoomSearch')?.value || '').trim().toLowerCase();
+    if (_frsRoomSearch) { _renderRoomSearchResults(); return; }   // keeps the shown room until a pick
+    _activeRoom = null;
+    _renderRoomList();
+}
+/* Room search spans EVERY building (ignores the building tab + floor filter). Results show
+   "Building · Floor"; clicking one switches to that room's building tab and opens it. */
+function _renderRoomSearchResults() {
+    const list = document.getElementById('frsRoomList');
+    const q = _frsRoomSearch;
+    const bName = bid => (_buildings.find(b => String(b.id) === String(bid)) || {}).name || '';
+    const hits = _rooms.filter(r => String(r.name).toLowerCase().includes(q) ||
+                                    bName(r.bid).toLowerCase().includes(q))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+    const countEl = document.getElementById('frsRoomCount');
+    if (countEl) countEl.textContent = `${hits.length} room${hits.length === 1 ? '' : 's'}`;
+    list.innerHTML = '';
+    if (!hits.length) {
+        list.innerHTML = '<div class="frs-room-empty">No rooms found.</div>';
+        return;
+    }
+    hits.forEach(r => {
+        const item = document.createElement('div');
+        item.className   = 'frs-room-item' + (String(r.id) === String(_activeRoom) ? ' active' : '');
+        item.innerHTML   = `<span class="frs-room-name">${_esc(r.name)}</span>` +
+                           `<span class="frs-room-floor">${_esc([bName(r.bid), _floorLabel(r.floor)].filter(Boolean).join(' · '))}</span>`;
+        item.dataset.rid = r.id;
+        item.onclick     = () => frsOpenRoomFromSearch(r.id, r.bid);
+        list.appendChild(item);
+    });
+}
+
+function frsOpenRoomFromSearch(rid, bid) {
+    const input = document.getElementById('frsRoomSearch');
+    if (input) input.value = '';
+    _frsRoomSearch = '';
+    frsSelectBuilding(bid, rid);
+    const tab = document.querySelector(`.frs-bldg-tab[data-bid="${bid}"]`);
+    if (tab && tab.scrollIntoView) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
 
 function frsFilterFloor() {
     _floorFilter = document.getElementById('frsFloorSel').value;
@@ -112,7 +164,8 @@ function frsFilterFloor() {
 /* ═══════════════════════════════════════════
    ROOM LIST
 ═══════════════════════════════════════════ */
-function _renderRoomList() {
+function _renderRoomList(focusRoomId = null) {
+    if (_frsRoomSearch) { _renderRoomSearchResults(); return; }
     const list = document.getElementById('frsRoomList');
     list.innerHTML = '';
     if (_activeBldg === null) {
@@ -123,19 +176,26 @@ function _renderRoomList() {
     if (_floorFilter) {
         filtered = filtered.filter(r => (r.floor || 'other') === _floorFilter);
     }
+    const countEl = document.getElementById('frsRoomCount');
+    if (countEl) countEl.textContent = `${filtered.length} room${filtered.length === 1 ? '' : 's'}`;
     if (!filtered.length) {
         list.innerHTML = '<div class="frs-room-empty">No rooms found.</div>';
         return;
     }
-    filtered.forEach((r, idx) => {
+    filtered.forEach(r => {
         const item = document.createElement('div');
         item.className   = 'frs-room-item';
-        item.textContent = r.name;
+        item.innerHTML   = `<span class="frs-room-name">${_esc(r.name)}</span>` +
+                           `<span class="frs-room-floor">${_esc(_floorLabel(r.floor))}</span>`;
         item.dataset.rid = r.id;
         item.onclick     = () => frsSelectRoom(r.id, r.name, r.bid);
         list.appendChild(item);
-        if (idx === 0) frsSelectRoom(r.id, r.name, r.bid);
     });
+    // Show the requested room (e.g. picked from the room search), else the first one.
+    const target = filtered.find(r => String(r.id) === String(focusRoomId)) || filtered[0];
+    frsSelectRoom(target.id, target.name, target.bid);
+    const el = list.querySelector(`.frs-room-item[data-rid="${target.id}"]`);
+    if (el && focusRoomId) el.scrollIntoView({ block: 'nearest' });
 }
 
 /* ═══════════════════════════════════════════
@@ -147,11 +207,15 @@ async function frsSelectRoom(rid, rname, bid) {
         el.classList.toggle('active', String(el.dataset.rid) === String(rid))
     );
     const bldgObj  = _buildings.find(b => String(b.id) === String(bid));
-    const bldgName = bldgObj ? bldgObj.name.toUpperCase() : '';
-    document.getElementById('frsCalTitle').textContent = `BUILDING: ${bldgName} – ROOM ${rname}`;
+    const roomObj  = _rooms.find(r => String(r.id) === String(rid));
+    document.getElementById('frsCalTitle').textContent = rname;
+    const subEl = document.getElementById('frsCalSub');
+    if (subEl) subEl.textContent = [bldgObj ? `${bldgObj.name} Building` : '',
+                                    roomObj ? _floorLabel(roomObj.floor) : ''].filter(Boolean).join(' · ');
+    _frsSessions = [];
     _clearGrid();
     try {
-        const params = new URLSearchParams({ scheduler_mode: 'local' });
+        const params = new URLSearchParams({ scheduler_mode: 'local', include_makeups: '1' });
         if (_activeAyId) params.set('ay_id', _activeAyId);
         if (_activeSem)  params.set('semester', _activeSem);
         const res  = await fetch(`/api/get_room_schedule/${rid}?` + params.toString());
@@ -165,13 +229,37 @@ async function frsSelectRoom(rid, rname, bid) {
 /* ═══════════════════════════════════════════
    GRID BUILD + RENDER
 ═══════════════════════════════════════════ */
+const _FRS_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _frsShownDates() {
+    const today = _frsToday();
+    if (_frsView === 'day') return [today];
+    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    return FRS_DAYS.map((_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
+}
+function frsSetView(view) {
+    _frsView = view === 'day' ? 'day' : 'week';
+    document.getElementById('frsViewDay')?.classList.toggle('active', _frsView === 'day');
+    document.getElementById('frsViewWeek')?.classList.toggle('active', _frsView === 'week');
+    _buildGrid();
+    _renderRoomCalendar(_frsSessions);
+}
+
 function _buildGrid() {
     const grid = document.getElementById('frsGrid');
     grid.innerHTML = '';
-    ['TIME', 'MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'].forEach(d => {
+    const dates = _frsShownDates();
+    const today = _frsToday().getTime();
+    grid.classList.toggle('frs-week', _frsView === 'week');
+    grid.classList.toggle('frs-day',  _frsView === 'day');
+    const th = document.createElement('div');
+    th.className = 'frs-grid-header-cell';
+    th.textContent = 'TIME';
+    grid.appendChild(th);
+    dates.forEach(d => {
         const h = document.createElement('div');
-        h.className   = 'frs-grid-header-cell';
-        h.textContent = d;
+        h.className = 'frs-grid-header-cell' + (d.getTime() === today ? ' frs-hd-today' : '');
+        h.innerHTML = `${FRS_DAYS[(d.getDay() + 6) % 7].toUpperCase()}` +
+                      `<span class="frs-hd-date">${_FRS_MON[d.getMonth()]} ${d.getDate()}</span>`;
         grid.appendChild(h);
     });
     for (let m = FRS_GRID_START; m <= FRS_GRID_END; m += 30) {
@@ -179,9 +267,10 @@ function _buildGrid() {
         lbl.className   = 'frs-time-cell';
         lbl.textContent = _minsToLabel(m);
         grid.appendChild(lbl);
-        FRS_DAYS.forEach(day => {
+        dates.forEach(d => {
+            const day  = FRS_DAYS[(d.getDay() + 6) % 7];
             const cell = document.createElement('div');
-            cell.className    = 'frs-day-col-cell';
+            cell.className    = 'frs-day-col-cell' + (d.getTime() === today ? ' frs-col-today' : '');
             cell.dataset.day  = day;
             cell.dataset.slot = m;
             grid.appendChild(cell);
@@ -193,9 +282,27 @@ function _clearGrid() {
     document.querySelectorAll('.frs-pill').forEach(p => p.remove());
 }
 
+/* Approved Make-up classes (include_makeups=1) are one-date meetings: shown only in
+   the week/day that contains their makeup_date. */
+function _frsYmd(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function _frsMakeupVisible(s) {
+    if (!s.makeup_date) return true;
+    return _frsShownDates().some(d => _frsYmd(d) === s.makeup_date);
+}
+function _frsMakeupDateLabel(s) {
+    const m = String(s.makeup_date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return s.daydesc || '—';
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    return `${s.daydesc}, ${_FRS_MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+
 function _renderRoomCalendar(sessions) {
+    _frsSessions = sessions || [];
     _clearGrid();
-    sessions.forEach(s => {
+    _frsSessions.forEach(s => {
+        if (!_frsMakeupVisible(s)) return;
         const day = _normalizeDay(s.daydesc);
         if (!day) return;
         const startM = _timeidToMins(s.starttimeid);
@@ -208,24 +315,31 @@ function _renderRoomCalendar(sessions) {
         const cell = document.querySelector(`.frs-day-col-cell[data-day="${day}"][data-slot="${anchorSlot}"]`);
         if (!cell) return;
         const offsetPx = (visStart - anchorSlot) * (FRS_SLOT_H / 30);
-        const heightPx = Math.max((visEnd - visStart) * (FRS_SLOT_H / 30), 20);
+        // 4px gap at the bottom keeps back-to-back classes visibly separate.
+        const heightPx = Math.max((visEnd - visStart) * (FRS_SLOT_H / 30) - 4, 20);
         if (heightPx <= 0) return;
-        const isLocal = (s.status || '').toLowerCase() === 'local';
+        const isLocal  = (s.status || '').toLowerCase() === 'local';
+        const isMakeup = !!s.makeup_date;
         const pill = document.createElement('div');
-        pill.className        = 'frs-pill' + (isLocal ? ' frs-pill-local' : '');
+        const color = _subjectColor(s.subjectcode || '');
+        pill.className        = 'frs-pill' + (isLocal ? ' frs-pill-local' : '') + (isMakeup ? ' frs-pill-makeup' : '')
+                              + (heightPx < 70 ? ' frs-pill-compact' : '');
         pill.style.top        = offsetPx + 'px';
         pill.style.height     = heightPx + 'px';
-        pill.style.background = _subjectColor(s.subjectcode || '');
+        pill.style.background = color;
+        if (!isLocal) pill.style.borderLeftColor = _frsShade(color, -0.42);
         pill.style.cursor     = 'pointer';
-        pill.title            = isLocal ? 'Local Arrangement — Click to view details' : 'Click to view details';
+        pill.title            = isMakeup ? `Make-up class (${_frsMakeupDateLabel(s)}) — Click to view details`
+                              : isLocal ? 'Local Arrangement — Click to view details' : 'Click to view details';
         pill.addEventListener('click', () => frsShowDetail(s));
         const instrName = (s.instructor || 'TBA').split(',')[0].trim();
         pill.innerHTML =
             (isLocal ? `<span class="frs-pill-la-badge">LA</span>` : '') +
+            (isMakeup ? `<span class="frs-pill-la-badge frs-pill-mu-badge">MAKE-UP</span>` : '') +
             `<span class="frs-pill-code">${_esc(s.subjectcode || '')}</span>` +
             `<span class="frs-pill-name">${_esc(s.subjectname || '')}</span>` +
             `<div class="frs-pill-meta"><i class="fas fa-user"></i> ${_esc(instrName)}</div>` +
-            `<div class="frs-pill-meta"><i class="fas fa-door-open"></i> ${_esc(s.roomname || 'TBA')}</div>`;
+            `<div class="frs-pill-time">${_minsToLabel(startM)} - ${_minsToLabel(endM)}</div>`;
         cell.appendChild(pill);
     });
 }
@@ -236,16 +350,17 @@ function frsShowDetail(s) {
     const endLabel   = _minsToLabel(_timeidToMins(s.endtimeid)   || FRS_GRID_START);
     const timeRange  = `${startLabel} – ${endLabel}`;
     const _st = (s.status || '').toLowerCase();
-    const statusCls  = _st === 'published' ? 'frs-detail-badge-pub'
+    const statusCls  = s.makeup_date       ? 'frs-detail-badge-makeup'
+                     : _st === 'published' ? 'frs-detail-badge-pub'
                      : _st === 'local'     ? 'frs-detail-badge-local'
                      : 'frs-detail-badge-draft';
-    const statusTxt  = _st === 'local' ? 'Local Arrangement' : (s.status || 'Draft');
+    const statusTxt  = s.makeup_date ? 'Make-up Class' : _st === 'local' ? 'Local Arrangement' : (s.status || 'Draft');
     const yrLabel    = s.year_level ? `${s.year_level}${_ordSuffix(s.year_level)} Year` : '—';
 
     document.getElementById('frsDetailSubjCode').textContent = s.subjectcode  || '—';
     document.getElementById('frsDetailSubjName').textContent = s.subjectname  || '—';
     document.getElementById('frsDetailInstr').textContent    = s.instructor   || 'TBA';
-    document.getElementById('frsDetailDay').textContent      = s.daydesc      || '—';
+    document.getElementById('frsDetailDay').textContent      = (s.makeup_date ? _frsMakeupDateLabel(s) : s.daydesc)      || '—';
     document.getElementById('frsDetailTime').textContent     = timeRange;
     document.getElementById('frsDetailRoom').textContent     = s.roomname     || '—';
     document.getElementById('frsDetailProg').textContent     = s.programcode  || '—';
@@ -418,10 +533,12 @@ async function frsFindAvailable() {
     content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-spinner fa-spin"></i> Loading rooms…</div>`;
 
     const bldgName = bid
-        ? (_buildings.find(b => String(b.id) === String(bid))?.name || 'Selected Building')
-        : 'ALL BUILDINGS';
+        ? (_buildings.find(b => String(b.id) === String(bid))?.name || 'Selected building')
+        : 'All buildings';
     document.getElementById('frsAvailHeader').textContent =
-        `HERE ARE THE AVAILABLE ROOMS FOR (${bldgName.toUpperCase()})`;
+        `Here are the available rooms for the selected filters (${bldgName}).`;
+    const countEl = document.getElementById('frsAvailCount');
+    if (countEl) countEl.textContent = '';
 
     const params = new URLSearchParams();
     if (day)     params.set('day',         day);
@@ -446,47 +563,186 @@ async function frsFindAvailable() {
     }
 }
 
+let _availLast = null;
+let _availView = 'card';
+const _availCollapsed = new Set();
+function frsAvailRerender() { if (_availLast) _renderAvailRooms(..._availLast); }
+function frsAvailSetView(v) {
+    _availView = v === 'list' ? 'list' : 'card';
+    document.getElementById('frsAvailCardBtn')?.classList.toggle('active', _availView === 'card');
+    document.getElementById('frsAvailListBtn')?.classList.toggle('active', _availView === 'list');
+    frsAvailRerender();
+}
+function frsAvailToggleGroup(el) {
+    const g = el.closest('.frs-avail-group');
+    if (!g) return;
+    g.classList.toggle('collapsed');
+    g.classList.contains('collapsed') ? _availCollapsed.add(g.dataset.bname) : _availCollapsed.delete(g.dataset.bname);
+}
+function frsClearAvailFilters() {
+    ['frsAvailDay', 'frsAvailType', 'frsAvailBuilding', 'frsAvailRoomNum', 'frsAvailStart',
+     'frsAvailStartTxt', 'frsAvailEnd', 'frsAvailEndTxt', 'frsAvailSearch']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    _rebuildAvailRoomNumOptions(null);
+    frsFindAvailable();
+}
+
 function _renderAvailRooms(rooms, start, end, hasTimeFilter) {
+    _availLast = [rooms, start, end, hasTimeFilter];
     const content = document.getElementById('frsAvailContent');
-    if (!rooms.length) {
-        const msg = hasTimeFilter
-            ? 'No available rooms found for the selected criteria.'
-            : 'No rooms found.';
+    const q = (document.getElementById('frsAvailSearch')?.value || '').trim().toLowerCase();
+    const shown = (rooms || []).filter(r => !q ||
+        String(r.roomname || '').toLowerCase().includes(q) || String(r.buildingname || '').toLowerCase().includes(q));
+    const byName = (a, b) => String(a.roomname || '').localeCompare(String(b.roomname || ''), undefined, { numeric: true });
+    shown.sort((document.getElementById('frsAvailSort')?.value || 'name-asc') === 'name-desc' ? (a, b) => byName(b, a) : byName);
+    const countEl = document.getElementById('frsAvailCount');
+    if (countEl) countEl.textContent = `Showing ${shown.length} room${shown.length === 1 ? '' : 's'}`;
+    if (!shown.length) {
+        const msg = q ? 'No rooms match your search.'
+            : hasTimeFilter ? 'No available rooms found for the selected criteria.' : 'No rooms found.';
         content.innerHTML = `<div class="frs-cal-loading"><i class="fas fa-door-closed"></i> ${msg}</div>`;
         return;
     }
     const byBldg = {};
-    rooms.forEach(r => {
-        const key = r.buildingname || 'Other';
-        if (!byBldg[key]) byBldg[key] = [];
-        byBldg[key].push(r);
-    });
+    shown.forEach(r => { const k = r.buildingname || 'Other'; (byBldg[k] = byBldg[k] || []).push(r); });
     const timeLabel = hasTimeFilter ? `${_fmt12h(start)} – ${_fmt12h(end)}` : '';
+    const badgeOf = r => ((r.roomtype || '').toLowerCase() === 'laboratory'
+        ? '<span class="frs-avail-badge frs-badge-lab">LAB</span>'
+        : '<span class="frs-avail-badge frs-badge-lec">LECTURE</span>');
+    const clickAttr = r => `onclick="frsShowRoomSchedulePopup(${r.roomid}, '${_esc(r.roomname || '')}', '${_esc(r.buildingname || '')}')"`;
     let html = '';
-    Object.entries(byBldg).forEach(([bname, bRooms]) => {
-        html += `<div class="frs-avail-building-title">${_esc(bname)}</div>`;
-        html += `<div class="frs-avail-cards">`;
-        bRooms.forEach(r => {
-            const isLab = (r.roomtype || '').toLowerCase() === 'laboratory';
-            const badge = isLab
-                ? '<span class="frs-avail-badge frs-badge-lab">LAB</span>'
-                : '<span class="frs-avail-badge frs-badge-lec">LECTURE</span>';
-            const cap     = r.roomcapacity ? `<div class="frs-avail-detail"><i class="fas fa-users"></i> Capacity: ${_esc(String(r.roomcapacity))}</div>` : '';
-            const timeLbl = timeLabel ? `<div class="frs-avail-time">${_esc(timeLabel)}</div>` : '';
-            const statusChip = hasTimeFilter ? `<div class="frs-avail-status-chip">&#10003; Available</div>` : '';
-            html += `
-            <div class="frs-avail-card">
-                ${hasTimeFilter ? '<div class="frs-avail-dot"></div>' : ''}
-                <div class="frs-avail-room-name">ROOM ${_esc(r.roomname || '')}</div>
-                ${badge}
-                ${timeLbl}
-                ${cap}
-                ${statusChip}
-            </div>`;
-        });
-        html += `</div>`;
+    Object.entries(byBldg).sort(([a], [b]) => a.localeCompare(b)).forEach(([bname, bRooms]) => {
+        html += `<div class="frs-avail-group${_availCollapsed.has(bname) ? ' collapsed' : ''}" data-bname="${_esc(bname)}">
+            <div class="frs-avail-group-head" onclick="frsAvailToggleGroup(this)">
+                <i class="fas fa-building-columns"></i>
+                <span class="frs-avail-group-name">${_esc(String(bname).toUpperCase())}</span>
+                <span class="frs-avail-group-pill">${bRooms.length} room${bRooms.length === 1 ? '' : 's'}</span>
+                <i class="fas fa-chevron-up frs-avail-chev"></i>
+            </div>
+            <div class="frs-avail-group-body">`;
+        if (_availView === 'list') {
+            html += `<table class="frs-avail-list"><thead><tr><th>Room</th><th>Type</th><th>Capacity</th>${timeLabel ? '<th>Time</th>' : ''}<th></th></tr></thead><tbody>`;
+            bRooms.forEach(r => {
+                html += `<tr class="frs-avail-row" title="View this room's schedule" ${clickAttr(r)}>
+                    <td class="frs-avail-row-name">${_esc(r.roomname || '')}</td>
+                    <td>${badgeOf(r)}</td>
+                    <td>${r.roomcapacity ? _esc(String(r.roomcapacity)) : '—'}</td>
+                    ${timeLabel ? `<td>${_esc(timeLabel)}</td>` : ''}
+                    <td style="text-align:right;color:#800000;font-weight:700;font-size:.72rem;">View Schedule</td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+        } else {
+            html += `<div class="frs-avail-cards">`;
+            bRooms.forEach(r => {
+                const cap = r.roomcapacity
+                    ? `<div class="frs-avail-detail"><i class="fas fa-users"></i> Capacity: ${_esc(String(r.roomcapacity))}</div>` : '';
+                html += `
+                <div class="frs-avail-card frs-avail-card-clickable" title="View this room's schedule" ${clickAttr(r)}>
+                    ${hasTimeFilter ? '<div class="frs-avail-dot"></div>' : ''}
+                    <div class="frs-avail-card-top">
+                        <div class="frs-avail-room-name">${_esc(r.roomname || '')}</div>
+                        ${badgeOf(r)}
+                    </div>
+                    ${cap}
+                    ${timeLabel ? `<div class="frs-avail-time">${_esc(timeLabel)}</div>` : ''}
+                    ${hasTimeFilter ? `<div class="frs-avail-status-chip">&#10003; Available</div>` : ''}
+                    <div class="frs-avail-request-hint"><i class="fas fa-calendar-alt"></i> View Schedule</div>
+                </div>`;
+            });
+            html += `</div>`;
+        }
+        html += `</div></div>`;
     });
     content.innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════
+   ROOM SCHEDULE POPUP (Available Rooms → room card)
+═══════════════════════════════════════════ */
+let _frsPopupSeq = 0;
+const FRS_POP_ROW = 22;
+function _frsPopupEl() {
+    let el = document.getElementById('frsRoomPopup');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'frsRoomPopup';
+    el.className = 'frs-rp-overlay';
+    el.innerHTML = `
+        <div class="frs-rp-box" role="dialog" aria-modal="true">
+            <div class="frs-rp-head">
+                <div class="frs-rp-icon"><i class="fas fa-building-columns"></i></div>
+                <div class="frs-rp-titles">
+                    <div class="frs-rp-title" id="frsRpTitle"></div>
+                    <div class="frs-rp-sub" id="frsRpSub"></div>
+                </div>
+                <button type="button" class="frs-rp-close" onclick="frsCloseRoomSchedulePopup()" title="Close">&times;</button>
+            </div>
+            <div class="frs-rp-body" id="frsRpBody"></div>
+            <div class="frs-rp-foot">
+                <span class="frs-rp-note"><i class="fas fa-circle-info"></i> Shows the room's regular weekly classes.</span>
+                <button type="button" class="frs-rp-cancel" onclick="frsCloseRoomSchedulePopup()">Close</button>
+            </div>
+        </div>`;
+    el.addEventListener('click', e => { if (e.target === el) frsCloseRoomSchedulePopup(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('open')) frsCloseRoomSchedulePopup(); });
+    document.body.appendChild(el);
+    return el;
+}
+async function frsShowRoomSchedulePopup(roomId, roomName, buildingName) {
+    const seq = ++_frsPopupSeq;
+    const el = _frsPopupEl();
+    const room = _rooms.find(r => String(r.id) === String(roomId));
+    document.getElementById('frsRpTitle').textContent = roomName;
+    document.getElementById('frsRpSub').textContent = [buildingName ? `${buildingName} Building` : '',
+        room ? _floorLabel(room.floor) : '', room && room.capacity ? `Capacity: ${room.capacity}` : '']
+        .filter(Boolean).join(' · ');
+    const body = document.getElementById('frsRpBody');
+    body.innerHTML = '<div class="frs-cal-loading"><i class="fas fa-spinner fa-spin"></i> Loading schedule…</div>';
+    el.classList.add('open');
+    try {
+        const params = new URLSearchParams({ scheduler_mode: 'local' });
+        if (_activeAyId) params.set('ay_id', _activeAyId);
+        if (_activeSem)  params.set('semester', _activeSem);
+        const res  = await fetch(`/api/get_room_schedule/${roomId}?` + params.toString());
+        const data = await res.json();
+        if (seq !== _frsPopupSeq) return;
+        body.innerHTML = _frsPopupGrid(Array.isArray(data) ? data : []);
+    } catch (e) {
+        if (seq === _frsPopupSeq) body.innerHTML = '<div class="frs-cal-loading"><i class="fas fa-exclamation-circle"></i> Could not load the schedule.</div>';
+    }
+}
+function _frsPopupGrid(sessions) {
+    const colH = (FRS_GRID_END - FRS_GRID_START) / 30 * FRS_POP_ROW;
+    let times = '';
+    for (let m = FRS_GRID_START; m < FRS_GRID_END; m += 30) {
+        times += `<div class="frs-rp-time" style="height:${FRS_POP_ROW}px">${_minsToLabel(m)}</div>`;
+    }
+    const cols = FRS_DAYS.map(day => {
+        const blocks = sessions.filter(s => _normalizeDay(s.daydesc) === day).map(s => {
+            const st = _timeidToMins(s.starttimeid), en = _timeidToMins(s.endtimeid);
+            if (!st || !en || en <= st) return '';
+            const top = (Math.max(st, FRS_GRID_START) - FRS_GRID_START) / 30 * FRS_POP_ROW;
+            const h   = Math.max((Math.min(en, FRS_GRID_END) - Math.max(st, FRS_GRID_START)) / 30 * FRS_POP_ROW - 3, 16);
+            const color = _subjectColor(s.subjectcode || '');
+            const instr = (s.instructor || 'TBA').split(',')[0].trim();
+            return `<div class="frs-rp-block" style="top:${top}px;height:${h}px;background:${color};border-left-color:${_frsShade(color, -0.42)}"
+                         title="${_esc(s.subjectcode || '')} — ${_esc(s.subjectname || '')}\n${_esc(instr)}\n${_minsToLabel(st)} - ${_minsToLabel(en)}">
+                        <b>${_esc(s.subjectcode || '')}</b>${h >= 40 ? `<span>${_esc(instr)}</span>` : ''}
+                        ${h >= 56 ? `<span>${_minsToLabel(st)} - ${_minsToLabel(en)}</span>` : ''}
+                    </div>`;
+        }).join('');
+        return `<div class="frs-rp-col"><div class="frs-rp-dayhead">${day.slice(0, 3).toUpperCase()}</div>
+                    <div class="frs-rp-colbody" style="height:${colH}px">${blocks}</div></div>`;
+    }).join('');
+    const empty = sessions.length ? '' : '<div class="frs-rp-empty">No classes scheduled in this room — it is free all week.</div>';
+    return `${empty}<div class="frs-rp-grid">
+                <div class="frs-rp-col frs-rp-timecol"><div class="frs-rp-dayhead">TIME</div><div>${times}</div></div>
+                ${cols}
+            </div>`;
+}
+function frsCloseRoomSchedulePopup() {
+    document.getElementById('frsRoomPopup')?.classList.remove('open');
 }
 
 /* ═══════════════════════════════════════════
@@ -526,4 +782,14 @@ function _esc(str) {
     return String(str || '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+
+/* Darken (amount < 0) or lighten a #rrggbb color — the card's left accent border. */
+function _frsShade(hex, amount) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return '#999';
+    const n = parseInt(m[1], 16);
+    const ch = v => Math.max(0, Math.min(255, Math.round(amount < 0 ? v * (1 + amount) : v + (255 - v) * amount)));
+    return '#' + [ch(n >> 16), ch((n >> 8) & 255), ch(n & 255)].map(v => v.toString(16).padStart(2, '0')).join('');
 }

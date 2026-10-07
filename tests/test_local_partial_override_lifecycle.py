@@ -63,6 +63,24 @@ def env():
         mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def _reset_real_transaction_between_tests(env):
+    """Keep each lifecycle test isolated on the shared real DB connection.
+
+    The endpoint-facing _Shared wrapper intentionally makes app-level commit()/rollback()
+    no-ops so a test cannot persist data.  PostgreSQL transaction state, however, is
+    connection-wide: if one test exercises an expected failing statement, the real
+    connection can remain INERROR even though the wrapper swallowed rollback().  Reset
+    the real transaction after every test so a validation test cannot poison the next
+    request.  This still preserves the original safety contract: nothing created by a
+    test is persisted.
+    """
+    try:
+        yield
+    finally:
+        env[1].rollback()
+
+
 def _q(real, sql, params=()):
     import psycopg2.extras
     cur = real.cursor(cursor_factory=psycopg2.extras.RealDictCursor)

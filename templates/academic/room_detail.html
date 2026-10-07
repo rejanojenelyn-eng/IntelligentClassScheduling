@@ -1,11 +1,14 @@
 {% extends base_template %}
 
+
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/room_detail.css') }}">
 {% endblock %}
 
+
 {% block content %}
 <div class="rd-container">
+
 
     <!-- TOP HEADER BAR -->
     <div class="rd-header-bar">
@@ -19,6 +22,7 @@
         {% endif %}
     </div>
 
+
     <!-- HORIZONTAL BUILDING TABS -->
     <div class="rd-building-tabs">
         {% for bldg in buildings %}
@@ -30,8 +34,10 @@
         {% endfor %}
     </div>
 
+
     <!-- MAIN BODY: ROOM LIST + CALENDAR -->
     <div class="rd-body">
+
 
         <!-- LEFT: ROOM LIST SIDEBAR -->
         <div class="rd-room-sidebar" id="rdRoomSidebar">
@@ -40,6 +46,7 @@
                 <!-- populated by JS -->
             </div>
         </div>
+
 
         <!-- RIGHT: CALENDAR -->
         <div class="rd-calendar-wrap">
@@ -64,6 +71,7 @@
         </div>
     </div>
 </div>
+
 
 <script>
 const ROOM_ID         = {{ room.roomid }};
