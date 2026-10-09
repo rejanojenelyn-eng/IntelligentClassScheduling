@@ -277,7 +277,7 @@
         <div class="emp-export-header">
             <div class="emp-export-header-icon"><i class="fas fa-chalkboard-teacher"></i></div>
             <div>
-                <h2>Subject/Faculty Assignment Export</h2>
+                <h2>Subject/Faculty Assignment</h2>
                 <p>Select Academic Year, Semester, and Faculty Type(s) below</p>
             </div>
             <button class="emp-export-close" onclick="closeFacSubExportModal()">&#215;</button>
@@ -286,7 +286,7 @@
             <div class="emp-export-summary-icon"><i class="fas fa-list-alt"></i></div>
             <div>
                 <span class="emp-export-count" id="facSubCount">0</span>
-                <span class="emp-export-count-label">Assignments to Export</span>
+                <span class="emp-export-count-label">Assignments Found</span>
             </div>
             <div class="emp-export-summary-info" id="facSubScopeLabel">Select filters to begin</div>
         </div>
@@ -346,73 +346,13 @@
             </div>
         </div>
 
-        <div class="emp-export-section">
-            <div class="emp-export-section-header">
-                <span class="emp-export-section-title">Export Format</span>
-                <button class="emp-export-select-all" id="facSubFmtAllBtn" onclick="_toggleFacSubAllFmts()">Select All</button>
-            </div>
-            <div class="emp-export-format-grid">
-                <div class="emp-export-format-card csv-sel" data-format="csv" onclick="_toggleFacSubFmtCard(this)">
-                    <div class="emp-format-icon csv-color"><i class="fas fa-file-csv"></i></div>
-                    <div class="emp-format-name">CSV</div>
-                    <div class="emp-format-desc">Comma separated values</div>
-                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
-                </div>
-                <div class="emp-export-format-card xlsx-sel" data-format="xlsx" onclick="_toggleFacSubFmtCard(this)">
-                    <div class="emp-format-icon xlsx-color"><i class="fas fa-file-excel"></i></div>
-                    <div class="emp-format-name">Excel (XLSX)</div>
-                    <div class="emp-format-desc">Microsoft Excel workbook</div>
-                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
-                </div>
-                <div class="emp-export-format-card pdf-sel" data-format="pdf" onclick="_toggleFacSubFmtCard(this)">
-                    <div class="emp-format-icon pdf-color"><i class="fas fa-file-pdf"></i></div>
-                    <div class="emp-format-name">PDF</div>
-                    <div class="emp-format-desc">Portable document format</div>
-                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
-                </div>
-                <div class="emp-export-format-card docx-sel" data-format="docx" onclick="_toggleFacSubFmtCard(this)">
-                    <div class="emp-format-icon docx-color"><i class="fas fa-file-word"></i></div>
-                    <div class="emp-format-name">Word (DOCX)</div>
-                    <div class="emp-format-desc">Microsoft Word document</div>
-                    <div class="emp-format-check"><i class="fas fa-check-circle"></i></div>
-                </div>
-            </div>
-            <div class="emp-export-format-error" id="facSubFmtError" style="display:none;">
-                Please select at least one export format.
-            </div>
-        </div>
-
-        <div class="emp-export-section">
-            <label class="emp-export-label">Export Filename</label>
-            <div class="emp-filename-input-wrapper">
-                <i class="fas fa-file-signature"></i>
-                <input type="text" id="facSubFilenameInput" class="emp-filename-input" value="Faculty_Subject_Assignment" placeholder="Enter filename...">
-            </div>
-        </div>
-
         <div class="emp-export-footer">
             <button class="emp-export-cancel" onclick="closeFacSubExportModal()">Cancel</button>
-            <button class="emp-export-confirm" id="facSubConfirmBtn" onclick="executeFacSubExport()" disabled>
-                <i class="fas fa-download"></i> Export
+            <button class="emp-export-confirm" id="facSubConfirmBtn" onclick="previewFacSubReport()" disabled>
+                <i class="fas fa-eye"></i> Preview Report
             </button>
         </div>
     </div>
-</div>
-
-<div id="facSubExportLoadingOverlay" style="display:none;" class="emp-export-loading">
-    <div class="emp-export-loading-card">
-        <div class="emp-export-spinner"></div>
-        <div class="emp-export-loading-text" id="facSubExportLoadingText">Preparing export...</div>
-        <div class="emp-export-loading-sub" id="facSubExportLoadingSubText">Please wait</div>
-    </div>
-</div>
-<div id="facSubExportToast" class="emp-export-toast" style="display:none;">
-    <div class="emp-export-toast-icon" id="facSubExportToastIcon"></div>
-    <div class="emp-export-toast-body">
-        <div class="emp-export-toast-title" id="facSubExportToastTitle"></div>
-        <div class="emp-export-toast-msg" id="facSubExportToastMsg"></div>
-    </div>
-    <button class="emp-export-toast-close" onclick="document.getElementById('facSubExportToast').style.display='none'">&#215;</button>
 </div>
 
 
@@ -1117,7 +1057,6 @@ function _rptRoomSelContinue() {
    Reports > Teaching Assignment's "Generate" opens this modal.
 ═══════════════════════════════════════════════════════════ */
 const _FACSUB_COUNT_ROUTE  = '/admin/faculty/subject-export/count';
-const _FACSUB_EXPORT_ROUTE = '/admin/faculty/subject-export';
 let _facSubCountTmr = null;
 let _facSubLastFacultyCount = 0;
 
@@ -1125,14 +1064,10 @@ function openFacSubExportModal() {
     _facSubLastFacultyCount = 0;
     document.querySelectorAll('#facSubExportModal .fse-ay-cb, #facSubExportModal .fse-sem-cb, #facSubExportModal .fse-type-cb').forEach(cb => cb.checked = false);
     document.querySelectorAll('#facSubExportModal .emp-cb-item').forEach(el => el.classList.remove('selected'));
-    document.querySelectorAll('#facSubExportModal .emp-export-format-card').forEach(c => c.classList.remove('selected'));
-    document.getElementById('facSubFilenameInput').value = 'Faculty_Subject_Assignment';
     document.getElementById('facSubCount').textContent = '0';
     document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
-    document.getElementById('facSubFmtError').style.display = 'none';
     document.getElementById('facSubConfirmBtn').disabled = true;
     document.getElementById('facSubTypeAllBtn').textContent = 'All';
-    document.getElementById('facSubFmtAllBtn').textContent = 'Select All';
     document.getElementById('facSubExportModal').style.display = 'flex';
 }
 function closeFacSubExportModal() {
@@ -1165,21 +1100,6 @@ function _syncFacSubTypeAllBtn() {
     const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
     const allSel = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
     document.getElementById('facSubTypeAllBtn').textContent = allSel ? 'Clear' : 'All';
-}
-
-function _toggleFacSubFmtCard(el) {
-    el.classList.toggle('selected');
-    const all    = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
-    const allSel = Array.from(all).every(c => c.classList.contains('selected'));
-    document.getElementById('facSubFmtAllBtn').textContent = allSel ? 'Deselect All' : 'Select All';
-    _updateFacSubFooter();
-}
-function _toggleFacSubAllFmts() {
-    const cards  = document.querySelectorAll('#facSubExportModal .emp-export-format-card');
-    const allSel = Array.from(cards).every(c => c.classList.contains('selected'));
-    cards.forEach(c => allSel ? c.classList.remove('selected') : c.classList.add('selected'));
-    document.getElementById('facSubFmtAllBtn').textContent = !allSel ? 'Deselect All' : 'Select All';
-    _updateFacSubFooter();
 }
 
 function _facSubFilters() {
@@ -1217,65 +1137,20 @@ async function _fetchFacSubCount() {
 
 function _updateFacSubFooter() {
     const f    = _facSubFilters();
-    const fmts = document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected');
     const hasFilters = f.ay_ids.length > 0 && f.sem_types.length > 0 && f.faculty_types.length > 0;
-    const ok = hasFilters && fmts.length > 0 && _facSubLastFacultyCount > 0;
+    const ok = hasFilters && _facSubLastFacultyCount > 0;
     document.getElementById('facSubConfirmBtn').disabled = !ok;
 }
 
-function _showFacSubExportLoading(text, sub) {
-    document.getElementById('facSubExportLoadingText').textContent = text || 'Exporting...';
-    document.getElementById('facSubExportLoadingSubText').textContent = sub || 'Please wait';
-    document.getElementById('facSubExportLoadingOverlay').style.display = 'flex';
-}
-function _hideFacSubExportLoading() { document.getElementById('facSubExportLoadingOverlay').style.display = 'none'; }
-function _showFacSubExportToast(type, title, msg) {
-    const toast = document.getElementById('facSubExportToast');
-    toast.className = `emp-export-toast ${type}`;
-    document.getElementById('facSubExportToastIcon').innerHTML = type === 'success'
-        ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-times-circle"></i>';
-    document.getElementById('facSubExportToastTitle').textContent = title;
-    document.getElementById('facSubExportToastMsg').textContent   = msg;
-    toast.style.display = 'flex';
-    setTimeout(() => { toast.style.display = 'none'; }, 5000);
-}
-
-async function executeFacSubExport() {
-    const f      = _facSubFilters();
-    const fmts   = Array.from(document.querySelectorAll('#facSubExportModal .emp-export-format-card.selected')).map(c => c.dataset.format);
-    const fmtErr = document.getElementById('facSubFmtError');
-    if (!fmts.length) { fmtErr.style.display = 'block'; return; }
-    fmtErr.style.display = 'none';
-    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) {
-        _showFacSubExportToast('error', 'Missing Selection', 'Select at least one Academic Year, Semester, and Faculty Type.');
-        return;
-    }
-    const filename = (document.getElementById('facSubFilenameInput').value || 'Faculty_Subject_Assignment').trim().replace(/[\/\\:*?"<>|]/g, '_');
-    const btn = document.getElementById('facSubConfirmBtn');
-    btn.disabled = true;
-    closeFacSubExportModal();
-    _showFacSubExportLoading('Generating Export', 'Building faculty/subject assignment report...');
-
-    try {
-        const resp = await fetch(_FACSUB_EXPORT_ROUTE, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ ...f, formats: fmts, filename }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || resp.statusText);
-        }
-        const blob = await resp.blob();
-        const ext  = fmts.length > 1 ? '.zip' : '.' + fmts[0];
-        const a    = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename + ext });
-        a.click(); URL.revokeObjectURL(a.href);
-        _showFacSubExportToast('success', 'Export Complete', 'Faculty/subject assignment export downloaded.');
-    } catch (e) {
-        _showFacSubExportToast('error', 'Export Failed', e.message);
-    } finally {
-        _hideFacSubExportLoading();
-        btn.disabled = false;
-    }
+// Preview first: the preview page shows the report and exports it (Export Report).
+function previewFacSubReport() {
+    const f = _facSubFilters();
+    if (!f.ay_ids.length || !f.sem_types.length || !f.faculty_types.length) return;
+    const params = new URLSearchParams();
+    f.ay_ids.forEach(v => params.append('ay_ids', v));
+    f.sem_types.forEach(v => params.append('sem_types', v));
+    f.faculty_types.forEach(v => params.append('faculty_types', v));
+    window.location.href = `/reports/preview/faculty_subject?${params.toString()}`;
 }
 </script>
 {% endblock %}

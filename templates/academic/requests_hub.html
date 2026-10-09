@@ -698,6 +698,11 @@ async function rhubSelect(type, id, el) {
     rhubValidate(type, id, req);     // async constraint check
 }
 
+function _rhubEsc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 /* ════ RENDER DETAIL ════ */
 function rhubRenderDetail(req, v) {
     const body = document.getElementById('rhubDetailsBody');
@@ -734,8 +739,13 @@ function rhubRenderDetail(req, v) {
         const warnHtml = (v.warnings || []).length
             ? `<div class="rhub-analytics-msg" style="color:#856404">Advisory: ${v.warnings.map(w => w.message).join(' | ')}</div>`
             : '';
+        // HC16 group model: an adjustment of a Merge Group member's meeting is never approvable.
+        const mergeLocks = (v.merge_restrictions || []);
+        const mBadge = mergeLocks.length
+            ? `<span class="rhub-chip chip-bad" title="${_rhubEsc(mergeLocks[0].error)}"><i class="fas fa-object-group"></i> MERGED CLASS — ${_rhubEsc(mergeLocks[0].group || '')}</span>`
+            : '';
         analyticsHtml = `
-            <div class="rhub-chips">${rBadge}${fBadge}${sBadge}${pBadge}</div>
+            <div class="rhub-chips">${mBadge}${rBadge}${fBadge}${sBadge}${pBadge}</div>
             <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}`;
         // The server may know a newer status than the list (another reviewer decided it)
         if (v.status && v.status !== req.status) req.status = v.status;
@@ -744,7 +754,8 @@ function rhubRenderDetail(req, v) {
 
     // Make-up requests with hard conflicts can't be approved (the server re-checks
     // and refuses), so don't offer the button — rejecting is still possible.
-    const blocked = !!(v && req.req_type === 'makeup' && !v.all_ok);
+    const blocked = !!(v && req.req_type === 'makeup' && !v.all_ok) ||
+        !!(v && (v.merge_restrictions || []).length) || !!req.merge_restriction;
     const actionBtns = req.status === 'Pending' ? `
         <div class="rhub-actions">
             <button class="btn-rhub-approve" onclick="rhubApprove()" ${blocked

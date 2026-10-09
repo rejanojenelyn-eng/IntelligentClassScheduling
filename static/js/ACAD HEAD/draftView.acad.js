@@ -193,12 +193,10 @@ function _sortDaysStr(daysStr) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
         try {
-            const res = await fetch('/api/schedule/save-draft', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ schedule_data: scheduleData, context: draftContext })
-            });
-            const data = await res.json();
+            const data = await _dvPostWithMerge(b => fetch('/api/schedule/save-draft', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b)
+            }), { schedule_data: scheduleData, context: draftContext });
+            if (data._mergeDeclined) return;
             if (data.success) {
                 alert(`Saved as Draft V${data.draft_version}`);
             } else {
@@ -269,6 +267,27 @@ function _sortDaysStr(daysStr) {
         document.getElementById('publishModal').style.display = 'flex';
     };
 
+    // P7: Save Draft / Publish answer MERGE_CONFIRMATION_REQUIRED when a class sits exactly
+    // on another section's same-subject, same-faculty class. Ask, then resubmit confirmed.
+    // `send(payload)` performs the request (returns fetch's promise).
+    async function _dvPostWithMerge(send, body) {
+        let confirm = false;
+        for (;;) {
+            const res = await send(Object.assign({}, body, { confirm_merges: confirm }));
+            const data = await res.json();
+            if (!data.success && data.code === 'MERGE_CONFIRMATION_REQUIRED' && !confirm) {
+                const lines = (data.notice || []).map(t => `• ${t}`).join('\n');
+                const ok = await _dvConfirm(`You are merging classes:\n\n${lines}\n\n` +
+                    'These sections will attend one class together (same subject, faculty, day, time and ' +
+                    'room). The merge is recorded in Settings → Class Merging.', 'Merge Classes');
+                if (!ok) return { success: false, _mergeDeclined: true };
+                confirm = true;
+                continue;
+            }
+            return data;
+        }
+    }
+
     function _dvConfirm(message, title) {
         return new Promise(resolve => {
             const overlay = document.createElement('div');
@@ -335,12 +354,15 @@ function _sortDaysStr(daysStr) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
         try {
-            const res = await fetch('/api/schedule/approve', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ schedule_data: selectedData, context: draftContext })
-            });
-            const data = await res.json();
+            const data = await _dvPostWithMerge(b => fetch('/api/schedule/approve', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b)
+            }), { schedule_data: selectedData, context: draftContext });
+            if (data._mergeDeclined) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve Schedule';
+                modal.style.display = 'flex';
+                return;
+            }
             if (data.success) {
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Published';
                 await _dvConfirm(`${selectedData.length} session${selectedData.length !== 1 ? 's' : ''} published successfully!`, 'Schedule Published');

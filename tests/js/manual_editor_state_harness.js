@@ -594,6 +594,35 @@ const SCENARIOS = {
         }
         return out;
     },
+    // Deleting ANOTHER subject's pill with its × (calendar) must not switch the open subject:
+    // the user is mid-edit on A101 and removes B201's conflicting Draft.
+    async drop_other_subject_pill() {
+        const env = setup(() => [A_MON, A_THU, B_TUE]);
+        env.routes.unshift(['/api/schedule/delete_session', { success: true }]);
+        await openSubject(env, 'A101', [A_MON, A_THU]);
+        editRow(env, 1, 'Wednesday');                          // unsaved edit in progress
+        const calls = [];
+        for (const fn of ['_onSubjectClick', 'handlePillClick', '_resetRightPanel', '_localAutoSelectFirstSubject']) {
+            const orig = g(env, fn);
+            if (typeof orig !== 'function') continue;
+            env.sandbox.__set(fn, function (...a) { calls.push([fn, a[0] && String(a[0]).slice(0, 40)]); return orig.apply(this, a); });
+            if (env.sandbox.window) env.sandbox.window[fn] = env.sandbox.__get(fn);
+        }
+        const sd = encodeURIComponent(JSON.stringify({ temp_id: null, versionid: 200, dbKey: 'B201_Tuesday_13',
+            label: 'B201 — Tuesday | R5', subjectcode: 'B201', room_id: 5 }));
+        await safely(() => g(env, '_dropSession')(sd, { stopPropagation() {}, preventDefault() {} }));
+        // A stray click on the deleted pill right after the delete must NOT open B201.
+        const bPill = encodeURIComponent(JSON.stringify(Object.assign({}, B_TUE, { programcode: 'BSIT', year_level: 1 })));
+        await safely(() => env.sandbox.window.handlePillClick(bPill));
+        return {
+            current_subject: g(env, '_currentSubjectCode'),
+            sel_subj: env.getEl('sel_subj').value,
+            a_rows_left: Object.values(env.els).filter(e => e._isRow).length,
+            a_pending: g(env, 'pendingManualSchedule').filter(c => c.subject_code === 'A101').map(c => c.day),
+            calls,
+            delete_called: env.fetchLog.some(f => f.url.includes('/api/schedule/delete_session')),
+        };
+    },
     async token_rules() {
         const env = setup(() => []);
         const cur = g(env, '_existingLoadTokenIsCurrent');

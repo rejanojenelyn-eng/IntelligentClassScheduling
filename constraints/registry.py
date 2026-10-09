@@ -294,6 +294,15 @@ HARD_CONSTRAINTS = {
         status="decision_primitive",
         emits_violation=False,
         notes=(
+            "Two models, selected by the internal hc_merge_model switch (default 'legacy'). "
+            "LEGACY (live): the scope/pair rules described here, plus the separate NSTP/OU "
+            "shared-faculty exemption. GROUPS: merge_groups.GroupMergePolicy over the "
+            "administrator-configured Merge Groups is the only merge interpretation — an "
+            "HC10/HC11 overlap is waived only between two different sections' occurrences of "
+            "the same usable merged event (same group AND same meeting: exact day, start, end, "
+            "room) whose faculty mode they satisfy; no scope, pairs or NSTP/OU prefix rule; "
+            "HC16 then also emits HC16_DIVERGED / HC16_FACULTY (invalid) and HC16_UNSCHEDULED / "
+            "HC16_FACULTY_TBA (incomplete) consistency violations. HC12 is never waived. "
             "Merge eligibility is policy-gated by hc_merge_enabled and merge scope; "
             "hc_merge_scope_subjects, when configured, takes precedence over the "
             "legacy hc_merge_scope preset. hc_merge_section_pairs optionally "

@@ -78,6 +78,7 @@ from datetime import time
 from collections import defaultdict
 from database import get_db_connection, query_db, load_scheduler_config
 import faculty_load
+import merge_groups
 
 logger = logging.getLogger(__name__)
 
@@ -759,6 +760,17 @@ def _entry_days(cls: dict) -> list:
     return [d for d in days if d]
 
 
+def _as_time(value):
+    """A time object from a time / 'HH:MM[:SS]' value (load slices carry either), else None."""
+    if value is None or hasattr(value, 'hour'):
+        return value
+    try:
+        h, m = str(value).split(':')[:2]
+        return time(int(h), int(m))
+    except (TypeError, ValueError):
+        return None
+
+
 def collect_designee_night_days(schedule, faculty_map) -> dict:
     """{faculty_id: {day: set(subject_codes)}} of the DISTINCT days each
     designee teaches inside the Night Teaching Service window. Set-based, so
@@ -879,6 +891,14 @@ class CSPValidator:
         except (TypeError, ValueError):
             pass
 
+        # ── HC16 group model ───────────────────────────────────
+        # None under the legacy model (every legacy merge path below is untouched).
+        # Under hc_merge_model='groups' this is the caller-injected
+        # merge_groups.GroupMergePolicy (or an empty one that exempts nothing), and it
+        # alone decides HC10/HC11 exemptions and emits HC16 consistency violations.
+        # HC17 (load counting via is_valid_merge) intentionally stays legacy until P3.
+        self._merge_policy = merge_groups.policy_from_config(cfg)
+
     # ── Helper: is this HC toggle enabled? ────────────────────
     def _enabled(self, key: str) -> bool:
         return bool(self._cfg.get(key, 1))
@@ -951,6 +971,11 @@ class CSPValidator:
         # HC12 Section time conflict — two subjects of one section cannot share a time slot
         if self._enabled('hc_section_conflict_enabled'):
             violations += self._check_section_overlaps(schedule)
+        # HC16 Merged-Class Validity — emits only under the group model: a merge-group
+        # member off its group's meeting (invalid), with no usable meeting yet or TBA
+        # faculty (incomplete, severity 'warning'), or not the group's designated faculty.
+        if self._merge_policy is not None:
+            violations += self._merge_policy.consistency_violations(schedule)
         # HC_SPEC  Faculty specialization restriction (advisory/warning — not in final HC1-17)
         if self._enabled('hc_faculty_spec_enabled'):
             violations += self._check_faculty_specialization(schedule, faculty_map)
@@ -1440,6 +1465,49 @@ class CSPValidator:
                 covered.append(day)
         return covered
 
+    def _group_mode_load_credit(self, schedule, faculty_map, cross):
+        """Group model HC9/HC17: ({id(gene): credited hours}, {faculty: (Δregular, Δpt)})
+        from the shared calculation over each faculty's existing slices (other
+        sections, listed FIRST so an event they already count keeps its hours) plus
+        this schedule's genes. Δ is how the genes change the credit of the existing
+        slices; it is bucketed with the same hour-granular rule the existing totals
+        were built with (faculty_load.group_assignments)."""
+        by_faculty = defaultdict(list)
+        for cls in schedule:
+            fnum = cls.get('faculty_id')
+            if fnum and fnum in faculty_map and (cls.get('duration_hrs') or 0):
+                by_faculty[fnum].append(cls)
+
+        def _hours(r):
+            v = r.get('duration_hrs') if r.get('duration_hrs') is not None else r.get('hrs')
+            return float(v or 0)
+
+        credit, delta = {}, {}
+        for fnum, genes in by_faculty.items():
+            existing = cross.get(fnum)
+            slices = list(existing.get('slices') or []) if isinstance(existing, dict) else []
+            both = self._merge_policy.credit_rows(slices + genes, hours=_hours)
+            for cls, m in zip(genes, both[len(slices):]):
+                credit[id(cls)] = m['credit']
+            if not slices:
+                continue
+            alone = self._merge_policy.credit_rows(slices, hours=_hours)
+            d_reg = d_pt = 0.0
+            for s, m_both, m_alone in zip(slices, both, alone):
+                d = m_both['credit'] - m_alone['credit']
+                if abs(d) < 1e-9:
+                    continue
+                st = _as_time(s.get('start_time') or s.get('start'))
+                et = _as_time(s.get('end_time') or s.get('end'))
+                reg = (faculty_load.classify_slice(s.get('day'), et.hour, st.hour) == 'regular'
+                       if st is not None and et is not None else False)
+                if reg:
+                    d_reg += d
+                else:
+                    d_pt += d
+            delta[fnum] = (d_reg, d_pt)
+        return credit, delta
+
     def _check_load_limits(self, schedule, faculty_map, existing_load: dict = None):
         """
         existing_load: HOURS already committed by each faculty in OTHER sections/programs
@@ -1472,6 +1540,11 @@ class CSPValidator:
         # two sections). Tracks which (faculty, subject, day, start, end)
         # merge-groups have already had their hours counted.
         _counted_merge_groups: set = set()
+        # Group model (HC16/HC17 P3): per-gene credited hours and the change to the
+        # faculty's already-counted existing slices, both from the ONE shared HC17
+        # calculation (merge_groups.GroupMergePolicy.credit_rows). No inference below.
+        _group_credit, _existing_delta = ({}, {}) if self._merge_policy is None else \
+            self._group_mode_load_credit(schedule, faculty_map, _cross)
 
         for cls in schedule:
             fnum = cls.get('faculty_id')
@@ -1488,40 +1561,47 @@ class CSPValidator:
             if hrs == 0:
                 continue
 
-            # HC17 across sections: meeting days already counted in this
-            # faculty's existing load (a valid merge with another section's
-            # identical meeting) must not be counted a second time here.
-            _existing = _cross.get(fnum)
-            _covered = self._merged_with_existing_days(
-                cls, schedule, _existing.get('slices') if isinstance(_existing, dict) else None)
-            if _covered:
-                _gene_days = _entry_days(cls)
-                hrs = hrs * (len(_gene_days) - len(_covered)) / len(_gene_days)
+            if self._merge_policy is not None:
+                # Group model: the shared HC17 credit (0 for a further row of an event
+                # this faculty already teaches; curriculum-scaled under a mapped policy).
+                hrs = _group_credit.get(id(cls), hrs)
                 if hrs <= 0:
                     continue
+            else:
+                # HC17 across sections: meeting days already counted in this
+                # faculty's existing load (a valid merge with another section's
+                # identical meeting) must not be counted a second time here.
+                _existing = _cross.get(fnum)
+                _covered = self._merged_with_existing_days(
+                    cls, schedule, _existing.get('slices') if isinstance(_existing, dict) else None)
+                if _covered:
+                    _gene_days = _entry_days(cls)
+                    hrs = hrs * (len(_gene_days) - len(_covered)) / len(_gene_days)
+                    if hrs <= 0:
+                        continue
 
-            _subj = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
-            _merge_key = (fnum, _subj, cls.get('day'), cls.get('start_time'), cls.get('end_time'))
-            if _merge_key in _counted_merge_groups:
-                continue  # this physical session's hours were already counted once
-            _merge_members = [
-                other for other in schedule
-                if other.get('faculty_id') == fnum
-                and (other.get('subject_code') or other.get('subjectcode') or '').upper() == _subj
-                and other.get('day') == cls.get('day')
-                and other.get('start_time') == cls.get('start_time')
-                and other.get('end_time') == cls.get('end_time')
-            ]
-            # HC17 follows HC16 pairwise authorization for the ENTIRE merge
-            # group.  For 3+ sections every pair must be a valid merge; checking
-            # only the current row against its siblings could incorrectly count
-            # A/B/C once when A-B and A-C are allowed but B-C is forbidden.
-            if len(_merge_members) > 1 and all(
-                self.is_valid_merge(a, b)
-                for pos, a in enumerate(_merge_members)
-                for b in _merge_members[pos + 1:]
-            ):
-                _counted_merge_groups.add(_merge_key)
+                _subj = (cls.get('subject_code') or cls.get('subjectcode') or '').upper()
+                _merge_key = (fnum, _subj, cls.get('day'), cls.get('start_time'), cls.get('end_time'))
+                if _merge_key in _counted_merge_groups:
+                    continue  # this physical session's hours were already counted once
+                _merge_members = [
+                    other for other in schedule
+                    if other.get('faculty_id') == fnum
+                    and (other.get('subject_code') or other.get('subjectcode') or '').upper() == _subj
+                    and other.get('day') == cls.get('day')
+                    and other.get('start_time') == cls.get('start_time')
+                    and other.get('end_time') == cls.get('end_time')
+                ]
+                # HC17 follows HC16 pairwise authorization for the ENTIRE merge
+                # group.  For 3+ sections every pair must be a valid merge; checking
+                # only the current row against its siblings could incorrectly count
+                # A/B/C once when A-B and A-C are allowed but B-C is forbidden.
+                if len(_merge_members) > 1 and all(
+                    self.is_valid_merge(a, b)
+                    for pos, a in enumerate(_merge_members)
+                    for b in _merge_members[pos + 1:]
+                ):
+                    _counted_merge_groups.add(_merge_key)
 
             # Phase B checkpoint 1 (final HC9 fix): bucket via the ONE shared
             # classifier instead of a bare `end_time <= regular_end` check,
@@ -1549,6 +1629,16 @@ class CSPValidator:
                 regular_hrs[fnum] += hrs
             else:
                 pt_hrs[fnum] += hrs
+
+        # Group model: a gene that joins an event already in this faculty's existing
+        # load can change that assignment's HC17 credit (e.g. its section count now
+        # matches a mapped policy) — apply that change to the existing buckets too.
+        for fnum, (d_reg, d_pt) in _existing_delta.items():
+            if fnum in faculty_map:
+                if d_reg:
+                    regular_hrs[fnum] += d_reg
+                if d_pt:
+                    pt_hrs[fnum] += d_pt
 
         for fnum, hrs in regular_hrs.items():
             # Add cross-section committed REGULAR hours so the check matches the Manual Editor total
@@ -1770,10 +1860,19 @@ class CSPValidator:
         return faculty_load.nstp_shared_faculty_exempt(a, b)
 
     def faculty_overlap_exempt(self, a, b):
-        """Final HC10 exemption (shared rule, faculty_load.faculty_overlap_exempt):
-        a valid HC16 merge OR the NSTP/OU shared-faculty exemption."""
+        """Final HC10 exemption. Legacy model: the shared rule
+        faculty_load.faculty_overlap_exempt (valid HC16 merge OR the NSTP/OU
+        shared-faculty exemption). Group model: only the same usable HC16 merged event."""
+        if self._merge_policy is not None:
+            return self._merge_policy.same_event(a, b)
         return faculty_load.faculty_overlap_exempt(
             a, b, config=self._cfg, merge_section_pairs=self._merge_section_pairs)
+
+    def _unexempted_days(self, a, b, shared_days):
+        """Group model: the shared days on which a and b are NOT one merged event
+        (each day of a multi-day class is its own meeting)."""
+        exempt = set(self._merge_policy.exempt_days(a, b, shared_days))
+        return [d for d in shared_days if d not in exempt]
 
     def _check_room_overlaps(self, schedule):
         violations = []
@@ -1787,9 +1886,13 @@ class CSPValidator:
                     continue
                 if a_room != b_room:
                     continue
-                if self.is_valid_merge(a, b):
-                    continue  # valid merge (final HC16) — skip room conflict
-                shared_days = self._shared_overlap_days(a, b)
+                if self._merge_policy is not None:
+                    # Group model: only the same HC16 merged event may share the room.
+                    shared_days = self._unexempted_days(a, b, self._shared_overlap_days(a, b))
+                else:
+                    if self.is_valid_merge(a, b):
+                        continue  # valid merge (final HC16) — skip room conflict
+                    shared_days = self._shared_overlap_days(a, b)
                 if not shared_days:
                     continue
                 v = self._build_overlap_violation('HC11', a, b, shared_days, ('room', 'day', 'time'))
@@ -1813,12 +1916,15 @@ class CSPValidator:
                 if a.get('faculty_id') != b.get('faculty_id'):
                     continue
 
-                # Shared HC10 exemption: valid HC16 merge (scope + section pairs)
-                # or the NSTP/OU shared-faculty rule. HC12 is checked separately.
-                if self.faculty_overlap_exempt(a, b):
-                    continue
-
-                shared_days = self._shared_overlap_days(a, b)
+                if self._merge_policy is not None:
+                    # Group model: only the same HC16 merged event, day by day.
+                    shared_days = self._unexempted_days(a, b, self._shared_overlap_days(a, b))
+                else:
+                    # Shared HC10 exemption: valid HC16 merge (scope + section pairs)
+                    # or the NSTP/OU shared-faculty rule. HC12 is checked separately.
+                    if self.faculty_overlap_exempt(a, b):
+                        continue
+                    shared_days = self._shared_overlap_days(a, b)
                 if not shared_days:
                     continue
                 v = self._build_overlap_violation('HC10', a, b, shared_days, ('instructor', 'day', 'time'))
@@ -2870,6 +2976,11 @@ class IntelligentScheduler:
         # The mergedclass table stores explicit admin assignments of faculty to
         # curriculumsubjects for a specific semester.  These override everything
         # else because an admin intentionally chose that teacher.
+        # HC16 group model: the authoritative Merge Group configuration (designated /
+        # known same-faculty) decides a merged subject's faculty instead, so this
+        # derived Published hint is not consulted.
+        if getattr(self, '_group_mode', False):
+            return prefs
         merged_rows = query_db("""
             SELECT DISTINCT ON (cs.subjectcode)
                 cs.subjectcode,
@@ -3148,6 +3259,7 @@ class IntelligentScheduler:
         self, term: str, acad_year_id: str,
         exclude_program: str = '', exclude_year_level: int = None,
         exclude_subject_codes: list = None, exclude_section_id: int = None,
+        skip_row=None,
     ) -> tuple:
         """
         Load existing Published AND Draft room/faculty occupancies for the semester.
@@ -3265,6 +3377,10 @@ class IntelligentScheduler:
                     and row_yr == exclude_year_level:
                 if not excl_codes or row_sc in excl_codes:
                     continue   # legacy (no section known): this subject is being replaced
+            # HC16 group model: another member's occurrence of the SAME merged event this
+            # section is pinned to never blocks the group's room/faculty (an outsider does).
+            if skip_row is not None and skip_row(r):
+                continue
             day   = r['day']
             start = r['start_time']
             end   = r['end_time']
@@ -4392,6 +4508,8 @@ class IntelligentScheduler:
         if not locked_parts or not individual:
             return
         for gene in individual:
+            if gene.get('_group_set'):
+                continue   # an extra Merge Group meeting set: pinned on creation, not by key
             lock = locked_parts.get(
                 (gene.get('subject_code'), gene.get('class_type'), gene.get('course'))
             )
@@ -4443,6 +4561,8 @@ class IntelligentScheduler:
         enforced here; CBR-derived locks keep their releasable semantics.
         """
         for gene in individual or []:
+            if gene.get('_group_set'):
+                continue   # extra Merge Group meeting set (see _finalize_group_genes)
             flags = self._user_lock_flags(gene, locked_parts)
             if not flags:
                 continue
@@ -4802,14 +4922,26 @@ class IntelligentScheduler:
                 (cls.get('subject_code'), cls.get('class_type'), cls.get('course'))
             )
             _lock_flags = (_lock.get('lock') or {}) if _lock else {}
-            if _lock and (_lock_flags.get('room') or _lock_flags.get('schedule')):
+            _user_flags = self._user_lock_flags(cls, locked_parts)
+            if _user_flags.get('room') or _user_flags.get('schedule'):
                 # Both repair strategies below rewrite room_id (and strategy 2
                 # also rewrites the time/day), so a gene with room or schedule
-                # preserved must never be touched here — surface the conflict
-                # instead of silently overriding what the user chose to keep.
+                # the USER chose to keep must never be touched here — surface the
+                # conflict instead of silently overriding it.
                 print(f'[REPAIR]   Skipping {scode}: locked by user selection, '
                       f'conflict left unresolved for review.')
                 continue
+            if _lock and (_lock_flags.get('room') or _lock_flags.get('schedule')):
+                # A historical (CBR) room/time is only a preference: it now collides
+                # with another section's booking, so release it (a later _reapply_locks
+                # would otherwise put the colliding value straight back) and repair.
+                # Treating it like a user lock left the class with no room ("Room is TBA").
+                for _f in ('room', 'schedule'):
+                    if _lock_flags.get(_f):
+                        _lock_flags[_f] = False
+                _lock['release_reason'] = (_lock.get('release_reason')
+                                           or f'cross-section conflict: {conflict_desc}')
+                print(f'[REPAIR]   Releasing historical room/time of {scode} to repair the conflict.')
 
             fixed = False
 
@@ -5222,7 +5354,14 @@ class IntelligentScheduler:
             # remains the absolute hard limit; SC4 only ever prefers moving
             # CLOSER to the target, never rewards exceeding it.
             max_pt = et.get('parttimeload') or 0
-            if max_pt:
+            if max_pt and self.csp._merge_policy is not None:
+                # Group model: the same shared HC17 credit HC9 uses (no inference).
+                pt_genes = [c for c in sorted_cls
+                            if c['day'] in WEEKDAYS and c['end_time'] > regular_end]
+                total_pt_hrs = sum(m['credit'] for m in self.csp._merge_policy.credit_rows(
+                    pt_genes, hours=lambda c: float(c.get('duration_hrs', 0) or 0)))
+                score -= abs(total_pt_hrs - max_pt) * sc4_weight
+            elif max_pt:
                 counted_keys = set()
                 total_pt_hrs = 0.0
                 for idx, cls in enumerate(sorted_cls):
@@ -5607,6 +5746,179 @@ class IntelligentScheduler:
 
     # ── Main entry point ─────────────────────────────────────────
 
+    # ── HC16 group model: Merge Group pins (P4) ─────────────────────────────────
+
+    @staticmethod
+    def _hc16_report(code, sub_code, entry, detail, components):
+        """A merged-class consistency finding raised by generation itself (reported,
+        never auto-resolved)."""
+        return {'rule': 'HC16', 'code': code, 'type': RULE_LABELS.get('HC16', 'HC16'),
+                'merge_state': 'invalid' if code != 'HC16_FACULTY_TBA' else 'incomplete',
+                'blocks_publish': code != 'HC16_FACULTY_TBA', 'subject': sub_code,
+                'group': entry.get('groupname'), 'detail': detail,
+                'affected_components': list(components)}
+
+    @staticmethod
+    def _same_event_skipper(policy, plan):
+        """Occupancy filter for the group model: True for another member's occurrence of
+        a merged event this section is pinned to (it must not block the group's room or
+        faculty); None under the legacy model (occupancy unchanged)."""
+        if policy is None or not plan:
+            return None
+        pinned = set()
+        for entry in (plan.get('entries') or {}).values():
+            if entry.get('state') == 'pinned':
+                pinned |= {ev for ev in entry['events']
+                           if any(ev[1] in s['meeting_ids'] for s in entry['sets'])}
+        if not pinned:
+            return None
+        return lambda row: policy.index.event_of(row) in pinned
+
+    def _apply_group_pins(self, locked_parts, user_locked_parts, subjects, plan, faculty_map, rooms_by_id):
+        """Turn the Merge Group generation plan into `merge_group`-source locks.
+
+        A pinned subject's day/time and room (and, for SAME_FACULTY, its faculty) come
+        from the group's meeting — they replace any CBR/historical value for that gene.
+        The pin carries no 'source_case', so — exactly like a user lock — it is never
+        released by CBR release, repair, mutation, fallback placement or selective
+        regeneration; it is distinguished from a user lock by source='merge_group'.
+        A USER lock always stays as the user set it: fields the user locked to a value
+        the group does not allow are kept and reported as HC16; fields the user left
+        free are pinned to the group. Returns (locked_parts, reports)."""
+        out, reports = dict(locked_parts), []
+        entries = (plan or {}).get('entries') or {}
+        for sub in subjects:
+            for ctype in class_types_for_subject(sub):
+                entry = entries.get((merge_groups.norm_code(sub['subjectcode']), ctype))
+                if not entry:
+                    continue
+                key = (sub['subjectcode'], ctype, sub['offeringcode'])
+                fac = entry['faculty']
+                if fac['status'] == 'conflict':
+                    reports.append(self._hc16_report(
+                        'HC16_FACULTY', sub['subjectcode'], entry,
+                        f"{sub['subjectcode']}: merged class '{entry['groupname']}' requires the same faculty, "
+                        f"but its other sections already have different faculty ({', '.join(fac['known'])}). "
+                        f"No faculty was chosen.", ['instructor']))
+                if entry['state'] != 'pinned':
+                    if key in out and key not in user_locked_parts:
+                        out.pop(key)          # no CBR/historical slot for an unscheduled merged subject
+                    continue
+                s0 = entry['sets'][0]
+                st, et = _as_time(s0['start']), _as_time(s0['end'])
+                room = rooms_by_id.get(s0['roomid']) if s0['roomid'] is not None else None
+                fac_locked = fac['status'] in ('designated', 'known', 'conflict', 'tba')
+                fac_id = fac['faculty_id']
+                pin = {
+                    'subject_code': sub['subjectcode'], 'class_type': ctype, 'course': sub['offeringcode'],
+                    'source': 'merge_group', 'merge_group': entry['groupname'], 'mergegroupid': entry['group'],
+                    'lock': {'schedule': True, 'room': True, 'faculty': fac_locked},
+                    'start_time': st, 'end_time': et, 'days_list': list(s0['days']), 'day': s0['days'][0],
+                    'time': f"{format_time_12h(st)} – {format_time_12h(et)}",
+                    'days': '/'.join(d[:3].upper() for d in s0['days']),
+                    'room_id': s0['roomid'], 'room': (room or {}).get('roomname') or s0.get('roomname'),
+                    'room_type': (room or {}).get('roomtype') or s0.get('roomtype') or '',
+                    'faculty_id': fac_id if fac_locked else None,
+                    'instructor': (faculty_map.get(fac_id) or {}).get('fullname') if fac_id else None,
+                }
+                user = user_locked_parts.get(key)
+                if user is None:
+                    out[key] = pin
+                    continue
+                uflags = dict(user.get('lock') or {})
+                merged = dict(user)
+                merged.update(source='merge_group+user', merge_group=entry['groupname'],
+                              mergegroupid=entry['group'])
+                if uflags.get('schedule'):
+                    if (sorted(user.get('days_list') or [user.get('day')]) != sorted(pin['days_list'])
+                            or user.get('start_time') != st or user.get('end_time') != et):
+                        reports.append(self._hc16_report(
+                            'HC16_DIVERGED', sub['subjectcode'], entry,
+                            f"{sub['subjectcode']}: the locked day/time is kept, but merged class "
+                            f"'{entry['groupname']}' meets {', '.join(pin['days_list'])} "
+                            f"{pin['time']}. Unlock it or change the group's meeting.", ['day', 'time']))
+                else:
+                    for f in self._USER_LOCK_FIELDS['schedule']:
+                        merged[f] = pin[f]
+                if uflags.get('room'):
+                    if user.get('room_id') != s0['roomid']:
+                        reports.append(self._hc16_report(
+                            'HC16_DIVERGED', sub['subjectcode'], entry,
+                            f"{sub['subjectcode']}: the locked room is kept, but merged class "
+                            f"'{entry['groupname']}' meets in {pin['room'] or 'room TBA'}.", ['room']))
+                else:
+                    for f in self._USER_LOCK_FIELDS['room']:
+                        merged[f] = pin[f]
+                if uflags.get('faculty'):
+                    if (fac['status'] in ('designated', 'known') and user.get('faculty_id')
+                            and str(user.get('faculty_id')) != str(fac_id)):
+                        reports.append(self._hc16_report(
+                            'HC16_FACULTY', sub['subjectcode'], entry,
+                            f"{sub['subjectcode']}: the locked faculty is kept, but merged class "
+                            f"'{entry['groupname']}' requires {pin['instructor'] or fac_id}.", ['instructor']))
+                elif fac_locked:
+                    for f in self._USER_LOCK_FIELDS['faculty']:
+                        merged[f] = pin[f]
+                merged['lock'] = {'schedule': True, 'room': True,
+                                  'faculty': bool(uflags.get('faculty') or fac_locked)}
+                merged['user_lock'] = uflags        # what the USER locked (never overridden)
+                out[key] = merged
+        return out, reports
+
+    def _finalize_group_genes(self, individual, plan, locked_parts):
+        """After the GA: an unscheduled merged subject gets no invented slot (day/time and
+        room stripped, with the group's reason); a pinned subject keeps its group values,
+        a TBA group room / TBA same-faculty stays TBA, and each extra meeting set (another
+        time or room of the same class type) becomes its own gene. User-locked fields are
+        never touched. Returns the (possibly extended) individual."""
+        entries = (plan or {}).get('entries') or {}
+        out = []
+        for gene in individual or []:
+            out.append(gene)
+            entry = entries.get((merge_groups.norm_code(gene.get('subject_code')), gene.get('class_type')))
+            if not entry or gene.get('_group_set'):
+                continue
+            lock = (locked_parts or {}).get((gene.get('subject_code'), gene.get('class_type'), gene.get('course'))) or {}
+            # Fields the USER locked: a merged pin+user entry remembers them; a plain user
+            # lock (no source) is entirely the user's; a pure group pin or CBR entry has none.
+            if lock.get('source') == 'merge_group+user':
+                uflags = lock.get('user_lock') or {}
+            elif lock and lock.get('source') is None and 'source_case' not in lock:
+                uflags = lock.get('lock') or {}
+            else:
+                uflags = {}
+            gene['merge_group'] = entry['groupname']
+            if entry['state'] != 'pinned':
+                if not uflags.get('schedule'):
+                    self._strip_component(gene, 'schedule', entry['reason'])
+                if not uflags.get('room'):
+                    self._strip_component(gene, 'room', entry['reason'])
+                continue
+            fac = entry['faculty']
+            if fac['status'] in ('tba', 'conflict') and not uflags.get('faculty'):
+                self._strip_component(
+                    gene, 'faculty',
+                    f"Merged class '{entry['groupname']}' requires the same faculty for every section; "
+                    + ("none is designated or known yet — assign one deliberately."
+                       if fac['status'] == 'tba' else "its sections have conflicting faculty."))
+            s0 = entry['sets'][0]
+            if s0['roomid'] is None and not uflags.get('room'):
+                self._strip_component(gene, 'room', f"Merged class '{entry['groupname']}' meets in a room TBA.")
+            if uflags.get('schedule'):
+                continue          # the user kept their own slot: no extra group meeting sets
+            for k, s in enumerate(entry['sets'][1:], 1):
+                st, et = _as_time(s['start']), _as_time(s['end'])
+                clone = dict(gene)
+                clone.update(_group_set=k, start_time=st, end_time=et, days_list=list(s['days']),
+                             day=s['days'][0], time=f"{format_time_12h(st)} – {format_time_12h(et)}",
+                             days='/'.join(d[:3].upper() for d in s['days']),
+                             room_id=s['roomid'], room=s.get('roomname'), room_type=s.get('roomtype') or '',
+                             duration_hrs=round(duration_hours(st, et) * len(s['days']), 2))
+                if s['roomid'] is None:
+                    self._strip_component(clone, 'room', f"Merged class '{entry['groupname']}' meets in a room TBA.")
+                out.append(clone)
+        return out
+
     def generate_draft(self, program, year_level, term, curriculum,
                        use_historical=False, acad_year_id: str = '',
                        locked_sessions=None, seed: int = None, section_id: int = None):
@@ -5649,6 +5961,36 @@ class IntelligentScheduler:
                 return {"success": False, "result_status": "GENERATION_ERROR",
                         "error": "No rooms defined in the database."}
 
+            # ── HC16 group model (P4): Merge Group meetings are the anchor ──────────
+            # Under hc_merge_model='groups' a subject this section takes in an active
+            # Merge Group is generated AT its group's meeting(s) (day/time/room pinned,
+            # SAME_FACULTY faculty from the group's configuration) — never wherever this
+            # section happens to land, and never depending on which member is generated
+            # first. The validator gets the same HC16/HC17 policy every other path uses
+            # (event identity, merged-load HC9). None under the legacy model: everything
+            # below then runs exactly as before.
+            self._group_mode = False
+            _group_policy, _group_plan, _group_reports = None, None, []
+            if merge_groups.merge_model(self._hc_cfg) == merge_groups.MODEL_GROUPS:
+                _plan_ay = acad_year_id or ((query_db(
+                    "SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1") or [{}])[0]
+                    .get('academicyearid', ''))
+                _plan_sem = query_db("SELECT semesterid FROM semester WHERE academicyearid = %s "
+                                     "AND semestertype = %s LIMIT 1", (_plan_ay, term), one=True)
+                _group_policy, _group_plan = merge_groups.load_generation_plan(
+                    self._hc_cfg, _plan_sem['semesterid'] if _plan_sem else None, section_id)
+                if _group_policy is not None:
+                    self._group_mode = True
+                    self.csp = CSPValidator(config=merge_groups.with_policy(self._hc_cfg, _group_policy))
+                    _group_reports += [dict(self._hc16_report(
+                        'HC16_DIVERGED', d['occurrence'].get('subjectcode'), {'groupname': d['group']},
+                        f"{d['occurrence'].get('section')} {d['occurrence'].get('subjectcode')} is off merged class "
+                        f"'{d['group']}' ({d['occurrence'].get('day')} {d['occurrence'].get('start')}–"
+                        f"{d['occurrence'].get('end')} in {d['occurrence'].get('room')}). That section is not "
+                        f"changed by this generation and does not move the group's meeting.", ['day', 'time', 'room']),
+                        severity='warning', other_section=True)
+                        for d in (_group_plan or {}).get('divergent', [])]
+
             # Retrieve and return previous schedule when requested. This is EXACT
             # schedule reuse (PREVIOUS_SCHEDULE_REUSED provenance) — a distinct
             # feature from CBR (retrieve_best_case_assignments), never to be
@@ -5662,6 +6004,10 @@ class IntelligentScheduler:
                 if hist_sched:
                     for cls in hist_sched:
                         cls['provenance'] = 'PREVIOUS_SCHEDULE_REUSED'
+                    if _group_plan:
+                        # The CURRENT group meeting wins over the reused historical slot.
+                        hist_sched, _pin_reports = merge_groups.pin_rows(hist_sched, _group_plan)
+                        _group_reports += _pin_reports
                     rooms_by_id_hist = {r['roomid']: r for r in rooms}
                     violations = self.csp.validate(hist_sched, faculty_map,
                                                     rooms_by_id=rooms_by_id_hist)
@@ -5678,6 +6024,9 @@ class IntelligentScheduler:
                     # unresolved hard violation.
                     unresolved_hard = []
                     for v in hard_v:
+                        if v.get('rule') == 'HC16':
+                            _group_reports.append(v)   # merged-class finding: reported, never stripped
+                            continue
                         flag       = self._CBR_RULE_TO_FLAG.get(v.get('rule'))
                         subj_field = (v.get('subject') or '').strip()
                         if not flag or not subj_field or subj_field.lower() == 'multiple':
@@ -5716,12 +6065,13 @@ class IntelligentScheduler:
                         round((total_required - incomplete_count) / total_required * 100, 1)
                         if total_required else 100.0
                     )
+                    _hist_hc16 = [v for v in _group_reports if v.get('severity') != 'warning']
                     return {
                         "success":               result_status in ('COMPLETE_VALID', 'PARTIAL_VALID'),
                         "result_status":         result_status,
                         "schedule_data":         hist_sched,
-                        "violations":            advisory_v + unresolved_hard,
-                        "conflict_count":        len(unresolved_hard),
+                        "violations":            advisory_v + unresolved_hard + _group_reports,
+                        "conflict_count":        len(unresolved_hard) + len(_hist_hc16),
                         "incomplete_count":      incomplete_count,
                         "completion_rate":       completion_rate,
                         "exact_reuse_requested":  True,
@@ -5816,6 +6166,7 @@ class IntelligentScheduler:
                     exclude_program=program, exclude_year_level=year_level,
                     exclude_subject_codes=all_subject_codes,
                     exclude_section_id=section_id,
+                    skip_row=self._same_event_skipper(_group_policy, _group_plan),
                 )
 
             # Pre-filter rooms that have zero free standard time slots for this semester.
@@ -5864,7 +6215,14 @@ class IntelligentScheduler:
             )
             # Explicit user row-locks (locked_sessions) always win over a CBR-derived
             # lock on the same gene (Section 3/28: manual editing behavior unchanged).
+            user_locked_parts = locked_parts
             locked_parts = {**cbr_locked_parts, **locked_parts}
+            # HC16 group model: the group meeting replaces any CBR/historical day/time/
+            # room for a merged subject; a user lock is kept (and reported if it differs).
+            if _group_plan:
+                locked_parts, _pin_reports = self._apply_group_pins(
+                    locked_parts, user_locked_parts, subjects, _group_plan, faculty_map, rooms_by_id)
+                _group_reports += _pin_reports
 
             POP_SIZE      = 50
             GENERATIONS   = 150
@@ -5985,6 +6343,11 @@ class IntelligentScheduler:
                 published_room_slots=published_room_slots,
                 published_faculty_slots=published_faculty_slots,
             )
+            # HC16 group model: unscheduled merged subjects get no invented slot; extra
+            # meeting sets become their own genes; TBA group room/faculty stay TBA.
+            if _group_plan:
+                best_schedule_global = self._finalize_group_genes(
+                    best_schedule_global, _group_plan, locked_parts)
 
             # ── Final validation ──────────────────────────────────────
             # Pass existing_load so HC9 counts cross-section units — matching what
@@ -6045,6 +6408,11 @@ class IntelligentScheduler:
             # reported conflicts (see the loop below), never stripped.
             locked_hard_violations = []
             for v in hard_violations:
+                if v.get('rule') == 'HC16':
+                    # A merged-class consistency finding is reported, never stripped:
+                    # the group configuration (or the user's lock) is authoritative.
+                    locked_hard_violations.append(v)
+                    continue
                 flag       = self._CBR_RULE_TO_FLAG.get(v.get('rule'))
                 subj_field = (v.get('subject') or '').strip()
                 # Re-generate Selected: an aggregate faculty-load violation (HC9,
@@ -6277,6 +6645,18 @@ class IntelligentScheduler:
 
             for cls in best_schedule_global:
                 cls.pop('_lock', None)
+                cls.pop('_group_set', None)
+
+            # HC16 group model: generation's own merged-class findings (user lock vs group,
+            # conflicting same-faculty, other members off the group's meeting) are
+            # reported with the rest; the blocking ones count as conflicts.
+            _seen_hc16 = {(v.get('code'), v.get('subject'), v.get('detail')) for v in locked_hard_violations}
+            for _r in _group_reports:
+                _k = (_r.get('code'), _r.get('subject'), _r.get('detail'))
+                if _k in _seen_hc16:
+                    continue
+                _seen_hc16.add(_k)
+                (advisory_violations if _r.get('severity') == 'warning' else locked_hard_violations).append(_r)
 
             total_required     = len(best_schedule_global)
             incomplete_count   = len(still_incomplete)

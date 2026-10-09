@@ -16,6 +16,11 @@ CURRENT_HARD_CONSTRAINT_IDS = HARD_CONSTRAINT_IDS
 # listed because its check exists, but it is INACTIVE in practice: no
 # class-size/enrollment data exists, so it never emits today. Former HC_SPEC is
 # intentionally not a final hard constraint.
+# HC16 is deliberately NOT listed while the live system runs the legacy merge
+# model: it emits merged-class consistency violations (HC16_DIVERGED /
+# HC16_UNSCHEDULED / HC16_FACULTY / HC16_FACULTY_TBA) only under
+# hc_merge_model='groups', and mapping it into the frozen evaluation criteria
+# (app._EVAL_CRITERION_RULES) is a separate, explicitly approved step before cutover.
 VIOLATION_EMITTING_IDS = (
     "HC1", "HC2", "HC3", "HC4", "HC5", "HC6", "HC7",
     "HC8", "HC9", "HC10", "HC11", "HC12", "HC13", "HC14",

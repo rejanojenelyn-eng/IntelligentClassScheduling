@@ -1,7 +1,7 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=20261006a">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=20261008p7">
 {% endblock %}
 
 {% block content %}
@@ -14,9 +14,6 @@
   "{{ ay.academicyearid }}": {"isfinalized": {{ 'true' if ay.isfinalized else 'false' }}, "has_published": {{ 'true' if ay.has_published else 'false' }}, "computed_status": "{{ ay.computed_status }}"}{% if not loop.last %},{% endif %}
   {% endfor %}
 }
-</script>
-<script id="merge-sections-data" type="application/json">
-{{ merge_sections | tojson }}
 </script>
 
 <div class="settings-container" id="settingsWrapper"
@@ -472,58 +469,41 @@
               </label>
             </div>
             <h3 class="card-title">Merged-Class Validity</h3>
-            <p class="card-desc">When enabled, multiple sections may share the same schedule slot, room, and faculty. The merge scope defines which subjects are eligible. Commonly used for NSTP subjects held on Sundays where multiple sections attend a single class.</p>
+            <p class="card-desc">Sections may attend one class together when it has the same subject, faculty, day, start and end time, and room. Merge a class directly in the Manual Editor — Save Draft / Publish asks before merging — and it is listed here automatically. You can also allow sections to merge in advance; nothing is ever merged without that confirmation.</p>
           </div>
           <div class="card-body" id="merge-body">
-            <div class="cparam-label"><i class="fas fa-sliders-h"></i> CONSTRAINT PARAMETERS CONFIGURATION</div>
-            <div class="param-row">
-              <div class="param-group" style="flex:1;">
-                <label class="param-label"><i class="fas fa-tags param-sublabel-icon"></i>MERGE SCOPE — ELIGIBLE SUBJECTS</label>
-                <p class="card-desc" style="margin:0 0 8px;">Search and add any subject that should be eligible for class merging — not limited to NSTP. Leave empty to keep the legacy default (NSTP subjects only).</p>
-                <div class="ms-scope-picker" id="msScopePicker">
-                  <div class="ms-scope-search-wrap">
-                    <i class="fas fa-search"></i>
-                    <input type="text" id="msScopeSearchInput" class="ms-scope-search-input"
-                           placeholder="Search subject code or name to add…" autocomplete="off"
-                           oninput="_msRenderSuggestions(this.value)"
-                           onfocus="_msRenderSuggestions(this.value)">
-                    <div class="ms-scope-suggest" id="msScopeSuggest"></div>
-                  </div>
-                  <div class="ms-scope-chips" id="msScopeChips"></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="cparam-divider"></div>
             <div class="pair-list-head">
-              <span class="param-sublabel"><i class="fas fa-link param-sublabel-icon"></i>MERGE CLASS CONFIGURATION — ALLOWED SECTION PAIRINGS</span>
-              <button class="btn-add-item" onclick="addSectionPair()"><i class="fas fa-plus"></i> ADD PAIR</button>
+              <span class="param-sublabel"><i class="fas fa-layer-group param-sublabel-icon"></i>MERGED CLASSES</span>
+              <button class="btn-add-item" id="mgCreateBtn" onclick="mgOpenEditor()"><i class="fas fa-plus"></i> ALLOW SECTIONS TO MERGE</button>
             </div>
-            <p class="card-desc" style="margin:2px 0 8px;">Only the section combinations listed below are eligible to merge during scheduling (e.g. DOMT-LOM paired to DOMT-MOM). Pairing is <strong>not limited by year level</strong> — a 1st year section can be paired with a 2nd year section if that's genuinely intended. To merge <strong>more than 2 sections</strong> into one shared class (see "Merged Sections" below), add every pairwise combination among them — e.g. for sections A, B, and C to all merge together, add A↔B, A↔C, <em>and</em> B↔C. Sections not part of a configured pair are always treated as a normal room conflict.</p>
-            <div id="merge-section-pairs-container"></div>
+            <div class="mg-toolbar">
+              <label class="param-label" for="mgSemesterSelect" style="margin:0;">SEMESTER</label>
+              <select id="mgSemesterSelect" class="mlp-input mg-semester-select" onchange="mgLoadGroups(this.value)"></select>
+            </div>
+            <div id="mgGroupList" class="mg-group-list"><div class="mlp-empty">Loading…</div></div>
 
             <div class="cparam-divider"></div>
             <div class="pair-list-head">
               <span class="param-sublabel"><i class="fas fa-calculator param-sublabel-icon"></i>HC17 · MERGED CLASS FACULTY LOAD POLICY</span>
               <button class="btn-add-item" onclick="addMergeLoadPolicyRow()"><i class="fas fa-plus"></i> ADD RULE</button>
             </div>
-            <p class="card-desc" style="margin:2px 0 8px;">Define which subjects count as merged for a given number of sections (e.g. NSTP with 2–3 merged sections). Credited units and teaching hours are never entered manually — they're always pulled automatically from the subject's own record (credited units, tuition hours) whenever a rule matches. When no rule matches, the subject's real credited units and the shared session's actual duration are used instead.</p>
+            <p class="card-desc" style="margin:2px 0 8px;">By default a merged class still counts in full for <b>each</b> section in the faculty's load (units and hours per section, like separate classes). To credit a merged class only once — like NSTP — add a rule here and apply it to that merged class; credited units and teaching hours then come from the subject's curriculum.</p>
             <div class="mlp-table-wrap">
               <table class="mlp-table">
                 <thead>
                   <tr>
-                    <th>SUBJECT</th><th>MERGED SECTIONS</th><th>CREDITED UNITS</th><th>TUITION HOURS</th><th></th>
+                    <th>POLICY</th><th>MERGED SECTIONS</th><th>APPLIES TO (MERGE GROUPS)</th><th>CREDITED UNITS</th><th>TUITION HOURS</th><th></th>
                   </tr>
                 </thead>
                 <tbody id="mergeLoadPolicyBody">
-                  <tr><td colspan="5" class="mlp-empty">Loading…</td></tr>
+                  <tr><td colspan="6" class="mlp-empty">Loading…</td></tr>
                 </tbody>
               </table>
             </div>
 
             <div class="status-row" style="margin-top:10px;">
               <i class="fas fa-check-circle ic-green"></i>
-              <span>Merge policy is system-enforced during automated schedule generation, official scheduling, and manual assignment validation. Faculty load for a merged class always credits one shared assignment — never multiplied by the number of merged sections — using the load policy rule above when one matches, otherwise the subject's real units/duration.</span>
+              <span>No matching rule: each section's merged class adds its own units and hours. A matching rule: the merged class is credited once, using the rule.</span>
             </div>
           </div>
         </div>
@@ -849,28 +829,80 @@
   </div>
 </div>
 
-<!-- ── MODAL: Remove Section Pairing (Merge Class Configuration) ── -->
-<div id="modalDeleteSectionPair" class="s-modal">
-  <div class="s-modal-box w-sm lock-warn-box">
-    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#b71c1c,#7f0000);">
+<!-- ── MODAL: Allow sections to merge (HC16, P7) ── -->
+<div id="modalMergeGroup" class="s-modal">
+  <div class="s-modal-box mg-editor-box">
+    <div class="s-modal-hd">
+      <h2 id="mgEditorTitle">ALLOW SECTIONS TO MERGE</h2>
+      <div class="modal-hd-right">
+        <button class="modal-x" onclick="closeSModal('modalMergeGroup')"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="s-modal-body">
+      <div class="mf">
+        <label for="mgSemester">ACADEMIC YEAR · SEMESTER</label>
+        <select id="mgSemester" class="m-input" onchange="mgEditorSemesterChanged()"></select>
+      </div>
+
+      <div class="mf" style="margin-top:14px;">
+        <label>PROGRAMS &amp; SECTIONS <span class="mg-hint-inline">(select 2 or more, any program)</span> <span class="mg-hint-inline" id="mgPickedCount"></span></label>
+        <input type="text" id="mgSectionFilter" class="m-input mg-filter" placeholder="Filter by program or section…" oninput="mgRenderSectionPicker()">
+        <div id="mgSectionPicker" class="mg-section-picker"><div class="mlp-empty">Loading…</div></div>
+      </div>
+
+      <div class="mf" style="margin-top:14px;">
+        <label>SUBJECTS <span class="mg-hint-inline">(optional — leave all unchecked to allow every subject these sections share)</span></label>
+        <div id="mgSubjectPicker" class="mg-section-picker"><div class="mlp-empty">Pick at least 2 sections first.</div></div>
+        <span class="mg-hint">Only subjects that are really the same (same code, or same name and hours) are listed. A merge still needs the same faculty, day, time and room — set it in the Manual Editor.</span>
+      </div>
+
+      <div id="mgEditorFeedback" class="mg-feedback" hidden></div>
+    </div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalMergeGroup')">CANCEL</button>
+      <button type="button" class="btn-ms" id="mgSaveBtn" onclick="mgSaveEditor()">SAVE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: HC17 policy -> Merge Group mapping ── -->
+<div id="modalPolicyGroups" class="s-modal">
+  <div class="s-modal-box mg-editor-box">
+    <div class="s-modal-hd">
+      <h2 id="mlpGroupsTitle">APPLY LOAD POLICY TO MERGE GROUPS</h2>
+      <div class="modal-hd-right">
+        <button class="modal-x" onclick="closeSModal('modalPolicyGroups')"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+    <div class="s-modal-body">
+      <p class="card-desc" style="margin:0 0 10px;">Choose the Merge Groups this policy applies to. Units and hours shown are read from each group's subject curriculum. Groups marked <span class="mg-tag">suggested</span> match this policy's subject under the old subject rule — they are only suggestions and are applied only if you tick them.</p>
+      <div id="mlpGroupsList" class="mg-section-picker"><div class="mlp-empty">Loading…</div></div>
+      <div id="mlpGroupsFeedback" class="mg-feedback" hidden></div>
+    </div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalPolicyGroups')">CANCEL</button>
+      <button type="button" class="btn-ms" onclick="mlpSavePolicyGroups()">SAVE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: Merge Group change impact ── -->
+<div id="modalMergeImpact" class="s-modal">
+  <div class="s-modal-box lock-warn-box">
+    <div class="lock-warn-banner" style="background:linear-gradient(135deg,#b26a00,#7a4300);">
       <i class="fas fa-exclamation-triangle"></i>
       <div>
-        <span class="lock-warn-title">REMOVE SECTION PAIRING</span>
-        <span class="lock-warn-sub" id="delPairLabel"></span>
+        <span class="lock-warn-title">REVIEW IMPACT BEFORE SAVING</span>
+        <span class="lock-warn-sub">No other section's schedule is changed by this save.</span>
       </div>
     </div>
     <div class="s-modal-body" style="padding-top:18px;">
-      <p class="lock-warn-body">
-        If these two sections currently share a merged class in the schedule, removing this
-        pairing means they'll be treated as a normal room conflict going forward. This does
-        not undo any already-published schedule — it only stops future scheduling from
-        treating them as mergeable.
-      </p>
+      <div id="mgImpactBody" class="lock-warn-body"></div>
       <div class="lock-warn-actions">
-        <button type="button" class="btn-ay-finalize-confirm" style="background:linear-gradient(135deg,#b71c1c,#7f0000);" onclick="_doDeleteSectionPair()">
-          <i class="fas fa-trash"></i> Remove Pairing
+        <button type="button" class="btn-ay-finalize-confirm" id="mgImpactConfirmBtn" onclick="mgConfirmImpact()">
+          <i class="fas fa-check"></i> Save anyway
         </button>
-        <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalDeleteSectionPair')">
+        <button type="button" class="btn-lock-cancel" onclick="closeSModal('modalMergeImpact')">
           <i class="fas fa-times"></i> Cancel
         </button>
       </div>
@@ -880,7 +912,7 @@
 
 <!-- ── MODAL: Generic delete/remove confirmation ─────────────
      Reused by every small inline delete on this page (day pairing rows,
-     time slot rows, merge scope subjects, merge load policy rules) so none
+     time slot rows, merge load policy rules) so none
      of them fall back to the browser's native confirm() popup. -->
 <div id="modalGenericConfirm" class="s-modal">
   <div class="s-modal-box w-sm lock-warn-box">
@@ -1162,5 +1194,5 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}?v=20261006a"></script>
+<script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}?v=20261008p7"></script>
 {% endblock %}

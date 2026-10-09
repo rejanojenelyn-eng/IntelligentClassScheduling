@@ -192,3 +192,14 @@ def test_local_mode_does_not_run_the_draft_lookup(monkeypatch):
     body, cur = _room(monkeypatch, [local_row], [{'subj': 'A101', 'sectionid': 9, 'semesterid': 1}], mode='local')
     assert len(body) == 1
     assert not any("sv.status = 'Draft'" in sql and 'ANY(%s)' in sql for sql in cur.calls)
+
+
+# ── Deleting another subject's pill (×) keeps the subject being edited ───────
+
+def test_dropping_another_subjects_pill_keeps_the_open_subject_and_its_edit(h):
+    r = h['drop_other_subject_pill']
+    assert r['delete_called'] is True
+    assert r['current_subject'] == 'A101' and r['sel_subj'] == 'A101'
+    assert 'Wednesday' in r['a_pending']                         # unsaved edit kept
+    # A stray click reaching the deleted pill's handler right after the × is ignored.
+    assert not any(c[0] == '_onSubjectClick' for c in r['calls'])

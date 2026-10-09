@@ -122,7 +122,13 @@ FACULTY_SESSIONS_SQL = """
         es.daydesc AS days,
         COALESCE(r.roomname,'—') AS room,
         'Published'::text AS status,
-        es.source
+        es.source,
+        -- Merged-event identity for HC16/HC17 (group model): faculty, room id and the
+        -- exact start/end as 'HH:MM' strings (JSON-safe).
+        es.employeenumber AS employeenumber,
+        es.roomid AS roomid,
+        TO_CHAR(ts_s.timevalue,'HH24:MI') AS start,
+        TO_CHAR(ts_e.timevalue,'HH24:MI') AS "end"
     FROM effective_sessions es
     JOIN curriculumsubject cs ON es.curriculumsubjectid = cs.curriculumsubjectid
     JOIN semester sem ON es.semesterid = sem.semesterid
@@ -154,7 +160,8 @@ _BATCH_HOURS_SQL_TMPL = """
            ts_s.timevalue AS start_time,
            ts_e.timevalue AS end_time,
            pyl.programcode AS programcode,
-           sec.sectionname AS sectionname
+           sec.sectionname AS sectionname,
+           es.roomid AS roomid
     FROM effective_sessions es
     JOIN schedule sc ON sc.scheduleid = es.scheduleid
     JOIN curriculumsubject cs ON es.curriculumsubjectid = cs.curriculumsubjectid
@@ -320,6 +327,32 @@ def _default_config(config):
     return config
 
 
+def _merge_policy_of(config):
+    """The HC16/HC17 group-model policy carried by `config` (merge_groups), or None
+    under the legacy model — then every legacy HC17 path below runs unchanged.
+    Imported lazily: merge_groups imports this module."""
+    if not config:
+        return None
+    import merge_groups
+    return merge_groups.policy_from_config(config)
+
+
+def _load_config(config, cur, ay_id, sem):
+    """`config` for a load computation of one term. Under the group model, when the
+    caller did not inject a policy, the semester's HC16 Merge Groups + HC17 policy
+    mappings are loaded here so totals always follow merged-event identity."""
+    config = _default_config(config)
+    import merge_groups
+    if (merge_groups.merge_model(config) != merge_groups.MODEL_GROUPS
+            or isinstance(config.get(merge_groups.POLICY_CFG_KEY), merge_groups.GroupMergePolicy)):
+        return config
+    cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                (ay_id, sem))
+    row = cur.fetchone()
+    sem_id = (row['semesterid'] if isinstance(row, dict) else row[0]) if row else None
+    return merge_groups.with_policy(config, merge_groups.policy_for(config, [sem_id], cur=cur))
+
+
 def get_faculty_scheduled_hours(cur, emp_num, ay_id, sem, published_only=False, config=None):
     """Total real LIVE scheduled hours for one faculty (effective schedule: Published
     Official + active Published Local), plus the raw session rows (callers that only need
@@ -330,7 +363,7 @@ def get_faculty_scheduled_hours(cur, emp_num, ay_id, sem, published_only=False, 
     same total the Faculty Load tab and CSPValidator's HC9 use. The raw sessions
     are returned unchanged."""
     sessions = get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=published_only)
-    grouped = group_assignments(sessions, config=_default_config(config))
+    grouped = group_assignments(sessions, config=_load_config(config, cur, ay_id, sem))
     return round(sum(float(g.get('hrs') or 0) for g in grouped), 2), sessions
 
 
@@ -376,6 +409,12 @@ def summarize_faculty_load(sessions, config=None):
         'programcode':  s.get('programcode'),
         'section_name': s.get('sectionname'),
         'sectionid':    s.get('sectionid'),
+        # group model (HC16/HC17): the slice's room, its own real hours and, for rows
+        # that carry times only as 'HH:MM' strings (FACULTY_SESSIONS_SQL), those times
+        'roomid':       s.get('roomid'),
+        'hrs':          s.get('hrs'),
+        'start':        s.get('start'),
+        'end':          s.get('end'),
     } for s in sessions]
     return {'regular': reg, 'pt': pt, 'total': round(reg + pt, 2), 'slices': slices}
 
@@ -384,7 +423,7 @@ def get_faculty_load_batch(cur, ay_id, sem, exclude_program=None, exclude_year_l
                            exclude_section_id=None, config=None):
     """{employeenumber: summarize_faculty_load(...)} for the whole term -- the
     bucketed, merge-aware `existing_load` CSPValidator's HC9 consumes."""
-    config = _default_config(config)
+    config = _load_config(config, cur, ay_id, sem)
     by_faculty = defaultdict(list)
     for row in _fetch_batch_rows(cur, ay_id, sem, exclude_program, exclude_year_level,
                                  exclude_section_id):
@@ -449,8 +488,24 @@ def merge_aware_additional_hours(rows, existing_slices=(), config=None):
     Every participant pair must be a valid merge (3+ sections need the full
     clique, same rule as CSPValidator._check_load_limits/group_assignments).
     Rows carry subject_code, day/days_list, start_time/end_time (time objects)
-    and optional course/programcode + section_name for section-pair rules."""
+    and optional course/programcode + section_name for section-pair rules.
+
+    Group model: no inference here — the shared HC17 calculation
+    (merge_groups.GroupMergePolicy.credit_rows, driven by HC16 event identity) is run
+    over existing + submitted rows and over existing rows alone; the difference is
+    what the submission adds (existing rows first, so an event already counted in
+    another section is not counted again)."""
     cfg = config or {}
+    policy = _merge_policy_of(cfg)
+    if policy is not None:
+        def _hours(r):
+            if r.get('hrs') is not None:
+                return float(r.get('hrs') or 0)
+            return _meeting_hours(r) * max(1, len(_meeting_days(r)))
+        existing = list(existing_slices or [])
+        both = sum(m['credit'] for m in policy.credit_rows(existing + list(rows or []), hours=_hours))
+        alone = sum(m['credit'] for m in policy.credit_rows(existing, hours=_hours))
+        return round(both - alone, 2)
     pairs = parse_merge_section_pairs(cfg.get('hc_merge_section_pairs'))
 
     def _code(r):
@@ -654,7 +709,13 @@ def group_assignments(sessions, config=None):
     scheduler.CSPValidator's HC17 fix in _check_load_limits. Without
     `config` (the previous behavior), no dedup is attempted -- any existing
     caller that doesn't pass it keeps exactly today's behavior.
+
+    Group model (config carries a merge_groups policy): see
+    _group_assignments_by_event — no subject/day/time inference at all.
     """
+    policy = _merge_policy_of(config)
+    if policy is not None:
+        return _group_assignments_by_event(sessions, policy)
     skip_hours = [False] * len(sessions)
     if config is not None:
         merge_section_pairs = parse_merge_section_pairs(config.get('hc_merge_section_pairs'))
@@ -747,6 +808,103 @@ def group_assignments(sessions, config=None):
         g['pt_days'], g['pt_time_range'] = _join(g['_pt_pairs'])
         result.append(g)
     return result
+
+
+def _group_assignments_by_event(sessions, policy):
+    """group_assignments() under the group merge model.
+
+    Hours come ONLY from the shared HC17 calculation (policy.credit_rows), which
+    consumes HC16 merged-event identity: rows of the same valid event count once for
+    the faculty, an explicitly mapped HC17 policy may re-credit the shared assignment
+    from curriculum hours, everything else is a normal assignment. Rows of one
+    faculty's merged assignment (same Merge Group) become ONE entry: sections joined,
+    subject units once (the policy's curriculum units when a policy applies), every
+    meeting's day/time listed once. Normal rows keep today's (subject, year_section)
+    grouping, so subject units are still credited once per assignment however many
+    weekly slices it has."""
+    meta = policy.credit_rows(sessions)
+    labels, rooms = defaultdict(list), defaultdict(list)
+    for s, m in zip(sessions, meta):
+        if m['merged_group'] is None:
+            continue
+        key = ('MG', m['merged_group'], str(s.get('employeenumber') or s.get('faculty_id') or ''))
+        if s.get('year_section') and s.get('year_section') not in labels[key]:
+            labels[key].append(s.get('year_section'))
+        if s.get('room') and s.get('room') not in rooms[key]:
+            rooms[key].append(s.get('room'))
+
+    groups, order = {}, []
+    for s, m in zip(sessions, meta):
+        merged = m['merged_group'] is not None
+        if merged:
+            key = ('MG', m['merged_group'], str(s.get('employeenumber') or s.get('faculty_id') or ''))
+        else:
+            key = (s.get('subjectcode'), s.get('year_section'))
+        h = float(m['credit'])
+        reg = is_reg_slice(s.get('days'), s.get('time_code'))
+        lists_meeting = bool(s.get('days')) and (not merged or m['keeper'])
+        pair = (s.get('days'), s.get('time_range'))
+        if key not in groups:
+            g = dict(s)
+            g['_reg_hrs'] = h if reg else 0.0
+            g['_pt_hrs'] = 0.0 if reg else h
+            g['_days'] = [s.get('days')] if lists_meeting else []
+            g['_times'] = [s.get('time_range')] if lists_meeting else []
+            g['_reg_pairs'] = [pair] if (reg and lists_meeting) else []
+            g['_pt_pairs'] = [pair] if (not reg and lists_meeting) else []
+            g['hrs'] = h
+            if merged:
+                grp = policy.index.group(m['merged_group']) or {}
+                g['year_section'] = ', '.join(labels[key]) or s.get('year_section')
+                if rooms[key]:
+                    g['room'] = ', '.join(rooms[key])
+                g['merge_group'] = grp.get('groupname')
+                g['merged_sections'] = m['section_count']
+                rule = m['rule'] or {}
+                g['merge_policy'] = rule.get('policyname') or rule.get('subjectcode')
+                if m['units'] is not None:
+                    g['units'] = m['units']
+            groups[key] = g
+            order.append(key)
+        else:
+            g = groups[key]
+            g['hrs'] += h
+            if reg:
+                g['_reg_hrs'] += h
+            else:
+                g['_pt_hrs'] += h
+            if lists_meeting:
+                g['_days'].append(s.get('days'))
+                g['_times'].append(s.get('time_range'))
+                (g['_reg_pairs'] if reg else g['_pt_pairs']).append(pair)
+
+    def _join(pairs):
+        ordered = sorted(pairs, key=lambda p: DAY_ORDER.get(p[0], 7))
+        return ', '.join(p[0] for p in ordered), ', '.join(p[1] for p in ordered)
+
+    result = []
+    for key in order:
+        g = groups[key]
+        g['hrs'] = round(g['hrs'], 4)
+        g['_reg_hrs'] = round(g['_reg_hrs'], 4)
+        g['_pt_hrs'] = round(g['_pt_hrs'], 4)
+        pairs = sorted(zip(g['_days'], g['_times']), key=lambda p: DAY_ORDER.get(p[0], 7))
+        g['days'] = ', '.join(p[0] for p in pairs)
+        g['time_range'] = ', '.join(p[1] for p in pairs)
+        g['reg_days'], g['reg_time_range'] = _join(g['_reg_pairs'])
+        g['pt_days'], g['pt_time_range'] = _join(g['_pt_pairs'])
+        result.append(g)
+    return result
+
+
+def credited_session_hours(sessions, config=None):
+    """Per-row hours as they count toward the faculty's load: the shared HC17
+    credit under the group model, the row's own hours otherwise (legacy callers
+    that show raw per-day hours keep doing exactly that)."""
+    policy = _merge_policy_of(config)
+    if policy is None:
+        return [float(s.get('hrs') or 0) for s in sessions]
+    return [m['credit'] for m in policy.credit_rows(sessions)]
 
 
 def cap_spill(items, max_hours):

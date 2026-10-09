@@ -142,6 +142,13 @@ function _laCardHtml(a) {
     const hcBadge  = a.has_hc_violation
         ? '<span class="la-badge la-badge-red"><i class="fas fa-exclamation-triangle"></i> HC Violation</span>'
         : '';
+    // HC16 group model: this arrangement changes a Merge Group member's meeting.
+    // Flag only — it is never modified or archived automatically; Publish rejects it.
+    const mergeLocks = a.merge_restrictions || [];
+    const mergeBadge = mergeLocks.length
+        ? `<span class="la-badge la-badge-red" title="${_laEsc(mergeLocks.map(m => m.error).join(' | '))}">` +
+          `<i class="fas fa-object-group"></i> Diverges from Merge Group: ${_laEsc([...new Set(mergeLocks.map(m => m.group))].join(', '))}</span>`
+        : '';
     const reason   = a.override_reason
         ? `<div class="la-card-reason"><i class="fas fa-quote-left" style="font-size:0.6rem;margin-right:4px;"></i>${_laEsc(a.override_reason)}</div>`
         : '';
@@ -163,6 +170,7 @@ function _laCardHtml(a) {
                 <span class="la-badge la-badge-gray"><i class="fas fa-user" style="font-size:0.55rem;"></i> ${_laEsc(a.created_by || '—')}</span>
                 <span class="la-badge la-badge-gray">${createdAt}</span>
                 ${hcBadge}
+                ${mergeBadge}
             </div>
             ${reason}
         </div>
@@ -231,6 +239,12 @@ async function laViewArrangement(arrId) {
                 <span class="la-modal-info-label">Saved On</span>
                 <span class="la-modal-info-val">${createdAt}</span>
             </div>
+            ${(data.merge_restrictions || []).length ? `
+            <div class="la-modal-info-item" style="flex-basis:100%;">
+                <span class="la-modal-info-label">Merge Group Conflict</span>
+                <span style="font-size:0.75rem;color:#c62828;font-weight:700;">${(data.merge_restrictions || []).map(m => _laEsc(m.error)).join('<br>')}
+                <br><span style="color:#555;font-weight:600;">This arrangement was not changed. It cannot be published again while it changes a merged class; restore those meetings to their Official day/time/room or deactivate it.</span></span>
+            </div>` : ''}
             ${a.override_reason ? `
             <div class="la-modal-info-item" style="flex-basis:100%;">
                 <span class="la-modal-info-label">Reason</span>

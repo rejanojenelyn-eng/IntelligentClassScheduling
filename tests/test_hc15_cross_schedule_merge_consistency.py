@@ -107,6 +107,13 @@ class _FakeConn:
 
 def test_check_cross_schedule_conflicts_skips_a_valid_nstp_merge(monkeypatch):
     import app
+    import database
+    # Legacy-model behaviour (NSTP auto-merge): pinned explicitly, since the live
+    # system now runs the HC16 Merge Group model (P7), where NSTP merges only
+    # through a recorded merged class.
+    _cfg = dict(database.load_scheduler_config(), hc_merge_model='legacy', hc_merge_enabled=1,
+                hc_merge_scope='nstp_only', hc_merge_scope_subjects='[]')
+    monkeypatch.setattr(database, 'load_scheduler_config', lambda *a, **k: dict(_cfg))
 
     published_row = {
         'roomid': 1, 'faculty_id': 'F2', 'day': 'Sunday',

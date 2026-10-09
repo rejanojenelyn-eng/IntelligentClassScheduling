@@ -1264,6 +1264,8 @@
                 </div>
                 <span class="right-subj-badge" id="right-subj-badge">-</span>
             </div>
+            <!-- HC16 group model: Merge Group badge/details (filled by manualEditor.mergeGroups.js) -->
+            <div id="mg-badge" hidden></div>
 
             <!-- Unit Progress row -->
             <div class="unit-progress-row">
@@ -1291,6 +1293,7 @@
             <div class="fac-lock-badge" id="fac-lock-badge" onclick="unlockFacultyChoice()" title="Click to change faculty">
                 <i class="fas fa-lock"></i> Faculty locked — click to reassign
             </div>
+            <div id="mg-fac-note" hidden></div>
 
             <!-- Faculty Stats Panel — serves as both selector and info display -->
             <div class="fac-stats-panel" id="fac-stats-panel">
@@ -1371,6 +1374,7 @@
                 <span>This subject does not have a Published Official Schedule.<br>
                 New Local Arrangements can only be created from an existing Published Schedule.<br>
             </div>
+            <div id="mg-banner" hidden></div>
             <div id="time-slots-container" class="time-slots-wrap"></div>
 
             <!-- Hidden legacy inputs for JS compatibility -->
@@ -1528,13 +1532,15 @@
      data-merge-enabled="{{ 'true' if merge_enabled else 'false' }}"
      data-merge-scope="{{ merge_scope }}"
      data-merge-scope-subjects="{{ merge_scope_subjects_json | e }}"
+     data-merge-model="{{ merge_model or 'legacy' }}"
      data-day-pairing-enabled="{{ 'true' if day_pairing_enabled else 'false' }}"
      data-day-pairs="{{ day_pairs_json | e }}"
      data-from-generator="{{ init_from_generator }}"
      data-my-emp-num="{{ my_emp_num or '' }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261008b"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261008p8"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.mergeGroups.js') }}?v=20261009a"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -2014,6 +2020,50 @@ function showConfirmModal(message, title = 'Confirm') {
         function onCancel() { cleanup(false); }
         btnOk.addEventListener('click', onOk);
         btnCancel.addEventListener('click', onCancel);
+    });
+}
+
+/* ── P7 merge notice — Save Draft / Publish placed a class exactly on another
+   section's same-subject, same-faculty class. Resolves true to merge, false to cancel. ── */
+function _confirmMergeNotice(data) {
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const merges = (data && data.merges) || [];
+    const problems = (data && data.merge_problems) || [];
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'merge-notice-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10001;display:flex;align-items:center;justify-content:center;';
+        const card = m => `
+            <div style="border:1.5px solid #9cc0e6;background:#f4f8fd;border-radius:6px;padding:10px 12px;margin-bottom:8px;">
+                <div style="font-weight:800;color:#1f4f82;font-size:.86rem;">${esc(m.subject_code)}${m.subject_name ? ' — ' + esc(m.subject_name) : ''}</div>
+                <div style="font-size:.8rem;color:#2c3e50;margin-top:3px;"><b>${esc(m.section_label)}</b> merges with <b>${esc(m.other_section_label)}</b>
+                    <span style="color:#7f8c8d;">(${esc(m.other_status)})</span></div>
+                <div style="font-size:.78rem;color:#566573;margin-top:3px;">
+                    ${esc(m.day)} · ${esc(m.start_label)} – ${esc(m.end_label)} · ${esc(m.roomname)} · ${esc(m.faculty_name)}</div>
+                ${m.group ? `<div style="font-size:.72rem;color:#7f8c8d;margin-top:2px;">Joins merged class “${esc(m.group)}”</div>` : ''}
+            </div>`;
+        overlay.innerHTML = `
+            <div style="background:#fff;border-radius:8px;padding:24px 26px;max-width:500px;width:92%;box-shadow:0 6px 32px rgba(0,0,0,.22);font-family:inherit;max-height:86vh;overflow:auto;">
+                <div style="font-size:.82rem;font-weight:900;color:#1f4f82;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">
+                    <i class="fas fa-object-group"></i> You are merging classes</div>
+                <div style="font-size:.83rem;color:#444;margin-bottom:14px;line-height:1.5;">
+                    These sections will attend <b>one class together</b> — same subject, faculty, day, time and room.
+                    The merge is recorded in Settings → Class Merging.</div>
+                ${merges.map(card).join('')}
+                ${problems.length ? `<div style="margin-top:6px;padding:8px 10px;border-radius:6px;background:#fdf2f0;border:1px solid #f1a9a0;color:#922b21;font-size:.76rem;">
+                    <b>Cannot merge (stays a conflict):</b><br>${problems.map(p => `${esc(p.subject_code)} with ${esc(p.other_section_label)}: ${esc(p.reason)}`).join('<br>')}</div>` : ''}
+                <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+                    <button type="button" data-act="cancel" style="padding:8px 18px;border:1.5px solid #ccc;border-radius:5px;background:#fff;color:#555;font-weight:700;cursor:pointer;">Cancel</button>
+                    <button type="button" data-act="ok" style="padding:8px 18px;border:none;border-radius:5px;background:#8b1a1a;color:#fff;font-weight:800;cursor:pointer;">Merge &amp; Continue</button>
+                </div>
+            </div>`;
+        const done = v => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+        const onKey = e => { if (e.key === 'Escape') done(false); };
+        overlay.querySelector('[data-act="ok"]').onclick = () => done(true);
+        overlay.querySelector('[data-act="cancel"]').onclick = () => done(false);
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
     });
 }
 
@@ -2682,6 +2732,10 @@ window.confirmAndPlace = async function() {
         
         for (const c of pendingManualSchedule) {
             if (c.subject_code === subjSel.value && c.ay === ay && c.sem === sem) {
+                // A preview is the unsaved mirror of a slice row — when Approve Schedule
+                // promotes that row through here, it IS the session being placed, so
+                // counting it too doubled the hours (3h slice → "3h + 3h = 6h exceeded").
+                if (c.isPreview) continue;
                 // Must match THIS section — otherwise a leftover entry from another section
                 // of the same subject (e.g. BSCE1-1's, still in memory while BSCE1-2 is now
                 // selected) would count toward this section's hours-required cap.
@@ -2753,7 +2807,20 @@ window.confirmAndPlace = async function() {
     const _curSubjCode = (subjSel.value || '').toUpperCase();
     let _mergeConfirmed = false; // set to true if user confirms a merge
 
+    // HC16 group model: the placed slice's server event key (set from its row by
+    // confirmAllSlots / saveIndividualSlice). Only rows of ANOTHER member section with the
+    // SAME key are the same merged class; everything else blocks as usual.
+    const _mgEv = typeof _mgPlacingEvent === 'function' ? _mgPlacingEvent() : '';
+    const _mgSame = o => typeof _mgSameEvent === 'function' && _mgSameEvent(o, _mgEv, sectionId);
+    // P7: exactly on another section's same-subject class with the same faculty (or TBA)
+    // in this room = a merge, not a conflict. Save Draft / Publish show the merge notice.
+    const _mgMine = { section: sectionId, subject: _curSubjCode, faculty: facVal };
+    const _mgExactMerge = (o, oStart, oEnd) => !!roomVal && roomVal !== 'TBA' &&
+        typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(o, _mgMine) &&
+        oStart === newStartIdx && oEnd === newEndIdx;
+
     const _inlineMergeMode = (() => {
+        if (typeof MERGE_MODEL !== 'undefined' && MERGE_MODEL === 'groups') return 'none';
         const enabled = typeof MERGE_ENABLED !== 'undefined' ? MERGE_ENABLED : true;
         if (!enabled) return 'none';
         const scope   = typeof MERGE_SCOPE !== 'undefined' ? MERGE_SCOPE : 'nstp_only';
@@ -2791,6 +2858,8 @@ window.confirmAndPlace = async function() {
                     s.daydesc     === window.currentEditSession.daydesc &&
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    if (_mgSame(s)) continue;   // the same merged class (another member section)
+                    if (_mgExactMerge(s, s.starttimeid, s.endtimeid)) continue;
                     const _sameSubj = (s.subjectcode || '').toUpperCase() === _curSubjCode;
                     const _sameFac  = String(s.employee_number) === String(facVal);
                     // Merge candidate: flexible (NSTP) = same subject only; strict = same subject + same faculty
@@ -2832,6 +2901,8 @@ window.confirmAndPlace = async function() {
                 const cStart = getTimeSlotIndex(c.start_time);
                 const cEnd   = getTimeSlotIndex(c.end_time);
                 if (newStartIdx < cEnd && newEndIdx > cStart) {
+                    if (_mgSame(c)) continue;   // the same merged class (another member section)
+                    if (_mgExactMerge(c, cStart, cEnd)) continue;
                     const _sameSubj = (c.subject_code || '').toUpperCase() === _curSubjCode;
                     const _sameFac  = String(c.faculty_id) === String(facVal);
                     if (_sameSubj && _inlineMergeMode !== 'none' &&
@@ -2868,6 +2939,8 @@ window.confirmAndPlace = async function() {
                     s.daydesc     === window.currentEditSession.daydesc &&
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
+                    if (_mgSame(s)) continue;   // the same merged class (another member section)
+                    if (String(s.roomid) === String(roomVal) && _mgExactMerge(s, s.starttimeid, s.endtimeid)) continue;
                     // Skip faculty conflict when merge allows this subject (merged sessions share a slot)
                     if (_inlineMergeMode !== 'none' && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
                     // Also skip if this is an already-confirmed merge class
@@ -2891,6 +2964,8 @@ window.confirmAndPlace = async function() {
             const cStart = getTimeSlotIndex(c.start_time);
             const cEnd   = getTimeSlotIndex(c.end_time);
             if (newStartIdx < cEnd && newEndIdx > cStart) {
+                if (_mgSame(c)) continue;   // the same merged class (another member section)
+                if (String(c.room_id) === String(roomVal) && _mgExactMerge(c, cStart, cEnd)) continue;
                 // Skip when this faculty is teaching the same subject under a valid merge
                 if (_inlineMergeMode !== 'none' && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
                 if (_mergeConfirmed && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
@@ -2980,6 +3055,9 @@ window.confirmAndPlace = async function() {
         status:            (window.currentEditSession && window.currentEditSession.status) || 'Draft'
     };
     Object.assign(newClass, _preservedOccurrenceIdentity(_replacedEntry, window.currentEditSession));
+    // Server-provided merged-event key of this placement (group model only) — lets other
+    // sections' unsaved checks recognise the same merged class. Never sent as identity.
+    if (_mgEv) newClass.merge_event = _mgEv;
 
     pendingManualSchedule.push(newClass);
     window.currentEditSession = null;
@@ -3313,7 +3391,18 @@ function _syncSubjectCardBars() {
 }
 
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
-async function _refreshSubjectScheduledHours() {
+// Every slice edit calls this; coalesce bursts into at most one running request plus
+// one follow-up (so a call made after a save still sees the post-save counts).
+let _rshRun = null, _rshAgain = false;
+function _refreshSubjectScheduledHours() {
+    if (_rshRun) { _rshAgain = true; return _rshRun; }
+    _rshRun = (async () => {
+        try { do { _rshAgain = false; await _refreshSubjectScheduledHoursOnce(); } while (_rshAgain); }
+        finally { _rshRun = null; }
+    })();
+    return _rshRun;
+}
+async function _refreshSubjectScheduledHoursOnce() {
     const ay       = document.getElementById('sel_ay').value;
     const sem      = document.getElementById('sel_sem').value;
     const currId   = document.getElementById('curr_id_hidden')?.value;
@@ -4007,9 +4096,17 @@ async function _onSubjectClick(code, name, units, hours) {
         }
     }
 
+    // HC16 group model: load this subject's merge metadata (badge, merged slots, notes).
+    // Only a broken (unloadable) context withholds the blank slice.
+    if (typeof _mgRefresh === 'function') {
+        await _mgRefresh();
+        if (_myClickToken !== _subjClickToken) return;
+    }
+    const _mgNoBlank = typeof _mgControlled === 'function' && _mgControlled();
+
     // Auto-add one empty slice if no slices were loaded (no existing sessions).
     // In Local mode: only add when unblocked (subject has a valid Published/LA source).
-    if ((!IS_LOCAL || _hasExistingSchedule) && !document.querySelectorAll('.ts-row').length) {
+    if (!_mgNoBlank && (!IS_LOCAL || _hasExistingSchedule) && !document.querySelectorAll('.ts-row').length) {
         if (typeof addNewTimeSlot === 'function') addNewTimeSlot('', '', '', '', '', true);
     }
 
@@ -4220,6 +4317,7 @@ function _clearFacultyLock() {
 /* ── Reset right panel to empty / no-subject state ─────────── */
 function _resetRightPanel() {
     _currentSubjectCode = null;
+    if (typeof _mgClearUi === 'function') { _mgCtx = null; _mgClearUi(); }
     window.currentEditSession = null;
     document.getElementById('right-subj-code').textContent = '--';
     document.getElementById('right-subj-name').textContent = 'Select a subject from the curriculum guide';
@@ -4375,6 +4473,7 @@ function _updateAssignFacultyBtn() {
 
 // Dispatches the single Assign/Reassign button to the right handler for its current state.
 function _handleAssignFacultyBtnClick() {
+    if (typeof _mgFacultyLocked === 'function' && _mgFacultyLocked()) { _mgFacultyGuard(); return; }
     const btn = document.getElementById('btnAssignFaculty');
     const action = btn?.dataset.action;
     if (action === 'reassign-locked') {
@@ -4419,6 +4518,7 @@ function _syncSubjectFacultyToCalendar(code, facId, facName) {
 function _handleTBABtnClick() {
     if (IS_LOCAL) return;
     if (!_currentSubjectCode) return;
+    if (typeof _mgFacultyLocked === 'function' && _mgFacultyLocked()) { _mgFacultyGuard(); return; }
 
     document.getElementById('sel_faculty').value       = 'TBA';
     document.getElementById('fac_display_name').value  = 'TBA';
@@ -4543,7 +4643,14 @@ async function _findFacultySliceConflict(facId, facName) {
         day:   row.querySelector('.ts-day-sel')?.value || '',
         start: _TS_TIMES.indexOf(row.querySelector('.ts-start-hidden')?.value || '') + 1,
         end:   _TS_TIMES.indexOf(row.querySelector('.ts-end-hidden')?.value   || '') + 1,
+        room:  row.querySelector('.ts-room-hidden')?.value || '',
+        ev:    row.dataset.mergeEvent || '',   // server event key (group model)
     })).filter(sl => sl.day && sl.start > 0 && sl.end > sl.start);
+    // P7: the same subject with this faculty in another section, exactly at a slice's
+    // day/time/room, is a merge (confirmed on Save Draft / Publish), not a conflict.
+    const _mergeAt = (s, x) => typeof _mgMergeCandidate === 'function' && x.room && x.room !== 'TBA' &&
+        String(s.roomid) === String(x.room) && s.starttimeid === x.start && s.endtimeid === x.end &&
+        _mgMergeCandidate(s, { section: sect, subject: code, faculty: facId });
     if (!slices.length) return '';
 
     const fmt = idx => _TS_TIMES[idx - 1] || '';
@@ -4566,7 +4673,9 @@ async function _findFacultySliceConflict(facId, facName) {
         if (sCode === code && String(s.section_id || '') === String(sect)) continue;
         // Same subject, another section, same slot: a merged class, allowed by merge policy.
         if (sCode === code && mergeOk) continue;
-        const sl = slices.find(x => hit(x, s.daydesc, s.starttimeid, s.endtimeid));
+        // Group model: only the SAME merged event of another member section is exempt.
+        const sl = slices.find(x => hit(x, s.daydesc, s.starttimeid, s.endtimeid) &&
+            !(typeof _mgSameEvent === 'function' && _mgSameEvent(s, x.ev, sect)) && !_mergeAt(s, x));
         if (sl) {
             return `${facName} already has "${s.subjectname || s.subjectcode}"` +
                 `${s.sectionname ? ` (${s.sectionname})` : ''} on ${s.daydesc} — ` +
@@ -4728,6 +4837,7 @@ async function _loadFacultyAssignments() {
 // No load-event hook needed here.
 
 window.unlockFacultyChoice = async function() {
+    if (typeof _mgFacultyGuard === 'function' && await _mgFacultyGuard()) return;
     if (IS_LOCAL) return;  // Local mode: faculty is always from Official schedule
     const sliceCount = document.querySelectorAll('.ts-row').length;
     if (!sliceCount) { _clearFacultyLock(); return; }
@@ -5362,12 +5472,15 @@ function tsFilter(p, id) {
     tsOpen(p, id);
 }
 function tsSel(p, id, val) {
+    // HC16 group model: a group-controlled slice's day/time/room are read-only.
+    if (typeof _mgRowLocked === 'function' && _mgRowLocked(id)) return;
     const list  = document.getElementById(`${p}-list-${id}`);
     const item  = list?.querySelector(`.ts-ss-item[data-val="${val}"]`);
     // Belt-and-suspenders: an occupied/before-start/unavailable-room option should already be
     // hidden (see tsOpen/tsFilter), but never honor a click on one regardless — e.g. a stale
     // DOM click queued right as the option got dimmed out from under it.
-    if (item && (item.classList.contains('occ-dim') || item.classList.contains('before-start')
+    // RESET TO GROUP SLOT applies the server's group slot as is (server HC16/HC11 judge it).
+    if (!window._mgApplying && item && (item.classList.contains('occ-dim') || item.classList.contains('before-start')
         || item.classList.contains('room-unavailable'))) return;
     const label = item ? item.textContent.trim() : val;
     const txtEl = document.getElementById(`${p}-txt-${id}`);
@@ -5417,7 +5530,7 @@ function tsSel(p, id, val) {
         if (val) {
             const _rfAy  = document.getElementById('sel_ay')?.value  || '';
             const _rfSem = document.getElementById('sel_sem')?.value || '';
-            _prefetchRoomOccupancy(val, _rfAy, _rfSem).then(() => _applyRoomOccupancyFilter(id));
+            _prefetchRoomOccupancy(val, _rfAy, _rfSem, { join: true }).then(() => _applyRoomOccupancyFilter(id));
         } else {
             _applyRoomOccupancyFilter(id);
         }
@@ -5490,6 +5603,7 @@ function _renderDayRecommendations(rowId) {
 }
 
 function _openDayList(rowId) {
+    if (typeof _mgRowLocked === 'function' && _mgRowLocked(rowId)) return;
     _renderDayRecommendations(rowId);
     tsOpen('tsd', rowId);
 }
@@ -5502,6 +5616,7 @@ function _toggleDayList(rowId) {
 }
 
 function _chooseRecommendedDay(rowId, day) {
+    if (typeof _mgRowLocked === 'function' && _mgRowLocked(rowId)) return;
     const sel = document.getElementById(`ts-day-${rowId}`);
     if (!sel || !Array.from(sel.options).some(o => o.value === day)) return;
     const changed = sel.value !== day;
@@ -5581,6 +5696,7 @@ function _renderTimeRecommendations(rowId) {
 }
 
 function _chooseRecommendedTime(rowId, start, end) {
+    if (typeof _mgRowLocked === 'function' && _mgRowLocked(rowId)) return;
     if (!_TS_TIMES.includes(start) || !_TS_TIMES.includes(end)) return;
     const sm = _timeToMinutes(start), em = _timeToMinutes(end);
     if (sm === null || em === null || em <= sm) return;
@@ -5619,6 +5735,13 @@ window._scheduleRecommendationRefresh = function() {
 };
 
 function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJson='', skipFullCheck=false) {
+    // HC16 group model: a merged subject's slices come only from its Merge Group (RESET TO
+    // GROUP SLOT) — never a free-edit blank slice.
+    if (!dayVal && !startVal && !endVal && !existingJson && !skipFullCheck &&
+        typeof _mgControlled === 'function' && _mgControlled()) {
+        _mgBlockFreeSlot('added');
+        return;
+    }
     if (!dayVal && !startVal && !endVal && !existingJson && !skipFullCheck) {
         const _chkCode = _currentSubjectCode;
         if (_chkCode) {
@@ -5671,6 +5794,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                 <button class="ts-action-icon ts-rem-icon" onclick="removeTimeSlot(${id})" title="Remove Slice">×</button>
             </div>
         </div>
+        <div class="ts-merge-note" id="ts-mg-${id}" hidden></div>
 
         <div class="ts-field-row">
             <div class="ts-field-icon"><i class="fas fa-calendar-days"></i></div>
@@ -5791,6 +5915,7 @@ function _filterConflictingStartTimes(newId, dayVal, roomId) {
 function duplicateTimeSlot(id) {
     const row = document.getElementById(`ts-row-${id}`);
     if (!row) return;
+    if (typeof _mgControlled === 'function' && _mgControlled()) { _mgBlockFreeSlot('duplicated'); return; }
     // Check if subject is already fully scheduled before duplicating
     const _dupCode = _currentSubjectCode;
     if (_dupCode) {
@@ -5837,6 +5962,8 @@ function _isDupUnmodified(id) {
 async function removeTimeSlot(id) {
     const row = document.getElementById(`ts-row-${id}`);
     if (!row) return;
+    // Removal affects only this section's slice; re-check its Merge Group sync afterwards.
+    if (typeof _mgScheduleRefresh === 'function') _mgScheduleRefresh();
 
     // Capture the room this slice occupied before it's removed from the DOM — needed below
     // to refresh the room-occupancy cache regardless of which view is currently active.
@@ -6081,6 +6208,7 @@ function _renumberSlices() {
 }
 
 function onTsDayChange(id) {
+    if (typeof _mgRowLocked === 'function' && _mgRowLocked(id)) return;
     document.getElementById('sel_day').value = document.getElementById(`ts-day-${id}`).value;
     onDayChange();
     _markSliceModified(id);
@@ -6217,6 +6345,7 @@ function _syncSliceToPending(id) {
                 time:         `${newStart} - ${newEnd}`,
                 course:       prog,
                 year_level:   yl,
+                section_id:   document.getElementById('sel_section')?.value || '',
                 units:        (typeof _subjInfo !== 'undefined' && _subjInfo) ? _subjInfo.creditunits : 3,
                 fromExisting: false,
                 status:       'Draft',
@@ -6560,6 +6689,10 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
     const code = _currentSubjectCode;
     const meta = _subjectMeta[code] || {};
     _updateUnitProgress(code, ay, sem, meta.units || 0, meta.total_hours || 0);
+
+    // HC16 group model: classify the loaded slices against their Merge Group (an OUT OF
+    // SYNC Draft is shown, never overwritten on open).
+    if (typeof _mgRefresh === 'function') await _mgRefresh();
 };
 
 /* ══════════════════════════════════════════════════════════════
@@ -6924,6 +7057,9 @@ function _completeSubjectDrafts(changed, ay, sem, sectionId, extraTouched = []) 
 }
 
 window._triggerSaveDraft = async function _triggerSaveDraft() {
+    // HC16 group model, fail-closed: no Save Draft while the open subject's Merge Group details
+    // are unavailable or still loading (never applies under the legacy model).
+    if (typeof _mgGuardSave === 'function' && await _mgGuardSave('save this Draft')) return false;
     // Captured before any await below — used after the save round trip to detect
     // whether the user has since switched to a different subject (see its use further
     // down, guarding the post-save panel refresh).
@@ -6982,7 +7118,8 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const valRes  = await fetch('/api/schedule/validate', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ schedule_data: newDrafts })
+                // context: lets the server resolve the section's merged classes (HC16).
+                body:    JSON.stringify({ schedule_data: newDrafts, context })
             });
             const valData = await valRes.json();
             if (valData.has_violations) {
@@ -7038,22 +7175,34 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
     const _saveAbort   = new AbortController();
     const _saveTimeout = setTimeout(() => _saveAbort.abort(), 60000);
     try {
-        const res = await fetch('/api/schedule/save-draft', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                schedule_data:     contextDrafts,
-                context:           context,
-                deleted_subjects:  Array.from(window._deletedSubjectCodes),
-                removed_subjects:  _subjectRemovals,
-                scheduler_mode:    SCHED_MODE
-            }),
-            signal: _saveAbort.signal
-        });
+        // P7: a class placed exactly on another section's same subject + faculty slot is
+        // a merge — the server asks first (MERGE_CONFIRMATION_REQUIRED); confirming
+        // resubmits the same Draft with confirm_merges.
+        let data, _confirmMerges = false;
+        for (;;) {
+            const res = await fetch('/api/schedule/save-draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    schedule_data:     contextDrafts,
+                    context:           context,
+                    deleted_subjects:  Array.from(window._deletedSubjectCodes),
+                    removed_subjects:  _subjectRemovals,
+                    scheduler_mode:    SCHED_MODE,
+                    confirm_merges:    _confirmMerges
+                }),
+                signal: _saveAbort.signal
+            });
+            try { data = await res.json(); }
+            catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was saved.` }; }
+            if (!data.success && data.code === 'MERGE_CONFIRMATION_REQUIRED' && !_confirmMerges) {
+                if (await _confirmMergeNotice(data)) { _confirmMerges = true; continue; }
+                clearTimeout(_saveTimeout);
+                return false;   // merge declined: nothing saved (button reset in finally)
+            }
+            break;
+        }
         clearTimeout(_saveTimeout);
-        let data;
-        try { data = await res.json(); }
-        catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was saved.` }; }
 
         if (data.success) {
             // Reset button immediately — don't make the user wait for post-save refreshes
@@ -7212,6 +7361,9 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
 // subject being reassigned, so there's nothing left for the user to actually choose).
 async function confirmAllSlots(opts = {}) {
     const auto = !!opts.auto;
+    // HC16 group model, fail-closed: no saving while the open subject's Merge Group details
+    // are unavailable or still loading (never applies under the legacy model).
+    if (typeof _mgGuardSave === 'function' && await _mgGuardSave('save')) return;
     if (window._pendingFacultyAssignment && !auto) {
         const ok = await showConfirmModal(
             'The selected faculty has not been confirmed yet. Saving this schedule will automatically confirm and assign the selected faculty to this subject.',
@@ -7453,7 +7605,8 @@ async function confirmAllSlots(opts = {}) {
         }
 
         const prevLen = pendingManualSchedule.length;
-        await confirmAndPlace();
+        window._mgPlacingEventKey = row.dataset.mergeEvent || '';
+        try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; }
         // BUG (fixed): this used to also require `!window.currentEditSession` here, which
         // meant a conflict on an EXISTING slice (hasExisting branch above always sets
         // window.currentEditSession = sessData before calling confirmAndPlace) never
@@ -7510,6 +7663,9 @@ function _injectTimeOpt(selId, val) {
 async function saveIndividualSlice(id) {
     const row = document.getElementById(`ts-row-${id}`);
     if (!row) return;
+    // HC16 group model, fail-closed: no slice save while the open subject's Merge Group details
+    // are unavailable or still loading (never applies under the legacy model).
+    if (typeof _mgGuardSave === 'function' && await _mgGuardSave('save this slice')) return;
 
     const day    = row.querySelector('.ts-day-sel')?.value      || '';
     const start  = row.querySelector('.ts-start-hidden')?.value || '';
@@ -7597,7 +7753,8 @@ async function saveIndividualSlice(id) {
     // Remove any preview entry for this specific slice before placing the real entry
     pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== 'PREVIEW_' + id);
     const prevLen = pendingManualSchedule.length;
-    await confirmAndPlace();
+    window._mgPlacingEventKey = row.dataset.mergeEvent || '';
+    try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; }
     const placed = pendingManualSchedule.length > prevLen ||
                    (hasExisting && window.currentEditSession === null);
 
@@ -8150,6 +8307,9 @@ _onSubjectClick = async function(code, name, units, hours) {
    ══════════════════════════════════════════════════════════════ */
 const _origHandlePillClickEnh = window.handlePillClick;
 window.handlePillClick = async function(sessJson) {
+    // A pill's × (delete) must never open its subject — ignore pill clicks while a delete
+    // is in progress / just finished, so the subject being edited in the right panel stays.
+    if (typeof _pillDropGuardActive === 'function' && _pillDropGuardActive()) return;
     // _origHandlePillClickEnh runs synchronously up to its first await, stamping
     // window._pillClickCurrentToken with the token it claimed — capture that token
     // NOW (synchronously, before awaiting) so a newer click that starts WHILE we wait
@@ -8262,14 +8422,19 @@ _filterEndTimeItems = function(id, startVal) {
             // filter does — otherwise moving an existing slice's start earlier made its own
             // old time look "occupied" and hid every end time after it.
             const _occRanges = _getOccupiedRanges(_occRoomId, _occDay, _occAy, _occSem, _occExcId, _occExcVer);
-            let _minOccAfter = Infinity;
-            _occRanges.forEach(r => { if (r.startIdx >= startIdx && r.startIdx < _minOccAfter) _minOccAfter = r.startIdx; });
-            if (_minOccAfter < Infinity) {
-                endList.querySelectorAll('.ts-ss-item').forEach(item => {
-                    if (_TS_TIMES.indexOf(item.dataset.val) > _minOccAfter)
-                        item.classList.add('dim', 'occ-dim');
-                });
-            }
+            // Each end time is checked against EVERY occupied range with the same rule the
+            // start filter uses (_mgRangeBlocks): a P7 merge slot allows only its exact end,
+            // anything else overlapping is occupied. (Keeping only the first merge range let a
+            // second copy of the same slot — e.g. the other section's DB row + its editor
+            // mirror — block every end time, leaving the End list empty.)
+            const _blocks = (r, s, e) => (typeof _mgRangeBlocks === 'function')
+                ? _mgRangeBlocks(r, s, e) : (s < r.endIdx && e > r.startIdx);
+            endList.querySelectorAll('.ts-ss-item').forEach(item => {
+                const _ti = _TS_TIMES.indexOf(item.dataset.val);
+                if (_ti <= startIdx) return;   // before/at start: handled by the base filter
+                if (_occRanges.some(r => _blocks(r, startIdx, _ti)))
+                    item.classList.add('dim', 'occ-dim');
+            });
         }
     }
 };
@@ -8323,12 +8488,27 @@ tsOpen = function(p, id) {
 // DB sessions cache keyed by `${roomId}|${ay}|${sem}`
 window._roomDbCache = window._roomDbCache || {};
 
-async function _prefetchRoomOccupancy(roomId, ay, sem) {
-    if (!roomId || !ay || !sem) return;
+// In-flight fetch per key. Cache-miss callers (the day/time/room filters, which run many
+// times per edit) pass { join: true } and reuse a running fetch instead of starting another
+// identical one; explicit refreshes (after a re-render / delete) always fetch fresh, and a
+// superseded response is dropped so it can never overwrite newer data.
+const _roomDbInflight = {};
+let _roomDbSeq = 0;
+function _prefetchRoomOccupancy(roomId, ay, sem, opts = {}) {
+    if (!roomId || !ay || !sem) return Promise.resolve();
     const key = `${roomId}|${ay}|${sem}`;
+    if (opts.join && _roomDbInflight[key]) return _roomDbInflight[key].promise;
+    const seq = ++_roomDbSeq;
+    const promise = _fetchRoomOccupancy(roomId, ay, sem, key, seq);
+    _roomDbInflight[key] = { seq, promise };
+    return promise;
+}
+async function _fetchRoomOccupancy(roomId, ay, sem, key, seq) {
+    const _current = () => _roomDbInflight[key]?.seq === seq;
     try {
         const resp = await fetch(`/api/get_room_schedule/${roomId}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
         const sessions = await resp.json();
+        if (!_current()) return;   // a newer refresh for this room is on its way
         const _hdb = (typeof hiddenDbSchedules !== 'undefined') ? hiddenDbSchedules : new Set();
         window._roomDbCache[key] = sessions
             .filter(s => {
@@ -8344,10 +8524,15 @@ async function _prefetchRoomOccupancy(roomId, ay, sem) {
                 subjectcode:     (s.subjectcode || '').toUpperCase(),
                 employee_number: String(s.employee_number || ''),
                 versionid:       s.versionid || null,
+                // Group model: server merged-event key + section (absent under legacy).
+                merge_event:     s.merge_event || null,
+                section_id:      s.section_id ?? null,
             }));
     } catch(e) {
+        if (!_current()) return;
         window._roomDbCache[key] = [];
     }
+    delete _roomDbInflight[key];
     // Re-apply start-time filter for every open slice
     document.querySelectorAll('.ts-row').forEach(row => {
         const rowId = parseInt(row.id.replace('ts-row-', ''));
@@ -8366,15 +8551,32 @@ async function _prefetchRoomOccupancy(roomId, ay, sem) {
 // Occupancy-by-day cache keyed by `${day}|${ay}|${sem}` → {roomId: [{startIdx,endIdx}]}
 window._roomsByDayCache = window._roomsByDayCache || {};
 
-async function _prefetchRoomsOccupancyForDay(day, ay, sem) {
-    if (!day || !ay || !sem) return;
+// One in-flight request per day key — repeated misses while it loads share it. Every
+// invalidation replaces window._roomsByDayCache with a new object, so a request started
+// for an older cache object is never joined and its response is dropped.
+const _roomsByDayInflight = {};
+function _prefetchRoomsOccupancyForDay(day, ay, sem) {
+    if (!day || !ay || !sem) return Promise.resolve();
     const key = `${day}|${ay}|${sem}`;
+    const cur = _roomsByDayInflight[key];
+    if (cur && cur.cache === window._roomsByDayCache) return cur.promise;
+    const entry = { cache: window._roomsByDayCache };
+    entry.promise = _fetchRoomsOccupancyForDay(day, ay, sem, key, entry);
+    _roomsByDayInflight[key] = entry;
+    return entry.promise;
+}
+async function _fetchRoomsOccupancyForDay(day, ay, sem, key, entry) {
+    let data;
     try {
         const resp = await fetch(`/api/rooms_occupancy_by_day?day=${encodeURIComponent(day)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
-        window._roomsByDayCache[key] = await resp.json();
+        data = await resp.json();
     } catch(e) {
-        window._roomsByDayCache[key] = {};
+        data = {};
     }
+    if (_roomsByDayInflight[key] === entry) delete _roomsByDayInflight[key];
+    // Invalidated meanwhile — drop the stale data and load it again for the rows waiting on it.
+    if (entry.cache !== window._roomsByDayCache) return _prefetchRoomsOccupancyForDay(day, ay, sem);
+    window._roomsByDayCache[key] = data;
     document.querySelectorAll('.ts-row').forEach(row => {
         const rowId = parseInt(row.id.replace('ts-row-', ''));
         if (!isNaN(rowId)) _applyRoomAvailabilityFilter(rowId);
@@ -8427,7 +8629,7 @@ function _applyDayAvailabilityFilter(rowId) {
     // Not loaded yet — _prefetchRoomOccupancy's own completion loop re-runs
     // _applyRoomOccupancyFilter (which calls back into this) for every row once it resolves.
     if (!(`${roomId}|${ay}|${sem}` in window._roomDbCache)) {
-        if (typeof _prefetchRoomOccupancy === 'function') _prefetchRoomOccupancy(roomId, ay, sem).catch(() => {});
+        if (typeof _prefetchRoomOccupancy === 'function') _prefetchRoomOccupancy(roomId, ay, sem, { join: true }).catch(() => {});
         return;
     }
 
@@ -8443,8 +8645,10 @@ function _applyDayAvailabilityFilter(rowId) {
 
     Array.from(daySel.options).forEach(opt => {
         if (!opt.value) return; // keep the "-- Day --" placeholder
-        const ranges   = _getOccupiedRanges(roomId, opt.value, ay, sem, excludeTempId, excludeVersionId);
-        const occupied = ranges.some(r => startIdx < r.endIdx && endIdx > r.startIdx);
+        const ranges   = _getOccupiedRanges(roomId, opt.value, ay, sem, excludeTempId, excludeVersionId,
+                                            row.dataset.mergeEvent || '');
+        const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
+            ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx));
         if (occupied) opt.remove();
     });
 
@@ -8512,20 +8716,26 @@ function _applyRoomAvailabilityFilter(rowId) {
         const si = _TS_TIMES.indexOf(c.start_time);
         const ei = _TS_TIMES.indexOf(c.end_time);
         if (si >= 0 && ei > si) {
-            (localByRoom[c.room_id] = localByRoom[c.room_id] || []).push({ startIdx: si, endIdx: ei });
+            (localByRoom[c.room_id] = localByRoom[c.room_id] || []).push({
+                startIdx: si, endIdx: ei,
+                section_id: c.section_id, subject_code: c.subject_code, faculty_id: c.faculty_id });
         }
     });
 
     list.querySelectorAll('.ts-ss-item').forEach(item => {
         const rid = item.dataset.val;
         if (!rid || rid === 'TBA' || String(rid) === String(selRoomId)) return;
-        const ranges = [...(dayOccupancy[rid] || []), ...(localByRoom[rid] || [])];
-        const occupied = ranges.some(r => startIdx < r.endIdx && endIdx > r.startIdx);
+        const _mgSect = document.getElementById('sel_section')?.value || '';
+        const ranges = [...(dayOccupancy[rid] || []), ...(localByRoom[rid] || [])]
+            .filter(r => !(typeof _mgSameEvent === 'function' && _mgSameEvent(r, row.dataset.mergeEvent || '', _mgSect)))
+            .map(r => (typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(r)) ? Object.assign({}, r, { merge: true }) : r);
+        const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
+            ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx));
         if (occupied) item.classList.add('room-unavailable');
     });
 }
 
-function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionId) {
+function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionId, mergeEvent) {
     const ranges = [];
     if (!roomId || !day) return ranges;
     if (roomId === 'TBA') return ranges; // TBA sessions don't occupy a real room
@@ -8546,11 +8756,17 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
         // by itself", which used to only dim the option (harmless) but now, since Day options
         // are fully removed rather than dimmed, silently erased the slice's own selected day.
         if (excludeVersionId && s.versionid && String(s.versionid) === String(excludeVersionId)) return;
+        // Group model: the same merged class of another member section never blocks.
+        if (typeof _mgSameEvent === 'function' &&
+            _mgSameEvent(s, mergeEvent, document.getElementById('sel_section')?.value || '')) return;
         if (curSubj && s.subjectcode === curSubj && _mergeMode !== 'none') {
             if (_mergeMode === 'flexible') return; // NSTP: different faculty OK
             if (curFac && s.employee_number === curFac) return; // strict: must match faculty
         }
-        ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx });
+        // P7: same subject + same faculty (or TBA) in another section — offered as a merge
+        // at exactly its slot (see _mgRangeBlocks).
+        const _merge = typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(s);
+        ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx, merge: _merge });
     });
 
     // From local pending schedule — skip merge-eligible entries too
@@ -8560,6 +8776,8 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
         if (c.day !== day || c.ay !== ay || c.sem !== sem) return;
         if (c.temp_id === excludeTempId) return;
         if (c.isPreview) return;
+        if (typeof _mgSameEvent === 'function' &&
+            _mgSameEvent(c, mergeEvent, document.getElementById('sel_section')?.value || '')) return;
         const cSubj = (c.subject_code || '').toUpperCase();
         if (curSubj && cSubj === curSubj && _mergeMode !== 'none') {
             if (_mergeMode === 'flexible') return;
@@ -8567,7 +8785,8 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
         }
         const si = _TS_TIMES.indexOf(c.start_time);
         const ei = _TS_TIMES.indexOf(c.end_time);
-        if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei });
+        const _merge = typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(c);
+        if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei, merge: _merge });
     });
 
     return ranges;
@@ -8611,7 +8830,7 @@ function _applyRoomOccupancyFilter(sliceId) {
     // free. Bail and let _prefetchRoomOccupancy's own completion loop re-run this once the
     // real data is in (mirrors the same guard _applyDayAvailabilityFilter already has).
     if (!(`${roomId}|${ay}|${sem}` in window._roomDbCache)) {
-        if (typeof _prefetchRoomOccupancy === 'function') _prefetchRoomOccupancy(roomId, ay, sem).catch(() => {});
+        if (typeof _prefetchRoomOccupancy === 'function') _prefetchRoomOccupancy(roomId, ay, sem, { join: true }).catch(() => {});
         return;
     }
 
@@ -8620,7 +8839,7 @@ function _applyRoomOccupancyFilter(sliceId) {
 
     startList.querySelectorAll('.ts-ss-item').forEach(item => {
         const tIdx = _TS_TIMES.indexOf(item.dataset.val);
-        if (ranges.some(r => tIdx >= r.startIdx && tIdx < r.endIdx))
+        if (ranges.some(r => tIdx >= r.startIdx && tIdx < r.endIdx && !(r.merge && tIdx === r.startIdx)))
             item.classList.add('dim', 'occ-dim');
     });
 
@@ -8633,13 +8852,18 @@ function _applyRoomOccupancyFilter(sliceId) {
 (function _patchRenderGridForOccupancyCache() {
     const _ogRG = renderGrid;
     renderGrid = async function(roomId, ayFilter, semFilter) {
-        delete window._roomDbCache[`${roomId}|${ayFilter}|${semFilter}`];
+        const _key = `${roomId}|${ayFilter}|${semFilter}`;
+        delete window._roomDbCache[_key];
+        delete _roomDbInflight[_key];          // a fetch started before this point is stale
+        const _seqAtInvalidate = _roomDbSeq;
         // Day-keyed occupancy isn't scoped to a single room — clear it all so the next
         // Add Schedule room-availability check reflects whatever just changed.
         window._roomsByDayCache = {};
         await _ogRG.call(this, roomId, ayFilter, semFilter);
-        // Run in background — don't block the grid render
-        _prefetchRoomOccupancy(roomId, ayFilter, semFilter).catch(() => {});
+        // Run in background — don't block the grid render. Back-to-back re-renders share
+        // one fetch as long as it started after this render's invalidation.
+        const _fresh = _roomDbInflight[_key] && _roomDbInflight[_key].seq > _seqAtInvalidate;
+        _prefetchRoomOccupancy(roomId, ayFilter, semFilter, { join: _fresh }).catch(() => {});
     };
 })();
 
@@ -8899,6 +9123,9 @@ function _showLocalApiFailure(result, rejectedTitle) {
     if (result.kind === 'server')  return showValidationModal('Server Error', result.error);
     if (result.data && result.data.code === 'UPCOMING_MAKEUP_CLASS')
         return showValidationModal('Make-up Class Not Yet Done', result.error);
+    // HC16 group model: the server names the Merge Group and the restricted change.
+    if (result.data && result.data.code === 'MERGED_OCCURRENCE_LOCKED')
+        return showValidationModal('Merged Class — Change Not Allowed', result.error);
     return showValidationModal(rejectedTitle, result.error);
 }
 
@@ -11054,6 +11281,11 @@ async function restoreVersion(versionId, btn) {
             else renderGrid(document.getElementById('sel_room')?.value || '', ay, sem);
             await _initFlFacultyMenu();
             _refreshFlIfVisible();
+            // HC16 group model: show the restored Draft of the open subject as it now is —
+            // a divergent restored Draft appears OUT OF SYNC (history is never rewritten).
+            if (typeof _mgActive === 'function' && _mgActive() && _currentSubjectCode) {
+                await _mgReloadOpenSubject();
+            }
         } else {
             await showValidationModal('Restore Failed', data.error || 'An unknown error occurred.');
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-undo-alt"></i> RESTORE'; }
