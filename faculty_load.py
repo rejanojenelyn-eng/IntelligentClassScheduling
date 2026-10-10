@@ -224,6 +224,130 @@ def classify_assignment(day, start_time, end_time, *, is_part_time=False,
     return 'pt'
 
 
+# ── Designee time segments (final HC2/HC4 + HC9 for designees) ───────────────────
+# A designee's weekday class is classified PER TIME SEGMENT, never as one block —
+# it is split at the window boundaries first:
+#   morning  [AM window start, AM window end)  default 7:30-9:00 AM   -> Regular (TS once Regular is full)
+#   regular  [AM window end, regular end)      default 9:00 AM-4:30 PM -> Regular (TS once Regular is full)
+#   pm       [regular end, designee PM end)    default 4:30-6:00 PM   -> PT/TS
+#   night    [designee PM end, 9:00 PM)        default 6:00-9:00 PM   -> PT (Night Teaching Service, HC8)
+#   outside  anything else on a weekday                                -> not a valid teaching time
+# On weekends the whole slice is one 'weekend' segment (PT; weekend availability is the
+# restricted-day rule's concern). TS is still never decided here: Regular hours beyond
+# the Regular cap (and PT beyond the PT cap) spill into TS at the load step (cap_spill /
+# HC9), so the same segment can be Regular or TS depending on remaining allocation.
+DESIGNEE_REGULAR_KINDS = frozenset({'morning', 'regular'})
+DESIGNEE_PT_KINDS      = frozenset({'pm', 'night', 'weekend'})
+
+
+def _minutes(t):
+    return t.hour * 60 + t.minute
+
+
+def _from_minutes(m):
+    return time(m // 60, m % 60)
+
+
+def designee_segments(day, start_time, end_time, *, regular_start=None, regular_end=None,
+                      am_pt_start=None, am_pt_end=None, pm_end=None, night_end=None):
+    """[(start, end, kind)] for one designee slice — see the table above."""
+    if start_time is None or end_time is None or end_time <= start_time:
+        return []
+    if day not in WEEKDAYS:
+        return [(start_time, end_time, 'weekend')]
+    am_s = am_pt_start or time(7, 30)
+    am_e = am_pt_end or time(9, 0)
+    first = min(am_s, regular_start or am_s)
+    reg_e = regular_end or time(16, 30)
+    pm_e = pm_end or time(18, 0)
+    nt_e = night_end or time(21, 0)
+    bounds = [(first, am_e, 'morning'), (am_e, reg_e, 'regular'),
+              (reg_e, pm_e, 'pm'), (pm_e, nt_e, 'night')]
+    s, e = _minutes(start_time), _minutes(end_time)
+    out, cur = [], s
+    for (bs, be, kind) in bounds:
+        bs, be = _minutes(bs), _minutes(be)
+        if be <= bs:
+            continue
+        lo, hi = max(cur, bs), min(e, be)
+        if lo > cur:                                   # a gap before this window
+            out.append((_from_minutes(cur), _from_minutes(min(lo, e)), 'outside'))
+            cur = min(lo, e)
+        if hi > lo:
+            out.append((_from_minutes(lo), _from_minutes(hi), kind))
+            cur = hi
+        if cur >= e:
+            break
+    if cur < e:
+        out.append((_from_minutes(cur), _from_minutes(e), 'outside'))
+    return out
+
+
+def designee_split_hours(day, start_time, end_time, **windows):
+    """(regular_hours, pt_hours, outside_hours) of one designee slice."""
+    reg = pt = out = 0.0
+    for (s, e, kind) in designee_segments(day, start_time, end_time, **windows):
+        h = (_minutes(e) - _minutes(s)) / 60.0
+        if kind in DESIGNEE_REGULAR_KINDS:
+            reg += h
+        elif kind in DESIGNEE_PT_KINDS:
+            pt += h
+        else:
+            out += h
+    return reg, pt, out
+
+
+def _designee_windows_from_config(config):
+    """Window bounds for designee_segments from scheduler_config (defaults otherwise)."""
+    def _t(key, default):
+        raw = (config or {}).get(key)
+        try:
+            h, m = str(raw).split(':')[:2]
+            return time(int(h), int(m))
+        except (TypeError, ValueError, AttributeError):
+            return default
+    return {'am_pt_start': _t('hc_pt_am_start', time(7, 30)), 'am_pt_end': _t('hc_pt_am_end', time(9, 0)),
+            'regular_end': _t('hc4_pt_pm_start', time(16, 30)),
+            'pm_end': _t('hc4_pt_pm_end', time(18, 0))}
+
+
+def _session_times(s):
+    """(start, end) time objects of a load session row, from start_time/end_time,
+    'HH:MM' start/end strings, or (hour-granular) time_code — None when unknown."""
+    def _as_t(v):
+        if v is None or hasattr(v, 'hour'):
+            return v
+        try:
+            h, m = str(v).split(':')[:2]
+            return time(int(h), int(m))
+        except (TypeError, ValueError):
+            return None
+    st = _as_t(s.get('start_time')) or _as_t(s.get('start'))
+    et = _as_t(s.get('end_time')) or _as_t(s.get('end'))
+    if st is None or et is None:
+        tc = str(s.get('time_code') or '')
+        try:
+            st, et = time(int(tc[:2]), 0), time(min(int(tc[2:]), 23), 0)
+        except (TypeError, ValueError):
+            return None, None
+    return st, et
+
+
+def _designee_session_split(s, hrs, config):
+    """(regular_hrs, pt_hrs) for a load session of a DESIGNEE: its credited `hrs` split in
+    the proportion of its time segments (outside time counts as PT, as before)."""
+    st, et = _session_times(s)
+    if st is None or et is None or hrs <= 0:
+        reg = is_reg_slice(s.get('days'), s.get('time_code'))
+        return (hrs, 0.0) if reg else (0.0, hrs)
+    r, p, o = designee_split_hours(s.get('days') or s.get('day'), st, et,
+                                   **_designee_windows_from_config(config))
+    total = r + p + o
+    if total <= 0:
+        return 0.0, hrs
+    return hrs * r / total, hrs * (p + o) / total
+
+
 def classify_slice(day, end_hour, start_hour=None):
     """Hour-granularity wrapper around classify_assignment(), kept for the
     existing Faculty Load tab / group_assignments() call sites which only
@@ -387,7 +511,7 @@ def _fetch_batch_rows(cur, ay_id, sem, exclude_program=None, exclude_year_level=
     return [dict(r) for r in (cur.fetchall() or [])]
 
 
-def summarize_faculty_load(sessions, config=None):
+def summarize_faculty_load(sessions, config=None, designee=False):
     """One faculty's HC9 committed load from per-slice session rows, HC17
     merge-aware and split into the same Regular / PT buckets group_assignments
     uses:
@@ -397,7 +521,7 @@ def summarize_faculty_load(sessions, config=None):
     `slices` are the underlying meetings (subject, day, start/end, section
     identity) so a validator can recognise a gene that is the SAME merged
     meeting as one of these and not count it a second time."""
-    grouped = group_assignments(sessions, config=_default_config(config))
+    grouped = group_assignments(sessions, config=_default_config(config), designee=designee)
     reg = round(sum(float(g.get('_reg_hrs') or 0) for g in grouped), 2)
     pt = round(sum(float(g.get('_pt_hrs') or 0) for g in grouped), 2)
     slices = [{
@@ -419,6 +543,15 @@ def summarize_faculty_load(sessions, config=None):
     return {'regular': reg, 'pt': pt, 'total': round(reg + pt, 2), 'slices': slices}
 
 
+def _designee_ids(cur):
+    """{employeenumber} of every faculty member who holds a designation."""
+    try:
+        cur.execute("SELECT employeenumber FROM faculty WHERE designationid IS NOT NULL")
+        return {str(r['employeenumber'] if isinstance(r, dict) else r[0]) for r in (cur.fetchall() or [])}
+    except Exception:
+        return set()
+
+
 def get_faculty_load_batch(cur, ay_id, sem, exclude_program=None, exclude_year_level=None,
                            exclude_section_id=None, config=None):
     """{employeenumber: summarize_faculty_load(...)} for the whole term -- the
@@ -428,7 +561,9 @@ def get_faculty_load_batch(cur, ay_id, sem, exclude_program=None, exclude_year_l
     for row in _fetch_batch_rows(cur, ay_id, sem, exclude_program, exclude_year_level,
                                  exclude_section_id):
         by_faculty[row.get('employeenumber')].append(row)
-    return {emp: summarize_faculty_load(sessions, config)
+    # Designees' sessions are split by time segment (designee_segments) into Regular/PT.
+    designees = _designee_ids(cur)
+    return {emp: summarize_faculty_load(sessions, config, designee=str(emp) in designees)
             for emp, sessions in by_faculty.items()}
 
 
@@ -695,7 +830,16 @@ def faculty_overlap_exempt(a: dict, b: dict, config: dict = None,
     return bool(valid_merge) or nstp_shared_faculty_exempt(a, b)
 
 
-def group_assignments(sessions, config=None):
+def _session_bucket_hours(s, h, designee, config):
+    """(regular_hrs, pt_hrs) of one load session worth `h` credited hours: a designee's
+    session is split by time segment (designee_segments); anyone else's is classified
+    whole, exactly as before (is_reg_slice)."""
+    if designee:
+        return _designee_session_split(s, h, config)
+    return (h, 0.0) if is_reg_slice(s.get('days'), s.get('time_code')) else (0.0, h)
+
+
+def group_assignments(sessions, config=None, designee=False):
     """Merge multi-slice rows of the same (subjectcode, year_section) into one assignment,
     tracking hour totals split by Regular-time vs PT-time slices. Mirrors the JS
     `_flGroupSessions` algorithm this module replaces so nothing can diverge again.
@@ -715,7 +859,7 @@ def group_assignments(sessions, config=None):
     """
     policy = _merge_policy_of(config)
     if policy is not None:
-        return _group_assignments_by_event(sessions, policy)
+        return _group_assignments_by_event(sessions, policy, designee=designee, config=config)
     skip_hours = [False] * len(sessions)
     if config is not None:
         merge_section_pairs = parse_merge_section_pairs(config.get('hc_merge_section_pairs'))
@@ -766,31 +910,31 @@ def group_assignments(sessions, config=None):
     for i, s in enumerate(sessions):
         key = (s.get('subjectcode'), s.get('year_section'))
         h = 0.0 if skip_hours[i] else float(s.get('hrs') or 0)
-        reg = is_reg_slice(s.get('days'), s.get('time_code'))
+        rh, ph = _session_bucket_hours(s, h, designee, config)
+        pair = (s.get('days'), s.get('time_range'))
         if key not in groups:
             g = dict(s)
-            g['_reg_hrs'] = h if reg else 0.0
-            g['_pt_hrs'] = 0.0 if reg else h
+            g['_reg_hrs'] = rh
+            g['_pt_hrs'] = ph
             g['_days'] = [s.get('days')] if s.get('days') else []
             g['_times'] = [s.get('time_range')] if s.get('time_range') else []
-            pair = (s.get('days'), s.get('time_range'))
-            g['_reg_pairs'] = [pair] if (reg and s.get('days')) else []
-            g['_pt_pairs'] = [pair] if (not reg and s.get('days')) else []
+            g['_reg_pairs'] = [pair] if (rh > 0 and s.get('days')) else []
+            g['_pt_pairs'] = [pair] if (ph > 0 and s.get('days')) else []
             g['hrs'] = h
             groups[key] = g
             order.append(key)
         else:
             g = groups[key]
             g['hrs'] += h
-            if reg:
-                g['_reg_hrs'] += h
-            else:
-                g['_pt_hrs'] += h
+            g['_reg_hrs'] += rh
+            g['_pt_hrs'] += ph
             if s.get('days'):
                 g['_days'].append(s.get('days'))
                 g['_times'].append(s.get('time_range'))
-                pair = (s.get('days'), s.get('time_range'))
-                (g['_reg_pairs'] if reg else g['_pt_pairs']).append(pair)
+                if rh > 0:
+                    g['_reg_pairs'].append(pair)
+                if ph > 0:
+                    g['_pt_pairs'].append(pair)
 
     def _join(pairs):
         ordered = sorted(pairs, key=lambda p: DAY_ORDER.get(p[0], 7))
@@ -810,7 +954,7 @@ def group_assignments(sessions, config=None):
     return result
 
 
-def _group_assignments_by_event(sessions, policy):
+def _group_assignments_by_event(sessions, policy, designee=False, config=None):
     """group_assignments() under the group merge model.
 
     Hours come ONLY from the shared HC17 calculation (policy.credit_rows), which
@@ -841,17 +985,17 @@ def _group_assignments_by_event(sessions, policy):
         else:
             key = (s.get('subjectcode'), s.get('year_section'))
         h = float(m['credit'])
-        reg = is_reg_slice(s.get('days'), s.get('time_code'))
+        rh, ph = _session_bucket_hours(s, h, designee, config)
         lists_meeting = bool(s.get('days')) and (not merged or m['keeper'])
         pair = (s.get('days'), s.get('time_range'))
         if key not in groups:
             g = dict(s)
-            g['_reg_hrs'] = h if reg else 0.0
-            g['_pt_hrs'] = 0.0 if reg else h
+            g['_reg_hrs'] = rh
+            g['_pt_hrs'] = ph
             g['_days'] = [s.get('days')] if lists_meeting else []
             g['_times'] = [s.get('time_range')] if lists_meeting else []
-            g['_reg_pairs'] = [pair] if (reg and lists_meeting) else []
-            g['_pt_pairs'] = [pair] if (not reg and lists_meeting) else []
+            g['_reg_pairs'] = [pair] if (rh > 0 and lists_meeting) else []
+            g['_pt_pairs'] = [pair] if (ph > 0 and lists_meeting) else []
             g['hrs'] = h
             if merged:
                 grp = policy.index.group(m['merged_group']) or {}
@@ -869,14 +1013,15 @@ def _group_assignments_by_event(sessions, policy):
         else:
             g = groups[key]
             g['hrs'] += h
-            if reg:
-                g['_reg_hrs'] += h
-            else:
-                g['_pt_hrs'] += h
+            g['_reg_hrs'] += rh
+            g['_pt_hrs'] += ph
             if lists_meeting:
                 g['_days'].append(s.get('days'))
                 g['_times'].append(s.get('time_range'))
-                (g['_reg_pairs'] if reg else g['_pt_pairs']).append(pair)
+                if rh > 0:
+                    g['_reg_pairs'].append(pair)
+                if ph > 0:
+                    g['_pt_pairs'].append(pair)
 
     def _join(pairs):
         ordered = sorted(pairs, key=lambda p: DAY_ORDER.get(p[0], 7))
@@ -948,6 +1093,7 @@ def compute_load_buckets(sessions, faculty_row, config=None):
     g = faculty_row.get
     typename = (g('typename') or g('employee_type') or g('employeestatus') or '').lower()
     is_part_time = 'part' in typename and g('designationid') is None
+    is_designee = g('designationid') is not None
 
     if is_part_time:
         # Part-time faculty have no separate daytime-duty bucket — every session is PT
@@ -956,7 +1102,7 @@ def compute_load_buckets(sessions, faculty_row, config=None):
         pt_kept, pt_spilled = cap_spill(grouped, pt_max)
         grouped_reg, grouped_pt, ts_sessions = [], pt_kept, pt_spilled
     else:
-        grouped = group_assignments(sessions, config=config)
+        grouped = group_assignments(sessions, config=config, designee=is_designee)
         reg_candidates, pt_candidates = [], []
         for g in grouped:
             total = g['_reg_hrs'] + g['_pt_hrs']
@@ -987,6 +1133,7 @@ def compute_load_buckets(sessions, faculty_row, config=None):
     reg_used, pt_used, ts_used = _sum(grouped_reg), _sum(grouped_pt), _sum(ts_sessions)
     return {
         'isPartTime': is_part_time,
+        'isDesignee': is_designee,
         'regMax': reg_max, 'ptMax': pt_max, 'tsMax': ts_max,
         'maxTotal': reg_max + pt_max + ts_max,
         'groupedReg': grouped_reg, 'groupedPt': grouped_pt, 'tsSessions': ts_sessions,

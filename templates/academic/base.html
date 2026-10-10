@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive.css') }}">
 </head>
 
 <body>
@@ -428,6 +429,7 @@
 
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ACAD HEAD/base.acad.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/responsive.js') }}"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('input[type="text"], input[type="search"], input[type="number"], input[type="email"]').forEach(function (el) {

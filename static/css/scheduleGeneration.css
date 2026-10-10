@@ -1357,6 +1357,17 @@
 .issue-list.issue-blocking li { color: #9b1c1c; }
 .issue-advisory-title { text-align: left; margin-top: 10px; font-size: 12px; font-weight: 600; color: #6b7280; }
 .issue-list.issue-advisory li { color: #6b7280; font-style: italic; }
+/* Plain-language shortage notices (no room / no instructor / load limit) */
+.shortage-notices { text-align: left; margin-top: 12px; display: flex; flex-direction: column; gap: 8px;
+    max-height: 260px; overflow-y: auto; }
+.shortage-notice { border: 1px solid #f5c6c6; border-left: 4px solid #8b1a1a; background: #fff7f7;
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; line-height: 1.45; color: #374151; }
+.shortage-title { font-weight: 800; color: #8b1a1a; }
+.shortage-title i { margin-right: 4px; }
+.shortage-subject { font-weight: 700; color: #111827; margin-top: 2px; }
+.shortage-subject span { font-weight: 500; color: #6b7280; }
+.shortage-msg { margin-top: 3px; }
+.shortage-tip { margin-top: 4px; color: #1f4f82; }
 
 /* ── Evaluation: quality score vs approval readiness; incomplete rows ─────── */
 .eval-readiness { margin-top: 8px; padding: 6px 8px; border-radius: 6px; background: #fdecec; color: #9b1c1c;

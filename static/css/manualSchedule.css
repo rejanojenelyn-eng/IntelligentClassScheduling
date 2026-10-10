@@ -679,6 +679,12 @@
     border: 1px solid #a5d6a7;
 }
 
+.badge-unscheduled {
+    background: #fdecec;
+    color: #b71c1c;
+    border: 1px solid #f5a3a3;
+}
+
 .subj-item-active .subj-badge {
     background: rgba(255,255,255,0.2);
     color: white;
@@ -1594,6 +1600,12 @@
 .ts-save-slice-btn:hover { background: #7a0100; }
 .ts-save-slice-btn:disabled { background: #aaa; cursor: not-allowed; }
 .ts-row.ts-existing { border-left: 4px solid #2e7d32; background: #f6fff8; }
+/* A saved Draft slice looks like its (grey, dashed) Draft pill, not like a Published one. */
+.ts-day-warn { margin: 4px 0 6px; padding: 6px 8px; border-radius: 6px; background: #fff4e5;
+    border: 1px solid #f5c27a; color: #8a4b00; font-size: .72rem; line-height: 1.35; }
+.ts-day-warn i { margin-right: 4px; }
+.ts-row.ts-existing.ts-st-draft { border-left: 4px dashed #78909c; background: #f5f8f9; }
+.ts-row.ts-existing.ts-st-published_draft { border-left: 4px solid #78909c; background: #f5f8f9; }
 .ts-row.ts-saved    { border-left: 4px solid #1565c0; background: #e8f0fe; }
 .ts-row { cursor: pointer; }
 .ts-row.ts-row-active {

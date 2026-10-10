@@ -67,9 +67,11 @@ HARD_CONSTRAINTS = {
     ),
     "HC2": _hc(
         "HC2", "Designee Regular Teaching Hours",
-        "Regular-classified assignments of faculty designees/administrators must "
-        "stay within the applicable designee weekday regular window (default "
-        "8:00 AM-5:00 PM, subject to the scheduler's existing designee policy).",
+        "A designee's class is split at the window boundaries and classified per "
+        "segment: weekday 7:30-9:00 AM (special morning window) and 9:00 AM-4:30 PM "
+        "are Regular, becoming TS once the Regular allocation is full (HC9). Those "
+        "segments are always valid time; a segment outside every designee window is "
+        "reported by HC4.",
         ("instructor", "day", "time"),
         config_keys=("hc_faculty_load_enabled",),
         implementation="CSPValidator._check_time_windows",
@@ -89,11 +91,10 @@ HARD_CONSTRAINTS = {
     ),
     "HC4": _hc(
         "HC4", "Designee Extra Teaching Load",
-        "PT-classified weekday assignments of faculty designees/administrators "
-        "must fall within the authorized AM extra-teaching window, the "
-        "designee-specific PM window (default 4:30-6:00 PM), or the 6:00-9:00 PM "
-        "Night Teaching Service window. Whether a designee may use the night "
-        "window, and on how many days, is decided by HC8.",
+        "Per time segment (never the whole class): weekday 4:30-6:00 PM is the "
+        "designee PT/TS window and 6:00-9:00 PM the Night Teaching Service window; "
+        "only a segment outside every designee window is rejected, naming that "
+        "segment. Available PT/TS hours are HC9's check; how many night days, HC8's.",
         ("instructor", "day", "time"),
         config_keys=("hc_faculty_load_enabled", "hc_pt_am_start", "hc_pt_am_end",
                      "hc4_pt_pm_start", "hc4_pt_pm_end"),

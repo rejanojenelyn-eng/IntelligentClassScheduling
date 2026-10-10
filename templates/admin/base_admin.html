@@ -15,6 +15,7 @@
 
 
     {% block head %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive.css') }}">
 </head>
 
 
@@ -370,6 +371,7 @@
 
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ADMIN/base.admin.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/responsive.js') }}"></script>
     <script>
     // Prevent browser autofill on all text/number inputs (Chrome ignores autocomplete="off")
     document.addEventListener('DOMContentLoaded', function () {

@@ -13,15 +13,16 @@ scheduler.LEGACY_RULE_ID_MAP for the internal IDs used before this pass):
                                            (shifts to 9:00–18:00 on a day
                                            with an authorized 7:30–9:00 AM
                                            extra-teaching class)
-  HC2  Designee Regular Teaching Hours  : Mon–Fri 8:00–17:00 (Regular-
-                                           classified assignments only —
-                                           see faculty_load.classify_assignment)
+  HC2  Designee Regular Teaching Hours  : per time SEGMENT (faculty_load.
+                                           designee_segments): 7:30–9:00 AM and
+                                           9:00 AM–4:30 PM are Regular (TS once
+                                           Regular is full, decided by HC9)
   HC3  Full-Time Extra Teaching Load    : weekday 7:30–9:00 AM / 16:30–21:00,
                                            weekends 7:30–21:00
-  HC4  Designee Extra Teaching Load     : weekday 7:30–9:00 AM (shared with
-                                           HC3) / 16:30–18:00 designee-specific
-                                           / 18:00–21:00 Night Teaching Service
-                                           (availability + limit decided by HC8)
+  HC4  Designee Extra Teaching Load     : per time SEGMENT — 16:30–18:00
+                                           PT/TS / 18:00–21:00 Night Teaching
+                                           Service (limit: HC8); only a segment
+                                           outside every window is rejected
   HC5  Restricted-Day Subject Requirement: only OU / NSTP subjects on
                                            configured restricted day(s)
   HC6  Standard Time-Slot Compliance    : configured scheduling grid
@@ -1047,53 +1048,15 @@ class CSPValidator:
             # Designee check takes priority — a faculty member with a designation
             # is always validated under HC2 rules, regardless of employment status.
             if designation is not None:
-                # Phase B checkpoint 1 (final HC2/HC4 load-classification fix):
-                # determine Regular-vs-PT via the ONE shared classifier BEFORE
-                # deciding which rule applies, instead of routing purely on
-                # is_regular_slot with no AM-PT exception for designees.
-                #
-                # Classification uses the faculty's PLAIN employeetype window
-                # (regular_start/regular_end, the same "is this roughly
-                # daytime hours" test the Permanent/Temporary branch uses) —
-                # NOT desig_min/desig_max. Those must stay separate: desig_min/
-                # desig_max is the PRECISE designee privilege window this
-                # branch validates against once something is classified
-                # Regular; using it for classification too would make that
-                # validation vacuous (classify_assignment's 'regular' branch
-                # already requires start>=regular_start and end<=regular_end,
-                # so checking the identical bounds again could never fail).
-                #
-                # is_am_pt_window is checked first inside classify_assignment
-                # regardless of which regular_start/end is passed, so a
-                # 7:30-9:00 AM designee class is always PT here, validated by
-                # HC4 (_check_designee_pt_window) — never HC2, never both.
-                desig_min, desig_max = _designee_regular_window(fac)
-                _load_type = faculty_load.classify_assignment(
-                    day, start, end, is_part_time=False,
-                    regular_start=regular_start, regular_end=regular_end,
-                    am_pt_start=self._pt_am_start, am_pt_end=self._pt_am_end,
-                )
-                if _load_type == 'regular':
-                    if start < desig_min or end > desig_max:
-                        violations.append({
-                            'rule': 'HC2',
-                            'subject': subj_code,
-                            'detail': (
-                                f'Designee/administrator teaching hours are '
-                                f'{format_time_12h(desig_min)}–{format_time_12h(desig_max)} on weekdays. '
-                                f'The slot on {day} ({format_time_12h(start)}–{format_time_12h(end)}) is outside this window.'
-                            )
-                        })
-                # else: PT-classified — validated separately by
-                # _check_designee_pt_window (final HC4), not here. The
-                # previous per-slot "allowed_nights = 6 - night_service"
-                # availability gate that used to live in this branch has
-                # been removed: it's superseded by the centralized,
-                # correctly-scoped final HC8 unique-teaching-night count
-                # (_check_night_pt_cap), which already runs over the whole
-                # schedule rather than one slot at a time. See the Phase B
-                # checkpoint 1 report for the characterization/final-policy
-                # test pair proving this.
+                # Designee: the slice is split at the window boundaries and every
+                # segment validated on its own (faculty_load.designee_segments) —
+                # 7:30-9:00 AM and 9:00 AM-4:30 PM are Regular (TS once Regular is
+                # full, decided by HC9), 4:30-6:00 PM PT/TS, 6:00-9:00 PM Night
+                # Teaching Service (day limit: HC8). Segments in the Regular windows
+                # are always time-valid, so HC2 has nothing to reject here; a segment
+                # outside every window is reported once, by HC4
+                # (_check_designee_pt_window), naming that exact segment.
+                pass
 
             elif emp_status == 'Part-Time':
                 ts_hours = int(et.get('teachingsubstitution', 0) or 0)
@@ -1184,6 +1147,15 @@ class CSPValidator:
 
         return violations
 
+    def _designee_windows(self, fac):
+        """Window bounds for faculty_load.designee_segments for this designee: the
+        configured AM window, 4:30 PM (hc4_pt_pm_start) as the Regular/PT boundary,
+        the designee PM end (hc4_pt_pm_end) and the 9:00 PM night-service end."""
+        regular_start, _ = _plain_regular_window(fac)
+        return {'regular_start': regular_start, 'regular_end': self._designee_pm_start,
+                'am_pt_start': self._pt_am_start, 'am_pt_end': self._pt_am_end,
+                'pm_end': self._designee_pm_end, 'night_end': NIGHT_SERVICE_END}
+
     # ── Final HC4 Designee Extra Teaching Load (internal id HC_DESIGNEE_PT;
     #    kept unnumbered pending the global HC ID migration — see the
     #    Phase B checkpoint 1 report) ────────────────────────────
@@ -1194,6 +1166,12 @@ class CSPValidator:
     # restricted-day rule (current HC4 / final HC5), not by this window
     # check.
     def _check_designee_pt_window(self, schedule, faculty_map):
+        """HC4 for designees, per time SEGMENT (never the whole slice): a class that
+        crosses a boundary (e.g. 2:00-5:00 PM = 2:00-4:30 Regular + 4:30-5:00 PT/TS)
+        is valid as long as every segment falls in an allowed window. Only a segment
+        outside all of them is reported — naming that segment and why. Whether PT/TS
+        or Regular hours are still available is HC9's load check; how many distinct
+        Night Teaching Service days are used is HC8's."""
         violations = []
         for cls in schedule:
             fnum = cls.get('faculty_id')
@@ -1204,50 +1182,28 @@ class CSPValidator:
                 continue
             day = cls.get('day')
             start, end = cls.get('start_time'), cls.get('end_time')
-            if day is None or start is None or end is None:
+            if day is None or start is None or end is None or day in WEEKEND:
                 continue
-            if day in WEEKEND:
+            w = self._designee_windows(fac)
+            bad = [(s_, e_) for (s_, e_, kind) in faculty_load.designee_segments(day, start, end, **w)
+                   if kind == 'outside']
+            if not bad:
                 continue
-
-            # Classify with the SAME plain-window heuristic _check_time_windows
-            # uses (not _designee_regular_window's precise privilege window) --
-            # otherwise the two functions could disagree about which bucket a
-            # slice belongs to, exactly the inconsistency this checkpoint
-            # exists to eliminate.
-            regular_start, regular_end = _plain_regular_window(fac)
-            load_type = faculty_load.classify_assignment(
-                day, start, end, is_part_time=False,
-                regular_start=regular_start, regular_end=regular_end,
-                am_pt_start=self._pt_am_start, am_pt_end=self._pt_am_end,
-            )
-            if load_type != 'pt':
-                continue
-
-            in_am = faculty_load.is_am_pt_window(
-                day, start, end, self._pt_am_start, self._pt_am_end
-            )
-            in_pm = start >= self._designee_pm_start and end <= self._designee_pm_end
-            # Night Teaching Service window (6:00-9:00 PM, optionally entered
-            # from the 4:30 PM PT window). Whether this designee may use it at
-            # all (allowance 0) and on how many distinct days is final HC8's
-            # decision (_check_night_pt_cap) — flagging it here too would
-            # report the wrong reason ("outside these windows") and double-count.
-            in_night = (start >= self._designee_pm_start and end <= NIGHT_SERVICE_END
-                        and is_night_service_slice(start, end))
-            if not (in_am or in_pm or in_night):
-                subj_code = cls.get('subject_code', '?')
-                violations.append({
-                    'rule': 'HC4',
-                    'subject': subj_code,
-                    'detail': (
-                        f'Designee/administrator PT teaching hours are '
-                        f'{format_time_12h(self._pt_am_start)}–{format_time_12h(self._pt_am_end)}, '
-                        f'{format_time_12h(self._designee_pm_start)}–{format_time_12h(self._designee_pm_end)}, '
-                        f'or the {format_time_12h(NIGHT_SERVICE_START)}–{format_time_12h(NIGHT_SERVICE_END)} '
-                        f'Night Teaching Service window on weekdays. The slot on {day} '
-                        f'({format_time_12h(start)}–{format_time_12h(end)}) is outside these windows.'
-                    )
-                })
+            first = min(w['am_pt_start'], w['regular_start'] or w['am_pt_start'])
+            seg_txt = ', '.join(f'{format_time_12h(a)}–{format_time_12h(b)}' for a, b in bad)
+            violations.append({
+                'rule': 'HC4',
+                'subject': cls.get('subject_code', '?'),
+                'detail': (
+                    f'{seg_txt} on {day} is outside designee teaching hours. '
+                    f'The {format_time_12h(start)}–{format_time_12h(end)} class is checked in parts: '
+                    f'{format_time_12h(first)}–{format_time_12h(w["regular_end"])} counts as Regular '
+                    f'(or TS once Regular hours are full), '
+                    f'{format_time_12h(w["regular_end"])}–{format_time_12h(w["pm_end"])} as PT/TS, and '
+                    f'{format_time_12h(w["pm_end"])}–{format_time_12h(w["night_end"])} as Night Teaching Service. '
+                    f'Only the part{"s" if len(bad) > 1 else ""} listed falls outside all of these.'
+                ),
+            })
         return violations
 
     # ── HC5 Weekend / NSTP restriction ─────────────────────────
@@ -1482,26 +1438,59 @@ class CSPValidator:
             v = r.get('duration_hrs') if r.get('duration_hrs') is not None else r.get('hrs')
             return float(v or 0)
 
+        # The existing slices' own credit ("alone") and Regular/PT bucket depend only on
+        # `cross` and the policy — both fixed for a whole solve — yet this runs on every
+        # fitness evaluation (tens of thousands per solve). Compute them once per faculty.
+        cache = getattr(self, '_existing_credit_cache', None)
+        if cache is None or cache[0] is not cross or cache[1] is not self._merge_policy:
+            cache = (cross, self._merge_policy, {})
+            self._existing_credit_cache = cache
+        per_fac = cache[2]
+
+        pol = self._merge_policy
+
+        def _eventful(row):
+            # A row interacts with other rows in credit_rows ONLY through a usable HC16
+            # event (it decides sharing/keepers); a row with none is always credited its
+            # full hours and never affects another row. Unknown → treat as eventful.
+            try:
+                occ = pol._occ(row)
+                fac = merge_groups._occ_faculty(occ)
+                return any(pol._usable_event(occ, fac, d) is not None
+                           for d in (merge_groups._occ_days(occ) or []))
+            except Exception:
+                return True
+
         credit, delta = {}, {}
         for fnum, genes in by_faculty.items():
             existing = cross.get(fnum)
             slices = list(existing.get('slices') or []) if isinstance(existing, dict) else []
-            both = self._merge_policy.credit_rows(slices + genes, hours=_hours)
-            for cls, m in zip(genes, both[len(slices):]):
+            fixed = per_fac.get(fnum)
+            if fixed is None:
+                alone = pol.credit_rows(slices, hours=_hours) if slices else []
+                regs = []
+                for s in slices:
+                    st = _as_time(s.get('start_time') or s.get('start'))
+                    et = _as_time(s.get('end_time') or s.get('end'))
+                    regs.append(faculty_load.classify_slice(s.get('day'), et.hour, st.hour) == 'regular'
+                                if st is not None and et is not None else False)
+                fixed = per_fac[fnum] = ([m['credit'] for m in alone], regs,
+                                         [i for i, s in enumerate(slices) if _eventful(s)])
+            alone_credit, regs, ev_idx = fixed
+            # Only the existing slices that can interact (eventful, kept in order and
+            # listed FIRST) go into the joint calculation — identical result, far less work.
+            ev_slices = [slices[i] for i in ev_idx]
+            both = pol.credit_rows(ev_slices + genes, hours=_hours)
+            for cls, m in zip(genes, both[len(ev_slices):]):
                 credit[id(cls)] = m['credit']
-            if not slices:
+            if not ev_slices:
                 continue
-            alone = self._merge_policy.credit_rows(slices, hours=_hours)
             d_reg = d_pt = 0.0
-            for s, m_both, m_alone in zip(slices, both, alone):
-                d = m_both['credit'] - m_alone['credit']
+            for j, i in enumerate(ev_idx):
+                d = both[j]['credit'] - alone_credit[i]
                 if abs(d) < 1e-9:
                     continue
-                st = _as_time(s.get('start_time') or s.get('start'))
-                et = _as_time(s.get('end_time') or s.get('end'))
-                reg = (faculty_load.classify_slice(s.get('day'), et.hour, st.hour) == 'regular'
-                       if st is not None and et is not None else False)
-                if reg:
+                if regs[i]:
                     d_reg += d
                 else:
                     d_pt += d
@@ -1619,6 +1608,16 @@ class CSPValidator:
             # regular load" below) — that existing TS-via-daytime-bucket
             # design is unchanged here; only the AM-PT-window
             # misclassification is fixed, uniformly across every faculty type.
+            if fac.get('designationid') is not None:
+                # Designee: split by time segment — the Regular windows (7:30 AM-4:30 PM)
+                # go to the Regular bucket (overflow is TS below), 4:30-9:00 PM to PT.
+                _r, _p, _o = faculty_load.designee_split_hours(
+                    cls['day'], cls['start_time'], cls['end_time'], **self._designee_windows(fac))
+                _tot = _r + _p + _o
+                if _tot > 0:
+                    regular_hrs[fnum] += hrs * _r / _tot
+                    pt_hrs[fnum] += hrs * (_p + _o) / _tot
+                continue
             regular_start, regular_end = _plain_regular_window(fac)
             load_type = faculty_load.classify_assignment(
                 cls['day'], cls['start_time'], cls['end_time'],
@@ -3709,10 +3708,20 @@ class IntelligentScheduler:
                             gene, placed_genes, faculty_map, existing_load)
                         bad_flags |= {self._CBR_RULE_TO_FLAG.get(v.get('rule')) for v in violations} - {None}
 
+                # Restricted-day rule (Settings): with it on, NSTP/OU meet ONLY on the
+                # restricted day(s) and nothing else may use them. A historical time on
+                # the wrong day (e.g. NSTP on Saturday when only Sunday is allowed) is
+                # not kept — the Manual Editor can't even show that day for the subject.
+                _days_ok = True
+                if self._nstp_force_sunday and gene.get('days_list'):
+                    _scope = set(self._weekend_day_scope or [])
+                    _nstp = any(str(a.subject_code or '').upper().startswith(p) for p in SUNDAY_ALLOWED_PREFIXES)
+                    _days_ok = (all(d in _scope for d in gene['days_list']) if _nstp
+                                else not any(d in _scope for d in gene['days_list']))
                 lock_flags = {
                     'faculty':  fac_ok  and 'faculty'  not in bad_flags,
                     'room':     room_ok and 'room'     not in bad_flags,
-                    'schedule': part_time_ok and 'schedule' not in bad_flags,
+                    'schedule': part_time_ok and _days_ok and 'schedule' not in bad_flags,
                 }
                 if not any(lock_flags.values()):
                     continue
@@ -3871,7 +3880,26 @@ class IntelligentScheduler:
         regular_end   = et.get('regular_end')   or time(16, 30)
 
         allowed = []
+        if designation is not None:
+            # Designee: same per-segment rule as the validator (HC2/HC4 via
+            # faculty_load.designee_segments) — a block that crosses a boundary (e.g.
+            # 2:00-5:00 PM) is allowed when every segment is in an allowed window. The
+            # 4:30-6:00 PM PT window keeps its existing eligibility (night service or a
+            # Permanent/Temporary designee) and 6:00-9:00 PM needs a night allowance.
+            _pm_ok = bool((night_svc and night_svc > 0) or emp_status in ('Permanent', 'Temporary'))
+            _night_ok = bool(designee_night_allowance(fac))
+            _w = self.csp._designee_windows(fac)
+            for (s, e) in valid_blks:
+                kinds = {k for (_a, _b, k) in faculty_load.designee_segments(
+                    'Monday', s, e, **_w)}
+                if 'outside' in kinds or ('pm' in kinds and not _pm_ok) or ('night' in kinds and not _night_ok):
+                    continue
+                allowed.append((s, e, 'regular' if kinds <= faculty_load.DESIGNEE_REGULAR_KINDS else 'pt'))
+            if allowed:
+                return allowed
         for (s, e) in valid_blks:
+            if designation is not None:
+                break   # designee handled above (falls through to the fallback below)
             if e <= regular_end and s >= regular_start:
                 if emp_status != 'Part-Time':
                     allowed.append((s, e, 'regular'))
@@ -5063,10 +5091,94 @@ class IntelligentScheduler:
                 incomplete.append((gene, missing))
         return incomplete
 
+    def _make_slot_free_check(self, individual, published_room_slots=None, published_faculty_slots=None):
+        """free(fid, rid, days, s, e, exclude_gene): True when neither the faculty nor the
+        room is busy at that time — in `individual` or in other sections' Published/Draft."""
+        published_room_slots    = published_room_slots    or {}
+        published_faculty_slots = published_faculty_slots or {}
+
+        def free(fid, rid, days, s, e, exclude_gene):
+            for other in individual:
+                if other is exclude_gene or other.get('start_time') is None or not other.get('days_list'):
+                    continue
+                if not any(d in other['days_list'] for d in days):
+                    continue
+                if not CSPValidator._times_overlap(s, e, other['start_time'], other['end_time']):
+                    continue
+                if (fid and other.get('faculty_id') == fid) or (rid and other.get('room_id') == rid):
+                    return False
+            for d in days:
+                if rid and any(CSPValidator._times_overlap(s, e, ps, pe)
+                               for (ps, pe) in published_room_slots.get((rid, d), [])):
+                    return False
+                if fid and any(CSPValidator._times_overlap(s, e, ps, pe)
+                               for (ps, pe) in published_faculty_slots.get((fid, d), [])):
+                    return False
+            return True
+        return free
+
+    def _relocate_for_room(self, gene, individual, pool, days, s, e, faculty_map, free, only_current=False):
+        """Give `gene` a room from `pool`: first at its current days/time, then (unless
+        only_current) at the first other day set + time of the same length and number of
+        meetings where no other class of this section overlaps, its faculty is free and
+        inside their allowed hours, and such a room is free. Kept only when it adds no
+        hard violation."""
+        n = len(days)
+        if n < 1 or s is None or e is None:
+            return False
+        dur = int(round(duration_hours(s, e) * 60))
+        day_pool = [d for d in WEEKDAYS + ['Saturday'] if d not in self._weekend_day_scope]
+        sub_code = (gene.get('subject_code') or '').upper()
+        if any(sub_code.startswith(p) for p in SUNDAY_ALLOWED_PREFIXES) and self._nstp_force_sunday:
+            day_pool = ['Sunday']
+        day_sets = [list(days)]
+        if not only_current:
+            day_sets += [ds for ds in (self._multi_meeting_day_sets(n, day_pool) if n > 1 else [[d] for d in day_pool])
+                         if sorted(ds) != sorted(days)]
+        blks = [(time(m // 60, m % 60), time((m + dur) // 60, (m + dur) % 60))
+                for m in range(7 * 60 + 30, 21 * 60 - dur + 1, 30)]
+        fid = gene.get('faculty_id')
+        fac = faculty_map.get(fid, {}) if fid else {}
+        allowed = (self._get_allowed_blocks_for_faculty(fac, blks) if fac
+                   else [(bs, be, 'regular') for (bs, be) in blks])
+        # The class's own time first (room change only), then every other time.
+        allowed = [(s, e, 'current')] + ([] if only_current else [b for b in allowed if (b[0], b[1]) != (s, e)])
+
+        def _section_free(ds, bs, be):
+            for other in individual:
+                if other is gene or other.get('start_time') is None:
+                    continue
+                if any(d in (other.get('days_list') or []) for d in ds) and \
+                        CSPValidator._times_overlap(bs, be, other['start_time'], other['end_time']):
+                    return False
+            return True
+
+        hard = lambda: sum(1 for v in self.csp.validate(individual, faculty_map) if v.get('severity') != 'warning')
+        before_hard = hard()
+        saved = {k: gene.get(k) for k in ('start_time', 'end_time', 'days_list', 'day', 'time', 'days',
+                                          'duration_hrs', 'room_id', 'room', 'room_type')}
+        for ds in day_sets:
+            for (bs, be, _k) in allowed:
+                if not _section_free(ds, bs, be) or not free(fid, None, ds, bs, be, gene):
+                    continue
+                room = next((r for r in pool if free(fid, r['roomid'], ds, bs, be, gene)), None)
+                if room is None:
+                    continue
+                gene.update(start_time=bs, end_time=be, days_list=list(ds), day=ds[0],
+                            time=f"{format_time_12h(bs)} – {format_time_12h(be)}",
+                            days='/'.join(d[:3].upper() for d in ds),
+                            duration_hrs=round(duration_hours(bs, be), 2),
+                            room_id=room['roomid'], room=room['roomname'], room_type=room.get('roomtype', ''))
+                if hard() <= before_hard:
+                    return True
+                gene.update(saved)
+        return False
+
     def _repair_incomplete_genes(self, individual: list, faculty_list: list,
                                  faculty_map: dict, rooms: list,
                                  published_room_slots: dict = None,
-                                 published_faculty_slots: dict = None) -> list:
+                                 published_faculty_slots: dict = None,
+                                 locked_parts: dict = None) -> list:
         """
         One bounded pass per incomplete gene, filling ONLY the missing
         component(s) — schedule first (a day/time must exist before a
@@ -5146,6 +5258,13 @@ class IntelligentScheduler:
                         gene['room']      = r['roomname']
                         gene['room_type'] = r.get('roomtype', '')
                         break
+                # No room of the right type at THIS time — move the class to another time
+                # where the section, its instructor and such a room are all free, instead
+                # of leaving "Room is TBA" while other times work (a user-locked time or a
+                # merge-group meeting is never moved).
+                if (not gene.get('room_id') and not gene.get('_group_set')
+                        and not self._user_lock_flags(gene, locked_parts).get('schedule')):
+                    self._relocate_for_room(gene, individual, pool, days, s, e, faculty_map, _free)
 
             if 'faculty' in missing and days and s is not None and e is not None:
                 for f in faculty_list:
@@ -6229,6 +6348,13 @@ class IntelligentScheduler:
             MUTATION_RATE = 0.30
             ELITE_RATIO   = 0.35
             MAX_ATTEMPTS  = 5   # initial run + up to 4 restarts with increasing diversity
+            # When rooms/faculty are exhausted a zero-violation schedule doesn't exist, so
+            # without these the GA always ran every generation of every attempt (~25 s per
+            # solve). Stop an attempt once its best stops improving, and stop restarting
+            # once restarts stop beating the best found so far.
+            STALL_GENS          = 30
+            MAX_STALE_ATTEMPTS  = 2
+            _stale_attempts     = 0
 
             best_schedule_global    = None
             least_violations_global = 9999
@@ -6270,6 +6396,7 @@ class IntelligentScheduler:
                 best_schedule    = None
                 least_violations = 9999
                 best_score       = -999999
+                _last_improved   = 0
 
                 for gen in range(GENERATIONS):
                     scored = []
@@ -6283,12 +6410,16 @@ class IntelligentScheduler:
                             best_score       = score
                             least_violations = n_violations
                             best_schedule    = [{**g, 'days_list': list(g.get('days_list', []))} for g in ind]
+                            _last_improved   = gen
 
                     if attempt == 0 and gen == 0 and initial_fitness is None and scored:
                         initial_fitness = max(s for s, _, _ in scored)
 
                     # Stop early once conflict-free and sufficiently evolved
                     if least_violations == 0 and gen >= 5:
+                        break
+                    # ...or once this attempt has stopped improving.
+                    if gen - _last_improved >= STALL_GENS:
                         break
 
                     elite_n   = max(2, int(POP_SIZE * ELITE_RATIO))
@@ -6330,9 +6461,14 @@ class IntelligentScheduler:
                     best_schedule_global    = best_schedule
                     least_violations_global = least_violations
                     best_score_global       = best_score
+                    _stale_attempts         = 0
+                else:
+                    _stale_attempts += 1
 
                 if least_violations_global == 0:
                     break   # Conflict-free schedule found — no more restarts needed
+                if _stale_attempts >= MAX_STALE_ATTEMPTS:
+                    break   # restarts no longer find anything better
 
             # ── Completeness repair (Section A/I/J/R) ─────────────────────────────
             # A required session missing Faculty/Room/Day/Start/End is never a valid
@@ -6342,6 +6478,7 @@ class IntelligentScheduler:
                 best_schedule_global, faculty_list, faculty_map, rooms,
                 published_room_slots=published_room_slots,
                 published_faculty_slots=published_faculty_slots,
+                locked_parts=locked_parts,
             )
             # HC16 group model: unscheduled merged subjects get no invented slot; extra
             # meeting sets become their own genes; TBA group room/faculty stay TBA.
@@ -6389,6 +6526,38 @@ class IntelligentScheduler:
             # HC_SPEC (specialization mismatch) is advisory — generation still succeeds;
             # the warning is surfaced in the UI so the Academic Head can review assignments.
             hard_violations     = [v for v in final_violations if v.get('severity') != 'warning']
+
+            # HC13 (lab hours need a Laboratory room): before stripping the subject's room
+            # to TBA below, put one of its lab parts in a free Laboratory room — at its own
+            # time if one is free, else at another time when the section, its faculty and a
+            # lab room are all free. A user-locked room is never changed (a user-locked
+            # time is kept and only the room is tried).
+            _hc13 = [v for v in hard_violations if v.get('rule') == 'HC13']
+            if _hc13:
+                _lab_pool = [r for r in rooms if is_laboratory_room_type(r.get('roomtype'))]
+                _free13 = self._make_slot_free_check(best_schedule_global, published_room_slots,
+                                                     published_faculty_slots)
+                _moved = False
+                for v in _hc13:
+                    subj = (v.get('subject') or '').strip().upper()
+                    for gene in best_schedule_global:
+                        if (gene.get('subject_code') or '').upper() != subj or gene.get('class_type') != 'Lab':
+                            continue
+                        _ul = self._user_lock_flags(gene, locked_parts)
+                        if gene.get('_group_set') or _ul.get('room'):
+                            continue
+                        _days = gene.get('days_list') or ([gene['day']] if gene.get('day') else [])
+                        if self._relocate_for_room(gene, best_schedule_global, _lab_pool, _days,
+                                                   gene.get('start_time'), gene.get('end_time'),
+                                                   faculty_map, _free13, only_current=bool(_ul.get('schedule'))):
+                            _moved = True
+                            break
+                if _moved:
+                    final_violations = self.csp.validate(
+                        best_schedule_global, faculty_map, existing_load=existing_load,
+                        rooms_by_id=rooms_by_id
+                    )
+                    hard_violations = [v for v in final_violations if v.get('severity') != 'warning']
             advisory_violations = [v for v in final_violations if v.get('severity') == 'warning']
 
             # ── Partial-generation degrade (architecture spec section 6) ───────────

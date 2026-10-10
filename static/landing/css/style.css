@@ -1,0 +1,238 @@
+/* ===== BRAND TOKENS (match the system GUI) — edit colors here ===== */
+:root {
+  --maroon: #800000;
+  --maroon-dark: #5a0000;
+  --maroon-light: #a83a3a;
+  --crimson: #9b1c1c;
+  --gold: #f2c230;
+  --bg: #f6f2f1;
+  --card: #ffffff;
+  --text: #2b1d1d;
+  --muted: #6e5f5f;
+  --radius: 18px;
+  --font: 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 70px; }
+body { font-family: var(--font); color: var(--text); background: var(--bg); line-height: 1.65; }
+img { max-width: 100%; display: block; }
+a { color: inherit; text-decoration: none; }
+
+/* ===== TOP BAR (same as system top navigation) ===== */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .6rem 5%; background: var(--maroon); color: #fff;
+  box-shadow: 0 2px 12px rgba(0,0,0,.25);
+}
+.brand { display: flex; align-items: center; gap: .6rem; font-size: 1.05rem; }
+.brand img { width: 38px; height: 38px; }
+.brand b { font-weight: 700; }
+nav { display: flex; gap: 1.4rem; font-size: .9rem; font-weight: 500; }
+nav a { opacity: .85; transition: .2s; padding-bottom: 2px; border-bottom: 2px solid transparent; }
+nav a:hover { opacity: 1; border-color: var(--gold); }
+.menu-btn { display: none; background: none; border: 0; color: #fff; font-size: 1.6rem; cursor: pointer; }
+
+/* ===== HERO (login-screen style: white panel + maroon gradient) ===== */
+.hero {
+  min-height: 88vh; display: grid; place-items: center; padding: 3rem 5%;
+  background:
+    linear-gradient(135deg, rgba(90,0,0,.92), rgba(155,28,28,.85)),
+    radial-gradient(circle at 20% 20%, #a83a3a, #3a0000);
+}
+.hero-card {
+  display: grid; grid-template-columns: 1fr 1.4fr; max-width: 1000px; width: 100%;
+  border-radius: 28px; overflow: hidden; box-shadow: 0 30px 70px rgba(0,0,0,.45);
+}
+.hero-left { background: #f4f1f1; display: grid; place-content: center; text-align: center; padding: 2.5rem; }
+.seal { width: 170px; margin: 0 auto 1rem; }
+.hero-left h2 { font-size: 1.7rem; font-weight: 800; letter-spacing: .5px; }
+.hero-left p { font-size: .8rem; font-weight: 600; letter-spacing: 1px; }
+.hero-right { background: linear-gradient(135deg, var(--maroon-dark), var(--crimson)); color: #fff; padding: 3rem 2.5rem; }
+.hero-right h1 { font-size: clamp(1.7rem, 3.6vw, 2.5rem); line-height: 1.2; font-weight: 700; margin-bottom: 1rem; }
+.hero-right p { opacity: .9; margin-bottom: 1.8rem; }
+.cta { display: flex; flex-wrap: wrap; gap: .8rem; }
+.btn { padding: .7rem 1.6rem; border-radius: 999px; font-weight: 600; font-size: .9rem; transition: .2s; }
+.btn-light { background: #fff; color: var(--maroon); }
+.btn-light:hover { background: var(--gold); }
+.btn-outline { border: 2px solid #fff; color: #fff; }
+.btn-outline:hover { background: #fff; color: var(--maroon); }
+
+/* ===== SECTIONS ===== */
+.section { padding: 5rem 5%; max-width: 1200px; margin: auto; }
+.section.alt { max-width: none; background: #fff; }
+.section.alt > * { max-width: 1200px; margin-left: auto; margin-right: auto; }
+.eyebrow { color: var(--maroon-light); font-weight: 700; letter-spacing: 3px; text-transform: uppercase; font-size: .78rem; }
+.title { color: var(--maroon); font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 700; margin: .3rem 0 2rem; }
+
+.grid { display: grid; gap: 1.4rem; }
+.grid.two { grid-template-columns: repeat(2, 1fr); }
+.grid.three { grid-template-columns: repeat(3, 1fr); }
+.grid.four { grid-template-columns: repeat(4, 1fr); }
+.grid.five { grid-template-columns: repeat(5, 1fr); }
+
+.card { background: var(--card); border-radius: var(--radius); padding: 2rem; box-shadow: 0 6px 24px rgba(90,0,0,.08); }
+.card h3 { color: var(--maroon); margin-bottom: .6rem; }
+.card.maroon { background: linear-gradient(135deg, var(--maroon-dark), var(--crimson)); color: #fff; }
+.card.maroon h3 { color: var(--gold); }
+.note { margin-top: 1rem; font-size: .85rem; opacity: .85; border-left: 3px solid var(--gold); padding-left: .8rem; }
+.stats { list-style: none; display: flex; gap: 2rem; margin-top: 1.4rem; }
+.stats strong { display: block; font-size: 1.8rem; color: var(--maroon); line-height: 1.1; }
+.stats span { font-size: .8rem; color: var(--muted); }
+
+/* ===== FEATURES ===== */
+.feature { background: var(--bg); border-radius: var(--radius); padding: 1.6rem; border-bottom: 4px solid var(--maroon); transition: .25s; }
+.feature:hover { transform: translateY(-6px); box-shadow: 0 12px 28px rgba(90,0,0,.18); }
+.ico { font-size: 1.7rem; }
+.feature h3 { color: var(--maroon); font-size: 1rem; margin: .5rem 0 .3rem; }
+.feature p { font-size: .85rem; color: var(--muted); }
+
+/* ===== STEPS ===== */
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2rem; counter-reset: s; }
+.step { background: var(--card); border-radius: var(--radius); padding: 1.8rem 1.4rem; box-shadow: 0 6px 24px rgba(90,0,0,.08); position: relative; }
+.step b { display: inline-grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; background: var(--maroon); color: var(--gold); font-size: .95rem; margin-bottom: .8rem; border: 3px solid var(--maroon-light); }
+.step h3 { color: var(--maroon); font-size: 1rem; }
+.step p { font-size: .85rem; color: var(--muted); margin-top: .3rem; }
+
+/* ===== PREVIEW ===== */
+.shot { max-width: 900px; margin: auto; }
+.shot img { border-radius: 14px; box-shadow: 0 20px 50px rgba(90,0,0,.3); border: 1px solid #ddd; }
+.shot-title { margin-top: 3.5rem; }
+.shot figcaption { text-align: center; margin-top: 1rem; color: var(--muted); font-size: .9rem; }
+
+/* ===== METRICS ===== */
+.metric { background: linear-gradient(135deg, var(--maroon-dark), var(--crimson)); color: #fff; border-radius: var(--radius); padding: 1.8rem 1.2rem; text-align: center; }
+.metric strong { display: block; font-size: 1.9rem; color: var(--gold); }
+.metric span { font-size: .82rem; opacity: .9; }
+
+/* ===== TEAM ===== */
+.member { text-align: center; }
+.member h3 { font-size: .9rem; color: var(--text); }
+
+/* ===== FOOTER ===== */
+footer { background: var(--maroon-dark); color: #fff; text-align: center; padding: 2.5rem 5%; }
+footer img { width: 60px; margin: 0 auto .8rem; }
+footer .small { opacity: .65; font-size: .8rem; margin-top: .6rem; }
+
+/* ===== SCROLL REVEAL ===== */
+.reveal { opacity: 0; transform: translateY(24px); transition: .6s ease; }
+.reveal.show { opacity: 1; transform: none; }
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
+  .grid.three, .grid.four, .steps { grid-template-columns: repeat(2, 1fr); }
+  .grid.five { grid-template-columns: repeat(3, 1fr); }
+  .hero-card { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .menu-btn { display: block; }
+  nav { display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; background: var(--maroon-dark); padding: 1rem 5%; }
+  nav.open { display: flex; }
+  .grid.two, .grid.three, .grid.four, .steps { grid-template-columns: 1fr; }
+  .grid.five { grid-template-columns: repeat(2, 1fr); }
+  .stats { flex-direction: column; gap: 1rem; }
+}
+
+.photo {
+  width: 110px; height: 110px; border-radius: 50%;
+  object-fit: cover; margin: 0 auto .8rem;
+  border: 4px solid var(--bg);
+  box-shadow: 0 0 0 3px var(--maroon-light);
+}
+.role {
+  font-size: .78rem; font-weight: 600;
+  color: var(--maroon-light); margin-top: .2rem;
+}
+/* ===== CAMPUS PHOTO BACKGROUNDS ===== */
+/* Photo sections: full width, content stays inside 1200px */
+.section.bgphoto { max-width: none; position: relative; background-size: cover; background-position: center; }
+.section.bgphoto > * { max-width: 1200px; margin-left: auto; margin-right: auto; }
+
+/* Hero: building photo under the maroon gradient */
+.hero {
+  background:
+    linear-gradient(135deg, rgba(90,0,0,.90), rgba(155,28,28,.78)),
+    url('../assets/campus/campus-building.jpg') center / cover no-repeat;
+}
+
+/* About: students photo, washed out so the white cards stay readable */
+.roles-bg {
+  background-image:
+    linear-gradient(180deg, rgba(246,242,241,.94), rgba(246,242,241,.86) 50%, rgba(246,242,241,.96)),
+    url('../assets/campus/students.jpg');
+}
+
+/* Objectives: sunset photo under a dark maroon gradient, light text */
+.objectives-bg {
+  background-image:
+    linear-gradient(180deg, rgba(58,0,0,.88), rgba(90,0,0,.80) 55%, rgba(58,0,0,.92)),
+    url('../assets/campus/campus-sunset.jpg');
+  background-position: center 75%;
+}
+.objectives-bg .title { color: #fff; }
+.objectives-bg .eyebrow { color: var(--gold); }
+.objectives-bg .metric {
+  background: rgba(255,255,255,.10); border: 1px solid rgba(242,194,48,.45);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+
+/* Team: building photo, light wash, each member on a white card */
+.team-bg {
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,.93), rgba(246,242,241,.90)),
+    url('../assets/campus/campus-building.jpg');
+  background-position: center 30%;
+}
+.team-bg .member { background: var(--card); border-radius: var(--radius); padding: 1.6rem 1rem; box-shadow: 0 6px 24px rgba(90,0,0,.10); }
+
+/* Footer: sunset photo, dark overlay */
+.footer-bg {
+  background:
+    linear-gradient(rgba(58,0,0,.90), rgba(58,0,0,.94)),
+    url('../assets/campus/campus-sunset.jpg') center 80% / cover no-repeat;
+}
+
+/* Gentle parallax on desktop only (fixed backgrounds break on phones) */
+@media (min-width: 1024px) and (hover: hover) {
+  .roles-bg, .objectives-bg { background-attachment: scroll, fixed; }
+}
+
+/* Show content even if JS fails, and respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* ===== LOGIN CTAs & ROLES ===== */
+nav a.nav-login { background: var(--gold); color: var(--maroon-dark); opacity: 1; padding: .35rem 1.1rem; border-radius: 999px; border-bottom: 0; font-weight: 600; }
+nav a.nav-login:hover { background: #fff; }
+.hero-right .hint { font-size: .8rem; opacity: .75; margin: 1.2rem 0 0; }
+.btn-maroon { background: var(--maroon); color: #fff; margin-left: .6rem; display: inline-block; }
+.btn-maroon:hover { background: var(--maroon-dark); }
+.persona { background: var(--card); border-radius: var(--radius); padding: 1.8rem 1.4rem; border-top: 4px solid var(--maroon); box-shadow: 0 6px 24px rgba(90,0,0,.10); }
+.persona h3 { color: var(--maroon); font-size: 1.05rem; margin: .5rem 0 .4rem; }
+.persona p { font-size: .88rem; color: var(--muted); }
+.roles-cta { text-align: center; margin-top: 2.2rem; font-weight: 500; }
+.foot-login { display: inline-block; margin-top: .6rem; padding: .5rem 1.4rem; border-radius: 999px; background: var(--gold); color: var(--maroon-dark); font-weight: 600; font-size: .9rem; }
+@media (max-width: 680px) { nav a.nav-login { align-self: flex-start; } }
+
+/* ===== INTRO ===== */
+.intro { text-align: center; }
+.intro .lead { max-width: 760px; margin: 0 auto; font-size: 1.05rem; color: var(--muted); }
+.chips { list-style: none; display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; margin-top: 1.6rem; }
+.chips li { padding: .4rem 1rem; border-radius: 999px; border: 1.5px solid var(--maroon-light); color: var(--maroon); font-size: .85rem; font-weight: 600; background: #fff; }
+
+/* ===== HOW IT WORKS FLOW ===== */
+.flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; }
+.flow-step { background: var(--card); border-radius: var(--radius); padding: 1.6rem 1.4rem; box-shadow: 0 6px 24px rgba(90,0,0,.08); border-top: 4px solid var(--maroon); }
+.flow-step b { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: var(--maroon); color: var(--gold); font-size: .95rem; }
+.flow-step h3 { color: var(--maroon); font-size: 1.05rem; margin: .6rem 0 .3rem; }
+.flow-step p, .flow-step li { font-size: .88rem; color: var(--muted); }
+.flow-step ul { padding-left: 1.1rem; margin-top: .5rem; display: grid; gap: .4rem; }
+.flow-step strong { color: var(--text); }
+.who { display: inline-block; font-size: .72rem; font-weight: 600; color: var(--maroon); background: rgba(128,0,0,.08); padding: .1rem .7rem; border-radius: 999px; margin-bottom: .5rem; }
+.sub { color: var(--maroon); font-size: 1.2rem; margin: 3rem 0 .3rem; }
+.sub-note { color: var(--muted); font-size: .9rem; margin-bottom: 1.2rem; }
+@media (max-width: 900px) { .flow { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 680px) { .flow { grid-template-columns: 1fr; } }

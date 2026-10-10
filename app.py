@@ -830,7 +830,9 @@ def inject_active_period():
 # --- 1. ROOT ROUTE ---
 @app.route('/')
 def index():
-    return redirect(url_for('login'))
+    # Public landing page. /login already sends signed-in users to their dashboard.
+    logged_in = bool(session.get('loggedin')) and _dashboard_url_for_role(session.get('role')) != 'login'
+    return render_template('landing.html', login_href=url_for('login'), logged_in=logged_in)
 
 # --- 2. ONE-TIME SETUP ROUTE ---
 @app.route('/setup')
@@ -16519,7 +16521,8 @@ def api_rooms_occupancy_by_day():
         official_rows = query_db(f"""
             SELECT ss.roomid, ss.starttimeid, ss.endtimeid, ss.daydesc,
                    s.sectionid AS section_id, cs_o.subjectcode,
-                   COALESCE(sv.employeenumber, s.employeenumber) AS employee_number
+                   COALESCE(sv.employeenumber, s.employeenumber) AS employee_number,
+                   ss.sessionid, ss.versionid
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule s ON sv.scheduleid = s.scheduleid
@@ -16586,6 +16589,11 @@ def api_rooms_occupancy_by_day():
                 'startIdx': (r['starttimeid'] or 1) - 1,
                 'endIdx': (r['endtimeid'] or 1) - 1,
             }
+            # Official rows: which booking this is, so the editor can skip the slice's own
+            # saved booking and rows it has already moved (hidden) when listing free rooms.
+            if r.get('sessionid') is not None:
+                rng['sessionid'] = r['sessionid']
+                rng['versionid'] = r.get('versionid')
             if _mpol is not None:
                 rng['merge_event'] = _keys.get(i)
                 rng['section_id'] = r.get('section_id')
@@ -29928,9 +29936,14 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
         day = s.get('days')
         if not day:
             continue
-        is_reg = (not buckets['isPartTime']) and faculty_load.is_reg_slice(day, s.get('time_code'))
-        bucket = per_day['regular' if is_reg else 'part_time']
-        bucket[day] = round(bucket.get(day, 0) + h, 2)
+        if buckets['isPartTime']:
+            _rh, _ph = 0.0, h
+        else:
+            # Designees: split by time segment (2:00-5:00 PM = 2.5 h Regular + 0.5 h PT).
+            _rh, _ph = faculty_load._session_bucket_hours(s, h, buckets.get('isDesignee'), load_scheduler_config())
+        for _key, _hv in (('regular', _rh), ('part_time', _ph)):
+            if _hv > 0:
+                per_day[_key][day] = round(per_day[_key].get(day, 0) + _hv, 2)
 
 
     def _row(g):
@@ -34305,10 +34318,167 @@ def _selected_row_problems(schedule_rows, violations, cross_violations, codes, r
 # known: Room first, Instructor last (the most meaningful historical value).
 _PROGRESSIVE_RELEASE_ORDER = ('room', 'schedule', 'faculty')
 _MAX_REGEN_ROUNDS = 5
-# Fresh Generate: re-run with new random seeds (each run ~0.3 s) until the result is
-# complete and conflict-free, keeping the best of at most this many attempts.
+# Fresh Generate: re-run with new random seeds until the result is complete and
+# conflict-free, keeping the best of at most this many attempts — but stop after
+# _FRESH_GEN_MAX_NO_GAIN retries in a row that are no better, or once retries have used
+# _FRESH_GEN_RETRY_BUDGET_S seconds (a saturated term can't be improved by more seeds).
 _FRESH_GEN_ATTEMPTS = 8
+_FRESH_GEN_MAX_NO_GAIN = 2
+_FRESH_GEN_RETRY_BUDGET_S = 30
 import random
+
+
+_NOTICE_DAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+_NOTICE_DAY_START, _NOTICE_DAY_END = 7 * 60 + 30, 21 * 60      # 7:30 AM – 9:00 PM
+
+
+def _notice_minutes(v):
+    if v is None:
+        return None
+    if hasattr(v, 'hour'):
+        return v.hour * 60 + v.minute
+    try:
+        h, m = str(v).split(':')[:2]
+        return int(h) * 60 + int(m)
+    except (ValueError, TypeError):
+        return None
+
+
+def _notice_hours_label(minutes):
+    h = minutes / 60
+    return f"{h:g}-hour" if h != 1 else "1-hour"
+
+
+def _generation_load_notices(schedule_rows, violations):
+    """Faculty-load shortages (HC9): an instructor pushed past their load limit because
+    the generator had nobody else available for their classes."""
+    out, seen = [], set()
+    for v in violations or []:
+        if v.get('rule') != 'HC9' or v.get('severity') == 'warning':
+            continue
+        fid = v.get('faculty_id')
+        if (fid, v.get('detail')) in seen:
+            continue
+        seen.add((fid, v.get('detail')))
+        mine = sorted({g.get('subject_code') for g in schedule_rows or []
+                       if fid and str(g.get('faculty_id')) == str(fid) and g.get('subject_code')})
+        name = next((g.get('instructor') for g in schedule_rows or []
+                     if fid and str(g.get('faculty_id')) == str(fid) and g.get('instructor')), None)
+        who = name or 'This instructor'
+        out.append({'kind': 'faculty_load', 'subject_code': ', '.join(mine), 'subject': ', '.join(mine),
+                    'class_info': '', 'missing': ['faculty'],
+                    'title': f'{who} is over their load limit',
+                    'message': (v.get('detail') or '').rstrip('.') + '. No other available instructor could take '
+                               + (f"their class{'es' if len(mine) != 1 else ''} in this section ({', '.join(mine)})."
+                                  if mine else 'their classes in this section.'),
+                    'suggestion': 'Give one of these classes to another instructor (Manual Editor), '
+                                  'or raise this instructor\'s load limit if that is allowed.'})
+    return out
+
+
+def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, violations=None):
+    """Plain-language notices for classes the generator could not complete: what is
+    missing (room / instructor / time), WHY in terms the Academic Head can act on (e.g.
+    "all 18 laboratory rooms are fully booked for 3-hour blocks"), and what to do next.
+    Also explains faculty-load shortages (HC9). Purely explanatory — never changes the
+    result."""
+    load_notices = _generation_load_notices(schedule_rows, violations)
+    rows = [g for g in (schedule_rows or []) if g.get('incomplete') or g.get('incomplete_components')]
+    if not rows:
+        return load_notices
+    # Room occupancy for the term (other sections' Published + Draft classes) plus the
+    # classes this generation did place.
+    try:
+        codes = sorted({(g.get('subject_code') or '').strip().upper() for g in schedule_rows or []} - {''})
+        room_slots, _ = scheduler_engine.fetch_published_room_faculty_slots(
+            term, acad_year_id, exclude_subject_codes=codes,
+            exclude_section_id=_section_id_or_none(section_id))
+    except Exception as e:
+        print(f"[shortage notices] occupancy unavailable: {e}")
+        room_slots = {}
+    from collections import defaultdict
+    busy = defaultdict(list)          # (roomid, day) -> [(start_min, end_min)]
+    for (rid, day), slots in (room_slots or {}).items():
+        for s, e in slots:
+            sm, em = _notice_minutes(s), _notice_minutes(e)
+            if sm is not None and em is not None:
+                busy[(str(rid), day)].append((sm, em))
+    for g in schedule_rows or []:
+        if g.get('incomplete') or not g.get('room_id'):
+            continue
+        sm, em = _notice_minutes(g.get('start_time')), _notice_minutes(g.get('end_time'))
+        for day in (g.get('days_list') or ([g['day']] if g.get('day') else [])):
+            if sm is not None and em is not None:
+                busy[(str(g['room_id']), day)].append((sm, em))
+
+    rooms = query_db("SELECT roomid, roomname, roomtype FROM room WHERE COALESCE(isactive, TRUE)") or []
+
+    def _has_free_block(rid, block, days=_NOTICE_DAYS):
+        for day in days:
+            taken = busy.get((str(rid), day), [])
+            for start in range(_NOTICE_DAY_START, _NOTICE_DAY_END - block + 1, 30):
+                if all(start >= e or start + block <= s for s, e in taken):
+                    return True
+        return False
+
+    notices = []
+    for g in rows:
+        code = g.get('subject_code') or ''
+        comps = {('faculty' if c in ('faculty', 'instructor') else 'schedule' if c in ('schedule', 'time', 'days') else c)
+                 for c in (g.get('incomplete_components') or [])}
+        reasons = ' '.join(str(r) for r in (g.get('incomplete_reason') or []))
+        is_lab = (g.get('class_type') == 'Lab') or ('Laboratory' in reasons)
+        sm, em = _notice_minutes(g.get('start_time')), _notice_minutes(g.get('end_time'))
+        if sm is not None and em is not None and em > sm:
+            block = em - sm
+        else:
+            n_days = max(1, len(g.get('days_list') or []) or 1)
+            block = max(30, int(round(float(g.get('duration_hrs') or 1.5) * 60 / n_days / 30)) * 30)
+        kind = 'laboratory' if is_lab else 'lecture'
+        # A Sunday-only class (e.g. NSTP) can only use Sunday — count free blocks there.
+        sunday_only = (g.get('days_list') or [g.get('day')]) == ['Sunday']
+        days_for = ('Sunday',) if sunday_only else _NOTICE_DAYS
+        days_label = 'on Sunday' if sunday_only else 'on any day (Monday–Saturday'
+        label = f"{code} – {g.get('description')}" if g.get('description') else code
+        what = f"{g.get('class_type') or ('Lab' if is_lab else 'Lecture')}, {_notice_hours_label(block)} meetings"
+        base = {'subject_code': code, 'subject': label, 'class_info': what, 'missing': sorted(comps)}
+
+        if 'room' in comps:
+            typed = [r for r in rooms if (r.get('roomtype') or '').lower().startswith('lab' if is_lab else 'lec')]
+            free = [r for r in typed if _has_free_block(r['roomid'], block, days_for)]
+            if not typed:
+                notices.append(dict(base, kind='no_room', title=f'No {kind} rooms set up',
+                    message=f'There are no active {kind} rooms in the system, so {code} has no room it can use.',
+                    suggestion=f'Add a {kind} room (Settings → Rooms), or save with the room as TBA and assign it later.'))
+            elif not free:
+                notices.append(dict(base, kind='no_room', title=f'All {kind} rooms are full',
+                    message=f'All {len(typed)} {kind} rooms are already booked by other classes — none has a free '
+                            f'{_notice_hours_label(block)} block {days_label}, 7:30 AM–9:00 PM' + (')' if not sunday_only else '') + '.',
+                    suggestion=f"Free up a {kind} room in another section's schedule, add a {kind} room, "
+                               f'or save this class with the room as TBA and assign it later.'))
+            else:
+                instr = g.get('instructor') or ('an instructor' if 'faculty' in comps else 'the instructor')
+                notices.append(dict(base, kind='no_room_at_time', title=f'No {kind} room free at a usable time',
+                    message=f'{len(free)} of {len(typed)} {kind} rooms still have free {_notice_hours_label(block)} '
+                            f'blocks{" on Sunday" if sunday_only else ""}, but none at a time when this section and {instr} are both free.',
+                    suggestion='Use Re-generate Selected with Time/Days or Instructor unlocked, '
+                               'or set the room and time yourself in the Manual Editor.'))
+        if 'faculty' in comps:
+            notices.append(dict(base, kind='no_faculty', title='No instructor available',
+                message=f'Every faculty member who can teach {code} is already at their maximum load '
+                        f'or is teaching at every time this class could be held.',
+                suggestion='Assign an instructor yourself (Manual Editor), raise a faculty member\'s load limit, '
+                           'or add a qualified faculty member.'))
+        if 'schedule' in comps and 'room' not in comps and 'faculty' not in comps:
+            notices.append(dict(base, kind='no_time', title='No free time slot',
+                message=f'There is no time when this section, its instructor and a suitable room are all free '
+                        f'for a {_notice_hours_label(block)} meeting.',
+                suggestion='Unlock Instructor or Room with Re-generate Selected, or place it yourself in the Manual Editor.'))
+        if not ({'room', 'faculty', 'schedule'} & comps):
+            notices.append(dict(base, kind='other', title='Could not be completed',
+                message=(g.get('incomplete_reason') or ['This class could not be fully scheduled.'])[0],
+                suggestion='Review it in the table, or place it yourself in the Manual Editor.'))
+    return notices + load_notices
 
 
 @app.route('/api/schedule/generate', methods=['POST'])
@@ -34451,17 +34621,25 @@ def api_generate_schedule():
                     + sum(1 for v in (cv or []) if v.get('severity') != 'warning')
                     + (1000 if (r.get('result_status') == 'INVALID_RESULT') else 0))
         _best_bad = _badness(res, cross_violations)
+        # When rooms/faculty are simply used up, no seed can do better — stop once retries
+        # stop improving (or the time budget is spent) instead of always running all 8.
+        _retry_deadline = _time_mod.monotonic() + _FRESH_GEN_RETRY_BUDGET_S
+        _no_gain = 0
         for _attempt in range(_FRESH_GEN_ATTEMPTS - 1):
-            if _best_bad == 0:
+            if _best_bad == 0 or _no_gain >= _FRESH_GEN_MAX_NO_GAIN or _time_mod.monotonic() > _retry_deadline:
                 break
             _r2 = _solve(sessions, seed=random.randrange(1, 2**31))
             _s2 = _r2.get('result_status') or ('COMPLETE_VALID' if _r2.get('success') else 'GENERATION_ERROR')
             if _s2 == 'GENERATION_ERROR' or not _r2.get('schedule_data'):
+                _no_gain += 1
                 continue
             _cv2, _cc2 = _cross(_r2['schedule_data'])
             _b2 = _badness(_r2, _cv2)
             if _b2 < _best_bad:
                 res, result_status, cross_violations, cross_conflict_count, _best_bad = _r2, _s2, _cv2, _cc2, _b2
+                _no_gain = 0
+            else:
+                _no_gain += 1
 
     # The same advisory (e.g. one specialization notice) is raised once per session of a
     # subject — list each distinct notice once.
@@ -34590,8 +34768,20 @@ def api_generate_schedule():
                         if result_status == 'COMPLETE_VALID' and not blocking_violations and not incomplete_components
                         else 'PARTIAL_RESULT')
 
+    # Plain-language "no room / no instructor / no time" explanations for the classes
+    # that could not be completed (supplemental — never fails the generation).
+    try:
+        shortage_notices = _generation_shortage_notices(
+            res.get('schedule_data'), term, data.get('acadYear', ''),
+            data.get('section') or data.get('section_id') or data.get('sectionId'),
+            violations=res.get('violations'))
+    except Exception as e:
+        print(f"[shortage notices] skipped: {e}")
+        shortage_notices = []
+
     return jsonify({
         'success':              result_status in ('COMPLETE_VALID', 'PARTIAL_VALID', 'REGENERATION_PARTIAL'),
+        'shortage_notices':     shortage_notices,
         'result_status':        result_status,
         'result_state':         result_state,
         'advisories':           advisories,
@@ -35460,6 +35650,44 @@ def api_save_draft():
         except Exception:
             pass
 
+def _keep_faculty_after_schedule_delete(cur, version_id):
+    """After a subject's (last) schedule version in a section is deleted, record its faculty
+    in subject_faculty_assignment so the subject keeps its faculty — only the schedule was
+    removed. No-op when the version had no faculty or the subject still has an active
+    Draft/Published version in that section."""
+    cur.execute("""
+        SELECT sv.employeenumber, s.scheduleid, s.sectionid, s.semesterid,
+               UPPER(cs.subjectcode) AS code, UPPER(c.programcode) AS prog, cs.yearlevel
+        FROM schedule_version sv
+        JOIN schedule s            ON s.scheduleid = sv.scheduleid
+        JOIN curriculumsubject cs  ON cs.curriculumsubjectid = s.curriculumsubjectid
+        JOIN curriculum c          ON c.curriculumid = cs.curriculumid
+        WHERE sv.versionid = %s
+    """, (version_id,))
+    v = cur.fetchone()
+    emp = (v or {}).get('employeenumber')
+    if not v or not emp or str(emp).upper() == 'TBA':
+        return
+    cur.execute("""
+        SELECT 1 FROM schedule_version sv
+        JOIN schedule s ON s.scheduleid = sv.scheduleid
+        JOIN curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+        WHERE s.sectionid = %s AND s.semesterid = %s AND UPPER(cs.subjectcode) = %s
+          AND sv.status IN ('Draft', 'Published') AND sv.source IS DISTINCT FROM 'local'
+        LIMIT 1
+    """, (v['sectionid'], v['semesterid'], v['code']))
+    if cur.fetchone():
+        return
+    _ensure_faculty_assignment_table(cur)
+    cur.execute("""
+        INSERT INTO public.subject_faculty_assignment
+            (programcode, yearlevel, semesterid, subjectcode, employeenumber, sectionid)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (programcode, yearlevel, semesterid, subjectcode)
+        DO UPDATE SET employeenumber = EXCLUDED.employeenumber, sectionid = EXCLUDED.sectionid, createdat = NOW()
+    """, (v['prog'], int(v['yearlevel']), v['semesterid'], v['code'], str(emp), v['sectionid']))
+
+
 @app.route('/api/schedule/delete_session', methods=['POST'])
 def api_delete_session():
     """Delete one time-slot session of a DRAFT version.
@@ -35535,6 +35763,19 @@ def api_delete_session():
                 UPDATE schedule_version SET status = 'Archive'
                  WHERE versionid = %s AND status = 'Draft'
             """, (int(version_id),))
+
+        # Deleting a subject's schedule removes its day/time/room — not its faculty. The
+        # faculty lives on the schedule_version, so once the subject has no active
+        # schedule left in this section, keep it as the subject's faculty assignment
+        # (what the editor shows for an unscheduled subject).
+        if whole_version_deleted:
+            cur.execute("SAVEPOINT keep_faculty")
+            try:
+                _keep_faculty_after_schedule_delete(cur, int(version_id))
+                cur.execute("RELEASE SAVEPOINT keep_faculty")
+            except Exception as _kf:
+                cur.execute("ROLLBACK TO SAVEPOINT keep_faculty")   # never blocks the delete
+                print(f"[delete_session] faculty not kept: {_kf}")
 
         conn.commit()
         cur.close(); conn.close()

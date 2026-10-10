@@ -1,0 +1,245 @@
+/* ═══════════════════════════════════════════════════════
+   RESPONSIVE LAYER — tablets & phones
+   Loaded last by academic/base.html, admin/base_admin.html and
+   faculty/base_faculty.html (after each page's own CSS), together
+   with js/responsive.js. Desktop (> 1024px) is left untouched.
+   ═══════════════════════════════════════════════════════ */
+
+/* Wrapper responsive.js puts around wide tables */
+.rsp-table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Drawer backdrop (created by responsive.js) */
+.rsp-backdrop { display: none; }
+
+/* ═══ TABLET + PHONE (≤ 1024px): sidebar becomes a slide-out drawer ═══ */
+@media (max-width: 1024px) {
+    html, body { height: 100%; height: 100dvh; }
+
+    .main-container { height: auto; flex: 1; min-height: 0; }
+
+    .sidebar,
+    .sidebar.collapsed {
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        width: 280px;
+        max-width: 85vw;
+        z-index: 2500;
+        transform: translateX(-105%);
+        transition: transform .28s cubic-bezier(.4,0,.2,1);
+        box-shadow: 4px 0 24px rgba(0,0,0,.25);
+    }
+    .sidebar.rsp-open { transform: translateX(0); }
+
+    /* Undo the desktop "icons only" mode inside the drawer */
+    .sidebar.collapsed .nav-label,
+    .sidebar.collapsed .nav-section-label,
+    .sidebar.collapsed .nav-arrow { display: initial; }
+    .sidebar.collapsed .sub-menu.show-submenu { display: block; }
+    .sidebar.collapsed .nav-divider::before { display: block; }
+    .sidebar.collapsed .nav-divider { padding: 28px 20px 10px; justify-content: flex-start; }
+    .sidebar.collapsed .nav-link,
+    .sidebar.collapsed .nav-link-wrapper,
+    .sidebar.collapsed .nav-link-main { justify-content: flex-start; }
+    .sidebar.collapsed .nav-link { padding: 12px 14px; }
+    .sidebar.collapsed .nav-link i,
+    .sidebar.collapsed .nav-link-main i { min-width: 32px; font-size: 1rem; }
+    .sidebar.collapsed .nav-item { margin: 3px 10px; }
+
+    .rsp-backdrop {
+        display: block;
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,.4);
+        z-index: 2400;
+        opacity: 0; pointer-events: none;
+        transition: opacity .25s;
+    }
+    .rsp-backdrop.show { opacity: 1; pointer-events: auto; }
+    body.rsp-drawer-open { overflow: hidden; }
+
+    .sub-header { gap: 14px; padding: 0 16px; }
+    .toggle-btn { padding: 6px 4px; }
+
+    .top-nav { padding: 0 16px; }
+    .nav-left { min-width: 0; }
+    .nav-left h1 { font-size: 1rem; }
+    .nav-right { min-width: 0; gap: 14px; }
+    .search-container { margin: 0 14px; }
+
+    .content-body { padding: 20px 18px; }
+}
+
+/* ═══ PHONE (≤ 768px) ═══ */
+@media (max-width: 768px) {
+    .top-nav { height: 56px; padding: 0 12px; gap: 8px; }
+    .nav-left { gap: 8px; flex: 1; }
+    .nav-left img { width: 34px; height: 34px; }
+    .nav-left h1 { font-size: .92rem; overflow: hidden; text-overflow: ellipsis; }
+    .ay-label, .up-info, .up-caret { display: none; }
+    .nav-right { gap: 8px; }
+
+    /* Search moves from the header into the toggle bar (responsive.js) */
+    .top-nav .search-container { display: none; }
+    .sub-header { height: 52px; }
+    .sub-header .search-container { display: block; flex: 1; max-width: none; margin: 0; }
+    .sub-header .search-container input { padding: 8px 14px 8px 38px; font-size: 16px; }
+    .sub-header .search-container i { left: 14px; }
+
+    .up-dropdown { position: fixed; top: 60px; right: 8px; left: auto; width: min(300px, calc(100vw - 16px)); }
+
+    .content-body { padding: 16px 12px; }
+
+    /* Page headers / toolbars wrap instead of overflowing */
+    .page-header, .table-toolbar, .toolbar-filters, .toolbar-actions,
+    .card-header { flex-wrap: wrap; gap: 10px; }
+    .page-title { font-size: 1.25rem; }
+    .toolbar-select, .toolbar-input { min-width: 0; max-width: 100%; }
+
+    /* Shared modals fit the screen */
+    .modal-content-logout,
+    .up-panel-box,
+    .notif-popup { width: calc(100vw - 24px) !important; max-width: calc(100vw - 24px) !important; }
+    .up-panel-box { max-height: 90dvh; padding: 18px; }
+
+    /* 16px inputs stop iOS from zooming in when a field is focused */
+    .content-body input:not([type=checkbox]):not([type=radio]),
+    .content-body select, .content-body textarea,
+    .up-input, .up-select { font-size: 16px; }
+}
+
+/* ═══ SMALL PHONE (≤ 400px) ═══ */
+@media (max-width: 400px) {
+    .nav-left h1 { font-size: .82rem; }
+}
+
+/* ═══════════════════════════════════════════════════════
+   PAGE-SPECIFIC ADJUSTMENTS
+   Grid columns use minmax(0, 1fr) so long text can't force a column
+   wider than the screen.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── TABLET (≤ 1024px) ── */
+@media (max-width: 1024px) {
+    /* Dashboards (academic / admin / faculty) */
+    .stats-grid, .stats-row, .rhub-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .action-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .analytics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tables-grid, .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+
+    /* Page headers with action buttons */
+    .page-header-row, .page-header-hub, .header-section,
+    .filter-container, .frs-header-row { flex-wrap: wrap; gap: 12px; }
+    .header-actions, .header-buttons, .filter-secondary-actions { flex-wrap: wrap; }
+
+    /* Rooms: building list goes above the room table */
+    .room-container { padding: 0; min-height: 0; }
+    .room-grid { flex-direction: column; min-height: 0; }
+    .building-sidebar { width: 100%; position: static; max-height: none; min-height: 0; }
+    .room-content-area { min-width: 0; }
+    .bldg-list-scroll {
+        display: flex; flex-direction: row; gap: 6px;
+        overflow-x: auto; overflow-y: hidden; max-height: none; padding-bottom: 6px;
+    }
+    .bldg-list-scroll .btn-building { flex-shrink: 0; white-space: nowrap; }
+
+    /* Schedule generation */
+    .gen-main { min-width: 0; width: 100%; }
+
+    /* Class schedule (SIS) / schedule toolbars */
+    .view-control-row, .right-controls-row, .cs-filter-row { flex-wrap: wrap; gap: 10px; }
+    .cs-filter-unit { min-width: 0; max-width: 100%; }
+
+    /* Requests hub */
+    .rhub-main { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── PHONE (≤ 768px) ── */
+@media (max-width: 768px) {
+    .page-title, .page-header-hub h1, .header-section h1 { font-size: 1.35rem; }
+    .section-header-row { flex-wrap: wrap; gap: 10px; }
+    .requests-header { flex-wrap: wrap; gap: 12px; }
+
+    .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .analytics-grid { grid-template-columns: minmax(0, 1fr); }
+    .stats-grid, .stats-row, .rhub-stats { gap: 12px; }
+    .stat-card { padding: 16px; }
+    .table-card { padding: 16px; }
+
+    /* Filter rows: stack, full-width fields */
+    .filter-inputs-row { gap: 12px; width: 100%; }
+    .filter-group { flex: 1 1 100%; min-width: 0; }
+    .filter-group select, .search-wrapper input, .filter-group input { width: 100%; }
+    .filter-bar { flex-wrap: wrap; gap: 10px; }
+    .filter-bar .filter-group { flex-wrap: wrap; }
+
+    .cs-filter-unit, .cs-filter-unit.cs-filter-program { flex: 1 1 100%; width: 100%; }
+    .cs-filter-unit select { width: 100%; min-width: 0; }
+
+    .frs-active-term-badge { white-space: normal; }
+    .prog-search-wrapper, .curr-prog-search-wrapper { width: 100%; max-width: 100%; }
+
+    /* Requests hub stat cards: drop the decorative icon so numbers fit */
+    .rhub-stat-card { padding: 14px; }
+    .rhub-stat-icon { display: none; }
+
+    /* Local arrangements: icon + text on top, buttons underneath */
+    .la-card { flex-wrap: wrap; }
+    .la-card-info { flex: 1 1 0; min-width: 0; }
+    .la-card-actions { flex: 1 1 100%; justify-content: flex-end; }
+}
+
+@media (max-width: 480px) {
+    .stats-grid, .stats-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .rhub-stats { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+/* ═══════════════════════════════════════════════════════
+   MANUAL SCHEDULE EDITOR (academic/manualScheduleEditor.html)
+   Desktop: filters | grid | assignment panel side by side.
+   Tablet: filters on top, grid + assignment panel below.
+   Phone: everything stacked; the timetable scrolls inside its own box.
+   ═══════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+    .schedule-container { padding: 0 !important; }
+    .editor-header-bar { flex-wrap: wrap; }
+    .editor-header-left { flex: 1 1 100%; flex-wrap: wrap; }
+    .editor-hdr-title, .editor-hdr-mode { white-space: normal; }
+    .editor-header-right { flex-wrap: wrap; flex-shrink: 1; }
+
+    .editor-wrapper { flex-direction: column; height: auto; min-width: 0; overflow: visible; }
+    .editor-left-panel { width: 100%; }
+    .center-right-col { min-height: 0; }
+    .manual-nav-bar { flex-wrap: wrap; row-gap: 8px; }
+    .manual-nav-tabs { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+    .manual-nav-tabs > * { flex-shrink: 0; }
+    .center-right-row { height: 78vh; height: 78dvh; }
+    .editor-right-panel-new { width: 290px; }
+}
+@media (max-width: 768px) {
+    .center-right-row { flex-direction: column; height: auto; }
+    .editor-center-panel { height: 70vh; height: 70dvh; flex: none; }
+    .editor-right-panel-new { width: 100%; overflow-y: visible; }
+    .bldg-room-bar { flex-wrap: wrap; }
+}
+
+/* ═══════════════════════════════════════════════════════
+   POP-UPS / MODALS on phones: never wider or taller than the screen.
+   max-width also overrides inline style="width: 540px".
+   ═══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+    .modal-content, .modal-content-lg, .modal-box, .fac-popup-content,
+    .import-conflict-dialog, .curr-exp-dialog, .room-exp-dialog, .rpt-modal-content,
+    .import-modal-content, .s-modal-box, .ep-modal-box, .mg-editor-box, .sl-del-dialog,
+    .la-modal-box, .validation-box, .confirm-box, .existing-sched-box,
+    [class*="modal-content"], [class*="modal-box"], [class*="-dialog"], [class*="popup-content"] {
+        max-width: calc(100vw - 24px) !important;
+    }
+    .modal-content, .modal-content-lg, .modal-box, .fac-popup-content,
+    .import-conflict-dialog, .curr-exp-dialog, .room-exp-dialog, .rpt-modal-content,
+    .import-modal-content, .s-modal-box, .ep-modal-box, .mg-editor-box, .sl-del-dialog, .la-modal-box {
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
+    }
+    .prog-search-menu { width: 100%; max-width: calc(100vw - 24px); }
+    .s-modal-box .mg-2 { grid-template-columns: minmax(0, 1fr); }
+    .s-modal-box input, .s-modal-box select { min-width: 0; max-width: 100%; }
+}

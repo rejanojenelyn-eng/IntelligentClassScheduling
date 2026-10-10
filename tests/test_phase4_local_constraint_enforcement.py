@@ -162,17 +162,21 @@ def test_hc3_part_time_faculty_daytime_move_rejected_evening_allowed(monkeypatch
     assert ok, err
 
 
-def test_hc2_designee_regular_class_outside_designee_window_rejected(monkeypatch, cfg):
+def test_designee_class_crossing_the_morning_window_is_split_not_rejected(monkeypatch, cfg):
+    # Designee segment policy (same rule as the Official validator): 7:30-10:30 is
+    # 7:30-9:00 (morning, Regular/TS) + 9:00-10:30 (Regular/TS) — valid, never rejected
+    # as a whole by the old 8:00-17:00 designee window.
     desig = _fac(designation=3, nights=0)
     (ok, err), _ = _service(monkeypatch, desig, [_s(start=1, end=3)])   # 7:30-10:30
-    assert not ok and 'Designee/administrator teaching hours' in err
+    assert ok, err
     (ok, err), _ = _service(monkeypatch, desig, [_s(start=9, end=8)])   # 13:30-16:30
     assert ok, err
 
 
-def test_hc4_designee_pt_class_outside_designee_pt_windows_rejected(monkeypatch, cfg):
+def test_designee_class_crossing_into_the_pt_window_is_split_not_rejected(monkeypatch, cfg):
+    # 15:00-18:00 = 15:00-16:30 Regular/TS + 16:30-18:00 PT/TS — every segment is valid.
     (ok, err), _ = _service(monkeypatch, _fac(designation=3, nights=2), [_s(start=10, end=5)])
-    assert not ok and 'Designee/administrator PT teaching hours' in err  # 15:00-18:00
+    assert ok, err
 
 
 def _night(day, start=5, end=6, code='IT201'):

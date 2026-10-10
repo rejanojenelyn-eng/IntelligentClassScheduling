@@ -76,22 +76,26 @@ def test_hc1_am_pt_slot_7_30_to_9_00_is_allowed_and_shifts_window():
 
 # ── HC2 Designee Regular Teaching Hours ─────────────────────────────────────
 
-def test_hc2_designee_no_night_service_uses_8_to_17_window():
-    # PHASE B CHECKPOINT 1 CHANGE: this used to assert a 7:30-8:00 designee
-    # class violates HC2, because the designee branch had no AM-PT exception
-    # at all and evaluated it as a "regular slot" against the 8:00-17:00
-    # window. Under the final policy, ANY weekday 7:30-9:00 slice is
-    # PT/extra-teaching load for every faculty type (including designees) --
-    # HC2 no longer evaluates it at all; final HC4 does (see
-    # test_designee_am_pt_window_is_hc4_not_hc2 below and
-    # tests/test_phase_b_designee_pt.py). This test now proves a GENUINELY
-    # still-Regular-classified slot (starts within the plain 7:30-16:30
-    # window, extends past the AM-PT window's 9:00 end, and starts before
-    # the designee's own 8:00 privilege window) still correctly violates HC2.
+def test_hc2_designee_7_30_to_9_30_is_split_not_rejected():
+    # Designee segment policy: 7:30-9:30 = 7:30-9:00 (morning window) + 9:00-9:30
+    # (Regular window). Both segments are valid Regular/TS time, so neither HC2 nor
+    # HC4 rejects the class (it used to be rejected whole by HC2's 8:00-17:00 window).
     fac = _fac(designation=1, night_svc=0)
     cls = _gene(faculty_id='F1', start_time=time(7, 30), end_time=time(9, 30))
     v = CSPValidator(config={'hc_time_blocks_enabled': 0}).validate([cls], {'F1': fac})
-    assert 'HC2' in _rules(v)
+    assert 'HC2' not in _rules(v)
+    assert 'HC4' not in _rules(v)
+
+
+def test_hc4_designee_segment_outside_all_windows_is_reported():
+    # 7:00-8:00 AM: only 7:00-7:30 is outside every designee window — reported by HC4,
+    # naming that exact segment.
+    fac = _fac(designation=1, night_svc=0)
+    cls = _gene(faculty_id='F1', start_time=time(7, 0), end_time=time(8, 0))
+    v = CSPValidator(config={'hc_time_blocks_enabled': 0}).validate([cls], {'F1': fac})
+    hc4 = [x for x in v if x['rule'] == 'HC4']
+    assert len(hc4) == 1 and '07:00 AM–07:30 AM' in hc4[0]['detail']
+    assert 'HC2' not in _rules(v)
 
 
 def test_designee_am_pt_window_is_hc4_not_hc2():

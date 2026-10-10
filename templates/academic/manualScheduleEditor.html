@@ -2,7 +2,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}?v=20260519">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20261005a">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20261010a">
 <style>
     /* ── DSS dropdown styles ── */
     .dss-select-wrapper { position: relative; width: 100%; }
@@ -1539,7 +1539,7 @@
      data-my-emp-num="{{ my_emp_num or '' }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261008p8"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261010b"></script>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.mergeGroups.js') }}?v=20261009a"></script>
 
 <script>
@@ -2171,6 +2171,8 @@ function _readCurrentSubjectSlices() {
             days: day,
             time_code: `${String(s.h).padStart(2, '0')}${String(e.h).padStart(2, '0')}`,
             hrs,
+            startMin: s.h * 60 + s.m,
+            endMin:   e.h * 60 + e.m,
         });
     });
     return slices;
@@ -2185,6 +2187,13 @@ function _readCurrentSubjectSlices() {
    the same actual-hours convention used everywhere else now. Returns null when
    the subject's day/time isn't known yet (nothing to classify) — the caller
    should fall back to the flat overall check in that case. */
+// Hours of a designee slice inside the weekday Regular windows (7:30 AM–4:30 PM).
+function _flDesigneeRegularHours(sl) {
+    if (!_FL_WKDAYS.has(sl.days || '') || sl.startMin == null || sl.endMin == null) return 0;
+    const lo = Math.max(sl.startMin, 7 * 60 + 30), hi = Math.min(sl.endMin, 16 * 60 + 30);
+    return hi > lo ? (hi - lo) / 60 : 0;
+}
+
 async function _checkFacultyBucketCapacity(empNum, ayId, sem, subjectUnits) {
     const slices = _readCurrentSubjectSlices();
 
@@ -2201,7 +2210,16 @@ async function _checkFacultyBucketCapacity(empNum, ayId, sem, subjectUnits) {
         return null;   // day/time not chosen yet — nothing to classify against
     }
     let regHrs = 0, ptHrs = 0;
-    slices.forEach(sl => { if (_flIsRegSlice(sl)) regHrs += sl.hrs; else ptHrs += sl.hrs; });
+    slices.forEach(sl => {
+        if (buckets.isDesignee) {
+            // Designee: split by time segment, same rule as the server
+            // (faculty_load.designee_segments): weekday 7:30 AM–4:30 PM is Regular
+            // (TS once Regular is full), the rest PT — e.g. 2:00–5:00 PM = 2.5 h + 0.5 h.
+            const r = _flDesigneeRegularHours(sl);
+            regHrs += r; ptHrs += Math.max(0, sl.hrs - r);
+        } else if (_flIsRegSlice(sl)) regHrs += sl.hrs;
+        else ptHrs += sl.hrs;
+    });
     const totalHrs = regHrs + ptHrs;
     if (totalHrs <= 0) return null;
     if (buckets.isPartTime) {
@@ -2424,7 +2442,14 @@ window.onFacultySelect = async function(empNum) {
     // This handles the reassignment flow: old faculty's reservation was deleted by
     // unlockFacultyChoice; new faculty selection should instantly create a new reservation
     // so units update globally (across programs) without requiring a button click.
-    if (_selFacId && _selFacName && _currentSubjectCode && !_lockedFacultyId &&
+    // Picking a faculty applies it right away — always, not only when slices exist (that
+    // made the same action sometimes need an "Assign Faculty" click and sometimes not).
+    // Outside a reassignment of a scheduled subject, this is exactly the button's action.
+    const _reassigning = window._pendingFacultyReassignSubject === _currentSubjectCode;
+    if (_selFacId && _currentSubjectCode && !_lockedFacultyId && !_reassigning &&
+        !(_alreadySaved && String(_alreadySaved.id) === String(_selFacId))) {
+        await assignFacultyToSubject();
+    } else if (_selFacId && _selFacName && _currentSubjectCode && !_lockedFacultyId &&
         document.querySelectorAll('.ts-row').length > 0 &&
         !(_alreadySaved && String(_alreadySaved.id) === String(_selFacId))) {
         // Auto-save assignment to DB (mirrors assignFacultyToSubject logic)
@@ -2457,10 +2482,22 @@ window.onFacultySelect = async function(empNum) {
         if (window._facultyReassignInfo && window._facultyReassignInfo.code === _currentSubjectCode) {
             window._facultyReassignInfo.toName = _selFacName || 'TBA';
         }
+        // The change is being saved automatically — don't offer an "Assign Faculty" click
+        // meanwhile (it looked like a step the user still had to take).
+        const _rbtn = document.getElementById('btnAssignFaculty');
+        if (_rbtn) {
+            _rbtn.style.display = 'block';
+            _rbtn.disabled = true;
+            _rbtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving faculty change…';
+        }
+        const _rtba = document.getElementById('btnAssignTBA');
+        if (_rtba) _rtba.style.display = 'none';
         try {
             if (typeof confirmAllSlots === 'function') await confirmAllSlots({ auto: true });
         } finally {
             window._facultyReassignInfo = null;   // never leaks into a later manual save
+            if (_rbtn) _rbtn.disabled = false;
+            if (typeof _updateAssignFacultyBtn === 'function') _updateAssignFacultyBtn();
         }
     }
 
@@ -2701,19 +2738,29 @@ window.confirmAndPlace = async function() {
         ? pendingManualSchedule.find(c => c.temp_id === _editTempId) || null
         : null;
 
-    // If sel_faculty was cleared by a panel reset but TBA is still the stored assignment, restore it
+    // If sel_faculty was cleared by a panel reset but the subject still has a stored
+    // assignment (TBA or a real faculty), restore it. A Reassign Faculty deletes the stored
+    // assignment first, so this never brings back a faculty the user chose to replace.
     if (!facVal && _currentSubjectCode) {
         const _stored = _subjectFacultyAssignments[_currentSubjectCode];
-        if (_stored && _stored.id === 'TBA') {
-            facVal  = 'TBA';
-            facName = 'TBA';
-            document.getElementById('sel_faculty').value      = 'TBA';
-            document.getElementById('fac_display_name').value = 'TBA';
+        if (_stored && _stored.id) {
+            facVal  = String(_stored.id);
+            facName = _stored.id === 'TBA' ? 'TBA' : (_stored.name || facName || '');
+            document.getElementById('sel_faculty').value      = facVal;
+            document.getElementById('fac_display_name').value = facName;
         }
     }
 
     if (!subjSel.value || !facVal || !roomVal || !dayVal || !startVal || !endVal) {
-        await showValidationModal('Incomplete Form', 'Subject, Faculty, Room, Day, and Time Block are all required.');
+        // Say exactly what is missing (the slice card can look complete while e.g. the
+        // faculty was never actually picked after a Reassign Faculty).
+        const _miss = [];
+        if (!subjSel.value) _miss.push('Subject');
+        if (!facVal)        _miss.push('Faculty: none selected — pick a faculty, or click Assign as TBA');
+        if (!roomVal)       _miss.push('Room');
+        if (!dayVal)        _miss.push('Day');
+        if (!startVal || !endVal) _miss.push('Time (start and end)');
+        await showValidationModal('Incomplete Form', 'Missing: ' + _miss.join('; ') + '.');
         return;
     }
 
@@ -3286,6 +3333,9 @@ async function _updateSubjectList() {
             badgeText = 'DRAFT'; badgeCls += ' badge-draft';
         } else if (hasNoPublished) {
             badgeText = 'NO PUB'; badgeCls += ' badge-no-pub';
+        } else if (!IS_LOCAL && hours > 0 && !(sched > 0)) {
+            // Nothing saved or placed for this subject yet — make it impossible to miss.
+            badgeText = 'NOT SCHEDULED'; badgeCls += ' badge-unscheduled';
         }
 
         const typePillCls  = labhours > 0 ? 'subj-type-pill subj-type-lab' : 'subj-type-pill subj-type-lec';
@@ -3376,14 +3426,20 @@ function _syncSubjectCardBars() {
         // Sync badge (do not overwrite if subject is currently active — right panel manages it)
         const activeCode = document.getElementById('sel_subj')?.value;
         if (code !== activeCode) {
-            const badgeEl = card.querySelector('.subj-badge');
+            let badgeEl = card.querySelector('.subj-badge');
+            let bt = '', bc = 'subj-badge';
+            if (savedSt === 'Published')       { bt = 'PUBLISHED'; bc += ' badge-published'; }
+            else if (savedSt === 'Draft')      { bt = 'DRAFT';     bc += ' badge-draft'; }
+            else if (savedSt === 'Published/Draft') { bt = 'DRAFT'; bc += ' badge-draft'; }
+            else if (!IS_LOCAL && hours > 0 && !(sched > 0)) { bt = 'NOT SCHEDULED'; bc += ' badge-unscheduled'; }
+            if (!badgeEl && bt) {
+                badgeEl = document.createElement('span');
+                card.querySelector('.subj-item-inner')?.appendChild(badgeEl);
+            }
             if (badgeEl) {
-                let bt = '', bc = 'subj-badge';
-                if (savedSt === 'Published')       { bt = 'PUBLISHED'; bc += ' badge-published'; }
-                else if (savedSt === 'Draft')      { bt = 'DRAFT';     bc += ' badge-draft'; }
-                else if (savedSt === 'Published/Draft') { bt = 'DRAFT'; bc += ' badge-draft'; }
                 badgeEl.textContent = bt;
                 badgeEl.className   = bc;
+                badgeEl.style.display = bt ? '' : 'none';
             }
         }
     });
@@ -3391,18 +3447,30 @@ function _syncSubjectCardBars() {
 }
 
 /* ── Refresh data-dbScheduled and data-savedStatus on all subject options from the API ── */
-// Every slice edit calls this; coalesce bursts into at most one running request plus
-// one follow-up (so a call made after a save still sees the post-save counts).
-let _rshRun = null, _rshAgain = false;
-function _refreshSubjectScheduledHours() {
-    if (_rshRun) { _rshAgain = true; return _rshRun; }
-    _rshRun = (async () => {
-        try { do { _rshAgain = false; await _refreshSubjectScheduledHoursOnce(); } while (_rshAgain); }
-        finally { _rshRun = null; }
-    })();
-    return _rshRun;
+// Every slice edit calls this; coalesce bursts for the SAME context into at most one
+// running request plus one follow-up (so a call made after a save still sees the
+// post-save counts). A call for a different section/curriculum starts its own request,
+// and the superseded one is dropped — it must never fill the list with the old context.
+let _rshRun = null, _rshAgain = false, _rshKey = '';
+function _rshContextKey() {
+    const v = id => document.getElementById(id)?.value || '';
+    return [v('sel_ay'), v('sel_sem'), v('curr_id_hidden'), v('sel_year'), v('sel_section'),
+            typeof _curriculumViewMode !== 'undefined' ? _curriculumViewMode : 'regular'].join('|');
 }
-async function _refreshSubjectScheduledHoursOnce() {
+function _refreshSubjectScheduledHours() {
+    const key = _rshContextKey();
+    if (_rshRun && key === _rshKey) { _rshAgain = true; return _rshRun; }
+    _rshKey = key;
+    _rshAgain = false;
+    const run = (async () => {
+        const current = () => _rshRun === run;
+        try { do { _rshAgain = false; await _refreshSubjectScheduledHoursOnce(current); } while (_rshAgain && current()); }
+        finally { if (_rshRun === run) _rshRun = null; }
+    })();
+    _rshRun = run;
+    return run;
+}
+async function _refreshSubjectScheduledHoursOnce(isCurrent = () => true) {
     const ay       = document.getElementById('sel_ay').value;
     const sem      = document.getElementById('sel_sem').value;
     const currId   = document.getElementById('curr_id_hidden')?.value;
@@ -3412,6 +3480,7 @@ async function _refreshSubjectScheduledHoursOnce() {
     try {
         const resp = await fetch(`/api/get_subjects?curriculum_id=${encodeURIComponent(currId)}&year_level=${encodeURIComponent(yl)}&semester=${encodeURIComponent(sem)}&ay_id=${encodeURIComponent(ay)}&scheduler_mode=${SCHED_MODE}&section_id=${encodeURIComponent(sectId)}&curriculum_mode=${typeof _curriculumViewMode !== 'undefined' ? _curriculumViewMode : 'regular'}`);
         const data = await resp.json();
+        if (!isCurrent()) return;   // superseded by a refresh for another section/curriculum
         if (!data.subjects) return;
         const subjSel = document.getElementById('sel_subj');
         if (subjSel.options.length <= 1 && data.subjects.length > 0) {
@@ -3557,6 +3626,7 @@ function _getScheduledHoursForCode(code, ay, sem) {
     const sect = document.getElementById('sel_section')?.value || '';
     // Count unsaved pending hours first
     let pendingHours = 0;
+    let _hasEntries  = false;
     if (typeof pendingManualSchedule !== 'undefined') {
         // A generated result REPLACES the subject's saved sessions (saving it writes one new
         // Draft for the subject). If this section has generator slices for the subject, its
@@ -3580,14 +3650,18 @@ function _getScheduledHoursForCode(code, ay, sem) {
             // THIS section's progress — hence the explicit section_id check below.
             if (prog && c.course && c.course !== prog) continue;
             if (sect && c.section_id && String(c.section_id) !== String(sect)) continue;
+            _hasEntries = true;
             const si = _TS_TIMES.indexOf(c.start_time);
             const ei = _TS_TIMES.indexOf(c.end_time);
             if (si >= 0 && ei > si) pendingHours += (ei - si) * 0.5;
         }
     }
-    if (pendingHours > 0) return pendingHours;
+    // The subject's slices are in the editor: their live total IS the answer — even 0
+    // (times being edited / an end before the start). Falling back to the saved hours
+    // here froze the display at the old value (e.g. "3 / 3 hrs") while editing.
+    if (pendingHours > 0 || _hasEntries) return pendingHours;
 
-    // No pending — fall back to DB-saved hours (stored in option data attribute)
+    // Nothing for this subject in the editor — fall back to DB-saved hours (option data attribute)
     const subjSel = document.getElementById('sel_subj');
     if (subjSel) {
         const opt = Array.from(subjSel.options).find(o => o.value === code);
@@ -3684,16 +3758,20 @@ async function _onSubjectClick(code, name, units, hours) {
         // never a real edit) never count. Previously isPreview/fromGenerator weren't excluded
         // here, so simply opening a subject that still had a stale preview entry lying around —
         // no actual edits made — could falsely trigger the "Unsaved Changes" switch prompt.
+        // Scoped to the OPEN section: an unsaved entry of the same subject code kept for
+        // another section (Room View keeps them) is not "this subject's" change.
+        const _curSect = String(document.getElementById('sel_section')?.value || '');
         const pendingForCurrent = pendingManualSchedule.filter(c =>
             c.subject_code === _currentSubjectCode &&
             c.ay === document.getElementById('sel_ay').value &&
             c.sem === document.getElementById('sel_sem').value &&
-            !c.fromExisting && !c.isPreview && !c.fromGenerator
+            !c.fromExisting && !c.isPreview && !c.fromGenerator &&
+            (!_curSect || !c.section_id || String(c.section_id) === _curSect)
         );
         // Only flag rows that are genuinely modified/new with content.
         // Rows with existingJson are existing sessions — check _dirtySliceIds instead of
         // the .ts-existing class (which _markSliceModified may have removed on room/day change).
-        const _hasFilledRows = Array.from(document.querySelectorAll('.ts-row')).some(row => {
+        const _filledRows = Array.from(document.querySelectorAll('.ts-row')).filter(row => {
             const dayVal   = row.querySelector('.ts-day-sel')?.value;
             const startVal = row.querySelector('.ts-start-hidden')?.value;
             if (!dayVal && !startVal) return false; // blank placeholder row
@@ -3707,10 +3785,23 @@ async function _onSubjectClick(code, name, units, hours) {
         const _switchSect        = document.getElementById('sel_section')?.value || '';
         const _hasBoardRemoval   = _touchedCodesForSection(_switchSect)
             .includes(String(_currentSubjectCode).toUpperCase());
+        const _hasFilledRows     = _filledRows.length > 0;
         const _hasPendingSlices  = pendingForCurrent.length > 0 || _hasFilledRows || _hasBoardRemoval;
         const _hasPendingFaculty = !!window._pendingFacultyAssignment;
+        // Say exactly WHAT is unsaved, so a prompt right after a save can be judged.
+        const _what = [];
+        _filledRows.forEach(row => {
+            const n = (row.querySelector('.ts-row-num span')?.textContent || 'Slice').trim();
+            const d = row.querySelector('.ts-day-sel')?.value || '—';
+            const st = row.querySelector('.ts-start-hidden')?.value || '—';
+            const en = row.querySelector('.ts-end-hidden')?.value || '—';
+            _what.push(`${n.charAt(0) + n.slice(1).toLowerCase()}: ${d} ${st}–${en} (${row.dataset.existingJson ? 'edited' : 'new'}, not saved)`);
+        });
+        if (!_filledRows.length) pendingForCurrent.forEach(c =>
+            _what.push(`${c.day || '—'} ${c.start_time || '—'}–${c.end_time || '—'} (placed, not saved)`));
+        if (_hasBoardRemoval) _what.push('A published slice removed on the calendar (not yet published)');
         if ((_hasPendingSlices || _hasPendingFaculty) &&
-            !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty))) return;
+            !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty, _what))) return;
         // Discarding: un-hide any Published slice of the old subject removed on the board.
         if (_hasBoardRemoval) _forgetRemovedPublished(_switchSect, _currentSubjectCode);
 
@@ -4179,7 +4270,7 @@ async function _focusSubjectPillInCalendar(code) {
     applyHighlight();
 }
 
-async function _confirmSubjectSwitch(hasSlices, hasFaculty) {
+async function _confirmSubjectSwitch(hasSlices, hasFaculty, details = []) {
     let msg;
     if (hasSlices && hasFaculty) {
         msg = 'You have unsaved schedule changes and an unconfirmed faculty assignment for this subject.\nSwitch subject and discard them?';
@@ -4187,6 +4278,10 @@ async function _confirmSubjectSwitch(hasSlices, hasFaculty) {
         msg = 'You selected a faculty for this subject but did not click "Assign Faculty" to confirm it.\nSwitch subject and discard the assignment?';
     } else {
         msg = 'You have unsaved changes for the current subject.\nSwitch subject and discard them?';
+    }
+    // List what exactly is unsaved (slice day/time and whether it is new or edited).
+    if (details.length) {
+        msg = msg.replace('\nSwitch', '\n\n' + details.map(d => '• ' + d).join('\n') + '\n\nSwitch');
     }
     return await showConfirmModal(msg, 'Unsaved Changes');
 }
@@ -4403,9 +4498,23 @@ function _updateAssignFacultyBtn() {
     if (tbaBadge)  tbaBadge.style.display = 'none';
     if (btnTBA)    btnTBA.style.display   = 'none';
     btn.classList.remove('reassign');
+    btn.disabled = false;
 
     if (!hasSubject) {
         btn.style.display = 'none';
+        return;
+    }
+
+    // Reassign Faculty clicked, new faculty not picked yet: picking one saves the change
+    // by itself, so there is no button to click — say what to do instead of offering an
+    // "Assign Faculty" action (that took a different path and made the flow inconsistent).
+    if (window._pendingFacultyReassignSubject && window._pendingFacultyReassignSubject === _currentSubjectCode) {
+        btn.style.display  = 'block';
+        btn.dataset.action = 'reassign-wait';
+        btn.disabled       = true;
+        btn.innerHTML      = '<i class="fas fa-hand-pointer"></i> Pick the new faculty from the list';
+        if (facWrapper) facWrapper.style.display = 'block';
+        if (btnTBA) { btnTBA.style.display = 'block'; btnTBA.innerHTML = '<i class="fas fa-question-circle"></i> Assign as TBA'; }
         return;
     }
 
@@ -5405,7 +5514,11 @@ function tsClose(p, id) {
             if (txtEl && hidEl) {
                 const typed = txtEl.value.trim();
                 const matched = _TS_TIMES.find(t => t.toLowerCase() === typed.toLowerCase());
-                if (matched && matched !== hidEl.value) {
+                if (!typed) {
+                    // Box erased — actually clear the time (same as the Room box does), so the
+                    // slice, the Day list and the room filter stop using the old value.
+                    if (hidEl.value) tsSel(p, id, '');
+                } else if (matched && matched !== hidEl.value) {
                     tsSel(p, id, matched);
                 } else if (!matched && typed) {
                     if (p === 'tset') {
@@ -5765,6 +5878,13 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     const num     = rows.length + 1;
     const div     = document.createElement('div');
     div.className = 'ts-row' + (existingJson ? ' ts-existing' : '');
+    // The card's look follows the slice's real status (green = Published, grey = Draft),
+    // the same as its status tag and its calendar pill.
+    if (existingJson) {
+        let _st = 'Draft';
+        try { _st = JSON.parse(existingJson).status || 'Draft'; } catch (e) {}
+        div.classList.add('ts-st-' + String(_st).toLowerCase().replace('/', '_'));
+    }
     div.id        = `ts-row-${id}`;
     if (existingJson) div.dataset.existingJson = existingJson;
     div.addEventListener('click', e => _selectSlice(id, e));
@@ -5874,6 +5994,24 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     _renderDayRecommendations(id);
     _renderTimeRecommendations(id);
 
+    // A saved slice whose day this subject may no longer use (Settings → Restricted Day,
+    // e.g. NSTP saved on Saturday while only Sunday is allowed) loads with an empty Day.
+    // Say so on the slice right away instead of only when saving.
+    if (existingJson && dayVal) {
+        const _dsel = div.querySelector('.ts-day-sel');
+        const _base = document.createElement('select');
+        _base.innerHTML = _dsel?.dataset.baseOptionsHtml || _dsel?.innerHTML || '';
+        const _allowedDays = Array.from(_base.options).map(o => o.value).filter(Boolean);
+        if (_allowedDays.length && !_allowedDays.includes(dayVal)) {
+            const _w = document.createElement('div');
+            _w.className = 'ts-day-warn';
+            _w.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Saved on <b>${dayVal}</b>, but ` +
+                `${_currentSubjectCode || 'this subject'} can only be on <b>${_allowedDays.join(' / ')}</b> ` +
+                `(Settings → Restricted Day). Pick ${_allowedDays.length === 1 ? _allowedDays[0] : 'an allowed day'}.`;
+            div.querySelector('.ts-card-hdr')?.after(_w);
+        }
+    }
+
     // New (unsaved) slices start dirty and auto-selected
     if (!existingJson) {
         _markSliceDirty(id);
@@ -5943,7 +6081,22 @@ function duplicateTimeSlot(id) {
         // Tag the new row with the origin values so save/drop can detect it is still unmodified.
         const newRow = document.getElementById(`ts-row-${newId}`);
         if (newRow) newRow.dataset.dupOrigin = [day, start, end, roomId].join('|');
+        // The Day filter already ran while the row was being built (before it was tagged as
+        // a duplicate) and dropped the copied day. Put it back now that the tag is set.
+        const _dupSel = newRow?.querySelector('.ts-day-sel');
+        if (_dupSel && day && _dupSel.value !== day) {
+            if (_dupSel.dataset.baseOptionsHtml) _dupSel.innerHTML = _dupSel.dataset.baseOptionsHtml;
+            _dupSel.value = day;
+            if (_dupSel.value === day) {
+                if (typeof _applyDayAvailabilityFilter === 'function') _applyDayAvailabilityFilter(newId);
+                else _renderDayRecommendations(newId);
+                _syncSliceToPending(newId);
+            }
+        }
         setTimeout(() => _filterConflictingStartTimes(newId, day, roomId), 50);
+        // An exact copy keeps the original's day too — the user changes what they need.
+        // (_applyDayAvailabilityFilter keeps the copied day while the copy is unmodified;
+        // saving an unmodified copy is blocked by the "Unmodified Duplicate" check.)
     }
 }
 
@@ -6209,6 +6362,8 @@ function _renumberSlices() {
 
 function onTsDayChange(id) {
     if (typeof _mgRowLocked === 'function' && _mgRowLocked(id)) return;
+    // A valid day was picked — the "saved on a day not allowed" warning no longer applies.
+    if (document.getElementById(`ts-day-${id}`)?.value) document.querySelector(`#ts-row-${id} .ts-day-warn`)?.remove();
     document.getElementById('sel_day').value = document.getElementById(`ts-day-${id}`).value;
     onDayChange();
     _markSliceModified(id);
@@ -6224,6 +6379,16 @@ function onTsDayChange(id) {
 
 function onTsStartChange(id) {
     const startVal = document.getElementById(`tsst-hid-${id}`)?.value || '';
+    // A start at/after the current end leaves an impossible range (e.g. 2:00 PM – 1:30 PM):
+    // clear the end so it must be picked again from the (now filtered) End list.
+    const _endHid = document.getElementById(`tset-hid-${id}`);
+    if (startVal && _endHid?.value && _TS_TIMES.indexOf(_endHid.value) <= _TS_TIMES.indexOf(startVal)) {
+        _endHid.value = '';
+        const _endTxt = document.getElementById(`tset-txt-${id}`);
+        if (_endTxt) _endTxt.value = '';
+        document.getElementById(`tset-list-${id}`)?.querySelectorAll('.ts-ss-item.active')
+            .forEach(i => i.classList.remove('active'));
+    }
     document.getElementById('sel_start_time').innerHTML =
         '<option value="">—</option>' + _buildTimeOpts(startVal);
     document.getElementById('sel_start_time').value = startVal;
@@ -6868,8 +7033,10 @@ async function selectBcSect(id, name) {
     const _subjSelForModeReset = document.getElementById('sel_subj');
     if (_subjSelForModeReset) _subjSelForModeReset.innerHTML = '<option value="">-- Select Subject --</option>';
 
-    // Refresh subject statuses (badges/hours) and visible panels for the selected section
-    _updateSubjectList().catch(() => {});
+    // Refresh subject statuses (badges/hours) and visible panels for the selected section.
+    // Awaited so the new section's subject list is in place before any caller (a pill
+    // click) selects a subject in it.
+    await _updateSubjectList().catch(() => {});
     const dlPanel = document.getElementById('draftListPanel');
     if (dlPanel && dlPanel.style.display !== 'none') _loadDraftListPanel();
     const vhPanel = document.getElementById('versionHistoryPanel');
@@ -6936,7 +7103,10 @@ async function _loadSectionOptions(desiredSectionId, desiredSectionName) {
                     (desiredSectionId && String(s.id) === String(desiredSectionId)) ||
                     (desiredSectionName && s.name === desiredSectionName)
                 );
-                if (match) selectBcSect(match.id, match.name);
+                // Awaited: a pill click (handlePillClick) selects the pill's subject right
+                // after this returns — the section switch must already have rebuilt the
+                // subject list, or it wiped that selection and the slices never loaded.
+                if (match) await selectBcSect(match.id, match.name);
             }
         }
     } catch(e) {
@@ -7359,6 +7529,23 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
 // reassignment on an existing slice saves immediately with no manual click at all,
 // including the slice-picker modal below (every dirty row already belongs to the one
 // subject being reassigned, so there's nothing left for the user to actually choose).
+/* "Incomplete Slot" text for one slice. When the slice's SAVED day is no longer allowed
+   for this subject (e.g. NSTP saved on Saturday while Settings → Restricted Day allows
+   Sunday only), the Day box comes up empty — say that, instead of a generic message. */
+function _incompleteSliceMessage(row, sliceNum, f) {
+    const missing = [!f.day && 'Day', !f.start && 'Start Time', !f.end && 'End Time'].filter(Boolean);
+    let savedDay = '';
+    try { savedDay = JSON.parse(row?.dataset?.existingJson || '{}').daydesc || ''; } catch (e) {}
+    const allowed = Array.from(row?.querySelector('.ts-day-sel')?.options || []).map(o => o.value).filter(Boolean);
+    if (!f.day && savedDay && !allowed.includes(savedDay)) {
+        const subj = document.getElementById('sel_subj')?.value || 'This subject';
+        return `Slice ${sliceNum} is saved on ${savedDay}, but ${subj} can only be scheduled on ` +
+               `${allowed.join(' / ') || 'other days'} (Settings → Restricted Day). ` +
+               `Pick ${allowed.length === 1 ? allowed[0] : 'an allowed day'} as its Day, then save again.`;
+    }
+    return `Slice ${sliceNum}: fill in ${missing.join(', ').replace(/, ([^,]*)$/, ' and $1')}.`;
+}
+
 async function confirmAllSlots(opts = {}) {
     const auto = !!opts.auto;
     // HC16 group model, fail-closed: no saving while the open subject's Merge Group details
@@ -7458,8 +7645,7 @@ async function confirmAllSlots(opts = {}) {
         const { row, day, start, end, roomId } = rowsToSave[i];
         const _sn = rowsToSave[i].sliceNum || (i + 1);
         if (!day || !start || !end) {
-            await showValidationModal('Incomplete Slot',
-                `Slice ${_sn}: fill in Day, Start Time, and End Time.`);
+            await showValidationModal('Incomplete Slot', _incompleteSliceMessage(row, _sn, { day, start, end }));
             return;
         }
         if (!roomId) {
@@ -8173,6 +8359,7 @@ async function _localAutoSelectFirstSubject() {
     const subjSel = document.getElementById('sel_subj');
     if (!subjSel) return;
     if (window._autoSelectHold) return;   // startup context still settling — released later
+    if (window._pillClickDepth > 0) return;   // a pill click is opening its own subject
 
     // Never auto-select without a section — the right panel can't know whose schedule to load.
     if (!(document.getElementById('sel_section')?.value || '')) return;
@@ -8314,9 +8501,15 @@ window.handlePillClick = async function(sessJson) {
     // window._pillClickCurrentToken with the token it claimed — capture that token
     // NOW (synchronously, before awaiting) so a newer click that starts WHILE we wait
     // can't overwrite the value we need to compare against afterward.
-    const _callPromise  = _origHandlePillClickEnh.call(this, sessJson);
+    // While the click switches section, the section switch must not auto-open the
+    // section's first subject (_localAutoSelectFirstSubject) — the pill's own subject is
+    // about to load, and two loads at once left the Time Allotment panel empty.
+    window._pillClickDepth = (window._pillClickDepth || 0) + 1;
+    let _callPromise;
+    try { _callPromise = _origHandlePillClickEnh.call(this, sessJson); }
+    catch (e) { window._pillClickDepth--; throw e; }
     const _myPillToken  = window._pillClickCurrentToken;
-    await _callPromise;
+    try { await _callPromise; } finally { window._pillClickDepth--; }
 
     // If a newer pill click has started (and possibly already finished) since, bail out
     // here too — otherwise this stale click could still override the room selection /
@@ -8449,6 +8642,14 @@ const _origTsOpen = tsOpen;
 tsOpen = function(p, id) {
     _origTsOpen.call(this, p, id);
 
+    // Recompute the End list for the CURRENT start/day/room first — the show/hide pass
+    // below reads its classes, and running it on the previous state showed stale end
+    // times (wrong ones offered, free ones missing).
+    if (p === 'tset' && !(document.getElementById(`tset-txt-${id}`)?.value || '').trim()) {
+        const _sv = document.getElementById(`tsst-hid-${id}`)?.value || '';
+        if (_sv) _filterEndTimeItems(id, _sv);
+    }
+
     // Occupied/invalid options must disappear the moment the list opens, not only once the
     // user starts typing — tsFilter (search-as-you-type) already hides them once there's a
     // query, but before that they were left merely dimmed: still visible and still clickable,
@@ -8509,14 +8710,10 @@ async function _fetchRoomOccupancy(roomId, ay, sem, key, seq) {
         const resp = await fetch(`/api/get_room_schedule/${roomId}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}`);
         const sessions = await resp.json();
         if (!_current()) return;   // a newer refresh for this room is on its way
-        const _hdb = (typeof hiddenDbSchedules !== 'undefined') ? hiddenDbSchedules : new Set();
+        // Every DB row is kept; rows an editor copy replaces (hiddenDbSchedules) are
+        // skipped when READ (_getOccupiedRanges), so the check always matches the calendar
+        // as it is now — not the hide-set from whenever this was fetched.
         window._roomDbCache[key] = sessions
-            .filter(s => {
-                // Match both the new versionid-scoped key and the legacy fallback key
-                if (s.versionid && _hdb.has(`v:${s.versionid}`)) return false;
-                if (_hdb.has(`${s.subjectcode}_${s.daydesc}_${s.starttimeid}`)) return false;
-                return true;
-            })
             .map(s => ({
                 daydesc:         s.daydesc,
                 startIdx:        (s.starttimeid || 1) - 1,
@@ -8524,6 +8721,8 @@ async function _fetchRoomOccupancy(roomId, ay, sem, key, seq) {
                 subjectcode:     (s.subjectcode || '').toUpperCase(),
                 employee_number: String(s.employee_number || ''),
                 versionid:       s.versionid || null,
+                sessionid:       s.official_sessionid || s.sessionid || null,
+                starttimeid:     s.starttimeid || null,
                 // Group model: server merged-event key + section (absent under legacy).
                 merge_event:     s.merge_event || null,
                 section_id:      s.section_id ?? null,
@@ -8643,8 +8842,13 @@ function _applyDayAvailabilityFilter(rowId) {
         } catch(e) {}
     }
 
+    // A just-duplicated slice is meant to be an exact copy: its own day is "occupied" only
+    // by the slice it was copied from, so keep that day shown until the copy is changed.
+    const _keepDupDay = !!row.dataset.dupOrigin && typeof _isDupUnmodified === 'function'
+        && _isDupUnmodified(rowId) ? curVal : '';
     Array.from(daySel.options).forEach(opt => {
         if (!opt.value) return; // keep the "-- Day --" placeholder
+        if (_keepDupDay && opt.value === _keepDupDay) return;
         const ranges   = _getOccupiedRanges(roomId, opt.value, ay, sem, excludeTempId, excludeVersionId,
                                             row.dataset.mergeEvent || '');
         const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
@@ -8726,7 +8930,13 @@ function _applyRoomAvailabilityFilter(rowId) {
         const rid = item.dataset.val;
         if (!rid || rid === 'TBA' || String(rid) === String(selRoomId)) return;
         const _mgSect = document.getElementById('sel_section')?.value || '';
-        const ranges = [...(dayOccupancy[rid] || []), ...(localByRoom[rid] || [])]
+        // DB bookings an editor copy replaces don't block (that copy is in localByRoom) —
+        // e.g. this slice's own saved booking, which otherwise hid its own room from the
+        // search once the room box was cleared to look for a room.
+        const dbRanges = (dayOccupancy[rid] || []).filter(r => !(typeof _isDbRowHidden === 'function' &&
+            _isDbRowHidden({ sessionid: r.sessionid, versionid: r.versionid, subjectcode: r.subjectcode,
+                             daydesc: day, starttimeid: r.startIdx + 1 })));
+        const ranges = [...dbRanges, ...(localByRoom[rid] || [])]
             .filter(r => !(typeof _mgSameEvent === 'function' && _mgSameEvent(r, row.dataset.mergeEvent || '', _mgSect)))
             .map(r => (typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(r)) ? Object.assign({}, r, { merge: true }) : r);
         const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
@@ -8751,6 +8961,10 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
     const dbItems = (window._roomDbCache[`${roomId}|${ay}|${sem}`] || []);
     dbItems.forEach(s => {
         if (s.daydesc !== day || s.startIdx < 0 || s.endIdx <= s.startIdx) return;
+        // A DB row an editor copy replaces (moved/edited, not yet saved) no longer occupies
+        // its old slot — the copy below (pendingManualSchedule) is what counts. Same rule as
+        // the calendar's renderGrid, including the per-session `s:<id>` hide key.
+        if (typeof _isDbRowHidden === 'function' && _isDbRowHidden(s)) return;
         // This slice's OWN already-saved booking shows up here too (the raw DB cache isn't
         // scoped to "everyone else") — without this it flags its own day/time as "occupied
         // by itself", which used to only dim the option (harmless) but now, since Day options

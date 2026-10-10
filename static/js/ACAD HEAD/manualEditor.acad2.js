@@ -454,7 +454,10 @@ function _getMaxEndIdx() {
     if (tn === 'Designee' && isWkd && day) {
         const hasNS = _facInfo && _facInfo.night_service > 0;
         if (hasNS) return _hhmm_to_slot_idx(_facInfo.parttime_end, DES_NIGHT_END_IDX);
-        return Math.max(_hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX), REG_END_IDX);
+        // Designee time is split per segment (server: faculty_load.designee_segments):
+        // up to 4:30 PM is Regular, 4:30-6:00 PM is the designee PT/TS window — so a class
+        // may run until 6:00 PM (e.g. 2:00-5:00 PM); only 6:00-9:00 PM needs night service.
+        return Math.max(_hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX), DES_NIGHT_END_IDX);
     }
     if (tn === 'Regular' && isWkd && day) {
         return _hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX);
@@ -2668,6 +2671,34 @@ function _showLocalImpactModal(rows) {
     });
 }
 
+// Time Allotment slices that have SOME of Day / Start / End / Room filled but not all —
+// [{label: 'Slice 2', missing: ['Day']}]. Completely blank slices are not listed.
+function _partlyFilledSlices() {
+    const out = [];
+    document.querySelectorAll('.ts-row').forEach((row, i) => {
+        const f = {
+            Day:          row.querySelector('.ts-day-sel')?.value || '',
+            'Start time': row.querySelector('.ts-start-hidden')?.value || '',
+            'End time':   row.querySelector('.ts-end-hidden')?.value || '',
+            Room:         row.querySelector('.ts-room-hidden')?.value || '',
+        };
+        const missing = Object.keys(f).filter(k => !f[k]);
+        if (!missing.length || missing.length === 4) return;
+        // Saved on a day this subject may no longer use (Settings → Restricted Day)?
+        let savedDay = '';
+        try { savedDay = JSON.parse(row.dataset.existingJson || '{}').daydesc || ''; } catch (e) {}
+        const allowed = Array.from(row.querySelector('.ts-day-sel')?.options || []).map(o => o.value).filter(Boolean);
+        if (!f.Day && savedDay && !allowed.includes(savedDay)) {
+            missing[missing.indexOf('Day')] = `Day (it was saved on ${savedDay}, but only ` +
+                `${allowed.join(' / ') || 'other days'} ${allowed.length === 1 ? 'is' : 'are'} allowed for this subject)`;
+        }
+        const label = (row.querySelector('.ts-row-num span')?.textContent || `Slice ${i + 1}`).trim();
+        out.push({ label: label.charAt(0) + label.slice(1).toLowerCase(), missing });
+    });
+    return out;
+}
+window._partlyFilledSlices = _partlyFilledSlices;
+
 window._runManualApproveImpl = async function(opts = {}) {
     const auto = !!opts.auto;
     const ay   = formAyFilter();
@@ -2679,6 +2710,20 @@ window._runManualApproveImpl = async function(opts = {}) {
         if (auto) return false;
         await showValidationModal('Missing Context', 'Please select Academic Year, Semester, Program, and Year Level before publishing.');
         return;
+    }
+
+    // A slice that is only partly filled in (e.g. no Day yet) is not publishable — and it
+    // used to be skipped silently: the rest of the subject was published and that slice
+    // vanished when the panel reloaded. Stop and say exactly what is missing instead.
+    // (A completely blank slice is simply ignored, as before.)
+    if (!auto) {
+        const _incompleteSlices = _partlyFilledSlices();
+        if (_incompleteSlices.length) {
+            await showValidationModal('Finish the Slice First',
+                _incompleteSlices.map(s => `${s.label} is missing: ${s.missing.join(', ')}.`).join('\n') +
+                '\n\nFill it in (or remove it with ×) before publishing, so it isn\'t left out.');
+            return;
+        }
     }
 
     // Scope to the currently selected subject only. A fromExisting entry that is already
