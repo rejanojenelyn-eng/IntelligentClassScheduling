@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // The single shared evaluation result object — same object backs the panel UI,
     // row-conflict highlighting, exports, and Approve-button gating.
     let currentEvaluation   = null;
+    let _currentShortageNotices = [];
     // True from the moment a Generate/Regenerate/Retrieve result is on screen
     // until it's saved as Draft, Published, or handed off to Manual Editor —
     // guards both switching filters mid-page and leaving/closing the tab.
@@ -1165,7 +1166,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const LABEL = { faculty: 'Instructor', schedule: 'Time/Days', room: 'Room', subject: 'Subject' };
             const ev = currentEvaluation;
             const items = (ev && Array.isArray(ev.incomplete))
-                ? ev.incomplete.map(e => ({ code: e.subject_code, comps: e.components || [], why: (e.reasons || [])[0] || '' }))
+                ? ev.incomplete.map(e => {
+                    // Prefer the plain-language explanation of WHY (no free lab room, no instructor…).
+                    const n = _currentShortageNotices.find(x => x.subject_code === e.subject_code && x.kind !== 'faculty_load');
+                    return { code: e.subject_code, comps: e.components || [],
+                             why: n ? `${n.message} ${n.suggestion || ''}`.trim() : ((e.reasons || [])[0] || '') };
+                })
                 : [...map.entries()].map(([key, comps]) => ({ code: key.split('||')[0], comps: [...comps], why: '' }));
             list.innerHTML = items.map(it =>
                 `<li><strong>${_escHtml(it.code)}</strong> — ${_escHtml(it.comps.map(c => LABEL[c] || c).join(', '))}`
@@ -1423,6 +1429,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // overrides a CSP failure. Set it before renderTable() so row-conflict
         // highlighting reflects this result on the very first paint.
         currentEvaluation = data.evaluation || null;
+        // Plain-language shortage explanations for this result (used by the incomplete banner).
+        _currentShortageNotices = Array.isArray(data.shortage_notices) ? data.shortage_notices : [];
 
         renderTable(currentScheduleData, sortSelect.value);
         updateTitleBar();
@@ -1701,13 +1709,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (hardCount) counts.push(plural(hardCount, 'hard-constraint violation', 'hard-constraint violations'));
         if (adv.length) counts.push(plural(adv.length, 'advisory notice', 'advisory notices'));
         const MAX = 5;
-        const problems = inc.map(e => `${e.subject_code}: ${(e.reasons || [])[0] || 'incomplete'}`)
-            .concat(hard.map(v => v.detail || v.type || v.rule || 'Hard-constraint violation'));
+        // Plain-language shortage notices (no room / no instructor / load limit) from the
+        // server replace the raw rule text for the classes they explain.
+        const notices = Array.isArray(data.shortage_notices) ? data.shortage_notices : [];
+        const explained = new Set(notices.flatMap(n => String(n.subject_code || '').split(',').map(s => s.trim()).filter(Boolean)));
+        const problems = inc.filter(e => !explained.has(e.subject_code))
+            .map(e => `${e.subject_code}: ${(e.reasons || [])[0] || 'incomplete'}`)
+            .concat(hard.filter(v => !(v.rule === 'HC9' && notices.some(n => n.kind === 'faculty_load'))
+                                 && !(v.rule === 'HC13' && explained.has(String(v.subject || '').trim())))
+                        .map(v => v.detail || v.type || v.rule || 'Hard-constraint violation'));
         let html = 'A schedule was generated, but some assignments could not be completed or still '
             + 'require correction.<br><br>You can review the generated result and save it as a draft, '
             + 'but approval is disabled until all required assignments are complete and all blocking '
             + 'constraints are resolved.';
-        if (counts.length) html += `<br><br><strong>${counts.map(_escHtml).join(' · ')}</strong>`;
+        if (notices.length) {
+            html += '<div class="shortage-notices">'
+                + notices.map(n =>
+                    '<div class="shortage-notice">'
+                    + `<div class="shortage-title"><i class="fas fa-exclamation-circle"></i> ${_escHtml(n.title || '')}</div>`
+                    + (n.subject ? `<div class="shortage-subject">${_escHtml(n.subject)}`
+                        + (n.class_info ? ` <span>(${_escHtml(n.class_info)})</span>` : '') + '</div>' : '')
+                    + `<div class="shortage-msg">${_escHtml(n.message || '')}</div>`
+                    + (n.suggestion ? `<div class="shortage-tip"><strong>What you can do:</strong> ${_escHtml(n.suggestion)}</div>` : '')
+                    + '</div>').join('')
+                + '</div>';
+        }
+        if (counts.length) html += `<br><strong>${counts.map(_escHtml).join(' · ')}</strong>`;
         if (problems.length) {
             html += '<ul class="issue-list issue-blocking">'
                 + problems.slice(0, MAX).map(t => `<li>${_escHtml(t)}</li>`).join('')

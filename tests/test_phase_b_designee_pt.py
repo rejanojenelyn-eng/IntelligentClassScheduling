@@ -155,33 +155,32 @@ def test_hc8_cap_is_the_designation_value_not_hc7_max_night():
 
 # ── §15: HC9 (final) load-bucket cross-validation ───────────────────────────
 
-def test_designee_am_pt_hours_land_entirely_in_pt_bucket_not_regular():
-    # Tuesday + Friday 7:30-9:00 AM = 3.0 hours total. regularload is set so
-    # low that ANY regular-bucketed hours would violate; parttimeload is set
-    # just under 3.0 so the PT bucket violating proves exactly 3.0 hours
-    # landed there. If the old bug were still present (AM slice miscounted
-    # as Regular), this assertion pair would flip.
+def test_designee_am_hours_land_entirely_in_regular_bucket_not_pt():
+    # Designee segment policy: 7:30-9:00 AM is the special morning window, classified
+    # Regular (TS once Regular is full) — never PT. Tuesday + Friday 7:30-9:00 AM =
+    # 3.0 hours; parttimeload is tiny so ANY PT-bucketed hours would violate, and
+    # regularload just under 3.0 proves exactly 3.0 hours landed in Regular.
     fac = {'F1': _designee(employeetype={
-        'regularload': 0.1, 'parttimeload': 2.9, 'teachingsubstitution': 0,
+        'regularload': 2.9, 'parttimeload': 0.1, 'teachingsubstitution': 0,
     })}
     tue = _gene(day='Tuesday', days_list=['Tuesday'])
     fri = _gene(day='Friday', days_list=['Friday'], subject_code='IT102')
     v = CSPValidator(config=NO_GRID).validate([tue, fri], fac)
     hc9_viols = [x for x in v if x['rule'] == 'HC9']
     assert len(hc9_viols) == 1
-    assert 'PT load 3.0 hrs exceeds limit 2.9' in hc9_viols[0]['detail']
-    assert 'regular load' not in hc9_viols[0]['detail'].lower()
+    assert 'regular load 3.0 hrs exceeds limit 2.9' in hc9_viols[0]['detail']
+    assert 'pt load' not in hc9_viols[0]['detail'].lower()
 
 
-def test_regular_bucket_is_genuinely_zero_for_am_only_designee_schedule():
+def test_designee_am_hours_beyond_regular_are_covered_by_ts():
+    # Regular allocation full (0) but 3.0 h of TS available: the morning hours are
+    # Regular-or-TS, so they fit as TS — no HC9 violation.
     fac = {'F1': _designee(employeetype={
-        'regularload': 0.0, 'parttimeload': 99, 'teachingsubstitution': 0,
+        'regularload': 0.0, 'parttimeload': 0, 'teachingsubstitution': 3.0,
     })}
     tue = _gene(day='Tuesday', days_list=['Tuesday'])
     fri = _gene(day='Friday', days_list=['Friday'], subject_code='IT102')
     v = CSPValidator(config=NO_GRID).validate([tue, fri], fac)
-    # regularload=0 -- if even a fraction of an hour were miscounted as
-    # Regular, this would violate. It doesn't: all 3.0 hours are PT.
     assert 'HC9' not in _rules(v)
 
 
@@ -207,10 +206,9 @@ def test_same_assignment_produces_identical_result_via_constraint_service():
 # ── §23: Checkpoint 1 designee regression, retained through renumbering ────
 
 def test_checkpoint1_designee_regression_scenario_still_holds():
-    """The exact scenario Phase B checkpoint 1 was built for, re-verified
-    after checkpoint 2's renumbering: DESIGNEE, Tuesday + Friday,
-    7:30 AM-9:00 AM. Must remain: load type PT, HC2 not applicable, HC4
-    pass, HC8 night count 0, HC9 Regular 0.0h / PT 3.0h."""
+    """DESIGNEE, Tuesday + Friday, 7:30-9:00 AM under the segment policy: the morning
+    window is Regular (TS once full) — HC2 and HC4 pass, HC8 night count 0, and HC9
+    counts all 3.0 h as Regular."""
     fac = {'F1': _designee(employeetype={
         'regularload': 0.1, 'parttimeload': 2.9, 'teachingsubstitution': 0,
     })}
@@ -218,9 +216,9 @@ def test_checkpoint1_designee_regression_scenario_still_holds():
     fri = _gene(day='Friday', days_list=['Friday'], subject_code='IT102')
     v = CSPValidator(config=NO_GRID).validate([tue, fri], fac)
 
-    assert 'HC2' not in _rules(v)   # not applicable -- PT-classified
-    assert 'HC4' not in _rules(v)   # PASS -- within the AM PT window
+    assert 'HC2' not in _rules(v)
+    assert 'HC4' not in _rules(v)   # PASS -- inside the morning window
     assert 'HC8' not in _rules(v)   # 0 teaching nights (AM never counts)
     hc9 = [x for x in v if x['rule'] == 'HC9']
     assert len(hc9) == 1
-    assert 'PT load 3.0 hrs exceeds limit 2.9' in hc9[0]['detail']
+    assert 'regular load 3.0 hrs exceeds limit 0.1' in hc9[0]['detail']

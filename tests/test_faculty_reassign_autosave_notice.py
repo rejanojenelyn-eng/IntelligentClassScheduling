@@ -26,4 +26,4 @@ def test_published_stays_published_and_draft_stays_draft():
 
 def test_reassign_info_is_always_consumed():
     s = HTML.index("window._facultyReassignInfo.toName = _selFacName")
-    assert "window._facultyReassignInfo = null;   // never leaks" in HTML[s:s + 500]
+    assert "window._facultyReassignInfo = null;   // never leaks" in HTML[s:s + 1500]

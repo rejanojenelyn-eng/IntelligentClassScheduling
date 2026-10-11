@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PUP Lopez Academic Scheduling System</title>
+  <meta name="theme-color" content="#800000">
+  <meta name="description" content="Log in to the PUP Lopez Academic Scheduling System to create, review and manage class schedules, room requests and teaching loads.">
+  <link rel="icon" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='landing/css/style.css') }}">
+</head>
+<body>
+
+<!-- ============ NAVBAR ============ -->
+<header class="topbar">
+  <a class="brand" href="#home">
+    <img src="{{ url_for('static', filename='landing/assets/logo.png') }}" alt="PUP seal">
+    <span><b>PUPLC</b> Scheduling System</span>
+  </a>
+  <button class="menu-btn" aria-label="Toggle menu">☰</button>
+  <nav id="nav">
+    <a href="#roles">Who It's For</a>
+    <a href="#features">Features</a>
+    <a href="#algorithms">How It Works</a>
+    <a href="#about">About</a>
+    <a href="#team">Team</a>
+    <a class="nav-login" href="{{ login_href }}" data-login>{{ 'Go to dashboard' if logged_in else 'Log in' }}</a>
+  </nav>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="home">
+  <div class="hero-card">
+    <div class="hero-left">
+      <img src="{{ url_for('static', filename='landing/assets/logo.png') }}" alt="PUP Lopez seal" class="seal">
+      <h2>PUP LOPEZ</h2>
+      <p>ACADEMIC SCHEDULING SYSTEM</p>
+    </div>
+    <div class="hero-right">
+      <h1>Better Schedules Start with Better Decisions.</h1>
+      <p>Explore a smarter approach to class scheduling. Log in to access the system or learn more about how it supports better scheduling decisions.</p>
+      <div class="cta">
+        <a class="btn btn-light" href="{{ login_href }}" data-login>{{ 'Go to my dashboard' if logged_in else 'Log in to the system' }}</a>
+        <a class="btn btn-outline" href="#roles">See how it works for you</a>
+      </div>
+      <p class="hint">No account yet? Accounts are created by the system administrator.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INTRO ============ -->
+<section id="intro" class="section intro">
+  <p class="eyebrow">Meet the System</p>
+  <h2 class="title">PUP Lopez Academic Scheduling System</h2>
+ <p class="lead">
+  The PUP Lopez Academic Scheduling System (PUPLC) is a web-based
+  <strong>Decision Support System (DSS)</strong> designed for the PUP Lopez, Quezon Campus.
+  It brings class scheduling for all academic programs into one centralized workspace,
+  providing data-driven recommendations based on historical schedules and validating
+  proposed schedules against scheduling constraints. The system assists the Academic Head
+  in creating and managing feasible class schedules while keeping the final decision
+  and control in their hands.
+</p>
+  <ul class="chips">
+<li>Decision Support</li>
+<li>Centralized Scheduling</li>
+<li>Constraint Validation</li>
+<li>Data-Driven Recommendations</li>
+  </ul>
+</section>
+
+<!-- ============ ROLES ============ -->
+<section id="roles" class="section bgphoto roles-bg">
+  <p class="eyebrow">Who It's For</p>
+  <h2 class="title">One System, Different Access</h2>
+  <div class="grid three">
+    <article class="persona"><span class="ico">📋</span><h3>Academic Head</h3><p>Build and approve schedules, review requests, and monitor scheduling activity from one dashboard.</p></article>
+
+    <article class="persona"><span class="ico">👩‍🏫</span><h3>Faculty</h3><p>View your assigned schedule, submit room requests, and raise schedule concerns.</p></article>
+    <article class="persona"><span class="ico">🛠️</span><h3>Administrator</h3><p>Manage user accounts, system settings, academic configurations and records.</p></article>
+  </div>
+  <p class="roles-cta">Your view depends on your account role. <a class="btn btn-maroon" href="{{ login_href }}" data-login>{{ 'Go to dashboard' if logged_in else 'Log in' }}</a></p>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section id="features" class="section alt">
+  <p class="eyebrow">Features</p>
+  <h2 class="title">Everything you need to manage scheduling</h2>
+  <div class="grid four">
+    <article class="feature"><span class="ico">⚙️</span><h3>Auto-Generate</h3><p>Generate full schedules from similar historical cases, optimized with a Genetic Algorithm.</p></article>
+    <article class="feature"><span class="ico">✏️</span><h3>Manual Editor</h3><p>Room, Program and Faculty views with ranked assignment recommendations as you schedule.</p></article>
+    <article class="feature"><span class="ico">🚨</span><h3>Conflict Detection</h3><p>Checks faculty availability, room allocation, time slots and teaching load limits.</p></article>
+    <article class="feature"><span class="ico">🏫</span><h3>Official &amp; Local Schedulers</h3><p>Handle local arrangements in a separate, color-coded scheduling mode.</p></article>
+    <article class="feature"><span class="ico">📨</span><h3>Requests</h3><p>Room requests, class meetings and schedule change requests in one hub.</p></article>
+    <article class="feature"><span class="ico">👥</span><h3>Teaching Load</h3><p>Track and manage faculty teaching load and employee records.</p></article>
+    <article class="feature"><span class="ico">📊</span><h3>Reports</h3><p>Preview and export reports as CSV, Excel, Word or PDF.</p></article>
+    <article class="feature"><span class="ico">🔐</span><h3>Role-Based Access</h3><p>Tailored views for Administrator, Academic Head, Program Coordinator and Faculty.</p></article>
+  </div>
+</section>
+
+<!-- ============ ALGORITHMS ============ -->
+<section id="algorithms" class="section">
+  <p class="eyebrow">How It Works</p>
+  <h2 class="title">From setup to an approved schedule</h2>
+  <div class="flow">
+    <div class="flow-step"><b>1</b><h3>Set up the term</h3><span class="who">Administrator</span><p>Set the academic year and semester, rooms and buildings, and the teaching-load limits for each faculty type.</p></div>
+    <div class="flow-step"><b>2</b><h3>Assign loads and rooms</h3><span class="who">Academic Head</span><p>Import subject offerings and faculty records, assign teaching loads by faculty qualifications, and match each course to a lecture or laboratory room.</p></div>
+    <div class="flow-step"><b>3</b><h3>Create the schedule</h3><span class="who">Academic Head</span>
+      <ul><li><strong>Auto-generate:</strong> the system finds similar schedules from past semesters and optimizes them into a draft.</li>
+      <li><strong>Manual:</strong> schedule in Room, Program or Faculty view, with ranked recommendations as you go.</li></ul></div>
+    <div class="flow-step"><b>4</b><h3>Check for conflicts</h3><span class="who">Automatic</span><p>Every schedule is checked for duplicate faculty assignments, double-booked rooms, overloads and student schedule conflicts. Conflicts are flagged so they can be fixed before moving on.</p></div>
+    <div class="flow-step"><b>5</b><h3>Review and approve</h3><span class="who">Academic Head</span><p>The Academic Head gives the draft a final review. Once approved, it becomes the official schedule for everyone in the system.</p></div>
+    <div class="flow-step"><b>6</b><h3>Request and adjust</h3><span class="who">Faculty &amp; Academic Head</span><p>Faculty view their schedules and send room requests, such as for make-up or remedial classes. The Academic Head approves or rejects them, and schedules can be updated when needed.</p></div>
+  </div>
+
+  <h3 class="sub">What powers steps 3 and 4</h3>
+  <p class="sub-note">Learn from previous schedules while keeping every new assignment aligned with current scheduling requirements.</p>
+  <div class="steps">
+    <div class="step"><b>CBR</b><h3>Case-Based Reasoning</h3><p>Retrieves similar historical scheduling cases as a starting point for generation.</p></div>
+    <div class="step"><b>RF</b><h3>Random Forest</h3><p>Ranks and recommends suitable assignments during manual scheduling.</p></div>
+    <div class="step"><b>GA</b><h3>Genetic Algorithm</h3><p>Optimizes schedule assignments during automatic generation.</p></div>
+    <div class="step"><b>CSP</b><h3>Constraint Satisfaction</h3><p>Validates every schedule, whether generated, manual or modified, against current constraints.</p></div>
+  </div>
+</section>
+
+<!-- ============ PREVIEW ============ -->
+<section id="preview" class="section alt">
+  <p class="eyebrow">System Preview</p>
+  <h2 class="title">Academic Head dashboard</h2>
+  <figure class="shot">
+    <img src="{{ url_for('static', filename='landing/assets/dashboard.png') }}" alt="Academic Head dashboard showing schedule analytics, recent requests and schedule list">
+    <figcaption>Sidebar navigation, schedule analytics and quick actions in one workspace.</figcaption>
+  </figure>
+  <h2 class="title shot-title">Faculty dashboard</h2>
+  <figure class="shot">
+    <img src="{{ url_for('static', filename='landing/assets/fdashboard.png') }}" alt="Faculty dashboard showing assigned schedules, teaching loads and room information">
+    <figcaption>Easy access to schedules, teaching loads, room information and submission of requests.</figcaption>
+  </figure>
+</section>
+
+<!-- ============ ABOUT / PROBLEM ============ -->
+<section id="about" class="section">
+  <p class="eyebrow">Why We Built It</p>
+  <h2 class="title">Building on how scheduling is done today</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3>The Problem</h3>
+      <p>Scheduling at PUP Lopez Campus has relied on printed forms, spreadsheets and close coordination between offices, guided by the experience of the Academic Head and program coordinators. Every semester's schedules are kept as records, and they hold years of useful decisions.</p>
+      <p style="margin-top:.8rem">With more than 20 academic programs to schedule, that careful work takes time. The next step is to make it easier to reuse what already works.</p>
+      <ul class="stats">
+        <li><strong>5–6 hrs</strong><span>average manual scheduling time per program</span></li>
+        <li><strong>20+</strong><span>academic programs to schedule</span></li>
+      </ul>
+    </div>
+    <div class="card maroon">
+      <h3>The Solution</h3>
+      <p>The proposed system turns years of scheduling records into a useful resource for creating new schedules. Relevant past cases can be retrieved to recommend possible assignments for faculty, rooms, subjects, and time slots, while current scheduling constraints determine whether those recommendations are suitable.</p>
+      <p class="note">By combining past scheduling experience with current requirements, the system reduces repetitive manual work and gives the Academic Head better information to evaluate scheduling options and make the final decision.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OBJECTIVES ============ -->
+<section id="objectives" class="section bgphoto objectives-bg">
+  <p class="eyebrow">Quality Targets</p>
+  <h2 class="title">How we measure success</h2>
+  <div class="grid four">
+    <div class="metric"><strong>100%</strong><span>Hard-constraint compliance for feasible schedules</span></div>
+    <div class="metric"><strong>≥75%</strong><span>Soft-constraint satisfaction target</span></div>
+    <div class="metric"><strong>≥90%</strong><span>Random Forest Top-3 recommendation accuracy</span></div>
+    <div class="metric"><strong>ISO/IEC 25010</strong><span>Software quality acceptability evaluation</span></div>
+  </div>
+</section>
+
+<!-- ============ TEAM ============ -->
+<section id="team" class="section bgphoto team-bg">
+  <p class="eyebrow">The Team</p>
+  <h2 class="title">The people behind the system</h2>
+  <div class="grid five">
+  <div class="member">
+    <img class="photo" src="{{ url_for('static', filename='landing/assets/team/yap.jpg') }}" alt="Elaija Jasmin C. Yap">
+    <h3>Elaija Jasmin C. Yap</h3>
+    <p class="role">Leader, Programmer</p>
+  </div>
+  <div class="member">
+    <img class="photo" src="{{ url_for('static', filename='landing/assets/team/cozette.jpg') }}" alt="Jazmyne Cozette S. Basco">
+    <h3>Jazmyne Cozette S. Basco</h3>
+    <p class="role">Database Administrator / Data Analyst</p>
+  </div>
+  <div class="member">
+    <img class="photo" src="{{ url_for('static', filename='landing/assets/team/camille.jpg') }}" alt="Camille C. Caralian">
+    <h3>Camille C. Caralian</h3>
+    <p class="role">Documentation Head</p>
+  </div>
+  <div class="member">
+    <img class="photo" src="{{ url_for('static', filename='landing/assets/team/pau.jpg') }}" alt="Pauleen Jesareth L. Convento">
+    <h3>Pauleen Jesareth L. Convento</h3>
+    <p class="role">QA, UI/UX Design</p>
+  </div>
+  <div class="member">
+    <img class="photo" src="{{ url_for('static', filename='landing/assets/team/rejano.jpg') }}" alt="Jenelyn F. Rejano">
+    <h3>Jenelyn F. Rejano</h3>
+    <p class="role">Lead Programmer</p>
+  </div>
+</div>
+  <!-- TODO: add adviser / panel members here -->
+</section>
+
+<footer class="footer-bg">
+  <img src="{{ url_for('static', filename='landing/assets/logo.png') }}" alt="">
+  <p><b>Polytechnic University of the Philippines</b><br>Lopez, Quezon Campus · BS in Information Technology</p>
+     <p>
+  <span>For inquiries:</span>
+  <a href="mailto:fiveintelligence2023@gmail.com">
+    fiveintelligence2023@gmail.com
+  </a>
+</p>
+  <p><a class="foot-login" href="{{ login_href }}" data-login>{{ 'Go to my dashboard' if logged_in else 'Log in to the system' }}</a></p>
+  <p class="small">A Capstone Project · October 2026</p>
+</footer>
+
+<script src="{{ url_for('static', filename='landing/js/main.js') }}"></script>
+</body>
+</html>

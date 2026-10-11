@@ -165,8 +165,10 @@ def test_designee_time_window_consistent_across_all_centralized_sites():
     # to keep proving HC2 itself is consistent across every centralized site.
     fac = {'F1': {'designationid': 1, 'employeestatus': '', 'employeetype': {},
                   'nightteachingservice': 0}}
-    cls = _gene(faculty_id='F1', start_time=time(7, 30), end_time=time(9, 30))
-    _assert_all_sites_agree([cls], fac, {'hc_time_blocks_enabled': 0}, expect_rule='HC2')
+    # Designee segment policy: a class with a segment outside every designee window
+    # (7:00-7:30 AM of a 7:00-8:00 class) is HC4 — identical at every entry point.
+    cls = _gene(faculty_id='F1', start_time=time(7, 0), end_time=time(8, 0))
+    _assert_all_sites_agree([cls], fac, {'hc_time_blocks_enabled': 0}, expect_rule='HC4')
 
 
 def test_load_limit_consistent_across_all_centralized_sites():

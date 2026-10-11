@@ -723,7 +723,7 @@ function saveConstraintParam(key, val) {
   _scheduleHCSave();
 }
 
-/* Merge toggle — also shows/dims the scope selector */
+/* Merge toggle — also shows/dims the Merge Group configuration */
 function saveMergeConstraint(checked) {
   _hcState['hc_merge_enabled'] = checked ? 1 : 0;
   _scheduleHCSave();
@@ -740,7 +740,7 @@ function _applyMergeBodyState(enabled) {
 /* ── Restricted-Day picker — was a fixed "Sunday Only" / "All Weekends" select;
    now any combination of day(s) can be reserved for the subject restriction above.
    Stored as a JSON array of day names under hc_weekend_day (same pattern as
-   hc_merge_scope_subjects / hc_merge_section_pairs). Old installs may still have
+   hc_day_pairs). Old installs may still have
    the legacy 'sunday_only' / 'all_weekends' string — interpreted the same way
    they always behaved so existing configs keep working unchanged. ── */
 function _parseWeekendDays(raw) {
@@ -823,101 +823,6 @@ async function initHCToggles() {
   if (ssMax) ssMax.value = data.hc_sem_summer_max_weeks ?? '';
 }
 
-/* ── Merge Scope — searchable subject multi-select ───────────────────
-   Replaces the old fixed nstp_only/non_nstp/all_subjects dropdown: the admin
-   can now search and add ANY subject as eligible for class merging. Stored as
-   a JSON array of subject codes under hc_merge_scope_subjects (same pattern
-   as hc_day_pairs / hc_merge_section_pairs). Leaving it empty preserves the
-   legacy "NSTP subjects only" default — see app.py/scheduler.py _merge_in_scope. */
-let _msScopeCodes = [];
-
-function _msLoadScopeFromState() {
-  try {
-    const raw = _hcState.hc_merge_scope_subjects;
-    const arr = raw ? JSON.parse(raw) : [];
-    _msScopeCodes = Array.isArray(arr) ? arr.map(c => String(c).toUpperCase()) : [];
-  } catch { _msScopeCodes = []; }
-}
-
-function _msSaveScope() {
-  _hcState.hc_merge_scope_subjects = JSON.stringify(_msScopeCodes);
-  _scheduleHCSave();
-}
-
-async function initMergeScopePicker() {
-  if (!document.getElementById('msScopePicker')) return;
-  await _getMlpSubjects();
-  _msLoadScopeFromState();
-  _msRenderScopeChips();
-}
-
-function _msSubjectLabel(code) {
-  const s = (_MLP_SUBJECTS || []).find(x => x.subjectcode === code);
-  return s ? `${s.subjectcode} — ${s.subjectname}` : code;
-}
-
-function _msRenderScopeChips() {
-  const wrap = document.getElementById('msScopeChips');
-  if (!wrap) return;
-  if (!_msScopeCodes.length) {
-    wrap.innerHTML = '<span class="ms-scope-chips-empty">No subjects added yet — falls back to NSTP subjects only.</span>';
-    return;
-  }
-  wrap.innerHTML = _msScopeCodes.map(code => `
-    <span class="ms-scope-chip" data-code="${escHtml(code)}">
-      ${escHtml(_msSubjectLabel(code))}
-      <button type="button" class="ms-chip-del" title="Remove" onclick="_msRemoveScopeSubject('${escHtml(code)}')"><i class="fas fa-times"></i></button>
-    </span>`).join('');
-}
-
-function _msRenderSuggestions(query) {
-  const box = document.getElementById('msScopeSuggest');
-  if (!box) return;
-  const q    = (query || '').trim().toLowerCase();
-  const pool = (_MLP_SUBJECTS || []).filter(s => !_msScopeCodes.includes(s.subjectcode));
-  const filtered = !q ? pool
-    : pool.filter(s => s.subjectcode.toLowerCase().includes(q) || (s.subjectname || '').toLowerCase().includes(q));
-  const top = filtered.slice(0, 30);
-  box.innerHTML = top.length
-    ? top.map(s => `<div class="pair-sec-option" data-code="${escHtml(s.subjectcode)}">${escHtml(s.subjectcode)} — ${escHtml(s.subjectname)}</div>`).join('')
-    : '<div class="pair-sec-empty">No matching subjects.</div>';
-  box.classList.add('open');
-}
-
-function _msAddScopeSubject(code) {
-  if (!code || _msScopeCodes.includes(code)) return;
-  _msScopeCodes.push(code);
-  _msSaveScope();
-  _msRenderScopeChips();
-  const input = document.getElementById('msScopeSearchInput');
-  if (input) { input.value = ''; input.focus(); }
-  document.getElementById('msScopeSuggest')?.classList.remove('open');
-}
-
-function _msRemoveScopeSubject(code) {
-  const label = _msSubjectLabel(code);
-  _confirmAction({
-    title: 'REMOVE FROM MERGE SCOPE',
-    sub: label,
-    body: `Remove "${label}" from the merge scope? It will no longer be eligible for class merging until re-added.`,
-    confirmLabel: 'Remove',
-  }, () => {
-    _msScopeCodes = _msScopeCodes.filter(c => c !== code);
-    _msSaveScope();
-    _msRenderScopeChips();
-  });
-}
-
-document.addEventListener('click', e => {
-  if (e.target.closest('#msScopeSuggest .pair-sec-option')) {
-    _msAddScopeSubject(e.target.closest('.pair-sec-option').dataset.code);
-    return;
-  }
-  if (!e.target.closest('.ms-scope-search-wrap')) {
-    document.getElementById('msScopeSuggest')?.classList.remove('open');
-  }
-});
-
 /* ── Day Pairs ──────────────────────────────────────────── */
 function loadPairsFromState() {
   try {
@@ -979,199 +884,308 @@ function addDayPair() {
   savePairs();
 }
 
-/* ── Merge Class — Allowed Section Pairings ──────────────── */
-/* Section "value" is a stable "PROGRAMCODE-SECTIONNAME" label — matched against
-   schedule rows at merge-validation time, independent of any one academic year's
-   sectionid so a configured pairing keeps working after sections are recreated
-   for a new AY. */
-function _getMergeSectionOptions() {
-  const raw = document.getElementById('merge-sections-data');
-  if (!raw) return [];
-  let sections;
-  try { sections = JSON.parse(raw.textContent); } catch { return []; }
-  if (!Array.isArray(sections)) return [];
-  const seen = new Map();
-  sections.forEach(s => {
-    const prog = (s.programcode || '').toUpperCase();
-    const name = s.sectionname || '';
-    if (!prog || !name) return;
-    const value = `${prog}-${name}`;
-    if (seen.has(value)) return;
-    seen.set(value, { value, label: `${value}${s.yearlevel ? ' (Year ' + s.yearlevel + ')' : ''}` });
-  });
-  return Array.from(seen.values()).sort((a, b) => a.value.localeCompare(b.value));
+/* ── HC16 Class Merging (P7 "allowed" model) ─────────────────
+   Sections MAY merge a class: same subject, faculty, day, time and room. Merges are
+   made in the Manual Editor — Save Draft / Publish shows a merge notice and records the
+   confirmed merge — and are listed here. "Allow sections to merge" pre-registers sections
+   (optionally only some shared subjects) so the editor shows them as mergeable; it never
+   forces a merge. The server owns every rule (merge_groups.py); this code only renders
+   and submits. */
+let _mg = { semesterId: null, semesters: [], groups: [], pendingSave: null,
+            sections: [], picked: [], subjects: null, pickedSubjects: new Set(), subjSeq: 0 };
+
+async function _mgFetch(url, opts = {}) {
+  const res = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  let data = {};
+  try { data = await res.json(); } catch { data = { success: false, error: 'Unexpected server response.' }; }
+  data._status = res.status;
+  return data;
 }
 
-function loadSectionPairsFromState() {
-  try {
-    const raw = _hcState.hc_merge_section_pairs;
-    if (!raw) return null;
-    const arr = JSON.parse(raw);
-    return arr.map(p => ({ from: p[0], to: p[1] }));
-  } catch { return null; }
+async function initMergeGroups() {
+  if (!document.getElementById('mgGroupList')) return;   // page without the HC16 card
+  await mgLoadGroups(null);
 }
 
-function saveSectionPairs() {
-  const data = [];
-  document.querySelectorAll('#merge-section-pairs-container .pair-row').forEach(row => {
-    const wrappers = row.querySelectorAll('.pair-sec-wrapper');
-    if (wrappers.length !== 2) return;
-    const a = wrappers[0].dataset.value, b = wrappers[1].dataset.value;
-    if (a && b && a !== b) data.push([a, b]);
-  });
-  _hcState.hc_merge_section_pairs = JSON.stringify(data);
-  _scheduleHCSave();
-}
-
-/* Searchable section picker — type-to-filter instead of scrolling a huge
-   native <select>. Each instance tracks its own value on wrapperEl.dataset.value
-   and fires 'pairsecchange' (bubbling) so the owning row can re-validate. */
-function _buildPairSecPicker(selectedValue, options) {
-  const wrap = document.createElement('div');
-  wrap.className = 'pair-sec-wrapper';
-  wrap.dataset.value = selectedValue || '';
-  const selOpt = options.find(o => o.value === selectedValue);
-  // A saved pair can reference a section that no longer exists among the current AY's
-  // options (renamed, moved to a different AY, etc.) — flag that clearly instead of
-  // silently echoing the raw stored value, which looked identical to a real section name
-  // and made it seem like nothing could be picked (the dropdown itself still lists every
-  // real current option; only the initial label/highlight was misleading).
-  const isStale = !!selectedValue && !selOpt;
-  if (isStale) wrap.classList.add('stale');
-  const initialLabel = selOpt ? selOpt.label
-    : (selectedValue ? `⚠ Not in current list — click to reselect (was: ${selectedValue})` : 'Select section');
-  wrap.innerHTML = `
-    <div class="pair-sec-trigger" ${isStale ? 'title="This section is no longer in the current list — pick a valid one."' : ''}>
-      <span class="pair-sec-trigger-text">${escHtml(initialLabel)}</span>
-      <i class="fas fa-chevron-down"></i>
-    </div>
-    <div class="pair-sec-menu">
-      <div class="pair-sec-search-box">
-        <input type="text" class="pair-sec-search-input" placeholder="Search section…" autocomplete="off">
-      </div>
-      <div class="pair-sec-list"></div>
-    </div>`;
-
-  const list   = wrap.querySelector('.pair-sec-list');
-  const search = wrap.querySelector('.pair-sec-search-input');
-
-  function renderList(q) {
-    const query = (q || '').trim().toLowerCase();
-    const filtered = !query ? options
-      : options.filter(o => o.label.toLowerCase().includes(query) || o.value.toLowerCase().includes(query));
-    list.innerHTML = filtered.length
-      ? filtered.map(o => `<div class="pair-sec-option${o.value===wrap.dataset.value?' active':''}" data-value="${escHtml(o.value)}">${escHtml(o.label)}</div>`).join('')
-      : '<div class="pair-sec-empty">No sections found.</div>';
-  }
-  renderList('');
-
-  wrap.querySelector('.pair-sec-trigger').addEventListener('click', e => {
-    e.stopPropagation();
-    const isOpen = wrap.classList.contains('open');
-    document.querySelectorAll('.pair-sec-wrapper.open').forEach(w => w.classList.remove('open'));
-    if (!isOpen) { wrap.classList.add('open'); search.value = ''; renderList(''); search.focus(); }
-  });
-  search.addEventListener('click', e => e.stopPropagation());
-  search.addEventListener('input', () => renderList(search.value));
-  list.addEventListener('click', e => {
-    const opt = e.target.closest('.pair-sec-option');
-    if (!opt) return;
-    const val = opt.dataset.value;
-    wrap.dataset.value = val;
-    wrap.querySelector('.pair-sec-trigger-text').textContent =
-      (options.find(o => o.value === val) || {}).label || val;
-    wrap.classList.remove('open', 'stale');   // picking a real option always clears the stale flag
-    wrap.querySelector('.pair-sec-trigger').removeAttribute('title');
-    wrap.dispatchEvent(new CustomEvent('pairsecchange', { bubbles: true }));
-  });
-  return wrap;
-}
-
-/* Close any open section picker when clicking elsewhere on the page. */
-document.addEventListener('click', e => {
-  if (!e.target.closest('.pair-sec-wrapper')) {
-    document.querySelectorAll('.pair-sec-wrapper.open').forEach(w => w.classList.remove('open'));
-  }
-});
-
-function _onPairSecChange(fromPicker, toPicker) {
-  const a = fromPicker.dataset.value, b = toPicker.dataset.value;
-  const same = a && b && a === b;
-  fromPicker.classList.toggle('invalid', !!same);
-  toPicker.classList.toggle('invalid', !!same);
-  if (same) {
-    _showToast('error', "A section can't be paired with itself — pick two different sections.");
+async function mgLoadGroups(semesterId) {
+  const list = document.getElementById('mgGroupList');
+  if (!list) return;
+  const q = semesterId ? `?semesterid=${encodeURIComponent(semesterId)}` : '';
+  const data = await _mgFetch('/admin/settings/merge_groups' + q);
+  if (!data.success) {
+    list.innerHTML = `<div class="mlp-empty">${escHtml(data.error || 'Could not load merged classes.')}</div>`;
     return;
   }
-  saveSectionPairs();
-}
-
-function renderSectionPair(pair, container, options) {
-  const opts = options || _getMergeSectionOptions();
-  const row = document.createElement('div');
-  row.className = 'pair-row';
-
-  const fromPicker = _buildPairSecPicker(pair.from, opts);
-  const toPicker    = _buildPairSecPicker(pair.to, opts);
-
-  const badge = document.createElement('span');
-  badge.className = 'pair-badge';
-  badge.textContent = 'paired to';
-
-  const delBtn = document.createElement('button');
-  delBtn.type = 'button';
-  delBtn.className = 'btn-del';
-  delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
-  delBtn.onclick = () => _confirmDeleteSectionPair(row);
-
-  row.appendChild(fromPicker);
-  row.appendChild(badge);
-  row.appendChild(toPicker);
-  row.appendChild(delBtn);
-  container.appendChild(row);
-
-  if (pair.from && pair.to && pair.from === pair.to) {
-    fromPicker.classList.add('invalid');
-    toPicker.classList.add('invalid');
+  _mg.semesters = data.semesters || [];
+  _mg.semesterId = data.selected_semesterid;
+  _mg.groups = data.groups || [];
+  const sel = document.getElementById('mgSemesterSelect');
+  if (sel) {
+    sel.innerHTML = _mg.semesters.map(s =>
+      `<option value="${s.semesterid}"${s.semesterid === _mg.semesterId ? ' selected' : ''}>${escHtml(s.label)}${s.ended ? ' (ended)' : ''}</option>`).join('');
   }
-
-  row.addEventListener('pairsecchange', () => _onPairSecChange(fromPicker, toPicker));
+  _mgRenderGroups();
 }
 
-/* Deleting a configured pairing can silently turn an existing merged class
-   into a "room conflict" the next time the schedule is validated, so this
-   always confirms first rather than removing on a single click. */
-let _pendingPairRow = null;
-function _confirmDeleteSectionPair(row) {
-  _pendingPairRow = row;
-  const wrappers = row.querySelectorAll('.pair-sec-wrapper');
-  const aLabel = wrappers[0]?.querySelector('.pair-sec-trigger-text')?.textContent || '—';
-  const bLabel = wrappers[1]?.querySelector('.pair-sec-trigger-text')?.textContent || '—';
-  const lbl = document.getElementById('delPairLabel');
-  if (lbl) lbl.textContent = `${aLabel} ↔ ${bLabel}`;
-  openSModal('modalDeleteSectionPair');
-}
-function _doDeleteSectionPair() {
-  if (_pendingPairRow) { _pendingPairRow.remove(); saveSectionPairs(); }
-  _pendingPairRow = null;
-  closeSModal('modalDeleteSectionPair');
+function _fmtHM(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
-function initSectionPairs() {
-  const container = document.getElementById('merge-section-pairs-container');
-  if (!container) return;
-  const options = _getMergeSectionOptions();
-  const pairs = loadSectionPairsFromState() || [];
-  pairs.forEach(p => renderSectionPair(p, container, options));
+function _mgMeetingText(m) {
+  return `${escHtml(m.daydesc)} ${escHtml(_fmtHM(m.start))}–${escHtml(_fmtHM(m.end))} · ${escHtml(m.roomname || 'Room TBA')}`;
 }
 
-function addSectionPair() {
-  const c = document.getElementById('merge-section-pairs-container');
-  const options = _getMergeSectionOptions();
-  if (!options.length) { _showToast('error', 'No sections available to pair. Add sections under Program Management first.'); return; }
-  const second = options.find(o => o.value !== options[0].value) || options[0];
-  renderSectionPair({ from: options[0].value, to: second.value }, c, options);
-  saveSectionPairs();
+// One card per set of sections (the same sections may share several subjects).
+function _mgRenderGroups() {
+  const list = document.getElementById('mgGroupList');
+  if (!list) return;
+  const sem = _mg.semesters.find(s => s.semesterid === _mg.semesterId);
+  const ended = !!(sem && sem.ended);
+  const createBtn = document.getElementById('mgCreateBtn');
+  if (createBtn) createBtn.disabled = ended;
+  if (!_mg.groups.length) {
+    list.innerHTML = '<div class="mlp-empty">No merged classes for this semester yet. Merge a class in the Manual Editor ' +
+      '(same subject, faculty, day, time and room as another section), or allow sections to merge here.</div>';
+    return;
+  }
+  const sets = new Map();
+  _mg.groups.forEach(g => {
+    const members = (g.members || []).slice().sort((a, b) => a.sectionid - b.sectionid);
+    const key = members.map(m => m.sectionid).join('-');
+    if (!sets.has(key)) sets.set(key, { labels: members.map(m => m.label), members, groups: [] });
+    sets.get(key).groups.push(g);
+  });
+  list.innerHTML = Array.from(sets.values()).map(set => {
+    const ids = set.groups.map(g => g.mergegroupid);
+    const rows = set.groups.map(g => {
+      const meetings = (g.meetings || []).length
+        ? g.meetings.map(m => `<span class="mg-chip mg-chip-merged"><i class="fas fa-object-group"></i> ${_mgMeetingText(m)}</span>`).join(' ')
+        : '<span class="mg-muted">Not merged yet — allowed</span>';
+      const problems = [].concat(g.config_errors || []);
+      return `
+        <div class="mg-subj-row${g.is_active ? '' : ' mg-card-inactive'}">
+          <div class="mg-subj-main">
+            <div class="mg-subj-title">${escHtml(g.ref_subjectcode)} <span class="mg-subj-name">${escHtml(g.ref_subjectname || '')}</span>
+              ${g.origin === 'editor' ? '<span class="mg-tag">from Manual Editor</span>' : ''}
+              ${g.is_active ? '' : '<span class="mg-state mg-state-off">Inactive</span>'}</div>
+            <div class="mg-subj-meetings">${meetings}</div>
+            ${problems.length ? `<ul class="mg-problems">${problems.map(p => `<li>${escHtml(p)}</li>`).join('')}</ul>` : ''}
+          </div>
+          ${ended ? '' : `<div class="mlp-actions">
+            <button class="mlp-del" title="Unmerge this subject" onclick="mgDeleteGroup(${g.mergegroupid})"><i class="fas fa-trash-alt"></i></button>
+          </div>`}
+        </div>`;
+    }).join('');
+    const chips = set.members.map(m => `<span class="mg-chip">${escHtml(m.label)}${ended || set.members.length < 2 ? '' :
+      ` <button type="button" class="mg-chip-x" title="Remove ${escHtml(m.label)} from these merges" onclick="mgRemoveSection('${ids.join(',')}', ${m.sectionid}, '${escHtml(m.label).replace(/'/g, '&#39;')}')">&times;</button>`}</span>`).join(' ');
+    return `
+      <div class="mg-card">
+        <div class="mg-card-head">
+          <div class="mg-card-sections">${chips}</div>
+          ${ended ? '<span class="mg-muted">read-only (semester ended)</span>' : `<div class="mlp-actions">
+            <button class="mlp-del" title="Unmerge all subjects" onclick="mgDeleteSet('${ids.join(',')}')"><i class="fas fa-trash-alt"></i></button>
+          </div>`}
+        </div>
+        <div class="mg-card-body">${rows}</div>
+      </div>`;
+  }).join('');
+}
+
+/* ── Allow sections to merge ── */
+async function mgOpenEditor() {
+  _mg.picked = [];
+  _mg.subjects = null;
+  _mg.pickedSubjects = new Set();
+  const sel = document.getElementById('mgSemester');
+  sel.innerHTML = _mg.semesters.filter(s => !s.ended).map(s =>
+    `<option value="${s.semesterid}"${s.semesterid === _mg.semesterId ? ' selected' : ''}>${escHtml(s.label)}</option>`).join('');
+  document.getElementById('mgSectionFilter').value = '';
+  _mgFeedback('', '');
+  openSModal('modalMergeGroup');
+  await mgEditorSemesterChanged();
+}
+
+async function mgEditorSemesterChanged() {
+  _mg.picked = [];
+  _mg.subjects = null;
+  _mg.pickedSubjects = new Set();
+  const semId = document.getElementById('mgSemester').value;
+  const box = document.getElementById('mgSectionPicker');
+  box.innerHTML = '<div class="mlp-empty">Loading sections…</div>';
+  const data = await _mgFetch(`/admin/settings/merge_groups/sections?semesterid=${encodeURIComponent(semId)}`);
+  _mg.sections = data.success ? (data.sections || []) : [];
+  if (!data.success) box.innerHTML = `<div class="mlp-empty">${escHtml(data.error || 'Could not load sections.')}</div>`;
+  else mgRenderSectionPicker();
+  _mgRenderSubjects();
+}
+
+function mgRenderSectionPicker() {
+  const box = document.getElementById('mgSectionPicker');
+  if (!box) return;
+  const q = (document.getElementById('mgSectionFilter').value || '').trim().toLowerCase();
+  const shown = _mg.sections.filter(s => !q || s.label.toLowerCase().includes(q) || String(s.programcode).toLowerCase().includes(q));
+  if (!shown.length) { box.innerHTML = '<div class="mlp-empty">No sections match.</div>'; return; }
+  let prog = null;
+  box.innerHTML = shown.map(s => {
+    const head = s.programcode !== prog ? `<div class="mg-prog-head">${escHtml(s.programcode)}</div>` : '';
+    prog = s.programcode;
+    const on = _mg.picked.includes(s.sectionid);
+    return `${head}<label class="mg-sec-opt${on ? ' mg-sec-on' : ''}">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="mgToggleSection(${s.sectionid}, this.checked)">
+        <span>${escHtml(s.label)}</span></label>`;
+  }).join('');
+  const count = document.getElementById('mgPickedCount');
+  if (count) count.textContent = _mg.picked.length ? `${_mg.picked.length} selected` : '';
+}
+
+async function mgToggleSection(sectionId, on) {
+  _mg.picked = _mg.picked.filter(id => id !== sectionId);
+  if (on) _mg.picked.push(sectionId);
+  mgRenderSectionPicker();
+  _mg.subjects = null;
+  _mg.pickedSubjects = new Set();
+  if (_mg.picked.length < 2) { _mgRenderSubjects(); return; }
+  const seq = ++_mg.subjSeq;
+  _mgRenderSubjects('loading');
+  const semId = document.getElementById('mgSemester').value;
+  const data = await _mgFetch(`/admin/settings/merge_groups/common_subjects?semesterid=${encodeURIComponent(semId)}` +
+    `&section_ids=${encodeURIComponent(_mg.picked.join(','))}`);
+  if (seq !== _mg.subjSeq) return;
+  _mg.subjects = data.success ? (data.subjects || []) : [];
+  _mgRenderSubjects();
+}
+
+function _mgRenderSubjects(state) {
+  const box = document.getElementById('mgSubjectPicker');
+  if (!box) return;
+  if (_mg.picked.length < 2) { box.innerHTML = '<div class="mlp-empty">Pick at least 2 sections first.</div>'; return; }
+  if (state === 'loading' || !_mg.subjects) { box.innerHTML = '<div class="mlp-empty">Finding shared subjects…</div>'; return; }
+  if (!_mg.subjects.length) {
+    box.innerHTML = '<div class="mlp-empty">These sections have no subject in common (same code, or same name and hours).</div>';
+    return;
+  }
+  box.innerHTML = _mg.subjects.map(s => {
+    const codes = [...new Set(s.members.map(m => m.subjectcode))];
+    const on = _mg.pickedSubjects.has(s.key);
+    return `<label class="mg-sec-opt${on ? ' mg-sec-on' : ''}">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="mgToggleSubject(${s.key}, this.checked)">
+        <span><b>${escHtml(codes.join(' / '))}</b> ${escHtml(s.subjectname || '')}
+          ${(s.groups || []).length ? `<span class="mg-muted">· already in ${escHtml(s.groups.join(', '))}</span>` : ''}</span></label>`;
+  }).join('');
+}
+
+function mgToggleSubject(key, on) {
+  if (on) _mg.pickedSubjects.add(key); else _mg.pickedSubjects.delete(key);
+  _mgRenderSubjects();
+}
+
+function _mgFeedback(html, kind) {
+  const fb = document.getElementById('mgEditorFeedback');
+  if (!fb) return;
+  fb.hidden = !html;
+  fb.className = 'mg-feedback' + (kind ? ` ${kind}` : '');
+  fb.innerHTML = html || '';
+}
+
+async function mgSaveEditor() {
+  if (_mg.picked.length < 2) { _mgFeedback('Pick at least 2 sections.', 'error'); return; }
+  const btn = document.getElementById('mgSaveBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await _mgFetch('/admin/settings/merge_groups/sets', {
+      method: 'POST',
+      body: JSON.stringify({ semesterid: document.getElementById('mgSemester').value,
+                             section_ids: _mg.picked, subject_keys: Array.from(_mg.pickedSubjects) }),
+    });
+    if (!data.success) { _mgFeedback(escHtml((data.errors || []).join(' ') || data.error || 'Could not save.'), 'error'); return; }
+    const n = (data.created || []).length + (data.extended || []).length;
+    const skipped = (data.skipped || []).map(s => `${s.subjectcode}: ${s.reason}`);
+    closeSModal('modalMergeGroup');
+    _showToast(n ? 'success' : 'error', n
+      ? `${n} subject${n === 1 ? '' : 's'} can now be merged by these sections.` +
+        (skipped.length ? ` Skipped: ${skipped.join('; ')}` : '')
+      : (skipped.join('; ') || 'Nothing changed — these sections are already allowed to merge.'));
+    await mgLoadGroups(document.getElementById('mgSemester').value);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ── Unmerge ── */
+function _mgOccLine(o) {
+  return `${escHtml(o.section)} · ${escHtml(o.subjectcode)} · ${escHtml(o.day)} ${escHtml(_fmtHM(o.start))}–${escHtml(_fmtHM(o.end))} · ${escHtml(String(o.room))} <span class="mg-muted">(${escHtml(o.origin || '')})</span>`;
+}
+
+function _mgShowImpact(impact, action) {
+  const lm = (impact && impact.losing_merge) || [];
+  const body = document.getElementById('mgImpactBody');
+  body.innerHTML = lm.length
+    ? `<p><strong>${lm.length} class session(s) are merged right now.</strong> After unmerging they are ordinary
+        classes again, so their shared room and faculty will show as conflicts until one section moves.</p>
+      <ul>${lm.map(o => `<li>${_mgOccLine(o)}</li>`).join('')}</ul>` : '';
+  document.getElementById('mgImpactConfirmBtn').innerHTML = '<i class="fas fa-check"></i> Unmerge anyway';
+  openSModal('modalMergeImpact');
+}
+
+function mgConfirmImpact() {
+  const fn = _mg.pendingSave;
+  _mg.pendingSave = null;
+  closeSModal('modalMergeImpact');
+  if (fn) fn();
+}
+
+function mgDeleteGroup(groupId) {
+  const g = _mg.groups.find(x => x.mergegroupid === groupId);
+  _confirmAction({
+    title: 'UNMERGE SUBJECT', sub: g ? `${g.ref_subjectcode} · ${(g.members || []).map(m => m.label).join(' + ')}` : '',
+    body: 'These sections will no longer share this class. No schedule is changed — classes still placed together ' +
+          'will show as room/faculty conflicts until one section moves.',
+    confirmLabel: 'Unmerge',
+  }, () => _mgDoDelete(groupId, false));
+}
+
+function mgDeleteSet(idsCsv) {
+  const ids = String(idsCsv).split(',').map(Number).filter(Boolean);
+  _confirmAction({
+    title: 'UNMERGE ALL', sub: `${ids.length} subject${ids.length === 1 ? '' : 's'}`,
+    body: 'These sections will no longer share any of these classes. No schedule is changed.',
+    confirmLabel: 'Unmerge all',
+  }, async () => {
+    for (const id of ids) await _mgDoDelete(id, true, true);
+    _showToast('success', 'Unmerged.');
+    await mgLoadGroups(_mg.semesterId);
+  });
+}
+
+function mgRemoveSection(idsCsv, sectionId, label) {
+  const ids = String(idsCsv).split(',').map(Number).filter(Boolean);
+  _confirmAction({
+    title: 'REMOVE SECTION', sub: label,
+    body: `${label} will no longer merge with these sections. A merge left with one section is removed. No schedule is changed.`,
+    confirmLabel: 'Remove',
+  }, async () => {
+    for (const id of ids) {
+      const data = await _mgFetch(`/admin/settings/merge_groups/${id}/members/${sectionId}`, { method: 'DELETE' });
+      if (!data.success) { _showToast('error', data.error || 'Could not remove the section.'); break; }
+    }
+    await mgLoadGroups(_mg.semesterId);
+  });
+}
+
+async function _mgDoDelete(groupId, confirmImpact, quiet) {
+  const data = await _mgFetch(`/admin/settings/merge_groups/${groupId}${confirmImpact ? '?confirm_impact=1' : ''}`, { method: 'DELETE' });
+  if (data.needs_confirmation) {
+    _mg.pendingSave = () => _mgDoDelete(groupId, true);
+    _mgShowImpact(data.impact, 'delete');
+    return;
+  }
+  if (!data.success) { _showToast('error', (data.errors || []).join(' ') || data.error || 'Could not unmerge.'); return; }
+  if (quiet) return;
+  _showToast('success', 'Unmerged.');
+  await mgLoadGroups(_mg.semesterId);
 }
 
 /* ── Merged Class Faculty Load Policy ────────────────────── */
@@ -1204,17 +1218,29 @@ function _renderMergeLoadPolicyTable() {
   const body = document.getElementById('mergeLoadPolicyBody');
   if (!body) return;
   if (!_MLP_POLICIES.length) {
-    body.innerHTML = '<tr><td colspan="5" class="mlp-empty">No rules configured — merged classes use the subject\'s real units/duration by default.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="mlp-empty">No rules configured — merged classes use the subject\'s real units/duration by default.</td></tr>';
     return;
   }
   body.innerHTML = _MLP_POLICIES.map(p => _mlpReadRowHtml(p)).join('');
 }
 
+/* Explicit HC17 applicability: the Merge Groups a policy is assigned to, each with
+   its own curriculum-derived load (read-only). Legacy mode still matches by subject. */
+function _mlpGroupsCellHtml(p) {
+  const groups = p.groups || [];
+  const chips = groups.length
+    ? groups.map(g => `<span class="mg-chip${g.is_active ? '' : ' mg-chip-override'}" title="${escHtml(g.semester_label || '')} · ${escHtml(g.ref_subjectcode || '')}: ${g.ref_creditunits ?? '—'} units / ${g.ref_teachinghours ?? '—'} hours from curriculum, credited once">${escHtml(g.groupname)}</span>`).join(' ')
+    : '<span class="mg-muted">No groups assigned</span>';
+  return `${chips} <button class="mlp-edit" title="Choose Merge Groups" onclick="mlpOpenPolicyGroups(${p.policyid})"><i class="fas fa-layer-group"></i></button>`;
+}
+
 function _mlpReadRowHtml(p) {
+  const title = p.policyname || p.subjectcode;
   return `
     <tr data-policyid="${p.policyid}">
-        <td>${escHtml(p.subjectcode)}${p.subjectname ? `<span class="mlp-sub-name">${escHtml(p.subjectname)}</span>` : ''}</td>
+        <td>${escHtml(title)}${p.policyname ? `<span class="mlp-sub-name">Subject (legacy rule): ${escHtml(p.subjectcode)}</span>` : (p.subjectname ? `<span class="mlp-sub-name">${escHtml(p.subjectname)}</span>` : '')}</td>
         <td>${p.min_sections}–${p.max_sections} sections</td>
+        <td>${_mlpGroupsCellHtml(p)}</td>
         <td>${p.creditunits ?? '—'}</td>
         <td>${p.tuitionhours ?? '—'}</td>
         <td class="mlp-actions">
@@ -1222,6 +1248,54 @@ function _mlpReadRowHtml(p) {
             <button class="mlp-del" title="Delete" onclick="deleteMergeLoadPolicyRow(${p.policyid})"><i class="fas fa-trash-alt"></i></button>
         </td>
     </tr>`;
+}
+
+let _MLP_GROUPS_EDIT = null;   // { policyid, groups: [...] }
+
+async function mlpOpenPolicyGroups(policyid) {
+  const list = document.getElementById('mlpGroupsList');
+  const fb = document.getElementById('mlpGroupsFeedback');
+  if (!list) return;
+  list.innerHTML = '<div class="mlp-empty">Loading…</div>';
+  if (fb) fb.hidden = true;
+  openSModal('modalPolicyGroups');
+  const data = await (await fetch(`/admin/settings/merge_load_policies/${policyid}/groups`)).json().catch(() => ({}));
+  if (!data.success) { list.innerHTML = `<div class="mlp-empty">${escHtml(data.error || 'Could not load merge groups.')}</div>`; return; }
+  _MLP_GROUPS_EDIT = { policyid, groups: data.groups || [] };
+  const p = data.policy || {};
+  document.getElementById('mlpGroupsTitle').textContent =
+    `APPLY "${(p.policyname || p.subjectcode || '').toUpperCase()}" (${p.min_sections}–${p.max_sections} SECTIONS) TO MERGE GROUPS`;
+  if (!_MLP_GROUPS_EDIT.groups.length) {
+    list.innerHTML = '<div class="mlp-empty">No Merge Groups exist yet for current or upcoming semesters. Create them under Merged Class Groups first.</div>';
+    return;
+  }
+  list.innerHTML = _MLP_GROUPS_EDIT.groups.map(g => `
+    <label class="mg-section-row${g.mapped ? ' chosen' : ''}">
+      <span class="mg-section-check">
+        <input type="checkbox" data-gid="${g.mergegroupid}" ${g.mapped ? 'checked' : ''}>
+        <span>${escHtml(g.groupname)} ${g.suggested ? '<span class="mg-tag">suggested</span>' : ''}${g.is_active ? '' : ' <span class="mg-tag">inactive</span>'}</span>
+      </span>
+      <span class="mg-muted">${escHtml(g.semester_label || '')} · ${escHtml(g.ref_subjectcode || '')} · ${g.sections} sections ·
+        ${g.ref_creditunits ?? '—'} units / ${g.ref_teachinghours ?? '—'} hours (from curriculum, credited once)</span>
+    </label>`).join('');
+}
+
+async function mlpSavePolicyGroups() {
+  if (!_MLP_GROUPS_EDIT) return;
+  const ids = Array.from(document.querySelectorAll('#mlpGroupsList input[type=checkbox]:checked'))
+    .map(el => Number(el.dataset.gid));
+  const res = await fetch(`/admin/settings/merge_load_policies/${_MLP_GROUPS_EDIT.policyid}/groups`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mergegroupids: ids }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.success) {
+    const fb = document.getElementById('mlpGroupsFeedback');
+    if (fb) { fb.hidden = false; fb.className = 'mg-feedback error'; fb.textContent = data.error || 'Could not save.'; }
+    return;
+  }
+  closeSModal('modalPolicyGroups');
+  _showToast('success', 'Load policy groups updated.');
+  await loadMergeLoadPolicies();
 }
 
 function _mlpSubjectOptionsHtml(selected) {
@@ -1246,7 +1320,10 @@ function _mlpEditRowHtml(p) {
   const id = p.policyid ?? '';
   return `
     <tr data-policyid="${id}" data-editing="1">
-        <td><select class="mlp-input mlp-f-subject" onchange="_mlpRefreshPreview(this)">${_mlpSubjectOptionsHtml(p.subjectcode)}</select></td>
+        <td>
+            <input type="text" class="mlp-input mlp-f-name" maxlength="100" placeholder="Policy name (optional)" value="${escHtml(p.policyname || '')}">
+            <select class="mlp-input mlp-f-subject" onchange="_mlpRefreshPreview(this)" title="Subject used by the legacy merge model">${_mlpSubjectOptionsHtml(p.subjectcode)}</select>
+        </td>
         <td>
             <div class="mlp-range-inputs">
                 <input type="number" class="mlp-input mlp-f-min" min="2" value="${p.min_sections ?? 2}">
@@ -1254,6 +1331,7 @@ function _mlpEditRowHtml(p) {
                 <input type="number" class="mlp-input mlp-f-max" min="2" value="${p.max_sections ?? 2}">
             </div>
         </td>
+        <td>${p.policyid ? _mlpGroupsCellHtml(p) : '<span class="mg-muted">Save first, then assign groups</span>'}</td>
         <td class="mlp-preview-units">${p.creditunits ?? '…'}</td>
         <td class="mlp-preview-hours">${p.tuitionhours ?? '…'}</td>
         <td class="mlp-actions">
@@ -1322,6 +1400,7 @@ function cancelMergeLoadPolicyRow(policyid, btn) {
 async function saveMergeLoadPolicyRow(policyid, btn) {
   const row = btn.closest('tr');
   const payload = {
+    policyname:   (row.querySelector('.mlp-f-name') || {}).value || '',
     subjectcode:  row.querySelector('.mlp-f-subject').value,
     min_sections: row.querySelector('.mlp-f-min').value,
     max_sections: row.querySelector('.mlp-f-max').value,
@@ -2218,10 +2297,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   markTableActionsLocked();
   await initHCToggles();
-  initMergeScopePicker();
   initDayPairs();
   initTimeSlots();
-  initSectionPairs();
+  initMergeGroups();
   loadMergeLoadPolicies();
   initProgramPanel();
 

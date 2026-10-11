@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, s
 import psycopg2.errors
 import makeup_requests as _makeup
 import password_change as _pwchange
+import email_change as _emailchange
 import password_reset as _pwreset
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
@@ -830,7 +831,9 @@ def inject_active_period():
 # --- 1. ROOT ROUTE ---
 @app.route('/')
 def index():
-    return redirect(url_for('login'))
+    # Public landing page. /login already sends signed-in users to their dashboard.
+    logged_in = bool(session.get('loggedin')) and _dashboard_url_for_role(session.get('role')) != 'login'
+    return render_template('landing.html', login_href=url_for('login'), logged_in=logged_in)
 
 # --- 2. ONE-TIME SETUP ROUTE ---
 @app.route('/setup')
@@ -2028,7 +2031,8 @@ def api_requests_list():
                 COALESCE(TO_CHAR(ts_s.timevalue, 'HH12:MI AM'), '') AS start_time,
                 COALESCE(TO_CHAR(ts_e.timevalue, 'HH12:MI AM'), '') AS end_time,
                 COALESCE(scr.new_daydesc, '')           AS new_daydesc,
-                COALESCE(scr.change_type, '')           AS change_type
+                COALESCE(scr.change_type, '')           AS change_type,
+                scr.official_sessionid, scr.new_starttimeid, scr.new_endtimeid, scr.new_roomid
             FROM schedule_change_request scr
             JOIN schedule sc ON scr.scheduleid = sc.scheduleid
             JOIN faculty f ON sc.employeenumber = f.employeenumber
@@ -2045,6 +2049,18 @@ def api_requests_list():
         """
         makeup_rows = [dict(r) for r in (query_db(makeup_sql) or [])]
         adj_rows    = [dict(r) for r in (query_db(adj_sql)    or [])]
+        # HC16 group model (P6): flag pending adjustments of a Merge Group member's
+        # meeting — they cannot be approved (rejecting stays available).
+        _pending_adj = [r for r in adj_rows if r['status'] == 'Pending' and r.get('official_sessionid')]
+        _locked = {x['official_sessionid']: x for x in _merged_occurrence_restrictions(
+            None, [(r['official_sessionid'], None) for r in _pending_adj],
+            action='Schedule Adjustment request', targeted=True)}
+        for r in _pending_adj:
+            if r['official_sessionid'] in _locked:
+                r['merge_restriction'] = _locked[r['official_sessionid']]
+        for r in adj_rows:
+            for _k in ('new_starttimeid', 'new_endtimeid', 'new_roomid'):
+                r.pop(_k, None)
         all_rows    = makeup_rows + adj_rows
         all_rows.sort(key=lambda r: r.get('created_at_raw') or '', reverse=True)
 
@@ -2191,6 +2207,14 @@ def _request_occupant_blocks(requester, occupant, dimension):
     if not requester or dimension not in ('room', 'faculty'):
         return True
     cfg = requester.get('_cfg') or {}
+    import merge_groups as _mg_req
+    if _mg_req.merge_model(cfg) == _mg_req.MODEL_GROUPS:
+        # HC16 group model: a request (date-specific make-up, or a one-section schedule
+        # adjustment) is never the group's authoritative merged meeting, so it never
+        # shares a room or a faculty member through a merge exemption. The legacy
+        # scope/pair/NSTP rules below are not consulted. (Final Local/request handling
+        # of merged classes is P6.)
+        return True
     mine = {'subject_code': requester.get('subjectcode'), 'faculty_id': requester.get('employeenumber'),
             'programcode': requester.get('programcode'), 'section_name': requester.get('sectionname')}
     theirs = {'subject_code': occupant.get('subjectcode'), 'faculty_id': occupant.get('employeenumber'),
@@ -2552,8 +2576,19 @@ def _request_conflict_summary(req_type, req_id):
     else:
         return None, ('Invalid type', 400)
 
+    # HC16 group model (P6): an adjustment of a Merge Group member's meeting is never
+    # approvable (make-ups are separate date-specific meetings and are not restricted).
+    merge_locked = []
+    if req_type == 'adjustment':
+        merge_locked = _merged_occurrence_restrictions(
+            None, [(row.get('official_sessionid'), {'daydesc': row.get('new_daydesc'),
+                                                    'starttimeid': row.get('new_starttimeid'),
+                                                    'endtimeid': row.get('new_endtimeid'),
+                                                    'roomid': row.get('new_roomid')})],
+            action='Schedule Adjustment request', targeted=True)
+
     # A dimension blocked ONLY by an approved make-up still to come says so (and when it frees up).
-    conflicts = []
+    conflicts = [r['error'] for r in merge_locked]
     if not room_available:
         conflicts.append(_makeup_wait_message(makeup_waits['room'], 'room', 'This adjustment')
                          if 'room' in makeup_waits else 'Room is already booked at the requested time.')
@@ -2568,7 +2603,8 @@ def _request_conflict_summary(req_type, req_id):
         'faculty_free':   faculty_free,
         'program_ok':     program_ok,
         'conflicts':      conflicts,
-        'all_ok':         room_available and faculty_free and program_ok,
+        'all_ok':         room_available and faculty_free and program_ok and not merge_locked,
+        'merge_restrictions': merge_locked,
         # Phase 3D: semantic mapping only. The SQL above intentionally
         # remains date/database-aware; these IDs identify the frozen
         # constraint dimensions without replacing request-specific scope.
@@ -2663,6 +2699,17 @@ def api_requests_decide():
                 return jsonify({'success': False, 'error': 'Schedule adjustment request not found.'}), 404
 
             if decision == 'Approved':
+                # HC16 group model (P6): never approve a change to a Merge Group member's
+                # meeting (rejecting the request stays possible).
+                _merge_locked = _merged_occurrence_restrictions(
+                    _cur, [(adj.get('official_sessionid'), {'daydesc': adj.get('new_daydesc'),
+                                                            'starttimeid': adj.get('new_starttimeid'),
+                                                            'endtimeid': adj.get('new_endtimeid'),
+                                                            'roomid': adj.get('new_roomid')})],
+                    action='Schedule Adjustment request', targeted=True)
+                if _merge_locked:
+                    _conn.rollback()
+                    return _merged_restriction_response(_merge_locked)
                 if not adj.get('official_sessionid') or not adj.get('official_daydesc'):
                     _conn.rollback()
                     return jsonify({'success': False, 'error':
@@ -3097,6 +3144,9 @@ def api_edit_employee():
                 SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
             WHERE EmployeeNumber=%s
         """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({'success': False, 'error': f'Faculty {emp_num} was not found. It may have been archived or removed.'}), 404
         conn.commit()
         flash("Employee details updated successfully!", "success")
         return jsonify({'success': True})
@@ -7481,7 +7531,8 @@ def _room_report_fetch(cur, ay_ids, sem_types, building_id, room_type, room_id):
             pyl.yearlevel AS "Year",
             COALESCE(f.lastname||', '||f.firstname,'TBA') AS "Instructor",
             ay.yearstart||'–'||ay.yearend AS "AY", sem.semestertype AS "Sem",
-            es.official_sessionid AS "OfficialSessionID", es.source AS "ScheduleSource"
+            es.official_sessionid AS "OfficialSessionID", es.source AS "ScheduleSource",
+            es.semesterid AS "SemesterID"
         FROM effective_sessions es
         JOIN curriculumsubject cs ON es.curriculumsubjectid = cs.curriculumsubjectid
         JOIN sections sec ON es.sectionid = sec.sectionid
@@ -7497,11 +7548,91 @@ def _room_report_fetch(cur, ay_ids, sem_types, building_id, room_type, room_id):
         {('WHERE ' + ' AND '.join(where)) if where else ''}
     """, p)
     effective = list(cur.fetchall() or [])
+    effective.extend(_room_report_fetch_historical(
+        cur, ay_ids, sem_types, building_id, room_type, room_id,
+        live_semesters={r['SemesterID'] for r in effective}))
     effective.sort(key=lambda r: (
         str(r.get('Building') or ''), str(r.get('Room') or ''),
         str(r.get('Day') or ''), str(r.get('Time') or '')
     ))
     return effective
+
+
+def _room_report_fetch_historical(cur, ay_ids, sem_types, building_id, room_type, room_id, live_semesters):
+    """Reports > Room Schedule rows for ended semesters, whose schedules were moved
+    to historical_data at rollover (same fallback Class Schedule's _sch_exp_fetch uses).
+    A semester that still has live sessions is never mixed with its archived copy.
+
+    historical_data keeps the room as free text ("LQ117", "107/TBA"), so it is matched
+    to a Room by name ignoring spaces/case. Unmatched rooms are grouped under
+    "Unmatched Rooms" and are left out whenever a Building/Room Type/Room filter is set.
+    Day/s and Time stay as recorded; the calendar lists what it can't place as unscheduled.
+    """
+    where, p = ["TRIM(COALESCE(hd.\"Room\", '')) NOT IN ('', 'TBA')"], []
+    if ay_ids:
+        where.append(f"hd.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); p.extend(ay_ids)
+    if sem_types:
+        where.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); p.extend(sem_types)
+    if live_semesters:
+        where.append(f"hd.semesterid NOT IN ({','.join(['%s']*len(live_semesters))})"); p.extend(live_semesters)
+    if building_id:
+        where.append("b.buildingid = %s"); p.append(int(building_id))
+    if room_type:
+        where.append("r.roomtype = %s"); p.append(room_type)
+    if room_id:
+        where.append("r.roomid = %s"); p.append(int(room_id))
+
+    cur.execute(f"""
+        SELECT
+            COALESCE(b.buildingname, 'Unmatched Rooms') AS "Building",
+            COALESCE(r.roomname, TRIM(hd."Room"))       AS "Room",
+            r.roomtype                                   AS "RoomType",
+            hd."Day/s" AS "Day", hd."Day/s" AS "Day/s", hd."Time" AS "Time",
+            hd."Subject Code" AS "SubjectCode", hd."Subject Name" AS "SubjectName",
+            sec.sectionname AS "Section", hd."Program" AS "Program",
+            hd."Year Level" AS "Year", COALESCE(hd."Instructor", 'TBA') AS "Instructor",
+            ay.yearstart||'–'||ay.yearend AS "AY", sem.semestertype AS "Sem",
+            NULL AS "OfficialSessionID", 'Historical' AS "ScheduleSource",
+            hd.semesterid AS "SemesterID"
+        FROM historical_data hd
+        JOIN semester sem     ON hd.semesterid = sem.semesterid
+        JOIN academicyear ay  ON sem.academicyearid = ay.academicyearid
+        LEFT JOIN sections sec ON hd.sectionid = sec.sectionid
+        LEFT JOIN room r      ON UPPER(REGEXP_REPLACE(r.roomname, '\\s+', '', 'g'))
+                               = UPPER(REGEXP_REPLACE(hd."Room", '\\s+', '', 'g'))
+        LEFT JOIN building b  ON r.buildingid = b.buildingid
+        WHERE {' AND '.join(where)}
+    """, p)
+    rows = []
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        for k in ('Day', 'Day/s', 'Time'):
+            r[k] = ' '.join((r[k] or '').split())      # recorded text may contain line breaks
+        rows.extend(_hist_split_slots(r))
+    return rows
+
+
+def _hist_split_slots(r):
+    """historical_data packs several meetings into one row ('TTH/ F' + '7:30-9:00/ 1:00-3:00').
+    When the '/'-separated day and time parts pair up one-to-one and every part resolves
+    through _resolve_historical_day_time (the shared historical AM/PM convention), return
+    one row per meeting with an 'H:MM AM - H:MM PM' time the calendar can place; otherwise
+    return the row unchanged (Table View shows it as recorded, Calendar View lists it as
+    unscheduled)."""
+    times = [t.strip() for t in (r['Time'] or '').split('/') if t.strip()]
+    days = [d.strip() for d in (r['Day/s'] or '').split('/') if d.strip()]
+    if len(times) == 1:
+        days = [r['Day/s']]
+    if not times or len(days) != len(times):
+        return [r]
+    fmt = lambda t: t.strftime('%I:%M %p').lstrip('0')
+    out = []
+    for d, t in zip(days, times):
+        _days, start, end, status, _reason = _resolve_historical_day_time(d, t)
+        if status != 'resolved' or not start or not end:
+            return [r]
+        out.append(dict(r, **{'Day': d, 'Day/s': d, 'Time': f'{fmt(start)} - {fmt(end)}'}))
+    return out
 
 
 def _room_report_groups(rows):
@@ -8587,10 +8718,11 @@ _FACSUB_TYPE_LABELS = {
 
 
 def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
-    """Faculty/Subject Assignment Export: one row per current schedule
-    assignment (subject+section+semester+employee), joined to faculty type
-    for grouping. Historical/legacy data is excluded — it has no employee
-    link, so it can't be classified by faculty type."""
+    """Faculty/Subject Assignment Export: one row per schedule assignment
+    (subject+section+semester+employee), joined to faculty type for grouping.
+    Ended semesters with no live schedule come from historical_data (rows whose
+    employeenumber links to a faculty record; unlinked rows can't be classified
+    by faculty type and are left out)."""
     nf, params = ["sv.status IN ('Published', 'Draft')"], []
     if ay_ids:
         nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); params.extend(ay_ids)
@@ -8613,7 +8745,8 @@ def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
             sec.sectionname  AS "Section",
             (COALESCE(cs.lecturehours,0)+COALESCE(cs.laboratoryhours,0)) AS "Hours",
             ay.yearstart||'-'||ay.yearend AS "AcademicYear",
-            sem.semestertype AS "SemesterType"
+            sem.semestertype AS "SemesterType",
+            sc.semesterid    AS "SemesterID"
         FROM schedule sc
         JOIN schedule_version sv        ON sv.scheduleid = sc.scheduleid
         JOIN curriculumsubject cs       ON sc.curriculumsubjectid = cs.curriculumsubjectid
@@ -8633,7 +8766,46 @@ def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
         ORDER BY et.typename, f.lastname, f.firstname, cs.subjectcode
     """
     cur.execute(q, params)
-    return cur.fetchall()
+    rows = list(cur.fetchall() or [])
+
+    # Ended semesters: their schedules were moved to historical_data at rollover.
+    hf, hp = ["TRUE"], []
+    if ay_ids:
+        hf.append(f"hd.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); hp.extend(ay_ids)
+    if sem_types:
+        hf.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); hp.extend(sem_types)
+    if faculty_types:
+        hf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})"); hp.extend(faculty_types)
+    live_sems = {r['SemesterID'] for r in rows}
+    if live_sems:
+        hf.append(f"hd.semesterid NOT IN ({','.join(['%s']*len(live_sems))})"); hp.extend(live_sems)
+    cur.execute("""
+        SELECT
+            f.employeenumber AS "EmpNum",
+            f.lastname  AS "LastName",
+            f.firstname AS "FirstName",
+            COALESCE(f.lastname||', '||f.firstname||COALESCE(' '||f.middlename,''),'TBA') AS "FacultyName",
+            et.typename          AS "FacultyType",
+            hd."Subject Code"    AS "SubjectCode",
+            hd."Subject Name"    AS "SubjectDescription",
+            REGEXP_REPLACE(hd."Program", '\\s+\\d+$', '') AS "Program",
+            hd."Year Level"      AS "YearLevel",
+            COALESCE(sec.sectionname, hd."Course") AS "Section",
+            COALESCE(hd."Hours", COALESCE(hd."Lecture Hours",0)+COALESCE(hd."Laboratory Hours",0)) AS "Hours",
+            ay.yearstart||'-'||ay.yearend AS "AcademicYear",
+            sem.semestertype     AS "SemesterType",
+            hd.semesterid        AS "SemesterID"
+        FROM historical_data hd
+        JOIN semester sem       ON hd.semesterid = sem.semesterid
+        JOIN academicyear ay    ON sem.academicyearid = ay.academicyearid
+        JOIN faculty f          ON hd.employeenumber = f.employeenumber
+        JOIN employeetype et    ON f.employeetypeid = et.employeetypeid
+        LEFT JOIN sections sec  ON hd.sectionid = sec.sectionid
+        WHERE """ + " AND ".join(hf) + """
+        ORDER BY et.typename, f.lastname, f.firstname, hd."Subject Code"
+    """, hp)
+    rows.extend(cur.fetchall() or [])
+    return rows
 
 
 def _facsub_roster_fetch(cur, faculty_types):
@@ -9060,6 +9232,68 @@ def facsub_export_count():
         cur.close(); conn.close()
 
 
+def _facsub_report_context(cur, ay_ids, sem_types, faculty_types):
+    """Fetch + group Subject/Faculty Assignment rows and the header's semester/AY text.
+    Shared by the Reports preview, the preview's Export, and the direct export below,
+    so what the preview shows is exactly what gets exported."""
+    roster = _facsub_roster_fetch(cur, faculty_types)
+    rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
+    groups = _facsub_exp_groups(roster, rows)
+
+    # Derive the header's semester/AY text from the user's actual selection
+    # (not from the fetched assignment rows) — with the new "include every
+    # faculty member" behavior, a selected type can legitimately have zero
+    # assignments, and the header must still reflect what was selected.
+    sem_map   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+    sem_label = ' & '.join(sem_map.get(s, s) for s in sorted(sem_types)) if sem_types else 'All Semesters'
+    ay_label = ''
+    if ay_ids:
+        cur.execute(
+            f"SELECT yearstart, yearend FROM academicyear WHERE academicyearid IN "
+            f"({','.join(['%s']*len(ay_ids))}) ORDER BY yearstart", ay_ids)
+        ay_rows = cur.fetchall()
+        if len(ay_rows) == 1:
+            ay_label = f"{ay_rows[0]['yearstart']}-{ay_rows[0]['yearend']}"
+        elif len(ay_rows) > 1:
+            ay_label = 'Multiple Academic Years'
+    return rows, groups, sem_label, ay_label
+
+
+def _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename):
+    """One file (or a .zip of several formats) of the Subject/Faculty Assignment report."""
+    rows, groups, sem_label, ay_label = _facsub_report_context(cur, ay_ids, sem_types, faculty_types)
+    mime_map = {
+        'csv':  ('text/csv', '.csv'),
+        'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
+        'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
+        'pdf':  ('application/pdf', '.pdf'),
+    }
+    gen_map = {
+        'csv':  lambda: _facsub_gen_csv(groups, sem_label, ay_label),
+        'xlsx': lambda: _facsub_gen_xlsx(groups, sem_label, ay_label),
+        'docx': lambda: _facsub_gen_docx(groups, sem_label, ay_label),
+        'pdf':  lambda: _facsub_gen_pdf(groups, sem_label, ay_label),
+    }
+
+    if len(formats) == 1:
+        fmt = formats[0]
+        if fmt not in mime_map:
+            return jsonify({'error': f'Unknown format: {fmt}'}), 400
+        out = gen_map[fmt]()
+        mime, ext = mime_map[fmt]
+        return Response(out, mimetype=mime,
+                        headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fmt in formats:
+            if fmt in gen_map:
+                zf.writestr(filename + mime_map[fmt][1], gen_map[fmt]())
+    buf.seek(0)
+    return Response(buf.read(), mimetype='application/zip',
+                    headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+
+
 @app.route('/admin/faculty/subject-export', methods=['POST'])
 def facsub_export():
     if session.get('role') not in _FACSUB_ROLES:
@@ -9077,58 +9311,7 @@ def facsub_export():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        roster = _facsub_roster_fetch(cur, faculty_types)
-        rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
-        groups = _facsub_exp_groups(roster, rows)
-
-        # Derive the header's semester/AY text from the user's actual selection
-        # (not from the fetched assignment rows) — with the new "include every
-        # faculty member" behavior, a selected type can legitimately have zero
-        # assignments, and the header must still reflect what was selected.
-        sem_map   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
-        sem_label = ' & '.join(sem_map.get(s, s) for s in sorted(sem_types)) if sem_types else 'All Semesters'
-        ay_label = ''
-        if ay_ids:
-            cur.execute(
-                f"SELECT yearstart, yearend FROM academicyear WHERE academicyearid IN "
-                f"({','.join(['%s']*len(ay_ids))}) ORDER BY yearstart", ay_ids)
-            ay_rows = cur.fetchall()
-            if len(ay_rows) == 1:
-                ay_label = f"{ay_rows[0]['yearstart']}-{ay_rows[0]['yearend']}"
-            elif len(ay_rows) > 1:
-                ay_label = 'Multiple Academic Years'
-
-        mime_map = {
-            'csv':  ('text/csv', '.csv'),
-            'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
-            'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
-            'pdf':  ('application/pdf', '.pdf'),
-        }
-        gen_map = {
-            'csv':  lambda: _facsub_gen_csv(groups, sem_label, ay_label),
-            'xlsx': lambda: _facsub_gen_xlsx(groups, sem_label, ay_label),
-            'docx': lambda: _facsub_gen_docx(groups, sem_label, ay_label),
-            'pdf':  lambda: _facsub_gen_pdf(groups, sem_label, ay_label),
-        }
-
-        if len(formats) == 1:
-            fmt = formats[0]
-            if fmt not in mime_map:
-                return jsonify({'error': f'Unknown format: {fmt}'}), 400
-            out = gen_map[fmt]()
-            mime, ext = mime_map[fmt]
-            return Response(out, mimetype=mime,
-                            headers={'Content-Disposition': f'attachment; filename="{filename}{ext}"'})
-        else:
-            import zipfile
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for fmt in formats:
-                    if fmt in gen_map:
-                        zf.writestr(filename + mime_map[fmt][1], gen_map[fmt]())
-            buf.seek(0)
-            return Response(buf.read(), mimetype='application/zip',
-                            headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
+        return _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename)
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -13153,6 +13336,10 @@ def manual_schedule_editor():
         spec_constraint_enabled = bool(_sched_cfg.get('hc_faculty_spec_enabled', 1))
         merge_enabled           = bool(_sched_cfg.get('hc_merge_enabled', 1))
         merge_scope             = _sched_cfg.get('hc_merge_scope', 'nstp_only')
+        # HC16 model (internal switch): 'groups' turns the editor's legacy merge logic
+        # (scope / NSTP flexible rule / "Merge Class Detected") off entirely.
+        import merge_groups as _mg_editor
+        merge_model             = _mg_editor.merge_model(_sched_cfg)
         from database import parse_merge_scope_subjects as _parse_merge_scope_subjects
         merge_scope_subjects_json = json.dumps(sorted(_parse_merge_scope_subjects(_sched_cfg.get('hc_merge_scope_subjects')) or []))
         day_pairing_enabled     = bool(_sched_cfg.get('hc_day_pairing_enabled', 1))
@@ -13188,6 +13375,7 @@ def manual_schedule_editor():
                                merge_enabled=merge_enabled,
                                merge_scope=merge_scope,
                                merge_scope_subjects_json=merge_scope_subjects_json,
+                               merge_model=merge_model,
                                day_pairing_enabled=day_pairing_enabled,
                                day_pairs_json=day_pairs_json)
     finally:
@@ -13364,6 +13552,15 @@ def api_save_local_arrangement():
                     'error': f'{subject or "Selected subject"} is not part of the Published Official Schedule for the selected section.'
                 }), 409
 
+            # HC16 group model (P6): a Merge Group member's occurrence cannot have its
+            # day/time/room/faculty changed for one section (no-op under legacy).
+            _merge_locked = _merged_occurrence_restrictions(
+                cur, [(sess.get('official_sessionid') or sess.get('officialSessionId'), _local_proposed(sess))],
+                action='Local adjustment')
+            if _merge_locked:
+                conn.rollback()
+                return _merged_restriction_response(_merge_locked)
+
             # Legacy subject-level guard remains as an early compatibility check;
             # the exact occurrence-level lookup below is the final authority.
             _official_faculties = official_subject_faculty.get(subject, set())
@@ -13481,6 +13678,14 @@ def api_save_local_arrangement():
                 'official_sessionid': kept['official_sessionid'],
             })
 
+        # Existing Published overrides carried into this Draft that change a Merge Group
+        # member's occurrence are flagged, never modified here (Publish rejects them).
+        carried_merge_warnings = _merged_occurrence_restrictions(
+            cur, [(n['official_sessionid'], {'daydesc': n['daydesc'], 'starttimeid': n['starttimeid'],
+                                             'endtimeid': n['endtimeid'], 'roomid': n['roomid']})
+                  for n in normalized if n['official_sessionid'] not in submitted_ids],
+            action='Local adjustment')
+
         coverage_ok, coverage_error = _validate_local_occurrence_coverage(
             cur, official_version['versionid'], section_id, normalized
         )
@@ -13574,8 +13779,11 @@ def api_save_local_arrangement():
         )
         conn.commit()
         cur.close(); conn.close()
-        return jsonify({'success': True, 'arrangement_id': arr_id, 'status': 'Draft',
-                        'updated_at': _local_updated_at_iso(arr_updated_at)})
+        out = {'success': True, 'arrangement_id': arr_id, 'status': 'Draft',
+               'updated_at': _local_updated_at_iso(arr_updated_at)}
+        if carried_merge_warnings:
+            out['merge_warnings'] = carried_merge_warnings
+        return jsonify(out)
 
     except Exception:
         import traceback; traceback.print_exc()
@@ -13669,12 +13877,15 @@ def api_get_local_arrangements():
         """, params or None)
 
         rows   = cur.fetchall()
+        # HC16 group model (P6): flag arrangements that diverge from a Merge Group.
+        merge_flags = _local_arrangement_merge_flags(cur, [r['arrangementid'] for r in (rows or [])])
         cur.close(); conn.close()
 
         _sem_labels = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
         result = []
         for r in (rows or []):
             result.append({
+                'merge_restrictions': merge_flags.get(r['arrangementid'], []),
                 'arrangementid':  r['arrangementid'],
                 'description':    r['description'],
                 'programcode':    r['programcode'],
@@ -13751,10 +13962,12 @@ def api_get_local_arrangement(arr_id):
             ORDER BY ts_s.timevalue, las.daydesc
         """, (arr_id,))
         sessions = cur.fetchall()
+        merge_flags = _local_arrangement_merge_flags(cur, [arr_id]).get(arr_id, [])
         cur.close(); conn.close()
 
         _sem_labels = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
         sem_label   = _sem_labels.get(arr['semestertype'], arr['semestertype'] or '—')
+        _locked_ids = {f['official_sessionid'] for f in merge_flags}
 
         return jsonify({
             'success': True,
@@ -13781,11 +13994,51 @@ def api_get_local_arrangement(arr_id):
                 'created_at':       arr['created_at'].isoformat() if arr['created_at'] else None,
                 'updated_at':       _local_updated_at_iso(arr.get('updated_at')),
             },
-            'sessions': [dict(s) for s in (sessions or [])],
+            'sessions': [dict(s, merge_locked=s.get('official_sessionid') in _locked_ids)
+                         for s in (sessions or [])],
+            # HC16 group model (P6): sessions that change a Merge Group member's meeting.
+            'merge_restrictions': merge_flags,
         })
 
     except Exception as e:
         return _safe_local_api_error()   # logs the real exception server-side
+
+
+@app.route('/api/local/merge_divergence')
+def api_local_merge_divergence():
+    """HC16 group model (P6): every Draft or active Published Local arrangement whose
+    sessions change a Merge Group member's Official occurrence. Read-only report —
+    nothing is modified or archived. {'model': 'legacy', 'arrangements': []} under legacy."""
+    auth_error = _require_academic_head_api()
+    if auth_error:
+        return auth_error
+    import merge_groups as _mg
+    cfg = load_scheduler_config()
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS:
+        return jsonify({'success': True, 'model': _mg.MODEL_LEGACY, 'arrangements': []})
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_local_tables(cur)
+        sem = request.args.get('semesterid')
+        cur.execute("""SELECT la.arrangementid, la.programcode, la.yearlevel, la.sectionid, la.semesterid,
+                              la.status, la.is_active, sec.sectionname
+                       FROM public.local_arrangement la
+                       LEFT JOIN sections sec ON sec.sectionid = la.sectionid
+                       WHERE (la.status = 'Draft' OR (la.status = 'Published' AND la.is_active))
+                         AND (%s::int IS NULL OR la.semesterid = %s::int)
+                       ORDER BY la.arrangementid""", (sem if str(sem or '').isdigit() else None,) * 2)
+        arrs = [dict(r) for r in cur.fetchall() or []]
+        flags = _local_arrangement_merge_flags(cur, [a['arrangementid'] for a in arrs])
+        conn.commit()
+        return jsonify(_mg.serialize({'success': True, 'model': _mg.MODEL_GROUPS,
+                                      'arrangements': [dict(a, merge_restrictions=flags[a['arrangementid']])
+                                                       for a in arrs if a['arrangementid'] in flags]}))
+    except Exception:
+        conn.rollback()
+        return _safe_local_api_error()
+    finally:
+        cur.close(); conn.close()
 
 
 @app.route('/api/local/arrangement/<int:arr_id>/deactivate', methods=['POST'])
@@ -14928,6 +15181,16 @@ def api_publish_local_arrangement(arr_id):
                 'code': 'INVALID_LOCAL_OCCURRENCE_SET'
             }), 409
 
+        # HC16 group model (P6): no Local Draft that changes a Merge Group member's
+        # occurrence goes live — including overrides carried forward from an earlier
+        # Published arrangement (they are reported, never silently dropped).
+        _merge_locked = _merged_occurrence_restrictions(
+            cur, [(ds.get('official_sessionid'), _local_proposed(ds)) for ds in draft_sessions],
+            action='Local adjustment')
+        if _merge_locked:
+            conn.rollback(); cur.close(); conn.close()
+            return _merged_restriction_response(_merge_locked)
+
         published_occurrence_ids = [ds.get('official_sessionid') for ds in draft_sessions]
         if len(published_occurrence_ids) != len(set(published_occurrence_ids)):
             conn.rollback(); cur.close(); conn.close()
@@ -15034,8 +15297,36 @@ def api_publish_local_arrangement(arr_id):
                     (arr['sectionid'],))
         publish_section_name = (cur.fetchone() or {}).get('sectionname')
         _dim_order = ('Room', 'Faculty', 'Section')
+        # HC16 group model (None under the legacy model): same merged-event policy as
+        # /api/local/check_room_conflicts. Occupant time columns are selected only then,
+        # so legacy query results are unchanged. Final Local handling is P6.
+        publish_merge_pol = _merge_policy_for(publish_merge_cfg, sem_id=arr['semesterid'],
+                                              section_id=arr['sectionid'], cur=cur)
+        _off_tcols = ", ss.daydesc, ss.starttimeid, ss.endtimeid" if publish_merge_pol else ""
+        _loc_tcols = ", las.daydesc, las.starttimeid, las.endtimeid" if publish_merge_pol else ""
 
         def _publish_conflict_dims(ds, occ, occ_faculty):
+            if publish_merge_pol is not None:
+                merged = publish_merge_pol.same_event(
+                    {'sectionid': arr['sectionid'], 'subjectcode': ds.get('subjectcode'),
+                     'daydesc': ds.get('daydesc'), 'starttimeid': ds.get('starttimeid'),
+                     'endtimeid': ds.get('endtimeid'), 'roomid': ds.get('roomid'),
+                     'employeenumber': ds.get('faculty_employeenumber')},
+                    # _merge_* keep the real identity of a Draft occupant whose room and
+                    # section are blanked below for the faculty-only comparison.
+                    {'sectionid': occ.get('_merge_sectionid', occ.get('sectionid')),
+                     'subjectcode': occ.get('subjectcode'),
+                     'daydesc': occ.get('daydesc'), 'starttimeid': occ.get('starttimeid'),
+                     'endtimeid': occ.get('endtimeid'),
+                     'roomid': occ.get('_merge_roomid', occ.get('roomid')),
+                     'employeenumber': occ_faculty})
+                dims = _context_conflicts.overlapping_resource_conflicts(
+                    {'faculty_id': ds.get('faculty_employeenumber'), 'room_id': ds.get('roomid'),
+                     'section_id': arr['sectionid']},
+                    {'faculty_id': occ_faculty, 'room_id': occ.get('roomid'),
+                     'section_id': occ.get('sectionid')},
+                    valid_merge=merged, faculty_exempt=merged)
+                return [d for d in _dim_order if d in dims]
             cand = {'subject_code': ds.get('subjectcode'),
                     'faculty_id': ds.get('faculty_employeenumber'),
                     'programcode': arr['programcode'], 'section_name': publish_section_name}
@@ -15058,7 +15349,7 @@ def api_publish_local_arrangement(arr_id):
             cur.execute("""
                 SELECT DISTINCT UPPER(cs.subjectcode) AS subjectcode,
                        s.sectionid, s.employeenumber, ss.roomid,
-                       sec.sectionname, pyl.programcode
+                       sec.sectionname, pyl.programcode""" + _off_tcols + """
                 FROM schedule_sessions ss
                 JOIN schedule_version sv
                   ON ss.versionid = sv.versionid AND sv.status = 'Published'
@@ -15112,7 +15403,7 @@ def api_publish_local_arrangement(arr_id):
                 cur.execute("""
                     SELECT DISTINCT UPPER(cs.subjectcode) AS subjectcode,
                            s.sectionid, COALESCE(sv.employeenumber, s.employeenumber) AS employeenumber,
-                           ss.roomid, sec.sectionname, pyl.programcode
+                           ss.roomid, sec.sectionname, pyl.programcode""" + _off_tcols + """
                     FROM schedule_sessions ss
                     JOIN schedule_version sv
                       ON ss.versionid = sv.versionid AND sv.status = 'Draft'
@@ -15134,7 +15425,9 @@ def api_publish_local_arrangement(arr_id):
                 for occ in cur.fetchall() or []:
                     # Room/section of a Draft are not reserved: compare faculty only.
                     dims = [d for d in _publish_conflict_dims(
-                                ds, {**occ, 'roomid': None, 'sectionid': None},
+                                ds, {**occ, 'roomid': None, 'sectionid': None,
+                                     '_merge_roomid': occ.get('roomid'),
+                                     '_merge_sectionid': occ.get('sectionid')},
                                 occ.get('employeenumber'))
                             if d == 'Faculty']
                     if dims:
@@ -15146,7 +15439,7 @@ def api_publish_local_arrangement(arr_id):
                 SELECT DISTINCT UPPER(las.subjectcode) AS subjectcode,
                        la.sectionid, las.faculty_employeenumber, las.roomid,
                        las.official_sessionid,
-                       sec.sectionname, la.programcode
+                       sec.sectionname, la.programcode""" + _loc_tcols + """
                 FROM public.local_arrangement la
                 JOIN public.local_arrangement_sessions las
                   ON las.arrangementid = la.arrangementid
@@ -15385,6 +15678,15 @@ def api_restore_local_arrangement(arr_id):
                 'code': 'DUPLICATE_OFFICIAL_OCCURRENCE'
             }), 409
 
+        # HC16 group model (P6): history is not rewritten, but a restore must not
+        # re-create a Draft that changes a Merge Group member's occurrence.
+        _merge_locked = _merged_occurrence_restrictions(
+            cur, [(ss.get('official_sessionid'), _local_proposed(ss)) for ss in (src_sessions or [])],
+            action='Local adjustment')
+        if _merge_locked:
+            conn.rollback(); cur.close(); conn.close()
+            return _merged_restriction_response(_merge_locked)
+
         for ss in (src_sessions or []):
             valid_structure, structure_error = _validate_local_session_structure(cur, ss)
             if not valid_structure:
@@ -15602,11 +15904,26 @@ def api_local_check_room_conflicts():
                 'section_name': row.get('sectionname') or (current_section_name if row.get('sectionid') == section_id else None),
             }
 
+        # HC16 group model (None under the legacy model): the same merged-event policy
+        # as CSPValidator / cross-schedule, so Local cannot bypass it through the legacy
+        # helpers. Final Local behaviour for merged occurrences is P6.
+        local_merge_pol = _merge_policy_for(local_conflict_cfg, sem_id=sem_id, section_id=section_id, cur=cur)
+
+        def _merge_occ(row):
+            return {'sectionid': row.get('sectionid'), 'subjectcode': row.get('subjectcode'),
+                    'daydesc': row.get('daydesc'), 'starttimeid': row.get('starttimeid'),
+                    'endtimeid': row.get('endtimeid'), 'roomid': row.get('roomid'),
+                    'employeenumber': row.get('employeenumber')}
+
         def _valid_merge(a, b):
+            if local_merge_pol is not None:
+                return local_merge_pol.same_event(_merge_occ(a), _merge_occ(b))
             return _local_hard_constraints.is_valid_merge(
                 _merge_gene(a), _merge_gene(b), config=local_conflict_cfg
             )
         def _faculty_overlap_exempt(a, b, merged):
+            if local_merge_pol is not None:
+                return bool(merged)   # group model: only the same merged event
             # Shared HC10 rule (same as CSPValidator / cross-schedule):
             # valid HC16 merge OR the NSTP/OU shared-faculty exemption.
             return faculty_load.faculty_overlap_exempt(
@@ -15666,6 +15983,18 @@ def api_local_check_room_conflicts():
                         'error': f"{cnd.get('subjectcode') or 'A Local session'} has an invalid Official occurrence reference.",
                         'code': 'INVALID_OFFICIAL_SESSION_BINDING'
                     }), 409
+
+        # HC16 group model (P6): the Local check rejects the same Merge Group-locked
+        # changes Save and Publish reject (no-op under the legacy model).
+        _merge_locked = _merged_occurrence_restrictions(
+            cur, [(c.get('official_sessionid'), {'daydesc': c['daydesc'], 'starttimeid': c['starttimeid'],
+                                                 'endtimeid': c['endtimeid'], 'roomid': c['roomid'],
+                                                 'faculty_id': c.get('employeenumber')})
+                  for c in candidates],
+            action='Local adjustment', cfg=local_conflict_cfg)
+        if _merge_locked:
+            cur.close(); conn.close()
+            return _merged_restriction_response(_merge_locked)
 
         if current_official:
             for cnd in candidates:
@@ -15767,6 +16096,7 @@ def api_local_check_room_conflicts():
                        ss.roomid, s.employeenumber,
                        TO_CHAR(ts1.timevalue,'HH12:MI AM') AS start_fmt,
                        TO_CHAR(ts2.timevalue,'HH12:MI AM') AS end_fmt,
+                       ss.starttimeid, ss.endtimeid,
                        COALESCE(f.lastname||', '||f.firstname,'—') AS instructor
                 FROM public.schedule_sessions ss
                 JOIN public.schedule_version sv ON ss.versionid=sv.versionid AND sv.status='Published'
@@ -15824,6 +16154,7 @@ def api_local_check_room_conflicts():
                        las.faculty_employeenumber AS employeenumber, las.official_sessionid,
                        TO_CHAR(ts1.timevalue,'HH12:MI AM') AS start_fmt,
                        TO_CHAR(ts2.timevalue,'HH12:MI AM') AS end_fmt,
+                       las.starttimeid, las.endtimeid,
                        COALESCE(f.lastname||', '||f.firstname,'—') AS instructor
                 FROM public.local_arrangement la
                 JOIN public.local_arrangement_sessions las ON las.arrangementid=la.arrangementid
@@ -15875,6 +16206,7 @@ def api_local_check_room_conflicts():
                            ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS employeenumber,
                            TO_CHAR(ts1.timevalue,'HH12:MI AM') AS start_fmt,
                            TO_CHAR(ts2.timevalue,'HH12:MI AM') AS end_fmt,
+                           ss.starttimeid, ss.endtimeid,
                            COALESCE(f.lastname||', '||f.firstname,'—') AS instructor
                     FROM public.schedule_sessions ss
                     JOIN public.schedule_version sv ON ss.versionid=sv.versionid
@@ -16142,6 +16474,13 @@ def get_room_schedule(room_id):
             """, (room_id,))
             result_rows.extend(dict(m) for m in (cur.fetchall() or []))
 
+        # Group model (P5): each row carries its merged-event key, so the editor exempts
+        # only the same merged class of another member section — never an outsider.
+        _mpol = _merge_occupancy_policy(ay_id, semester)
+        if _mpol is not None:
+            import merge_groups as _mg
+            _mg.annotate_event_keys(_mpol, result_rows, room_id=room_id)
+
         return jsonify(result_rows)
     except Exception as e:
         print(f"Error fetching room schedule: {e}")
@@ -16185,10 +16524,14 @@ def api_rooms_occupancy_by_day():
         # Official editor occupancy. Draft Official rows are intentionally kept;
         # only Published Official occurrences can be superseded by Published Local.
         official_rows = query_db(f"""
-            SELECT ss.roomid, ss.starttimeid, ss.endtimeid
+            SELECT ss.roomid, ss.starttimeid, ss.endtimeid, ss.daydesc,
+                   s.sectionid AS section_id, cs_o.subjectcode,
+                   COALESCE(sv.employeenumber, s.employeenumber) AS employee_number,
+                   ss.sessionid, ss.versionid
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
             JOIN schedule s ON sv.scheduleid = s.scheduleid
+            JOIN curriculumsubject cs_o ON cs_o.curriculumsubjectid = s.curriculumsubjectid
             {joins}
             WHERE ss.daydesc = %s
               AND sv.status IN ('Published', 'Draft')
@@ -16239,11 +16582,31 @@ def api_rooms_occupancy_by_day():
         """, tuple(local_params)) or []
 
         occupancy = {}
-        for r in list(official_rows) + list(local_rows):
-            occupancy.setdefault(str(r['roomid']), []).append({
+        # Group model (P5): official ranges carry their merged-event key and section.
+        _mpol = _merge_occupancy_policy(ay_id, semester)
+        _keys = {}
+        if _mpol is not None:
+            import merge_groups as _mg
+            _ann = _mg.annotate_event_keys(_mpol, [dict(r) for r in official_rows])
+            _keys = {i: a['merge_event'] for i, a in enumerate(_ann)}
+        for i, r in enumerate(list(official_rows) + list(local_rows)):
+            rng = {
                 'startIdx': (r['starttimeid'] or 1) - 1,
                 'endIdx': (r['endtimeid'] or 1) - 1,
-            })
+            }
+            # Official rows: which booking this is, so the editor can skip the slice's own
+            # saved booking and rows it has already moved (hidden) when listing free rooms.
+            if r.get('sessionid') is not None:
+                rng['sessionid'] = r['sessionid']
+                rng['versionid'] = r.get('versionid')
+            if _mpol is not None:
+                rng['merge_event'] = _keys.get(i)
+                rng['section_id'] = r.get('section_id')
+                # P7: the editor offers an occupied slot as a merge when it is the same
+                # subject with the same faculty (or TBA) in another section.
+                rng['subjectcode'] = (r.get('subjectcode') or '').upper() or None
+                rng['employee_number'] = r.get('employee_number')
+            occupancy.setdefault(str(r['roomid']), []).append(rng)
 
         return jsonify(occupancy)
     except Exception as e:
@@ -16597,7 +16960,7 @@ def api_manual_faculty_schedule():
             rows = query_db(f"""
                 SELECT cs.subjectcode, cs.subjectname, ss.daydesc, ss.starttimeid, ss.endtimeid, sv.status,
                        ts_s.timevalue AS starttimevalue, ts_e.timevalue AS endtimevalue,
-                       r.roomname, sec.sectionname, sec.sectionid AS section_id,
+                       r.roomname, ss.roomid, sec.sectionname, sec.sectionid AS section_id,
                        pyl.programcode, pyl.yearlevel, sc.employeenumber AS employee_number,
                        ss.sessionid AS official_sessionid, 'Official' AS schedule_source
                 FROM schedule_sessions ss
@@ -16634,7 +16997,7 @@ def api_manual_faculty_schedule():
             official = query_db(f"""
                 SELECT cs.subjectcode, cs.subjectname, ss.daydesc, ss.starttimeid, ss.endtimeid, sv.status,
                        ts_s.timevalue AS starttimevalue, ts_e.timevalue AS endtimevalue,
-                       r.roomname, sec.sectionname, sec.sectionid AS section_id,
+                       r.roomname, ss.roomid, sec.sectionname, sec.sectionid AS section_id,
                        pyl.programcode, pyl.yearlevel, sc.employeenumber AS employee_number,
                        ss.sessionid AS official_sessionid, 'Official' AS schedule_source
                 FROM schedule_sessions ss
@@ -16689,6 +17052,12 @@ def api_manual_faculty_schedule():
                     d[_k] = _v.strftime('%H:%M:%S')
             result.append(d)
         result.sort(key=lambda x: (str(x.get('daydesc') or ''), str(x.get('starttimevalue') or '')))
+        # Group model (P5): merged-event key per row (same-event rows of another member
+        # section do not block this faculty; everything else does).
+        _mpol = _merge_occupancy_policy(ay_id, semester)
+        if _mpol is not None:
+            import merge_groups as _mg
+            _mg.annotate_event_keys(_mpol, result)
         return jsonify(result)
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -17825,25 +18194,36 @@ def api_merge_load_policy_subject_preview():
     finally:
         cur.close(); conn.close()
 
+def _hc17_policy_groups(cur, policy_ids):
+    """{policyid: [mapped Merge Group summary]} (merge_groups owns the group tables)."""
+    import merge_groups as _mg
+    return _mg.hc17_policy_groups(cur, policy_ids)
+
+
 @app.route('/admin/settings/merge_load_policies', methods=['GET'])
 def api_list_merge_load_policies():
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         _ensure_merge_load_policy_table(cur)
+        import merge_groups as _mg
+        _mg.ensure_hc17_schema(cur)
         cur.execute("""
-            SELECT policyid, subjectcode, min_sections, max_sections
+            SELECT policyid, policyname, subjectcode, min_sections, max_sections
             FROM public.merge_load_policy
             ORDER BY subjectcode, min_sections
         """)
         rows = [dict(r) for r in cur.fetchall()]
+        mapped = _hc17_policy_groups(cur, [r['policyid'] for r in rows])
         for r in rows:
             info = _subject_load_info(cur, r['subjectcode'])
             r['subjectname']  = info.get('subjectname') or (
                 'National Service Training Program (all variants)' if r['subjectcode'] == 'NSTP' else None)
             r['creditunits']  = info.get('creditunits')
             r['tuitionhours'] = info.get('tuitionhours')
+            r['groups']       = mapped.get(r['policyid'], [])
         conn.commit()
-        return jsonify({'success': True, 'policies': rows})
+        cfg = load_scheduler_config()
+        return jsonify({'success': True, 'policies': rows, 'model': _mg.merge_model(cfg)})
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -17863,7 +18243,9 @@ def _validate_merge_policy_payload(data):
         return None, 'Minimum merged sections must be at least 2 (a single section is not a merge).'
     if max_sections < min_sections:
         return None, 'Maximum merged sections must be greater than or equal to the minimum.'
-    return {'subjectcode': subjectcode, 'min_sections': min_sections, 'max_sections': max_sections}, None
+    policyname = ' '.join(str(data.get('policyname') or '').split())[:100] or None
+    return {'subjectcode': subjectcode, 'min_sections': min_sections, 'max_sections': max_sections,
+            'policyname': policyname}, None
 
 @app.route('/admin/settings/merge_load_policies', methods=['POST'])
 def api_create_merge_load_policy():
@@ -17885,10 +18267,12 @@ def api_create_merge_load_policy():
                 return jsonify({'success': False, 'error':
                     f"This range overlaps an existing rule for {payload['subjectcode']} "
                     f"({r['min_sections']}–{r['max_sections']} sections)."}), 400
+        import merge_groups as _mg
+        _mg.ensure_hc17_schema(cur)
         cur.execute("""
-            INSERT INTO public.merge_load_policy (subjectcode, min_sections, max_sections)
-            VALUES (%s, %s, %s) RETURNING policyid
-        """, (payload['subjectcode'], payload['min_sections'], payload['max_sections']))
+            INSERT INTO public.merge_load_policy (subjectcode, min_sections, max_sections, policyname)
+            VALUES (%s, %s, %s, %s) RETURNING policyid
+        """, (payload['subjectcode'], payload['min_sections'], payload['max_sections'], payload['policyname']))
         new_id = cur.fetchone()['policyid']
         conn.commit()
         return jsonify({'success': True, 'policyid': new_id})
@@ -17918,16 +18302,127 @@ def api_update_merge_load_policy(policyid):
                 return jsonify({'success': False, 'error':
                     f"This range overlaps an existing rule for {payload['subjectcode']} "
                     f"({r['min_sections']}–{r['max_sections']} sections)."}), 400
-        cur.execute("""
-            UPDATE public.merge_load_policy
-            SET subjectcode=%s, min_sections=%s, max_sections=%s
-            WHERE policyid=%s
-        """, (payload['subjectcode'], payload['min_sections'], payload['max_sections'], policyid))
+        # Group model HC17: the new range must stay unambiguous on every Merge Group this
+        # policy is explicitly mapped to (the database trigger enforces the same rule).
+        import merge_groups as _mg
+        import psycopg2.errors as _pg_errors
+        _mg.ensure_hc17_schema(cur)
+        conflicts = _hc17_mapping_conflicts(cur, dict(payload, policyid=policyid), None)
+        if conflicts:
+            conn.rollback()
+            return jsonify({'success': False, 'conflicts': conflicts, 'error':
+                'This range would overlap another HC17 policy on: ' + '; '.join(
+                    f"{c['groupname']} ({c['policyname']} {c['range']} sections)" for c in conflicts)}), 409
+        try:
+            cur.execute("""
+                UPDATE public.merge_load_policy
+                SET subjectcode=%s, min_sections=%s, max_sections=%s, policyname=%s
+                WHERE policyid=%s
+            """, (payload['subjectcode'], payload['min_sections'], payload['max_sections'],
+                  payload['policyname'], policyid))
+        except _pg_errors.ExclusionViolation as e:
+            conn.rollback()
+            return jsonify({'success': False, 'error': f'Ambiguous HC17 policy range: {e.diag.message_primary}'}), 409
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({'success': False, 'error': 'Rule not found.'}), 404
         conn.commit()
         return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+def _hc17_mapping_conflicts(cur, policy, group_ids):
+    """Overlapping section-count ranges that mapping `policy` to `group_ids` would
+    create (group_ids None = the groups it is already mapped to)."""
+    import merge_groups as _mg
+    return _mg.hc17_mapping_conflicts(cur, policy, group_ids)
+
+
+@app.route('/admin/settings/merge_load_policies/<int:policyid>/groups', methods=['GET'])
+def api_merge_load_policy_groups(policyid):
+    """Mapping editor data for one HC17 policy: the Merge Groups it applies to, every
+    group it could apply to (current and future semesters), and SUGGESTIONS — groups
+    whose member subjects the LEGACY subject rule would have matched. Suggestions are
+    never applied automatically; the administrator confirms the mapping."""
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    import merge_groups as _mg
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_merge_load_policy_table(cur)
+        _mg.ensure_hc17_schema(cur)
+        cur.execute("SELECT policyid, policyname, subjectcode, min_sections, max_sections "
+                    "FROM public.merge_load_policy WHERE policyid = %s", (policyid,))
+        pol = cur.fetchone()
+        if not pol:
+            return jsonify({'success': False, 'error': 'Rule not found.'}), 404
+        semesters = [s for s in _mg.load_semesters(cur) if not s['ended']]
+        groups = _mg.load_groups(cur, load_scheduler_config(),
+                                 semester_ids=[s['semesterid'] for s in semesters]) if semesters else []
+        mapped = {g['mergegroupid'] for g in _hc17_policy_groups(cur, [policyid]).get(policyid, [])}
+        legacy_rules = {str(pol['subjectcode']).upper(): [dict(pol)]}
+        available = []
+        for g in groups:
+            codes = {m['subjectcode'] for m in g['members']} | {g['ref_subjectcode']}
+            suggested = any(_merge_policy_rules_for(c, legacy_rules) for c in codes)
+            available.append({'mergegroupid': g['mergegroupid'], 'groupname': g['groupname'],
+                              'semester_label': g['semester_label'], 'is_active': g['is_active'],
+                              'state': g['state'], 'ref_subjectcode': g['ref_subjectcode'],
+                              'ref_creditunits': g['ref_creditunits'], 'ref_teachinghours': g['ref_teachinghours'],
+                              'sections': len(g['members']), 'mapped': g['mergegroupid'] in mapped,
+                              'suggested': suggested and g['mergegroupid'] not in mapped})
+        conn.commit()
+        return jsonify(_mg.serialize({'success': True, 'policy': dict(pol), 'groups': available}))
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_load_policies/<int:policyid>/groups', methods=['PUT'])
+def api_set_merge_load_policy_groups(policyid):
+    """Replace the explicit set of Merge Groups this HC17 policy applies to. Rejected
+    when it would give any group two policies with overlapping section ranges."""
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    data = request.get_json(silent=True) or {}
+    try:
+        wanted = sorted({int(x) for x in (data.get('mergegroupids') or [])})
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'mergegroupids must be a list of ids.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_merge_load_policy_table(cur)
+        res = _mg.set_policy_groups(cur, policyid, wanted, username=session.get('username') or 'Admin')
+        if res.get('not_found'):
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Rule not found.'}), 404
+        if res.get('unknown_groups'):
+            conn.rollback()
+            return jsonify({'success': False, 'error': f"Unknown merge group(s): {res['unknown_groups']}"}), 400
+        if res.get('conflicts'):
+            conn.rollback()
+            return jsonify({'success': False, 'conflicts': res['conflicts'], 'error':
+                'Ambiguous HC17 configuration — overlapping section ranges on: ' + '; '.join(
+                    f"{c['groupname']} ({c['policyname']} {c['range']} sections)" for c in res['conflicts'])}), 409
+        pol = res['policy']
+        conn.commit()
+        write_activity_log('Updated HC17 Policy Groups',
+                           f"HC17 policy '{pol['policyname'] or pol['subjectcode']}' "
+                           f"({pol['min_sections']}–{pol['max_sections']} sections) now applies to "
+                           f"merge group id(s): {wanted or 'none'}",
+                           category='settings', color=_LOG_COLORS['settings'])
+        return jsonify({'success': True, 'mergegroupids': wanted})
+    except _pg_errors.ExclusionViolation as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': f'Ambiguous HC17 configuration: {e.diag.message_primary}'}), 409
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -17973,6 +18468,484 @@ def api_list_all_subjects():
         }]
         rows.sort(key=lambda r: (r.get('subjectcode') or '').upper())
     return jsonify({'subjects': rows})
+
+
+# ── HC16 Merge Groups (Settings → Class Merging) ─────────────────────────────────
+# P7: Settings lists merged classes (recorded from the Manual Editor's merge notice) and
+# lets an admin allow sections to merge in advance (/sets); unmerge removes a group or a
+# section. The discovery / dry-run endpoints below remain from P1 for diagnostics only.
+# (P1 note: under the legacy model nothing here changes scheduling —
+# HC10/HC11/HC16/HC17, generation, the Manual Editor and the
+# Local Scheduler keep using the legacy rules while the internal hc_merge_model
+# switch is 'legacy'; see merge_groups.py.)
+
+def _mg_admin_only():
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    return None
+
+
+def _mg_json(payload, status=200):
+    import merge_groups as _mg
+    return jsonify(_mg.serialize(payload)), status
+
+
+def _mg_semester_ids(cur, raw=None):
+    """(all semesters, selected semester ids): the requested one, else the active AY."""
+    import merge_groups as _mg
+    semesters = _mg.load_semesters(cur)
+    sem_id = _mg_int(raw) if raw not in (None, '') else None
+    if sem_id is not None:
+        return semesters, [sem_id]
+    active = [s['semesterid'] for s in semesters if s.get('isactive')]
+    return semesters, (active[:1] or _mg.default_semester_ids(semesters)[:1])
+
+
+def _mg_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mg_result_response(conn, result, ok_status=200):
+    if result.get('not_found'):
+        conn.rollback()
+        return _mg_json({'success': False, 'error': 'Merge group not found.'}, 404)
+    if result.get('needs_confirmation'):
+        conn.rollback()
+        return _mg_json({'success': False, 'needs_confirmation': True, 'impact': result.get('impact'),
+                         'state': result.get('state'), 'completeness': result.get('completeness')}, 409)
+    if not result.get('ok'):
+        conn.rollback()
+        return _mg_json({'success': False, 'errors': result.get('errors') or [],
+                         'error': '; '.join(result.get('errors') or []) or 'Invalid merge group.'}, 400)
+    conn.commit()
+    return _mg_json(dict(result, success=True), ok_status)
+
+
+def _mg_unique_violation_response(conn, exc):
+    conn.rollback()
+    name = getattr(getattr(exc, 'diag', None), 'constraint_name', '') or ''
+    msg = ('A section\'s subject can belong to only one active merge group.'
+           if 'section_subject' in name else
+           'Another merge group in this semester already uses that name.'
+           if 'uq_mg_name' in name else 'This merge group conflicts with an existing one.')
+    return _mg_json({'success': False, 'errors': [msg], 'error': msg}, 409)
+
+
+@app.route('/admin/settings/merge_groups', methods=['GET'])
+def api_list_merge_groups():
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cfg = _lsc()
+        _mg.ensure_schema(cur)
+        semesters, sem_ids = _mg_semester_ids(cur, request.args.get('semesterid'))
+        groups = _mg.load_groups(cur, cfg, semester_ids=sem_ids)
+        conn.commit()
+        return _mg_json({'success': True, 'model': _mg.merge_model(cfg),
+                         'legacy': _mg.legacy_config_view(cfg),
+                         'semesters': [{k: s[k] for k in ('semesterid', 'label', 'isactive', 'ended')}
+                                       for s in semesters],
+                         'selected_semesterid': sem_ids[0] if sem_ids else None,
+                         'groups': groups})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/options', methods=['GET'])
+def api_merge_group_options():
+    """Pickers for the Create/Edit form: subjects offered this semester (reference
+    subject), active faculty, active rooms, and HC6 time blocks mapped to timeslot ids."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cfg = _lsc()
+        _semesters, sem_ids = _mg_semester_ids(cur, request.args.get('semesterid'))
+        sem_id = sem_ids[0] if sem_ids else None
+        sections, subjects = _mg.load_offered(cur, sem_id) if sem_id else ({}, {})
+        offered_by = {}
+        for sec in sections.values():
+            for csid in sec['offered']:
+                offered_by.setdefault(csid, []).append(sec['label'])
+        subject_list = sorted(
+            [dict(subjects[c], sections=sorted(v)) for c, v in offered_by.items()],
+            key=lambda s: (_mg.norm_code(s['subjectcode']), s.get('curriculumyear') or ''))
+        timeslots = _mg.load_timeslots(cur)
+        by_time = {t: tid for tid, t in timeslots.items()}
+        blocks = _mg.valid_time_blocks(dict(cfg, hc_time_blocks_enabled=1)) or set()
+        block_list = sorted(
+            [{'start': s, 'end': e, 'starttimeid': by_time[s], 'endtimeid': by_time[e]}
+             for s, e in blocks if s in by_time and e in by_time],
+            key=lambda b: (b['start'], b['end']))
+        rooms = [r for r in _mg.load_rooms(cur).values() if r.get('isactive')]
+        faculty = [f for f in _mg.load_faculty(cur).values() if f.get('isactive')]
+        conn.commit()
+        return _mg_json({'success': True, 'semesterid': sem_id, 'subjects': subject_list,
+                         'blocks': block_list, 'rooms': rooms, 'faculty': faculty,
+                         'days': list(_mg.DAYS)})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/member_candidates', methods=['GET'])
+def api_merge_group_member_candidates():
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    sem_id = _mg_int(request.args.get('semesterid'))
+    ref_csid = _mg_int(request.args.get('ref_curriculumsubjectid'))
+    if sem_id is None or ref_csid is None:
+        return _mg_json({'success': False, 'error': 'semesterid and ref_curriculumsubjectid are required.'}, 400)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        out = _mg.member_candidates(cur, sem_id, ref_csid)
+        conn.commit()
+        return _mg_json(dict(out, success=True))
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/preview', methods=['POST'])
+def api_merge_group_preview():
+    """Validation + scheduling completeness + impact of a proposed save, without writing."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    group_id = _mg_int(data.get('mergegroupid'))
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        pv = _mg.preview(cur, data, _lsc(), group_id=group_id, action='save')
+        conn.rollback()
+        if pv.get('not_found'):
+            return _mg_json({'success': False, 'error': 'Merge group not found.'}, 404)
+        return _mg_json({'success': True, 'valid': not pv['errors'], 'errors': pv['errors'],
+                         'members': pv['members'], 'state': pv['state'],
+                         'completeness': pv['completeness'], 'impact': pv['impact']})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+def _mg_log_save(action, result, data):
+    overrides = result.get('overrides') or []
+    detail = f"{action} merge group '{(data or {}).get('groupname') or result.get('groupname') or ''}'"
+    if overrides:
+        detail += ' with subject-equivalence override(s): ' + '; '.join(
+            f"{m.get('label')} {m.get('subjectcode')} — {m.get('equivalence_note')}" for m in overrides)
+    write_activity_log(f'{action} Merge Group', detail, category='settings', color=_LOG_COLORS['settings'])
+
+
+@app.route('/admin/settings/merge_groups', methods=['POST'])
+def api_create_merge_group():
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _mg.save_group(cur, data, _lsc(), username=session.get('username') or 'Admin',
+                                confirm_impact=bool(data.get('confirm_impact')))
+        resp = _mg_result_response(conn, result, 201)
+        if result.get('ok'):
+            _mg_log_save('Created', result, data)
+        return resp
+    except _pg_errors.UniqueViolation as e:
+        return _mg_unique_violation_response(conn, e)
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/<int:group_id>', methods=['PUT'])
+def api_update_merge_group(group_id):
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _mg.save_group(cur, data, _lsc(), username=session.get('username') or 'Admin',
+                                group_id=group_id, confirm_impact=bool(data.get('confirm_impact')))
+        resp = _mg_result_response(conn, result)
+        if result.get('ok'):
+            _mg_log_save('Updated', result, data)
+        return resp
+    except _pg_errors.UniqueViolation as e:
+        return _mg_unique_violation_response(conn, e)
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/<int:group_id>/active', methods=['POST'])
+def api_set_merge_group_active(group_id):
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    active = bool(data.get('is_active'))
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _mg.set_group_active(cur, group_id, active, _lsc(),
+                                      username=session.get('username') or 'Admin',
+                                      confirm_impact=bool(data.get('confirm_impact')))
+        resp = _mg_result_response(conn, result)
+        if result.get('ok'):
+            write_activity_log('Activated Merge Group' if active else 'Deactivated Merge Group',
+                               f'Merge group #{group_id} {"activated" if active else "deactivated"}',
+                               category='settings', color=_LOG_COLORS['settings'])
+        return resp
+    except _pg_errors.UniqueViolation as e:
+        return _mg_unique_violation_response(conn, e)
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/<int:group_id>', methods=['DELETE'])
+def api_delete_merge_group(group_id):
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    confirm = bool(data.get('confirm_impact')) or request.args.get('confirm_impact') in ('1', 'true')
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _mg.delete_group(cur, group_id, _lsc(), confirm_impact=confirm)
+        resp = _mg_result_response(conn, result)
+        if result.get('ok'):
+            write_activity_log('Deleted Merge Group', f"Deleted merge group '{result.get('groupname')}'",
+                               category='settings', color=_LOG_COLORS['settings'])
+        return resp
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/sections', methods=['GET'])
+def api_merge_group_sections():
+    """P7 merge-set picker: every section of the semester's academic year, by program."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _semesters, sem_ids = _mg_semester_ids(cur, request.args.get('semesterid'))
+        sem_id = sem_ids[0] if sem_ids else None
+        sections, _subjects = _mg.load_offered(cur, sem_id) if sem_id else ({}, {})
+        rows = sorted(({'sectionid': s['sectionid'], 'label': s['label'], 'programcode': s['programcode'],
+                        'yearlevel': s['yearlevel'], 'sectionname': s['sectionname'],
+                        'subject_count': len(s['offered'])}
+                       for s in sections.values() if s.get('isactive', True)),
+                      key=lambda s: (str(s['programcode']), s['yearlevel'] or 0, str(s['sectionname'])))
+        conn.commit()
+        return _mg_json({'success': True, 'semesterid': sem_id, 'sections': rows})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/common_subjects', methods=['GET'])
+def api_merge_group_common_subjects():
+    """P7: subjects every selected section takes (same code, or same name and hours)."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    sem_id = _mg_int(request.args.get('semesterid'))
+    ids = [_mg_int(x) for x in (request.args.get('section_ids') or '').split(',') if x.strip()]
+    if sem_id is None:
+        return _mg_json({'success': False, 'error': 'semesterid is required.'}, 400)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        out = _mg.common_subjects(cur, sem_id, [i for i in ids if i is not None])
+        conn.commit()
+        return _mg_json({'success': True, 'subjects': out})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/sets', methods=['POST'])
+def api_create_merge_set():
+    """P7: allow sections to merge — the chosen subjects (or every common subject)
+    become Merge Groups without meetings; the merged class is made in the Manual Editor."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _mg.ensure_schema(cur)
+        result = _mg.create_merge_set(cur, _lsc(), data.get('semesterid'), data.get('section_ids') or [],
+                                      data.get('subject_keys') or None,
+                                      username=session.get('username') or 'Admin')
+        conn.commit()
+        names = [g['groupname'] for g in result['created']] + [g['groupname'] for g in result['extended']]
+        if names:
+            write_activity_log('Created Merge Set', 'Sections allowed to merge: ' + '; '.join(names),
+                               category='settings', color=_LOG_COLORS['settings'])
+        return _mg_json(dict(result, success=True), 201)
+    except _mg.MergeApplyError as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e), 'errors': [str(e)]}, 400)
+    except _pg_errors.UniqueViolation as e:
+        return _mg_unique_violation_response(conn, e)
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/<int:group_id>/members/<int:section_id>', methods=['DELETE'])
+def api_remove_merge_group_member(group_id, section_id):
+    """P7: unmerge one section (a group left with one section is deleted)."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _mg.remove_member(cur, group_id, section_id, username=session.get('username') or 'Admin')
+        resp = _mg_result_response(conn, result)
+        if result.get('ok'):
+            write_activity_log('Unmerged Section', f"Removed section #{section_id} from merge group "
+                               f"'{result.get('groupname')}'" + (' (group deleted)' if result.get('deleted_group') else ''),
+                               category='settings', color=_LOG_COLORS['settings'])
+        return resp
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/discovery', methods=['GET'])
+def api_merge_group_discovery():
+    """Read-only migration preview: candidate groups from merges the legacy rule accepts."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _semesters, sem_ids = _mg_semester_ids(cur, request.args.get('semesterid'))
+        out = _mg.discovery(cur, sem_ids, _lsc())
+        conn.rollback()
+        return _mg_json(dict(out, success=True, semester_ids=sem_ids))
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/discovery/confirm', methods=['POST'])
+def api_merge_group_discovery_confirm():
+    """Create the candidates the administrator reviewed and selected (origin='migrated').
+    Each is validated like a normal create; one failing candidate does not block the rest."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    from database import load_scheduler_config as _lsc
+    data = request.get_json(silent=True) or {}
+    cfg = _lsc()
+    user = session.get('username') or 'Admin'
+    results = []
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        for i, cand in enumerate(data.get('candidates') or []):
+            cur.execute('SAVEPOINT mg_confirm')
+            try:
+                r = _mg.save_group(cur, cand, cfg, username=user, origin='migrated',
+                                   confirm_impact=bool(data.get('confirm_impact')))
+            except _pg_errors.UniqueViolation:
+                cur.execute('ROLLBACK TO SAVEPOINT mg_confirm')
+                results.append({'index': i, 'ok': False,
+                                'errors': ['Conflicts with an existing merge group.']})
+                continue
+            if r.get('ok'):
+                cur.execute('RELEASE SAVEPOINT mg_confirm')
+            else:
+                cur.execute('ROLLBACK TO SAVEPOINT mg_confirm')
+            results.append(dict(r, index=i, groupname=cand.get('groupname')))
+        conn.commit()
+        created = [r for r in results if r.get('ok')]
+        if created:
+            write_activity_log('Imported Merge Groups',
+                               f'Created {len(created)} merge group(s) from legacy merge discovery: '
+                               + ', '.join(str(r.get('groupname')) for r in created),
+                               category='settings', color=_LOG_COLORS['settings'])
+        return _mg_json({'success': True, 'created': len(created), 'results': results})
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/merge_groups/dry_run', methods=['GET'])
+def api_merge_group_dry_run():
+    """What HC10/HC11/HC16 would report under the group model vs the legacy rule.
+    Read-only; nothing is enforced while hc_merge_model is 'legacy'."""
+    denied = _mg_admin_only()
+    if denied: return denied
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cfg = _lsc()
+        _semesters, sem_ids = _mg_semester_ids(cur, request.args.get('semesterid'))
+        report = _mg.dry_run_report(cur, sem_ids, cfg)
+        conn.rollback()
+        return _mg_json(dict(report, success=True, model=_mg.merge_model(cfg), semester_ids=sem_ids))
+    except Exception as e:
+        conn.rollback()
+        return _mg_json({'success': False, 'error': str(e)}, 500)
+    finally:
+        cur.close(); conn.close()
 
 @app.route('/api/manual/assign_faculty', methods=['GET'])
 def api_manual_get_assignments():
@@ -18316,6 +19289,113 @@ def api_manual_existing_sessions():
             return jsonify({'success': True, 'sessions': [], 'removed_in_draft': True})
         rows = [dict(r) for r in pub_rows]
     return jsonify({'success': True, 'sessions': rows})
+
+
+# Every table merge_groups.policy_for reads (load_groups -> load_validation_context,
+# load_hc17_rules). The Manual Editor hits the occupancy endpoints many times per
+# action and rebuilding the policy (every group + the whole offered curriculum) is
+# ~95% of their time, so the read-only occupancy policy is reused while none of these
+# tables' contents (nor the config / date) changed. Content-hashed, not timestamp-based,
+# so it also sees uncommitted changes made on the same connection.
+_MERGE_POLICY_TABLES = (
+    'academicyear', 'building', 'curriculum', 'curriculumsubject', 'faculty',
+    'merge_group', 'merge_group_meeting', 'merge_group_member', 'merge_load_policy',
+    'merge_load_policy_group', 'program_yearlevel', 'room', 'sections', 'semester', 'timeslot',
+)
+_merge_occ_policy_cache = {}   # (ay_id, semester) -> (signature, policy)
+
+
+def _merge_policy_data_signature():
+    present = [r['relname'] for r in query_db(
+        "SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace "
+        "AND relkind = 'r' AND relname = ANY(%s)", (list(_MERGE_POLICY_TABLES),))]
+    if not present:
+        return ()
+    row = query_db('SELECT ' + ', '.join(
+        f"(SELECT count(*)::text || ':' || COALESCE(SUM(hashtext(t::text)::bigint), 0)::text "
+        f"FROM public.{name} t) AS {name}" for name in sorted(present)), one=True)
+    return tuple(sorted(dict(row).items()))
+
+
+def _merge_occupancy_policy(ay_id, semester):
+    """Group model: the term's HC16 policy for stamping occupancy rows with their
+    merged-event key (merge_groups.annotate_event_keys); None under the legacy model."""
+    import merge_groups as _mg
+    cfg = load_scheduler_config()
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS or not ay_id or not semester:
+        return None
+    key = (str(ay_id), str(semester))
+    try:
+        sig = (date.today().isoformat(), json.dumps(cfg, sort_keys=True, default=str),
+               _merge_policy_data_signature())
+    except Exception as e:
+        print(f"[merge occupancy] signature unavailable, loading uncached: {e}")
+        sig = None
+    hit = _merge_occ_policy_cache.get(key)
+    if sig is not None and hit and hit[0] == sig:
+        return hit[1]
+    try:
+        policy = _merge_policy_for(cfg, ay=ay_id, term=semester)
+    except Exception as e:
+        print(f"[merge occupancy] policy unavailable: {e}")
+        return None
+    if sig is not None:
+        _merge_occ_policy_cache[key] = (sig, policy)
+    return policy
+
+
+@app.route('/api/manual/merge_context', methods=['GET', 'POST'])
+def api_manual_merge_context():
+    """Manual Editor (P5): server-provided Merge Group metadata for ONE section.
+
+    Legacy model: {'model': 'legacy'} — the editor keeps its legacy merge behavior.
+    Group model: per merged subject the group name, faculty mode, designated faculty,
+    sections, meetings (with opaque event keys), group state/reason and this section's
+    sync status; per posted slice its sync state (in_sync / out_of_sync / unscheduled),
+    event key, expected vs actual and faculty issue; plus a RESET TO GROUP SLOT plan
+    that touches only this section's editor state. Read-only: never writes anything."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    import merge_groups as _mg
+    data = (request.get_json(silent=True) or {}) if request.method == 'POST' else {}
+    args = request.args
+    ay_id = data.get('ay_id') or args.get('ay_id')
+    sem = data.get('semester') or args.get('semester')
+    section_id = data.get('section_id') or args.get('section_id')
+    rows = data.get('rows') or []
+    cfg = load_scheduler_config()
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS:
+        return jsonify({'success': True, 'model': _mg.MODEL_LEGACY})
+    try:
+        section_id = int(section_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': True, 'model': _mg.MODEL_GROUPS, 'section_id': None,
+                        'subjects': {}, 'rows': {}})
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                    (ay_id, sem))
+        srow = cur.fetchone()
+        if not srow:
+            return jsonify({'success': True, 'model': _mg.MODEL_GROUPS, 'section_id': section_id,
+                            'subjects': {}, 'rows': {}})
+        # Lecture/Lab identity comes only from Merge Group meeting metadata (see
+        # merge_groups.editor_context) — never inferred from the room type.
+        for r in rows:
+            r.pop('class_type', None)
+        ctx = _mg.load_editor_context(cur, cfg, srow['semesterid'], section_id, rows)
+        subject_code = data.get('subject_code') or args.get('subject_code')
+        # The open subject's entry, resolved server-side (the editor never normalizes codes).
+        ctx['current'] = ctx.get('subjects', {}).get(_mg.norm_code(subject_code)) if subject_code else None
+        conn.commit()
+        return jsonify(dict(_mg.serialize(ctx), success=True))
+    except Exception as e:
+        conn.rollback()
+        import traceback; traceback.print_exc()
+        return jsonify({'success': False, 'error': f'Merge Group context unavailable: {e}'}), 500
+    finally:
+        cur.close(); conn.close()
 
 
 @app.route('/api/manual/section_schedule')
@@ -19774,6 +20854,9 @@ def admin_api_edit_employee():
                 SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
             WHERE EmployeeNumber=%s
         """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({'success': False, 'error': f'Faculty {emp_num} was not found. It may have been archived or removed.'}), 404
 
 
         role = 'Faculty'
@@ -22965,24 +24048,8 @@ def admin_settings():
         _max_ye = cur.fetchone()
         max_existing_year_end = int(_max_ye[0]) if _max_ye and _max_ye[0] else 0
 
-        # Sections for the Class Merging "allowed section pairings" picker (Hard
-        # Constraints). This lives on the Settings page but section data is now
-        # owned by the separate Program Management page, so fetch a lightweight
-        # copy here scoped to the current active AY.
-        cur.execute("""
-            SELECT sec.sectionname, pyl.programcode, pyl.yearlevel
-            FROM   sections sec
-            JOIN   program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-            JOIN   programs p ON pyl.programcode = p.programcode
-            WHERE  sec.isactive = TRUE AND p.isactive = TRUE
-              AND  pyl.academicyearid = (
-                       SELECT academicyearid FROM academicyear
-                       WHERE isactive = TRUE ORDER BY yearstart DESC LIMIT 1
-                   )
-            ORDER  BY pyl.programcode, pyl.yearlevel, sec.sectionname
-        """)
-        merge_sections = to_dict(cur)
-
+        # HC16 Merge Groups load their own data (/admin/settings/merge_groups*); the old
+        # "allowed section pairings" picker and its section list are gone.
         return render_template('admin/settings_admin.html',
                                ay_list=ay_data, emp_types=emp_types,
                                designations=designations, designee_base=designee_base,
@@ -22992,8 +24059,7 @@ def admin_settings():
                                activity_logs=activity_logs,
                                current_ay_label=current_ay_label,
                                current_sem_label=current_sem_label,
-                               max_existing_year_end=max_existing_year_end,
-                               merge_sections=merge_sections)
+                               max_existing_year_end=max_existing_year_end)
     except Exception as e:
         flash(f"Error loading settings: {e}", "error")
         return redirect(url_for('admin_dashboard'))
@@ -23868,8 +24934,10 @@ def get_hard_constraints():
     from database import load_scheduler_config
     try:
         cfg = load_scheduler_config()
-        # Return only hc_* keys (plus a few numeric ones the UI needs)
-        result = {k: v for k, v in cfg.items() if k.startswith('hc_')}
+        # Return only hc_* keys (plus a few numeric ones the UI needs). The internal HC16
+        # cutover switch is never exposed to the Settings form.
+        import merge_groups as _mg
+        result = {k: v for k, v in cfg.items() if k.startswith('hc_') and k != _mg.MODEL_KEY}
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -23879,10 +24947,14 @@ def save_hard_constraints():
     if session.get('role') != 'Admin':
         return jsonify({'error': 'Unauthorized'}), 403
     data = request.get_json(silent=True) or {}
+    # HC16 redesign: the internal cutover switch is never writable here, and the legacy
+    # merge scope/pair keys are frozen (still enforced under 'legacy', read-only until
+    # the migration to Merge Groups is confirmed and they are retired).
+    import merge_groups as _mg
     conn = get_db_connection(); cur = conn.cursor()
     try:
         for key, val in data.items():
-            if not key.startswith('hc_'):
+            if not key.startswith('hc_') or key in _mg.FROZEN_CONFIG_KEYS:
                 continue
             # Ensure scheduler_config table exists
             cur.execute("""
@@ -27071,6 +28143,7 @@ _RPT_TITLES = {
     'curriculum':     'Curriculum List',
     'rooms':          'Room and Building List',
     'assignments':    'Teaching Assignment',
+    'faculty_subject':'Subject/Faculty Assignment',
     'offerings':      'Academic Offerings',
     'programs':       'Program List',
 }
@@ -27082,6 +28155,7 @@ _RPT_FILENAMES = {
     'curriculum':     'Curriculum_List',
     'rooms':          'Room_Building_List',
     'assignments':    'Teaching_Assignment',
+    'faculty_subject':'Faculty_Subject_Assignment',
     'offerings':      'Academic_Offerings',
     'programs':       'Program_List',
 }
@@ -27170,6 +28244,7 @@ def report_preview(report_type):
         'building': request.args.get('building'),
         'room_type':request.args.get('room_type'),
         'layout':   request.args.get('layout'),
+        'faculty_types':  request.args.getlist('faculty_types'),
     }
     # Remove empty values so JS payload is clean
     filter_params = {k: v for k, v in params.items() if v}
@@ -27203,6 +28278,7 @@ def report_preview(report_type):
     # Building → Room — built from _bldg_report_context instead of the
     # generic flat one-row-per-room table.
     bldg_groups = []
+    facsub_groups, facsub_title_lines = [], []
 
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -27333,6 +28409,22 @@ def report_preview(report_type):
                     room_calendar_view.append(bldg_entry)
 
             columns, sections = [], None
+        elif report_type == 'faculty_subject':
+            # Subject/Faculty Assignment — same data prep as its export
+            # (_facsub_report_context), so Preview shows exactly what is exported.
+            rows = []
+            if session.get('role') in _FACSUB_ROLES:
+                ay_ids    = _as_list(params.get('ay_ids'))
+                sem_types = _as_list(params.get('sem_types'))
+                rows, facsub_groups, fs_sem, fs_ay = _facsub_report_context(
+                    cur, ay_ids, sem_types, _as_list(params.get('faculty_types')))
+                facsub_groups = [g for g in facsub_groups if g['faculty']]
+                facsub_title_lines = _facsub_official_title_lines(fs_sem, fs_ay)
+                for g in facsub_groups:
+                    for fac in g['faculty']:
+                        fac['cells'] = [[r.get('SubjectCode') or '', r.get('SubjectDescription') or '',
+                                         _facsub_course_label(r), r.get('Hours') or 0] for r in fac['rows']]
+            columns, sections = [], None
         elif report_type == 'curriculum':
             programs_f     = _as_list(params.get('programs')) or ([params['prog']] if params.get('prog') else [])
             curriculum_ids = [int(v) for v in _as_list(params.get('curriculum_ids')) if str(v).strip()]
@@ -27356,6 +28448,7 @@ def report_preview(report_type):
         room_view, room_calendar_view = [], []
         curr_groups = []
         bldg_groups = []
+        facsub_groups = []
         import traceback; traceback.print_exc()
     finally:
         cur.close(); conn.close()
@@ -27469,6 +28562,7 @@ def report_preview(report_type):
         ('Year Level',    params.get('year_levels'),    None),
         ('Curriculum',    params.get('curriculum_ids'), curr_lookup),
         ('Building',      params.get('building_ids'),   bldg_lookup),
+        ('Faculty Type',  params.get('faculty_types'),  None),
     ]
     active_filters += [
         chip for (label, vals, lkp) in multi_chip_map
@@ -27539,6 +28633,10 @@ def report_preview(report_type):
         # same design principle as the other "official report" types above.
         bldg_groups       = bldg_groups,
         bldg_headers      = _BLDG_RPT_HEADERS,
+        # Subject/Faculty Assignment — Faculty Type → Faculty grouped layout,
+        # mirroring _facsub_gen_xlsx/docx/pdf.
+        facsub_groups      = facsub_groups,
+        facsub_title_lines = facsub_title_lines,
         # RPT_DATA dropdown sources for the "Modify Filters" panel — see fetch above.
         ay_list          = ay_list,
         programs         = programs,
@@ -27603,6 +28701,20 @@ def report_export(report_type):
         'building': payload.get('building'),
         'room_type':payload.get('room_type'),
     }
+
+    if report_type == 'faculty_subject':
+        if session.get('role') not in _FACSUB_ROLES:
+            return jsonify({'error': 'Unauthorized'}), 403
+        conn = get_db_connection()
+        cur  = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            return _facsub_export_response(cur, _as_list(payload.get('ay_ids')), _as_list(payload.get('sem_types')),
+                                           _as_list(payload.get('faculty_types')), formats, filename)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+        finally:
+            cur.close(); conn.close()
 
     # For class_schedule, delegate to the exact same data-prep + generator
     # dispatch the Class Schedule SIS tab's own Export Schedule button uses
@@ -28385,10 +29497,17 @@ def api_faculty_update_request(req_type, req_id):
                 eff_from = data.get('start_date') or None
                 end_date = data.get('end_date') or None
                 existing = query_db(
-                    "SELECT requestid, scheduleid FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
+                    "SELECT requestid, scheduleid, official_sessionid FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
                     [req_id, emp_num], one=True)
                 if not existing:
                     return jsonify({'success': False, 'error': 'Request not found or not editable.'}), 404
+                # HC16 group model (P6): editing cannot keep a Merge Group-locked request alive.
+                _merge_locked = _merged_occurrence_restrictions(
+                    None, [(existing.get('official_sessionid'), {'daydesc': new_day, 'starttimeid': start_tid,
+                                                                 'endtimeid': end_tid, 'roomid': rid})],
+                    action='Schedule Adjustment request', targeted=True)
+                if _merge_locked:
+                    return _merged_restriction_response(_merge_locked)
                 _dur_err = _check_duration(existing.get('scheduleid'))
                 if _dur_err:
                     return jsonify({'success': False, 'error': _dur_err}), 400
@@ -28609,7 +29728,13 @@ def _local_teaching_sessions(cur, emp_num, ay_id, sem):
                LPAD(EXTRACT(HOUR FROM ts_e.timevalue)::text,2,'0') AS time_code,
                TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
                ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
-               COALESCE(r.roomname,'—') AS room
+               COALESCE(r.roomname,'—') AS room,
+               -- Merged-event identity (group model) — resolved by the same MergeIndex
+               -- as Official rows; Local adds no merge inference of its own.
+               las.faculty_employeenumber AS employeenumber,
+               las.roomid AS roomid,
+               TO_CHAR(ts_s.timevalue,'HH24:MI') AS start,
+               TO_CHAR(ts_e.timevalue,'HH24:MI') AS "end"
         FROM public.local_arrangement_sessions las
         JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
         LEFT JOIN LATERAL (
@@ -28677,7 +29802,9 @@ def api_faculty_my_teaching_load():
             sessions = _local_teaching_sessions(cur, emp_num, ay_id, sem)
         else:
             sessions = faculty_load.get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=True)
-        buckets = faculty_load.compute_load_buckets(sessions, fac, config=load_scheduler_config())
+        # Group model: merged classes credited by the shared HC17 calculation (the same
+        # numbers HC9 enforces); legacy: unchanged.
+        buckets = faculty_load.compute_load_buckets(sessions, fac, config=_load_cfg_for(ay_id, sem, cur=cur))
 
         cur.execute("""
             SELECT TO_CHAR(semstartdate,'MM/DD/YYYY') AS effectivity
@@ -28776,7 +29903,17 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
         # Published-only — the one existing "real scheduled hours" source in
         # the codebase (faculty_load.FACULTY_SESSIONS_SQL, published_only variant).
         sessions = faculty_load.get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=True)
-    buckets = faculty_load.compute_load_buckets(sessions, fac)
+    # Group model: the shared HC17 calculation (same merged-class credit as HC9 and
+    # the Faculty Load tab). Legacy: the previous call, unchanged.
+    import merge_groups as _mg_portal
+    _portal_cfg = _load_cfg_for(ay_id, sem, cur=cur)
+    _portal_group_mode = _mg_portal.policy_from_config(_portal_cfg) is not None
+    if _portal_group_mode:
+        buckets = faculty_load.compute_load_buckets(sessions, fac, config=_portal_cfg)
+    else:
+        buckets = faculty_load.compute_load_buckets(sessions, fac)
+    _session_hours = faculty_load.credited_session_hours(
+        sessions, _portal_cfg if _portal_group_mode else None)
 
 
     cur.execute("""
@@ -28800,14 +29937,18 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
     # Teaching load per day (hours), split Regular / Part-Time with the same
     # per-slice rule faculty_load uses for the Regular/PT buckets.
     per_day = {'regular': {}, 'part_time': {}}
-    for s in sessions:
+    for s, h in zip(sessions, _session_hours):
         day = s.get('days')
         if not day:
             continue
-        h = float(s.get('hrs') or 0)
-        is_reg = (not buckets['isPartTime']) and faculty_load.is_reg_slice(day, s.get('time_code'))
-        bucket = per_day['regular' if is_reg else 'part_time']
-        bucket[day] = round(bucket.get(day, 0) + h, 2)
+        if buckets['isPartTime']:
+            _rh, _ph = 0.0, h
+        else:
+            # Designees: split by time segment (2:00-5:00 PM = 2.5 h Regular + 0.5 h PT).
+            _rh, _ph = faculty_load._session_bucket_hours(s, h, buckets.get('isDesignee'), load_scheduler_config())
+        for _key, _hv in (('regular', _rh), ('part_time', _ph)):
+            if _hv > 0:
+                per_day[_key][day] = round(per_day[_key].get(day, 0) + _hv, 2)
 
 
     def _row(g):
@@ -29373,30 +30514,42 @@ def api_user_password_change():
     return _password_step(_change)
 
 
+def _email_step(fn):
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'unauthorized',
+                        'message': 'Please log in again.'}), 401
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Database connection failed.'}), 500
+    try:
+        return fn(conn, session['username'])
+    except _emailchange.EmailChangeError as ee:
+        return jsonify(ee.to_json()), ee.status
+    except Exception as e:
+        conn.rollback()
+        print(f"[email change] unexpected error: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Something went wrong. Please try again.'}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/user/email/request-code', methods=['POST'])
+def api_user_email_request_code():
+    # The code goes to the NEW address, proving the user can read it before it
+    # becomes the account email (where password codes are sent afterwards).
+    return _email_step(lambda c, u: jsonify(
+        _emailchange.request_code(c, u, request.form.get('email', ''), Config)))
+
 @app.route('/api/user/email/update', methods=['POST'])
 def api_user_email_update():
-    if 'loggedin' not in session: return jsonify({'success': False}), 401
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        username = session.get('username')
-        email    = request.form.get('email', '').strip()
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
-            return jsonify({'success': False, 'error': 'Please enter a valid email address.'}), 400
-        cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
-        acc = cur.fetchone()
-        emp_num = acc['employeenumber'] if acc else None
-        if emp_num:
-            cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s", (email, emp_num))
-        else:
-            # Standalone accounts with no faculty record (the system Admin) keep
-            # their own contact email on accounts — never on a faculty row.
-            cur.execute("UPDATE accounts SET email = %s WHERE username = %s AND employeenumber IS NULL",
-                        (email, username))
-        conn.commit()
-        return jsonify({'success': True})
-    except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
-    finally: cur.close(); conn.close()
+    def _confirm(c, u):
+        saved = _emailchange.confirm(c, u, request.form.get('email', ''), request.form.get('code', ''))
+        write_activity_log(action='Email Changed',
+                           details=f"{u} changed their email address (verified by email code)",
+                           category='account', color='blue')
+        return jsonify({'success': True, 'email': saved})
+    return _email_step(_confirm)
 
 # --- API: Faculty's own published-schedule assignments (for subject/section dropdown) ---
 @app.route('/api/faculty/my_assignments')
@@ -29902,6 +31055,15 @@ def api_faculty_submit_request():
                 if not occurrence:
                     return jsonify({'success': False,
                         'error': 'The selected Official meeting is no longer available. Please select it again.'}), 400
+
+                # HC16 group model (P6): a Merge Group member's meeting cannot be adjusted
+                # for one section (no-op under the legacy model).
+                _merge_locked = _merged_occurrence_restrictions(
+                    None, [(official_sessionid, {'daydesc': day, 'starttimeid': start_tid,
+                                                 'endtimeid': end_tid, 'roomid': rid})],
+                    action='Schedule Adjustment request', targeted=True)
+                if _merge_locked:
+                    return _merged_restriction_response(_merge_locked)
 
                 parts = []
                 if day:
@@ -30465,6 +31627,9 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
             'programcode':  cls.get('course') or cls.get('program') or cls.get('programcode')
                             or exclude_program,
             'section_name': cls.get('section_name') or cls.get('sectionname'),
+            # HC16 event identity (group model; ignored by the legacy calculation)
+            'room_id':      cls.get('room_id') or cls.get('roomid'),
+            'section_id':   cls.get('section_id') or cls.get('sectionid'),
         })
     if not submitted_rows:
         return []
@@ -30482,7 +31647,10 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
         sem_row = cur.fetchone()
         if not sem_row:
             raise LookupError(f'semester {sem_id} not found')
-        merge_cfg = load_scheduler_config()
+        # Group model: one HC16/HC17 policy for the existing batch AND the submitted rows
+        # (their section stamped from the context). Legacy: the plain config, unchanged.
+        merge_cfg = _load_cfg_for(sem_row['academicyearid'], sem_row['semestertype'], cur=cur,
+                                  sem_id=sem_id, section_id=_section_id_or_none(exclude_section_id))
         existing_loads = faculty_load.get_faculty_load_batch(
             cur, sem_row['academicyearid'], sem_row['semestertype'],
             exclude_program=(exclude_program or '').upper() or None,
@@ -30742,6 +31910,19 @@ def _rehydrate_schedule(schedule_data: list) -> list:
             cls['days_list'] = _parse_days(cls['days'])
         if 'day' not in cls and 'days_list' in cls and cls['days_list']:
             cls['day'] = cls['days_list'][0]
+        # One day for validation AND saving. The validators read day/days_list and skip a
+        # day-less row, but _insert_batch falls back to daydesc — so a row sent as
+        # day='' with a stale daydesc='Saturday' used to pass every conflict check and still
+        # be saved on Saturday (a room double-booking published unnoticed). day is the
+        # editor's current choice; daydesc only fills in when day is blank.
+        if not cls.get('day'):
+            _fallback_day = cls.get('daydesc') or (cls.get('days_list') or [None])[0]
+            if _fallback_day:
+                cls['day'] = _fallback_day
+        if cls.get('day'):
+            cls['daydesc'] = cls['day']
+            if not cls.get('days_list'):
+                cls['days_list'] = [cls['day']]
         # Normalize the hours field: manual editor sends 'units'; CSP validator
         # expects 'total_hours' or 'total_subject_hrs' for HC7 day-pairing check.
         if 'total_hours' not in cls and 'total_subject_hrs' not in cls:
@@ -31960,6 +33141,7 @@ _CONFLICT_RESOLUTION_LOCKS = {
     'HC12': ('schedule',),            # section overlap
     'HC13': ('room',),                # laboratory room
     'HC14': ('room',),                # room capacity
+    'HC16': ('schedule', 'room'),     # merged-class consistency (group model); faculty variants carry 'instructor'
     'HC17': ('faculty',),             # merged-class faculty load
 }
 _COMPONENT_TO_LOCK = {'instructor': 'faculty', 'faculty': 'faculty', 'room': 'room',
@@ -32200,10 +33382,27 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     # instantiating CSPValidator directly. Behavior-identical -- CSPValidator's
     # own config=None default already resolves to load_scheduler_config(),
     # the same source ConstraintService's SchedulingPolicy.load() reads.
-    all_violations  = ConstraintService.with_current_policy().validate_schedule(
-        hydrated, faculty_map, existing_load=existing_load
-    ).violations
-    hard_violations = [v for v in all_violations if v.get('severity') != 'warning']
+    # HC16 group model (P4): with the section known, the same merged-event policy the
+    # generator and Publish use reports merged-class VALIDITY findings here too. HC16 has
+    # no quality-score criterion (frozen weights unchanged) — it only affects validity
+    # (hardViolationCount / eligibleForApproval), and an incomplete finding that would
+    # block Publish counts as such. Legacy model: the previous call, unchanged.
+    import merge_groups as _mg_eval
+    _eval_cfg = load_scheduler_config()
+    _eval_pol = (_merge_policy_for(_eval_cfg, ay=acad_year, term=(term or '').strip().upper(),
+                                   section_id=_section_id_or_none(section_id))
+                 if acad_year and section_id else None)
+    if _eval_pol is None:
+        all_violations  = ConstraintService.with_current_policy().validate_schedule(
+            hydrated, faculty_map, existing_load=existing_load
+        ).violations
+    else:
+        all_violations  = ConstraintService(SchedulingPolicy(
+            _mg_eval.with_policy(_eval_cfg, _eval_pol))).validate_schedule(
+            hydrated, faculty_map, existing_load=existing_load
+        ).violations
+    hard_violations = [v for v in all_violations
+                       if v.get('severity') != 'warning' or v.get('blocks_publish')]
     # One de-duplicated hard-conflict source: the score, hardViolationCount,
     # row indicators and the Generation conflict panel all read from this.
     combined_hard, _seen_conflicts = [], set()
@@ -32663,8 +33862,193 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     }
 
 
+def _merge_policy_for(cfg, *, sem_id=None, ay=None, term=None, section_id=None, cur=None):
+    """HC16 group-model policy (merge_groups.GroupMergePolicy) for one semester, or
+    None under the legacy model — every caller then runs its unchanged legacy merge
+    code. `section_id` is stamped on payload rows that carry no section identity."""
+    import merge_groups as _mg
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS:
+        return None
+    if sem_id is None and ay and term:
+        row = query_db("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                       (ay, term), one=True)
+        sem_id = row['semesterid'] if row else None
+    return _mg.policy_for(cfg, [sem_id], cur=cur, default_section_id=section_id)
+
+
+def _merge_confirmation_gate(cur, cfg, sem_id, section_id, rows, data):
+    """P7 merge notice for Save Draft / Publish (group model only).
+
+    A submitted class placed exactly on another section's equivalent class (same day,
+    start, end, room; same faculty or TBA) is a merge. The first submission returns
+    (409 MERGE_CONFIRMATION_REQUIRED response, []) listing them; resubmitting with
+    `confirm_merges` records them with `cur` — inside the caller's transaction — and
+    returns (None, applied). (None, []) when nothing merges or under the legacy model.
+    Raises merge_groups.MergeApplyError when a confirmed merge cannot be stored."""
+    import merge_groups as _mg
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS or not section_id or not sem_id or not rows:
+        return None, []
+    found = _mg.detect_merges(cur, cfg, sem_id, section_id, rows)
+    if not found['merges']:
+        return None, []
+    if not data.get('confirm_merges'):
+        return (jsonify(_mg.serialize({
+            'success': False, 'code': 'MERGE_CONFIRMATION_REQUIRED',
+            'error': 'This schedule merges classes with another section. Confirm the merge to continue.',
+            'merges': found['merges'], 'merge_problems': found['problems'],
+            'notice': _mg.merge_notice_text(found['merges'])})), 409), []
+    applied = _mg.apply_merges(cur, cfg, sem_id, found['merges'],
+                               username=session.get('username') or 'Unknown')['applied']
+    return None, applied
+
+
+def _merge_apply_error_response(exc):
+    return jsonify({'success': False, 'code': 'MERGE_NOT_RECORDED',
+                    'error': f'The merge could not be recorded: {exc}'}), 409
+
+
+def _load_cfg_for(ay_id, sem, *, cur=None, section_id=None, sem_id=None):
+    """scheduler_config for one term's FACULTY-LOAD computation. Group model: carries
+    the term's HC16/HC17 policy, so every load surface (HC9, Faculty Load tab, faculty
+    portal, cross-program checks) credits merged classes through the one shared HC17
+    calculation. Legacy model: the plain config (callers keep their legacy calls)."""
+    import merge_groups as _mg
+    cfg = load_scheduler_config()
+    return _mg.with_policy(cfg, _merge_policy_for(cfg, sem_id=sem_id, ay=ay_id, term=sem,
+                                                  section_id=section_id, cur=cur))
+
+
+_MERGED_OCC_SQL = """
+    SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid,
+           sc.sectionid, sc.semesterid, UPPER(cs.subjectcode) AS subjectcode,
+           COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+           sec.sectionname, pyl.programcode, pyl.yearlevel
+    FROM schedule_sessions ss
+    JOIN schedule_version sv ON sv.versionid = ss.versionid
+    JOIN schedule sc ON sc.scheduleid = sv.scheduleid
+    JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+    LEFT JOIN sections sec ON sec.sectionid = sc.sectionid
+    LEFT JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+    WHERE ss.sessionid = ANY(%s)
+"""
+
+
+def _merged_occurrence_restrictions(cur, items, *, action, targeted=False, cfg=None):
+    """HC16 group model (P6): Merge Group restrictions on changing Official occurrences
+    through Local / Faculty Schedule Adjustment requests.
+
+    items: [(official_sessionid, proposed dict or None)]. Returns a list of
+    merge_groups.occurrence_change_restriction results (each carrying 'error',
+    'group', 'changes', 'official_sessionid') — [] under the legacy model, for
+    non-members, or when nothing is changed. Read-only; `cur` may be any cursor
+    (RealDict or plain)."""
+    import merge_groups as _mg
+    cfg = cfg if cfg is not None else load_scheduler_config()
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS:
+        return []
+    ids = sorted({int(i) for i, _p in items if str(i or '').isdigit()})
+    if not ids:
+        return []
+    own = None
+    if cur is None:                      # callers without a dict cursor of their own
+        own = get_db_connection()
+        k = own.cursor(cursor_factory=RealDictCursor)
+    else:
+        k = cur
+    try:
+        k.execute(_MERGED_OCC_SQL, (ids,))
+        occs = {r['sessionid']: dict(r) for r in k.fetchall() or []}
+        out, policies = [], {}
+        for sid, proposed in items:
+            occ = occs.get(int(sid)) if str(sid or '').isdigit() else None
+            if not occ:
+                continue
+            sem = occ['semesterid']
+            if sem not in policies:
+                policies[sem] = _merge_policy_for(cfg, sem_id=sem, cur=k)
+            r = _mg.occurrence_change_restriction(policies[sem], occ, proposed, action=action, targeted=targeted)
+            if r:
+                out.append(dict(r, official_sessionid=occ['sessionid']))
+        return out
+    finally:
+        if own is not None:
+            k.close(); own.close()
+
+
+def _local_proposed(sess):
+    """A Local session's proposed day/time/room/faculty for the merged-occurrence check."""
+    def _v(*keys):
+        return next((sess.get(k) for k in keys if sess.get(k) not in (None, '')), None)
+    return {'daydesc': _v('daydesc', 'day'), 'starttimeid': _v('starttimeid', 'start_time'),
+            'endtimeid': _v('endtimeid', 'end_time'), 'roomid': _v('roomid', 'room_id'),
+            'faculty_id': _v('faculty_id', 'faculty_employeenumber', 'facultyEmployeeNumber', 'employeenumber')}
+
+
+def _local_arrangement_merge_flags(cur, arrangement_ids):
+    """{arrangementid: [restriction]} for Local arrangements whose sessions change a
+    Merge Group member's Official occurrence (group model; {} under legacy). Flags
+    only — existing arrangements are never modified or archived here."""
+    import merge_groups as _mg
+    cfg = load_scheduler_config()
+    ids = [a for a in (arrangement_ids or []) if a is not None]
+    if _mg.merge_model(cfg) != _mg.MODEL_GROUPS or not ids:
+        return {}
+    own = None
+    if cur is None:
+        own = get_db_connection()
+        cur = own.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""SELECT arrangementid, daydesc, starttimeid, endtimeid, roomid,
+                              faculty_employeenumber, official_sessionid
+                       FROM public.local_arrangement_sessions
+                       WHERE arrangementid = ANY(%s) AND official_sessionid IS NOT NULL""", (list(ids),))
+        by_arr = {}
+        for r in cur.fetchall() or []:
+            by_arr.setdefault(r['arrangementid'], []).append(r)
+        out = {}
+        for arr_id, rows in by_arr.items():
+            found = _merged_occurrence_restrictions(
+                cur, [(r['official_sessionid'], _local_proposed(r)) for r in rows],
+                action='Local adjustment', cfg=cfg)
+            if found:
+                out[arr_id] = found
+        return out
+    finally:
+        if own is not None:
+            cur.close(); own.close()
+
+
+def _merged_restriction_response(restrictions, status=409):
+    """One consistent JSON rejection for Merge Group-locked occurrences."""
+    first = restrictions[0]
+    return jsonify({'success': False, 'error': first['error'], 'code': first['code'],
+                    'merge_restrictions': restrictions}), status
+
+
+def _hc16_member_faculty_conflicts(rows, policy, sem_id, section_id, cur=None):
+    """Group model: HC16_FACULTY between this section's rows and the OTHER member
+    sections' live (effective Published) occurrences of the same SAME_FACULTY
+    merged event. [] under the legacy model or without any group member."""
+    import merge_groups as _mg
+    from scheduler import _label_violation
+    if policy is None or not len(policy.index) or not sem_id:
+        return []
+    others = [s for s in policy.index.member_section_ids() if s != section_id]
+    if not others:
+        return []
+    if cur is None:
+        _c = get_db_connection(); _k = _c.cursor(cursor_factory=RealDictCursor)
+        try:
+            live = _mg.fetch_occurrences(_k, [sem_id], others, draft_preferred=False)
+        finally:
+            _k.close(); _c.close()
+    else:
+        live = _mg.fetch_occurrences(cur, [sem_id], others, draft_preferred=False)
+    return [_label_violation(v) for v in policy.faculty_conflicts(rows, live)]
+
+
 def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, acad_year_id, section_id=None,
-                                    fail_closed=False):
+                                    fail_closed=False, include_drafts=False):
     """
     Check a freshly-generated schedule (raw, with datetime.time objects) against
     existing Published sessions from OTHER sections in the same semester.
@@ -32673,6 +34057,9 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     Faculty conflict = same faculty, same day, overlapping time (different subject).
     Admin Settings can switch HC15 off entirely, and HC10/HC11/HC12 per dimension
     (Official scheduling only -- Local/request checks never read these switches).
+    include_drafts=True (Publish only): OTHER sections' saved Draft sessions also
+    reserve their room/faculty, so a publish cannot take a slot another section's
+    Draft already holds. Generation / Save Draft keep counting Published only.
     """
     if not schedule_data or not acad_year_id or not term:
         return [], 0
@@ -32786,6 +34173,42 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
               AND ts_e.timevalue IS NOT NULL
         """, (sem_id, section_id, section_id))
         published.extend(cur.fetchall() or [])
+
+        if include_drafts:
+            # Other sections' saved Official Drafts (not removal markers). Listed after
+            # the Published rows so an identical Published slot is reported first.
+            cur.execute("""
+                SELECT ss.roomid,
+                       COALESCE(sv.employeenumber, sc.employeenumber) AS faculty_id,
+                       sc.sectionid               AS sectionid,
+                       ss.daydesc                 AS day,
+                       ts_s.timevalue             AS start_time,
+                       ts_e.timevalue             AS end_time,
+                       UPPER(cs.subjectcode)      AS subjectcode,
+                       UPPER(c.programcode)       AS programcode,
+                       cs.yearlevel               AS yearlevel,
+                       sec.sectionname            AS sectionname,
+                       COALESCE(r.roomname, CAST(ss.roomid AS TEXT)) AS roomname,
+                       'Draft'                    AS status
+                FROM   schedule_sessions ss
+                JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+                JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+                JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+                LEFT JOIN sections sec      ON sc.sectionid           = sec.sectionid
+                LEFT JOIN room r            ON ss.roomid              = r.roomid
+                LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+                LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+                WHERE  sc.semesterid  = %s
+                  AND  sv.status      = 'Draft'
+                  AND  sv.is_removal  = FALSE
+                  AND  COALESCE(sv.source, '') <> 'local'
+                  AND  (%s IS NULL OR sc.sectionid <> %s)
+                  AND  ss.daydesc     IS NOT NULL
+                  AND  ts_s.timevalue IS NOT NULL
+                  AND  ts_e.timevalue IS NOT NULL
+            """, (sem_id, section_id, section_id))
+            published.extend(cur.fetchall() or [])
         cur.close(); conn.close()
     except Exception as exc:
         try: cur.close()
@@ -32814,6 +34237,15 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     from constraints import hard_constraints as _hc_adapter
     from database import load_scheduler_config as _load_merge_cfg
     _merge_cfg = _load_merge_cfg()
+    # Group model (hc_merge_model='groups'): merge_groups.GroupMergePolicy is the only
+    # merge interpretation — HC10/HC11 are waived only for the same usable merged event,
+    # never by scope/pairs/NSTP prefix. None under the legacy model (code below unchanged).
+    try:
+        _merge_pol = _merge_policy_for(_merge_cfg, sem_id=sem_id, section_id=section_id)
+    except Exception as exc:
+        if fail_closed:
+            raise ConstraintCheckUnavailable(f'cross-schedule conflicts (HC15/HC16): {exc}') from exc
+        return [], 0
 
     violations = []
     seen       = set()
@@ -32840,20 +34272,43 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                 if ex['day'] != day_new or not _ctx_conflicts.interval_overlaps(st_new, et_new, st_ex, et_ex):
                     continue
 
-                _gene_new = {'subject_code': sc_new, 'faculty_id': fac_new,
-                             'programcode': program, 'section_name': secname_new}
-                _gene_ex = {'subject_code': ex['subjectcode'], 'faculty_id': ex.get('faculty_id'),
-                            'programcode': ex.get('programcode'), 'section_name': ex.get('sectionname')}
-                merged = _hc_adapter.is_valid_merge(_gene_new, _gene_ex, config=_merge_cfg)
-                dims = _ctx_conflicts.overlapping_resource_conflicts(
-                    {'faculty_id': fac_new, 'room_id': r_new, 'section_id': sec_new},
-                    {'faculty_id': ex.get('faculty_id'), 'room_id': ex.get('roomid'),
-                     'section_id': ex.get('sectionid')},
-                    valid_merge=merged,
-                    # Shared HC10 rule (same as CSPValidator): HC16 merge OR NSTP/OU.
-                    faculty_exempt=faculty_load.faculty_overlap_exempt(
-                        _gene_new, _gene_ex, valid_merge=merged),
-                )
+                if _merge_pol is not None:
+                    # Group model: one HC16 decision for both HC10 and HC11.
+                    _occ_new = {'section_id': sec_new, 'programcode': program, 'sectionname': secname_new,
+                                'subject_code': sc_new, 'faculty_id': fac_new, 'room_id': r_new,
+                                'day': day_new, 'start_time': st_new, 'end_time': et_new}
+                    _occ_ex = {'sectionid': ex.get('sectionid'), 'programcode': ex.get('programcode'),
+                               'sectionname': ex.get('sectionname'), 'subject_code': ex['subjectcode'],
+                               'faculty_id': ex.get('faculty_id'), 'roomid': ex.get('roomid'),
+                               'room': ex.get('roomname'), 'day': ex['day'],
+                               'start_time': st_ex, 'end_time': et_ex}
+                    merged = _merge_pol.same_event(_occ_new, _occ_ex, day=day_new)
+                    dims = _ctx_conflicts.overlapping_resource_conflicts(
+                        {'faculty_id': fac_new, 'room_id': r_new, 'section_id': sec_new},
+                        {'faculty_id': ex.get('faculty_id'), 'room_id': ex.get('roomid'),
+                         'section_id': ex.get('sectionid')},
+                        valid_merge=merged, faculty_exempt=merged,
+                    )
+                    for _hv in _merge_pol.faculty_conflicts([_occ_new], [_occ_ex]):
+                        _hkey = ('HC16', _hv['code'], day_new, sc_new, str(ex.get('sectionid')))
+                        if _hkey not in seen:
+                            seen.add(_hkey)
+                            violations.append(dict(_hv, type=RULE_LABELS['HC16'], target_subject_code=sc_new))
+                else:
+                    _gene_new = {'subject_code': sc_new, 'faculty_id': fac_new,
+                                 'programcode': program, 'section_name': secname_new}
+                    _gene_ex = {'subject_code': ex['subjectcode'], 'faculty_id': ex.get('faculty_id'),
+                                'programcode': ex.get('programcode'), 'section_name': ex.get('sectionname')}
+                    merged = _hc_adapter.is_valid_merge(_gene_new, _gene_ex, config=_merge_cfg)
+                    dims = _ctx_conflicts.overlapping_resource_conflicts(
+                        {'faculty_id': fac_new, 'room_id': r_new, 'section_id': sec_new},
+                        {'faculty_id': ex.get('faculty_id'), 'room_id': ex.get('roomid'),
+                         'section_id': ex.get('sectionid')},
+                        valid_merge=merged,
+                        # Shared HC10 rule (same as CSPValidator): HC16 merge OR NSTP/OU.
+                        faculty_exempt=faculty_load.faculty_overlap_exempt(
+                            _gene_new, _gene_ex, valid_merge=merged),
+                    )
                 for dim in dims:
                     if not _dim_enabled.get(dim, True):
                         continue
@@ -32875,12 +34330,17 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                         detail = (f"Section {sec_new} has overlapping classes on {day_new}: {sc_new} and "
                                   f"{ex['subjectcode']} at the same time.")
                         affected = ['day', 'time']
+                    if ex.get('status') == 'Draft':
+                        detail += (f" That class is a saved Draft of {ex.get('sectionname') or 'another section'}"
+                                   " — change it or this slice before publishing.")
                     violation = {
                         'rule': rule, 'type': RULE_LABELS[rule],
                         'subject': f"{sc_new} / {ex['subjectcode']}",
                         'target_subject_code': sc_new, 'detail': detail,
                         'affected_components': affected,
                     }
+                    if ex.get('status') == 'Draft':
+                        violation['against_draft'] = True
                     if dim == 'Faculty':
                         violation['faculty_id'] = fac_new
                     violations.append(violation)
@@ -32932,10 +34392,167 @@ def _selected_row_problems(schedule_rows, violations, cross_violations, codes, r
 # known: Room first, Instructor last (the most meaningful historical value).
 _PROGRESSIVE_RELEASE_ORDER = ('room', 'schedule', 'faculty')
 _MAX_REGEN_ROUNDS = 5
-# Fresh Generate: re-run with new random seeds (each run ~0.3 s) until the result is
-# complete and conflict-free, keeping the best of at most this many attempts.
+# Fresh Generate: re-run with new random seeds until the result is complete and
+# conflict-free, keeping the best of at most this many attempts — but stop after
+# _FRESH_GEN_MAX_NO_GAIN retries in a row that are no better, or once retries have used
+# _FRESH_GEN_RETRY_BUDGET_S seconds (a saturated term can't be improved by more seeds).
 _FRESH_GEN_ATTEMPTS = 8
+_FRESH_GEN_MAX_NO_GAIN = 2
+_FRESH_GEN_RETRY_BUDGET_S = 30
 import random
+
+
+_NOTICE_DAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+_NOTICE_DAY_START, _NOTICE_DAY_END = 7 * 60 + 30, 21 * 60      # 7:30 AM – 9:00 PM
+
+
+def _notice_minutes(v):
+    if v is None:
+        return None
+    if hasattr(v, 'hour'):
+        return v.hour * 60 + v.minute
+    try:
+        h, m = str(v).split(':')[:2]
+        return int(h) * 60 + int(m)
+    except (ValueError, TypeError):
+        return None
+
+
+def _notice_hours_label(minutes):
+    h = minutes / 60
+    return f"{h:g}-hour" if h != 1 else "1-hour"
+
+
+def _generation_load_notices(schedule_rows, violations):
+    """Faculty-load shortages (HC9): an instructor pushed past their load limit because
+    the generator had nobody else available for their classes."""
+    out, seen = [], set()
+    for v in violations or []:
+        if v.get('rule') != 'HC9' or v.get('severity') == 'warning':
+            continue
+        fid = v.get('faculty_id')
+        if (fid, v.get('detail')) in seen:
+            continue
+        seen.add((fid, v.get('detail')))
+        mine = sorted({g.get('subject_code') for g in schedule_rows or []
+                       if fid and str(g.get('faculty_id')) == str(fid) and g.get('subject_code')})
+        name = next((g.get('instructor') for g in schedule_rows or []
+                     if fid and str(g.get('faculty_id')) == str(fid) and g.get('instructor')), None)
+        who = name or 'This instructor'
+        out.append({'kind': 'faculty_load', 'subject_code': ', '.join(mine), 'subject': ', '.join(mine),
+                    'class_info': '', 'missing': ['faculty'],
+                    'title': f'{who} is over their load limit',
+                    'message': (v.get('detail') or '').rstrip('.') + '. No other available instructor could take '
+                               + (f"their class{'es' if len(mine) != 1 else ''} in this section ({', '.join(mine)})."
+                                  if mine else 'their classes in this section.'),
+                    'suggestion': 'Give one of these classes to another instructor (Manual Editor), '
+                                  'or raise this instructor\'s load limit if that is allowed.'})
+    return out
+
+
+def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, violations=None):
+    """Plain-language notices for classes the generator could not complete: what is
+    missing (room / instructor / time), WHY in terms the Academic Head can act on (e.g.
+    "all 18 laboratory rooms are fully booked for 3-hour blocks"), and what to do next.
+    Also explains faculty-load shortages (HC9). Purely explanatory — never changes the
+    result."""
+    load_notices = _generation_load_notices(schedule_rows, violations)
+    rows = [g for g in (schedule_rows or []) if g.get('incomplete') or g.get('incomplete_components')]
+    if not rows:
+        return load_notices
+    # Room occupancy for the term (other sections' Published + Draft classes) plus the
+    # classes this generation did place.
+    try:
+        codes = sorted({(g.get('subject_code') or '').strip().upper() for g in schedule_rows or []} - {''})
+        room_slots, _ = scheduler_engine.fetch_published_room_faculty_slots(
+            term, acad_year_id, exclude_subject_codes=codes,
+            exclude_section_id=_section_id_or_none(section_id))
+    except Exception as e:
+        print(f"[shortage notices] occupancy unavailable: {e}")
+        room_slots = {}
+    from collections import defaultdict
+    busy = defaultdict(list)          # (roomid, day) -> [(start_min, end_min)]
+    for (rid, day), slots in (room_slots or {}).items():
+        for s, e in slots:
+            sm, em = _notice_minutes(s), _notice_minutes(e)
+            if sm is not None and em is not None:
+                busy[(str(rid), day)].append((sm, em))
+    for g in schedule_rows or []:
+        if g.get('incomplete') or not g.get('room_id'):
+            continue
+        sm, em = _notice_minutes(g.get('start_time')), _notice_minutes(g.get('end_time'))
+        for day in (g.get('days_list') or ([g['day']] if g.get('day') else [])):
+            if sm is not None and em is not None:
+                busy[(str(g['room_id']), day)].append((sm, em))
+
+    rooms = query_db("SELECT roomid, roomname, roomtype FROM room WHERE COALESCE(isactive, TRUE)") or []
+
+    def _has_free_block(rid, block, days=_NOTICE_DAYS):
+        for day in days:
+            taken = busy.get((str(rid), day), [])
+            for start in range(_NOTICE_DAY_START, _NOTICE_DAY_END - block + 1, 30):
+                if all(start >= e or start + block <= s for s, e in taken):
+                    return True
+        return False
+
+    notices = []
+    for g in rows:
+        code = g.get('subject_code') or ''
+        comps = {('faculty' if c in ('faculty', 'instructor') else 'schedule' if c in ('schedule', 'time', 'days') else c)
+                 for c in (g.get('incomplete_components') or [])}
+        reasons = ' '.join(str(r) for r in (g.get('incomplete_reason') or []))
+        is_lab = (g.get('class_type') == 'Lab') or ('Laboratory' in reasons)
+        sm, em = _notice_minutes(g.get('start_time')), _notice_minutes(g.get('end_time'))
+        if sm is not None and em is not None and em > sm:
+            block = em - sm
+        else:
+            n_days = max(1, len(g.get('days_list') or []) or 1)
+            block = max(30, int(round(float(g.get('duration_hrs') or 1.5) * 60 / n_days / 30)) * 30)
+        kind = 'laboratory' if is_lab else 'lecture'
+        # A Sunday-only class (e.g. NSTP) can only use Sunday — count free blocks there.
+        sunday_only = (g.get('days_list') or [g.get('day')]) == ['Sunday']
+        days_for = ('Sunday',) if sunday_only else _NOTICE_DAYS
+        days_label = 'on Sunday' if sunday_only else 'on any day (Monday–Saturday'
+        label = f"{code} – {g.get('description')}" if g.get('description') else code
+        what = f"{g.get('class_type') or ('Lab' if is_lab else 'Lecture')}, {_notice_hours_label(block)} meetings"
+        base = {'subject_code': code, 'subject': label, 'class_info': what, 'missing': sorted(comps)}
+
+        if 'room' in comps:
+            typed = [r for r in rooms if (r.get('roomtype') or '').lower().startswith('lab' if is_lab else 'lec')]
+            free = [r for r in typed if _has_free_block(r['roomid'], block, days_for)]
+            if not typed:
+                notices.append(dict(base, kind='no_room', title=f'No {kind} rooms set up',
+                    message=f'There are no active {kind} rooms in the system, so {code} has no room it can use.',
+                    suggestion=f'Add a {kind} room (Settings → Rooms), or save with the room as TBA and assign it later.'))
+            elif not free:
+                notices.append(dict(base, kind='no_room', title=f'All {kind} rooms are full',
+                    message=f'All {len(typed)} {kind} rooms are already booked by other classes — none has a free '
+                            f'{_notice_hours_label(block)} block {days_label}, 7:30 AM–9:00 PM' + (')' if not sunday_only else '') + '.',
+                    suggestion=f"Free up a {kind} room in another section's schedule, add a {kind} room, "
+                               f'or save this class with the room as TBA and assign it later.'))
+            else:
+                instr = g.get('instructor') or ('an instructor' if 'faculty' in comps else 'the instructor')
+                notices.append(dict(base, kind='no_room_at_time', title=f'No {kind} room free at a usable time',
+                    message=f'{len(free)} of {len(typed)} {kind} rooms still have free {_notice_hours_label(block)} '
+                            f'blocks{" on Sunday" if sunday_only else ""}, but none at a time when this section and {instr} are both free.',
+                    suggestion='Use Re-generate Selected with Time/Days or Instructor unlocked, '
+                               'or set the room and time yourself in the Manual Editor.'))
+        if 'faculty' in comps:
+            notices.append(dict(base, kind='no_faculty', title='No instructor available',
+                message=f'Every faculty member who can teach {code} is already at their maximum load '
+                        f'or is teaching at every time this class could be held.',
+                suggestion='Assign an instructor yourself (Manual Editor), raise a faculty member\'s load limit, '
+                           'or add a qualified faculty member.'))
+        if 'schedule' in comps and 'room' not in comps and 'faculty' not in comps:
+            notices.append(dict(base, kind='no_time', title='No free time slot',
+                message=f'There is no time when this section, its instructor and a suitable room are all free '
+                        f'for a {_notice_hours_label(block)} meeting.',
+                suggestion='Unlock Instructor or Room with Re-generate Selected, or place it yourself in the Manual Editor.'))
+        if not ({'room', 'faculty', 'schedule'} & comps):
+            notices.append(dict(base, kind='other', title='Could not be completed',
+                message=(g.get('incomplete_reason') or ['This class could not be fully scheduled.'])[0],
+                suggestion='Review it in the table, or place it yourself in the Manual Editor.'))
+    return notices + load_notices
 
 
 @app.route('/api/schedule/generate', methods=['POST'])
@@ -33078,17 +34695,25 @@ def api_generate_schedule():
                     + sum(1 for v in (cv or []) if v.get('severity') != 'warning')
                     + (1000 if (r.get('result_status') == 'INVALID_RESULT') else 0))
         _best_bad = _badness(res, cross_violations)
+        # When rooms/faculty are simply used up, no seed can do better — stop once retries
+        # stop improving (or the time budget is spent) instead of always running all 8.
+        _retry_deadline = _time_mod.monotonic() + _FRESH_GEN_RETRY_BUDGET_S
+        _no_gain = 0
         for _attempt in range(_FRESH_GEN_ATTEMPTS - 1):
-            if _best_bad == 0:
+            if _best_bad == 0 or _no_gain >= _FRESH_GEN_MAX_NO_GAIN or _time_mod.monotonic() > _retry_deadline:
                 break
             _r2 = _solve(sessions, seed=random.randrange(1, 2**31))
             _s2 = _r2.get('result_status') or ('COMPLETE_VALID' if _r2.get('success') else 'GENERATION_ERROR')
             if _s2 == 'GENERATION_ERROR' or not _r2.get('schedule_data'):
+                _no_gain += 1
                 continue
             _cv2, _cc2 = _cross(_r2['schedule_data'])
             _b2 = _badness(_r2, _cv2)
             if _b2 < _best_bad:
                 res, result_status, cross_violations, cross_conflict_count, _best_bad = _r2, _s2, _cv2, _cc2, _b2
+                _no_gain = 0
+            else:
+                _no_gain += 1
 
     # The same advisory (e.g. one specialization notice) is raised once per session of a
     # subject — list each distinct notice once.
@@ -33217,8 +34842,20 @@ def api_generate_schedule():
                         if result_status == 'COMPLETE_VALID' and not blocking_violations and not incomplete_components
                         else 'PARTIAL_RESULT')
 
+    # Plain-language "no room / no instructor / no time" explanations for the classes
+    # that could not be completed (supplemental — never fails the generation).
+    try:
+        shortage_notices = _generation_shortage_notices(
+            res.get('schedule_data'), term, data.get('acadYear', ''),
+            data.get('section') or data.get('section_id') or data.get('sectionId'),
+            violations=res.get('violations'))
+    except Exception as e:
+        print(f"[shortage notices] skipped: {e}")
+        shortage_notices = []
+
     return jsonify({
         'success':              result_status in ('COMPLETE_VALID', 'PARTIAL_VALID', 'REGENERATION_PARTIAL'),
+        'shortage_notices':     shortage_notices,
         'result_status':        result_status,
         'result_state':         result_state,
         'advisories':           advisories,
@@ -33579,6 +35216,17 @@ def api_retrieve_previous_schedule():
         # historical free-text code (history only supplies Instructor/Time/Room).
         _resolve_current_curriculum_subjects(
             schedule_data, program, year_level, term, data.get('curriculum') or None)
+        # HC16 group model (P4): a merged subject takes its CURRENT Merge Group meeting,
+        # never the previous AY's slot (unscheduled group -> no slot). Legacy: no-op.
+        import merge_groups as _mg_ret
+        _ret_cfg = load_scheduler_config()
+        if _mg_ret.merge_model(_ret_cfg) == _mg_ret.MODEL_GROUPS and section_id and acad_year and term:
+            _ret_sem = query_db("SELECT semesterid FROM semester WHERE academicyearid = %s "
+                                "AND semestertype = %s LIMIT 1", (acad_year, (term or '').strip().upper()), one=True)
+            _ret_pol, _ret_plan = _mg_ret.load_generation_plan(
+                _ret_cfg, _ret_sem['semesterid'] if _ret_sem else None, _section_id_or_none(section_id))
+            if _ret_plan:
+                schedule_data, _ = _mg_ret.pin_rows(schedule_data, _ret_plan)
         _annotate_unresolved(schedule_data, _load_reference_data(
             program, year_level, term, data.get('curriculum') or None))
 
@@ -33787,17 +35435,58 @@ def api_save_draft():
             }), 400
 
         _fmap_pre = _load_faculty_map()
+        # HC16 group model: None under the legacy model (the call below is then exactly
+        # the previous one).
+        from database import load_scheduler_config as _load_draft_cfg
+        import merge_groups as _mg_gate
+        _draft_cfg = _load_draft_cfg()
+        # P7 merge notice: a class placed exactly on another section's same-subject,
+        # same-faculty class is a merge — confirmed by the user, then recorded in THIS
+        # transaction (so the policy below already sees it). Official drafts only.
+        _applied_merges = []
+        if draft_source != 'local':
+            try:
+                _merge_resp, _applied_merges = _merge_confirmation_gate(
+                    cur, _draft_cfg, sem_id, ctx_section_id, _pre_rehydrated, data)
+            except _mg_gate.MergeApplyError as _mae:
+                conn.rollback()
+                return _merge_apply_error_response(_mae)
+            if _merge_resp is not None:
+                conn.rollback()
+                return _merge_resp
+        _draft_merge_pol = _merge_policy_for(_draft_cfg, sem_id=sem_id, section_id=ctx_section_id, cur=cur)
         if _pre_rehydrated:
             # Phase A2 centralization: routed through ConstraintService instead
             # of instantiating CSPValidator directly (same call shape/result).
-            _viols_pre = ConstraintService.with_current_policy().validate_schedule(
+            import merge_groups as _mg_draft
+            _draft_svc = (ConstraintService.with_current_policy() if _draft_merge_pol is None else
+                          ConstraintService(SchedulingPolicy(_mg_draft.with_policy(_draft_cfg, _draft_merge_pol))))
+            _viols_pre = _draft_svc.validate_schedule(
                 _pre_rehydrated, _fmap_pre,
                 existing_load=_other_sections_faculty_hours(ay, term, program, year_level,
                                                             section_id=ctx_section_id),
             ).violations
+            # A merge-group member that is INVALID (off its group's authoritative
+            # day/time/room, or with incompatible known faculty) is not work in progress
+            # but a broken merged class — blocked like an overlapping slice, before
+            # anything is written. INCOMPLETE merged classes (no group meeting yet, TBA
+            # faculty) stay ordinary draft warnings.
+            if _draft_merge_pol is not None:
+                _hc16_invalid = [v for v in _viols_pre
+                                 if v.get('rule') == 'HC16' and v.get('merge_state') == 'invalid']
+                _hc16_invalid += _hc16_member_faculty_conflicts(
+                    _pre_rehydrated, _draft_merge_pol, sem_id, ctx_section_id, cur=cur)
+                if _hc16_invalid:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Cannot save: merged-class consistency conflict(s).',
+                        'code': 'HC16_MERGED_CLASS_CONFLICT',
+                        'violations': _hc16_invalid,
+                    }), 400
             # HC_SPEC is advisory-only (warning severity) — skip it so specialization
             # mismatches don't block saves; the Academic Head can still approve.
-            _hard_viols = [v for v in _viols_pre if v.get('severity') != 'warning']
+            _hard_viols = [v for v in _viols_pre if v.get('severity') != 'warning'
+                           or (v.get('rule') == 'HC16' and v.get('merge_state') == 'incomplete')]
             draft_warnings += [{'rule': v.get('rule'), 'subject': v.get('subject'), 'detail': v.get('detail')}
                                for v in _hard_viols]
 
@@ -34003,10 +35692,15 @@ def api_save_draft():
             + (f" (Section {ctx_section_id})" if ctx_section_id else ""),
             category='schedule', color=_LOG_COLORS.get('schedule', 'green')
         )
+        if _applied_merges:
+            write_activity_log("Merged Classes", '; '.join(_mg_gate.merge_notice_text(_applied_merges)),
+                               category='schedule', color=_LOG_COLORS.get('schedule', 'green'))
 
         return jsonify({
             'success': True,
             'draft_version': new_v,
+            # P7: merges recorded with this save (shown in Settings → Class Merging).
+            'merged': _mg_gate.merge_notice_text(_applied_merges),
             'is_incomplete': bool(incomplete_map),
             # Subjects flagged incomplete that had zero resolved slices — no
             # schedule_version row exists for them at all (schedule_sessions'
@@ -34029,6 +35723,44 @@ def api_save_draft():
             if conn: conn.close()
         except Exception:
             pass
+
+def _keep_faculty_after_schedule_delete(cur, version_id):
+    """After a subject's (last) schedule version in a section is deleted, record its faculty
+    in subject_faculty_assignment so the subject keeps its faculty — only the schedule was
+    removed. No-op when the version had no faculty or the subject still has an active
+    Draft/Published version in that section."""
+    cur.execute("""
+        SELECT sv.employeenumber, s.scheduleid, s.sectionid, s.semesterid,
+               UPPER(cs.subjectcode) AS code, UPPER(c.programcode) AS prog, cs.yearlevel
+        FROM schedule_version sv
+        JOIN schedule s            ON s.scheduleid = sv.scheduleid
+        JOIN curriculumsubject cs  ON cs.curriculumsubjectid = s.curriculumsubjectid
+        JOIN curriculum c          ON c.curriculumid = cs.curriculumid
+        WHERE sv.versionid = %s
+    """, (version_id,))
+    v = cur.fetchone()
+    emp = (v or {}).get('employeenumber')
+    if not v or not emp or str(emp).upper() == 'TBA':
+        return
+    cur.execute("""
+        SELECT 1 FROM schedule_version sv
+        JOIN schedule s ON s.scheduleid = sv.scheduleid
+        JOIN curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+        WHERE s.sectionid = %s AND s.semesterid = %s AND UPPER(cs.subjectcode) = %s
+          AND sv.status IN ('Draft', 'Published') AND sv.source IS DISTINCT FROM 'local'
+        LIMIT 1
+    """, (v['sectionid'], v['semesterid'], v['code']))
+    if cur.fetchone():
+        return
+    _ensure_faculty_assignment_table(cur)
+    cur.execute("""
+        INSERT INTO public.subject_faculty_assignment
+            (programcode, yearlevel, semesterid, subjectcode, employeenumber, sectionid)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (programcode, yearlevel, semesterid, subjectcode)
+        DO UPDATE SET employeenumber = EXCLUDED.employeenumber, sectionid = EXCLUDED.sectionid, createdat = NOW()
+    """, (v['prog'], int(v['yearlevel']), v['semesterid'], v['code'], str(emp), v['sectionid']))
+
 
 @app.route('/api/schedule/delete_session', methods=['POST'])
 def api_delete_session():
@@ -34105,6 +35837,19 @@ def api_delete_session():
                 UPDATE schedule_version SET status = 'Archive'
                  WHERE versionid = %s AND status = 'Draft'
             """, (int(version_id),))
+
+        # Deleting a subject's schedule removes its day/time/room — not its faculty. The
+        # faculty lives on the schedule_version, so once the subject has no active
+        # schedule left in this section, keep it as the subject's faculty assignment
+        # (what the editor shows for an unscheduled subject).
+        if whole_version_deleted:
+            cur.execute("SAVEPOINT keep_faculty")
+            try:
+                _keep_faculty_after_schedule_delete(cur, int(version_id))
+                cur.execute("RELEASE SAVEPOINT keep_faculty")
+            except Exception as _kf:
+                cur.execute("ROLLBACK TO SAVEPOINT keep_faculty")   # never blocks the delete
+                print(f"[delete_session] faculty not kept: {_kf}")
 
         conn.commit()
         cur.close(); conn.close()
@@ -34225,13 +35970,35 @@ def api_validate_schedule():
         data        = request.json or {}
         rehydrated  = _rehydrate_schedule(list(data.get('schedule_data', [])))
         faculty_map = _load_faculty_map()
+        # HC16 group model needs the section + term the rows belong to (optional
+        # `context`, same shape as Save Draft's). None under the legacy model.
+        ctx = data.get('context') or {}
+        from database import load_scheduler_config as _load_validate_cfg
+        _val_cfg = _load_validate_cfg()
+        _val_section = ctx.get('section_id') or ctx.get('sectionId') or ctx.get('section')
+        _val_section = int(_val_section) if str(_val_section or '').isdigit() else None
+        _val_sem = None
+        if ctx.get('acadYear') and ctx.get('term'):
+            _sem_row = query_db("SELECT semesterid FROM semester WHERE academicyearid = %s "
+                                "AND semestertype = %s LIMIT 1", (ctx['acadYear'], ctx['term']), one=True)
+            _val_sem = _sem_row['semesterid'] if _sem_row else None
+        _val_pol = (_merge_policy_for(_val_cfg, sem_id=_val_sem, section_id=_val_section)
+                    if _val_sem else None)
         # Phase A2 centralization: Manual Editor's authoritative backend call
         # now routes through ConstraintService instead of instantiating
         # CSPValidator directly. Same config source (SchedulingPolicy.load()
         # == load_scheduler_config()), same call shape, same return list.
-        all_viols  = ConstraintService.with_current_policy().validate_schedule(
+        if _val_pol is None:
+            _val_svc = ConstraintService.with_current_policy()
+        else:
+            import merge_groups as _mg_val
+            _val_svc = ConstraintService(SchedulingPolicy(_mg_val.with_policy(_val_cfg, _val_pol)))
+        all_viols  = _val_svc.validate_schedule(
             rehydrated, faculty_map
         ).violations
+        if _val_pol is not None:
+            all_viols = all_viols + _hc16_member_faculty_conflicts(
+                rehydrated, _val_pol, _val_sem, _val_section)
         # HC_SPEC is warning-only — separate it so the client can show an advisory without blocking
         hard_viols = [v for v in all_viols if v.get('severity') != 'warning']
         warn_viols = [v for v in all_viols if v.get('severity') == 'warning']
@@ -34313,6 +36080,36 @@ def _sync_mergedclass_for_semester(cur, sem_id):
                 cfg[key] = float(val)
             except (TypeError, ValueError):
                 cfg[key] = val
+
+    # HC16 group model (P4): rebuild from valid HC16 events in the Official Published
+    # schedule (one row set per Merge Group + faculty), never from legacy inference.
+    # Only mergedclass/mergedclass_sections are written; the Merge Group configuration
+    # tables are read, never modified.
+    import merge_groups as _mg_sync
+    if _mg_sync.merge_model(cfg) == _mg_sync.MODEL_GROUPS:
+        merges = _mg_sync.published_merges(cur, cfg, sem_id)
+        cur.execute("DELETE FROM public.mergedclass WHERE semesterid = %s", (sem_id,))
+        for m in merges:
+            sectionids = sorted(m['sections'], key=lambda s: m['sectionnames'].get(s) or '')
+            classname = (f"{m['groupname']} - Merged ("
+                         f"{'/'.join(m['sectionnames'].get(s) or '?' for s in sectionids)})")[:100]
+            by_csid = {}
+            for sid in sectionids:
+                by_csid.setdefault(m['sections'][sid], []).append(sid)
+            for csid, sids in by_csid.items():
+                cur.execute("""
+                    INSERT INTO public.mergedclass
+                        (curriculumsubjectid, semesterid, employeenumber, classname, isactive)
+                    VALUES (%s, %s, %s, %s, TRUE)
+                    RETURNING mergedclassid
+                """, (csid, sem_id, m['employeenumber'], classname))
+                new_id = cur.fetchone()['mergedclassid']
+                psycopg2.extras.execute_values(cur, """
+                    INSERT INTO public.mergedclass_sections (mergedclassid, sectionid)
+                    VALUES %s
+                """, [(new_id, sid) for sid in sids])
+        return
+
     merge_pairs = faculty_load.parse_merge_section_pairs(cfg.get('hc_merge_section_pairs'))
 
     cur.execute("""
@@ -34653,12 +36450,38 @@ def api_approve_schedule():
         # instantiating CSPValidator directly (same _hc_cfg, same call shape).
         # existing_load: final HC9 counts the hours each faculty already teaches
         # in other sections — exactly as generation and the evaluation do.
-        all_viols  = ConstraintService(SchedulingPolicy(_hc_cfg)).validate_schedule(
+        # HC16 group model: the same merged-event policy CSP, cross-schedule and Save
+        # Draft use (None -> legacy config unchanged). An incomplete merged-class finding
+        # that cannot be published (no usable group meeting) blocks here even though it
+        # is only a warning while drafting.
+        import merge_groups as _mg_pub
+        # P7 merge notice (same rule as Save Draft). Confirmed merges are recorded and
+        # committed BEFORE validation so the policy below treats them as merged classes;
+        # they stay recorded even if this Publish is then rejected for another reason
+        # (the user confirmed them, and the Draft still holds the merged slots).
+        _applied_merges = []
+        if _ctx_section_id and _mg_pub.merge_model(_hc_cfg) == _mg_pub.MODEL_GROUPS:
+            _gconn = get_db_connection(); _gcur = _gconn.cursor(cursor_factory=RealDictCursor)
+            try:
+                _merge_resp, _applied_merges = _merge_confirmation_gate(
+                    _gcur, _hc_cfg, _get_semester_id(_gcur, ay, term), _ctx_section_id, sched_data, data)
+                if _merge_resp is not None:
+                    _gconn.rollback()
+                    return _merge_resp
+                _gconn.commit()
+            except _mg_pub.MergeApplyError as _mae:
+                _gconn.rollback()
+                return _merge_apply_error_response(_mae)
+            finally:
+                _gcur.close(); _gconn.close()
+        _hc_cfg_csp = _mg_pub.with_policy(_hc_cfg, _merge_policy_for(
+            _hc_cfg, ay=ay, term=term, section_id=_ctx_section_id))
+        all_viols  = ConstraintService(SchedulingPolicy(_hc_cfg_csp)).validate_schedule(
             sched_data, faculty_map,
             existing_load=_other_sections_faculty_hours(ay, term, program, year_level,
                                                         section_id=_ctx_section_id),
         ).violations
-        violations = [v for v in all_viols if v.get('severity') != 'warning']
+        violations = [v for v in all_viols if v.get('severity') != 'warning' or v.get('blocks_publish')]
 
         if publish_gate_on and violations:
             return _not_approvable(
@@ -34816,7 +36639,7 @@ def api_approve_schedule():
         if publish_gate_on:
             cross_violations, _cross_count = _check_cross_schedule_conflicts(
                 sched_data, program, year_level, term, ay, section_id=_ctx_section_id,
-                fail_closed=True,
+                fail_closed=True, include_drafts=True,
             )
             if cross_violations:
                 cur.close(); conn.close()
@@ -34966,7 +36789,9 @@ def api_approve_schedule():
             'published_version': max_v + 1,
             'draft_version': new_draft_v,
             'archived_local_arrangements': archived_local_count,
-            'local_scheduler_notice': local_republish_notice
+            'local_scheduler_notice': local_republish_notice,
+            # P7: merges recorded with this publish (shown in Settings → Class Merging).
+            'merged': _mg_pub.merge_notice_text(_applied_merges),
         })
     except ConstraintCheckUnavailable as e:
         # A blocking cross-section check (HC8/HC9/HC15) could not run. Never
@@ -35116,7 +36941,12 @@ def api_faculty_teaching_assignments():
                 ss.daydesc AS days,
                 COALESCE(r.roomname,'—') AS room,
                 COALESCE(TO_CHAR(sem.semstartdate,'MM/DD/YYYY'),'—') AS effectivity,
-                sv.status
+                sv.status,
+                -- Merged-event identity (HC16/HC17 group model), JSON-safe.
+                COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+                ss.roomid AS roomid,
+                TO_CHAR(ts_s.timevalue,'HH24:MI') AS start,
+                TO_CHAR(ts_e.timevalue,'HH24:MI') AS "end"
             FROM ranked rk
             JOIN schedule_sessions ss ON ss.versionid = rk.versionid
             JOIN schedule_version sv ON sv.versionid = rk.versionid
@@ -35131,6 +36961,17 @@ def api_faculty_teaching_assignments():
             ORDER BY cs.subjectcode, ts_s.timevalue
         """, (emp_num, ay_id, sem))
         sessions = [dict(r) for r in (cur.fetchall() or [])]
+
+        # HC16/HC17 group model: merged classes are identified ONLY by HC16 event
+        # identity and credited ONLY by the shared HC17 calculation — display rows here
+        # and the buckets below come from that one function, so the tab always shows
+        # what HC9 enforces. The legacy collapse block below then does not run.
+        import merge_groups as _mg_ta
+        _ta_cfg = _load_cfg_for(ay_id, sem, cur=cur)
+        _ta_policy = _mg_ta.policy_from_config(_ta_cfg)
+        _raw_sessions = sessions
+        if _ta_policy is not None:
+            sessions = _ta_policy.collapse_for_display(_raw_sessions)
 
         # Merged-class faculty load: when Class Merging is enabled, sections that attend
         # the exact same physical meeting (same subject, day, time, room — e.g. 3 NSTP
@@ -35171,7 +37012,7 @@ def api_faculty_teaching_assignments():
                 (_merge_scope == 'all_subjects')
             )
 
-        if _merge_enabled and sessions:
+        if _ta_policy is None and _merge_enabled and sessions:
             # HC16/HC17: a merge group may only collapse into ONE assignment when every
             # pair of its distinct sections is an allowed merge pairing (full clique,
             # same rule as CSPValidator._check_load_limits and
@@ -35401,7 +37242,11 @@ def api_faculty_teaching_assignments():
         # time validation gate (faculty_load.py). Pending "Assign Faculty" reservations have
         # no day/time yet, so they can't be bucket-classified (same known gap as before);
         # only `sessions` (real schedule rows) go into the buckets.
-        buckets = faculty_load.compute_load_buckets(sessions, fac, config=load_scheduler_config())
+        if _ta_policy is not None:
+            # raw rows: the shared calculation does its own once-per-event crediting
+            buckets = faculty_load.compute_load_buckets(_raw_sessions, fac, config=_ta_cfg)
+        else:
+            buckets = faculty_load.compute_load_buckets(sessions, fac, config=load_scheduler_config())
 
         cur.close(); conn.close()
         return jsonify({
@@ -36123,6 +37968,12 @@ def _run_startup_migrations():
     """
     _c = get_db_connection()
     _cur = _c.cursor(cursor_factory=RealDictCursor)
+    # Each ALTER takes an ACCESS EXCLUSIVE lock even when it changes nothing. If another
+    # running instance (the live server while tests start, a second server) is mid-request
+    # on these tables, waiting would queue every other query behind this ALTER and freeze
+    # that instance; give up instead — the step is logged and the schema is already current.
+    _cur.execute("SET lock_timeout = '5s'")
+    _c.commit()
 
     def _step(name, sql_list):
         try:
@@ -36320,6 +38171,10 @@ def _run_startup_migrations():
     # (see password_change.py / migrations/2026-09-28_password_change_otp.sql).
     _step('sm_password_change_otp', _pwchange.ENSURE_SCHEMA_SQL)
 
+    # Self-service email change: code sent to the new address (see email_change.py /
+    # migrations/2026-10-11_email_change_otp.sql).
+    _step('sm_email_change_otp', _emailchange.ENSURE_SCHEMA_SQL)
+
     # Forgot Password (logged out): hashed one-time codes + reset windows, kept in
     # the database so they survive restarts (see password_reset.py /
     # migrations/2026-09-29_password_reset_requests.sql).
@@ -36386,6 +38241,18 @@ def _run_startup_migrations():
     except OSError as _e:
         print(f'[startup migration] sm_request_cancel_and_local_integrity: {_e}')
 
+    # HC16 Merge Group configuration tables (P1: additive, not read by scheduling while
+    # hc_merge_model is 'legacy'). Executed from the reviewed migration file, same as above.
+    try:
+        import merge_groups as _mg_schema
+        _step('sm_merge_groups', [_mg_schema.schema_sql()])
+        # HC17 explicit policy -> Merge Group mappings (P3; additive; after the group tables).
+        _step('sm_hc17_policy_groups', [_mg_schema.hc17_schema_sql()])
+    except OSError as _e:
+        print(f'[startup migration] sm_merge_groups: {_e}')
+
+    _cur.execute("RESET lock_timeout")   # pooled connection — don't leak the setting
+    _c.commit()
     _cur.close(); _c.close()
 
     _ensure_runtime_schema()

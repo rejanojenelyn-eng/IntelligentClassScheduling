@@ -30,6 +30,10 @@ const MERGE_SCOPE_SUBJECTS    = (() => {
         return (Array.isArray(arr) && arr.length) ? new Set(arr.map(c => String(c).toUpperCase())) : null;
     } catch { return null; }
 })();
+// HC16 model (internal switch, never an admin option). 'groups': explicit Merge Groups decide
+// merged classes on the server, so every legacy merge rule below (_getMergeMode, MERGE_SCOPE,
+// the NSTP flexible rule, "Merge Class Detected") is off — see manualEditor.mergeGroups.js.
+const MERGE_MODEL             = _initData.dataset.mergeModel === 'groups' ? 'groups' : 'legacy';
 // Read at file-load time from the data attribute — never depends on inline script order
 const _IS_LOCAL_MODE          = (_initData.dataset.schedulerMode || '') === 'local';
 
@@ -69,6 +73,7 @@ function _codeInMergeScope(upperCode, scopeSet) {
 }
 
 function _getMergeMode(subjectCode) {
+    if (MERGE_MODEL === 'groups') return 'none';   // group model: no legacy merge inference
     if (!MERGE_ENABLED) return 'none';
     const upper  = (subjectCode || '').toUpperCase();
     const isNstp = upper.startsWith('NSTP') || upper.startsWith('OU');
@@ -449,7 +454,10 @@ function _getMaxEndIdx() {
     if (tn === 'Designee' && isWkd && day) {
         const hasNS = _facInfo && _facInfo.night_service > 0;
         if (hasNS) return _hhmm_to_slot_idx(_facInfo.parttime_end, DES_NIGHT_END_IDX);
-        return Math.max(_hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX), REG_END_IDX);
+        // Designee time is split per segment (server: faculty_load.designee_segments):
+        // up to 4:30 PM is Regular, 4:30-6:00 PM is the designee PT/TS window — so a class
+        // may run until 6:00 PM (e.g. 2:00-5:00 PM); only 6:00-9:00 PM needs night service.
+        return Math.max(_hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX), DES_NIGHT_END_IDX);
     }
     if (tn === 'Regular' && isWkd && day) {
         return _hhmm_to_slot_idx(_facInfo.regular_end, REG_END_IDX);
@@ -616,6 +624,8 @@ async function onFacultySelect(empNum) {
     }
     _checkFacultySpecWarning();
     await updateTimeDropdowns();
+    // HC16 group model: re-check this section's merged-class faculty state.
+    if (typeof _mgScheduleRefresh === 'function') _mgScheduleRefresh();
 }
 
 function _checkFacultySpecWarning() {
@@ -796,6 +806,8 @@ function formSemFilter() { return document.getElementById('sel_sem').value || ''
 
 function toggleDSSMenu(type, event) {
     event.stopPropagation();
+    // HC16 group model: a designated Merge Group faculty is read-only here.
+    if (type === 'fac' && typeof _mgFacultyLocked === 'function' && _mgFacultyLocked()) { _mgFacultyGuard(); return; }
     const menu = document.getElementById(`${type}_menu`);
     const opening = menu.style.display !== 'block';
     ['fac', 'room'].forEach(t => document.getElementById(`${t}_menu`).style.display = 'none');
@@ -1275,7 +1287,7 @@ function _renderProgPills(sessions, prog, yl) {
                 const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
                 const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
                 const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null, room_id: sess.room_id || sess.roomid || null }));
-                const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
+                const dropBtn = `<button class="pill-drop-btn" onmousedown="event.stopPropagation()" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
                 pill.innerHTML = compact
                     ? `${dropBtn}<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
                     : medium
@@ -2146,6 +2158,25 @@ async function confirmAndPlace() {
 /* ── Two-step session deletion (works for local pending AND saved DB sessions) ── */
 window._dropSession = async function(sessDataEncoded, event) {
     event.stopPropagation();
+    if (event.preventDefault) event.preventDefault();
+    // Deleting a pill with its × must never open that pill's subject (the user may be
+    // mid-edit on another subject in the right panel). handlePillClick ignores clicks while
+    // a drop is in progress and for a short grace period after it (see _pillDropGuardActive).
+    window._pillDropInProgress = true;
+    window._pillDropBusyUntil  = Date.now() + 1500;
+    try {
+        return await _dropSessionImpl(sessDataEncoded);
+    } finally {
+        window._pillDropInProgress = false;
+        window._pillDropBusyUntil  = Date.now() + 800;
+    }
+};
+
+function _pillDropGuardActive() {
+    return !!window._pillDropInProgress || Date.now() < (window._pillDropBusyUntil || 0);
+}
+
+async function _dropSessionImpl(sessDataEncoded) {
     let sd;
     try { sd = JSON.parse(decodeURIComponent(sessDataEncoded)); } catch(e) { return; }
 
@@ -2430,6 +2461,9 @@ document.getElementById('btnManualApprove').addEventListener('click', () => wind
 // used by the faculty-reassignment flow so a reassignment on an already-Published subject
 // goes live immediately instead of sitting as an unapproved Draft (see _triggerSaveDraft).
 window._runManualApprove = async function(opts = {}) {
+    // HC16 group model, fail-closed: no Publish while the open subject's Merge Group details
+    // are unavailable or still loading (never applies under the legacy model).
+    if (typeof _mgGuardSave === 'function' && await _mgGuardSave('publish')) return false;
     // Guard against double-invocation. The button is only disabled further down (once the
     // publish slice-selection modal has already been resolved), so a fast double-click — or
     // the button click firing while an auto-mode call from faculty reassignment is still in
@@ -2637,6 +2671,34 @@ function _showLocalImpactModal(rows) {
     });
 }
 
+// Time Allotment slices that have SOME of Day / Start / End / Room filled but not all —
+// [{label: 'Slice 2', missing: ['Day']}]. Completely blank slices are not listed.
+function _partlyFilledSlices() {
+    const out = [];
+    document.querySelectorAll('.ts-row').forEach((row, i) => {
+        const f = {
+            Day:          row.querySelector('.ts-day-sel')?.value || '',
+            'Start time': row.querySelector('.ts-start-hidden')?.value || '',
+            'End time':   row.querySelector('.ts-end-hidden')?.value || '',
+            Room:         row.querySelector('.ts-room-hidden')?.value || '',
+        };
+        const missing = Object.keys(f).filter(k => !f[k]);
+        if (!missing.length || missing.length === 4) return;
+        // Saved on a day this subject may no longer use (Settings → Restricted Day)?
+        let savedDay = '';
+        try { savedDay = JSON.parse(row.dataset.existingJson || '{}').daydesc || ''; } catch (e) {}
+        const allowed = Array.from(row.querySelector('.ts-day-sel')?.options || []).map(o => o.value).filter(Boolean);
+        if (!f.Day && savedDay && !allowed.includes(savedDay)) {
+            missing[missing.indexOf('Day')] = `Day (it was saved on ${savedDay}, but only ` +
+                `${allowed.join(' / ') || 'other days'} ${allowed.length === 1 ? 'is' : 'are'} allowed for this subject)`;
+        }
+        const label = (row.querySelector('.ts-row-num span')?.textContent || `Slice ${i + 1}`).trim();
+        out.push({ label: label.charAt(0) + label.slice(1).toLowerCase(), missing });
+    });
+    return out;
+}
+window._partlyFilledSlices = _partlyFilledSlices;
+
 window._runManualApproveImpl = async function(opts = {}) {
     const auto = !!opts.auto;
     const ay   = formAyFilter();
@@ -2650,6 +2712,20 @@ window._runManualApproveImpl = async function(opts = {}) {
         return;
     }
 
+    // A slice that is only partly filled in (e.g. no Day yet) is not publishable — and it
+    // used to be skipped silently: the rest of the subject was published and that slice
+    // vanished when the panel reloaded. Stop and say exactly what is missing instead.
+    // (A completely blank slice is simply ignored, as before.)
+    if (!auto) {
+        const _incompleteSlices = _partlyFilledSlices();
+        if (_incompleteSlices.length) {
+            await showValidationModal('Finish the Slice First',
+                _incompleteSlices.map(s => `${s.label} is missing: ${s.missing.join(', ')}.`).join('\n') +
+                '\n\nFill it in (or remove it with ×) before publishing, so it isn\'t left out.');
+            return;
+        }
+    }
+
     // Scope to the currently selected subject only. A fromExisting entry that is already
     // Published must not be re-submitted here — but one that is fromExisting and still Draft
     // (loaded back into slices after an earlier Save as Draft, or after this same subject's
@@ -2659,8 +2735,12 @@ window._runManualApproveImpl = async function(opts = {}) {
     // modal, with earlier Draft slices missing, until a separate Save as Draft round-trips
     // them through the DB and back in (mirrors the correct filter _triggerSaveDraft uses).
     const currentSubj = document.getElementById('sel_subj').value;
+    // Same subject in ANOTHER section (e.g. DOMT-LOM's GEED 001 still in memory while
+    // DOMT-MOM is open) must never be published — or matched as "already confirmed" — here.
+    const _ctxSect = document.getElementById('sel_section')?.value || '';
+    const _inSect  = c => !_ctxSect || !c.section_id || String(c.section_id) === String(_ctxSect);
     let contextDrafts = pendingManualSchedule.filter(c =>
-        c.ay === ay && c.sem === sem && !c.isPreview &&
+        c.ay === ay && c.sem === sem && !c.isPreview && _inSect(c) &&
         !(c.fromExisting && (c.status || '').toLowerCase() === 'published') &&
         (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
     );
@@ -2788,6 +2868,11 @@ window._runManualApproveImpl = async function(opts = {}) {
                 // For newly added rows (no existingJson), null is correct — they're not in the DB yet.
                 window.currentEditSession = _sessData;
 
+                // Drop this row's own preview mirror first (Save as Draft does the same) —
+                // otherwise confirmAndPlace counts it as an already-scheduled session.
+                const _rowId = String(row.id || '').replace('ts-row-', '');
+                pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== 'PREVIEW_' + _rowId);
+
                 const prevLen = pendingManualSchedule.length;
                 await confirmAndPlace();
                 // A new row grows the array; an existing row REPLACES its own mirror
@@ -2809,7 +2894,7 @@ window._runManualApproveImpl = async function(opts = {}) {
             // and triggering a false "replace published schedule" confirmation for subjects that
             // were never touched in this action.
             contextDrafts = pendingManualSchedule.filter(c =>
-                c.ay === ay && c.sem === sem &&
+                c.ay === ay && c.sem === sem && !c.isPreview && _inSect(c) &&
                 (!currentSubj || (c.subject_code || c.subjectcode) === currentSubj)
             );
         }
@@ -2906,6 +2991,7 @@ window._runManualApproveImpl = async function(opts = {}) {
 
     try {
         let overrideFlag = false;
+        let mergeFlag = false;   // P7: user confirmed the merge notice
         while (true) {
             // A publish that never answers must not leave the button spinning forever.
             const _approveAbort   = new AbortController();
@@ -2916,7 +3002,7 @@ window._runManualApproveImpl = async function(opts = {}) {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ schedule_data: selectedDrafts, context, override: overrideFlag,
-                                           removed_subjects: removedSubjects }),
+                                           removed_subjects: removedSubjects, confirm_merges: mergeFlag }),
                     signal: _approveAbort.signal
                 });
             } finally {
@@ -2925,6 +3011,16 @@ window._runManualApproveImpl = async function(opts = {}) {
             let data;
             try { data = await res.json(); }
             catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was published.` }; }
+
+            // P7: this publish places a class exactly on another section's same subject +
+            // faculty slot — a merge. Ask, then resubmit with confirm_merges.
+            if (!data.success && data.code === 'MERGE_CONFIRMATION_REQUIRED' && !mergeFlag) {
+                if (!auto && typeof _confirmMergeNotice === 'function' && await _confirmMergeNotice(data)) {
+                    mergeFlag = true;
+                    continue;
+                }
+                return false;
+            }
 
             if (data.success) {
                 window.isLeavingIntentionally = true;
@@ -3322,7 +3418,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     // Pass all merged versionids so delete-all can be triggered if needed
                     _allVersionIds: _mergedSects.map(ms => ms.versionid).filter(Boolean)
                 }));
-                const dropBtn = `<button class="pill-drop-btn" onclick="_dropSession('${_sd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
+                const dropBtn = `<button class="pill-drop-btn" onmousedown="event.stopPropagation()" onclick="_dropSession('${_sd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
 
                 // Section badge(s) — same colored style for both single and merged sections.
                 // Status suffix (· DRAFT / · PUB) only shown when the session has a real
@@ -3699,7 +3795,9 @@ function _violEsc(t) {
     return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function _violParse(v) {
-    const rawType = v.type || (v.rule ? `Conflict: ${v.rule}` : 'Schedule Conflict');
+    const rawType = v.rule === 'HC16' && typeof _mgViolationDetails === 'function' && _mgViolationDetails(v)
+        ? 'Merged-Class Consistency'
+        : (v.type || (v.rule ? `Conflict: ${v.rule}` : 'Schedule Conflict'));
     const type = rawType.replace(/^Conflict:\s*/i, '');
     let subject = v.subject || '';
     let detail = String(v.detail || '').trim();
@@ -3716,6 +3814,15 @@ function _violParse(v) {
     const fix = fixIdx >= 0 ? sentences[fixIdx].replace(/^please\s+/i, '').replace(/^\w/, c => c.toUpperCase()) : '';
     const rest = sentences.filter((_, i) => i !== fixIdx);
     return { type, subject, what: rest[0] || '', info: rest.slice(1).join(' '), fix };
+}
+
+// HC16 group model: group, section, expected slot, actual slot and faculty issue.
+function _violMergeHtml(v) {
+    const d = typeof _mgViolationDetails === 'function' ? _mgViolationDetails(v) : null;
+    if (!d) return '';
+    return `<div class="viol-mg"><div class="viol-mg-row"><span>Status</span><b>${_violEsc(d.state)}</b></div>` +
+        d.rows.map(([k, val]) => `<div class="viol-mg-row"><span>${_violEsc(k)}</span><b>${_violEsc(val)}</b></div>`).join('') +
+        `</div>`;
 }
 
 async function _showFirstViolation(violations, opts = {}) {
@@ -3741,6 +3848,7 @@ async function _showFirstViolation(violations, opts = {}) {
                 (p.what ? `<div class="viol-what">${_violEsc(p.what)}</div>` : '') +
                 (p.info ? `<div class="viol-info">${_violEsc(p.info)}</div>` : '') +
                 (p.fix ? `<div class="viol-fix"><i class="fas fa-lightbulb"></i><span><strong>How to fix:</strong> ${_violEsc(p.fix)}</span></div>` : '') +
+                _violMergeHtml(violations[idx]) +
             `</div>` + nav;
     }
 

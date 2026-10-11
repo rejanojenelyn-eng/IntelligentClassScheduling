@@ -1153,3 +1153,45 @@ async function _loadFacultyLoad(empNum) {
 
 // Subject/Faculty Assignment Export moved to Reports > Teaching Assignment
 // (see reports.html / reports_admin.html) — no longer lives on this page.
+function _bindFacultyFormSubmit(formId, bannerId) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const banner = document.getElementById(bannerId);
+        if (banner) { banner.style.display = 'none'; banner.textContent = ''; }
+
+
+        const payload = {};
+        new FormData(form).forEach((val, key) => { payload[key] = val; });
+
+
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+            const res  = await fetch(form.dataset.apiAction, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!data.success) {
+                if (banner) {
+                    banner.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Unable to save faculty. Please try again.'}`;
+                    banner.style.display = 'flex';
+                }
+                return;
+            }
+            location.reload();
+        } catch (err) {
+            if (banner) {
+                banner.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network error. Please try again.';
+                banner.style.display = 'flex';
+            }
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+        }
+    });
+}
+_bindFacultyFormSubmit('addEmployeeForm', 'addFacultyErrorBanner');
+_bindFacultyFormSubmit('editEmployeeForm', 'editFacultyErrorBanner');

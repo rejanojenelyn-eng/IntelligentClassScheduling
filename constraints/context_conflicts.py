@@ -102,6 +102,17 @@ def _assigned_faculty(faculty_id):
     return bool(faculty_id) and str(faculty_id).strip().upper() not in ('TBA', 'NONE', 'NULL')
 
 
+def _resource_id(value):
+    """Normalize a faculty/room/section id for equality checks: '18' and 18 match;
+    blank and TBA mean "no resource" (never conflicts)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.upper() in ('TBA', 'NONE', 'NULL'):
+        return None
+    return text
+
+
 def overlapping_resource_conflicts(a, b, *, valid_merge=False, faculty_exempt=None):
     """Return HC10/HC11/HC12 resource dimensions shared by two occurrences.
 
@@ -118,9 +129,15 @@ def overlapping_resource_conflicts(a, b, *, valid_merge=False, faculty_exempt=No
     if faculty_exempt is None:
         faculty_exempt = valid_merge
     conflicts = []
-    same_faculty = _assigned_faculty(a.get('faculty_id')) and a.get('faculty_id') == b.get('faculty_id')
-    same_room = a.get('room_id') is not None and a.get('room_id') == b.get('room_id')
-    same_section = a.get('section_id') is not None and a.get('section_id') == b.get('section_id')
+    # Ids are compared as text: the editor sends room/section ids as strings ('18')
+    # while DB rows carry ints (18), and '18' == 18 is False — that silently let a
+    # room double-booking through the cross-schedule check.
+    fac_a, fac_b = _resource_id(a.get('faculty_id')), _resource_id(b.get('faculty_id'))
+    room_a, room_b = _resource_id(a.get('room_id')), _resource_id(b.get('room_id'))
+    sec_a, sec_b = _resource_id(a.get('section_id')), _resource_id(b.get('section_id'))
+    same_faculty = _assigned_faculty(fac_a) and fac_a == fac_b
+    same_room = room_a is not None and room_a == room_b
+    same_section = sec_a is not None and sec_a == sec_b
     if same_faculty and not faculty_exempt:
         conflicts.append('Faculty')
     if same_room and not valid_merge:

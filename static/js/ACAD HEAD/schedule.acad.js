@@ -209,6 +209,31 @@ function updateYearLevels() {
     }
 }
 
+// Section option loads can overlap (a section pick reloads the list while another
+// filter change is still loading). Only the NEWEST load may fill the dropdown, and it
+// replaces the options in one step — otherwise two responses appended into the same
+// list (e.g. BSAM-1..4 plus a second BSAM-2).
+let _sectionLoadSeq = 0;
+async function _loadSectionOptions(sel, url) {
+    const seq = ++_sectionLoadSeq;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (seq !== _sectionLoadSeq) return false;
+    sel.innerHTML = '<option value="">SELECT</option>';
+    const seen = new Set();
+    (data.sections || []).forEach(s => {
+        if (seen.has(String(s.id))) return;
+        seen.add(String(s.id));
+        const opt = document.createElement('option');
+        opt.value             = s.id;
+        opt.dataset.offering  = s.offeringcode || '';
+        opt.dataset.yearlevel = String(s.yearlevel || '');
+        opt.text = s.name;
+        sel.appendChild(opt);
+    });
+    return true;
+}
+
 async function updateSections() {
     const prog = document.getElementById('view_prog').value;
     const ay   = document.getElementById('view_ay').value;
@@ -217,7 +242,7 @@ async function updateSections() {
     const sel  = document.getElementById('view_section');
     if (!sel) return;
     sel.innerHTML = '<option value="">SELECT</option>';
-    if (!ay || !sem) return;
+    if (!ay || !sem) { _sectionLoadSeq++; return; }
     try {
         let url;
         if (prog) {
@@ -226,16 +251,7 @@ async function updateSections() {
         } else {
             url = `/api/sections-by-program?ay=${encodeURIComponent(ay)}&semester=${sem}`;
         }
-        const resp = await fetch(url);
-        const data = await resp.json();
-        (data.sections || []).forEach(s => {
-            const opt = document.createElement('option');
-            opt.value            = s.id;
-            opt.dataset.offering  = s.offeringcode || '';
-            opt.dataset.yearlevel = String(s.yearlevel || '');
-            opt.text = s.name;
-            sel.appendChild(opt);
-        });
+        await _loadSectionOptions(sel, url);
     } catch (e) {
         console.error('[updateSections]', e);
     }
@@ -277,19 +293,12 @@ async function onSectionChange() {
             // Reload section dropdown scoped to this program, then re-select same section
             const ay  = document.getElementById('view_ay').value;
             const sem = document.getElementById('view_sem').value;
-            secSel.innerHTML = '<option value="">SELECT</option>';
             try {
-                const url = `/api/sections-by-program?program=${encodeURIComponent(match.value)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
-                const resp = await fetch(url);
-                const data = await resp.json();
-                (data.sections || []).forEach(s => {
-                    const opt = document.createElement('option');
-                    opt.value             = s.id;
-                    opt.dataset.offering  = s.offeringcode || '';
-                    opt.dataset.yearlevel = String(s.yearlevel || '');
-                    opt.text = s.name;
-                    secSel.appendChild(opt);
-                });
+                // Scope to the section's year level too — program alone listed every
+                // year level's sections (BSAM-1, -3, -4 ... under 2ND YEAR).
+                let url = `/api/sections-by-program?program=${encodeURIComponent(match.value)}&ay=${encodeURIComponent(ay)}&semester=${sem}`;
+                if (sectionYl) url += `&yearLevel=${encodeURIComponent(sectionYl)}`;
+                await _loadSectionOptions(secSel, url);
             } catch(e) { console.error('[onSectionChange] fetch', e); }
             const reselect = Array.from(secSel.options).find(o => o.value === selectedId);
             if (reselect) secSel.value = reselect.value;

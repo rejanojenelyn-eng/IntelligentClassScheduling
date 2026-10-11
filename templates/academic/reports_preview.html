@@ -464,6 +464,47 @@
     {% endif %}
     </div>
 
+    <!-- ── SUBJECT / FACULTY ASSIGNMENT — Faculty Type → Faculty grouped layout,
+         mirroring _facsub_gen_xlsx/docx/pdf (faculty with no load still listed). ── -->
+    {% elif report_type == 'faculty_subject' and facsub_groups %}
+    <div class="sis-sheet">
+    {% for line in facsub_title_lines %}<div class="sis-title">{{ line }}</div>{% endfor %}
+    <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+    {% for grp in facsub_groups %}
+        <div class="room-bldg-hdr">{{ grp.label }}</div>
+        <div class="rpt-table-wrapper">
+            <div class="rpt-table-scroll">
+                <table class="schedule-table">
+                    <colgroup>
+                        <col style="width:22%"><col style="width:12%"><col style="width:40%">
+                        <col style="width:16%"><col style="width:10%">
+                    </colgroup>
+                    <thead>
+                        <tr><th>Name</th><th>Subject Code</th><th>Subject Description</th><th>Course</th><th>Hours</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for fac in grp.faculty %}
+                            {% if fac.cells %}
+                                {% for row in fac.cells %}
+                                <tr>
+                                    {% if loop.first %}<td class="td-desc" rowspan="{{ fac.cells|length }}">{{ fac.name }}</td>{% endif %}
+                                    <td class="td-code">{{ row[0] }}</td>
+                                    <td class="td-desc">{{ row[1] }}</td>
+                                    <td>{{ row[2] }}</td>
+                                    <td>{{ row[3] }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr><td class="td-desc">{{ fac.name }}</td><td></td><td></td><td></td><td></td></tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+
     <!-- ── GROUPED SECTIONS (assignments, offerings) ── -->
     {% elif sections %}
         {% for sec in sections %}
