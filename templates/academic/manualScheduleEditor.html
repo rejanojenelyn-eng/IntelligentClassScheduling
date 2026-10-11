@@ -3856,6 +3856,7 @@ async function _onSubjectClick(code, name, units, hours) {
                 roomName = room ? room.name : 'TBA';
             }
             entry.day        = sess.daydesc;
+            entry.daydesc    = sess.daydesc;
             entry.days       = (sess.daydesc || '').substring(0, 3).toUpperCase();
             entry.days_list  = [sess.daydesc];
             entry.start_time = st;
@@ -6457,6 +6458,7 @@ function _syncSliceToPending(id) {
 
         const oldRoomId = entry.room_id;
         entry.day        = newDay;
+        entry.daydesc    = newDay;   // never leave a stale daydesc behind — the server saves it
         entry.days_list  = newDay ? [newDay] : [];
         entry.days       = newDay ? newDay.substring(0, 3).toUpperCase() : '';
         entry.start_time = newStart;
@@ -8853,7 +8855,12 @@ function _applyDayAvailabilityFilter(rowId) {
                                             row.dataset.mergeEvent || '');
         const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
             ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx));
-        if (occupied) opt.remove();
+        if (!occupied) return;
+        // Never hide the slice's OWN day: removing it blanked the select to "-- Day --",
+        // which hid the double-booking and sent day='' to Save/Publish. Keep it selected
+        // and label it so the conflict is visible; the conflict checks block it on save.
+        if (opt.value === curVal) { opt.textContent = `${opt.value} (room taken)`; return; }
+        opt.remove();
     });
 
     // The slice's own current booking is always excluded via excludeTempId above, so its

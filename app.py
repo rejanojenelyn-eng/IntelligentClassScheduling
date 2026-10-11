@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, s
 import psycopg2.errors
 import makeup_requests as _makeup
 import password_change as _pwchange
+import email_change as _emailchange
 import password_reset as _pwreset
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
@@ -30509,30 +30510,42 @@ def api_user_password_change():
     return _password_step(_change)
 
 
+def _email_step(fn):
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'unauthorized',
+                        'message': 'Please log in again.'}), 401
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Database connection failed.'}), 500
+    try:
+        return fn(conn, session['username'])
+    except _emailchange.EmailChangeError as ee:
+        return jsonify(ee.to_json()), ee.status
+    except Exception as e:
+        conn.rollback()
+        print(f"[email change] unexpected error: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Something went wrong. Please try again.'}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/user/email/request-code', methods=['POST'])
+def api_user_email_request_code():
+    # The code goes to the NEW address, proving the user can read it before it
+    # becomes the account email (where password codes are sent afterwards).
+    return _email_step(lambda c, u: jsonify(
+        _emailchange.request_code(c, u, request.form.get('email', ''), Config)))
+
 @app.route('/api/user/email/update', methods=['POST'])
 def api_user_email_update():
-    if 'loggedin' not in session: return jsonify({'success': False}), 401
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        username = session.get('username')
-        email    = request.form.get('email', '').strip()
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
-            return jsonify({'success': False, 'error': 'Please enter a valid email address.'}), 400
-        cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
-        acc = cur.fetchone()
-        emp_num = acc['employeenumber'] if acc else None
-        if emp_num:
-            cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s", (email, emp_num))
-        else:
-            # Standalone accounts with no faculty record (the system Admin) keep
-            # their own contact email on accounts — never on a faculty row.
-            cur.execute("UPDATE accounts SET email = %s WHERE username = %s AND employeenumber IS NULL",
-                        (email, username))
-        conn.commit()
-        return jsonify({'success': True})
-    except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
-    finally: cur.close(); conn.close()
+    def _confirm(c, u):
+        saved = _emailchange.confirm(c, u, request.form.get('email', ''), request.form.get('code', ''))
+        write_activity_log(action='Email Changed',
+                           details=f"{u} changed their email address (verified by email code)",
+                           category='account', color='blue')
+        return jsonify({'success': True, 'email': saved})
+    return _email_step(_confirm)
 
 # --- API: Faculty's own published-schedule assignments (for subject/section dropdown) ---
 @app.route('/api/faculty/my_assignments')
@@ -31893,6 +31906,19 @@ def _rehydrate_schedule(schedule_data: list) -> list:
             cls['days_list'] = _parse_days(cls['days'])
         if 'day' not in cls and 'days_list' in cls and cls['days_list']:
             cls['day'] = cls['days_list'][0]
+        # One day for validation AND saving. The validators read day/days_list and skip a
+        # day-less row, but _insert_batch falls back to daydesc — so a row sent as
+        # day='' with a stale daydesc='Saturday' used to pass every conflict check and still
+        # be saved on Saturday (a room double-booking published unnoticed). day is the
+        # editor's current choice; daydesc only fills in when day is blank.
+        if not cls.get('day'):
+            _fallback_day = cls.get('daydesc') or (cls.get('days_list') or [None])[0]
+            if _fallback_day:
+                cls['day'] = _fallback_day
+        if cls.get('day'):
+            cls['daydesc'] = cls['day']
+            if not cls.get('days_list'):
+                cls['days_list'] = [cls['day']]
         # Normalize the hours field: manual editor sends 'units'; CSP validator
         # expects 'total_hours' or 'total_subject_hrs' for HC7 day-pairing check.
         if 'total_hours' not in cls and 'total_subject_hrs' not in cls:
@@ -34018,7 +34044,7 @@ def _hc16_member_faculty_conflicts(rows, policy, sem_id, section_id, cur=None):
 
 
 def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, acad_year_id, section_id=None,
-                                    fail_closed=False):
+                                    fail_closed=False, include_drafts=False):
     """
     Check a freshly-generated schedule (raw, with datetime.time objects) against
     existing Published sessions from OTHER sections in the same semester.
@@ -34027,6 +34053,9 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     Faculty conflict = same faculty, same day, overlapping time (different subject).
     Admin Settings can switch HC15 off entirely, and HC10/HC11/HC12 per dimension
     (Official scheduling only -- Local/request checks never read these switches).
+    include_drafts=True (Publish only): OTHER sections' saved Draft sessions also
+    reserve their room/faculty, so a publish cannot take a slot another section's
+    Draft already holds. Generation / Save Draft keep counting Published only.
     """
     if not schedule_data or not acad_year_id or not term:
         return [], 0
@@ -34140,6 +34169,42 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
               AND ts_e.timevalue IS NOT NULL
         """, (sem_id, section_id, section_id))
         published.extend(cur.fetchall() or [])
+
+        if include_drafts:
+            # Other sections' saved Official Drafts (not removal markers). Listed after
+            # the Published rows so an identical Published slot is reported first.
+            cur.execute("""
+                SELECT ss.roomid,
+                       COALESCE(sv.employeenumber, sc.employeenumber) AS faculty_id,
+                       sc.sectionid               AS sectionid,
+                       ss.daydesc                 AS day,
+                       ts_s.timevalue             AS start_time,
+                       ts_e.timevalue             AS end_time,
+                       UPPER(cs.subjectcode)      AS subjectcode,
+                       UPPER(c.programcode)       AS programcode,
+                       cs.yearlevel               AS yearlevel,
+                       sec.sectionname            AS sectionname,
+                       COALESCE(r.roomname, CAST(ss.roomid AS TEXT)) AS roomname,
+                       'Draft'                    AS status
+                FROM   schedule_sessions ss
+                JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
+                JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
+                JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
+                LEFT JOIN sections sec      ON sc.sectionid           = sec.sectionid
+                LEFT JOIN room r            ON ss.roomid              = r.roomid
+                LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
+                LEFT JOIN timeslot ts_e     ON ss.endtimeid           = ts_e.timeid
+                WHERE  sc.semesterid  = %s
+                  AND  sv.status      = 'Draft'
+                  AND  sv.is_removal  = FALSE
+                  AND  COALESCE(sv.source, '') <> 'local'
+                  AND  (%s IS NULL OR sc.sectionid <> %s)
+                  AND  ss.daydesc     IS NOT NULL
+                  AND  ts_s.timevalue IS NOT NULL
+                  AND  ts_e.timevalue IS NOT NULL
+            """, (sem_id, section_id, section_id))
+            published.extend(cur.fetchall() or [])
         cur.close(); conn.close()
     except Exception as exc:
         try: cur.close()
@@ -34261,12 +34326,17 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                         detail = (f"Section {sec_new} has overlapping classes on {day_new}: {sc_new} and "
                                   f"{ex['subjectcode']} at the same time.")
                         affected = ['day', 'time']
+                    if ex.get('status') == 'Draft':
+                        detail += (f" That class is a saved Draft of {ex.get('sectionname') or 'another section'}"
+                                   " — change it or this slice before publishing.")
                     violation = {
                         'rule': rule, 'type': RULE_LABELS[rule],
                         'subject': f"{sc_new} / {ex['subjectcode']}",
                         'target_subject_code': sc_new, 'detail': detail,
                         'affected_components': affected,
                     }
+                    if ex.get('status') == 'Draft':
+                        violation['against_draft'] = True
                     if dim == 'Faculty':
                         violation['faculty_id'] = fac_new
                     violations.append(violation)
@@ -36565,7 +36635,7 @@ def api_approve_schedule():
         if publish_gate_on:
             cross_violations, _cross_count = _check_cross_schedule_conflicts(
                 sched_data, program, year_level, term, ay, section_id=_ctx_section_id,
-                fail_closed=True,
+                fail_closed=True, include_drafts=True,
             )
             if cross_violations:
                 cur.close(); conn.close()
@@ -38096,6 +38166,10 @@ def _run_startup_migrations():
     # Self-service password change: once-per-month limit + emailed verification code
     # (see password_change.py / migrations/2026-09-28_password_change_otp.sql).
     _step('sm_password_change_otp', _pwchange.ENSURE_SCHEMA_SQL)
+
+    # Self-service email change: code sent to the new address (see email_change.py /
+    # migrations/2026-10-11_email_change_otp.sql).
+    _step('sm_email_change_otp', _emailchange.ENSURE_SCHEMA_SQL)
 
     # Forgot Password (logged out): hashed one-time codes + reset windows, kept in
     # the database so they survive restarts (see password_reset.py /

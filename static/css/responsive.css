@@ -84,7 +84,13 @@
     .sub-header .search-container input { padding: 8px 14px 8px 38px; font-size: 16px; }
     .sub-header .search-container i { left: 14px; }
 
-    .up-dropdown { position: fixed; top: 60px; right: 8px; left: auto; width: min(300px, calc(100vw - 16px)); }
+    /* User menu and its panels: same spot, pinned under the nav */
+    .up-dropdown, .up-panel { position: fixed; top: 60px; right: 8px; left: auto; }
+    .up-dropdown { width: min(340px, calc(100vw - 16px)); max-height: calc(100dvh - 70px); }
+    .up-panel { width: min(420px, calc(100vw - 16px)); }
+    .up-panel-box { max-height: calc(100dvh - 70px); padding: 16px; }
+    .up-panel-icon { width: 52px; height: 52px; font-size: 1.3rem; }
+    .up-otp input { width: 36px; height: 42px; }
 
     .content-body { padding: 16px 12px; }
 
@@ -96,9 +102,7 @@
 
     /* Shared modals fit the screen */
     .modal-content-logout,
-    .up-panel-box,
     .notif-popup { width: calc(100vw - 24px) !important; max-width: calc(100vw - 24px) !important; }
-    .up-panel-box { max-height: 90dvh; padding: 18px; }
 
     /* 16px inputs stop iOS from zooming in when a field is focused */
     .content-body input:not([type=checkbox]):not([type=radio]),

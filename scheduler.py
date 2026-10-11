@@ -1883,7 +1883,7 @@ class CSPValidator:
                 # (both falsy/'TBA') would be treated as "same room" and falsely flagged.
                 if not a_room or not b_room or str(a_room).upper() == 'TBA' or str(b_room).upper() == 'TBA':
                     continue
-                if a_room != b_room:
+                if str(a_room).strip() != str(b_room).strip():   # '18' and 18 are the same room
                     continue
                 if self._merge_policy is not None:
                     # Group model: only the same HC16 merged event may share the room.

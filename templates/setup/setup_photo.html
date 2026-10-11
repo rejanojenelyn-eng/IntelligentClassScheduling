@@ -33,8 +33,10 @@
     <div class="photo-name" id="photoName">{{ 'Your current profile picture is shown above.' if current_photo else '' }}</div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/photo.cropper.js') }}"></script>
 <script>
-    function previewPhoto(input) {
+    let _croppedPhoto = null;   // the last photo the user cropped; kept if they cancel a later pick
+    async function previewPhoto(input) {
         const name = document.getElementById('photoName');
         if (!input.files || !input.files[0]) { name.textContent = ''; return; }
         const f = input.files[0];
@@ -42,10 +44,16 @@
             name.textContent = 'That file is larger than 2 MB. Please choose a smaller photo.';
             input.value = ''; return;
         }
-        const reader = new FileReader();
+        // Fit the picture to the circle; the cropped image replaces the chosen
+        // file so the form submits exactly what the preview shows.
+        const blob = await openPhotoCropper(f);
+        const dt = new DataTransfer();
+        if (blob) _croppedPhoto = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+        if (_croppedPhoto) dt.items.add(_croppedPhoto);
+        input.files = dt.files;
+        if (!blob) return;
         const img = document.getElementById('avatarPreview');
-        reader.onload = e => { img.src = e.target.result; img.style.display = 'block'; };
-        reader.readAsDataURL(f);
+        img.src = URL.createObjectURL(blob); img.style.display = 'block';
         name.textContent = f.name;
     }
 </script>

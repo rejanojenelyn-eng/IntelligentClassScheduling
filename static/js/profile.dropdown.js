@@ -27,6 +27,8 @@ let _profileData = null;
 
 function toggleUpDropdown(event) {
     event.stopPropagation();
+    // The avatar while a panel is open acts like the panel's Back.
+    if (_upActivePanel()) return upBackToMenu();
     _upOpen ? closeUpDropdown() : openUpDropdown();
 }
 function openUpDropdown() {
@@ -83,58 +85,83 @@ function _applyAvatar(circleId, iconId, photoUrl) {
 
 
 /* ══════════════════════════════════════════════════════
-   PANEL NAVIGATION (browser Back / in-panel Back)
+   PANEL NAVIGATION (in-panel Back / browser Back)
+   The menu and each panel open in the same spot under the avatar
+   (templates/shared/_user_menu.html). A panel's Back returns to the menu;
+   ✕ / Cancel / a successful save close everything.
    Opening a panel adds ONE history entry, so the browser's Back button (or a
-   mouse/phone back gesture) closes the panel and stays on the current page
+   mouse/phone back gesture) also returns to the menu and stays on the page
    instead of leaving it — previously, Back right after login walked onto
    /login, which ended the session. Switching between panels replaces that
    entry rather than stacking new ones, and closing a panel by any means
-   (Back, ✕, Cancel, Save) removes it again, so no duplicate entries pile up.
+   removes it again, so no duplicate entries pile up.
 ══════════════════════════════════════════════════════ */
 const _UP_PANELS = ['profilePanel', 'passwordPanel', 'emailPanel'];
+// Per-panel cleanup when it is hidden: unsaved input is discarded.
+const _UP_PANEL_RESET = {
+    profilePanel:  () => { _pendingPhoto = null; },
+    passwordPanel: () => _pwStop(),
+    emailPanel:    () => _emStop(),
+};
+
+
+function _upActivePanel() {
+    return _UP_PANELS.find(p => {
+        const el = document.getElementById(p);
+        return el && el.style.display !== 'none';
+    }) || null;
+}
+
+
+function _upHidePanels(except) {
+    _UP_PANELS.forEach(p => {
+        const el = document.getElementById(p);
+        if (!el || p === except || el.style.display === 'none') return;
+        el.style.display = 'none';
+        _UP_PANEL_RESET[p]();
+    });
+}
 
 
 function _upOpenPanel(id) {
-    _UP_PANELS.forEach(p => {
-        const el = document.getElementById(p);
-        if (el && p !== id) el.style.display = 'none';
-    });
+    closeUpDropdown();
+    _upHidePanels(id);
     const panel = document.getElementById(id);
-    if (panel) panel.style.display = 'flex';
+    if (panel) panel.style.display = 'block';
     const state = { upPanel: id };
     if (history.state && history.state.upPanel) history.replaceState(state, '');
     else history.pushState(state, '');
 }
 
 
-function _upClosePanel(id) {
-    const panel = document.getElementById(id);
-    if (panel) panel.style.display = 'none';
-    // Drop the entry this panel added; the popstate that follows only hides panels.
-    if (history.state && history.state.upPanel === id) history.back();
+function _upClosePanel(toMenu = false) {
+    _upHidePanels();
+    if (toMenu) openUpDropdown();
+    // Drop the entry the panel added; the popstate that follows finds nothing open.
+    if (history.state && history.state.upPanel) history.back();
 }
+
+
+/* Back: leave the panel and show the menu of what can be changed. */
+function upBackToMenu() { _upClosePanel(true); }
 
 
 window.addEventListener('popstate', e => {
     const want = e.state && e.state.upPanel;
-    _UP_PANELS.forEach(p => {
-        const el = document.getElementById(p);
-        if (el && p !== want) el.style.display = 'none';
-    });
-    if (want === 'passwordPanel') _pwStop();
+    const wasOpen = _upActivePanel();
+    _upHidePanels(want);
     // Browser Forward onto a panel entry: reopen it fresh.
     if (want === 'profilePanel') openProfilePanel();
     else if (want === 'passwordPanel') openPasswordPanel();
     else if (want === 'emailPanel') openEmailPanel();
+    // Browser Back out of a panel: same as the panel's Back.
+    else if (wasOpen) openUpDropdown();
 });
 
 
 window.addEventListener('pageshow', e => {
-    // Restored from the back/forward cache: never show a stale panel.
-    if (e.persisted) _UP_PANELS.forEach(p => {
-        const el = document.getElementById(p);
-        if (el) el.style.display = 'none';
-    });
+    // Restored from the back/forward cache: never show a stale panel or menu.
+    if (e.persisted) { _upHidePanels(); closeUpDropdown(); }
 });
 
 
@@ -142,10 +169,11 @@ window.addEventListener('pageshow', e => {
    PROFILE SETTINGS PANEL
 ══════════════════════════════════════════════════════ */
 let _profileOptions = null;
+let _profileEditable = false;
+let _pendingPhoto = null;   // cropped photo waiting for Save Changes; dropped on Cancel / close
 
 
 async function openProfilePanel() {
-    closeUpDropdown();
     _upOpenPanel('profilePanel');
     if (!_profileData) await _loadUserCard();
     if (!_profileOptions) {
@@ -220,6 +248,7 @@ async function openProfilePanel() {
     }
 
 
+    _pendingPhoto = null;
     _applyProfileEditLock(d.profile_editable !== false, d.photo_editable !== false);
 }
 
@@ -231,6 +260,7 @@ async function openProfilePanel() {
    self-edit). Re-enabling the backend flag alone won't restore the UI — this still
    needs to see profile_editable: true from the API. */
 function _applyProfileEditLock(editable, photoEditable = editable) {
+    _profileEditable = editable;
     ['pfDesignation', 'pfSpecialization', 'pfStatus'].forEach(id => {
         const sel = document.getElementById(id);
         if (sel) sel.disabled = !editable;
@@ -249,12 +279,7 @@ function _applyProfileEditLock(editable, photoEditable = editable) {
     }
 
 
-    const saveBtn = document.getElementById('pfSaveBtn');
-    if (saveBtn) {
-        saveBtn.disabled = !editable;
-        saveBtn.style.opacity = editable ? '' : '0.5';
-        saveBtn.style.cursor  = editable ? '' : 'not-allowed';
-    }
+    _syncProfileSaveBtn();
 
 
     const notice = document.getElementById('pfNotice');
@@ -268,8 +293,20 @@ function _applyProfileEditLock(editable, photoEditable = editable) {
 }
 
 
+/* Save Changes is usable when the profile fields are editable, or when there is a
+   cropped photo waiting to be saved (the photo stays changeable while the fields are locked). */
+function _syncProfileSaveBtn() {
+    const saveBtn = document.getElementById('pfSaveBtn');
+    if (!saveBtn) return;
+    const enabled = _profileEditable || !!_pendingPhoto;
+    saveBtn.disabled = !enabled;
+    saveBtn.style.opacity = enabled ? '' : '0.5';
+    saveBtn.style.cursor  = enabled ? '' : 'not-allowed';
+}
+
+
 function closeProfilePanel() {
-    _upClosePanel('profilePanel');
+    _upClosePanel();   // an unsaved photo is discarded (_UP_PANEL_RESET); the saved one shows next time
 }
 
 
@@ -277,73 +314,57 @@ async function saveProfile() {
     const btn  = document.querySelector('#profilePanel .up-btn-save');
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
-    const fd = new FormData();
-    fd.append('designation_id',    document.getElementById('pfDesignation')?.value    || '');
-    fd.append('specialization_id', document.getElementById('pfSpecialization')?.value || '');
-    fd.append('employment_status', document.getElementById('pfStatus')?.value         || '');
     try {
-        const res  = await fetch('/api/user/profile/update', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (data.success) {
-            _profileData = null;
-            await _loadUserCard();
-            closeProfilePanel();
-            _showUpToast('Profile updated successfully.');
-        } else { alert(data.error || 'Failed to save profile.'); }
+        if (_pendingPhoto) {
+            const pfd = new FormData(); pfd.append('photo', _pendingPhoto, 'profile.jpg');
+            const res  = await fetch('/api/user/photo/upload', { method: 'POST', body: pfd });
+            const data = await res.json();
+            if (!data.success) { alert(data.error || 'Photo upload failed.'); return; }
+            _pendingPhoto = null;
+        }
+        if (_profileEditable) {
+            const fd = new FormData();
+            fd.append('designation_id',    document.getElementById('pfDesignation')?.value    || '');
+            fd.append('specialization_id', document.getElementById('pfSpecialization')?.value || '');
+            fd.append('employment_status', document.getElementById('pfStatus')?.value         || '');
+            const res  = await fetch('/api/user/profile/update', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!data.success) { alert(data.error || 'Failed to save profile.'); return; }
+        }
+        _profileData = null;
+        await _loadUserCard();
+        closeProfilePanel();
+        _showUpToast('Profile updated successfully.');
     } catch(e) { alert('Error: ' + e.message); }
-    finally { btn.disabled = false; btn.textContent = orig; }
+    finally { btn.textContent = orig; _syncProfileSaveBtn(); }
 }
 
 
 async function handlePhotoUpload(input) {
     const file = input.files[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); input.value = ''; return; }
-    const fd = new FormData(); fd.append('photo', file);
-    try {
-        const res  = await fetch('/api/user/photo/upload', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (data.success) {
-            const photoImg  = document.getElementById('profilePhotoImg');
-            const photoIcon = document.getElementById('profilePhotoIcon');
-            photoImg.src = data.photo_url; photoImg.style.display = 'block';
-            if (photoIcon) photoIcon.style.display = 'none';
-            if (_profileData) _profileData.photo_url = data.photo_url;
-            _applyAvatar('navAvatar', 'navAvatarIcon', data.photo_url);
-            _applyAvatar('updAvatar', null, data.photo_url);
-        } else { alert(data.error || 'Upload failed.'); }
-    } catch(e) { alert('Upload error: ' + e.message); }
-    input.value = '';
+    input.value = '';   // so picking the same file again still fires onchange
+    if (file.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); return; }
+    // Let the user fit the picture to the avatar circle before it is uploaded.
+    const cropped = await openPhotoCropper(file);
+    if (!cropped) return;
+    // Preview only — nothing is uploaded until the user clicks Save Changes.
+    _pendingPhoto = cropped;
+    const photoImg  = document.getElementById('profilePhotoImg');
+    const photoIcon = document.getElementById('profilePhotoIcon');
+    photoImg.src = URL.createObjectURL(cropped); photoImg.style.display = 'block';
+    if (photoIcon) photoIcon.style.display = 'none';
+    _syncProfileSaveBtn();
 }
 
 
 /* ══════════════════════════════════════════════════════
-   PASSWORD PANEL
+   SHARED PANEL HELPERS
 ══════════════════════════════════════════════════════ */
-/* Flow: eligibility (once per month) → send emailed code → verify code →
-   current / new / confirm → update. The server enforces every step; this
-   only drives the three views inside the one panel. */
-let _pwResendTimer = null;
 const _pwEl = id => document.getElementById(id);
 
 
-function _pwShowStep(step) {
-    ['Check', 'Code', 'Form'].forEach(s => {
-        const el = _pwEl('pwStep' + s);
-        if (el) el.style.display = s === step ? '' : 'none';
-    });
-}
-function _pwError(id, msg) {
-    const el = _pwEl(id);
-    if (!el) return;
-    el.textContent = msg || '';
-    el.style.display = msg ? 'block' : 'none';
-}
-function _pwStop() {
-    if (_pwResendTimer) { clearInterval(_pwResendTimer); _pwResendTimer = null; }
-    ['pwCode', 'pwCurrent', 'pwNew', 'pwConfirm'].forEach(id => { const el = _pwEl(id); if (el) el.value = ''; });
-}
-async function _pwPost(url, fields) {
+async function _upPost(url, fields) {
     const fd = new FormData();
     Object.entries(fields || {}).forEach(([k, v]) => fd.append(k, v));
     const res = await fetch(url, { method: 'POST', body: fd });
@@ -354,58 +375,124 @@ async function _pwPost(url, fields) {
 }
 
 
-async function openPasswordPanel() {
-    closeUpDropdown();
-    _upOpenPanel('passwordPanel');
-    await _pwStart();
+function _upShowError(id, msg) {
+    const el = _pwEl(id);
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.display = msg ? 'block' : 'none';
 }
 
 
-async function _pwStart(errorMsg) {
+// Buttons keep their icon; only the text in their <span> changes.
+function _upBtnLabel(btn, text) {
+    const span = btn && btn.querySelector('span');
+    if (span) span.textContent = text; else if (btn) btn.textContent = text;
+}
+
+
+const _fmtCountdown = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+
+function togglePwVisibility(btn) {
+    const input = btn.parentElement.querySelector('input');
+    const show  = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.querySelector('i').className = show ? 'fas fa-eye-slash' : 'fas fa-eye';
+    btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+
+
+/* ══════════════════════════════════════════════════════
+   PASSWORD PANEL
+══════════════════════════════════════════════════════ */
+/* One form: Send Code → type the 6-digit code and the passwords → Update.
+   On Update the code is verified first (once), then the password is changed.
+   The server enforces every step (once a month, code expiry/attempts, the
+   verified window); this only drives the form. */
+let _pwResendTimer = null;
+let _pwCodeSent    = false;
+let _pwVerified    = false;   // code accepted; a retry (e.g. wrong current password) needn't re-verify
+
+
+const _pwOtpInputs = () => [...document.querySelectorAll('#pwOtp input')];
+const _pwOtpValue  = () => _pwOtpInputs().map(i => i.value).join('');
+const _pwError     = msg => _upShowError('pwError', msg);
+
+
+function _pwClearOtp() { _pwOtpInputs().forEach(i => { i.value = ''; }); }
+
+
+function _pwStop() {
+    if (_pwResendTimer) { clearInterval(_pwResendTimer); _pwResendTimer = null; }
+    _pwCodeSent = false; _pwVerified = false;
+    _pwClearOtp();
+    ['pwCurrent', 'pwNew', 'pwConfirm'].forEach(id => {
+        const el = _pwEl(id);
+        if (!el) return;
+        el.value = ''; el.type = 'password';
+        const eye = el.parentElement.querySelector('.up-pw-eye i');
+        if (eye) eye.className = 'fas fa-eye';
+    });
+    _pwError('');
+}
+
+
+/* Enable or lock the whole form (locked while the password can't be changed). */
+function _pwSetFormEnabled(on) {
+    document.querySelectorAll('#pwForm input').forEach(i => { i.disabled = !on; });
+    const send = _pwEl('pwSendBtn'), save = _pwEl('pwSaveBtn');
+    if (send) send.disabled = !on;
+    if (save) { save.disabled = !on; save.style.opacity = on ? '' : '0.5'; }
+}
+
+
+function _pwBlocked(msg, showAddEmail) {
+    _pwEl('pwBlocked').style.display = msg ? '' : 'none';
+    _pwEl('pwBlockedMsg').textContent = msg || '';
+    _pwEl('pwAddEmailBtn').style.display = showAddEmail ? '' : 'none';
+}
+
+
+async function openPasswordPanel() {
+    _upOpenPanel('passwordPanel');
     _pwStop();
-    _pwShowStep('Check');
-    ['pwCheckError', 'pwCodeError', 'pwError'].forEach(id => _pwError(id, ''));
-    _pwError('pwCheckError', errorMsg || '');
-    _pwEl('pwSub').textContent = 'Update your account password.';
-    const notice = _pwEl('pwCheckNotice'), msg = _pwEl('pwCheckMsg');
-    const sendBtn = _pwEl('pwSendBtn'), addBtn = _pwEl('pwAddEmailBtn');
-    notice.classList.remove('up-notice-warn');
-    msg.textContent = 'Checking eligibility…';
-    sendBtn.style.display = 'none'; addBtn.style.display = 'none';
+    _pwBlocked('');
+    _pwEl('pwResendBox').style.display = 'none';
+    _upBtnLabel(_pwEl('pwSendBtn'), 'Send Code');
+    _pwEl('pwCodeHint').textContent = 'A 6-digit verification code will be sent to your email.';
+    _pwSetFormEnabled(false);
+    if (!_profileData) await _loadUserCard();
+    _pwEl('pwEmail').textContent = _profileData?.email || '—';
     try {
         const res  = await fetch('/api/user/password/eligibility');
         const data = await res.json();
-        if (!data.success) throw new Error(data.message || 'Could not check eligibility.');
-        if (!data.eligible) {
-            notice.classList.add('up-notice-warn');
-            msg.textContent = data.message;
-        } else if (!data.has_email) {
-            notice.classList.add('up-notice-warn');
-            msg.textContent = 'A verification code must be sent to your email, but your account has no email address yet.';
-            addBtn.style.display = '';
-        } else {
-            msg.textContent = `For your security, a 6-digit verification code will be sent to ${data.email_masked}. `
-                            + 'You can change your password once per month.';
-            sendBtn.style.display = '';
+        if (!data.success) throw new Error(data.message);
+        if (!data.eligible) return _pwBlocked(data.message);
+        if (!data.has_email) {
+            _pwEl('pwEmail').textContent = 'No email address on file';
+            return _pwBlocked('A verification code must be sent to your email, but your account has no email address yet.', true);
         }
+        if (!_profileData?.email) _pwEl('pwEmail').textContent = data.email_masked;
+        _pwSetFormEnabled(true);
     } catch (e) {
-        msg.textContent = 'Could not check whether you can change your password right now.';
-        _pwError('pwCheckError', e.message);
+        _pwBlocked('Could not check whether you can change your password right now. Please try again.');
     }
 }
 
 
 function _pwStartResendCooldown(seconds) {
-    const btn = _pwEl('pwResendBtn');
+    const resend = _pwEl('pwResendBtn'), send = _pwEl('pwSendBtn');
     if (_pwResendTimer) clearInterval(_pwResendTimer);
     let left = Math.max(0, Math.ceil(seconds || 0));
     const tick = () => {
         if (left <= 0) {
             clearInterval(_pwResendTimer); _pwResendTimer = null;
-            btn.disabled = false; btn.textContent = 'Resend code';
+            resend.disabled = false; resend.textContent = 'Resend Code';
+            send.disabled = false; _upBtnLabel(send, 'Resend');
             return;
         }
-        btn.disabled = true; btn.textContent = `Resend code (${left}s)`;
+        resend.disabled = true; resend.textContent = `Resend Code (${_fmtCountdown(left)})`;
+        send.disabled = true;
         left -= 1;
     };
     tick();
@@ -415,123 +502,217 @@ function _pwStartResendCooldown(seconds) {
 
 async function requestPasswordCode(isResend) {
     const btn = isResend ? _pwEl('pwResendBtn') : _pwEl('pwSendBtn');
-    const errId = isResend ? 'pwCodeError' : 'pwCheckError';
-    _pwError(errId, '');
-    const orig = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Sending…';
+    _pwError('');
+    btn.disabled = true;
+    if (!isResend) _upBtnLabel(btn, 'Sending…');
     try {
-        const data = await _pwPost('/api/user/password/request-code');
+        const data = await _upPost('/api/user/password/request-code');
         if (data.success) {
-            _pwShowStep('Code');
-            _pwEl('pwCode').value = '';
-            _pwError('pwCodeError', '');
+            _pwCodeSent = true; _pwVerified = false;
+            _pwClearOtp();
             _pwEl('pwCodeHint').textContent =
                 `We sent a 6-digit code to ${data.email_masked}. It expires in ${data.expires_in_minutes} minutes and can only be used once.`;
+            _pwEl('pwResendBox').style.display = '';
             _pwStartResendCooldown(data.resend_after);
-            _pwEl('pwCode').focus();
+            _pwOtpInputs()[0]?.focus();
             if (isResend) _showUpToast('A new verification code was sent.');
             return;
         }
-        if (data.error === 'not_eligible') return _pwStart();
-        _pwError(errId, data.message || 'Could not send the verification code.');
-        if (data.error === 'too_soon' && isResend) return _pwStartResendCooldown(data.retry_after);
+        if (data.error === 'not_eligible') return openPasswordPanel();
+        _pwError(data.message || 'Could not send the verification code.');
+        if (data.error === 'too_soon') return _pwStartResendCooldown(data.retry_after);
     } catch (e) {
-        _pwError(errId, 'Network error. Please try again.');
+        _pwError('Network error. Please try again.');
     }
-    if (!(isResend && _pwResendTimer)) { btn.disabled = false; btn.textContent = orig; }
-}
-
-
-async function verifyPasswordCode() {
-    const code = (_pwEl('pwCode').value || '').trim();
-    _pwError('pwCodeError', '');
-    if (!/^\d{6}$/.test(code)) return _pwError('pwCodeError', 'Enter the 6-digit code from the email.');
-    const btn = _pwEl('pwVerifyBtn'), orig = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Verifying…';
-    try {
-        const data = await _pwPost('/api/user/password/verify-code', { code });
-        if (data.success) {
-            if (_pwResendTimer) { clearInterval(_pwResendTimer); _pwResendTimer = null; }
-            _pwShowStep('Form');
-            _pwEl('pwSub').textContent = 'Code verified. Enter your current password and your new password.';
-            _pwError('pwError', '');
-            _pwEl('pwCurrent').focus();
-            return;
-        }
-        if (data.error === 'not_eligible') return _pwStart();
-        _pwError('pwCodeError', data.message || 'Verification failed.');
-        if (['too_many_attempts', 'code_expired', 'no_code'].includes(data.error)) _pwEl('pwCode').value = '';
-    } catch (e) {
-        _pwError('pwCodeError', 'Network error. Please try again.');
-    } finally { btn.disabled = false; btn.textContent = orig; }
+    if (!_pwResendTimer) {
+        btn.disabled = false;
+        if (!isResend) _upBtnLabel(btn, _pwCodeSent ? 'Resend' : 'Send Code');
+    }
 }
 
 
 async function savePassword() {
+    const code = _pwOtpValue();
     const cur = _pwEl('pwCurrent').value, nw = _pwEl('pwNew').value, cf = _pwEl('pwConfirm').value;
-    _pwError('pwError', '');
-    if (!cur || !nw || !cf)  return _pwError('pwError', 'Please fill in all password fields.');
-    if (nw !== cf)           return _pwError('pwError', 'New Password and Confirm New Password do not match.');
-    if (nw.length < 8)       return _pwError('pwError', 'New password must be at least 8 characters.');
+    _pwError('');
+    if (!_pwCodeSent && !_pwVerified) return _pwError('Click Send Code to get a verification code first.');
+    if (!_pwVerified && !/^\d{6}$/.test(code)) return _pwError('Enter the 6-digit code from the email.');
+    if (!cur || !nw || !cf)  return _pwError('Please fill in all password fields.');
+    if (nw !== cf)           return _pwError('New Password and Confirm New Password do not match.');
+    if (nw.length < 8)       return _pwError('New password must be at least 8 characters.');
     if (!/[A-Za-z]/.test(nw) || !/\d/.test(nw))
-                             return _pwError('pwError', 'New password must contain both letters and numbers.');
-    if (nw === cur)          return _pwError('pwError', 'New password must be different from your current password.');
+                             return _pwError('New password must contain both letters and numbers.');
+    if (nw === cur)          return _pwError('New password must be different from your current password.');
     const btn = _pwEl('pwSaveBtn'), orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Updating…';
     try {
-        const data = await _pwPost('/api/user/password/change',
+        if (!_pwVerified) {
+            const v = await _upPost('/api/user/password/verify-code', { code });
+            if (!v.success) {
+                if (v.error === 'not_eligible') return openPasswordPanel();
+                if (['too_many_attempts', 'code_expired', 'no_code'].includes(v.error)) { _pwClearOtp(); _pwCodeSent = false; }
+                return _pwError(v.message || 'Verification failed.');
+            }
+            _pwVerified = true;
+        }
+        const data = await _upPost('/api/user/password/change',
             { current_password: cur, new_password: nw, confirm_password: cf });
         if (data.success) {
             closePasswordPanel();
             _showUpToast(`Password updated successfully. You can change it again on ${data.next_allowed_date}.`);
             return;
         }
-        if (data.error === 'not_verified' || data.error === 'not_eligible') return _pwStart(data.message);
-        _pwError('pwError', data.message || 'Failed to update password.');
+        if (data.error === 'not_verified') { _pwVerified = false; _pwCodeSent = false; _pwClearOtp(); }
+        if (data.error === 'not_eligible') return openPasswordPanel();
+        _pwError(data.message || 'Failed to update password.');
     } catch (e) {
-        _pwError('pwError', 'Network error. Please try again.');
+        _pwError('Network error. Please try again.');
     } finally { btn.disabled = false; btn.textContent = orig; }
 }
 
 
-function closePasswordPanel() {
-    _pwStop();
-    _upClosePanel('passwordPanel');
+function closePasswordPanel() { _upClosePanel(); }
+
+
+/* Six single-digit boxes: typing moves forward, Backspace moves back, and a
+   pasted / autofilled code spreads across all boxes. */
+function _initPwOtp() {
+    const boxes = _pwOtpInputs();
+    boxes.forEach((box, i) => {
+        box.addEventListener('input', () => {
+            const digits = box.value.replace(/\D/g, '');
+            if (digits.length > 1) {          // paste or one-time-code autofill
+                digits.slice(0, boxes.length - i).split('').forEach((d, k) => { boxes[i + k].value = d; });
+                boxes[Math.min(i + digits.length, boxes.length - 1)].focus();
+                return;
+            }
+            box.value = digits;
+            if (digits && boxes[i + 1]) boxes[i + 1].focus();
+        });
+        box.addEventListener('keydown', e => {
+            if (e.key === 'Backspace' && !box.value && boxes[i - 1]) { boxes[i - 1].focus(); boxes[i - 1].value = ''; e.preventDefault(); }
+            else if (e.key === 'ArrowLeft'  && boxes[i - 1]) boxes[i - 1].focus();
+            else if (e.key === 'ArrowRight' && boxes[i + 1]) boxes[i + 1].focus();
+        });
+        box.addEventListener('paste', e => {
+            const digits = (e.clipboardData?.getData('text') || '').replace(/\D/g, '');
+            if (!digits) return;
+            e.preventDefault();
+            boxes.forEach((b, k) => { b.value = digits[k] || ''; });
+            boxes[Math.min(digits.length, boxes.length) - 1].focus();
+        });
+    });
 }
+document.addEventListener('DOMContentLoaded', _initPwOtp);
 
 
 /* ══════════════════════════════════════════════════════
    EMAIL PANEL
 ══════════════════════════════════════════════════════ */
-function openEmailPanel() {
-    closeUpDropdown();
-    const emailEl = document.getElementById('pfEmail');
-    if (emailEl && _profileData?.email) emailEl.value = _profileData.email;
-    document.getElementById('emailError').style.display = 'none';
-    _upOpenPanel('emailPanel');
+/* Send Code mails a 6-digit code to the NEW address; Save Email checks it and
+   saves. The code only works for the address it was sent to. */
+let _emResendTimer = null;
+let _emSentTo      = '';
+const _emError     = msg => _upShowError('emailError', msg);
+const _EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+
+function _emStop() {
+    if (_emResendTimer) { clearInterval(_emResendTimer); _emResendTimer = null; }
+    _emSentTo = '';
+    ['emNew', 'emCode'].forEach(id => { const el = _pwEl(id); if (el) el.value = ''; });
+    const send = _pwEl('emSendBtn');
+    if (send) { send.disabled = false; _upBtnLabel(send, 'Send Code'); }
+    const hint = _pwEl('emHint');
+    if (hint) hint.textContent = 'A 6-digit verification code will be sent to your new email address.';
+    _emError('');
 }
-function closeEmailPanel() { _upClosePanel('emailPanel'); }
+
+
+async function openEmailPanel() {
+    _upOpenPanel('emailPanel');
+    _emStop();
+    if (!_profileData) await _loadUserCard();
+    const current = _profileData?.email || '';
+    _pwEl('emCurrent').value = current || 'No email address on file';
+    _pwEl('emCurrentTag').style.display = current ? '' : 'none';
+}
+
+
+function _emStartResendCooldown(seconds) {
+    const btn = _pwEl('emSendBtn');
+    if (_emResendTimer) clearInterval(_emResendTimer);
+    let left = Math.max(0, Math.ceil(seconds || 0));
+    const tick = () => {
+        if (left <= 0) {
+            clearInterval(_emResendTimer); _emResendTimer = null;
+            btn.disabled = false; _upBtnLabel(btn, 'Resend Code');
+            return;
+        }
+        btn.disabled = true; _upBtnLabel(btn, `Resend (${_fmtCountdown(left)})`);
+        left -= 1;
+    };
+    tick();
+    _emResendTimer = setInterval(tick, 1000);
+}
+
+
+async function requestEmailCode() {
+    const email = _pwEl('emNew').value.trim();
+    const btn = _pwEl('emSendBtn');
+    _emError('');
+    if (!_EMAIL_RE.test(email)) return _emError('Please enter a valid new email address first.');
+    btn.disabled = true; _upBtnLabel(btn, 'Sending…');
+    try {
+        const data = await _upPost('/api/user/email/request-code', { email });
+        if (data.success) {
+            _emSentTo = email;
+            _pwEl('emHint').textContent =
+                `We sent a 6-digit code to ${data.email_masked}. It expires in ${data.expires_in_minutes} minutes and can only be used once.`;
+            _emStartResendCooldown(data.resend_after);
+            _pwEl('emCode').value = '';
+            _pwEl('emCode').focus();
+            return;
+        }
+        _emError(data.message || 'Could not send the verification code.');
+        if (data.error === 'too_soon') return _emStartResendCooldown(data.retry_after);
+    } catch (e) {
+        _emError('Network error. Please try again.');
+    }
+    btn.disabled = false; _upBtnLabel(btn, _emSentTo ? 'Resend Code' : 'Send Code');
+}
 
 
 async function saveEmail() {
-    const btn   = document.querySelector('#emailPanel .up-btn-save');
-    const errEl = document.getElementById('emailError');
-    errEl.style.display = 'none';
-    const orig = btn.textContent;
+    const email = _pwEl('emNew').value.trim();
+    const code  = _pwEl('emCode').value.trim();
+    _emError('');
+    if (!_EMAIL_RE.test(email)) return _emError('Please enter a valid new email address.');
+    if (!_emSentTo) return _emError('Click Send Code to get a verification code for this address first.');
+    if (email.toLowerCase() !== _emSentTo.toLowerCase())
+        return _emError(`The code was sent to ${_emSentTo}. Send a new code to use this address instead.`);
+    if (!/^\d{6}$/.test(code)) return _emError('Enter the 6-digit code from the email.');
+    const btn = _pwEl('emSaveBtn'), orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
-    const fd = new FormData();
-    fd.append('email', document.getElementById('pfEmail').value.trim());
     try {
-        const res  = await fetch('/api/user/email/update', { method: 'POST', body: fd });
-        const data = await res.json();
+        const data = await _upPost('/api/user/email/update', { email, code });
         if (data.success) {
-            if (_profileData) _profileData.email = fd.get('email');
-            closeEmailPanel(); _showUpToast('Email updated successfully.');
+            if (_profileData) _profileData.email = data.email;
+            closeEmailPanel();
+            _showUpToast('Email updated successfully.');
+            return;
         }
-        else { errEl.textContent = data.error || 'Failed to update email.'; errEl.style.display = 'block'; }
-    } catch(e) { errEl.textContent = 'Error: ' + e.message; errEl.style.display = 'block'; }
-    finally { btn.disabled = false; btn.textContent = orig; }
+        if (['too_many_attempts', 'code_expired', 'no_code'].includes(data.error)) {
+            _pwEl('emCode').value = ''; _emSentTo = '';
+        }
+        _emError(data.message || 'Failed to update email.');
+    } catch (e) {
+        _emError('Network error. Please try again.');
+    } finally { btn.disabled = false; btn.textContent = orig; }
 }
+
+
+function closeEmailPanel() { _upClosePanel(); }
 
 
 /* ── Toast ─────────────────────────────────────────── */
@@ -650,8 +831,3 @@ async function _runSearch(q) {
 function _esc(s) {
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
-
-
-
-
-

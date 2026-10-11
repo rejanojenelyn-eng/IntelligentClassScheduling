@@ -1,0 +1,226 @@
+{# User menu (avatar dropdown) and its Profile / Email / Password panels.
+   Included inside .up-wrap by base.html (Acad), base_faculty.html and base_admin.html,
+   so the panels open in the same spot as the menu, under the avatar, and Back returns
+   to the menu. Behaviour: static/js/profile.dropdown.js; styles: static/css/style.css. #}
+
+<!-- ── User Dropdown Card ── -->
+<div class="up-dropdown" id="upDropdown">
+    <div class="upd-head">
+        <div class="upd-avatar" id="updAvatar"><i class="fas fa-user" id="updAvatarIcon"></i></div>
+        <div class="upd-head-info">
+            <div class="upd-name" id="updName">{{ current_user_display }}</div>
+            <div class="upd-role" id="updRole">{{ session.get('role', '') }}</div>
+            <div class="upd-dept" id="updDept">—</div>
+            {% if current_ay_label %}<span class="upd-ay"><i class="fas fa-university"></i> {{ current_ay_label }}</span>{% endif %}
+        </div>
+    </div>
+
+    <div class="upd-menu">
+        <button type="button" class="upd-menu-item" onclick="openProfilePanel()">
+            <span class="upd-mi-icon"><i class="fas fa-user"></i></span>
+            <span class="upd-mi-text"><span class="upd-mi-title">Profile</span><span class="upd-mi-sub">Manage your personal information</span></span>
+            <i class="fas fa-chevron-right"></i>
+        </button>
+        <button type="button" class="upd-menu-item" onclick="openEmailPanel()">
+            <span class="upd-mi-icon"><i class="fas fa-envelope"></i></span>
+            <span class="upd-mi-text"><span class="upd-mi-title">Email</span><span class="upd-mi-sub">Manage your email address</span></span>
+            <i class="fas fa-chevron-right"></i>
+        </button>
+        <button type="button" class="upd-menu-item" onclick="openPasswordPanel()">
+            <span class="upd-mi-icon"><i class="fas fa-lock"></i></span>
+            <span class="upd-mi-text"><span class="upd-mi-title">Password</span><span class="upd-mi-sub">Change your password</span></span>
+            <i class="fas fa-chevron-right"></i>
+        </button>
+    </div>
+
+    <div class="upd-status-card">
+        <div class="upd-status-row">
+            <span class="upd-status-label"><span class="upd-status-dot"></span>Account Status</span>
+            <span class="upd-status-badge">Active</span>
+        </div>
+        <div class="upd-last-login" id="updLastLogin">Last login: —</div>
+    </div>
+
+    <button type="button" class="upd-signout" onclick="openLogoutModal(event)">
+        <i class="fas fa-sign-out-alt"></i> Sign out
+    </button>
+</div>
+
+
+<!-- ── Profile Settings ── -->
+<div id="profilePanel" class="up-panel" style="display:none;">
+    <div class="up-panel-box">
+        <div class="up-panel-hd">
+            <button type="button" class="up-panel-back" onclick="upBackToMenu()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="up-panel-close" onclick="closeProfilePanel()" aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="up-panel-head">
+            <span class="up-panel-icon"><i class="fas fa-user"></i></span>
+            <div>
+                <h2 class="up-panel-title">Profile Settings</h2>
+                <p class="up-panel-sub">Manage your personal information.</p>
+            </div>
+        </div>
+
+        <div class="up-photo-wrap">
+            <div class="up-photo-circle" id="profilePhotoCircle">
+                <i class="fas fa-user" id="profilePhotoIcon"></i>
+                <img id="profilePhotoImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+            </div>
+            <label class="up-change-photo-btn" id="pfChangePhotoBtn" for="profilePhotoInput"><i class="fas fa-camera"></i> Change Photo</label>
+            <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
+            <div class="up-photo-hint">JPG, PNG up to 2MB</div>
+        </div>
+
+        <div class="up-form">
+            <div class="up-field"><label>Employee ID</label><input type="text" id="pfEmpId" class="up-input" readonly></div>
+            <div class="up-field"><label>First Name</label><input type="text" id="pfFirstName" class="up-input" readonly></div>
+            <div class="up-field"><label>Middle Name</label><input type="text" id="pfMiddleName" class="up-input" readonly></div>
+            <div class="up-field"><label>Surname</label><input type="text" id="pfSurname" class="up-input" readonly></div>
+            <div class="up-field" id="pfDesignationSection"><label>Designation</label><select id="pfDesignation" class="up-select"></select></div>
+            <div class="up-field" id="pfSpecializationSection"><label>Specialization</label><select id="pfSpecialization" class="up-select"></select></div>
+            <div class="up-field" id="pfStatusSection"><label>Employment Status</label>
+                <select id="pfStatus" class="up-select"><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select>
+            </div>
+        </div>
+
+        <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
+
+        <div class="up-panel-ft">
+            <button type="button" class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
+            <button type="button" class="up-btn-save" id="pfSaveBtn" onclick="saveProfile()">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ── Change Email Address ── -->
+<div id="emailPanel" class="up-panel" style="display:none;">
+    <div class="up-panel-box">
+        <div class="up-panel-hd">
+            <button type="button" class="up-panel-back" onclick="upBackToMenu()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="up-panel-close" onclick="closeEmailPanel()" aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="up-panel-head">
+            <span class="up-panel-icon"><i class="fas fa-envelope"></i></span>
+            <div>
+                <h2 class="up-panel-title">Change Email Address</h2>
+                <p class="up-panel-sub">Enter your new email address and verify it with the code we’ll send to your email.</p>
+            </div>
+        </div>
+
+        <form class="up-form" autocomplete="off" onsubmit="saveEmail(); return false;">
+            <div class="up-field">
+                <label>Current Email</label>
+                <div class="up-input-wrap">
+                    <input type="text" id="emCurrent" class="up-input" readonly>
+                    <span class="up-tag-current" id="emCurrentTag">Current</span>
+                </div>
+            </div>
+            <div class="up-field">
+                <label for="emNew">New Email Address</label>
+                <input type="email" id="emNew" class="up-input" placeholder="you@example.com" autocomplete="email">
+            </div>
+            <div class="up-field">
+                <label for="emCode">Verification Code <span class="up-req">*</span></label>
+                <div class="up-code-row">
+                    <input type="text" id="emCode" class="up-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Enter 6-digit code" autocomplete="one-time-code">
+                    <button type="button" class="up-btn-outline" id="emSendBtn" onclick="requestEmailCode()"><i class="fas fa-paper-plane"></i> <span>Send Code</span></button>
+                </div>
+                <div class="up-field-hint" id="emHint">A 6-digit verification code will be sent to your new email address.</div>
+            </div>
+            <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span>Didn’t receive the code? You can resend the code after 60 seconds.</span></div>
+            <div id="emailError" class="up-error" style="display:none;"></div>
+        </form>
+
+        <div class="up-panel-ft">
+            <button type="button" class="up-btn-cancel" onclick="closeEmailPanel()">Cancel</button>
+            <button type="button" class="up-btn-save" id="emSaveBtn" onclick="saveEmail()">Save Email</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ── Change Password ── -->
+<div id="passwordPanel" class="up-panel" style="display:none;">
+    <div class="up-panel-box">
+        <div class="up-panel-hd">
+            <button type="button" class="up-panel-back" onclick="upBackToMenu()"><i class="fas fa-arrow-left"></i> Back</button>
+            <button type="button" class="up-panel-close" onclick="closePasswordPanel()" aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="up-panel-head">
+            <span class="up-panel-icon"><i class="fas fa-lock"></i></span>
+            <div>
+                <h2 class="up-panel-title">Change Password</h2>
+                <p class="up-panel-sub">Update your account password. A verification code will be sent to your email.</p>
+            </div>
+        </div>
+
+        <!-- Shown when the password can't be changed yet (once a month) or there is no email. -->
+        <div class="up-panel-notice up-notice-warn" id="pwBlocked" style="display:none;">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span><span id="pwBlockedMsg"></span>
+                <button type="button" class="up-link-btn" id="pwAddEmailBtn" onclick="openEmailPanel()" style="display:none;">Add an email address</button></span>
+        </div>
+
+        <!-- Its own <form> keeps the browser's password-manager association on these fields only. -->
+        <form class="up-form" id="pwForm" autocomplete="off" onsubmit="savePassword(); return false;">
+            <div class="up-field">
+                <label>Email Address</label>
+                <div class="up-email-row">
+                    <span class="up-email-text" id="pwEmail">—</span>
+                    <span class="up-email-icon"><i class="fas fa-envelope"></i></span>
+                    <button type="button" class="up-btn-outline up-btn-sm" id="pwSendBtn" onclick="requestPasswordCode()"><i class="fas fa-paper-plane"></i> <span>Send Code</span></button>
+                </div>
+                <div class="up-field-hint" id="pwCodeHint">A 6-digit verification code will be sent to your email.</div>
+            </div>
+
+            <div class="up-field">
+                <label>Verification Code <span class="up-req">*</span></label>
+                <div class="up-otp-row">
+                    <div class="up-otp" id="pwOtp">
+                        {% for i in range(6) %}<input type="text" inputmode="numeric" maxlength="1" aria-label="Digit {{ i + 1 }}"{% if i == 0 %} autocomplete="one-time-code"{% endif %}>{% endfor %}
+                    </div>
+                    <div class="up-resend" id="pwResendBox" style="display:none;">
+                        <i class="far fa-clock"></i>
+                        <span>Didn’t receive the code?<br>
+                            <button type="button" class="up-link-btn" id="pwResendBtn" onclick="requestPasswordCode(true)">Resend Code</button></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="up-field">
+                <label for="pwCurrent">Current Password <span class="up-req">*</span></label>
+                <div class="up-pw-row">
+                    <span class="up-pw-lock"><i class="fas fa-lock"></i></span>
+                    <input type="password" id="pwCurrent" class="up-input" placeholder="Enter current password" autocomplete="current-password">
+                    <button type="button" class="up-pw-eye" onclick="togglePwVisibility(this)" aria-label="Show password"><i class="fas fa-eye"></i></button>
+                </div>
+            </div>
+            <div class="up-field">
+                <label for="pwNew">New Password <span class="up-req">*</span></label>
+                <div class="up-pw-row">
+                    <span class="up-pw-lock"><i class="fas fa-lock"></i></span>
+                    <input type="password" id="pwNew" class="up-input" placeholder="At least 8 characters" autocomplete="new-password">
+                    <button type="button" class="up-pw-eye" onclick="togglePwVisibility(this)" aria-label="Show password"><i class="fas fa-eye"></i></button>
+                </div>
+            </div>
+            <div class="up-field">
+                <label for="pwConfirm">Confirm New Password <span class="up-req">*</span></label>
+                <div class="up-pw-row">
+                    <span class="up-pw-lock"><i class="fas fa-lock"></i></span>
+                    <input type="password" id="pwConfirm" class="up-input" placeholder="Repeat new password" autocomplete="new-password">
+                    <button type="button" class="up-pw-eye" onclick="togglePwVisibility(this)" aria-label="Show password"><i class="fas fa-eye"></i></button>
+                </div>
+            </div>
+
+            <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span>Your password must be at least 8 characters long and include both letters and numbers.</span></div>
+            <div id="pwError" class="up-error" style="display:none;"></div>
+        </form>
+
+        <div class="up-panel-ft">
+            <button type="button" class="up-btn-cancel" onclick="closePasswordPanel()">Cancel</button>
+            <button type="button" class="up-btn-save" id="pwSaveBtn" onclick="savePassword()">Update Password</button>
+        </div>
+    </div>
+</div>
