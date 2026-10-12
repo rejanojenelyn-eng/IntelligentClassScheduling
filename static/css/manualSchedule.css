@@ -2621,6 +2621,17 @@
     border-radius: 0 4px 4px 0;
 }
 
+/* Faculty Load → PENDING ASSIGNMENTS (Drafts + assigned-but-unscheduled), last section */
+.fl-section-sub.fl-pending-hdr { background: #fff8e1; color: #7a5200; border-left-color: #e0a800; }
+.fl-pending-note { margin: -2px 0 8px; font-size: .74rem; color: #7a6a4a; }
+.fl-pending-none { color: #999; font-style: italic; }
+.fl-pending-pill {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: .68rem; font-weight: 800; letter-spacing: .3px; white-space: nowrap;
+}
+.fl-pending-pill.is-draft       { background: #fff3cd; color: #8a6100; border: 1px solid #f0d58a; }
+.fl-pending-pill.is-unscheduled { background: #f1f1f1; color: #666;    border: 1px solid #ddd; }
+
 .fl-table-wrap {
     overflow-x: auto;
     border: 1px solid #e0e0e0;

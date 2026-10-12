@@ -24,42 +24,7 @@
     }
 
 
-    /* ── Schedule table (TABLE VIEW) ── */
-    .schedule-table {
-        width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed;
-    }
-    .schedule-table thead {
-        background: #2c0000; color: #fff; position: sticky; top: 0; z-index: 2;
-    }
-    .schedule-table th {
-        padding: 8px 7px; font-weight: 700; font-size: 0.67rem; letter-spacing: .4px;
-        text-transform: uppercase; text-align: center;
-        border-right: 1px solid rgba(255,255,255,.12); white-space: nowrap;
-    }
-    .schedule-table th:last-child { border-right: none; }
-    .schedule-table tbody tr { border-bottom: 1px solid #f0e8e8; }
-    .schedule-table td {
-        padding: 9px 8px; font-size: 0.8rem; color: #1a0000; text-align: center;
-        border-right: 1px solid #f0e8e8; vertical-align: middle;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .schedule-table td:last-child { border-right: none; }
-    .schedule-table td.td-instructor { text-align:left; padding-left:14px; font-weight:600; color:#1a0000; }
-    .schedule-table td.td-code { font-weight:800; color:#630100; }
-    .schedule-table td.td-desc { text-align:left; padding-left:10px; font-weight:500; }
-    .schedule-table td.td-units { font-weight:800; color:#630100; }
-    .schedule-table td.td-days  { font-weight:700; color:#630100; font-size:.78rem; }
-    .schedule-table td.td-time  { white-space:nowrap; font-size:.77rem; font-weight:600; }
-    .schedule-table td.td-room  { font-weight:600; }
-    .schedule-table tr.sis-total-row td {
-        background:#f5e6e6; border-top:2px solid #800000; font-weight:700; color:#2c0000;
-    }
-    .schedule-table tr.sis-total-row td:first-child {
-        font-weight:800; font-size:.85rem; letter-spacing:.3px; text-align:left; padding-left:14px;
-    }
-    .empty-row td { text-align:center; padding:40px 20px; }
-    .empty-msg { font-size:13px; color:#aaa; display:flex; align-items:center; justify-content:center; gap:8px; }
-    #tableViewWrapper { background:#fff; overflow:hidden; }
+    /* Schedule table (TABLE VIEW): shared styles in static/css/schedule_acad.css */
 
 
     /* ── Time cell ── */
@@ -151,12 +116,6 @@
                     <option value="">ALL SECTIONS</option>
                 </select>
             </div>
-            <div class="cs-filter-unit cs-filter-instructor">
-                <label>INSTRUCTOR</label>
-                <select id="view_instructor" onchange="fcsLoadSchedule()">
-                    <option value="">SELECT</option>
-                </select>
-            </div>
         </div>
     </div>
 
@@ -235,7 +194,7 @@
                     </thead>
                     <tbody id="offeringsTableBody">
                         <tr class="empty-row">
-                            <td colspan="11"><span class="empty-msg">No data loaded. Select a program or instructor.</span></td>
+                            <td colspan="11"><span class="empty-msg">No data loaded. Select a program and section.</span></td>
                         </tr>
                     </tbody>
                 </table>

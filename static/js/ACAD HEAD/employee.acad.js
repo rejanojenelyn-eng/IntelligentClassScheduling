@@ -674,6 +674,45 @@ function filterTable() {
     }
 }
 
+// --- STAT CARDS: double-click lists that type (same as the Rooms page cards) ---
+const _FTL_META = {
+    'Regular':   { title: 'Regular Faculty',   icon: 'fa-user-tie'   },
+    'Part-time': { title: 'Part-Time Faculty', icon: 'fa-user-clock' },
+    'Designee':  { title: 'Designees',         icon: 'fa-user-tag'   },
+};
+
+function openFacultyTypeModal(type) {
+    const meta = _FTL_META[type] || { title: type, icon: 'fa-users' };
+    const rows = Array.from(document.querySelectorAll('#instructorTable tbody tr'))
+        .map(tr => ({
+            type:   (tr.querySelector('.emp-type')?.textContent   || '').trim(),
+            id:     (tr.querySelector('.row-check')?.value       || '').trim(),
+            name:   (tr.querySelector('.emp-name')?.textContent   || '').trim().replace(/\s+/g, ' '),
+            spec:   (tr.querySelector('.emp-spec')?.textContent   || '').trim(),
+            status: (tr.querySelector('.emp-status')?.textContent || '').trim(),
+        }))
+        .filter(r => r.type.toUpperCase() === type.toUpperCase())
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    document.getElementById('ftlTitle').innerHTML = `<i class="fas ${meta.icon}"></i> ${meta.title}`;
+    document.getElementById('ftlSub').textContent =
+        `${rows.length} ${rows.length === 1 ? 'employee' : 'employees'}, sorted by name.`;
+    const body = document.getElementById('ftlTableBody');
+    body.innerHTML = '';
+    rows.forEach(r => {
+        const tr = document.createElement('tr');
+        ['id', 'name', 'spec', 'status'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = r[key] || '—';
+            tr.appendChild(td);
+        });
+        body.appendChild(tr);
+    });
+    document.getElementById('ftlEmpty').style.display = rows.length ? 'none' : 'block';
+    document.getElementById('facultyTypeListModal').style.display = 'flex';
+}
+function closeFacultyTypeModal() { document.getElementById('facultyTypeListModal').style.display = 'none'; }
+
 // --- SORTING ---
 function sortTable() {
     const sortDirectionSpan = document.getElementById("sortDirection");

@@ -160,8 +160,10 @@ window.addEventListener('popstate', e => {
 
 
 window.addEventListener('pageshow', e => {
-    // Restored from the back/forward cache: never show a stale panel or menu.
-    if (e.persisted) { _upHidePanels(); closeUpDropdown(); }
+    // Restored from the back/forward cache (e.g. Back after Sign out): reload so
+    // the server decides — a signed-out user is sent to the login page instead of
+    // seeing the old logged-in page. Pages are also sent no-store (app.py).
+    if (e.persisted) { _upHidePanels(); closeUpDropdown(); location.reload(); }
 });
 
 

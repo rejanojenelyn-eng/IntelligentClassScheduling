@@ -335,7 +335,9 @@
 }
 .view-toggles { display: flex; gap: 4px; align-items: center; }
 
-.toggle-btn {
+/* Scoped to .view-toggles: the sidebar hamburger in the base layout is also
+   .toggle-btn, and an unscoped rule turned it into a boxed button on this page. */
+.view-toggles .toggle-btn {
     background: #fff;
     border: 1.5px solid #630100;
     color: #630100;
@@ -350,9 +352,10 @@
     letter-spacing: 0.4px;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
+    opacity: 1;   /* style.css .toggle-btn (the hamburger) fades it to .85 */
 }
-.toggle-btn:hover { background: rgba(99,1,0,.06); }
-.toggle-btn.active {
+.view-toggles .toggle-btn:hover { background: rgba(99,1,0,.06); }
+.view-toggles .toggle-btn.active {
     background: #630100;
     border-color: #630100;
     color: #fff;
@@ -804,6 +807,56 @@
    ===================================================== */
 #tableViewWrapper { display: none; overflow-x: auto; }
 #calendarViewWrapper { display: block; }
+
+/* Official Class Schedule → Table View (#offeringsTable). Shared by the Academic
+   Head, Faculty and Admin pages — previously only Admin and Faculty styled it
+   (inline), so the Academic Head table rendered unstyled.
+   Cells wrap instead of clipping: a merged offering can carry several sessions
+   ('MON/THU/SAT' with different times), and min-width makes the wrapper scroll
+   sideways on narrow screens rather than squeezing columns. */
+#tableViewWrapper.table-wrapper { background: #fff; }
+.schedule-table { width: 100%; min-width: 1180px; border-collapse: collapse; font-size: 0.8rem; }
+.schedule-table thead { background: #4b0a0a; color: #fff; position: sticky; top: 0; z-index: 2; }
+.schedule-table th {
+    padding: 11px 7px; font-weight: 700; font-size: 0.66rem; letter-spacing: .6px;
+    text-transform: uppercase; text-align: center; white-space: nowrap;
+    border-right: 1px solid rgba(255,255,255,.12);
+}
+.schedule-table th:first-child { text-align: left; padding-left: 16px; }
+.schedule-table th:nth-child(3) { text-align: left; padding-left: 10px; }
+.schedule-table th:last-child { border-right: none; }
+.schedule-table th:nth-child(1)  { width: 13%; }
+.schedule-table th:nth-child(2)  { width: 7%; }
+.schedule-table th:nth-child(3)  { width: 16%; }
+.schedule-table th:nth-child(4),
+.schedule-table th:nth-child(5),
+.schedule-table th:nth-child(9)  { width: 4%; }
+.schedule-table th:nth-child(6)  { width: 5%; }
+.schedule-table th:nth-child(7)  { width: 6%; }
+.schedule-table th:nth-child(8)  { width: 18%; }
+.schedule-table th:nth-child(10) { width: 10%; }
+.schedule-table th:nth-child(11) { width: 13%; }
+.schedule-table tbody tr { border-bottom: 1px solid #f0e8e8; transition: background .12s; }
+.schedule-table tbody tr:nth-child(odd)  { background: #fff; }
+.schedule-table tbody tr:nth-child(even) { background: #fcf8f8; }
+.schedule-table tbody tr:not(.empty-row):hover { background: #f8eded; }
+.schedule-table td {
+    padding: 9px 7px; color: #1a0000; font-size: 0.79rem; text-align: center;
+    border-right: 1px solid #f0e8e8; vertical-align: middle;
+    white-space: normal; word-break: break-word;
+}
+.schedule-table td:last-child { border-right: none; }
+.schedule-table td.td-instructor { text-align: left; padding-left: 16px; font-weight: 600; }
+.schedule-table td.td-code  { font-weight: 800; color: #630100; font-size: .82rem; letter-spacing: .2px; }
+.schedule-table td.td-desc  { text-align: left; padding-left: 10px; font-weight: 500; }
+.schedule-table td.td-units { font-weight: 800; color: #630100; }
+.schedule-table td.td-days  { font-weight: 700; color: #630100; font-size: .78rem; }
+.schedule-table td.td-time  { font-size: .77rem; font-weight: 600; }
+.schedule-table td.td-room  { font-weight: 600; }
+.schedule-table tr.sis-total-row td { background: #f5e6e6; border-top: 2px solid #800000; font-weight: 700; color: #2c0000; }
+.schedule-table tr.sis-total-row td:first-child { font-weight: 800; font-size: .85rem; letter-spacing: .3px; text-align: left; padding-left: 16px; }
+.schedule-table .empty-row td { text-align: center; padding: 48px 20px; border-right: none; }
+.schedule-table .empty-msg { font-size: 13px; color: #999; display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 .offerings-list-table {
     width: 100%;

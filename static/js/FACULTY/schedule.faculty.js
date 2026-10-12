@@ -72,7 +72,9 @@ function _fcsPopulateDropdowns() {
         }
     });
 
-    _FCS_FACULTY.forEach(f => {
+    // The Instructor filter was removed from this page (privacy); keep this
+    // working if the dropdown is ever added back.
+    if (instrSel) _FCS_FACULTY.forEach(f => {
         const opt = document.createElement('option');
         opt.value = f.emp;
         opt.textContent = f.name;
@@ -191,14 +193,14 @@ async function fcsLoadSchedule() {
     const prog   = document.getElementById('view_prog').value;
     const yl     = document.getElementById('view_yl').value;
     const sec    = document.getElementById('view_section').value;
-    const instr  = document.getElementById('view_instructor').value;
+    const instr  = document.getElementById('view_instructor')?.value || '';
 
     // Require section OR instructor — program + year level alone shows too many results
     if (!sec && !instr) {
         document.getElementById('gridLabel').innerText = 'SELECT FILTERS TO VIEW SCHEDULE';
         document.getElementById('gridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
         document.getElementById('offeringsTableBody').innerHTML =
-            '<tr class="empty-row"><td colspan="11"><span class="empty-msg">Please select a Section or Instructor to view the schedule.</span></td></tr>';
+            '<tr class="empty-row"><td colspan="11"><span class="empty-msg">Please select a Section to view the schedule.</span></td></tr>';
         _fcsSessions = [];
         return;
     }
@@ -217,7 +219,7 @@ async function fcsLoadSchedule() {
     const ylOrdinals = ['1st','2nd','3rd','4th','5th'];
     const ylText    = yl ? (ylOrdinals[parseInt(yl)-1] || yl) + ' Year' : '';
     const secText   = sec ? ' · ' + secSel.options[secSel.selectedIndex].text : '';
-    const instrText = instr ? ' · ' + instrSel.options[instrSel.selectedIndex].text : '';
+    const instrText = instr && instrSel ? ' · ' + instrSel.options[instrSel.selectedIndex].text : '';
     const semLabel  = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[FCS_ACTIVE_SEM] || FCS_ACTIVE_SEM;
     document.getElementById('gridLabel').innerText =
         `${progText}${ylText ? '  —  ' + ylText : ''}${secText}${instrText}  ·  ${semLabel}`;
