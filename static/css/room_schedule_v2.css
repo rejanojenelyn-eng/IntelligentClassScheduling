@@ -108,7 +108,11 @@
         border: 1px solid #eceef2; border-radius: 12px; box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
     }
 
-.frs-v2 .frs-cal-title-row { border-bottom: 1px solid #eceef2; padding: 12px 14px; gap: 12px; }
+.frs-v2 .frs-cal-title-row {
+    border-bottom: 1px solid #eceef2; padding: 12px 14px; gap: 12px;
+    /* Room name on the left, Day / Week toggle on the right (wraps under it only on narrow screens) */
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+}
 
 .frs-v2 .frs-cal-room { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
@@ -121,7 +125,7 @@
 
 .frs-v2 .frs-cal-sub { font-size: .76rem; color: #777; margin-top: 2px; }
 
-.frs-v2 .frs-cal-actions { flex-wrap: wrap; gap: 10px; padding: 0; }
+.frs-v2 .frs-cal-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0; margin-left: auto; }
 
 .frs-v2 .frs-view-toggle { display: inline-flex; background: #f1f2f4; border-radius: 10px; padding: 3px; }
 
@@ -306,6 +310,17 @@
 .frs-v2 .frs-avail-detail { font-size: .72rem; color: #555; margin-top: 8px; }
 
 .frs-v2 .frs-avail-detail i { margin-right: 4px; }
+
+/* "View Schedule" cue on each card: a small link-style line. Without this rule
+   it inherited the page's base text size and looked like a big plain label. */
+.frs-v2 .frs-avail-card-clickable { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.frs-v2 .frs-avail-card-clickable:hover { box-shadow: 0 4px 18px rgba(128,0,0,.16); transform: translateY(-2px); }
+.frs-v2 .frs-avail-request-hint {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+    font-size: .68rem; font-weight: 700; color: #800000;
+    text-transform: uppercase; letter-spacing: .3px; opacity: .7;
+}
+.frs-v2 .frs-avail-card-clickable:hover .frs-avail-request-hint { opacity: 1; text-decoration: underline; }
 
 .frs-v2 .frs-avail-dot { top: 8px; right: 8px; width: 9px; height: 9px; }
 /* List view */

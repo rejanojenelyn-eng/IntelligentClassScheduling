@@ -172,6 +172,8 @@
     .filter-inputs-row { gap: 12px; width: 100%; }
     .filter-group { flex: 1 1 100%; min-width: 0; }
     .filter-group select, .search-wrapper input, .filter-group input { width: 100%; }
+    .filter-container .filter-group select, .filter-container .search-wrapper input,
+    .filter-container .spec-search-trigger, .filter-container .spec-search-wrapper { width: 100%; }
     .filter-bar { flex-wrap: wrap; gap: 10px; }
     .filter-bar .filter-group { flex-wrap: wrap; }
 

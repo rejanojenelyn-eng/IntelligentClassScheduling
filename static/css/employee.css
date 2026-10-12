@@ -62,12 +62,13 @@
     text-decoration: none;
 }
 
+/* Same white style as the other header buttons (no solid red at rest). */
 .btn-add-new {
-    background-color: var(--pup-maroon);
-    color: white;
+    background-color: white;
+    color: var(--pup-maroon);
     border: 1px solid var(--pup-maroon);
 }
-.btn-add-new:hover { background-color: #6a0000; }
+.btn-add-new:hover { background-color: #fdf4f4; }
 
 .btn-view-archive {
     background-color: white;
@@ -136,6 +137,26 @@
 
 .card-maroon .stat-label, .card-maroon .stat-value { color: var(--tot-color); }
 .card-maroon .stat-icon { background: var(--tot-bg); color: var(--tot-color); }
+
+/* Regular / Part-time / Designee cards: double-click lists that type in a popup
+   (openFacultyTypeModal), the same as the Lecture / Laboratory cards on Rooms. */
+.stat-clickable { cursor: pointer; user-select: none; }
+
+.ftl-box { width: 640px; max-width: calc(100vw - 24px); }
+.ftl-body { padding: 16px 20px; }
+.ftl-sub { margin: 0 0 10px; font-size: .82rem; color: #666; }
+.ftl-table-wrap { max-height: 380px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; }
+.ftl-table { width: 100%; border-collapse: collapse; }
+.ftl-table th {
+    position: sticky; top: 0; background: #faf5f5; color: #630100;
+    padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid #eee;
+}
+.ftl-table td { padding: 9px 14px; border-bottom: 1px solid #f0eeee; font-size: .85rem; color: #444; }
+.ftl-table td:nth-child(2) { font-weight: 600; color: #222; }
+.ftl-table tbody tr:hover { background: #fdf7f7; }
+.ftl-empty { padding: 24px; text-align: center; color: #888; font-size: .85rem; }
+#facultyTypeListModal .modal-footer { padding: 12px 20px; }
 
 
 /* FILTER SECTION
@@ -644,11 +665,23 @@
     background-color: #6a0000;
 }
 
-/* Ensure filter boxes are tall enough to not cut off text */
+/* Filter bar: every control (search box, dropdowns, Specialization picker) is the
+   same size and lines up with the Sort / Export / Import buttons (38px). Earlier
+   rules gave the search box 30px and the picker its own padding, so they differed. */
+.filter-container .filter-group select,
+.filter-container .search-wrapper input,
+.filter-container .spec-search-trigger,
 .filter-group select, .search-input-wrapper input {
+    width: 180px;
     height: 38px !important;
-    padding: 0 10px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
 }
+.filter-container .search-wrapper input { padding-right: 32px; }
+.filter-container .filter-inputs-row { align-items: flex-end; }
+.filter-container .filter-secondary-actions { align-self: flex-end; }
+.filter-container .btn-outline-action { height: 38px; padding: 0 16px; font-size: 12px; }
 
 /* ═══════════════════════════════════════════════════════
    IMPORT CONFLICT MODAL

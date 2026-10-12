@@ -29,21 +29,21 @@
 
     <!-- STATS CARDS SECTION -->
     <div class="stats-row">
-        <div class="stat-card card-green">
+        <div class="stat-card card-green stat-clickable" ondblclick="openFacultyTypeModal('Regular')" title="Double-click to view regular faculty">
             <div class="stat-info">
                 <span class="stat-label">REGULAR FACULTY</span>
                 <span class="stat-value">{{ reg }}</span>
             </div>
             <div class="stat-icon"><i class="fas fa-user-tie"></i></div>
         </div>
-        <div class="stat-card card-orange">
+        <div class="stat-card card-orange stat-clickable" ondblclick="openFacultyTypeModal('Part-time')" title="Double-click to view part-time faculty">
             <div class="stat-info">
                 <span class="stat-label">PART-TIME FACULTY</span>
                 <span class="stat-value">{{ pt }}</span>
             </div>
             <div class="stat-icon"><i class="fas fa-user-clock"></i></div>
         </div>
-        <div class="stat-card card-blue">
+        <div class="stat-card card-blue stat-clickable" ondblclick="openFacultyTypeModal('Designee')" title="Double-click to view designees">
             <div class="stat-info">
                 <span class="stat-label">DESIGNEES</span>
                 <span class="stat-value">{{ des }}</span>
@@ -311,6 +311,29 @@
                 <button type="submit" class="btn-save">UPDATE FACULTY</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- FACULTY TYPE LIST (double-click a Regular / Part-time / Designee card, like Rooms) -->
+<div id="facultyTypeListModal" class="custom-modal" style="display:none;" onclick="if(event.target===this)closeFacultyTypeModal()">
+    <div class="modal-content-lg ftl-box">
+        <div class="modal-header-maroon">
+            <h2 id="ftlTitle"><i class="fas fa-user-tie"></i> Regular Faculty</h2>
+            <span class="close-btn" onclick="closeFacultyTypeModal()">&times;</span>
+        </div>
+        <div class="ftl-body">
+            <p class="ftl-sub" id="ftlSub"></p>
+            <div class="ftl-table-wrap">
+                <table class="ftl-table">
+                    <thead><tr><th>Employee ID</th><th>Faculty Name</th><th>Specialization</th><th>Status</th></tr></thead>
+                    <tbody id="ftlTableBody"></tbody>
+                </table>
+                <div id="ftlEmpty" class="ftl-empty" style="display:none;">No faculty found.</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeFacultyTypeModal()">CLOSE</button>
+        </div>
     </div>
 </div>
 

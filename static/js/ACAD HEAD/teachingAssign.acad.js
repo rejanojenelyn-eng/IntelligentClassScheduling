@@ -46,7 +46,7 @@ function showTab(name, el) {
 function setScheduleMode(mode) {
     _scheduleMode = mode;
     document.getElementById('btnOfficial').classList.toggle('active', mode === 'official');
-    document.getElementById('btnLocal').classList.toggle('active', mode === 'local');
+    document.getElementById('btnLocal')?.classList.toggle('active', mode === 'local');   // Local button removed from My TA
     if (_activeTab === 'weekly') renderCalendar(); else renderAssignment();
 }
 

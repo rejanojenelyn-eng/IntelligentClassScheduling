@@ -533,6 +533,18 @@ from rf_dss import resolve_faculty_names
 app = Flask(__name__)
 app.secret_key = Config.SECRET_KEY # Required for Login Sessions
 
+
+@app.after_request
+def _no_store_pages(resp):
+    """Browsers must not keep copies of the app's pages or API data. Otherwise
+    pressing Back after Sign out redisplays the logged-in page from cache even
+    though the session is gone. Static files (CSS/JS/images) stay cacheable."""
+    if request.endpoint != 'static' and (resp.mimetype in ('text/html', 'application/json')):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+    return resp
+
 def write_activity_log(action, details, category='system', color='gray'):
     """Insert one row into activity_log. Never raises — logging must not break the caller."""
     _ensure_activity_log_table()
@@ -36627,6 +36639,28 @@ def api_approve_schedule():
                     'violations': carried_conflicts,
                 }), 400
 
+            # ...and against this SAME section's other subjects' saved Drafts. The
+            # cross-schedule check below counts OTHER sections' Drafts (a publish may not
+            # take a slot a Draft already holds) but excludes this section, and the carried
+            # rows above are Published only — so a subject could be published on top of a
+            # pending Draft of another subject in the same section, e.g. the same faculty
+            # in two classes at once, found only when that Draft is published later.
+            pending_drafts = _fetch_section_sessions(
+                cur, program, year_level, sem_id,
+                exclude_codes=submitted_codes + removed_subjects,
+                draft_only=True, section_id=_ctx_section_id)
+            draft_conflicts = _publish_carried_forward_conflicts(
+                sched_data, pending_drafts, config=_hc_cfg)
+            if draft_conflicts:
+                conn.rollback(); cur.close(); conn.close()
+                return jsonify({
+                    'success': False,
+                    'error': (f'Cannot approve: {len(draft_conflicts)} conflict(s) with this '
+                              "section's saved Draft subjects (not yet published). Move one "
+                              'of the classes, or save the Draft with its new slot first.'),
+                    'violations': draft_conflicts,
+                }), 400
+
         # HC15 cross-schedule validation. Reuse the SAME effective-schedule
         # validator used by generation instead of maintaining a publish-only
         # room query. It checks active Published Official occurrences minus
@@ -36886,7 +36920,10 @@ def api_faculty_teaching_assignments():
         # teachingsubstitution/regularloadunit are reinterpreted as HOUR caps, not units.
         _reg, _pt, _teach_sub = faculty_load.get_faculty_caps(fac)
         max_units = _reg + _pt + _teach_sub
-        cur.execute("""
+        # The same row shape is read twice: draft-preferred (what HC9 / capacity and
+        # the header totals count) and Published-only (what is actually live — the
+        # Regular / Part-time / TS tables list only these; Drafts go to Pending).
+        _TA_SQL = """
             -- Resolved status-group per (subject, section): a single assignment can be
             -- split across MULTIPLE independent schedule/schedule_version rows (one row
             -- per time slice — e.g. a Mon + Thu + Sat split each has its own scheduleid,
@@ -36914,7 +36951,7 @@ def api_faculty_teaching_assignments():
             ranked AS (
                 SELECT versionid
                 FROM scoped
-                WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')
+                __RANK_WHERE__
             )
             SELECT
                 cs.subjectcode,
@@ -36955,8 +36992,12 @@ def api_faculty_teaching_assignments():
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
             ORDER BY cs.subjectcode, ts_s.timevalue
-        """, (emp_num, ay_id, sem))
+        """
+        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')"), (emp_num, ay_id, sem))
         sessions = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE status = 'Published'"), (emp_num, ay_id, sem))
+        _published_raw = [dict(r) for r in (cur.fetchall() or [])
+                          if (r.get('status') or 'Published') == 'Published']
 
         # HC16/HC17 group model: merged classes are identified ONLY by HC16 event
         # identity and credited ONLY by the shared HC17 calculation — display rows here
@@ -37198,6 +37239,7 @@ def api_faculty_teaching_assignments():
                         'subjectcode':  pr['subjectcode'],
                         'subjectname':  pr['subjectname'],
                         'units':        units_val,
+                        'hrs':          hrs_val,
                         'year_section': f"{pr['programcode']}-{pr['yearlevel']}",
                         'time_range':   '(Pending — no schedule)',
                         'time_code':    '0000',
@@ -37244,6 +37286,32 @@ def api_faculty_teaching_assignments():
         else:
             buckets = faculty_load.compute_load_buckets(sessions, fac, config=load_scheduler_config())
 
+        # Tables of the FACULTY LOAD tab: Regular / Part-time / TS list only what is live
+        # (Published). `buckets` above still includes Drafts — it is what the header
+        # totals and the assignment-time capacity check use, since a Draft already
+        # reserves this faculty's hours.
+        if _ta_policy is not None:
+            display_buckets = faculty_load.compute_load_buckets(_published_raw, fac, config=_ta_cfg)
+        else:
+            display_buckets = faculty_load.compute_load_buckets(
+                [s for s in sessions if (s.get('status') or 'Published') == 'Published'],
+                fac, config=load_scheduler_config())
+
+        # Draft schedules are not live yet: list them under Pending, ahead of the
+        # assigned-but-unscheduled reservations.
+        draft_pending = [{
+            'subjectcode':  s.get('subjectcode'),
+            'subjectname':  s.get('subjectname'),
+            'units':        s.get('units'),
+            'hrs':          s.get('hrs'),
+            'year_section': s.get('year_section'),
+            'time_range':   s.get('time_range'),
+            'days':         s.get('days'),
+            'room':         s.get('room'),
+            'status':       'Draft',
+        } for s in sessions if s.get('status') == 'Draft']
+        pending_sessions = draft_pending + pending_sessions
+
         cur.close(); conn.close()
         return jsonify({
             'success': True,
@@ -37258,6 +37326,7 @@ def api_faculty_teaching_assignments():
             'available_units': max(0, max_units - total_hrs),
             'total_teaching_hours': total_hrs,
             'buckets': buckets,
+            'display_buckets': display_buckets,
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

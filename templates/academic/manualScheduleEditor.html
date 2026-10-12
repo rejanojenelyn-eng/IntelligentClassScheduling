@@ -1102,6 +1102,25 @@
                             </table>
                         </div>
                         <div class="fl-total-line" id="fl-pt-total-label">TOTAL PART-TIME LOAD: <span id="fl-total-parttime">—</span></div>
+                        <!-- (TEACHING SUBSTITUTION is inserted here by selectFlFaculty) -->
+
+                        <!-- Pending: not live yet — Draft schedules + assigned subjects with no
+                             schedule. Always the LAST section, so it never sits between a load
+                             table and its total. -->
+                        <div id="fl-pending-section" style="display:none;">
+                            <h3 class="fl-section-sub fl-pending-hdr" style="margin-top:16px;">PENDING ASSIGNMENTS</h3>
+                            <p class="fl-pending-note">Not live yet: draft schedules waiting to be published, and assigned subjects with no schedule yet. They already reserve this faculty's hours.</p>
+                            <div class="fl-table-wrap">
+                                <table class="fl-table">
+                                    <thead><tr>
+                                        <th>SUBJECT CODE</th><th>SUBJECT DESCRIPTION</th><th>HOURS</th>
+                                        <th>YEAR &amp; SECTION</th><th>TIME</th><th>DAY/S</th><th>ROOM</th><th>STATUS</th>
+                                    </tr></thead>
+                                    <tbody id="fl-pending-body"></tbody>
+                                </table>
+                            </div>
+                            <div class="fl-total-line" id="fl-pending-total-label"></div>
+                        </div>
                     </div>
 
                     <!-- Calendar View — hidden until toggled; mirrors Room View's grid markup/CSS -->
@@ -9860,7 +9879,9 @@ async function selectFlFaculty(empNum, name) {
         // Buckets are now computed server-side (faculty_load.py) — the single source of
         // truth shared with the assignment-time validation gate, Reassign panel, and the
         // GA. This function only renders what the API already returns.
-        const _buckets = data.buckets || {};
+        // The load tables show only Published (live) sessions — display_buckets. Drafts
+        // are listed under PENDING ASSIGNMENTS below; the header totals still count them.
+        const _buckets = data.display_buckets || data.buckets || {};
         const { isPartTime, regMax, ptMax, tsMax, groupedReg, groupedPt, tsSessions,
                  regUsed, ptUsed, tsUsed } = _buckets;
 
@@ -9957,53 +9978,30 @@ async function selectFlFaculty(empNum, name) {
             if (tsTotalLbl) tsTotalLbl.innerHTML = `TOTAL TS LOAD (max ${tsMax}): <strong>${tsUsed} hrs</strong>`;
         }
 
-        // Pending assignments — subjects reserved via "Assign Faculty" but not yet scheduled.
+        // Pending — not live yet: Draft schedules (with their day/time) and subjects
+        // reserved via "Assign Faculty" with no schedule. Rendered into the fixed
+        // section at the bottom of the Teaching Assignment view.
         const _pendSessions = data.pending_sessions || [];
-        let _pendSection = document.getElementById('fl-pending-section');
-        if (_pendSessions.length) {
-            if (!_pendSection) {
-                // Inject the pending section once (below the part-time table)
-                const _ptTable = document.querySelector('.fl-table-wrap:last-of-type') ||
-                                 document.getElementById('fl-parttime-body')?.closest('table');
-                if (_ptTable) {
-                    const _wrap = document.createElement('div');
-                    _wrap.id = 'fl-pending-section';
-                    _wrap.style.cssText = 'margin-top:14px;';
-                    _wrap.innerHTML = `
-                        <div class="fl-section-hdr" style="background:#fff3cd;color:#856404;border-color:#ffe082;">
-                            PENDING ASSIGNMENTS <span style="font-weight:400;font-size:0.78em;">(assigned, no schedule yet)</span>
-                        </div>
-                        <div class="fl-table-wrap">
-                          <table class="fl-table">
-                            <thead><tr>
-                              <th>Code</th><th>Subject</th><th>Units</th>
-                              <th>Program</th><th>Time</th><th>Day</th><th>Room</th>
-                            </tr></thead>
-                            <tbody id="fl-pending-body"></tbody>
-                          </table>
-                        </div>
-                        <div class="fl-total-row" id="fl-pending-total-label"></div>`;
-                    _ptTable.closest('.fl-table-wrap')?.after(_wrap) ||
-                    document.getElementById('fl-parttime-body')?.closest('.fl-table-wrap')?.after(_wrap);
-                }
-                _pendSection = document.getElementById('fl-pending-section');
-            }
-            const _pBody = document.getElementById('fl-pending-body');
-            if (_pBody) {
-                _pBody.innerHTML = _pendSessions.map(s => `<tr style="background:#fffde7;">
+        const _pendSection  = document.getElementById('fl-pending-section');
+        const _pBody        = document.getElementById('fl-pending-body');
+        if (_pendSessions.length && _pBody) {
+            _pBody.innerHTML = _pendSessions.map(s => {
+                const isDraft = s.status === 'Draft';
+                return `<tr>
                     <td>${s.subjectcode||'—'}</td>
                     <td>${s.subjectname||'—'}</td>
-                    <td>${s.units||'—'}</td>
+                    <td>${s.hrs ?? '—'}</td>
                     <td>${s.year_section||'—'}</td>
-                    <td style="color:#999;font-style:italic;">${s.time_range||'—'}</td>
-                    <td>${s.days||'—'}</td>
-                    <td>${s.room||'—'}</td>
-                </tr>`).join('');
-            }
-            const _pendUsed = _pendSessions.reduce((t,s)=>t+(parseFloat(s.units)||0),0);
-            const _pLabel   = document.getElementById('fl-pending-total-label');
-            if (_pLabel) _pLabel.innerHTML = `TOTAL PENDING LOAD: <strong>${_pendUsed} units</strong>`;
-            if (_pendSection) _pendSection.style.display = '';
+                    <td>${isDraft ? (s.time_range||'—') : '<span class="fl-pending-none">No schedule yet</span>'}</td>
+                    <td>${isDraft ? (s.days||'—') : '—'}</td>
+                    <td>${isDraft ? (s.room||'—') : '—'}</td>
+                    <td><span class="fl-pending-pill ${isDraft ? 'is-draft' : 'is-unscheduled'}">${isDraft ? 'Draft' : 'Not scheduled'}</span></td>
+                </tr>`;
+            }).join('');
+            const _pendHrs = _pendSessions.reduce((t,s)=>t+(parseFloat(s.hrs)||0),0);
+            const _pLabel  = document.getElementById('fl-pending-total-label');
+            if (_pLabel) _pLabel.innerHTML = `TOTAL PENDING: <strong>${+_pendHrs.toFixed(2)} hrs</strong>`;
+            _pendSection.style.display = '';
         } else if (_pendSection) {
             _pendSection.style.display = 'none';
         }
