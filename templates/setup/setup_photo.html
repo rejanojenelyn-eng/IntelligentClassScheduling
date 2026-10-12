@@ -36,6 +36,13 @@
 <script src="{{ url_for('static', filename='js/photo.cropper.js') }}"></script>
 <script>
     let _croppedPhoto = null;   // the last photo the user cropped; kept if they cancel a later pick
+    window.setupValidateContinue = function () {
+        const input = document.getElementById('photoInput');
+        const hasCurrent = {{ 'true' if current_photo else 'false' }};
+        if (!hasCurrent && !(input.files && input.files.length))
+            return 'Please choose a photo to upload, or choose Skip.';
+        return '';
+    };
     async function previewPhoto(input) {
         const name = document.getElementById('photoName');
         if (!input.files || !input.files[0]) { name.textContent = ''; return; }

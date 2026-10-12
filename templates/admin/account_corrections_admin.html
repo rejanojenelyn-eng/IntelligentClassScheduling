@@ -4,58 +4,219 @@
 <style>
     .dashboard-wrapper { padding: 35px 40px; background-color: #f8f9fa; min-height: 100vh; }
 
-    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .page-header { margin-bottom: 24px; }
+    .btn-back-accounts {
+        display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px;
+        padding: 8px 14px; border: 1px solid #800000; border-radius: 6px; background: #fff;
+        color: #800000; font-size: 12px; font-weight: 800; text-transform: uppercase; text-decoration: none;
+        transition: background .15s;
+    }
+    .btn-back-accounts:hover { background: #fdf3f3; }
     .page-header h1 {
         font-size: 28px; font-weight: 800; color: #800000; margin: 0;
         text-transform: uppercase; letter-spacing: 0.5px;
     }
+    .page-header p { margin: 6px 0 0; color: #6c757d; font-size: 14px; }
 
-    .table-container { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }
+    /* Summary cards (each one filters the table) */
+    .acr-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }
+    .acr-stat {
+        background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 16px 18px;
+        display: flex; align-items: center; gap: 14px; text-decoration: none; color: inherit;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.03); transition: border-color .15s, box-shadow .15s;
+    }
+    .acr-stat:hover { border-color: #800000; }
+    .acr-stat.current { border-color: #800000; box-shadow: 0 0 0 2px rgba(128,0,0,0.12); }
+    .acr-stat-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .acr-stat-num { font-size: 24px; font-weight: 800; color: #222; line-height: 1.1; }
+    .acr-stat-label { font-size: 11px; font-weight: 700; color: #6c757d; text-transform: uppercase; letter-spacing: 0.4px; }
+    .ic-pending  { background: #fff3cd; color: #856404; }
+    .ic-approved { background: #d4edda; color: #155724; }
+    .ic-rejected { background: #f8d7da; color: #721c24; }
+    .ic-total    { background: #f3e5e5; color: #800000; }
+
+    /* Toolbar */
+    .acr-toolbar {
+        background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    }
+    .acr-search { flex: 1 1 260px; position: relative; }
+    .acr-search i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #999; font-size: 13px; }
+    .acr-search input, .acr-toolbar select {
+        width: 100%; height: 40px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;
+        font-family: inherit; background: #fff; color: #333;
+    }
+    .acr-search input { padding: 0 12px 0 34px; }
+    .acr-toolbar select { padding: 0 10px; width: auto; min-width: 150px; }
+    .acr-toolbar input:focus, .acr-toolbar select:focus { outline: none; border-color: #800000; }
+    .acr-reset { font-size: 12px; font-weight: 700; color: #800000; text-decoration: none; white-space: nowrap; }
+
+    /* Table */
+    .table-container { background: #fff; border-radius: 10px; border: 1px solid #eee; box-shadow: 0 2px 10px rgba(0,0,0,0.04); overflow: hidden; }
     .table-corrections { width: 100%; border-collapse: collapse; }
     .table-corrections thead th {
-        background: #800000; color: #fff; padding: 14px 16px; font-size: 11px;
-        text-transform: uppercase; letter-spacing: 0.5px; text-align: left;
+        background: #800000; color: #fff; padding: 13px 14px; font-size: 11px; font-weight: 800;
+        text-transform: uppercase; letter-spacing: 0.5px; text-align: left; white-space: nowrap;
     }
-    .table-corrections tbody td { padding: 14px 16px; font-size: 13px; color: #333; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
-    .table-corrections tbody tr.batch-start td { border-top: 2px solid #800000; }
-    .table-corrections tbody tr.batch-start:first-child td { border-top: none; }
+    .table-corrections tbody td { padding: 13px 14px; font-size: 13px; color: #333; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
     .table-corrections tbody tr:last-child td { border-bottom: none; }
+    .table-corrections tbody tr:hover { background: #fdfafb; }
+    .cell-muted { color: #999; }
+    .cell-sub { display: block; font-size: 11px; color: #999; margin-top: 2px; }
+    .val-current { color: #777; }
+    .val-proposed { font-weight: 700; color: #222; }
+    .val-arrow { color: #ccc; margin: 0 4px; }
 
-    .status-pill { padding: 4px 12px; border-radius: 50px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .status-pill { display: inline-block; padding: 4px 11px; border-radius: 50px; font-size: 11px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
     .status-Pending  { background: #fff3cd; color: #856404; }
     .status-Approved { background: #d4edda; color: #155724; }
     .status-Rejected { background: #f8d7da; color: #721c24; }
 
-    .action-group { display: flex; gap: 8px; }
-    .action-btn {
-        width: 34px; height: 34px; border-radius: 6px; border: 1px solid #e0e0e0; background: #fff;
-        cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.15s;
+    .btn-review {
+        background: #800000; color: #fff; border: none; border-radius: 6px; padding: 8px 16px;
+        font-size: 12px; font-weight: 800; text-transform: uppercase; cursor: pointer; white-space: nowrap;
     }
-    .action-btn.approve { color: #155724; } .action-btn.approve:hover { background: #d4edda; border-color: #155724; }
-    .action-btn.reject  { color: #721c24; } .action-btn.reject:hover  { background: #f8d7da; border-color: #721c24; }
+    .btn-review:hover { background: #600000; }
+    .btn-view {
+        background: #fff; color: #800000; border: 1px solid #800000; border-radius: 6px; padding: 7px 15px;
+        font-size: 12px; font-weight: 800; text-transform: uppercase; cursor: pointer; white-space: nowrap;
+    }
+    .btn-view:hover { background: #fdf3f3; }
 
-    .acr-modal {
-        display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.5); align-items: center; justify-content: center;
+    .acr-empty { padding: 50px 20px; text-align: center; color: #6c757d; }
+    .acr-empty i { font-size: 34px; color: #d8b4b4; margin-bottom: 12px; display: block; }
+    .acr-empty strong { display: block; color: #444; font-size: 15px; margin-bottom: 4px; }
+
+    /* Pagination */
+    .acr-pager { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 12px; color: #6c757d; flex-wrap: wrap; gap: 10px; }
+    .acr-pager .pages { display: flex; gap: 4px; }
+    .acr-pager a, .acr-pager span.pg {
+        min-width: 32px; height: 32px; padding: 0 8px; border-radius: 6px; border: 1px solid #e0e0e0;
+        display: inline-flex; align-items: center; justify-content: center; text-decoration: none; color: #333; font-weight: 600;
     }
-    .acr-modal-content { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.2); width: 100%; max-width: 420px; }
-    .acr-modal-header { padding: 18px 25px; display: flex; justify-content: space-between; align-items: center; color: #fff; }
-    .acr-modal-header h2 { margin: 0; font-size: 1.05rem; font-weight: 800; text-transform: uppercase; }
-    .acr-modal-header i.close { font-size: 22px; cursor: pointer; }
-    .acr-modal-body { padding: 22px 25px; }
-    .acr-modal-body textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; font-family: inherit; }
-    .acr-modal-footer { padding: 14px 25px 22px; display: flex; justify-content: flex-end; gap: 10px; }
-    .acr-btn { padding: 10px 20px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; text-transform: uppercase; }
-    .acr-btn-cancel { background: #e9ecef; color: #495057; }
-    .acr-btn-confirm { background: #800000; color: #fff; }
+    .acr-pager a:hover { border-color: #800000; color: #800000; }
+    .acr-pager span.pg.current { background: #800000; border-color: #800000; color: #fff; }
+    .acr-pager span.pg.disabled { color: #ccc; }
+
+    /* Review modal */
+    .acr-modal {
+        display: none; position: fixed; z-index: 2000; inset: 0;
+        background: rgba(0,0,0,0.5); align-items: center; justify-content: center; padding: 16px;
+    }
+    .acr-modal-content { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.2); width: 100%; max-width: 560px; max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+    .acr-modal-header { padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; color: #fff; background: #800000; }
+    .acr-modal-header h2 { margin: 0; font-size: 1rem; font-weight: 800; text-transform: uppercase; }
+    .acr-modal-header button { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+    .acr-modal-body { padding: 20px 22px; overflow-y: auto; }
+    .acr-dl { display: grid; grid-template-columns: 140px 1fr; gap: 10px 14px; font-size: 13px; margin: 0 0 16px; }
+    .acr-dl dt { color: #888; font-size: 11px; font-weight: 800; text-transform: uppercase; padding-top: 2px; }
+    .acr-dl dd { margin: 0; color: #333; word-break: break-word; }
+    .acr-change { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+    .acr-change .lbl { display: block; font-size: 10px; font-weight: 800; color: #888; text-transform: uppercase; margin-bottom: 3px; }
+    .acr-change .cur { color: #777; }
+    .acr-change .new { font-weight: 800; color: #222; }
+    .acr-reason { background: #fdf8f8; border-left: 3px solid #800000; padding: 10px 12px; font-size: 13px; color: #333; border-radius: 0 6px 6px 0; margin-bottom: 14px; white-space: pre-wrap; }
+    .acr-warn { background: #fff8e1; color: #7a5200; font-size: 12px; padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; }
+    .acr-label { display: block; font-size: 11px; font-weight: 800; color: #495057; margin-bottom: 6px; text-transform: uppercase; }
+    .acr-modal-body textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: inherit; resize: vertical; }
+    .acr-modal-body textarea:focus { outline: none; border-color: #800000; }
+    .acr-field-error { color: #b22222; font-size: 12px; font-weight: 600; margin-top: 6px; display: none; }
+    .acr-confirm-box { display: none; background: #eef7ef; color: #1e5b26; font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; }
+    .acr-modal-footer { padding: 14px 22px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f0f0f0; flex-wrap: wrap; }
+    .acr-btn { padding: 10px 18px; border-radius: 6px; font-size: 12px; font-weight: 800; cursor: pointer; border: none; text-transform: uppercase; }
+    .acr-btn-cancel  { background: #e9ecef; color: #495057; }
+    .acr-btn-reject  { background: #fff; color: #721c24; border: 1px solid #c98a8f; }
+    .acr-btn-reject:hover { background: #f8d7da; }
+    .acr-btn-approve { background: #800000; color: #fff; }
+    .acr-btn-approve:hover { background: #600000; }
+
+    @media (max-width: 1100px) {
+        .acr-stats { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 900px) {
+        .dashboard-wrapper { padding: 20px 16px; }
+        .table-corrections thead { display: none; }
+        .table-corrections, .table-corrections tbody, .table-corrections tr, .table-corrections td { display: block; width: 100%; }
+        .table-corrections tbody tr { padding: 12px 14px; border-bottom: 1px solid #eee; }
+        .table-corrections tbody td { border: none; padding: 4px 0; display: flex; gap: 10px; }
+        .table-corrections tbody td::before {
+            content: attr(data-label); flex: 0 0 110px; font-size: 11px; font-weight: 800;
+            color: #888; text-transform: uppercase; padding-top: 2px;
+        }
+        .table-corrections tbody td.td-action { padding-top: 10px; }
+        .table-corrections tbody td.td-action::before { content: none; }
+        .acr-toolbar select { flex: 1 1 140px; }
+    }
+    @media (max-width: 520px) {
+        .acr-stats { grid-template-columns: 1fr 1fr; gap: 10px; }
+        .acr-stat { padding: 12px; gap: 10px; }
+        .acr-stat-icon { width: 34px; height: 34px; }
+        .acr-dl { grid-template-columns: 1fr; gap: 2px 0; }
+        .acr-dl dd { margin-bottom: 8px; }
+        .acr-change { grid-template-columns: 1fr; }
+        .acr-change .val-arrow { transform: rotate(90deg); justify-self: start; }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
+{% macro list_url(page_no=None, status=None) -%}
+    {%- set args = dict(filters) -%}
+    {%- if status %}{% set _ = args.update({'status': status}) %}{% endif -%}
+    {{ url_for('admin_account_corrections', page=page_no or 1, **args) }}
+{%- endmacro %}
+{% macro faculty_name(r) -%}
+    {{ [r.firstname, r.middlename, r.lastname, r.suffix] | select | join(' ') if r.firstname else r.username }}
+{%- endmacro %}
+
 <div class="dashboard-wrapper">
     <div class="page-header">
+        <a class="btn-back-accounts" href="{{ url_for('admin_user_management') }}"><i class="fas fa-arrow-left"></i> Back to User Accounts</a>
         <h1>Account Correction Requests</h1>
+        <p>Review and manage faculty information correction requests.</p>
     </div>
+
+    <div class="acr-stats">
+        <a class="acr-stat {{ 'current' if filters.status == 'Pending' }}" href="{{ list_url(status='Pending') }}">
+            <span class="acr-stat-icon ic-pending"><i class="fas fa-hourglass-half"></i></span>
+            <span><span class="acr-stat-num">{{ counts.pending }}</span><br><span class="acr-stat-label">Pending</span></span>
+        </a>
+        <a class="acr-stat {{ 'current' if filters.status == 'Approved' }}" href="{{ list_url(status='Approved') }}">
+            <span class="acr-stat-icon ic-approved"><i class="fas fa-check"></i></span>
+            <span><span class="acr-stat-num">{{ counts.approved }}</span><br><span class="acr-stat-label">Approved</span></span>
+        </a>
+        <a class="acr-stat {{ 'current' if filters.status == 'Rejected' }}" href="{{ list_url(status='Rejected') }}">
+            <span class="acr-stat-icon ic-rejected"><i class="fas fa-times"></i></span>
+            <span><span class="acr-stat-num">{{ counts.rejected }}</span><br><span class="acr-stat-label">Rejected</span></span>
+        </a>
+        <a class="acr-stat {{ 'current' if filters.status == 'All' }}" href="{{ list_url(status='All') }}">
+            <span class="acr-stat-icon ic-total"><i class="fas fa-list"></i></span>
+            <span><span class="acr-stat-num">{{ counts.total }}</span><br><span class="acr-stat-label">Total Requests</span></span>
+        </a>
+    </div>
+
+    <form class="acr-toolbar" method="GET" action="{{ url_for('admin_account_corrections') }}" id="acrFilters">
+        <div class="acr-search">
+            <i class="fas fa-search"></i>
+            <input type="search" name="q" value="{{ filters.q }}" placeholder="Search by Employee ID or faculty name" aria-label="Search">
+        </div>
+        <select name="status" aria-label="Status" onchange="this.form.submit()">
+            {% for s in ['All', 'Pending', 'Approved', 'Rejected'] %}
+            <option value="{{ s }}" {{ 'selected' if filters.status == s }}>{{ 'All statuses' if s == 'All' else s }}</option>
+            {% endfor %}
+        </select>
+        <select name="field" aria-label="Field" onchange="this.form.submit()">
+            <option value="">All fields</option>
+            {% for f in fields %}<option value="{{ f }}" {{ 'selected' if filters.field == f }}>{{ f }}</option>{% endfor %}
+        </select>
+        <select name="sort" aria-label="Sort by date" onchange="this.form.submit()">
+            <option value="newest" {{ 'selected' if filters.sort == 'newest' }}>Newest first</option>
+            <option value="oldest" {{ 'selected' if filters.sort == 'oldest' }}>Oldest first</option>
+        </select>
+        {% if filters.q or filters.field or filters.status != 'Pending' or filters.sort != 'newest' %}
+        <a class="acr-reset" href="{{ url_for('admin_account_corrections') }}"><i class="fas fa-rotate-left"></i> Reset</a>
+        {% endif %}
+    </form>
 
     <div class="table-container">
         <table class="table-corrections">
@@ -66,78 +227,215 @@
                     <th>Field</th>
                     <th>Current Value</th>
                     <th>Proposed Value</th>
-                    <th>Remarks</th>
                     <th>Status</th>
                     <th>Submitted</th>
-                    <th>Actions</th>
+                    <th>Action</th>
                 </tr>
             </thead>
             <tbody>
-                {% set ns = namespace(last_batch=none) %}
                 {% for r in requests %}
-                {% set is_new_group = (r.batch_id != ns.last_batch) %}
-                {% set ns.last_batch = r.batch_id %}
-                <tr class="{{ 'batch-start' if is_new_group and r.batch_id }}">
-                    <td>{{ r.employeenumber or r.username }}</td>
-                    <td>{{ [r.firstname, r.middlename, r.lastname, r.suffix] | select | join(' ') if r.firstname else r.username }}</td>
-                    <td>{{ r.field_name }}</td>
-                    <td>{{ r.current_value or '—' }}</td>
-                    <td><strong>{{ r.proposed_value }}</strong></td>
-                    <td>{{ r.remarks or '—' }}</td>
-                    <td><span class="status-pill status-{{ r.status }}">{{ r.status }}</span></td>
-                    <td>{{ r.created_at.strftime('%m-%d-%y %I:%M %p') if r.created_at else '—' }}</td>
-                    <td>
+                <tr>
+                    <td data-label="Employee ID">{{ r.employeenumber or '—' }}</td>
+                    <td data-label="Faculty">{{ faculty_name(r) }}</td>
+                    <td data-label="Field">{{ r.field_name }}</td>
+                    <td data-label="Current" class="val-current">{{ r.current_value or '—' }}</td>
+                    <td data-label="Proposed" class="val-proposed">{{ r.proposed_value or '(blank)' }}</td>
+                    <td data-label="Status"><span class="status-pill status-{{ r.status }}">{{ r.status }}</span></td>
+                    <td data-label="Submitted">{{ r.created_at.strftime('%b %d, %Y') if r.created_at else '—' }}
+                        {% if r.created_at %}<span class="cell-sub">{{ r.created_at.strftime('%I:%M %p') }}</span>{% endif %}</td>
+                    <td class="td-action">
                         {% if r.status == 'Pending' %}
-                        <div class="action-group">
-                            <button class="action-btn approve" title="Approve" onclick="prepareDecision({{ r.requestid }}, 'Approved')"><i class="fas fa-check"></i></button>
-                            <button class="action-btn reject" title="Reject" onclick="prepareDecision({{ r.requestid }}, 'Rejected')"><i class="fas fa-times"></i></button>
-                        </div>
+                        <button type="button" class="btn-review" onclick="openReview({{ r.requestid }})">Review</button>
                         {% else %}
-                            <small style="color:#888;">
-                                by {{ r.decided_by or '—' }}<br>
-                                {{ r.decided_at.strftime('%m-%d-%y %I:%M %p') if r.decided_at else '' }}
-                                {% if r.admin_remarks %}<br><em>{{ r.admin_remarks }}</em>{% endif %}
-                            </small>
+                        <button type="button" class="btn-view" onclick="openReview({{ r.requestid }})">View</button>
                         {% endif %}
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9" style="padding:30px; text-align:center; color:#6c757d;">No correction requests yet.</td></tr>
+                <tr><td colspan="8" class="acr-empty">
+                    <i class="fas fa-inbox"></i>
+                    {% if filters.q or filters.field %}
+                    <strong>No requests match your search.</strong>
+                    Try a different name, Employee ID or field.
+                    {% elif filters.status == 'Pending' %}
+                    <strong>No pending correction requests.</strong>
+                    You're all caught up. New requests from faculty will appear here.
+                    {% else %}
+                    <strong>No {{ '' if filters.status == 'All' else filters.status | lower }} correction requests.</strong>
+                    {% endif %}
+                </td></tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% if matched %}
+        <div class="acr-pager">
+            <span>Showing {{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + requests | length }} of {{ matched }}</span>
+            {% if pages > 1 %}
+            <div class="pages">
+                {% if page > 1 %}<a href="{{ list_url(page - 1) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+                {% else %}<span class="pg disabled"><i class="fas fa-chevron-left"></i></span>{% endif %}
+                {% for p in range(1, pages + 1) %}
+                    {% if p == page %}<span class="pg current">{{ p }}</span>
+                    {% elif p == 1 or p == pages or (p - page) | abs <= 2 %}<a href="{{ list_url(p) }}">{{ p }}</a>
+                    {% elif (p - page) | abs == 3 %}<span class="pg disabled">…</span>{% endif %}
+                {% endfor %}
+                {% if page < pages %}<a href="{{ list_url(page + 1) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+                {% else %}<span class="pg disabled"><i class="fas fa-chevron-right"></i></span>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
 </div>
 
-<div id="acrDecisionModal" class="acr-modal">
+<!-- Review / details modal -->
+<div id="acrReviewModal" class="acr-modal" role="dialog" aria-modal="true" aria-labelledby="acrModalTitle">
     <div class="acr-modal-content">
-        <div class="acr-modal-header" id="acrModalHeader">
-            <h2 id="acrModalTitle">Decision</h2>
-            <i class="fas fa-times close" onclick="closeAcrModal()"></i>
+        <div class="acr-modal-header">
+            <h2 id="acrModalTitle">Review Correction Request</h2>
+            <button type="button" onclick="closeReview()" aria-label="Close"><i class="fas fa-times"></i></button>
         </div>
-        <form id="acrDecisionForm" method="POST">
+        <form id="acrDecisionForm" method="POST" onsubmit="return submitDecision(event)">
             <input type="hidden" name="decision" id="acrDecisionInput">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
             <div class="acr-modal-body">
-                <label style="display:block; font-size:11px; font-weight:700; color:#495057; margin-bottom:8px; text-transform:uppercase;">Remarks (optional)</label>
-                <textarea name="admin_remarks" rows="3" placeholder="Notes for the record"></textarea>
+                <dl class="acr-dl">
+                    <dt>Faculty</dt><dd id="rvName"></dd>
+                    <dt>Employee ID</dt><dd id="rvEmp"></dd>
+                    <dt>Field</dt><dd id="rvField"></dd>
+                    <dt>Submitted</dt><dd id="rvSubmitted"></dd>
+                    <dt>Status</dt><dd id="rvStatus"></dd>
+                </dl>
+                <div class="acr-change">
+                    <div><span class="lbl">Current value</span><span class="cur" id="rvCurrent"></span></div>
+                    <i class="fas fa-arrow-right val-arrow"></i>
+                    <div><span class="lbl">Proposed value</span><span class="new" id="rvProposed"></span></div>
+                </div>
+                <div class="acr-warn" id="rvDrift" style="display:none;"></div>
+                <span class="acr-label">Reason for correction</span>
+                <div class="acr-reason" id="rvReason"></div>
+                <div class="acr-warn" id="rvEmpIdNote" style="display:none;">
+                    <i class="fas fa-triangle-exclamation"></i> Employee ID is linked to schedules and accounts, so approving
+                    only records the decision. Update the ID yourself in Faculty Management.
+                </div>
+
+                <div id="rvDecided" style="display:none;">
+                    <dl class="acr-dl">
+                        <dt>Decided by</dt><dd id="rvDecidedBy"></dd>
+                        <dt>Decided on</dt><dd id="rvDecidedAt"></dd>
+                        <dt>Admin remarks</dt><dd id="rvAdminRemarks"></dd>
+                    </dl>
+                </div>
+
+                <div id="rvRemarksWrap">
+                    <label class="acr-label" for="rvRemarks" id="rvRemarksLabel">Remarks (optional for approval, required for rejection)</label>
+                    <textarea name="admin_remarks" id="rvRemarks" rows="3" maxlength="1000" placeholder="Notes for the faculty member and the record"></textarea>
+                    <div class="acr-field-error" id="rvRemarksError">Please give a reason for rejecting this request.</div>
+                </div>
+                <div class="acr-confirm-box" id="rvConfirmBox">
+                    <i class="fas fa-circle-check"></i> <span id="rvConfirmText"></span>
+                </div>
             </div>
             <div class="acr-modal-footer">
-                <button type="button" class="acr-btn acr-btn-cancel" onclick="closeAcrModal()">Cancel</button>
-                <button type="submit" class="acr-btn acr-btn-confirm" id="acrConfirmBtn">Confirm</button>
+                <button type="button" class="acr-btn acr-btn-cancel" onclick="closeReview()">Cancel</button>
+                <button type="submit" class="acr-btn acr-btn-reject" id="rvRejectBtn" data-decision="Rejected">Reject Request</button>
+                <button type="submit" class="acr-btn acr-btn-approve" id="rvApproveBtn" data-decision="Approved">Approve Request</button>
             </div>
         </form>
     </div>
 </div>
 
 <script>
-    function prepareDecision(requestId, decision) {
-        document.getElementById('acrDecisionForm').action = '/admin/account-corrections/' + requestId + '/decide';
-        document.getElementById('acrDecisionInput').value = decision;
-        document.getElementById('acrModalTitle').textContent = decision === 'Approved' ? 'Approve Request' : 'Reject Request';
-        document.getElementById('acrModalHeader').style.background = decision === 'Approved' ? '#2e7d32' : '#800000';
-        document.getElementById('acrConfirmBtn').textContent = decision === 'Approved' ? 'Confirm Approve' : 'Confirm Reject';
-        document.getElementById('acrDecisionModal').style.display = 'flex';
+    const ACR_REQUESTS = {
+        {% for r in requests %}
+        {{ r.requestid }}: {
+            name: {{ faculty_name(r) | tojson }},
+            emp: {{ (r.employeenumber or '—') | tojson }},
+            field: {{ r.field_name | tojson }},
+            current: {{ (r.current_value or '') | tojson }},
+            proposed: {{ (r.proposed_value or '') | tojson }},
+            live: {{ (r.live_value or '') | tojson }},
+            reason: {{ (r.remarks or '') | tojson }},
+            status: {{ r.status | tojson }},
+            submitted: {{ (r.created_at.strftime('%B %d, %Y %I:%M %p') if r.created_at else '—') | tojson }},
+            decidedBy: {{ (r.decided_by or '—') | tojson }},
+            decidedAt: {{ (r.decided_at.strftime('%B %d, %Y %I:%M %p') if r.decided_at else '—') | tojson }},
+            adminRemarks: {{ (r.admin_remarks or '—') | tojson }},
+        },
+        {% endfor %}
+    };
+    let _acrConfirming = null;   // 'Approved' once the Admin has been asked to confirm
+
+    function _set(id, text) { document.getElementById(id).textContent = text; }
+    function _show(id, on) { document.getElementById(id).style.display = on ? '' : 'none'; }
+
+    function openReview(id) {
+        const r = ACR_REQUESTS[id];
+        if (!r) return;
+        const pending = r.status === 'Pending';
+        document.getElementById('acrDecisionForm').action = '/admin/account-corrections/' + id + '/decide';
+        _set('acrModalTitle', pending ? 'Review Correction Request' : 'Correction Request Details');
+        _set('rvName', r.name); _set('rvEmp', r.emp); _set('rvField', r.field);
+        _set('rvSubmitted', r.submitted);
+        document.getElementById('rvStatus').innerHTML = '';
+        const pill = document.createElement('span');
+        pill.className = 'status-pill status-' + r.status; pill.textContent = r.status;
+        document.getElementById('rvStatus').appendChild(pill);
+        _set('rvCurrent', r.current || '—'); _set('rvProposed', r.proposed || '(blank)');
+        _set('rvReason', r.reason || 'No reason given.');
+        // The record changed after the request was made: approving would overwrite that change.
+        const drift = pending && r.live !== r.current;
+        _show('rvDrift', drift);
+        if (drift) _set('rvDrift', 'Heads up: the value on file is now "' + (r.live || '—') +
+                                   '", not the value the faculty member saw when they submitted this request.');
+        _show('rvEmpIdNote', pending && r.field === 'Employee ID');
+        _show('rvDecided', !pending);
+        _set('rvDecidedBy', r.decidedBy); _set('rvDecidedAt', r.decidedAt); _set('rvAdminRemarks', r.adminRemarks);
+        _show('rvRemarksWrap', pending);
+        _show('rvRejectBtn', pending); _show('rvApproveBtn', pending);
+        document.getElementById('rvRemarks').value = '';
+        _resetConfirm();
+        document.getElementById('acrReviewModal').style.display = 'flex';
     }
-    function closeAcrModal() { document.getElementById('acrDecisionModal').style.display = 'none'; }
+
+    function _resetConfirm() {
+        _acrConfirming = null;
+        _show('rvConfirmBox', false); _show('rvRemarksError', false);
+        _set('rvApproveBtn', 'Approve Request'); _set('rvRejectBtn', 'Reject Request');
+        ['rvApproveBtn', 'rvRejectBtn'].forEach(b => document.getElementById(b).disabled = false);
+    }
+
+    function closeReview() { document.getElementById('acrReviewModal').style.display = 'none'; }
+
+    function submitDecision(e) {
+        const decision = e.submitter ? e.submitter.dataset.decision : null;
+        if (!decision) { e.preventDefault(); return false; }
+        const remarks = document.getElementById('rvRemarks').value.trim();
+        if (decision === 'Rejected') {
+            if (!remarks) {
+                _show('rvRemarksError', true);
+                document.getElementById('rvRemarks').focus();
+                e.preventDefault(); return false;
+            }
+        } else if (_acrConfirming !== 'Approved') {
+            // First click asks for confirmation; the second click submits.
+            _acrConfirming = 'Approved';
+            const r = ACR_REQUESTS[document.getElementById('acrDecisionForm').action.match(/(\d+)\/decide$/)[1]];
+            _set('rvConfirmText', r.field === 'Employee ID'
+                ? 'Approve this request? The Employee ID itself will not be changed automatically.'
+                : 'Approve and change ' + r.field + ' on the faculty record to "' + (r.proposed || '(blank)') + '"?');
+            _show('rvConfirmBox', true);
+            _set('rvApproveBtn', 'Yes, Approve');
+            e.preventDefault(); return false;
+        }
+        document.getElementById('acrDecisionInput').value = decision;
+        // Guard against a double submit while the page reloads.
+        setTimeout(() => ['rvApproveBtn', 'rvRejectBtn'].forEach(b => document.getElementById(b).disabled = true), 0);
+        return true;
+    }
+
+    document.getElementById('rvRemarks').addEventListener('input', () => _show('rvRemarksError', false));
+    document.getElementById('acrReviewModal').addEventListener('click', e => { if (e.target.id === 'acrReviewModal') closeReview(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReview(); });
 </script>
 {% endblock %}

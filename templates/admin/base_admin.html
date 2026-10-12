@@ -3,6 +3,7 @@
 
 
 <head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PUPLC Scheduling System | Admin</title>
@@ -129,14 +130,9 @@
                             <i class="fas fa-file-lines"></i><span class="nav-label">Reports</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_user_management' }}">
+                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_user_management', 'admin_account_corrections'] }}">
                         <a href="{{ url_for('admin_user_management') }}" class="nav-link">
                             <i class="fas fa-user-shield"></i><span class="nav-label">User Management </span>
-                        </a>
-                    </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_account_corrections' }}">
-                        <a href="{{ url_for('admin_account_corrections') }}" class="nav-link">
-                            <i class="fas fa-user-pen"></i><span class="nav-label">Account Corrections</span>
                         </a>
                     </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_program_management' }}">

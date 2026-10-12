@@ -504,6 +504,34 @@ body {
 .up-panel-notice.up-notice-warn { background: #fff8e1; color: #7a5200; margin-bottom: 14px; }
 .up-panel-notice.up-notice-warn i { color: #f0a500; }
 
+/* My Correction Requests (expandable section in Profile Settings) */
+.cr-card { border: 1px solid #eee; border-radius: 8px; margin: 14px 0; overflow: hidden; }
+.cr-card-head {
+    width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 12px;
+    background: #fafafa; border: none; cursor: pointer; font-family: inherit; text-align: left;
+}
+.cr-card-head:hover { background: #fdf6f6; }
+.cr-card-title { flex: 1; font-size: .82rem; font-weight: 800; color: #800000; }
+.cr-card-title i { margin-right: 6px; }
+.cr-caret { color: #999; font-size: .75rem; transition: transform .2s; }
+.cr-card-head.open .cr-caret { transform: rotate(180deg); }
+.cr-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d97706; vertical-align: middle; margin-left: 4px; }
+.cr-note { font-size: .74rem; color: #666; margin-bottom: 6px; }
+.cr-list { display: flex; flex-direction: column; gap: 10px; padding: 10px; max-height: 40vh; overflow-y: auto; }
+.cr-list[hidden] { display: none; }
+.cr-row.cr-admin span { display: block; margin-bottom: 2px; }
+.cr-empty { font-size: .85rem; color: #777; text-align: center; padding: 18px 0; }
+.cr-item { border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; font-size: .82rem; color: #333; }
+.cr-item-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cr-field { font-weight: 800; color: #800000; }
+.cr-status { padding: 2px 9px; border-radius: 10px; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
+.cr-Pending  { background: #fff3cd; color: #856404; }
+.cr-Approved { background: #d4edda; color: #155724; }
+.cr-Rejected { background: #f8d7da; color: #721c24; }
+.cr-row { color: #555; margin-top: 3px; word-break: break-word; }
+.cr-row span { display: inline-block; min-width: 92px; color: #999; font-size: .7rem; font-weight: 800; text-transform: uppercase; }
+.cr-admin { background: #fafafa; border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
+
 .up-error {
     background: #fdf2f2; border: 1px solid #f5c6c6;
     border-radius: 6px; padding: 8px 12px;

@@ -9,6 +9,17 @@
     <div class="form-group">
         <label for="setupEmail">NEW EMAIL</label>
         <input type="email" id="setupEmail" name="email" value="{{ draft_email }}"
-               placeholder="{{ 'Leave blank to keep your current email' if current_email else 'you@example.com' }}">
+               placeholder="you@example.com">
     </div>
+{% endblock %}
+{% block scripts %}
+<script>
+    window.setupValidateContinue = function () {
+        const email = document.getElementById('setupEmail').value.trim();
+        if (!email) return 'Please enter an email address, or choose Skip.';
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 255)
+            return 'Please enter a valid email address, or choose Skip.';
+        return '';
+    };
+</script>
 {% endblock %}

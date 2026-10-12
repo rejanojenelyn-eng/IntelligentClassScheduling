@@ -611,6 +611,26 @@ def inject_user_display():
         return {'current_user_display': session.get('username', 'User')}
 
 
+# --- CONTEXT PROCESSOR: PENDING CORRECTION REQUESTS ---
+# Admin: every Pending request (User Accounts "Correction Requests" button).
+# Anyone else signed in: only their own Pending requests (Profile Settings indicator).
+@app.context_processor
+def inject_pending_corrections():
+    username = session.get('username')
+    if not username:
+        return {}
+    try:
+        if session.get('role') == 'Admin':
+            row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
+                           "WHERE status = 'Pending'", one=True)
+            return {'pending_correction_count': row['n'] if row else 0}
+        row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
+                       "WHERE status = 'Pending' AND username = %s", (username,), one=True)
+        return {'my_pending_correction_count': row['n'] if row else 0}
+    except Exception:
+        return {'pending_correction_count': 0, 'my_pending_correction_count': 0}
+
+
 def _auto_archive_semester(cur, old_sem_id):
     """
     On semester transition: copy all Published schedule records from the old semester
@@ -846,6 +866,12 @@ def index():
     # Public landing page. /login already sends signed-in users to their dashboard.
     logged_in = bool(session.get('loggedin')) and _dashboard_url_for_role(session.get('role')) != 'login'
     return render_template('landing.html', login_href=url_for('login'), logged_in=logged_in)
+
+# Browsers request /favicon.ico for any page that doesn't name its own tab icon,
+# so serving the PUP logo here puts it on the tab of every page in the system.
+@app.route('/favicon.ico')
+def favicon():
+    return app.send_static_file('landing/assets/logo.png')
 
 # --- 2. ONE-TIME SETUP ROUTE ---
 @app.route('/setup')
@@ -1173,7 +1199,7 @@ def _enforce_account_setup():
     if not session.get('loggedin'):
         return
     ep = request.endpoint or ''
-    if request.path.startswith('/static/') or ep in ('login', 'logout'):
+    if request.path.startswith('/static/') or ep in ('login', 'logout', 'favicon'):
         return
 
 
@@ -1221,6 +1247,14 @@ def _setup_clear_draft(*keys):
         d.pop(k, None)
     session['setup_draft'] = d
 
+def _setup_url(endpoint):
+    """URL of a setup step, keeping ?from=review when the user came from the Review page's Edit link."""
+    return url_for(endpoint, **({'from': 'review'} if request.args.get('from') == 'review' else {}))
+
+def _setup_next(endpoint):
+    """Where Continue / Skip goes: back to Review after an Edit, otherwise the next step."""
+    return url_for('account_setup_verify') if request.args.get('from') == 'review' else url_for(endpoint)
+
 def _setup_guard():
     """Redirect for anyone who may NOT be on an optional step right now (or None)."""
     if 'loggedin' not in session:
@@ -1256,14 +1290,16 @@ def account_setup_email():
             return redirect(url_for('account_setup_password'))
         if action == 'skip':
             _setup_clear_draft('email')
-            return redirect(url_for('account_setup_photo'))
-        if not email and on_file:
-            _setup_clear_draft('email')                     # keep the email already on file
-            return redirect(url_for('account_setup_photo'))
+            return redirect(_setup_next('account_setup_photo'))
+        if not email:
+            # An empty field is never treated as Skip: the user must type one or press Skip.
+            _setup_clear_draft('email')
+            flash("Please enter an email address, or choose Skip.", "error")
+            return redirect(_setup_url('account_setup_email'))
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
             _setup_set_draft(email=email)
             flash("Please enter a valid email address, or choose Skip.", "error")
-            return redirect(url_for('account_setup_email'))
+            return redirect(_setup_url('account_setup_email'))
         conn = get_db_connection(); cur = conn.cursor()
         try:
             if acc.get('employeenumber'):
@@ -1281,11 +1317,11 @@ def account_setup_email():
             else:
                 print(f"[account setup] email save failed: {type(e).__name__}")
                 flash("Your email could not be saved. Please try again.", "error")
-            return redirect(url_for('account_setup_email'))
+            return redirect(_setup_url('account_setup_email'))
         finally:
             cur.close(); conn.close()
         _setup_clear_draft('email')
-        return redirect(url_for('account_setup_photo'))
+        return redirect(_setup_next('account_setup_photo'))
 
 
     return render_template('setup/setup_email.html', current_email=on_file,
@@ -1308,13 +1344,13 @@ def account_setup_photo():
             _url, err = _save_profile_photo(session.get('username'), photo)
             if err:
                 flash(err, "error")
-                return redirect(url_for('account_setup_photo'))
+                return redirect(_setup_url('account_setup_photo'))
         if action == 'back':
             return redirect(url_for('account_setup_email'))
         if action == 'continue' and not chosen and not acc.get('profile_photo'):
             flash("Please choose a photo to upload, or choose Skip.", "error")
-            return redirect(url_for('account_setup_photo'))
-        return redirect(url_for('account_setup_contact'))
+            return redirect(_setup_url('account_setup_photo'))
+        return redirect(_setup_next('account_setup_contact'))
 
 
     return render_template('setup/setup_photo.html', current_photo=acc.get('profile_photo') or '',
@@ -1343,14 +1379,16 @@ def account_setup_contact():
         if action == 'skip':
             _setup_clear_draft('contact')
             return redirect(url_for('account_setup_verify'))
-        if not contact and on_file:
+        if not contact:
+            # An empty field is never treated as Skip: the user must type one or press Skip.
             _setup_clear_draft('contact')
-            return redirect(url_for('account_setup_verify'))
+            flash("Please enter a contact number, or choose Skip.", "error")
+            return redirect(_setup_url('account_setup_contact'))
         digits = re.sub(r'\D', '', contact)
         if not re.fullmatch(r'[0-9+()\-\s]+', contact or 'x') or not (7 <= len(digits) <= 15):
             _setup_set_draft(contact=contact)
             flash("Please enter a valid contact number, or choose Skip.", "error")
-            return redirect(url_for('account_setup_contact'))
+            return redirect(_setup_url('account_setup_contact'))
         conn = get_db_connection(); cur = conn.cursor()
         try:
             cur.execute("UPDATE faculty SET contactnumber = %s WHERE employeenumber = %s",
@@ -1361,7 +1399,7 @@ def account_setup_contact():
             _setup_set_draft(contact=contact)
             print(f"[account setup] contact save failed: {type(e).__name__}")
             flash("Your contact number could not be saved. Please try again.", "error")
-            return redirect(url_for('account_setup_contact'))
+            return redirect(_setup_url('account_setup_contact'))
         finally:
             cur.close(); conn.close()
         _setup_clear_draft('contact')
@@ -1476,80 +1514,167 @@ def account_setup_verify():
     }
 
 
+    designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
+    specializations = query_db("SELECT specializationid, specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
+
+
     if request.method == 'POST':
         action = request.form.get('action')
-        conn = get_db_connection(); cur = conn.cursor()
+        if action == 'correction':
+            # A correction request is independent of finishing setup: it is saved for
+            # Admin review and the user stays on this page to review and confirm.
+            return _setup_submit_corrections(username, info.get('employeenumber'), current_values,
+                                             designations, specializations)
+        if action != 'confirm':
+            flash("Unrecognised action. Please use Save and Confirm to finish setup.", "error")
+            return redirect(url_for('account_setup_verify'))
+        conn = get_db_connection()
+        if conn is None:
+            flash("The system could not reach the database. Your information is unchanged — "
+                  "please try again in a moment.", "error")
+            return redirect(url_for('account_setup_verify'))
+        cur = conn.cursor()
         try:
-            if action == 'correction':
-                try:
-                    items = json.loads(request.form.get('corrections_json', '[]'))
-                except (ValueError, TypeError):
-                    items = []
-                remarks  = request.form.get('remarks', '').strip() or None
-                batch_id = uuid.uuid4().hex[:12]
-                inserted = 0
-
-
-                for item in items if isinstance(items, list) else []:
-                    if not isinstance(item, dict):
-                        continue
-                    field_name     = str(item.get('field_name', '')).strip()
-                    proposed_value = str(item.get('proposed_value', '')).strip()
-                    if field_name not in _CORRECTION_FIELDS:
-                        continue
-                    current_value = current_values.get(field_name, '')
-                    # Middle Name / Suffix may legitimately be corrected to blank
-                    # (e.g. clearing a wrongly-entered value); every other field
-                    # needs an actual value. Either way, skip a "correction" that
-                    # doesn't actually change anything.
-                    if field_name not in ('Middle Name', 'Suffix') and not proposed_value:
-                        continue
-                    if proposed_value == current_value:
-                        continue
-                    cur.execute("""
-                        INSERT INTO personal_info_correction_request
-                            (username, employeenumber, field_name, current_value, proposed_value, remarks, batch_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (username, info.get('employeenumber'), field_name,
-                          current_value, proposed_value, remarks, batch_id))
-                    inserted += 1
-
-
-                if inserted == 0:
-                    flash("Please select at least one field to correct and provide a new value.", "error")
-                    return redirect(url_for('account_setup_verify'))
-
-
-                cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
-                conn.commit()
-                flash(f"Correction request submitted for admin review ({inserted} field"
-                      f"{'s' if inserted != 1 else ''}). Your official record stays unchanged until it's approved.", "success")
-            else:
-                cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
-                conn.commit()
-                flash("Account setup complete. Welcome!", "success")
-            session['account_setup_complete'] = True
-            session.pop('setup_draft', None)
-            return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+            cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
+            if cur.rowcount != 1:
+                raise LookupError(username)
+            conn.commit()
+        except LookupError:
+            conn.rollback()
+            session.clear()
+            flash("Your account could not be found. Please sign in again.", "error")
+            return redirect(url_for('login'))
         except Exception as e:
             conn.rollback()
-            print(f"[account setup] complete failed: {type(e).__name__}")
-            flash("Your setup could not be completed. Please try again.", "error")
+            print(f"[account setup] complete failed: {type(e).__name__}: {e}")
+            flash("Your setup could not be saved because of a database error. Nothing was lost — "
+                  "please press Save and Confirm again. If this keeps happening, contact the Administrator.", "error")
             return redirect(url_for('account_setup_verify'))
         finally:
             cur.close(); conn.close()
+        session['account_setup_complete'] = True
+        session.pop('setup_draft', None)
+        flash("Account setup complete. Welcome!", "success")
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
 
 
-    designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
-    specializations = query_db("SELECT specializationid, specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
+    profile_photo = query_db("SELECT profile_photo FROM accounts WHERE username = %s",
+                             (username,), one=True) or {}
+    pending = query_db("""
+        SELECT field_name, current_value, proposed_value, created_at
+        FROM personal_info_correction_request
+        WHERE username = %s AND status = 'Pending'
+        ORDER BY created_at, requestid
+    """, (username,))
 
 
     return render_template('setup/setup_verify.html',
                            info=current_values, full_name=full_name,
                            account_email=info.get('email') or '',
                            account_contact=info.get('contactnumber') or '',
+                           profile_photo=profile_photo.get('profile_photo') or '',
+                           pending_corrections=pending,
+                           clear_cart=session.pop('setup_corrections_saved', False),
                            designations=designations, specializations=specializations,
                            back_url=url_for('account_setup_contact'), **_setup_ctx('verify'))
+
+
+_CORRECTION_FIELDS = ('First Name', 'Middle Name', 'Last Name', 'Suffix',
+                      'Designation', 'Specialization', 'Employee ID')
+_CORRECTION_MAX_LEN = 255          # personal_info_correction_request.proposed_value
+_CORRECTION_REASON_MAX_LEN = 1000
+
+def _setup_submit_corrections(username, employeenumber, current_values, designations, specializations):
+    """Validate and save a Review-step correction request. Never touches the faculty
+    record (the Admin applies approved requests) and never completes account setup."""
+    back = redirect(url_for('account_setup_verify'))
+    try:
+        items = json.loads(request.form.get('corrections_json', '[]'))
+    except (ValueError, TypeError):
+        items = None
+    if not isinstance(items, list) or not items:
+        flash("Please add at least one correction before submitting the request.", "correction-error")
+        return back
+    reason = request.form.get('remarks', '').strip()
+    if not reason:
+        flash("Please explain the reason for your correction request.", "correction-error")
+        return back
+    if len(reason) > _CORRECTION_REASON_MAX_LEN:
+        flash(f"The reason is too long (maximum {_CORRECTION_REASON_MAX_LEN} characters).", "correction-error")
+        return back
+
+    allowed = {'Designation':    {d['designationname'] for d in designations},
+               'Specialization': {s['specializationname'] for s in specializations}}
+    rows, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        field_name     = str(item.get('field_name', '')).strip()
+        proposed_value = str(item.get('proposed_value', '')).strip()
+        if field_name not in _CORRECTION_FIELDS or field_name in seen:
+            continue
+        current_value = current_values.get(field_name, '')
+        # Middle Name / Suffix may legitimately be corrected to blank; every other
+        # field needs a value. A "correction" that changes nothing is dropped.
+        if field_name not in ('Middle Name', 'Suffix') and not proposed_value:
+            flash(f"Please enter the correct {field_name}.", "correction-error")
+            return back
+        if proposed_value == current_value:
+            continue
+        max_len = (_CORRECTION_NAME_COLUMNS[field_name][1] if field_name in _CORRECTION_NAME_COLUMNS
+                   else 30 if field_name == 'Employee ID' else _CORRECTION_MAX_LEN)
+        if len(proposed_value) > max_len:
+            flash(f"The corrected {field_name} is too long (maximum {max_len} characters).", "correction-error")
+            return back
+        if field_name in allowed and proposed_value not in allowed[field_name]:
+            flash(f"Please choose a {field_name} from the list.", "correction-error")
+            return back
+        seen.add(field_name)
+        rows.append((field_name, current_value, proposed_value))
+    if not rows:
+        flash("None of the requested values differ from what is on file. Please change at least one value.", "correction-error")
+        return back
+
+    conn = get_db_connection()
+    if conn is None:
+        flash("The system could not reach the database. Your correction request was not sent — "
+              "your entries are still listed below; please try again.", "correction-error")
+        return back
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT field_name FROM personal_info_correction_request
+            WHERE username = %s AND status = 'Pending' AND field_name = ANY(%s)
+        """, (username, [r[0] for r in rows]))
+        already = sorted({r[0] for r in cur.fetchall()})
+        if already:
+            flash("You already have a pending correction request for: " + ", ".join(already) +
+                  ". Please remove " + ("it" if len(already) == 1 else "them") +
+                  " from this request and wait for the Admin's decision.", "correction-error")
+            return back
+        batch_id = uuid.uuid4().hex[:12]
+        for field_name, current_value, proposed_value in rows:
+            cur.execute("""
+                INSERT INTO personal_info_correction_request
+                    (username, employeenumber, field_name, current_value, proposed_value, remarks, batch_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (username, employeenumber, field_name, current_value, proposed_value, reason, batch_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[account setup] correction request failed: {type(e).__name__}: {e}")
+        flash("Your correction request could not be saved because of a database error. "
+              "Your entries are still listed below — please try again.", "correction-error")
+        return back
+    finally:
+        cur.close(); conn.close()
+
+    session['setup_corrections_saved'] = True       # tells the page to clear its unsent list
+    n = len(rows)
+    flash(f"Correction request submitted for Admin review ({n} field{'s' if n != 1 else ''}). "
+          "Your official record stays unchanged until it is approved. "
+          "You can now press Save and Confirm to finish setting up your account.", "correction-success")
+    return back
 
 # ==============================================================================
 # --- ACADEMIC HEAD PERSONAL FACULTY VIEW ---
@@ -23512,88 +23637,198 @@ def admin_user_management():
     finally:
         cur.close(); conn.close()
 
+_CORRECTIONS_PAGE_SIZE = 15
+# The faculty value each correction field maps to, read live so the Admin sees
+# whether the record changed after the request was submitted.
+_CORRECTION_LIVE_VALUE_SQL = """
+    CASE r.field_name
+        WHEN 'First Name'     THEN f.firstname
+        WHEN 'Middle Name'    THEN f.middlename
+        WHEN 'Last Name'      THEN f.lastname
+        WHEN 'Suffix'         THEN f.suffix
+        WHEN 'Designation'    THEN d.designationname
+        WHEN 'Specialization' THEN s.specializationname
+        WHEN 'Employee ID'    THEN f.employeenumber
+    END
+"""
+
+def _corrections_list_url(form):
+    """Where to return after a decision: the list with the Admin's filters kept."""
+    nxt = form.get('next') or ''
+    return nxt if nxt.startswith('/admin/account-corrections') and '//' not in nxt \
+        else url_for('admin_account_corrections')
+
 @app.route('/admin/account-corrections')
 def admin_account_corrections():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    requests_ = query_db("""
+    q      = request.args.get('q', '').strip()
+    status = request.args.get('status', 'Pending')
+    field  = request.args.get('field', '')
+    sort   = request.args.get('sort', 'newest')
+    if status not in ('All', 'Pending', 'Approved', 'Rejected'): status = 'Pending'
+    if field not in _CORRECTION_FIELDS: field = ''
+    if sort not in ('newest', 'oldest'): sort = 'newest'
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+
+    where, args = [], []
+    if status != 'All':
+        where.append("r.status = %s"); args.append(status)
+    if field:
+        where.append("r.field_name = %s"); args.append(field)
+    if q:
+        like = f"%{q}%"
+        where.append("""(r.employeenumber ILIKE %s OR r.username ILIKE %s
+                         OR CONCAT_WS(' ', f.firstname, f.middlename, f.lastname, f.suffix) ILIKE %s
+                         OR CONCAT_WS(' ', f.lastname, f.firstname) ILIKE %s)""")
+        args += [like, like, like, like]
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    base = f"""
+        FROM personal_info_correction_request r
+        LEFT JOIN faculty f        ON r.employeenumber   = f.employeenumber
+        LEFT JOIN designation d    ON f.designationid    = d.designationid
+        LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        {where_sql}
+    """
+
+    counts = query_db("""
+        SELECT COUNT(*) FILTER (WHERE status = 'Pending')  AS pending,
+               COUNT(*) FILTER (WHERE status = 'Approved') AS approved,
+               COUNT(*) FILTER (WHERE status = 'Rejected') AS rejected,
+               COUNT(*)                                     AS total
+        FROM personal_info_correction_request
+    """, one=True)
+    matched = query_db("SELECT COUNT(*) AS n " + base, tuple(args), one=True)['n']
+    pages = max(1, -(-matched // _CORRECTIONS_PAGE_SIZE))
+    page = min(page, pages)
+    order = "DESC" if sort == 'newest' else "ASC"
+    rows = query_db(f"""
         SELECT r.requestid, r.username, r.employeenumber, r.field_name, r.current_value, r.proposed_value,
                r.remarks, r.status, r.decided_by, r.decided_at, r.admin_remarks, r.created_at, r.batch_id,
-               f.firstname, f.middlename, f.lastname, f.suffix
-        FROM personal_info_correction_request r
-        LEFT JOIN faculty f ON r.employeenumber = f.employeenumber
-        ORDER BY (r.status = 'Pending') DESC, r.created_at DESC, r.batch_id NULLS LAST, r.requestid ASC
-    """)
-    return render_template('admin/account_corrections_admin.html', requests=requests_)
+               f.firstname, f.middlename, f.lastname, f.suffix,
+               {_CORRECTION_LIVE_VALUE_SQL} AS live_value
+        {base}
+        ORDER BY r.created_at {order}, r.requestid {order}
+        LIMIT %s OFFSET %s
+    """, tuple(args) + (_CORRECTIONS_PAGE_SIZE, (page - 1) * _CORRECTIONS_PAGE_SIZE))
+
+    return render_template('admin/account_corrections_admin.html', requests=rows, counts=counts,
+                           fields=_CORRECTION_FIELDS, matched=matched, page=page, pages=pages,
+                           page_size=_CORRECTIONS_PAGE_SIZE,
+                           filters={'q': q, 'status': status, 'field': field, 'sort': sort})
 
 @app.route('/admin/account-corrections/<int:request_id>/decide', methods=['POST'])
 def admin_account_correction_decide(request_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
+    back = redirect(_corrections_list_url(request.form))
     decision      = request.form.get('decision')
     admin_remarks = request.form.get('admin_remarks', '').strip() or None
     if decision not in ('Approved', 'Rejected'):
         flash("Invalid decision.", "error")
-        return redirect(url_for('admin_account_corrections'))
+        return back
+    if decision == 'Rejected' and not admin_remarks:
+        flash("Please give a reason for rejecting the request.", "error")
+        return back
+    if admin_remarks and len(admin_remarks) > 1000:
+        flash("Remarks are too long (maximum 1000 characters).", "error")
+        return back
 
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    conn = get_db_connection()
+    if conn is None:
+        flash("The system could not reach the database. Nothing was changed — please try again.", "error")
+        return back
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute("SELECT * FROM personal_info_correction_request WHERE requestid = %s", (request_id,))
+        # Lock the row so two Admins (or a double click) can't decide it twice.
+        cur.execute("SELECT * FROM personal_info_correction_request WHERE requestid = %s FOR UPDATE",
+                    (request_id,))
         req = cur.fetchone()
         if not req:
             flash("Correction request not found.", "error")
-            return redirect(url_for('admin_account_corrections'))
+            return back
+        if req['status'] != 'Pending':
+            flash(f"This request was already {req['status'].lower()} by {req['decided_by'] or 'another Admin'}"
+                  " and cannot be processed again.", "error")
+            return back
 
         applied_note = None
-        if decision == 'Approved' and req['employeenumber']:
-            field = req['field_name']
-            value = req['proposed_value']
-            _NAME_COLUMN = {'First Name': 'firstname', 'Middle Name': 'middlename',
-                             'Last Name': 'lastname', 'Suffix': 'suffix'}
-            if field == 'Designation':
-                cur.execute("SELECT designationid FROM designation WHERE LOWER(designationname) = LOWER(%s)", (value,))
-                row = cur.fetchone()
-                if row:
-                    cur.execute("UPDATE faculty SET designationid = %s WHERE employeenumber = %s",
-                                (row['designationid'], req['employeenumber']))
-                    applied_note = "Designation updated automatically."
-                else:
-                    applied_note = f"No matching designation named '{value}' -- update manually via Employee Management."
-            elif field == 'Specialization':
-                cur.execute("SELECT specializationid FROM specialization WHERE LOWER(specializationname) = LOWER(%s)", (value,))
-                row = cur.fetchone()
-                if row:
-                    cur.execute("UPDATE faculty SET specializationid = %s WHERE employeenumber = %s",
-                                (row['specializationid'], req['employeenumber']))
-                    applied_note = "Specialization updated automatically."
-                else:
-                    applied_note = f"No matching specialization named '{value}' -- update manually via Employee Management."
-            elif field in _NAME_COLUMN:
-                # Unlike the old combined "Name" field, each name part is now its own
-                # unambiguous column -- safe to apply directly (Middle Name/Suffix may
-                # be an intentional blank, to clear a wrongly-entered value).
-                cur.execute(f"UPDATE faculty SET {_NAME_COLUMN[field]} = %s WHERE employeenumber = %s",
-                            (value or None, req['employeenumber']))
-                applied_note = f"{field} updated automatically."
-            else:
-                # Employee ID: never auto-applied -- it's a primary key referenced by
-                # faculty, accounts, mergedclass, schedule, etc. with ON UPDATE NO ACTION,
-                # so an automatic rewrite risks orphaning rows. Record the approval; the
-                # admin applies it by hand.
-                applied_note = f"{field} approved -- update it manually via Employee Management."
+        if decision == 'Approved':
+            applied_note, problem = _apply_correction(cur, req)
+            if problem:
+                conn.rollback()
+                flash(problem, "error")
+                return back
 
         cur.execute("""
             UPDATE personal_info_correction_request
             SET status = %s, decided_by = %s, decided_at = NOW(), admin_remarks = %s
-            WHERE requestid = %s
+            WHERE requestid = %s AND status = 'Pending'
         """, (decision, session.get('username'), admin_remarks, request_id))
-        conn.commit()
-
-        flash(f"Request {decision.lower()}." + (f" {applied_note}" if applied_note else ""), "success")
+        conn.commit()      # faculty update + status change land together, or not at all
+        flash(f"{req['field_name']} correction for {req['employeenumber'] or req['username']} "
+              f"{decision.lower()}." + (f" {applied_note}" if applied_note else ""), "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error deciding request: {e}", "error")
+        print(f"[account corrections] decide failed: {type(e).__name__}: {e}")
+        flash("The request could not be processed because of a database error. Nothing was changed — "
+              "please try again.", "error")
     finally:
         cur.close(); conn.close()
-    return redirect(url_for('admin_account_corrections'))
+    return back
+
+_CORRECTION_NAME_COLUMNS = {'First Name': ('firstname', 60, True), 'Middle Name': ('middlename', 60, False),
+                            'Last Name': ('lastname', 60, True), 'Suffix': ('suffix', 20, False)}
+
+def _apply_correction(cur, req):
+    """Write an approved correction to the faculty record on the caller's transaction.
+    Returns (note for the Admin, problem that blocks approval or None)."""
+    field, value, emp = req['field_name'], (req['proposed_value'] or '').strip(), req['employeenumber']
+    if not emp:
+        return None, "This request is not linked to a faculty record, so it cannot be applied."
+    if field == 'Employee ID':
+        # Never auto-applied: it's the primary key referenced by accounts, schedules,
+        # merged classes, etc. with ON UPDATE NO ACTION, so rewriting it would orphan
+        # rows. The approval is recorded; the Admin changes it in Faculty Management.
+        return "Employee ID is not changed automatically — update it in Faculty Management.", None
+    if field in ('Designation', 'Specialization'):
+        table = field.lower()
+        cur.execute(f"SELECT {table}id AS id FROM {table} WHERE LOWER({table}name) = LOWER(%s)", (value,))
+        row = cur.fetchone()
+        if not row:
+            return None, (f"No {field.lower()} named '{value}' exists any more, so this request can't be "
+                          f"approved. Reject it, or add the {field.lower()} first.")
+        cur.execute(f"UPDATE faculty SET {table}id = %s WHERE employeenumber = %s", (row['id'], emp))
+    elif field in _CORRECTION_NAME_COLUMNS:
+        column, max_len, required = _CORRECTION_NAME_COLUMNS[field]
+        if required and not value:
+            return None, f"{field} cannot be blank, so this request can't be approved."
+        if len(value) > max_len:
+            return None, f"The proposed {field} is longer than {max_len} characters, so it can't be saved."
+        cur.execute(f"UPDATE faculty SET {column} = %s WHERE employeenumber = %s", (value or None, emp))
+    else:
+        return None, f"Unknown field '{field}'."
+    if cur.rowcount != 1:
+        return None, "The faculty record for this request no longer exists."
+    return f"{field} updated on the faculty record.", None
+
+@app.route('/api/user/correction-requests')
+def api_user_correction_requests():
+    """The signed-in user's own correction requests (read-only)."""
+    if 'loggedin' not in session: return jsonify({'success': False}), 401
+    rows = query_db("""
+        SELECT field_name, current_value, proposed_value, remarks, status, admin_remarks,
+               created_at, decided_at
+        FROM personal_info_correction_request
+        WHERE username = %s
+        ORDER BY created_at DESC, requestid DESC
+    """, (session.get('username'),))
+    fmt = lambda d: d.strftime('%b %d, %Y %I:%M %p') if d else None
+    return jsonify({'success': True, 'requests': [
+        dict(field=r['field_name'], current=r['current_value'] or '', proposed=r['proposed_value'] or '',
+             reason=r['remarks'] or '', status=r['status'], admin_remarks=r['admin_remarks'] or '',
+             submitted=fmt(r['created_at']), decided=fmt(r['decided_at'])) for r in rows]})
 
 def _ensure_ay_finalized_col(cur):
     """Add isfinalized BOOLEAN DEFAULT FALSE to academicyear if not present."""

@@ -64,6 +64,17 @@
         color: #ffffff !important;
     }
 
+    /* Correction Requests button: pending count in a white pill */
+    .cr-count {
+        min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px;
+        background: #ffffff; color: #800000; font-size: 11px; font-weight: 800;
+        display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+    }
+    @media (max-width: 520px) {
+        .page-header { flex-wrap: wrap; gap: 12px; }
+        .btn-corrections { width: 100%; justify-content: center; }
+    }
+
     /* Table Styling */
     .table-container {
         background: #fff;
@@ -304,6 +315,11 @@
     <!-- Header -->
     <div class="page-header">
         <h1>USER MANAGEMENT</h1>
+        <a href="{{ url_for('admin_account_corrections') }}" class="btn-add-user btn-corrections"
+           {% if pending_correction_count %}aria-label="Correction Requests, {{ pending_correction_count }} pending"{% endif %}>
+            <i class="fas fa-user-pen"></i> Correction Requests
+            {% if pending_correction_count %}<span class="cr-count">{{ pending_correction_count }}</span>{% endif %}
+        </a>
     </div>
 
     <!-- Table Container -->

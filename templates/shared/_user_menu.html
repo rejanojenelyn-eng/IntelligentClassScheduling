@@ -18,7 +18,7 @@
     <div class="upd-menu">
         <button type="button" class="upd-menu-item" onclick="openProfilePanel()">
             <span class="upd-mi-icon"><i class="fas fa-user"></i></span>
-            <span class="upd-mi-text"><span class="upd-mi-title">Profile</span><span class="upd-mi-sub">Manage your personal information</span></span>
+            <span class="upd-mi-text"><span class="upd-mi-title">Profile{% if my_pending_correction_count %} <span class="cr-dot" title="You have pending correction requests"></span>{% endif %}</span><span class="upd-mi-sub">Manage your personal information</span></span>
             <i class="fas fa-chevron-right"></i>
         </button>
         <button type="button" class="upd-menu-item" onclick="openEmailPanel()">
@@ -83,6 +83,19 @@
                 <select id="pfStatus" class="up-select"><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select>
             </div>
         </div>
+
+        {% if session.get('role') != 'Admin' %}
+        <!-- My Correction Requests: read-only history of requests the Admin decides -->
+        <div class="cr-card" id="crCard">
+            <button type="button" class="cr-card-head" id="crToggle" onclick="toggleMyCorrections()"
+                    aria-expanded="false" aria-controls="crList">
+                <span class="cr-card-title"><i class="fas fa-user-pen"></i> My Correction Requests</span>
+                {% if my_pending_correction_count %}<span class="cr-status cr-Pending">{{ my_pending_correction_count }} pending</span>{% endif %}
+                <i class="fas fa-chevron-down cr-caret"></i>
+            </button>
+            <div id="crList" class="cr-list" hidden></div>
+        </div>
+        {% endif %}
 
         <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
 

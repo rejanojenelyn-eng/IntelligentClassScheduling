@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Set Up Your Account - PUP Lopez</title>
@@ -52,9 +53,10 @@
                 <p class="error-msg">{{ message }}</p>
             {% endfor %}
         {% endwith %}
+        <p class="error-msg" id="setupClientError" style="display:none;"></p>
 
 
-        <form method="POST" enctype="multipart/form-data" autocomplete="off" novalidate>
+        <form method="POST" enctype="multipart/form-data" autocomplete="off" novalidate id="setupForm">
             {% block content %}{% endblock %}
 
 
@@ -71,5 +73,37 @@
         </form>
     </div>
     {% block scripts %}{% endblock %}
+    <script>
+        // Optional steps define window.setupValidateContinue() -> error text or ''.
+        // Continue is blocked until it returns ''; Skip and Back always go through.
+        (function () {
+            const form = document.getElementById('setupForm');
+            const box  = document.getElementById('setupClientError');
+            if (!form || typeof window.setupValidateContinue !== 'function') return;
+            let lastAction = 'continue';
+            function clearErrors() {
+                box.textContent = ''; box.style.display = 'none';
+                document.querySelectorAll('.error-msg').forEach(function (el) {
+                    if (el !== box) el.remove();
+                });
+            }
+            window.setupClearErrors = clearErrors;
+            form.querySelectorAll('button[name="action"]').forEach(function (b) {
+                b.addEventListener('click', function () { lastAction = b.value; });
+            });
+            form.addEventListener('input', clearErrors);
+            form.addEventListener('change', clearErrors);
+            form.addEventListener('submit', function (e) {
+                const action = (e.submitter && e.submitter.value) || lastAction;
+                if (action !== 'continue') { if (action === 'skip') clearErrors(); return; }
+                const err = window.setupValidateContinue();
+                if (err) {
+                    e.preventDefault();
+                    clearErrors();
+                    box.textContent = err; box.style.display = 'block';
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

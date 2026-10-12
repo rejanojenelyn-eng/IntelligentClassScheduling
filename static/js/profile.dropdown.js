@@ -99,7 +99,7 @@ function _applyAvatar(circleId, iconId, photoUrl) {
 const _UP_PANELS = ['profilePanel', 'passwordPanel', 'emailPanel'];
 // Per-panel cleanup when it is hidden: unsaved input is discarded.
 const _UP_PANEL_RESET = {
-    profilePanel:  () => { _pendingPhoto = null; },
+    profilePanel:  () => { _pendingPhoto = null; _collapseMyCorrections(); },
     passwordPanel: () => _pwStop(),
     emailPanel:    () => _emStop(),
 };
@@ -715,6 +715,64 @@ async function saveEmail() {
 
 
 function closeEmailPanel() { _upClosePanel(); }
+
+
+/* ══════════════════════════════════════════════════════
+   MY CORRECTION REQUESTS — expandable section inside Profile Settings.
+   Read-only: status, values and remarks all come from the Admin's decision.
+══════════════════════════════════════════════════════ */
+function _crStatusText(r) {
+    if (r.status === 'Pending')  return 'Awaiting Administrator review.';
+    if (r.status === 'Rejected') return 'Rejected by the Administrator.';
+    return r.field === 'Employee ID'
+        ? 'Approved. The Administrator updates your Employee ID in Faculty Management.'
+        : 'Approved. Your official record was updated.';
+}
+
+function _collapseMyCorrections() {
+    const list = document.getElementById('crList');
+    const btn  = document.getElementById('crToggle');
+    if (!list || !btn) return;
+    list.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    btn.classList.remove('open');
+}
+
+async function toggleMyCorrections() {
+    const list = document.getElementById('crList');
+    const btn  = document.getElementById('crToggle');
+    if (!list.hidden) { _collapseMyCorrections(); return; }
+    list.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    btn.classList.add('open');
+    list.innerHTML = '<div class="cr-empty">Loading…</div>';
+    try {
+        // Fetched fresh on every open, so an Admin decision shows up without a reload.
+        const res = await fetch('/api/user/correction-requests', { credentials: 'same-origin' });
+        const d = await res.json();
+        if (!d.success) throw new Error();
+        if (!d.requests.length) {
+            list.innerHTML = '<div class="cr-empty">You have not submitted any correction requests.</div>';
+            return;
+        }
+        list.innerHTML = d.requests.map(r => `
+            <div class="cr-item">
+                <div class="cr-item-top">
+                    <span class="cr-field">${_esc(r.field)}</span>
+                    <span class="cr-status cr-${_esc(r.status)}">${_esc(r.status)}</span>
+                </div>
+                <div class="cr-note">${_esc(_crStatusText(r))}</div>
+                <div class="cr-row"><span>Original</span>${_esc(r.current) || '—'}</div>
+                <div class="cr-row"><span>Proposed</span><strong>${r.proposed ? _esc(r.proposed) : '<em>(blank)</em>'}</strong></div>
+                ${r.reason ? `<div class="cr-row"><span>Reason</span>${_esc(r.reason)}</div>` : ''}
+                <div class="cr-row"><span>Submitted</span>${_esc(r.submitted)}</div>
+                ${r.decided ? `<div class="cr-row"><span>Reviewed</span>${_esc(r.decided)}</div>` : ''}
+                ${r.admin_remarks ? `<div class="cr-row cr-admin"><span>${r.status === 'Rejected' ? 'Reason for rejection' : 'Admin remarks'}</span>${_esc(r.admin_remarks)}</div>` : ''}
+            </div>`).join('');
+    } catch (e) {
+        list.innerHTML = '<div class="cr-empty">Your requests could not be loaded. Please try again.</div>';
+    }
+}
 
 
 /* ── Toast ─────────────────────────────────────────── */

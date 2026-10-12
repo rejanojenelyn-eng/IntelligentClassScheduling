@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Set Up Your Account - PUP Lopez</title>
@@ -9,99 +10,145 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
         body { min-height: 100vh; background: #fdfdfd; display: flex; justify-content: center; padding: 50px 20px 80px; }
-        .setup-card { width: 100%; max-width: 760px; }
+        .setup-card { width: 100%; max-width: 900px; }
         .setup-card .brand-row { text-align: center; }
         .setup-card img.logo { width: 80px; margin-bottom: 8px; }
         .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.2rem; letter-spacing: 0.5px; }
         .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.72rem; letter-spacing: 1px; margin-bottom: 20px; }
 
+        h1.step-title { color: #800000; font-weight: 800; font-size: 1.8rem; text-align: center; margin-bottom: 6px; }
+        p.step-lead { color: #777; font-size: 0.92rem; text-align: center; margin-bottom: 26px; }
 
-        h1.step-title { color: #800000; font-weight: 800; font-size: 1.8rem; text-align: center; margin-bottom: 24px; }
+        .error-msg { color: #b22222; font-size: 0.85rem; font-weight: 600; }
+        .success-msg { color: #2e7d32; font-size: 0.85rem; font-weight: 600; }
+        .msg-box { border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; display: flex; gap: 8px; align-items: flex-start; }
+        .msg-box.error-msg { background: #fdf2f2; }
+        .msg-box.success-msg { background: #eef7ef; }
 
+        /* Two sections side by side on wide screens */
+        .review-grid { display: grid; grid-template-columns: 1fr 1.25fr; gap: 22px; align-items: start; }
+        .section-card { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 20px 22px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
+        .section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+            padding-bottom: 10px; margin-bottom: 4px; border-bottom: 2px solid #f3e5e5; }
+        .section-title { color: #800000; font-weight: 800; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .section-tag { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px;
+            padding: 3px 9px; border-radius: 10px; white-space: nowrap; }
+        .tag-edit { background: #eef7ef; color: #2e7d32; }
+        .tag-lock { background: #f3e5e5; color: #800000; }
+        .section-note { font-size: 0.76rem; color: #888; margin: 8px 0 2px; }
 
-        .error-msg { color: #b22222; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
-        .success-msg { color: #2e7d32; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600; }
-
-
-        .section-card { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 22px 26px; margin-bottom: 22px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
-        .section-title { color: #800000; font-weight: 800; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f3e5e5; }
-
-
-        .field-row {
-            display: flex; justify-content: space-between; align-items: flex-start;
-            padding: 12px 0; border-bottom: 1px solid #f5f5f5;
-        }
+        .field-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+            padding: 12px 0; border-bottom: 1px solid #f5f5f5; }
         .field-row:last-child { border-bottom: none; }
-        .field-label { color: #888; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-        .field-value { color: #333; font-size: 1rem; font-weight: 600; }
+        .field-main { min-width: 0; }
+        .field-label { color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .field-value { color: #333; font-size: 0.98rem; font-weight: 600; word-break: break-word; }
         .field-value.muted { color: #aaa; font-weight: 500; font-style: italic; }
-        .field-main { flex: 1; }
+        .field-value.full-name { font-size: 1.15rem; color: #4b0a0a; font-weight: 800; }
+        .photo-thumb { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; display: block; }
+        .edit-link { color: #800000; font-size: 0.78rem; font-weight: 800; text-decoration: none; white-space: nowrap;
+            padding: 6px 10px; border-radius: 6px; }
+        .edit-link:hover { background: #fdf3f3; }
+        .pending-badge { display: inline-block; background: #fff8e1; color: #a15c00; border-radius: 10px;
+            padding: 2px 8px; font-size: 0.64rem; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+        .pending-to { display: block; font-size: 0.76rem; color: #a15c00; margin-top: 3px; font-weight: 500; }
 
-
-        .name-block .field-value.full-name { font-size: 1.3rem; color: #4b0a0a; font-weight: 800; margin-bottom: 10px; }
-        .name-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
-        .name-part-label { color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
-        .name-part-value { color: #333; font-size: 0.92rem; font-weight: 600; }
-
-
-        .btn-request-correction {
-            background: none; border: 1px solid #800000; color: #800000; border-radius: 6px;
-            padding: 7px 14px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
-            letter-spacing: 0.3px; cursor: pointer; white-space: nowrap; margin-left: 16px; transition: 0.15s;
+        .btn-request {
+            width: 100%; margin-top: 14px; background: #fff; border: 1px dashed #c99; color: #800000; border-radius: 8px;
+            padding: 11px 14px; font-size: 0.82rem; font-weight: 800; cursor: pointer; transition: 0.15s;
         }
-        .btn-request-correction:hover { background: #800000; color: #fff; }
+        .btn-request:hover { background: #fdf6f6; border-style: solid; }
 
-
-        .correction-panel {
-            display: none; margin-top: 14px; padding: 18px 20px; border: 1px solid #e8c8c8;
-            border-radius: 10px; background: #fef9f9;
-        }
+        /* Single correction form */
+        .correction-panel { display: none; margin-top: 16px; padding: 16px 18px; border: 1px solid #e8c8c8; border-radius: 10px; background: #fef9f9; }
         .correction-panel.open { display: block; }
-        .correction-panel .cp-title { color: #4b0a0a; font-weight: 800; font-size: 0.85rem; margin-bottom: 14px; }
-        .cp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-        .cp-field label { display: block; color: #888; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
-        .cp-field .cp-current { color: #999; font-size: 0.85rem; margin-bottom: 6px; }
-        .cp-field input, .cp-field select {
-            width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px;
-            font-size: 0.9rem; font-family: inherit; background: #fff;
+        .cp-title { color: #4b0a0a; font-weight: 800; font-size: 0.88rem; margin-bottom: 4px; }
+        .cp-sub { color: #888; font-size: 0.76rem; margin-bottom: 12px; }
+        .cp-option { border-top: 1px solid #f1dede; padding: 10px 0; }
+        .cp-option:first-of-type { border-top: none; }
+        .cp-check { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; font-weight: 700; color: #333; cursor: pointer; }
+        .cp-check input { width: 16px; height: 16px; accent-color: #800000; }
+        .cp-check.disabled { color: #aaa; cursor: not-allowed; }
+        .cp-inputs { display: none; margin: 10px 0 2px 26px; }
+        .cp-option.checked .cp-inputs { display: block; }
+        .cp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+        .cp-field label { display: block; color: #888; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4px; }
+        .cp-field .cp-current { color: #999; font-size: 0.74rem; margin-top: 3px; }
+        .cp-field input, .cp-field select, .cp-reason textarea {
+            width: 100%; padding: 9px 11px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 0.88rem; font-family: inherit; background: #fff;
         }
-        .cp-actions { display: flex; justify-content: flex-end; gap: 10px; }
-        .btn-cp-cancel { background: none; border: none; color: #888; font-weight: 700; font-size: 0.8rem; cursor: pointer; padding: 9px 14px; }
-        .btn-cp-add { background: #800000; color: #fff; border: none; border-radius: 6px; padding: 9px 18px; font-weight: 800; font-size: 0.8rem; cursor: pointer; }
-        .btn-cp-add:hover { background: #5c0000; }
+        .cp-field input:focus, .cp-field select:focus, .cp-reason textarea:focus { outline: none; border-color: #800000; }
+        .cp-warn { font-size: 0.74rem; color: #a15c00; background: #fff8e1; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+        .cp-reason { margin-top: 12px; }
+        .cp-reason label { display: block; color: #800000; font-weight: 800; font-size: 0.7rem; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .cp-reason textarea { resize: vertical; }
+        .cp-error { margin-top: 10px; display: none; }
+        .cp-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+        .btn-cp-cancel { background: none; border: none; color: #777; font-weight: 700; font-size: 0.8rem; cursor: pointer; padding: 9px 14px; }
+        .btn-cp-submit { background: #800000; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-weight: 800; font-size: 0.8rem; cursor: pointer; }
+        .btn-cp-submit:hover { background: #5c0000; }
 
-
-        .summary-section { display: none; }
-        .summary-section.open { display: block; }
-        .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-        .summary-table th { text-align: left; font-size: 0.68rem; color: #888; text-transform: uppercase; padding: 8px 10px; border-bottom: 2px solid #eee; }
-        .summary-table td { padding: 10px; font-size: 0.88rem; border-bottom: 1px solid #f2f2f2; vertical-align: top; }
-        .summary-table .sv-current { color: #999; }
-        .summary-table .sv-new { color: #2e7d32; font-weight: 700; }
-        .summary-remove { background: none; border: none; color: #b22222; cursor: pointer; font-size: 0.9rem; }
-        .summary-remarks label { display: block; color: #800000; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.5px; margin-bottom: 8px; }
-        .summary-remarks textarea {
-            width: 100%; padding: 12px 14px; border: 1px solid #ddd; border-radius: 8px;
-            font-size: 0.9rem; font-family: inherit; resize: vertical; margin-bottom: 16px;
+        /* Finish */
+        .finish-area { margin-top: 26px; }
+        .finish-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .finish-hint { color: #888; font-size: 0.78rem; text-align: right; margin-top: 8px; }
+        .btn-finish {
+            padding: 13px 34px; border-radius: 8px; border: 2px solid #800000; background: #800000; color: #fff;
+            font-weight: 800; font-size: 0.95rem; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px;
         }
+        .btn-finish:hover { background: #5c0000; border-color: #5c0000; }
 
-
-        .actions-row { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
-        .btn-outline {
-            padding: 12px 26px; border: 2px solid #800000; border-radius: 6px; background: #fff;
-            color: #800000; font-weight: 800; font-size: 0.85rem; cursor: pointer; transition: 0.2s;
-        }
-        .btn-outline:hover { background: #800000; color: #fff; }
-        .btn-outline.secondary { border-color: #ccc; color: #888; }
-        .btn-outline.secondary:hover { background: #f3f3f3; color: #888; }
-
+        /* In-page notice dialog (instead of the browser's alert / confirm) */
+        .notice-overlay { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(40, 0, 0, 0.45);
+            align-items: center; justify-content: center; padding: 16px; }
+        .notice-overlay.open { display: flex; }
+        .notice-card { background: #fff; border-radius: 14px; width: 100%; max-width: 420px; padding: 26px 24px 22px;
+            text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.25); border-top: 5px solid #800000; }
+        .notice-icon { width: 52px; height: 52px; border-radius: 50%; background: #fff8e1; color: #d48806;
+            display: flex; align-items: center; justify-content: center; font-size: 1.3rem; margin: 0 auto 12px; }
+        .notice-title { color: #4b0a0a; font-size: 1.1rem; font-weight: 800; margin-bottom: 8px; }
+        .notice-text { color: #666; font-size: 0.88rem; line-height: 1.5; margin-bottom: 20px; }
+        .notice-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .notice-btn { padding: 11px 18px; border-radius: 8px; font-weight: 800; font-size: 0.82rem; cursor: pointer; flex: 1 1 160px; }
+        .notice-btn-primary { background: #800000; border: 2px solid #800000; color: #fff; }
+        .notice-btn-primary:hover { background: #5c0000; border-color: #5c0000; }
+        .notice-btn-secondary { background: #fff; border: 2px solid #ccc; color: #666; }
+        .notice-btn-secondary:hover { background: #f3f3f3; }
 
         {% include "setup/_setup_steps_css.html" %}
-        .confirm-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 26px; }
-        .confirm-row .btn-back { font-size: 0.85rem; padding: 12px 22px; border-radius: 6px; }
+        .finish-row .btn-back { font-size: 0.9rem; padding: 12px 22px; }
+
+        @media (max-width: 820px) {
+            .review-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 520px) {
+            body { padding: 30px 16px 60px; }
+            h1.step-title { font-size: 1.45rem; }
+            .section-card { padding: 16px; }
+            .cp-grid { grid-template-columns: 1fr; }
+            .cp-inputs { margin-left: 0; }
+            .finish-row { flex-direction: column-reverse; align-items: stretch; }
+            .finish-row .btn-back, .btn-finish { justify-content: center; }
+            .finish-hint { text-align: center; }
+        }
     </style>
 </head>
 <body>
+{% set pending_by_field = {} %}
+{% for p in pending_corrections or [] %}{% set _ = pending_by_field.update({p.field_name: p}) %}{% endfor %}
+{% macro pending_note(fields, pending_by_field) -%}
+    {%- for f in fields if f in pending_by_field -%}
+        <span class="pending-to">{{ f }} → {{ pending_by_field[f].proposed_value or '(blank)' }} · <span class="pending-badge">Pending review</span></span>
+    {%- endfor -%}
+{%- endmacro %}
+{% set ns = namespace(correction_msgs=[], other_msgs=[]) %}
+{% for category, message in get_flashed_messages(with_categories=true) %}
+    {% if category.startswith('correction-') %}{% set ns.correction_msgs = ns.correction_msgs + [(category[11:], message)] %}
+    {% else %}{% set ns.other_msgs = ns.other_msgs + [(category, message)] %}{% endif %}
+{% endfor %}
+{% set correction_failed = ns.correction_msgs | selectattr(0, 'equalto', 'error') | list | length > 0 %}
+
     <div class="setup-card">
         <div class="brand-row">
             <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
@@ -110,325 +157,315 @@
             {% include "setup/_setup_steps.html" %}
         </div>
 
-
         <h1 class="step-title">Check Your Information</h1>
+        <p class="step-lead">Review everything below, then press Finish Setup.</p>
 
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <p class="{{ 'success-msg' if category == 'success' else 'error-msg' }}">{{ message }}</p>
-            {% endfor %}
-        {% endwith %}
-
-
-        <!-- ACCOUNT INFORMATION -->
-        <div class="section-card">
-            <div class="section-title">Account Information</div>
-            <div class="field-row">
-                <div class="field-main">
-                    <div class="field-label">Employee ID</div>
-                    <div class="field-value">{{ info['Employee ID'] }}</div>
+        <div class="review-grid">
+            <!-- ACCOUNT INFORMATION: the user can change these directly -->
+            <section class="section-card" aria-labelledby="accTitle">
+                <div class="section-head">
+                    <span class="section-title" id="accTitle">Your Account</span>
+                    <span class="section-tag tag-edit"><i class="fas fa-pen"></i> You can edit</span>
                 </div>
-                <button type="button" class="btn-request-correction" onclick="openCorrection('empid')">Request Correction</button>
-            </div>
-            <div class="field-row">
-                <div class="field-main">
-                    <div class="field-label">Email Address</div>
-                    <div class="field-value">{{ account_email or '—' }}</div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Email Address</div>
+                        <div class="field-value {{ 'muted' if not account_email }}">{{ account_email or 'Not provided' }}</div>
+                    </div>
+                    <a class="edit-link" href="{{ url_for('account_setup_email', **{'from': 'review'}) }}">Edit</a>
                 </div>
-            </div>
-            <div class="field-row">
-                <div class="field-main">
-                    <div class="field-label">Contact Number</div>
-                    <div class="field-value">{{ account_contact or '—' }}</div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Profile Photo</div>
+                        {% if profile_photo %}
+                        <img class="photo-thumb" src="{{ profile_photo }}" alt="Your profile photo">
+                        {% else %}
+                        <div class="field-value muted">Not provided</div>
+                        {% endif %}
+                    </div>
+                    <a class="edit-link" href="{{ url_for('account_setup_photo', **{'from': 'review'}) }}">Edit</a>
                 </div>
-            </div>
-            <p style="font-size: 0.75rem; color: #999; margin-top: 8px; font-style: italic;">
-                To change your Email or Contact Number, use Back.
-            </p>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Contact Number</div>
+                        <div class="field-value {{ 'muted' if not account_contact }}">{{ account_contact or 'Not provided' }}</div>
+                    </div>
+                    <a class="edit-link" href="{{ url_for('account_setup_contact', **{'from': 'review'}) }}">Edit</a>
+                </div>
+                <p class="section-note">These are optional. You can also change them later from Profile Settings.</p>
+            </section>
+
+            <!-- OFFICIAL FACULTY INFORMATION: only changed through an Admin-approved request -->
+            <section class="section-card" aria-labelledby="offTitle" id="officialCard">
+                <div class="section-head">
+                    <span class="section-title" id="offTitle">Official Faculty Information</span>
+                    <span class="section-tag tag-lock"><i class="fas fa-lock"></i> Admin approval</span>
+                </div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Full Name</div>
+                        <div class="field-value full-name">{{ full_name or '—' }}</div>
+                        {{ pending_note(['First Name', 'Middle Name', 'Last Name', 'Suffix'], pending_by_field) }}
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Employee ID</div>
+                        <div class="field-value">{{ info['Employee ID'] }}</div>
+                        {{ pending_note(['Employee ID'], pending_by_field) }}
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Designation</div>
+                        <div class="field-value {{ 'muted' if not info['Designation'] }}">{{ info['Designation'] or 'Not set' }}</div>
+                        {{ pending_note(['Designation'], pending_by_field) }}
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-main">
+                        <div class="field-label">Specialization</div>
+                        <div class="field-value {{ 'muted' if not info['Specialization'] }}">{{ info['Specialization'] or 'Not set' }}</div>
+                        {{ pending_note(['Specialization'], pending_by_field) }}
+                    </div>
+                </div>
+
+                {% for category, message in ns.correction_msgs %}
+                <p class="msg-box {{ 'success-msg' if category == 'success' else 'error-msg' }}" role="{{ 'status' if category == 'success' else 'alert' }}">
+                    <i class="fas {{ 'fa-circle-check' if category == 'success' else 'fa-circle-exclamation' }}"></i><span>{{ message }}</span></p>
+                {% endfor %}
+
+                <button type="button" class="btn-request" id="openCorrectionBtn" onclick="openCorrection()" aria-expanded="false" aria-controls="correctionPanel">
+                    <i class="fas fa-pen-to-square"></i> Something wrong? Request a correction
+                </button>
+
+                <form class="correction-panel" id="correctionPanel" method="POST" novalidate onsubmit="return submitCorrections()">
+                    <input type="hidden" name="action" value="correction">
+                    <input type="hidden" name="corrections_json" id="correctionsJsonInput">
+                    <div class="cp-title">Request a Correction</div>
+                    <div class="cp-sub">Tick what is wrong and enter the correct information. The Admin reviews it; your record changes only once it is approved.</div>
+
+                    {% set opts = [
+                        ('name', 'Name', ['First Name', 'Middle Name', 'Last Name', 'Suffix']),
+                        ('empid', 'Employee ID', ['Employee ID']),
+                        ('designation', 'Designation', ['Designation']),
+                        ('specialization', 'Specialization', ['Specialization']),
+                    ] %}
+                    {% for key, label, flds in opts %}
+                    {% set all_pending = flds | reject('in', pending_by_field) | list | length == 0 %}
+                    <div class="cp-option" data-key="{{ key }}">
+                        <label class="cp-check {{ 'disabled' if all_pending }}">
+                            <input type="checkbox" value="{{ key }}" {{ 'disabled' if all_pending }} onchange="toggleOption(this)">
+                            {{ label }} {% if all_pending %}<span class="pending-badge">Pending review</span>{% endif %}
+                        </label>
+                        <div class="cp-inputs">
+                            {% if key == 'name' %}
+                            <div class="cp-grid">
+                                {% for f, ph in [('First Name', ''), ('Middle Name', ''), ('Last Name', ''), ('Suffix', 'Jr., Sr., III…')] %}
+                                <div class="cp-field">
+                                    <label for="cp-{{ loop.index }}">{{ f }}{{ ' (optional)' if f in ('Middle Name', 'Suffix') }}</label>
+                                    <input type="text" id="cp-{{ loop.index }}" data-field="{{ f }}" value="{{ info[f] }}"
+                                           maxlength="{{ 20 if f == 'Suffix' else 60 }}" placeholder="{{ ph }}" {{ 'disabled' if f in pending_by_field }}>
+                                    <div class="cp-current">{{ 'Pending review' if f in pending_by_field else 'On file: ' ~ (info[f] or '—') }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% elif key == 'empid' %}
+                            <p class="cp-warn"><i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. The Admin checks and updates it by hand.</p>
+                            <div class="cp-field">
+                                <label for="cp-empid">Correct Employee ID</label>
+                                <input type="text" id="cp-empid" data-field="Employee ID" maxlength="30" placeholder="Correct Employee ID">
+                                <div class="cp-current">On file: {{ info['Employee ID'] }}</div>
+                            </div>
+                            {% else %}
+                            <div class="cp-field">
+                                <label for="cp-{{ key }}">Correct {{ label }}</label>
+                                <select id="cp-{{ key }}" data-field="{{ label }}">
+                                    <option value="">— Select the correct {{ label | lower }} —</option>
+                                    {% for o in (designations if key == 'designation' else specializations) %}
+                                    {% set name = o.designationname if key == 'designation' else o.specializationname %}
+                                    <option value="{{ name }}">{{ name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="cp-current">On file: {{ info[label] or 'Not set' }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    <div class="cp-reason">
+                        <label for="cpReason">REASON FOR CORRECTION (REQUIRED)</label>
+                        <textarea id="cpReason" name="remarks" rows="3" maxlength="1000" placeholder="Explain why this needs to be corrected"></textarea>
+                    </div>
+                    <p class="msg-box error-msg cp-error" id="cpError" role="alert"><i class="fas fa-circle-exclamation"></i><span></span></p>
+                    <div class="cp-actions">
+                        <button type="button" class="btn-cp-cancel" onclick="cancelCorrection()">Cancel</button>
+                        <button type="submit" class="btn-cp-submit">Submit Correction Request</button>
+                    </div>
+                </form>
+            </section>
         </div>
 
-
-        <!-- OFFICIAL FACULTY INFORMATION -->
-        <div class="section-card">
-            <div class="section-title">Official Faculty Information</div>
-
-
-            <div class="field-row name-block">
-                <div class="field-main">
-                    <div class="field-value full-name">{{ full_name }}</div>
-                    <div class="name-parts">
-                        <div><div class="name-part-label">First Name</div><div class="name-part-value">{{ info['First Name'] or '—' }}</div></div>
-                        <div><div class="name-part-label">Middle Name</div><div class="name-part-value">{{ info['Middle Name'] or '—' }}</div></div>
-                        <div><div class="name-part-label">Last Name</div><div class="name-part-value">{{ info['Last Name'] or '—' }}</div></div>
-                        <div><div class="name-part-label">Suffix</div><div class="name-part-value">{{ info['Suffix'] or '—' }}</div></div>
-                    </div>
-                </div>
-                <button type="button" class="btn-request-correction" onclick="openCorrection('name')">Request Correction</button>
-            </div>
-
-
-            <div class="field-row">
-                <div class="field-main">
-                    <div class="field-label">Designation</div>
-                    <div class="field-value {{ 'muted' if not info['Designation'] }}">{{ info['Designation'] or 'Not set' }}</div>
-                </div>
-                <button type="button" class="btn-request-correction" onclick="openCorrection('designation')">Request Correction</button>
-            </div>
-
-
-            <div class="field-row">
-                <div class="field-main">
-                    <div class="field-label">Specialization</div>
-                    <div class="field-value {{ 'muted' if not info['Specialization'] }}">{{ info['Specialization'] or 'Not set' }}</div>
-                </div>
-                <button type="button" class="btn-request-correction" onclick="openCorrection('specialization')">Request Correction</button>
-            </div>
-
-
-            <!-- CORRECTION PANELS -->
-            <div class="correction-panel" id="panel-name">
-                <div class="cp-title">Correct Name</div>
-                <div class="cp-grid">
-                    <div class="cp-field">
-                        <label>First Name</label>
-                        <div class="cp-current">Current: {{ info['First Name'] or '—' }}</div>
-                        <input type="text" id="cp-name-first" value="{{ info['First Name'] }}">
-                    </div>
-                    <div class="cp-field">
-                        <label>Middle Name</label>
-                        <div class="cp-current">Current: {{ info['Middle Name'] or '—' }}</div>
-                        <input type="text" id="cp-name-middle" value="{{ info['Middle Name'] }}">
-                    </div>
-                    <div class="cp-field">
-                        <label>Last Name</label>
-                        <div class="cp-current">Current: {{ info['Last Name'] or '—' }}</div>
-                        <input type="text" id="cp-name-last" value="{{ info['Last Name'] }}">
-                    </div>
-                    <div class="cp-field">
-                        <label>Suffix (optional)</label>
-                        <div class="cp-current">Current: {{ info['Suffix'] or '—' }}</div>
-                        <input type="text" id="cp-name-suffix" value="{{ info['Suffix'] }}" placeholder="Jr., Sr., III...">
-                    </div>
-                </div>
-                <div class="cp-actions">
-                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('name')">Cancel</button>
-                    <button type="button" class="btn-cp-add" onclick="addNameCorrection()">Add to Request</button>
-                </div>
-            </div>
-
-
-            <div class="correction-panel" id="panel-designation">
-                <div class="cp-title">Correct Designation</div>
-                <div class="cp-field" style="margin-bottom:14px;">
-                    <label>Designation</label>
-                    <div class="cp-current">Current: {{ info['Designation'] or 'Not set' }}</div>
-                    <select id="cp-designation">
-                        <option value="">— Select correct designation —</option>
-                        {% for d in designations %}
-                        <option value="{{ d.designationname }}">{{ d.designationname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="cp-actions">
-                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('designation')">Cancel</button>
-                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Designation', 'cp-designation')">Add to Request</button>
-                </div>
-            </div>
-
-
-            <div class="correction-panel" id="panel-specialization">
-                <div class="cp-title">Correct Specialization</div>
-                <div class="cp-field" style="margin-bottom:14px;">
-                    <label>Specialization</label>
-                    <div class="cp-current">Current: {{ info['Specialization'] or 'Not set' }}</div>
-                    <select id="cp-specialization">
-                        <option value="">— Select correct specialization —</option>
-                        {% for s in specializations %}
-                        <option value="{{ s.specializationname }}">{{ s.specializationname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="cp-actions">
-                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('specialization')">Cancel</button>
-                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Specialization', 'cp-specialization')">Add to Request</button>
-                </div>
-            </div>
-
-
-            <div class="correction-panel" id="panel-empid">
-                <div class="cp-title">Correct Employee ID</div>
-                <p style="font-size:0.78rem; color:#a15c00; background:#fff8e1; border-radius:6px; padding:10px 12px; margin-bottom:14px;">
-                    <i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. A correction here is always reviewed and applied manually by the Admin, never automatically.
-                </p>
-                <div class="cp-field" style="margin-bottom:14px;">
-                    <label>Employee ID</label>
-                    <div class="cp-current">Current: {{ info['Employee ID'] }}</div>
-                    <input type="text" id="cp-empid" placeholder="Correct Employee ID">
-                </div>
-                <div class="cp-actions">
-                    <button type="button" class="btn-cp-cancel" onclick="closeCorrection('empid')">Cancel</button>
-                    <button type="button" class="btn-cp-add" onclick="addSimpleCorrection('Employee ID', 'cp-empid')">Add to Request</button>
-                </div>
-            </div>
-        </div>
-
-
-        <!-- REQUEST SUMMARY -->
-        <div class="section-card summary-section" id="summarySection">
-            <div class="section-title">Correction Request Summary</div>
-            <table class="summary-table">
-                <thead><tr><th>Field</th><th>Current</th><th>Requested Correction</th><th></th></tr></thead>
-                <tbody id="summaryBody"></tbody>
-            </table>
-            <div class="summary-remarks">
-                <label>REASON / REMARKS (OPTIONAL)</label>
-                <textarea id="summaryRemarks" rows="3" placeholder="Explain why this needs to be corrected"></textarea>
-            </div>
-            <div class="actions-row">
-                <button type="button" class="btn-outline secondary" onclick="clearCart()">Cancel</button>
-                <button type="button" class="btn-outline" onclick="submitCorrections()">Submit Correction Request</button>
-            </div>
-        </div>
-
-
-        <form method="POST" id="confirmForm" onsubmit="clearSavedCart()">
+        <form method="POST" id="confirmForm" class="finish-area" onsubmit="return confirmFinish()">
             <input type="hidden" name="action" value="confirm">
-            <div class="confirm-row">
-                <!-- Back keeps any pending corrections (saved for this browser tab). -->
+            {% for category, message in ns.other_msgs %}
+            <p class="msg-box {{ 'success-msg' if category == 'success' else 'error-msg' }}" role="alert">
+                <i class="fas {{ 'fa-circle-check' if category == 'success' else 'fa-circle-exclamation' }}"></i><span>{{ message }}</span></p>
+            {% endfor %}
+            <div class="finish-row">
                 <a href="{{ back_url }}" class="btn-back"><i class="fas fa-arrow-left"></i> BACK</a>
-                <button type="submit" class="btn-outline">SAVE AND CONFIRM</button>
+                <button type="submit" class="btn-finish">FINISH SETUP <i class="fas fa-arrow-right"></i></button>
             </div>
-        </form>
-
-
-        <form method="POST" id="correctionForm" style="display:none;">
-            <input type="hidden" name="action" value="correction">
-            <input type="hidden" name="corrections_json" id="correctionsJsonInput">
-            <input type="hidden" name="remarks" id="remarksInput">
+            {% if pending_corrections %}
+            <p class="finish-hint">Pending correction requests don't stop you from finishing. Track them later in Profile Settings, under My Correction Requests.</p>
+            {% endif %}
         </form>
     </div>
 
+    <!-- Unsent correction notice (replaces the browser's confirm pop-up) -->
+    <div class="notice-overlay" id="finishDialog" role="dialog" aria-modal="true" aria-labelledby="finishDialogTitle"
+         onclick="if (event.target === this) closeFinishDialog(false)">
+        <div class="notice-card">
+            <div class="notice-icon"><i class="fas fa-triangle-exclamation"></i></div>
+            <h2 class="notice-title" id="finishDialogTitle">Correction not sent yet</h2>
+            <p class="notice-text">You started a correction request but haven't submitted it. If you finish now, it won't be sent to the Administrator.</p>
+            <div class="notice-actions">
+                <button type="button" class="notice-btn notice-btn-secondary" onclick="finishWithoutSending()">Finish without sending</button>
+                <button type="button" class="notice-btn notice-btn-primary" id="finishDialogReview" onclick="closeFinishDialog(true)">Go back to my request</button>
+            </div>
+        </div>
+    </div>
 
 <script>
     const CURRENT = {{ info | tojson }};
-    // Pending corrections survive Back → Contact Number → Continue (this browser tab only).
-    const CART_KEY = 'setupCorrectionCart:' + (CURRENT['Employee ID'] || '');
-    let cart = [];
-    function _loadCart() {
-        try {
-            const saved = JSON.parse(sessionStorage.getItem(CART_KEY) || 'null');
-            if (saved && Array.isArray(saved.cart)) {
-                cart = saved.cart;
-                document.getElementById('summaryRemarks').value = saved.remarks || '';
-            }
-        } catch (e) { cart = []; }
-    }
-    function _saveCart() {
-        try {
-            sessionStorage.setItem(CART_KEY, JSON.stringify({
-                cart, remarks: document.getElementById('summaryRemarks').value }));
-        } catch (e) {}
-    }
-    function clearSavedCart() { try { sessionStorage.removeItem(CART_KEY); } catch (e) {} }
-    document.addEventListener('DOMContentLoaded', () => {
-        _loadCart(); renderSummary();
-        document.getElementById('summaryRemarks').addEventListener('input', _saveCart);
-    });
+    const PENDING = new Set({{ pending_by_field.keys() | list | tojson }});
+    // Unsent corrections survive Back / Edit and a failed submit (this browser tab only).
+    const DRAFT_KEY = 'setupCorrectionDraft:' + (CURRENT['Employee ID'] || '');
+    // The server confirmed the last request was saved: forget the draft.
+    {% if clear_cart %}clearDraft();  // request-saved{% endif %}
 
+    function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+    const panel = () => document.getElementById('correctionPanel');
 
-    function openCorrection(key) {
-        document.querySelectorAll('.correction-panel').forEach(p => p.classList.remove('open'));
-        document.getElementById('panel-' + key).classList.add('open');
+    function _saveDraft() {
+        const d = { open: panel().classList.contains('open'), checked: [], values: {},
+                    reason: document.getElementById('cpReason').value };
+        panel().querySelectorAll('.cp-option input[type=checkbox]:checked').forEach(c => d.checked.push(c.value));
+        panel().querySelectorAll('[data-field]').forEach(el => { d.values[el.id] = el.value; });
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
     }
-    function closeCorrection(key) {
-        document.getElementById('panel-' + key).classList.remove('open');
-    }
-
-
-    function addNameCorrection() {
-        const parts = [
-            ['First Name', document.getElementById('cp-name-first').value.trim()],
-            ['Middle Name', document.getElementById('cp-name-middle').value.trim()],
-            ['Last Name', document.getElementById('cp-name-last').value.trim()],
-            ['Suffix', document.getElementById('cp-name-suffix').value.trim()],
-        ];
-        let added = 0;
-        parts.forEach(([field, value]) => {
-            const current = CURRENT[field] || '';
-            if (value !== current && (value !== '' || field === 'Middle Name' || field === 'Suffix')) {
-                if (value === '' && current === '') return;
-                addCartItem(field, current, value);
-                added++;
-            }
+    function _loadDraft() {
+        let d = null;
+        try { d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+        if (!d) return;
+        Object.entries(d.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el && !el.disabled) el.value = v; });
+        (d.checked || []).forEach(k => {
+            const c = panel().querySelector('.cp-option[data-key="' + k + '"] input[type=checkbox]');
+            if (c && !c.disabled) { c.checked = true; toggleOption(c, true); }
         });
-        if (added === 0) { alert('Please change at least one name field before adding.'); return; }
-        closeCorrection('name');
+        document.getElementById('cpReason').value = d.reason || '';
+        if (d.open || {{ 'true' if correction_failed else 'false' }}) openCorrection(true);
     }
 
-
-    function addSimpleCorrection(field, inputId) {
-        const el = document.getElementById(inputId);
-        const value = el.value.trim();
-        if (!value) { alert('Please provide the correct information.'); return; }
-        const current = CURRENT[field] || '';
-        if (value === current) { alert('That matches the current value already on file.'); return; }
-        addCartItem(field, current, value);
-        const key = field === 'Employee ID' ? 'empid' : field.toLowerCase();
-        closeCorrection(key);
+    function openCorrection(silent) {
+        panel().classList.add('open');
+        document.getElementById('openCorrectionBtn').style.display = 'none';
+        document.getElementById('openCorrectionBtn').setAttribute('aria-expanded', 'true');
+        if (!silent) { panel().scrollIntoView({ behavior: 'smooth', block: 'nearest' }); _saveDraft(); }
+    }
+    function cancelCorrection() {
+        panel().reset();
+        panel().querySelectorAll('.cp-option').forEach(o => o.classList.remove('checked'));
+        panel().classList.remove('open');
+        document.getElementById('openCorrectionBtn').style.display = '';
+        document.getElementById('openCorrectionBtn').setAttribute('aria-expanded', 'false');
+        _showError('');
+        clearDraft();
+    }
+    function toggleOption(box, silent) {
+        box.closest('.cp-option').classList.toggle('checked', box.checked);
+        _showError('');
+        if (!silent) _saveDraft();
+    }
+    function _showError(msg) {
+        const el = document.getElementById('cpError');
+        el.querySelector('span').textContent = msg;
+        el.style.display = msg ? 'flex' : 'none';
     }
 
-
-    function addCartItem(field, current, value) {
-        // Replace any existing pending entry for the same field rather than duplicating it.
-        cart = cart.filter(c => c.field_name !== field);
-        cart.push({ field_name: field, current_value: current, proposed_value: value });
-        renderSummary();
-    }
-
-
-    function removeCartItem(index) {
-        cart.splice(index, 1);
-        renderSummary();
-    }
-
-
-    function renderSummary() {
-        const section = document.getElementById('summarySection');
-        const body = document.getElementById('summaryBody');
-        if (cart.length === 0) {
-            section.classList.remove('open');
-            body.innerHTML = '';
-            _saveCart();
-            return;
+    // Build the request from the ticked options; returns [items, error].
+    function _collect() {
+        const items = [];
+        const ticked = [...panel().querySelectorAll('.cp-option input[type=checkbox]:checked')];
+        if (!ticked.length) return [null, 'Tick at least one item that needs correcting.'];
+        for (const box of ticked) {
+            const opt = box.closest('.cp-option');
+            let changed = 0;
+            for (const el of opt.querySelectorAll('[data-field]')) {
+                if (el.disabled) continue;
+                const field = el.dataset.field, value = el.value.trim(), current = CURRENT[field] || '';
+                if (value === current) continue;
+                if (!value && !['Middle Name', 'Suffix'].includes(field))
+                    return [null, 'Please enter the correct ' + field + '.'];
+                items.push({ field_name: field, proposed_value: value });
+                changed++;
+            }
+            if (!changed) return [null, 'The new ' + opt.querySelector('.cp-check').textContent.trim() +
+                                        ' is the same as what is on file. Change it or untick it.'];
         }
-        section.classList.add('open');
-        _saveCart();
-        body.innerHTML = cart.map((c, i) => `
-            <tr>
-                <td><strong>${c.field_name}</strong></td>
-                <td class="sv-current">${c.current_value || '—'}</td>
-                <td class="sv-new">${c.proposed_value || '<em>(blank)</em>'}</td>
-                <td><button type="button" class="summary-remove" onclick="removeCartItem(${i})" title="Remove"><i class="fas fa-times"></i></button></td>
-            </tr>
-        `).join('');
+        return [items, null];
     }
-
-
-    function clearCart() {
-        cart = [];
-        renderSummary();
-        document.getElementById('summaryRemarks').value = '';
-    }
-
 
     function submitCorrections() {
-        if (cart.length === 0) return;
-        document.getElementById('correctionsJsonInput').value = JSON.stringify(cart);
-        document.getElementById('remarksInput').value = document.getElementById('summaryRemarks').value.trim();
-        clearSavedCart();
-        document.getElementById('correctionForm').submit();
+        const [items, err] = _collect();
+        if (err) { _showError(err); return false; }
+        if (!document.getElementById('cpReason').value.trim()) {
+            _showError('Please explain the reason for your correction request.');
+            document.getElementById('cpReason').focus();
+            return false;
+        }
+        _saveDraft();      // kept until the server confirms the request was saved
+        document.getElementById('correctionsJsonInput').value = JSON.stringify(items);
+        return true;
     }
+
+    // Finishing setup does not send a correction that is still only typed in:
+    // ask first, in the page's own dialog rather than a browser pop-up.
+    let _finishConfirmed = false;
+    function confirmFinish() {
+        const typing = panel().classList.contains('open') &&
+                       panel().querySelectorAll('.cp-option input[type=checkbox]:checked').length;
+        if (typing && !_finishConfirmed) {
+            const dlg = document.getElementById('finishDialog');
+            dlg.classList.add('open');
+            document.getElementById('finishDialogReview').focus();
+            return false;
+        }
+        clearDraft();
+        return true;
+    }
+    function closeFinishDialog(goToForm) {
+        document.getElementById('finishDialog').classList.remove('open');
+        if (goToForm) {
+            panel().scrollIntoView({ behavior: 'smooth', block: 'center' });
+            document.getElementById('cpReason').focus({ preventScroll: true });
+        }
+    }
+    function finishWithoutSending() {
+        _finishConfirmed = true;
+        closeFinishDialog(false);
+        clearDraft();
+        document.getElementById('confirmForm').submit();
+    }
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && document.getElementById('finishDialog').classList.contains('open')) closeFinishDialog(false);
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        _loadDraft();
+        panel().addEventListener('input', () => { _showError(''); _saveDraft(); });
+    });
 </script>
 </body>
 </html>

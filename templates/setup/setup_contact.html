@@ -1,4 +1,4 @@
-setup_contact.html{% extends "setup/_setup_layout.html" %}
+{% extends "setup/_setup_layout.html" %}
 {% block content %}
     <p class="step-sub">Add your contact number.</p>
     <p class="step-hint">Optional — you can skip this and add it later.</p>
@@ -9,6 +9,18 @@ setup_contact.html{% extends "setup/_setup_layout.html" %}
     <div class="form-group">
         <label for="setupContact">NEW CONTACT NUMBER</label>
         <input type="tel" id="setupContact" name="contact_number" value="{{ draft_contact }}"
-               placeholder="{{ 'Leave blank to keep your current number' if current_contact else '09XXXXXXXXX' }}">
+               placeholder="09XXXXXXXXX">
     </div>
+{% endblock %}
+{% block scripts %}
+<script>
+    window.setupValidateContinue = function () {
+        const contact = document.getElementById('setupContact').value.trim();
+        if (!contact) return 'Please enter a contact number, or choose Skip.';
+        const digits = contact.replace(/\D/g, '');
+        if (!/^[0-9+()\-\s]+$/.test(contact) || digits.length < 7 || digits.length > 15)
+            return 'Please enter a valid contact number, or choose Skip.';
+        return '';
+    };
+</script>
 {% endblock %}
