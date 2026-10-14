@@ -433,3 +433,53 @@ def test_faculty_sees_admin_decisions(env):
     rejected = next(r for r in reqs if r['status'] == 'Rejected')
     assert rejected['admin_remarks'] == 'Not supported by HR records.' and rejected['decided']
     assert _faculty_spec(env) == spec                     # the rejection left the approved value in place
+
+
+# ---- Profile Settings: Request Correction (after setup) ---------------------------
+
+def _post_correction(client, items, remarks='Wrong value on file'):
+    return client.post('/api/user/correction-requests', json={'items': items, 'remarks': remarks})
+
+
+def test_profile_correction_request_is_saved_for_admin_review(env):
+    spec = _spec_choice(env)
+    r = _post_correction(env.client, [{'field_name': 'Specialization', 'proposed_value': spec}])
+    assert r.status_code == 200 and r.get_json()['success'] and r.get_json()['count'] == 1
+    assert _requests(env) == [('Specialization', spec, 'Wrong value on file', 'Pending')]
+    # The faculty record is untouched until the Admin approves it.
+    assert env.q("""SELECT s.specializationname FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber
+                    LEFT JOIN specialization s ON s.specializationid = f.specializationid
+                    WHERE a.username = %s""", (env.username,))[0][0] != spec
+
+
+def test_profile_correction_request_uses_the_same_rules(env):
+    spec = _spec_choice(env)
+    r = _post_correction(env.client, [{'field_name': 'Specialization', 'proposed_value': spec}], remarks=' ')
+    assert r.status_code == 400 and 'explain the reason' in r.get_json()['error']
+    r = _post_correction(env.client, [{'field_name': 'Designation', 'proposed_value': 'Made Up Title XYZ'}])
+    assert r.status_code == 400 and 'from the list' in r.get_json()['error']
+    assert _post_correction(env.client, [{'field_name': 'Specialization', 'proposed_value': spec}]).status_code == 200
+    r = _post_correction(env.client, [{'field_name': 'Specialization', 'proposed_value': spec}])
+    assert r.status_code == 400 and 'already have a pending correction request for: Specialization' in r.get_json()['error']
+    assert len(_requests(env)) == 1
+
+
+def test_profile_correction_request_needs_a_faculty_record(env):
+    admin, _ = env.admin_client()
+    r = _post_correction(admin, [{'field_name': 'Specialization', 'proposed_value': 'X'}])
+    assert r.status_code == 400 and 'faculty record' in r.get_json()['error']
+    assert env.app.app.test_client().post('/api/user/correction-requests', json={}).status_code == 401
+
+
+def test_profile_settings_has_the_request_correction_button(env):
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})          # finish setup
+    with env.client.session_transaction() as s:
+        role = s['role']
+    home = '/faculty_dashboard' if role == 'Faculty' else '/academic/my-dashboard'
+    page = env.client.get(home, follow_redirects=True).data.decode()
+    profile = page.split('id="profilePanel"')[1].split('id="emailPanel"')[0]
+    assert 'id="pfRequestCorrectionBtn"' in profile and 'openCorrectionModal()' in profile
+    assert 'id="crModal"' in page
+    admin, _ = env.admin_client()
+    admin_page = admin.get('/admin/user-management').data.decode()
+    assert 'pfRequestCorrectionBtn' not in admin_page and 'id="crModal"' not in admin_page

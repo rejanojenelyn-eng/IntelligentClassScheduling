@@ -187,10 +187,19 @@ async function openProfilePanel() {
 
 
     const d = _profileData || {};
-    document.getElementById('pfEmpId').value = d.emp_num || '—';
-    document.getElementById('pfFirstName').value  = d.firstname  || '—';
-    document.getElementById('pfMiddleName').value = d.middlename || '—';
-    document.getElementById('pfSurname').value    = d.lastname   || '—';
+    const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '—'; };
+    setText('pfFullName',   d.fullname || d.role);
+    setText('pfRole',       d.role);
+    setText('pfEmpId',      d.emp_num);
+    setText('pfFirstName',  d.firstname);
+    setText('pfMiddleName', d.middlename);
+    setText('pfSurname',    d.lastname);
+    setText('pfDesignationText',    d.designation    || 'Not set');
+    setText('pfSpecializationText', d.specialization || 'Not set');
+    setText('pfStatusText',         d.employment_status || 'Not set');
+    setText('pfEmail',      d.email || 'No email on file');
+    const pending = document.getElementById('pfPhotoPending');
+    if (pending) pending.hidden = true;
 
 
     /* Photo */
@@ -263,10 +272,15 @@ async function openProfilePanel() {
    needs to see profile_editable: true from the API. */
 function _applyProfileEditLock(editable, photoEditable = editable) {
     _profileEditable = editable;
+    // Locked: show the values as plain text. Editable: show the dropdowns instead.
     ['pfDesignation', 'pfSpecialization', 'pfStatus'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (sel) sel.disabled = !editable;
+        const sel  = document.getElementById(id);
+        const text = document.getElementById(id + 'Text');
+        if (sel)  { sel.disabled = !editable; sel.hidden = !editable; }
+        if (text) text.hidden = editable;
     });
+    const lockTag = document.getElementById('pfLockTag');
+    if (lockTag) lockTag.hidden = editable;
 
 
     // The profile picture is the user's own and stays changeable even while the
@@ -289,7 +303,9 @@ function _applyProfileEditLock(editable, photoEditable = editable) {
         notice.textContent = editable
             ? 'Changes will be reflected across the system.'
             : (photoEditable
-                ? 'You can change your profile picture. Designation, specialization and employment status can’t be edited here right now.'
+                ? (document.getElementById('pfRequestCorrectionBtn')
+                    ? 'Official information is kept by the Administrator. If something is wrong, use Request Correction above.'
+                    : 'Official information is kept by the Administrator.')
                 : 'Profile editing is temporarily unavailable — this section is being reworked.');
     }
 }
@@ -356,6 +372,8 @@ async function handlePhotoUpload(input) {
     const photoIcon = document.getElementById('profilePhotoIcon');
     photoImg.src = URL.createObjectURL(cropped); photoImg.style.display = 'block';
     if (photoIcon) photoIcon.style.display = 'none';
+    const pending = document.getElementById('pfPhotoPending');
+    if (pending) pending.hidden = false;
     _syncProfileSaveBtn();
 }
 
@@ -773,6 +791,193 @@ async function toggleMyCorrections() {
         list.innerHTML = '<div class="cr-empty">Your requests could not be loaded. Please try again.</div>';
     }
 }
+
+
+/* ══════════════════════════════════════════════════════
+   REQUEST CORRECTION — pop-up opened from Profile Settings > Official Information.
+   Same request (and server validation) as the account-setup Review step; the
+   Administrator reviews it and the record changes only once it is approved.
+══════════════════════════════════════════════════════ */
+const _CRM_SUFFIXES = ['', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V'];
+const _escAttr = s => _esc(s).replace(/"/g, '&quot;');
+let _crmCurrent = {};
+
+function _crmFieldsFor(key) {
+    return { empid: ['Employee ID'], name: ['First Name', 'Middle Name', 'Last Name', 'Suffix'],
+             designation: ['Designation'], specialization: ['Specialization'] }[key];
+}
+
+function _crmItemHtml(key, label, icon, currentText, pending) {
+    const allPending = _crmFieldsFor(key).every(f => pending.has(f));
+    let proposed = '';
+    if (key === 'name') {
+        const sfx = _CRM_SUFFIXES.includes(_crmCurrent['Suffix']) ? _CRM_SUFFIXES : [..._CRM_SUFFIXES, _crmCurrent['Suffix']];
+        proposed = `<div class="crm-proposed-label">Proposed Full Name</div><div class="crm-grid">` +
+            ['First Name', 'Middle Name', 'Last Name'].map(f =>
+                `<input type="text" data-field="${f}" maxlength="60" placeholder="${f}" aria-label="Proposed ${f}"
+                        value="${_escAttr(_crmCurrent[f])}" ${pending.has(f) ? 'disabled' : ''}>`).join('') +
+            `<select data-field="Suffix" aria-label="Proposed suffix (optional)" ${pending.has('Suffix') ? 'disabled' : ''}>` +
+            sfx.map(s => `<option value="${_escAttr(s)}" ${s === _crmCurrent['Suffix'] ? 'selected' : ''}>${s ? _esc(s) : 'No suffix'}</option>`).join('') +
+            `</select></div>`;
+    } else if (key === 'empid') {
+        proposed = `<div class="crm-proposed-label">Proposed Employee ID</div>
+            <input type="text" data-field="Employee ID" maxlength="30" placeholder="Enter correct Employee ID">
+            <div class="crm-warn"><i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. The Administrator checks and updates it by hand.</div>`;
+    } else {
+        const opts = key === 'designation'
+            ? (_profileOptions?.designations || []).map(o => o.designationname)
+            : (_profileOptions?.specializations || []).filter(o => o.isactive !== false).map(o => o.specializationname);
+        proposed = `<div class="crm-proposed-label">Proposed ${label}</div>
+            <select data-field="${label}"><option value="">Select correct ${label.toLowerCase()}</option>` +
+            opts.map(n => `<option value="${_escAttr(n)}">${_esc(n)}</option>`).join('') + `</select>`;
+    }
+    return `<div class="crm-item" data-key="${key}">
+        <span class="crm-item-icon"><i class="fas ${icon}"></i></span>
+        <div class="crm-item-main">
+            <div class="crm-item-top">
+                <div><div class="crm-item-name">${label}</div><div class="crm-item-cur">Current ${label}</div>
+                     <div class="crm-current">${_esc(currentText) || 'Not set'}</div></div>
+                ${allPending ? '<span class="cr-status cr-Pending">Pending review</span>'
+                    : `<label class="crm-ok"><input type="checkbox" value="${key}" checked> This information is correct</label>`}
+            </div>
+            ${allPending ? '' : `<div class="crm-proposed">${proposed}</div>`}
+        </div>
+    </div>`;
+}
+
+const _crmChanging = () => [...document.querySelectorAll('#crmItems .crm-ok input')].filter(c => !c.checked);
+
+function _crmSync() {
+    const n = _crmChanging().length;
+    document.getElementById('crmForm').classList.toggle('has-changes', n > 0);
+    document.getElementById('crmSubmit').disabled = n === 0;
+    document.getElementById('crmReasonCount').textContent = document.getElementById('crmReason').value.length;
+}
+
+async function openCorrectionModal() {
+    const modal = document.getElementById('crModal');
+    if (!modal) return;
+    // Lives under the header; move it to <body> so it overlays the whole page.
+    if (modal.parentElement !== document.body) document.body.appendChild(modal);
+    _upShowError('crmError', '');
+    document.getElementById('crmReason').value = '';
+    document.getElementById('crmItems').innerHTML = '<div class="cr-empty">Loading…</div>';
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';
+
+    if (!_profileData) await _loadUserCard();
+    if (!_profileOptions) {
+        try { _profileOptions = await (await fetch('/api/user/options')).json(); }
+        catch (e) { _profileOptions = { designations: [], specializations: [] }; }
+    }
+    let pending = new Set();
+    try {
+        const d = await (await fetch('/api/user/correction-requests', { credentials: 'same-origin' })).json();
+        if (d.success) pending = new Set(d.requests.filter(r => r.status === 'Pending').map(r => r.field));
+    } catch (e) { /* the server still refuses a duplicate pending field */ }
+
+    const p = _profileData || {};
+    _crmCurrent = { 'Employee ID': p.emp_num || '', 'First Name': p.firstname || '', 'Middle Name': p.middlename || '',
+                    'Last Name': p.lastname || '', 'Suffix': p.suffix || '',
+                    'Designation': p.designation || '', 'Specialization': p.specialization || '' };
+    const fullName = [p.firstname, p.middlename, p.lastname, p.suffix].filter(Boolean).join(' ');
+    document.getElementById('crmItems').innerHTML =
+        _crmItemHtml('empid', 'Employee ID', 'fa-id-card', p.emp_num, pending) +
+        _crmItemHtml('name', 'Full Name', 'fa-user', fullName, pending) +
+        _crmItemHtml('designation', 'Designation', 'fa-briefcase', p.designation, pending) +
+        _crmItemHtml('specialization', 'Specialization', 'fa-graduation-cap', p.specialization, pending);
+    document.querySelectorAll('#crmItems .crm-ok input').forEach(box => box.addEventListener('change', () => {
+        const item = box.closest('.crm-item');
+        item.classList.toggle('changing', !box.checked);
+        if (!box.checked) item.querySelector('.crm-proposed [data-field]:not(:disabled)')?.focus();
+        _upShowError('crmError', '');
+        _crmSync();
+    }));
+    _crmSync();
+    (document.querySelector('#crmItems .crm-ok input') || document.querySelector('#crModal .crm-close')).focus();
+}
+
+function closeCorrectionModal() {
+    const modal = document.getElementById('crModal');
+    if (!modal || modal.hidden) return;
+    modal.hidden = true;
+    document.body.style.overflow = '';
+    document.getElementById('pfRequestCorrectionBtn')?.focus();
+}
+
+// Same checks as the setup Review step; returns [items, error].
+function _crmCollect() {
+    const items = [];
+    const boxes = _crmChanging();
+    if (!boxes.length) return [null, 'Uncheck at least one item that needs correcting.'];
+    for (const box of boxes) {
+        const item  = box.closest('.crm-item');
+        const label = item.querySelector('.crm-item-name').textContent.trim();
+        let changed = 0;
+        for (const el of item.querySelectorAll('.crm-proposed [data-field]')) {
+            if (el.disabled) continue;
+            const field = el.dataset.field, value = el.value.trim();
+            if (value === (_crmCurrent[field] || '')) continue;
+            if (!value && !['Middle Name', 'Suffix'].includes(field)) return [null, `Please enter the correct ${field}.`];
+            items.push({ field_name: field, proposed_value: value });
+            changed++;
+        }
+        if (!changed) return [null, `The proposed ${label} is the same as what is on file. Change it, or tick "This information is correct".`];
+    }
+    return [items, null];
+}
+
+async function submitCorrectionModal() {
+    const [items, err] = _crmCollect();
+    if (err) return _upShowError('crmError', err);
+    const remarks = document.getElementById('crmReason').value.trim();
+    if (!remarks) {
+        _upShowError('crmError', 'Please explain the reason for your correction request.');
+        return document.getElementById('crmReason').focus();
+    }
+    const btn = document.getElementById('crmSubmit'), orig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting…';
+    try {
+        const res  = await fetch('/api/user/correction-requests', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items, remarks }) });
+        const data = await res.json().catch(() => ({ success: false }));
+        if (!data.success) return _upShowError('crmError', data.error || 'Your request could not be sent. Please try again.');
+        closeCorrectionModal();
+        _showUpToast(data.message || 'Correction request submitted for Admin review.');
+        await _refreshPendingCorrections();
+    } catch (e) {
+        _upShowError('crmError', 'Network error. Please try again.');
+    } finally {
+        btn.innerHTML = orig; _crmSync();
+    }
+}
+
+// Pending badge on "My Correction Requests" (and its list, if open) after a new request.
+async function _refreshPendingCorrections() {
+    try {
+        const d = await (await fetch('/api/user/correction-requests', { credentials: 'same-origin' })).json();
+        if (!d.success) return;
+        const n = d.requests.filter(r => r.status === 'Pending').length;
+        const head = document.getElementById('crToggle');
+        let badge = head?.querySelector('.cr-status');
+        if (head && n && !badge) {
+            badge = document.createElement('span');
+            head.insertBefore(badge, head.querySelector('.cr-caret'));
+        }
+        if (badge) { badge.className = 'cr-status cr-Pending'; badge.textContent = `${n} pending`; badge.hidden = !n; }
+        const list = document.getElementById('crList');
+        if (list && !list.hidden) { _collapseMyCorrections(); toggleMyCorrections(); }
+    } catch (e) { /* the badge refreshes on the next page load */ }
+}
+
+document.addEventListener('input', e => {
+    if (e.target.closest && e.target.closest('#crModal')) { _upShowError('crmError', ''); _crmSync(); }
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !document.getElementById('crModal')?.hidden) closeCorrectionModal();
+});
 
 
 /* ── Toast ─────────────────────────────────────────── */

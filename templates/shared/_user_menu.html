@@ -62,27 +62,69 @@
             </div>
         </div>
 
-        <div class="up-photo-wrap">
-            <div class="up-photo-circle" id="profilePhotoCircle">
-                <i class="fas fa-user" id="profilePhotoIcon"></i>
-                <img id="profilePhotoImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+        <!-- Photo + who you are -->
+        <div class="pf-hero">
+            <div class="pf-avatar-wrap">
+                <div class="pf-avatar" id="profilePhotoCircle">
+                    <i class="fas fa-user" id="profilePhotoIcon"></i>
+                    <img id="profilePhotoImg" src="" alt="Your profile photo" style="display:none;">
+                </div>
+                <label class="pf-cam" id="pfChangePhotoBtn" for="profilePhotoInput" title="Change photo" aria-label="Change photo">
+                    <i class="fas fa-camera"></i>
+                </label>
+                <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
             </div>
-            <label class="up-change-photo-btn" id="pfChangePhotoBtn" for="profilePhotoInput"><i class="fas fa-camera"></i> Change Photo</label>
-            <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
-            <div class="up-photo-hint">JPG, PNG up to 2MB</div>
+            <div class="pf-hero-info">
+                <div class="pf-name" id="pfFullName">{{ current_user_display }}</div>
+                <div class="pf-role" id="pfRole">{{ session.get('role', '') }}</div>
+                <div class="pf-photo-hint">Use the camera button to change your photo · JPG or PNG, up to 2 MB</div>
+            </div>
+        </div>
+        <div class="pf-photo-pending" id="pfPhotoPending" hidden>
+            <i class="fas fa-circle-info"></i> New photo selected — press <strong>Save Changes</strong> to keep it.
         </div>
 
-        <div class="up-form">
-            <div class="up-field"><label>Employee ID</label><input type="text" id="pfEmpId" class="up-input" readonly></div>
-            <div class="up-field"><label>First Name</label><input type="text" id="pfFirstName" class="up-input" readonly></div>
-            <div class="up-field"><label>Middle Name</label><input type="text" id="pfMiddleName" class="up-input" readonly></div>
-            <div class="up-field"><label>Surname</label><input type="text" id="pfSurname" class="up-input" readonly></div>
-            <div class="up-field" id="pfDesignationSection"><label>Designation</label><select id="pfDesignation" class="up-select"></select></div>
-            <div class="up-field" id="pfSpecializationSection"><label>Specialization</label><select id="pfSpecialization" class="up-select"></select></div>
-            <div class="up-field" id="pfStatusSection"><label>Employment Status</label>
-                <select id="pfStatus" class="up-select"><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select>
+        <!-- Official information: read-only (comes from the Administrator's records) -->
+        <section class="pf-section">
+            <div class="pf-section-hd">
+                <span class="pf-section-title"><i class="fas fa-id-badge"></i> Official Information</span>
+                {% if session.get('role') != 'Admin' %}
+                <button type="button" class="pf-correct-btn" id="pfRequestCorrectionBtn" onclick="openCorrectionModal()"
+                        aria-haspopup="dialog" title="Something wrong here? Ask the Administrator to correct it.">
+                    <i class="fas fa-pen"></i> Request Correction</button>
+                {% else %}
+                <span class="pf-lock-tag" id="pfLockTag"><i class="fas fa-lock"></i> Managed by Admin</span>
+                {% endif %}
             </div>
-        </div>
+            <dl class="pf-grid">
+                <div class="pf-item"><dt>Employee ID</dt><dd id="pfEmpId">—</dd></div>
+                <div class="pf-item" id="pfStatusSection"><dt>Employment Status</dt>
+                    <dd><span id="pfStatusText">—</span>
+                        <select id="pfStatus" class="up-select" aria-label="Employment Status" hidden><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select></dd></div>
+                <div class="pf-item"><dt>First Name</dt><dd id="pfFirstName">—</dd></div>
+                <div class="pf-item"><dt>Middle Name</dt><dd id="pfMiddleName">—</dd></div>
+                <div class="pf-item pf-span2"><dt>Surname</dt><dd id="pfSurname">—</dd></div>
+                <div class="pf-item pf-span2" id="pfDesignationSection"><dt>Designation</dt>
+                    <dd><span id="pfDesignationText">—</span><select id="pfDesignation" class="up-select" aria-label="Designation" hidden></select></dd></div>
+                <div class="pf-item pf-span2" id="pfSpecializationSection"><dt>Specialization</dt>
+                    <dd><span id="pfSpecializationText">—</span><select id="pfSpecialization" class="up-select" aria-label="Specialization" hidden></select></dd></div>
+            </dl>
+        </section>
+
+        <!-- Sign-in details, with shortcuts to their own panels -->
+        <section class="pf-section">
+            <div class="pf-section-hd"><span class="pf-section-title"><i class="fas fa-key"></i> Sign-in Details</span></div>
+            <div class="pf-link-row">
+                <span class="pf-link-icon"><i class="fas fa-envelope"></i></span>
+                <span class="pf-link-main"><span class="pf-link-label">Email</span><span class="pf-link-value" id="pfEmail">—</span></span>
+                <button type="button" class="pf-link-btn" onclick="openEmailPanel()">Change</button>
+            </div>
+            <div class="pf-link-row">
+                <span class="pf-link-icon"><i class="fas fa-lock"></i></span>
+                <span class="pf-link-main"><span class="pf-link-label">Password</span><span class="pf-link-value">••••••••</span></span>
+                <button type="button" class="pf-link-btn" onclick="openPasswordPanel()">Change</button>
+            </div>
+        </section>
 
         {% if session.get('role') != 'Admin' %}
         <!-- My Correction Requests: read-only history of requests the Admin decides -->
@@ -97,7 +139,7 @@
         </div>
         {% endif %}
 
-        <div class="up-panel-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
+        <div class="up-panel-notice pf-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
 
         <div class="up-panel-ft">
             <button type="button" class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
@@ -237,3 +279,46 @@
         </div>
     </div>
 </div>
+
+
+{% if session.get('role') != 'Admin' %}
+<!-- ── Request Information Correction (pop-up from Profile Settings) ──
+     Same request as the account-setup Review step; the Administrator reviews it.
+     Filled by openCorrectionModal() (profile.dropdown.js). -->
+<div class="crm-overlay" id="crModal" role="dialog" aria-modal="true" aria-labelledby="crmTitle" hidden
+     onclick="if (event.target === this) closeCorrectionModal()">
+    <form class="crm-dialog" id="crmForm" novalidate onsubmit="submitCorrectionModal(); return false;">
+        <div class="crm-head">
+            <span class="crm-head-icon"><i class="fas fa-pen"></i></span>
+            <div>
+                <div class="crm-title" id="crmTitle">Request Information Correction</div>
+                <div class="crm-sub">Review your information below. Uncheck any item that needs correction.</div>
+            </div>
+            <button type="button" class="crm-close" onclick="closeCorrectionModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="crm-body">
+            <div class="crm-note" id="crmNote">
+                <i class="fas fa-circle-info"></i>
+                <div><strong>Your request will be reviewed by the Administrator.</strong>
+                    Checked information is correct and stays unchanged. Unchecked information needs a proposed correction.
+                    Your record changes only once the request is approved.</div>
+            </div>
+            <div id="crmItems"></div>
+            <div class="crm-item crm-reason">
+                <span class="crm-item-icon"><i class="fas fa-file-lines"></i></span>
+                <div class="crm-item-main">
+                    <label class="crm-item-name" for="crmReason">Reason for Correction <span class="up-req">(required)</span></label>
+                    <textarea id="crmReason" rows="3" maxlength="1000"
+                              placeholder="Explain why this needs to be corrected, with any details that help the Administrator review it."></textarea>
+                    <div class="crm-count"><span id="crmReasonCount">0</span>/1000</div>
+                </div>
+            </div>
+            <div class="up-error" id="crmError" role="alert" style="display:none;"></div>
+        </div>
+        <div class="crm-foot">
+            <button type="button" class="up-btn-cancel" onclick="closeCorrectionModal()">Cancel</button>
+            <button type="submit" class="up-btn-save" id="crmSubmit" disabled><i class="fas fa-paper-plane"></i> Submit Request</button>
+        </div>
+    </form>
+</div>
+{% endif %}

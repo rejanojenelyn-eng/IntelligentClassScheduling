@@ -1606,24 +1606,18 @@ _CORRECTION_FIELDS = ('First Name', 'Middle Name', 'Last Name', 'Suffix',
 _CORRECTION_MAX_LEN = 255          # personal_info_correction_request.proposed_value
 _CORRECTION_REASON_MAX_LEN = 1000
 
-def _setup_submit_corrections(username, employeenumber, current_values, designations, specializations):
-    """Validate and save a Review-step correction request. Never touches the faculty
-    record (the Admin applies approved requests) and never completes account setup."""
-    back = redirect(url_for('account_setup_verify'))
-    try:
-        items = json.loads(request.form.get('corrections_json', '[]'))
-    except (ValueError, TypeError):
-        items = None
+def _save_correction_request(username, employeenumber, current_values, designations, specializations,
+                             items, reason, *, db_unreachable_msg=None, db_error_msg=None):
+    """Validate and save one correction request (a batch of fields). Shared by the
+    account-setup Review step and Profile Settings. Never touches the faculty record
+    (the Admin applies approved requests). Returns (number of fields saved, error)."""
     if not isinstance(items, list) or not items:
-        flash("Please add at least one correction before submitting the request.", "correction-error")
-        return back
-    reason = request.form.get('remarks', '').strip()
+        return 0, "Please add at least one correction before submitting the request."
+    reason = (reason or '').strip()
     if not reason:
-        flash("Please explain the reason for your correction request.", "correction-error")
-        return back
+        return 0, "Please explain the reason for your correction request."
     if len(reason) > _CORRECTION_REASON_MAX_LEN:
-        flash(f"The reason is too long (maximum {_CORRECTION_REASON_MAX_LEN} characters).", "correction-error")
-        return back
+        return 0, f"The reason is too long (maximum {_CORRECTION_REASON_MAX_LEN} characters)."
 
     allowed = {'Designation':    {d['designationname'] for d in designations},
                'Specialization': {s['specializationname'] for s in specializations}}
@@ -1639,29 +1633,24 @@ def _setup_submit_corrections(username, employeenumber, current_values, designat
         # Middle Name / Suffix may legitimately be corrected to blank; every other
         # field needs a value. A "correction" that changes nothing is dropped.
         if field_name not in ('Middle Name', 'Suffix') and not proposed_value:
-            flash(f"Please enter the correct {field_name}.", "correction-error")
-            return back
+            return 0, f"Please enter the correct {field_name}."
         if proposed_value == current_value:
             continue
         max_len = (_CORRECTION_NAME_COLUMNS[field_name][1] if field_name in _CORRECTION_NAME_COLUMNS
                    else 30 if field_name == 'Employee ID' else _CORRECTION_MAX_LEN)
         if len(proposed_value) > max_len:
-            flash(f"The corrected {field_name} is too long (maximum {max_len} characters).", "correction-error")
-            return back
+            return 0, f"The corrected {field_name} is too long (maximum {max_len} characters)."
         if field_name in allowed and proposed_value not in allowed[field_name]:
-            flash(f"Please choose a {field_name} from the list.", "correction-error")
-            return back
+            return 0, f"Please choose a {field_name} from the list."
         seen.add(field_name)
         rows.append((field_name, current_value, proposed_value))
     if not rows:
-        flash("None of the requested values differ from what is on file. Please change at least one value.", "correction-error")
-        return back
+        return 0, "None of the requested values differ from what is on file. Please change at least one value."
 
     conn = get_db_connection()
     if conn is None:
-        flash("The system could not reach the database. Your correction request was not sent — "
-              "your entries are still listed below; please try again.", "correction-error")
-        return back
+        return 0, db_unreachable_msg or ("The system could not reach the database. Your correction request "
+                                         "was not sent — please try again.")
     cur = conn.cursor()
     try:
         cur.execute("""
@@ -1670,10 +1659,9 @@ def _setup_submit_corrections(username, employeenumber, current_values, designat
         """, (username, [r[0] for r in rows]))
         already = sorted({r[0] for r in cur.fetchall()})
         if already:
-            flash("You already have a pending correction request for: " + ", ".join(already) +
-                  ". Please remove " + ("it" if len(already) == 1 else "them") +
-                  " from this request and wait for the Admin's decision.", "correction-error")
-            return back
+            return 0, ("You already have a pending correction request for: " + ", ".join(already) +
+                       ". Please remove " + ("it" if len(already) == 1 else "them") +
+                       " from this request and wait for the Admin's decision.")
         batch_id = uuid.uuid4().hex[:12]
         for field_name, current_value, proposed_value in rows:
             cur.execute("""
@@ -1684,15 +1672,34 @@ def _setup_submit_corrections(username, employeenumber, current_values, designat
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"[account setup] correction request failed: {type(e).__name__}: {e}")
-        flash("Your correction request could not be saved because of a database error. "
-              "Your entries are still listed below — please try again.", "correction-error")
-        return back
+        print(f"[correction request] save failed: {type(e).__name__}: {e}")
+        return 0, db_error_msg or ("Your correction request could not be saved because of a database error. "
+                                   "Please try again.")
     finally:
         cur.close(); conn.close()
+    return len(rows), None
+
+
+def _setup_submit_corrections(username, employeenumber, current_values, designations, specializations):
+    """Validate and save a Review-step correction request. Never touches the faculty
+    record (the Admin applies approved requests) and never completes account setup."""
+    back = redirect(url_for('account_setup_verify'))
+    try:
+        items = json.loads(request.form.get('corrections_json', '[]'))
+    except (ValueError, TypeError):
+        items = None
+    n, err = _save_correction_request(
+        username, employeenumber, current_values, designations, specializations,
+        items, request.form.get('remarks', ''),
+        db_unreachable_msg="The system could not reach the database. Your correction request was not sent — "
+                           "your entries are still listed below; please try again.",
+        db_error_msg="Your correction request could not be saved because of a database error. "
+                     "Your entries are still listed below — please try again.")
+    if err:
+        flash(err, "correction-error")
+        return back
 
     session['setup_corrections_saved'] = True       # tells the page to clear its unsent list
-    n = len(rows)
     flash(f"Correction request submitted for Admin review ({n} field{'s' if n != 1 else ''}). "
           "Your official record stays unchanged until it is approved. "
           "You can now press Save and Confirm to finish setting up your account.", "correction-success")
@@ -23961,6 +23968,49 @@ def api_user_correction_requests():
              reason=r['remarks'] or '', status=r['status'], admin_remarks=r['admin_remarks'] or '',
              submitted=fmt(r['created_at']), decided=fmt(r['decided_at'])) for r in rows]})
 
+@app.route('/api/user/correction-requests', methods=['POST'])
+def api_user_submit_correction_request():
+    """Profile Settings > Request Correction: the same request the account-setup Review
+    step sends (same validation, same Admin review), for users who finished setup."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Please log in again.'}), 401
+    username = session.get('username')
+    info = query_db("""
+        SELECT f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
+               d.designationname, s.specializationname
+        FROM accounts a
+        LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
+        LEFT JOIN designation d ON f.designationid = d.designationid
+        LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        WHERE a.username = %s
+    """, (username,), one=True)
+    if not info or not info.get('employeenumber'):
+        return jsonify({'success': False,
+                        'error': 'Only accounts linked to a faculty record can request corrections.'}), 400
+    current_values = {
+        'Employee ID':    info.get('employeenumber') or '',
+        'First Name':     info.get('firstname') or '',
+        'Middle Name':    info.get('middlename') or '',
+        'Last Name':      info.get('lastname') or '',
+        'Suffix':         info.get('suffix') or '',
+        'Designation':    info.get('designationname') or '',
+        'Specialization': info.get('specializationname') or '',
+    }
+    designations    = query_db("SELECT designationname FROM designation ORDER BY designationname")
+    specializations = query_db("SELECT specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
+    data = request.get_json(silent=True) or {}
+    n, err = _save_correction_request(username, info['employeenumber'], current_values,
+                                      designations, specializations, data.get('items'), data.get('remarks'))
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    write_activity_log(action='Correction Requested',
+                       details=f"{username} requested a correction of {n} field{'s' if n != 1 else ''}",
+                       category='account', color='blue')
+    return jsonify({'success': True, 'count': n,
+                    'message': f"Correction request submitted for Admin review ({n} field{'s' if n != 1 else ''}). "
+                               "Your official record stays unchanged until it is approved."})
+
+
 def _ensure_ay_finalized_col(cur):
     """Add isfinalized BOOLEAN DEFAULT FALSE to academicyear if not present."""
     cur.execute("""
@@ -30754,7 +30804,7 @@ def api_user_me():
         username = session.get('username')
         cur.execute("""
             SELECT a.last_login, a.profile_photo,
-                   f.employeenumber, f.firstname, f.middlename, f.lastname,
+                   f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
                    CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END AS email,
                    f.employeestatus,
                    d.designationid, d.designationname,
@@ -30778,6 +30828,7 @@ def api_user_me():
             'firstname': row['firstname'] or '',
             'middlename': row['middlename'] or '',
             'lastname': row['lastname'] or '',
+            'suffix': row['suffix'] or '',
             'designation': row['designationname'] or '',
             'designation_id': row['designationid'],
             'specialization': row['specializationname'] or '',
@@ -30801,7 +30852,8 @@ def api_user_options():
     if 'loggedin' not in session: return jsonify({'success': False}), 401
     try:
         designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
-        specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
+        # isactive: a correction request may only propose an active specialization.
+        specializations = query_db("SELECT specializationid, specializationname, isactive FROM specialization ORDER BY specializationname")
         return jsonify({
             'success': True,
             'designations': [dict(r) for r in designations],

@@ -966,11 +966,12 @@
                     <a href="#" class="mnav-tab mnav-active" id="tab-room" onclick="switchEditorTab('room',this);return false;">ROOM VIEW</a>
                     <a href="#" class="mnav-tab" id="tab-main" onclick="switchEditorTab('main',this);return false;">PROGRAM VIEW</a>
                     <a href="#" class="mnav-tab" id="tab-faculty" onclick="switchEditorTab('faculty',this);return false;">FACULTY LOAD</a>
-                    {# Local Scheduler saves and publishes in one step (no separate Drafts), so no tab there. #}
+                    {# Local Scheduler saves and publishes in one step (no separate Drafts) and
+                       has no Version History, so neither tab is shown there. #}
                     {% if scheduler_mode != 'local' %}
                     <a href="#" class="mnav-tab" id="tab-drafts" onclick="switchEditorTab('drafts',this);return false;">DRAFTS</a>
-                    {% endif %}
                     <a href="#" class="mnav-tab" id="tab-history" onclick="switchEditorTab('history',this);return false;">VERSION HISTORY</a>
+                    {% endif %}
                 </div>
             </div>
 
@@ -1176,6 +1177,7 @@
                 </div>
             </div>
 
+            {% if scheduler_mode != 'local' %}
             <div id="versionHistoryPanel" class="version-history-panel" style="display:none;">
                 <div class="vhp-header">
                     <div>
@@ -1187,6 +1189,7 @@
                     <div class="vhp-loading"><i class="fas fa-spinner fa-spin"></i> Loading versions&hellip;</div>
                 </div>
             </div>
+            {% endif %}
 
             <div id="pvTimetableHeader" style="display:none;align-items:center;justify-content:space-between;padding:8px 16px;background:#fff;border-bottom:1px solid #e0e0e0;min-height:44px;">
                 <div id="pvTimetableLabel" style="font-size:0.8rem;font-weight:900;color:#800000;letter-spacing:0.5px;text-transform:uppercase;">
@@ -1428,7 +1431,7 @@
                 {% if scheduler_mode == 'local' %}
                     {# Local Scheduler: one action — saves the edits and makes them the active
                        Local Arrangement (publishLocalArrangementFromEditor saves, then publishes).
-                       Unpublished Drafts can still be published from Version History. #}
+                       With no pending edits it publishes the section's latest saved Draft. #}
                     <button type="button" class="btn-save-outlined btn-approve" id="btnPublishLocalArr" onclick="publishLocalArrangementFromEditor()">
                         SAVE AS LOCAL ARRANGEMENT
                     </button>
@@ -10461,6 +10464,8 @@ function _vhpComputeDiff(prevSessions, currSessions) {
 
 
 async function _loadVersionHistoryPanel() {
+    // The Local Scheduler has no Version History panel; shared callers (e.g. publish) may still call this.
+    if (!document.getElementById('versionHistoryPanel')) return;
     const cards    = document.getElementById('vhpCards');
     const subtitle = document.getElementById('vhpSubtitle');
 
