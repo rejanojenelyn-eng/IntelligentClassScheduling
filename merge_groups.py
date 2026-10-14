@@ -403,6 +403,12 @@ def scheduling_completeness(ref_subject, meetings, *, valid_blocks=None, rooms=N
                 'warnings': [], 'required': required, 'scheduled': scheduled, 'complete_types': []}
     rooms = rooms or {}
     bad_types = set()
+    from scheduler import is_nstp_subject, nstp_time_problem
+    subject_code = (ref_subject or {}).get('subjectcode')
+    nstp = is_nstp_subject(subject_code)
+    if nstp and valid_blocks is not None:
+        _t = lambda s: time(int(s[:2]), int(s[3:5]))
+        block_times = {(_t(s), _t(e)) for s, e in valid_blocks}
     for i, mt in enumerate(meetings, 1):
         ctype = mt.get('class_type')
         start, end = hhmm(mt.get('start')), hhmm(mt.get('end'))
@@ -413,8 +419,12 @@ def scheduling_completeness(ref_subject, meetings, *, valid_blocks=None, rooms=N
         if start and end:
             scheduled[ctype] = scheduled.get(ctype, 0.0) + (_minutes(end) - _minutes(start)) / 60.0
             if valid_blocks is not None and (start, end) not in valid_blocks:
-                issues.append(f'{tag}: not a valid time block (HC6).')
-                bad_types.add(ctype)
+                # NSTP may use any 3-hour session within the scheduling hours (same rule as CSP HC6).
+                problem = (nstp_time_problem(subject_code, _t(start), _t(end), block_times) if nstp
+                           else 'not a valid time block')
+                if problem:
+                    issues.append(f'{tag}: {problem} (HC6).')
+                    bad_types.add(ctype)
         room_id = norm_room(mt.get('roomid'))
         if room_id is None:
             warnings.append(f'{tag}: room is TBA.')

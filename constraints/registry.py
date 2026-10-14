@@ -119,7 +119,10 @@ HARD_CONSTRAINTS = {
         "scheduler.STANDARD_BLOCKS block or an admin-configured hc_time_slots block. "
         "A start and an end that each belong to some block are not enough -- the "
         "pair itself must be a block. Adjacent blocks (e.g. 7:30-9:00 and 9:00-10:30) "
-        "touch but do not overlap. Applies to Local Scheduler adjustments too.",
+        "touch but do not overlap. Applies to Local Scheduler adjustments too. "
+        "Exception: an NSTP class may start and end at any time (e.g. 2:00-5:00 PM) "
+        "as long as it is one 3-hour session within the scheduling hours "
+        "(earliest block start to latest block end); see scheduler.nstp_time_problem.",
         ("time",),
         config_keys=("hc_time_blocks_enabled", "hc_time_slots"),
         implementation="CSPValidator._check_standard_slots",

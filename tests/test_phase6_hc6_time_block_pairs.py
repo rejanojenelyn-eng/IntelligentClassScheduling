@@ -50,6 +50,48 @@ def test_off_grid_endpoints_keep_their_existing_messages():
     assert any('invalid end time' in x['detail'] for x in v)
 
 
+def _hc6_subject(code, start, end, cfg=None):
+    row = {'subject_code': code, 'day': 'Sunday', 'days_list': ['Sunday'], 'start_time': start, 'end_time': end}
+    return CSPValidator(config=cfg if cfg is not None else {})._check_standard_slots([row])
+
+
+def test_nstp_any_three_hour_session_is_valid():
+    # Not on the block grid, but one 3-hour NSTP session inside the scheduling hours.
+    for code in ('NSTP 001', 'NSTP 002', 'NSTP 10013'):
+        assert _hc6_subject(code, time(14, 0), time(17, 0)) == []
+    assert _hc6_subject('NSTP 001', time(8, 0), time(11, 0)) == []
+    assert _hc6_subject('NSTP 001', time(18, 0), time(21, 0)) == []        # ends exactly at closing
+    # Standard blocks stay valid for NSTP exactly as before (incl. the generator's 1.5h pairs).
+    assert _hc6_subject('NSTP 001', time(13, 30), time(15, 0)) == []
+    assert _hc6_subject('NSTP 001', time(13, 30), time(16, 30)) == []
+
+
+def test_nstp_still_needs_three_hours_and_scheduling_hours():
+    two_h = _hc6_subject('NSTP 001', time(14, 0), time(16, 0))
+    assert len(two_h) == 1 and two_h[0]['rule'] == 'HC6' and '3-hour session' in two_h[0]['detail']
+    assert '3-hour session' in _hc6_subject('NSTP 001', time(14, 0), time(18, 0))[0]['detail']
+    late = _hc6_subject('NSTP 001', time(18, 30), time(21, 30))
+    assert len(late) == 1 and 'outside the scheduling hours (07:30 AM – 09:00 PM)' in late[0]['detail']
+    early = _hc6_subject('NSTP 001', time(7, 0), time(10, 0))
+    assert 'outside the scheduling hours' in early[0]['detail']
+    # No message mentions the old predefined blocks.
+    assert not any('standard time block' in v['detail'] for v in two_h + late + early)
+
+
+def test_nstp_exception_does_not_touch_other_subjects():
+    assert len(_hc6_subject('GEED 006', time(14, 0), time(17, 0))) == 2   # still off-grid
+    assert len(_hc6_subject('OU 101', time(14, 0), time(17, 0))) == 2
+
+
+def test_nstp_off_grid_keeps_conflict_checks():
+    # A valid 2:00-5:00 PM NSTP class still clashes with another class in the same room.
+    a = {'subject_code': 'NSTP 001', 'faculty_id': 'F1', 'room_id': 7, 'day': 'Sunday',
+         'days_list': ['Sunday'], 'start_time': time(14, 0), 'end_time': time(17, 0)}
+    b = dict(a, subject_code='NSTP 002', faculty_id='F2', start_time=time(15, 0), end_time=time(18, 0))
+    rules = {v['rule'] for v in CSPValidator(config={}).validate([a, b], {})}
+    assert 'HC6' not in rules and 'HC11' in rules
+
+
 def test_hc6_toggle_still_applies():
     row = {'subject_code': 'X', 'day': 'Monday', 'days_list': ['Monday'],
            'start_time': time(10, 30), 'end_time': time(13, 0)}

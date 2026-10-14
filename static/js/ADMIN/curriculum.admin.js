@@ -794,7 +794,7 @@ async function analyzeXlsxCurriculum() {
     _hideAnalyzeError('xlsxAnalyzeError');
 
     if (!progCode)  { _showAnalyzeError('xlsxAnalyzeError', 'Please select a target program.'); return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { _showAnalyzeError('xlsxAnalyzeError', 'Please enter a valid curriculum year (e.g. 2024-2025).'); return; }
+    if (_academicYearError(currYear)) { _showAnalyzeError('xlsxAnalyzeError', _academicYearError(currYear)); return; }
     if (!fileInput.files.length) { _showAnalyzeError('xlsxAnalyzeError', 'Please select an Excel file.'); return; }
 
     const validation = await _validateCurriculumFile(fileInput.files[0], 'xlsx');
@@ -873,7 +873,7 @@ async function analyzeCsvCurriculum() {
     _hideAnalyzeError('csvAnalyzeError');
 
     if (!progCode) { _showAnalyzeError('csvAnalyzeError', 'Please select a target program.'); return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) { _showAnalyzeError('csvAnalyzeError', 'Please enter a valid curriculum year (e.g. 2024-2025).'); return; }
+    if (_academicYearError(currYear)) { _showAnalyzeError('csvAnalyzeError', _academicYearError(currYear)); return; }
     if (!fileInput.files.length) { _showAnalyzeError('csvAnalyzeError', 'Please select a CSV file.'); return; }
 
     const validation = await _validateCurriculumFile(fileInput.files[0], 'csv');
@@ -1082,6 +1082,21 @@ async function _validateCurriculumFile(file, type) {
 }
 
 // Unified error display — shows icon + message; used by all four analyze functions
+// Same rule as the server (app.academic_year_problem): YYYY-YYYY where the ending
+// year is exactly the starting year + 1. Returns an error message, or '' when valid.
+function _academicYearError(value) {
+    const v = (value || '').trim();
+    if (!v) return 'Please enter the curriculum year (format YYYY-YYYY, e.g. 2024-2025).';
+    const m = /^(\d{4})-(\d{4})$/.exec(v);
+    if (!m) return `Curriculum year "${v}" is invalid: it must use the YYYY-YYYY format (e.g. 2024-2025).`;
+    const start = +m[1], end = +m[2];
+    if (end <= start)
+        return `Curriculum year "${v}" is invalid: the ending year (${end}) must come after the starting year (${start}). Did you mean ${start}-${start + 1}?`;
+    if (end !== start + 1)
+        return `Curriculum year "${v}" is invalid: it spans ${end - start} years. The ending year must be exactly one year after the starting year (e.g. ${start}-${start + 1}).`;
+    return '';
+}
+
 function _showAnalyzeError(boxId, msg) {
     const box = document.getElementById(boxId);
     if (!box) return;
@@ -1165,8 +1180,8 @@ async function analyzePdf() {
     _hideAnalyzeError('pdfAnalyzeError');
 
     if (!progCode) { _showPdfError('Please select a target academic offering.'); return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
-        _showPdfError('Please enter a valid curriculum year (e.g. 2024-2025).');
+    if (_academicYearError(currYear)) {
+        _showPdfError(_academicYearError(currYear));
         return;
     }
     if (!fileInput.files.length) { _showPdfError('Please select a PDF file to upload.'); return; }
@@ -1226,8 +1241,8 @@ async function analyzeDocx() {
     _hideAnalyzeError('docxAnalyzeError');
 
     if (!progCode) { _showDocxError('Please select a target academic offering.'); return; }
-    if (!currYear || !/^\d{4}-\d{4}$/.test(currYear)) {
-        _showDocxError('Please enter a valid curriculum year (e.g. 2024-2025).');
+    if (_academicYearError(currYear)) {
+        _showDocxError(_academicYearError(currYear));
         return;
     }
     if (!fileInput.files.length) { _showDocxError('Please select a Word (.docx) file to upload.'); return; }

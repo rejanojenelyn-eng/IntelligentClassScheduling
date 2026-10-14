@@ -70,6 +70,20 @@ def test_b2_manual_editor_validation_endpoint_uses_the_same_rule():
     assert 'HC6' not in {v['rule'] for v in good['violations']}
 
 
+@requires_db
+def test_b2b_manual_editor_accepts_nstp_2pm_to_5pm():
+    import app as app_module
+    client = app_module.app.test_client()
+    ok = client.post('/api/schedule/validate', json={'schedule_data': [
+        {'subject_code': 'NSTP 001', 'day': 'Sunday', 'days_list': ['Sunday'],
+         'start_time': '02:00 PM', 'end_time': '05:00 PM', 'room_type': 'Lecture'}]}).get_json()
+    assert 'HC6' not in {v['rule'] for v in ok['violations']}
+    short = client.post('/api/schedule/validate', json={'schedule_data': [
+        {'subject_code': 'NSTP 001', 'day': 'Sunday', 'days_list': ['Sunday'],
+         'start_time': '02:00 PM', 'end_time': '04:00 PM', 'room_type': 'Lecture'}]}).get_json()
+    assert 'HC6' in {v['rule'] for v in short['violations']}
+
+
 def test_b3_retrieved_historical_time_is_evaluated_by_the_current_rule():
     import app as app_module
     days, s, e, status, _ = app_module._resolve_historical_day_time('SAT', '2:00 - 5:00')

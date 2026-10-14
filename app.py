@@ -1219,15 +1219,18 @@ def _enforce_account_setup():
     if session.get('must_change_password'):
         return redirect(url_for('account_setup_password'))
     if not session.get('account_setup_complete', True):
-        return redirect(url_for('account_setup_email'))
+        return redirect(url_for('account_setup_photo'))
 
 _SETUP_STEPS = [
     ('password', 'Password',          'account_setup_password'),
-    ('email',    'Email',             'account_setup_email'),
     ('photo',    'Profile Photo',     'account_setup_photo'),
-    ('contact',  'Contact No.',       'account_setup_contact'),
-    ('verify',   'Review',            'account_setup_verify'),
+    ('email',    'Email',             'account_setup_email'),
+    ('contact',  'Contact Number',    'account_setup_contact'),
+    ('verify',   'Review Information', 'account_setup_verify'),
 ]
+
+# Philippine mobile number: +63 followed by 10 digits starting with 9 (e.g. +63 912 345 6789).
+_PH_MOBILE_RE = re.compile(r'\+63\s*9\d{2}[\s-]?\d{3}[\s-]?\d{4}')
 
 def _setup_ctx(step):
     idx = [s[0] for s in _SETUP_STEPS].index(step)
@@ -1287,10 +1290,10 @@ def account_setup_email():
         email  = request.form.get('email', '').strip()
         if action == 'back':
             _setup_set_draft(email=email)
-            return redirect(url_for('account_setup_password'))
+            return redirect(url_for('account_setup_photo'))
         if action == 'skip':
             _setup_clear_draft('email')
-            return redirect(_setup_next('account_setup_photo'))
+            return redirect(_setup_next('account_setup_contact'))
         if not email:
             # An empty field is never treated as Skip: the user must type one or press Skip.
             _setup_clear_draft('email')
@@ -1300,32 +1303,20 @@ def account_setup_email():
             _setup_set_draft(email=email)
             flash("Please enter a valid email address, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_email'))
-        conn = get_db_connection(); cur = conn.cursor()
-        try:
-            if acc.get('employeenumber'):
-                cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s",
-                            (email, acc['employeenumber']))
-            else:
-                cur.execute("UPDATE accounts SET email = %s WHERE username = %s AND employeenumber IS NULL",
-                            (email, session.get('username')))
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
+        # The address is saved only by the code check (/api/user/email/update), which
+        # proves the user can read that inbox. Continue just confirms it is the one on file.
+        if email.lower() != on_file.strip().lower():
             _setup_set_draft(email=email)
-            if isinstance(e, psycopg2.errors.UniqueViolation):
-                flash("That email address is already used by another faculty member.", "error")
-            else:
-                print(f"[account setup] email save failed: {type(e).__name__}")
-                flash("Your email could not be saved. Please try again.", "error")
+            flash("Please verify this email address with the code we send, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_email'))
-        finally:
-            cur.close(); conn.close()
         _setup_clear_draft('email')
-        return redirect(_setup_next('account_setup_photo'))
+        return redirect(_setup_next('account_setup_contact'))
 
 
     return render_template('setup/setup_email.html', current_email=on_file,
-                           draft_email=_setup_draft().get('email', ''), **_setup_ctx('email'))
+                           draft_email=_setup_draft().get('email', ''),
+                           code_length=_emailchange.CODE_LENGTH, code_ttl=_emailchange.CODE_TTL_MINUTES,
+                           **_setup_ctx('email'))
 
 @app.route('/account-setup/photo', methods=['GET', 'POST'])
 def account_setup_photo():
@@ -1346,11 +1337,11 @@ def account_setup_photo():
                 flash(err, "error")
                 return redirect(_setup_url('account_setup_photo'))
         if action == 'back':
-            return redirect(url_for('account_setup_email'))
+            return redirect(url_for('account_setup_password'))
         if action == 'continue' and not chosen and not acc.get('profile_photo'):
             flash("Please choose a photo to upload, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_photo'))
-        return redirect(_setup_next('account_setup_contact'))
+        return redirect(_setup_next('account_setup_email'))
 
 
     return render_template('setup/setup_photo.html', current_photo=acc.get('profile_photo') or '',
@@ -1365,7 +1356,7 @@ def account_setup_contact():
     if not acc.get('employeenumber'):
         # Standalone account (no faculty record): there is nowhere to keep a contact number.
         if request.method == 'POST' and request.form.get('action') == 'back':
-            return redirect(url_for('account_setup_photo'))
+            return redirect(url_for('account_setup_email'))
         return redirect(url_for('account_setup_verify'))
     on_file = acc.get('contactnumber') or ''
 
@@ -1375,7 +1366,7 @@ def account_setup_contact():
         contact = request.form.get('contact_number', '').strip()
         if action == 'back':
             _setup_set_draft(contact=contact)
-            return redirect(url_for('account_setup_photo'))
+            return redirect(url_for('account_setup_email'))
         if action == 'skip':
             _setup_clear_draft('contact')
             return redirect(url_for('account_setup_verify'))
@@ -1388,6 +1379,21 @@ def account_setup_contact():
         if not re.fullmatch(r'[0-9+()\-\s]+', contact or 'x') or not (7 <= len(digits) <= 15):
             _setup_set_draft(contact=contact)
             flash("Please enter a valid contact number, or choose Skip.", "error")
+            return redirect(_setup_url('account_setup_contact'))
+        if contact.startswith('+63') and not _PH_MOBILE_RE.fullmatch(contact):
+            _setup_set_draft(contact=contact)
+            flash("Please enter a valid Philippine mobile number (e.g. 912 345 6789), or choose Skip.", "error")
+            return redirect(_setup_url('account_setup_contact'))
+        draft_value = contact
+        # Stored compactly to fit faculty.contactnumber (varchar 15): a PH mobile in the
+        # local form every existing record uses (09XXXXXXXXX), any other number as +<digits>.
+        if contact.startswith('+63'):
+            contact = '0' + digits[2:]
+        elif contact.startswith('+'):
+            contact = '+' + digits
+        if len(contact) > 15:
+            _setup_set_draft(contact=draft_value)
+            flash("That contact number is too long. Please check it, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
         conn = get_db_connection(); cur = conn.cursor()
         try:
@@ -1420,7 +1426,7 @@ def account_setup_password():
             return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
         # Came Back to step 1 after already changing the password: show it as done.
         if request.method == 'POST':
-            return redirect(url_for('account_setup_email'))
+            return redirect(url_for('account_setup_photo'))
         return render_template('setup/setup_password.html', password_done=True, **_setup_ctx('password'))
 
 
@@ -1451,7 +1457,7 @@ def account_setup_password():
                 conn.commit()
                 session['must_change_password'] = False
                 if not session.get('account_setup_complete', True):
-                    return redirect(url_for('account_setup_email'))
+                    return redirect(url_for('account_setup_photo'))
                 flash("Password updated.", "success")
                 return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
             except Exception as e:
@@ -1497,8 +1503,8 @@ def account_setup_verify():
             cur.close(); conn.close()
         session['account_setup_complete'] = True
         session.pop('setup_draft', None)
-        flash("Account setup complete.", "success")
-        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+        session['setup_just_completed'] = True
+        return redirect(url_for('account_setup_done'))
 
 
     full_name = ' '.join(filter(None, [info.get('firstname'), info.get('middlename'),
@@ -1554,8 +1560,8 @@ def account_setup_verify():
             cur.close(); conn.close()
         session['account_setup_complete'] = True
         session.pop('setup_draft', None)
-        flash("Account setup complete. Welcome!", "success")
-        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+        session['setup_just_completed'] = True
+        return redirect(url_for('account_setup_done'))
 
 
     profile_photo = query_db("SELECT profile_photo FROM accounts WHERE username = %s",
@@ -1571,12 +1577,28 @@ def account_setup_verify():
     return render_template('setup/setup_verify.html',
                            info=current_values, full_name=full_name,
                            account_email=info.get('email') or '',
+                           email_verified=bool(info.get('email')) and
+                               (info.get('email') or '').strip().lower() == session.get('email_verified'),
                            account_contact=info.get('contactnumber') or '',
                            profile_photo=profile_photo.get('profile_photo') or '',
                            pending_corrections=pending,
                            clear_cart=session.pop('setup_corrections_saved', False),
                            designations=designations, specializations=specializations,
                            back_url=url_for('account_setup_contact'), **_setup_ctx('verify'))
+
+
+@app.route('/account-setup/done')
+def account_setup_done():
+    """'Your account is all set' page, shown once right after Complete Setup."""
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+    dashboard = url_for(_dashboard_url_for_role(session.get('role')))
+    if not session.pop('setup_just_completed', False):
+        return redirect(dashboard)
+    acc = _setup_account()
+    email = (acc.get('faculty_email') if acc.get('employeenumber') else acc.get('account_email')) or ''
+    return render_template('setup/setup_done.html', has_email=bool(email.strip()),
+                           dashboard_url=dashboard, **_setup_ctx('verify'))
 
 
 _CORRECTION_FIELDS = ('First Name', 'Middle Name', 'Last Name', 'Suffix',
@@ -9740,7 +9762,7 @@ def _resolve_historical_section(cur, course_raw, ay_id, create=False, manual_pro
                     INSERT INTO curriculum (programcode, curriculumcode, curriculumyear, isactive)
                     VALUES (%s, %s, %s, TRUE)
                     RETURNING curriculumid
-                """, (prog.upper(), _cc, _cy))
+                """, (prog.upper(), _cc, _full_curriculum_year(_cy)))
                 _ca = cur.fetchone()
                 cur.execute("RELEASE SAVEPOINT hist_curr_auto")
                 if _ca: curriculum_id = _ca['curriculumid']
@@ -10122,7 +10144,7 @@ def import_schedule():
                             cur.execute("""
                                 INSERT INTO curriculum (programcode, curriculumcode, curriculumyear, isactive)
                                 VALUES (%s, %s, %s, TRUE) RETURNING curriculumid
-                            """, (prog.upper(), _cc, _cy))
+                            """, (prog.upper(), _cc, _full_curriculum_year(_cy)))
                             _ca = cur.fetchone()
                             cur.execute("RELEASE SAVEPOINT curr_auto")
                             if _ca: _best_curr_id = _ca['curriculumid']
@@ -11675,7 +11697,7 @@ def sis_import_confirm():
                             INSERT INTO curriculum (programcode, curriculumcode, curriculumyear, curriculumtype, isactive)
                             VALUES (%s, %s, %s, %s, TRUE)
                             RETURNING curriculumid
-                        """, (offering_code.upper(), _cc, _cy, _new_ctype))
+                        """, (offering_code.upper(), _cc, _full_curriculum_year(_cy), _new_ctype))
                         _ca = cur.fetchone()
                         cur.execute("RELEASE SAVEPOINT curr_auto")
                         if _ca: best_curr_id = _ca['curriculumid']
@@ -22537,6 +22559,79 @@ def export_single_curriculum(curriculum_id):
     return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": f"attachment;filename=Curriculum_{filename_year}.csv"})
     
 # --- FIXED: ADDED TUITION HOURS (th) TO CURRICULUM IMPORT ---
+# ── Academic / curriculum year validation ────────────────────────────────────
+# One rule for every place a curriculum year is accepted (manual entry, every
+# import format, Settings add/edit): YYYY-YYYY where the ending year is exactly
+# the starting year + 1. Any past or future year is fine.
+_ACADEMIC_YEAR_RE = re.compile(r'(\d{4})-(\d{4})')
+_CURR_CODE_YEAR_RE = re.compile(r'CY(\d{2})(\d{2})')
+
+
+def academic_year_problem(value, label='Curriculum year'):
+    """None when `value` is a valid academic year (e.g. 2024-2025), else why not."""
+    v = (value or '').strip()
+    if not v:
+        return f'{label} is required (format YYYY-YYYY, e.g. 2024-2025).'
+    m = _ACADEMIC_YEAR_RE.fullmatch(v)
+    if not m:
+        return f'{label} "{v}" is invalid: it must use the YYYY-YYYY format (e.g. 2024-2025).'
+    start, end = int(m.group(1)), int(m.group(2))
+    if end <= start:
+        return (f'{label} "{v}" is invalid: the ending year ({end}) must come after the starting year '
+                f'({start}). Did you mean {start}-{start + 1}?')
+    if end != start + 1:
+        return (f'{label} "{v}" is invalid: it spans {end - start} years. The ending year must be exactly '
+                f'one year after the starting year (e.g. {start}-{start + 1}).')
+    return None
+
+
+def curriculum_file_year_problems(rows, cc_index, first_row_number=2):
+    """Academic-year problems in an uploaded file's Curriculum Code column, one message
+    per affected row. A code like CY2223 encodes 2022-2023; a cell may also hold a full
+    YYYY-YYYY year. `rows` are the data rows (header excluded)."""
+    problems = []
+    if cc_index is None:
+        return problems
+    for n, row in enumerate(rows, first_row_number):
+        if not row or cc_index >= len(row) or row[cc_index] is None:
+            continue
+        cell = str(row[cc_index]).strip()
+        if not cell:
+            continue
+        full = re.search(r'\d{4}\s*-\s*\d{4}', cell)
+        code = _CURR_CODE_YEAR_RE.match(cell.upper().replace(' ', ''))
+        if full:
+            err = academic_year_problem(re.sub(r'\s', '', full.group(0)), 'the academic year')
+        elif code:
+            a, b = int(code.group(1)), int(code.group(2))
+            err = None if b == (a + 1) % 100 else (
+                f'it encodes 20{code.group(1)}-20{code.group(2)}; the ending year must be exactly one '
+                f'year after the starting year (e.g. CY{code.group(1)}{(a + 1) % 100:02d}).')
+        else:
+            continue
+        if err:
+            problems.append(f'Row {n} (Curriculum Code "{cell}"): {err}')
+    return problems
+
+
+def _full_curriculum_year(start_year):
+    """'2021' -> '2021-2022' for auto-created placeholder curricula (anything else unchanged)."""
+    y = str(start_year or '')
+    return f'{y}-{int(y) + 1}' if y.isdigit() and len(y) == 4 else y
+
+
+def _year_import_error(curr_year, rows=None, cc_index=None):
+    """The first message that should block a curriculum import, or None."""
+    err = academic_year_problem(curr_year)
+    if err:
+        return err
+    problems = curriculum_file_year_problems(rows or [], cc_index)
+    if problems:
+        more = f' (and {len(problems) - 3} more row(s))' if len(problems) > 3 else ''
+        return 'Invalid academic year in the uploaded file — ' + '; '.join(problems[:3]) + more
+    return None
+
+
 @app.route('/admin/curriculum/import', methods=['POST'])
 def import_curriculum():
     file = request.files.get('file')
@@ -22556,10 +22651,17 @@ def import_curriculum():
         flash("Missing required fields.")
         return redirect(request.referrer)
 
+    curr_year = curr_year.strip()
     stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
     csv_input = csv.reader(stream)
     header = next(csv_input)
     csv_data = list(csv_input)
+
+    # Rejected before anything is written, so an invalid year never leaves a partial curriculum.
+    year_err = _year_import_error(curr_year, csv_data, idx.get('cc'))
+    if year_err:
+        flash(f"Import Blocked: {year_err}")
+        return redirect(request.referrer)
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     step = 'verifying program exists'
@@ -22689,6 +22791,10 @@ def analyze_curriculum_csv():
     except Exception as e:
         return jsonify({'error': f'Failed to read CSV: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
 
+    year_err = _year_import_error(curr_year, data_rows, idx.get('cc'))
+    if year_err:
+        return jsonify({'error': year_err, 'subjects': [], 'confidence': 0, 'warnings': [year_err], 'subject_count': 0}), 400
+
     def _gv(row, key):
         if key not in idx or idx[key] >= len(row): return ''
         return str(row[idx[key]]).strip()
@@ -22760,6 +22866,10 @@ def analyze_curriculum_xlsx():
     except Exception as e:
         return jsonify({'error': f'Failed to read Excel file: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
 
+    year_err = _year_import_error(curr_year, data_rows, idx.get('cc'))
+    if year_err:
+        return jsonify({'error': year_err, 'subjects': [], 'confidence': 0, 'warnings': [year_err], 'subject_count': 0}), 400
+
     def _gv(row, key):
         if key not in idx or idx[key] >= len(row): return ''
         v = row[idx[key]]
@@ -22826,6 +22936,10 @@ def analyze_curriculum_pdf():
     curr_year    = request.form.get('curriculum_year', '').strip()
     has_bridging = request.form.get('has_bridging', '0') == '1'
 
+    year_err = academic_year_problem(curr_year)
+    if year_err:
+        return jsonify({'error': year_err, 'subjects': [], 'confidence': 0, 'warnings': [year_err], 'subject_count': 0}), 400
+
     try:
         result = parse_curriculum_pdf(file.stream.read(), override_col_map)
         if has_bridging and result.get('subjects') and prog_code and curr_year:
@@ -22856,6 +22970,11 @@ def confirm_pdf_import():
 
     if not prog_code or not curr_year:
         flash("Missing required fields.")
+        return redirect(url_for('admin_curriculum'))
+
+    year_err = academic_year_problem(curr_year)
+    if year_err:
+        flash(f"Import Blocked: {year_err}")
         return redirect(url_for('admin_curriculum'))
 
     try:
@@ -23008,6 +23127,13 @@ def import_curriculum_xlsx():
 
     data_rows = rows[1:]
 
+    # Rejected before anything is written, so an invalid year never leaves a partial curriculum.
+    curr_year = curr_year.strip()
+    year_err = _year_import_error(curr_year, data_rows, idx.get('cc'))
+    if year_err:
+        flash(f"Import Blocked: {year_err}")
+        return redirect(request.referrer)
+
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     step = 'checking for existing curriculum'
     try:
@@ -23139,6 +23265,11 @@ def analyze_curriculum_docx_route():
     prog_code    = request.form.get('program_code', '').strip()
     curr_year    = request.form.get('curriculum_year', '').strip()
     has_bridging = request.form.get('has_bridging', '0') == '1'
+
+    year_err = academic_year_problem(curr_year)
+    if year_err:
+        return jsonify({'error': year_err, 'subjects': [], 'confidence': 0,
+                        'warnings': [year_err], 'subject_count': 0}), 400
 
     try:
         result = parse_curriculum_docx(file.stream.read(), override_col_map)
@@ -25447,6 +25578,10 @@ def settings_add_curriculum():
     pcode  = request.form.get('program_code', '').strip()
     year   = request.form.get('curriculum_year', '').strip()
     code   = request.form.get('curriculum_code', '').strip().upper()
+    year_err = academic_year_problem(year)
+    if year_err:
+        flash(year_err, "error")
+        return redirect(url_for('admin_settings'))
     conn = get_db_connection(); cur = conn.cursor()
     try:
         if not code:
@@ -25478,6 +25613,10 @@ def settings_edit_curriculum():
     cid  = request.form.get('curriculum_id')
     year = request.form.get('curriculum_year', '').strip()
     code = request.form.get('curriculum_code', '').strip().upper()
+    year_err = academic_year_problem(year)
+    if year_err:
+        flash(year_err, "error")
+        return redirect(url_for('admin_settings'))
     conn = get_db_connection(); cur = conn.cursor()
     try:
         cur.execute("""
@@ -30792,6 +30931,7 @@ def api_user_email_request_code():
 def api_user_email_update():
     def _confirm(c, u):
         saved = _emailchange.confirm(c, u, request.form.get('email', ''), request.form.get('code', ''))
+        session['email_verified'] = saved.lower()     # the Review step shows this address as Verified
         write_activity_log(action='Email Changed',
                            details=f"{u} changed their email address (verified by email code)",
                            category='account', color='blue')

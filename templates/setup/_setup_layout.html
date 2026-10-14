@@ -9,69 +9,123 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-        body { min-height: 100vh; background: #fdfdfd; display: flex; justify-content: center; padding: 50px 20px; }
-        .setup-card { width: 100%; max-width: 620px; text-align: center; }
-        .setup-card img.logo { width: 90px; margin-bottom: 10px; }
-        .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px; }
-        .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 22px; }
+        body { min-height: 100vh; background: #f7f7f8; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
 
+        /* Brand panel (left) + white setup card (right) */
+        .setup-shell { width: 100%; max-width: 1040px; display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; align-items: center; }
+        .setup-brand { text-align: center; }
+        .setup-brand img.logo { width: 150px; margin-bottom: 18px; }
+        .brand-title { color: #800000; font-weight: 800; font-size: 1.6rem; letter-spacing: 0.5px; }
+        .brand-sub { color: #800000; font-weight: 700; font-size: 0.68rem; letter-spacing: 2px; margin-top: 6px; }
 
-        p.step-sub { color: #666; font-size: 1.3rem; margin: 18px 0 10px; }
-        p.step-hint { color: #999; font-size: 0.85rem; margin-bottom: 26px; }
+        .setup-card { background: #fff; border: 1px solid #ececec; border-radius: 16px; padding: 34px 38px 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05); }
+        h1.setup-title { color: #800000; font-weight: 800; font-size: 2rem; line-height: 1.2; margin-bottom: 6px; }
+        p.setup-lead { color: #555; font-size: 0.95rem; margin-bottom: 20px; }
+        .setup-divider { border: none; border-top: 1px solid #eee; margin: 0 0 22px; }
 
-
-        .form-group { text-align: left; margin-bottom: 20px; }
-        label { display: block; color: #800000; font-weight: 800; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 8px; }
-        input[type="text"], input[type="email"], input[type="tel"] {
-            width: 100%; padding: 15px 18px; border: none; border-radius: 8px;
-            background: linear-gradient(90deg, #4b0a0a 0%, #b22222 100%);
-            color: #fff; font-size: 1rem; outline: none;
+        /* Fields */
+        .form-group { margin-bottom: 18px; }
+        label { display: block; color: #222; font-weight: 700; font-size: 0.86rem; margin-bottom: 8px; }
+        input[type="text"], input[type="email"], input[type="tel"], input[type="password"] {
+            width: 100%; padding: 13px 16px; border: 1px solid #d9d9d9; border-radius: 8px; background: #fff;
+            color: #222; font-size: 0.95rem; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
         }
-        input[readonly] { opacity: 0.75; cursor: not-allowed; }
-        input::placeholder { color: rgba(255,255,255,0.75); }
+        input:focus { border-color: #800000; box-shadow: 0 0 0 3px rgba(128, 0, 0, 0.12); }
+        input[readonly] { background: #f5f5f5; color: #777; cursor: not-allowed; }
+        input[readonly]:focus { border-color: #d9d9d9; box-shadow: none; }
+        input::placeholder { color: #a0a0a0; }
+        .field-hint { color: #888; font-size: 0.8rem; margin-top: 6px; }
 
+        /* Section header: round icon + title + one-line description */
+        .setup-section-head { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; }
+        .setup-section-icon { flex-shrink: 0; width: 62px; height: 62px; border-radius: 50%; background: #fbe4e4;
+            color: #800000; display: flex; align-items: center; justify-content: center; font-size: 1.45rem; }
+        .setup-section-title { color: #800000; font-weight: 800; font-size: 1.35rem; margin-bottom: 3px; }
+        .setup-section-sub { color: #666; font-size: 0.88rem; }
 
-        .error-msg { color: #b22222; font-size: 0.85rem; margin-bottom: 18px; font-weight: 600; text-align: left; }
+        /* Grey info box */
+        .setup-info { display: flex; gap: 14px; align-items: flex-start; background: #f2f4f7; border-radius: 10px;
+            padding: 14px 18px; margin-top: 8px; color: #555; font-size: 0.82rem; line-height: 1.55; }
+        .setup-info > i { font-size: 1.2rem; color: #5a6270; margin-top: 2px; }
+        .setup-info strong { color: #333; }
+        .setup-info small { display: block; color: #777; font-size: 0.78rem; }
 
+        /* Messages */
+        .error-msg, .alert-error {
+            display: flex; align-items: center; gap: 10px; margin: 0 0 18px;
+            background: #fdecec; border: 1px solid #f5b5b5; color: #9b1c1c; border-radius: 10px;
+            padding: 12px 16px; font-size: 0.86rem; font-weight: 600;
+        }
+        .alert-success { display: flex; align-items: center; gap: 10px; margin: 0 0 18px;
+            background: #eef8f1; border: 1px solid #bfe3cb; color: #1a6b3c; border-radius: 10px;
+            padding: 12px 16px; font-size: 0.86rem; font-weight: 600; }
 
         {% include "setup/_setup_steps_css.html" %}
+
+        @media (max-width: 860px) {
+            .setup-shell { grid-template-columns: minmax(0, 1fr); gap: 22px; max-width: 620px; }
+            .setup-brand img.logo { width: 80px; margin-bottom: 8px; }
+            .brand-title { font-size: 1.2rem; }
+        }
+        @media (max-width: 520px) {
+            body { padding: 24px 16px; align-items: flex-start; }
+            .setup-card { padding: 24px 18px 22px; border-radius: 12px; }
+            h1.setup-title { font-size: 1.5rem; }
+        }
         {% block extra_css %}{% endblock %}
     </style>
 </head>
 <body>
-    <div class="setup-card">
-        <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
-        <div class="brand-title">PUP LOPEZ</div>
-        <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
+    <main class="setup-shell">
+        <aside class="setup-brand">
+            <img class="logo" src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Logo">
+            <div class="brand-title">PUP LOPEZ</div>
+            <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
+        </aside>
 
+        <section class="setup-card">
+            <h1 class="setup-title">{% block heading %}Let&rsquo;s set up your account!{% endblock %}</h1>
+            <p class="setup-lead">{% block lead %}{% endblock %}</p>
 
-        {% include "setup/_setup_steps.html" %}
+            {% include "setup/_setup_steps.html" %}
+            <hr class="setup-divider">
 
+            {% block messages %}
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    {% if category == 'success' %}
+                    <p class="alert-success" role="status"><i class="fas fa-circle-check"></i> {{ message }}</p>
+                    {% else %}
+                    <p class="error-msg" role="alert"><i class="fas fa-circle-exclamation"></i> {{ message }}</p>
+                    {% endif %}
+                {% endfor %}
+            {% endwith %}
+            {% endblock %}
+            <p class="error-msg" id="setupClientError" role="alert" style="display:none;"></p>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <p class="error-msg">{{ message }}</p>
-            {% endfor %}
-        {% endwith %}
-        <p class="error-msg" id="setupClientError" style="display:none;"></p>
+            {% block form %}
+            <form method="POST" enctype="multipart/form-data" autocomplete="off" novalidate id="setupForm">
+                {% block content %}{% endblock %}
 
-
-        <form method="POST" enctype="multipart/form-data" autocomplete="off" novalidate id="setupForm">
-            {% block content %}{% endblock %}
-
-
-            <!-- Back / Skip / Continue. Back keeps what you typed; Skip leaves this item as it is. -->
-            <div class="setup-actions">
-                <button type="submit" name="action" value="back" class="btn-back">
-                    <i class="fas fa-arrow-left"></i> BACK
-                </button>
-                <div class="setup-actions-right">
-                    <button type="submit" name="action" value="skip" class="btn-skip">SKIP</button>
-                    <button type="submit" name="action" value="continue" class="btn-continue">CONTINUE</button>
+                {% block actions %}
+                <!-- Back / Skip / Save and Next. Back keeps what you typed; Skip leaves this item as it is. -->
+                <div class="setup-actions">
+                    <button type="submit" name="action" value="back" class="btn-back">
+                        <i class="fas fa-arrow-left"></i> BACK
+                    </button>
+                    <div class="setup-actions-right">
+                        <button type="submit" name="action" value="skip" class="btn-skip">SKIP FOR NOW</button>
+                        <button type="submit" name="action" value="continue" class="btn-continue">
+                            SAVE AND NEXT <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
                 </div>
-            </div>
-        </form>
-    </div>
+                {% endblock %}
+            </form>
+            {% endblock %}
+        </section>
+    </main>
     {% block scripts %}{% endblock %}
     <script>
         // Optional steps define window.setupValidateContinue() -> error text or ''.
@@ -100,7 +154,9 @@
                 if (err) {
                     e.preventDefault();
                     clearErrors();
-                    box.textContent = err; box.style.display = 'block';
+                    box.innerHTML = '<i class="fas fa-circle-exclamation"></i> ';
+                    box.appendChild(document.createTextNode(err));
+                    box.style.display = 'flex';
                 }
             });
         })();

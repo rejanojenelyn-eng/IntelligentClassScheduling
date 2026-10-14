@@ -1,25 +1,232 @@
 {% extends "setup/_setup_layout.html" %}
+{% block extra_css %}
+        .em-row { display: flex; gap: 12px; align-items: stretch; }
+        .em-row > input, .em-row > .code-boxes { flex: 1; min-width: 0; }
+        .btn-em {
+            flex-shrink: 0; width: 240px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+            padding: 12px 16px; border-radius: 8px; font-weight: 700; font-size: 0.86rem; cursor: pointer; transition: 0.2s;
+            border: 1.5px solid #800000; background: #800000; color: #fff;
+        }
+        .btn-em:hover:not(:disabled) { background: #5c0000; border-color: #5c0000; }
+        .btn-em:disabled { background: #e6e7ea; border-color: #e6e7ea; color: #8a8f98; cursor: not-allowed; }
+
+        .code-boxes { display: flex; gap: 10px; }
+        .code-boxes input {
+            width: 48px; height: 48px; padding: 0; text-align: center; font-size: 1.2rem; font-weight: 700;
+        }
+        .code-boxes input:disabled { background: #fafafa; }
+
+        .em-resend { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: #777; font-size: 0.8rem; }
+        .em-resend button { background: none; border: none; padding: 0; color: #800000; font-weight: 600; font-size: 0.8rem;
+            text-decoration: underline; text-underline-offset: 3px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+        .em-resend button:disabled { color: #b48c8c; cursor: not-allowed; }
+
+        .em-status { font-size: 0.82rem; margin-top: 8px; min-height: 1.2em; color: #666; }
+        .em-status.ok { color: #1a6b3c; font-weight: 600; }
+        .em-status.err { color: #9b1c1c; font-weight: 600; }
+
+        @media (max-width: 620px) {
+            .em-row { flex-direction: column; }
+            .btn-em { width: 100%; }
+            .code-boxes { gap: 6px; }
+            .code-boxes input { width: auto; flex: 1; min-width: 0; height: 46px; }
+        }
+{% endblock %}
+
+{% block lead %}Please add and verify your email address.{% endblock %}
+
 {% block content %}
-    <p class="step-sub">Check your email information.</p>
-    <p class="step-hint">Optional — you can skip this and add it later from Profile Settings.</p>
-    <div class="form-group">
-        <label>CURRENT EMAIL</label>
-        <input type="text" value="{{ current_email or 'Not on file yet' }}" readonly>
+    <div class="setup-section-head">
+        <div class="setup-section-icon"><i class="fas fa-envelope"></i></div>
+        <div>
+            <div class="setup-section-title">Email Address</div>
+            <div class="setup-section-sub">Enter your valid email address and verify it with the code we will send.</div>
+        </div>
     </div>
+
     <div class="form-group">
-        <label for="setupEmail">NEW EMAIL</label>
-        <input type="email" id="setupEmail" name="email" value="{{ draft_email }}"
-               placeholder="you@example.com">
+        <label for="setupEmail">Email Address</label>
+        <div class="em-row">
+            <input type="email" id="setupEmail" name="email" value="{{ draft_email or current_email }}"
+                   placeholder="Enter your email address" autocomplete="email">
+            <button type="button" class="btn-em" id="btnSendCode" onclick="sendCode()">
+                <i class="fas fa-paper-plane"></i> <span>Send Verification Code</span>
+            </button>
+        </div>
+        <div class="em-status" id="emStatus" aria-live="polite"></div>
+    </div>
+
+    <div class="form-group">
+        <label id="codeLabel">Verification Code</label>
+        <div class="em-row">
+            <div class="code-boxes" id="codeBoxes" role="group" aria-labelledby="codeLabel">
+                {% for i in range(code_length) %}
+                <input type="text" inputmode="numeric" maxlength="1" autocomplete="{{ 'one-time-code' if loop.first else 'off' }}"
+                       aria-label="Digit {{ loop.index }}" disabled>
+                {% endfor %}
+            </div>
+            <button type="button" class="btn-em" id="btnVerify" onclick="verifyCode()" disabled>Verify Code</button>
+        </div>
+        <div class="em-resend" id="emResend" style="display:none;">
+            Didn&rsquo;t receive the code?
+            <button type="button" id="btnResend" onclick="sendCode()"><i class="fas fa-rotate-right"></i> <span id="resendText">Resend Code</span></button>
+        </div>
+    </div>
+
+    <div class="setup-info">
+        <i class="fas fa-circle-info"></i>
+        <div>
+            A verification code will be sent to your email address.
+            <small>Please check your inbox (and spam folder). The code will expire in {{ code_ttl }} minutes.</small>
+        </div>
     </div>
 {% endblock %}
+
 {% block scripts %}
 <script>
+    const _EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    let onFile = {{ (current_email or '') | tojson }};   // the saved (verified) address
+    let sentTo = '';                                      // address the last code went to
+    let resendTimer = null;
+
+    const $ = id => document.getElementById(id);
+    const emailInput = $('setupEmail');
+    const boxes = Array.from(document.querySelectorAll('#codeBoxes input'));
+
+    const isVerified = () => !!onFile && emailInput.value.trim().toLowerCase() === onFile.toLowerCase();
+    const codeValue = () => boxes.map(b => b.value).join('');
+
+    function setStatus(msg, kind) {
+        const el = $('emStatus');
+        el.textContent = msg || '';
+        el.className = 'em-status' + (kind ? ' ' + kind : '');
+    }
+    function refresh() {
+        const sameAsSent = sentTo && emailInput.value.trim().toLowerCase() === sentTo.toLowerCase();
+        boxes.forEach(b => b.disabled = !sameAsSent || isVerified());
+        $('btnVerify').disabled = !sameAsSent || isVerified() || codeValue().length !== boxes.length;
+        $('btnSendCode').disabled = isVerified() || !!resendTimer;
+        $('emResend').style.display = sameAsSent && !isVerified() ? 'flex' : 'none';
+    }
+    function showVerifiedState() {
+        if (isVerified()) setStatus('This email address is verified and saved to your account.', 'ok');
+    }
+
+    function startCooldown(seconds) {
+        clearInterval(resendTimer);
+        let left = Math.max(0, parseInt(seconds, 10) || 0);
+        const label = $('resendText'), btn = $('btnResend');
+        const tick = () => {
+            if (left <= 0) {
+                clearInterval(resendTimer); resendTimer = null;
+                label.textContent = 'Resend Code'; btn.disabled = false; refresh(); return;
+            }
+            const mm = String(Math.floor(left / 60)).padStart(2, '0'), ss = String(left % 60).padStart(2, '0');
+            label.textContent = `Resend Code (${mm}:${ss})`; btn.disabled = true;
+            left -= 1;
+        };
+        resendTimer = setInterval(tick, 1000);
+        tick(); refresh();
+    }
+
+    async function post(url, fields) {
+        const fd = new FormData();
+        Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+        const res = await fetch(url, { method: 'POST', body: fd });
+        try { return await res.json(); } catch (e) { return { success: false }; }
+    }
+
+    async function sendCode() {
+        const email = emailInput.value.trim();
+        if (window.setupClearErrors) window.setupClearErrors();
+        if (!_EMAIL_RE.test(email)) return setStatus('Please enter a valid email address first.', 'err');
+        const btn = $('btnSendCode'), label = btn.querySelector('span');
+        btn.disabled = true; label.textContent = 'Sending…';
+        try {
+            const data = await post('/api/user/email/request-code', { email });
+            if (data.success) {
+                sentTo = email;
+                boxes.forEach(b => b.value = '');
+                setStatus(`We sent a ${boxes.length}-digit code to ${data.email_masked}.`);
+                startCooldown(data.resend_after);
+                refresh(); boxes[0].focus();
+            } else {
+                setStatus(data.message || 'Could not send the verification code.', 'err');
+                if (data.error === 'too_soon') { sentTo = sentTo || email; startCooldown(data.retry_after); }
+            }
+        } catch (e) {
+            setStatus('Network error. Please try again.', 'err');
+        } finally {
+            label.textContent = 'Send Verification Code'; refresh();
+        }
+    }
+
+    async function verifyCode() {
+        const email = emailInput.value.trim(), code = codeValue();
+        const btn = $('btnVerify');
+        btn.disabled = true; btn.textContent = 'Verifying…';
+        try {
+            const data = await post('/api/user/email/update', { email, code });
+            if (data.success) {
+                onFile = data.email; sentTo = '';
+                clearInterval(resendTimer); resendTimer = null;
+                boxes.forEach(b => b.value = '');
+                if (window.setupClearErrors) window.setupClearErrors();
+                showVerifiedState();
+            } else {
+                if (['too_many_attempts', 'code_expired', 'no_code'].includes(data.error)) {
+                    sentTo = ''; boxes.forEach(b => b.value = '');
+                }
+                setStatus(data.message || 'Could not verify the code.', 'err');
+            }
+        } catch (e) {
+            setStatus('Network error. Please try again.', 'err');
+        } finally {
+            btn.textContent = 'Verify Code'; refresh();
+        }
+    }
+
+    // One digit per box: type to advance, Backspace to go back, paste fills them all.
+    boxes.forEach((box, i) => {
+        box.addEventListener('input', () => {
+            box.value = box.value.replace(/\D/g, '').slice(-1);
+            if (box.value && i < boxes.length - 1) boxes[i + 1].focus();
+            refresh();
+        });
+        box.addEventListener('keydown', e => {
+            if (e.key === 'Backspace' && !box.value && i > 0) boxes[i - 1].focus();
+            if (e.key === 'Enter') { e.preventDefault(); if (!$('btnVerify').disabled) verifyCode(); }
+        });
+        box.addEventListener('paste', e => {
+            const digits = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, boxes.length);
+            if (!digits) return;
+            e.preventDefault();
+            boxes.forEach((b, j) => b.value = digits[j] || '');
+            boxes[Math.min(digits.length, boxes.length - 1)].focus();
+            refresh();
+        });
+    });
+    emailInput.addEventListener('input', () => {
+        if (isVerified()) showVerifiedState();
+        else if (sentTo && emailInput.value.trim().toLowerCase() !== sentTo.toLowerCase())
+            setStatus(`The code was sent to ${sentTo}. Send a new code to use this address instead.`);
+        else if (!sentTo) setStatus('');
+        refresh();
+    });
+    emailInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); if (!$('btnSendCode').disabled) sendCode(); }
+    });
+
     window.setupValidateContinue = function () {
-        const email = document.getElementById('setupEmail').value.trim();
+        const email = emailInput.value.trim();
         if (!email) return 'Please enter an email address, or choose Skip.';
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 255)
+        if (!_EMAIL_RE.test(email) || email.length > 255)
             return 'Please enter a valid email address, or choose Skip.';
+        if (!isVerified()) return 'Please verify this email address with the code we send, or choose Skip.';
         return '';
     };
+
+    showVerifiedState();
+    refresh();
 </script>
 {% endblock %}

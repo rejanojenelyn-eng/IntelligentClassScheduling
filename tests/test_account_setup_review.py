@@ -119,6 +119,36 @@ def test_email_empty_continue_stays_and_skip_proceeds(env):
                         follow_redirects=True)
     assert b'Please enter an email address, or choose Skip.' in r.data
     r = env.client.post('/account-setup/email', data={'action': 'skip', 'email': ''})
+    assert r.headers['Location'].endswith('/account-setup/contact')
+
+
+def test_email_continue_requires_a_verified_address(env):
+    # Continue never saves a typed address: only the emailed-code check does that.
+    before = env.q("SELECT f.email FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+                   "WHERE a.username = %s", (env.username,))[0][0]
+    r = env.client.post('/account-setup/email', data={'action': 'continue', 'email': 'not.verified@example.com'},
+                        follow_redirects=True)
+    assert b'Please verify this email address with the code we send, or choose Skip.' in r.data
+    after = env.q("SELECT f.email FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+                  "WHERE a.username = %s", (env.username,))[0][0]
+    assert after == before
+    if before:   # the address already on file counts as verified
+        r = env.client.post('/account-setup/email', data={'action': 'continue', 'email': before})
+        assert r.headers['Location'].endswith('/account-setup/contact')
+
+
+def test_step_order_is_password_photo_email_contact_review(env):
+    assert [s[0] for s in env.app._SETUP_STEPS] == ['password', 'photo', 'email', 'contact', 'verify']
+    r = env.client.post('/account-setup/photo', data={'action': 'skip'})
+    assert r.headers['Location'].endswith('/account-setup/email')
+    r = env.client.post('/account-setup/email', data={'action': 'back', 'email': ''})
+    assert r.headers['Location'].endswith('/account-setup/photo')
+    r = env.client.post('/account-setup/contact', data={'action': 'back', 'contact_number': ''})
+    assert r.headers['Location'].endswith('/account-setup/email')
+    with env.app.app.test_request_context():
+        from flask import url_for
+        dashboard = url_for('faculty_dashboard')
+    r = env.client.get(dashboard)      # unfinished setup resumes at the first optional step
     assert r.headers['Location'].endswith('/account-setup/photo')
 
 
@@ -180,12 +210,40 @@ def test_duplicate_pending_correction_is_blocked(env):
     assert len(_requests(env)) == 1
 
 
-def test_confirm_finishes_setup_and_goes_to_dashboard(env):
+def test_confirm_finishes_setup_and_shows_all_set_page_once(env):
     r = env.client.post('/account-setup/verify', data={'action': 'confirm'})
-    assert '/account-setup/' not in r.headers['Location']
+    assert r.headers['Location'].endswith('/account-setup/done')
     assert _complete(env) is True
     with env.client.session_transaction() as s:
         assert s['account_setup_complete'] is True
+        role = s['role']
+    page = env.client.get('/account-setup/done')
+    assert page.status_code == 200
+    assert b'Great, your account is all set!' in page.data
+    with env.app.app.test_request_context():
+        from flask import url_for
+        dashboard = url_for(env.app._dashboard_url_for_role(role))
+    assert f'href="{dashboard}"'.encode() in page.data and b'Go to Dashboard' in page.data
+    again = env.client.get('/account-setup/done')         # shown only right after finishing
+    assert again.headers['Location'].endswith(dashboard)
+
+
+def test_contact_requires_a_valid_ph_mobile_number(env):
+    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 12345'},
+                        follow_redirects=True)
+    assert b'Please enter a valid Philippine mobile number' in r.data
+    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 812 345 6789'},
+                        follow_redirects=True)
+    assert b'Please enter a valid Philippine mobile number' in r.data
+    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 912 345 6789'})
+    assert r.headers['Location'].endswith('/account-setup/verify')
+    def saved():
+        return env.q("SELECT f.contactnumber FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+                     "WHERE a.username = %s", (env.username,))[0][0]
+    assert saved() == '09123456789'          # same local form as existing records; fits varchar(15)
+    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+65 6123 4567'})
+    assert r.headers['Location'].endswith('/account-setup/verify')
+    assert saved() == '+6561234567'
 
 
 def test_confirm_db_failure_keeps_account_unchanged(env, monkeypatch):

@@ -146,6 +146,40 @@ def subject_allowed_on_restricted_day(subject_code, subject_rule) -> bool:
     return prefixes is None or (subject_code or '').upper().startswith(prefixes)
 
 
+NSTP_PREFIX        = 'NSTP'
+NSTP_SESSION_HOURS = 3.0   # an NSTP class (NSTP 1/2, CWTS/ROTC) meets in one 3-hour session
+
+
+def is_nstp_subject(subject_code) -> bool:
+    return (subject_code or '').strip().upper().startswith(NSTP_PREFIX)
+
+
+def nstp_time_problem(subject_code, start, end, valid_pairs):
+    """Final HC6 exception for NSTP: an NSTP class may start and end at any time
+    (e.g. 2:00 PM - 5:00 PM), not only on a standard block, as long as it is one
+    whole NSTP_SESSION_HOURS session inside the scheduling day -- the earliest
+    block start to the latest block end of `valid_pairs` (7:30 AM - 9:00 PM by
+    default). A standard block stays valid exactly as before (e.g. the
+    generator's 1.5-hour pairs). Returns None when allowed, else a message.
+    Shared by CSPValidator and merge_groups.scheduling_completeness."""
+    if (start, end) in valid_pairs:
+        return None
+    label = f'{format_time_12h(start)} – {format_time_12h(end)}'
+    day_open  = min(s for s, _ in valid_pairs)
+    day_close = max(e for _, e in valid_pairs)
+    if start >= end:
+        return f'"{subject_code}" — {label}: the end time must be after the start time.'
+    if start < day_open or end > day_close:
+        return (f'"{subject_code}" — {label} is outside the scheduling hours '
+                f'({format_time_12h(day_open)} – {format_time_12h(day_close)}).')
+    hours = duration_hours(start, end)
+    if abs(hours - NSTP_SESSION_HOURS) > 0.01:
+        return (f'"{subject_code}" — {label} is {hours:g} hour{"s" if hours != 1 else ""}. '
+                f'An NSTP class must be one {NSTP_SESSION_HOURS:g}-hour session '
+                f'(e.g. 2:00 PM – 5:00 PM).')
+    return None
+
+
 def is_laboratory_room_type(room_type) -> bool:
     """Final HC13: a room recognised as a Laboratory room (shared by CSP and Local)."""
     return (room_type or '').strip().lower() == 'laboratory'
@@ -946,7 +980,8 @@ class CSPValidator:
         if self._enabled('hc_weekend_enabled'):
             violations += self._check_sunday_restriction(schedule)
         # HC6  Standard Time-Slot Compliance: each class time must be one whole
-        # valid start-end block (STANDARD_BLOCKS + configured hc_time_slots).
+        # valid start-end block (STANDARD_BLOCKS + configured hc_time_slots) --
+        # except NSTP, which may use any 3-hour session within the scheduling hours.
         # CBR/GA already only place STANDARD_BLOCKS values, so this mainly guards
         # manual-editor, retrieved-history and Local entries.
         if self._enabled('hc_time_blocks_enabled') and 'HC6' not in skip_rules:
@@ -1241,6 +1276,13 @@ class CSPValidator:
             start = cls.get('start_time')
             end   = cls.get('end_time')
             subj = cls.get('subject_code', '?')
+            if start and end and is_nstp_subject(subj):
+                # NSTP is not tied to the block grid: any 3-hour session within the
+                # scheduling hours is valid (see nstp_time_problem).
+                problem = nstp_time_problem(subj, start, end, self._valid_pairs)
+                if problem:
+                    violations.append({'rule': 'HC6', 'subject': subj, 'detail': problem})
+                continue
             if start and start not in v_starts:
                 violations.append({
                     'rule': 'HC6',

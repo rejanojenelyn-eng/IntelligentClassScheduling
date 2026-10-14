@@ -262,10 +262,17 @@ def test_states_unscheduled_incomplete_scheduled():
 
 def test_completeness_checks_time_blocks_lab_rooms_and_types():
     rooms = ctx()['rooms']
-    off_grid = mg.scheduling_completeness(subj(1), [mt('Sunday', '08:00', '11:00')], valid_blocks=BLOCKS, rooms=rooms)
+    geed = subj(1, code='GEED 001', name='Understanding the Self')
+    off_grid = mg.scheduling_completeness(geed, [mt('Sunday', '08:00', '11:00')], valid_blocks=BLOCKS, rooms=rooms)
     assert any('HC6' in i for i in off_grid['issues'])
-    assert mg.scheduling_completeness(subj(1), [mt('Sunday', '08:00', '11:00')], valid_blocks=None,
+    assert mg.scheduling_completeness(geed, [mt('Sunday', '08:00', '11:00')], valid_blocks=None,
                                       rooms=rooms)['state'] == 'SCHEDULED'   # HC6 switched off
+    # NSTP is not tied to the block grid: any 3-hour session within the scheduling hours.
+    grid = mg.valid_time_blocks({})          # the real grid: 7:30 AM - 9:00 PM
+    nstp_ok = mg.scheduling_completeness(subj(1), [mt('Sunday', '14:00', '17:00')], valid_blocks=grid, rooms=rooms)
+    assert nstp_ok['state'] == 'SCHEDULED' and nstp_ok['issues'] == []
+    nstp_late = mg.scheduling_completeness(subj(1), [mt('Sunday', '18:30', '21:30')], valid_blocks=grid, rooms=rooms)
+    assert any('outside the scheduling hours' in i and 'HC6' in i for i in nstp_late['issues'])
     lab_subject = subj(1, lec=3, lab=3, tuition=6)
     lab_in_lecture_room = mg.scheduling_completeness(
         lab_subject, [mt('Monday', '07:30', '10:30'), mt('Tuesday', '07:30', '10:30', 'Lab', 100)],
