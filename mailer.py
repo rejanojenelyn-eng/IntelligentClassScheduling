@@ -120,6 +120,21 @@ def send_email(cfg, to_addr, subject, text, html=None):
     _SENDERS[p](cfg, to_addr, subject, text, html)
 
 
+def notice_email_html(title, paragraphs, footer):
+    """Simple branded HTML body for a notice (no code), e.g. a security alert."""
+    from html import escape
+    body = ''.join(f'<p style="margin:0 0 12px;">{escape(p)}</p>' for p in paragraphs)
+    return f"""<!doctype html><html><body style="margin:0;background:#f6f1f1;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;"><tr><td align="center">
+<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;border:1px solid #ecd6d6;">
+<tr><td style="background:#7a0100;color:#fff;padding:18px 24px;font-size:16px;font-weight:bold;">PUP Lopez Scheduling System</td></tr>
+<tr><td style="padding:24px;color:#333;font-size:14px;line-height:1.6;">
+<p style="margin:0 0 12px;font-size:18px;font-weight:bold;color:#7a0100;">{escape(title)}</p>
+{body}
+<p style="margin:0;color:#888;font-size:12px;">{escape(footer)}</p>
+</td></tr></table></td></tr></table></body></html>"""
+
+
 def code_email_html(title, intro, code, minutes, footer):
     """Simple branded HTML body for a verification-code email."""
     from html import escape

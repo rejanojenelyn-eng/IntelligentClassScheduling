@@ -7,6 +7,8 @@ import makeup_requests as _makeup
 import password_change as _pwchange
 import email_change as _emailchange
 import password_reset as _pwreset
+import login_security as _loginsec
+import login_assistance as _loginhelp
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
 from database import get_db_connection, query_db, load_scheduler_config
@@ -623,7 +625,13 @@ def inject_pending_corrections():
         if session.get('role') == 'Admin':
             row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
                            "WHERE status = 'Pending'", one=True)
-            return {'pending_correction_count': row['n'] if row else 0}
+            out = {'pending_correction_count': row['n'] if row else 0}
+            try:
+                la = query_db("SELECT COUNT(*) AS n FROM login_assistance_request WHERE status = 'Pending'", one=True)
+                out['pending_assistance_count'] = la['n'] if la else 0
+            except Exception:
+                out['pending_assistance_count'] = 0
+            return out
         row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
                        "WHERE status = 'Pending' AND username = %s", (username,), one=True)
         return {'my_pending_correction_count': row['n'] if row else 0}
@@ -910,69 +918,77 @@ def login():
     if request.method == 'POST':
         username = str(request.form.get('username')).strip()
         password = str(request.form.get('password')).strip()
+        session['saved_username'] = username
+
+        # Failed-attempt limit, temporary lockout and per-IP limit (login_security.py).
+        # The decision is made in the database under a row lock, for every role.
+        conn = get_db_connection()
+        try:
+            outcome = _loginsec.attempt(conn, username, password, _client_ip())
+        except Exception as e:
+            print(f"[login] attempt check failed: {type(e).__name__}: {e}", flush=True)
+            flash("Login is temporarily unavailable. Please try again in a moment.", 'error')
+            return redirect(url_for('login'))
+        finally:
+            conn.close()
+
+        if outcome['result'] == 'ip_limited':
+            flash(_loginsec.IP_LIMIT_MESSAGE, 'error')
+            return redirect(url_for('login'))
+        if outcome['result'] == 'locked':
+            if outcome['new_lock'] and outcome.get('user'):
+                _loginsec.dispatch_lockout_email(Config, outcome['user'])   # once per lockout
+            flash(_loginsec.locked_message(outcome['seconds_left'], outcome['new_lock']), 'locked')
+            return redirect(url_for('login'))
+        if outcome['result'] == 'invalid':
+            flash(_loginsec.invalid_message(outcome['failed'], outcome['remaining']),
+                  'warning' if outcome['failed'] >= _loginsec.WARN_FROM_ATTEMPT else 'error')
+            return redirect(url_for('login'))
+
+        # outcome 'ok': the password was verified (and the failed-attempt counter reset)
+        # by _loginsec.attempt.
+        user_data = {k.lower(): v for k, v in outcome['user'].items()}
+        db_role   = user_data.get('role')
+        if not user_data.get('isactive', True):
+            flash("Your account has been deactivated. Please contact the Administrator.")
+            return redirect(url_for('login'))
 
 
-        user = query_db("SELECT * FROM Accounts WHERE Username = %s", (username,), one=True)
+        must_change = bool(user_data.get('must_change_password'))
+        setup_done  = bool(user_data.get('account_setup_complete', True))
+        if not must_change and password in (f"PUP@{username}", username, 'password123'):
+            must_change = True
+            setup_done  = False
+            try:
+                _c3 = get_db_connection(); _cur3 = _c3.cursor()
+                _cur3.execute("""
+                    UPDATE accounts SET must_change_password = TRUE, account_setup_complete = FALSE
+                    WHERE username = %s
+                """, (username,))
+                _c3.commit(); _cur3.close(); _c3.close()
+            except Exception: pass
 
 
-        if user:
-            user_data   = {k.lower(): v for k, v in user.items()}
-            db_password = str(user_data.get('passwordhash')).strip()
-            db_role     = user_data.get('role')
+        session.clear()
+        session['loggedin'] = True
+        session['username'] = user_data.get('username')
+        session['role']     = db_role
+        session['must_change_password']   = must_change
+        session['account_setup_complete'] = setup_done
+        try:
+            _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
+            _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
+            _conn2.commit(); _cur2.close(); _conn2.close()
+        except Exception: pass
 
 
-            if check_password_hash(db_password, password):
-                if not user_data.get('isactive', True):
-                    flash("Your account has been deactivated. Please contact the Administrator.")
-                    session['saved_username'] = username
-                    return redirect(url_for('login'))
-
-
-                must_change = bool(user_data.get('must_change_password'))
-                setup_done  = bool(user_data.get('account_setup_complete', True))
-                if not must_change and password in (f"PUP@{username}", username, 'password123'):
-                    must_change = True
-                    setup_done  = False
-                    try:
-                        _c3 = get_db_connection(); _cur3 = _c3.cursor()
-                        _cur3.execute("""
-                            UPDATE accounts SET must_change_password = TRUE, account_setup_complete = FALSE
-                            WHERE username = %s
-                        """, (username,))
-                        _c3.commit(); _cur3.close(); _c3.close()
-                    except Exception: pass
-
-
-                session.clear()
-                session['loggedin'] = True
-                session['username'] = user_data.get('username')
-                session['role']     = db_role
-                session['must_change_password']   = must_change
-                session['account_setup_complete'] = setup_done
-                try:
-                    _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
-                    _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
-                    _conn2.commit(); _cur2.close(); _conn2.close()
-                except Exception: pass
-
-
-                if db_role == 'Admin':
-                    return redirect(url_for('admin_dashboard'))
-                elif db_role == 'Academic Head':
-                    return redirect(url_for('academic_my_dashboard'))
-                elif db_role == 'Faculty':
-                    return redirect(url_for('faculty_dashboard'))
-                else:
-                    flash("Your account does not have an assigned dashboard.")
-                    return redirect(url_for('login'))
-            else:
-                flash("Invalid username or password.")
-                session['saved_username'] = username
-        else:
-            flash("Invalid username or password.")
-            session['saved_username'] = username
-
-
+        if db_role == 'Admin':
+            return redirect(url_for('admin_dashboard'))
+        elif db_role == 'Academic Head':
+            return redirect(url_for('academic_my_dashboard'))
+        elif db_role == 'Faculty':
+            return redirect(url_for('faculty_dashboard'))
+        flash("Your account does not have an assigned dashboard.")
         return redirect(url_for('login'))
 
 
@@ -985,11 +1001,128 @@ def login():
     session.clear()
     if flashes:
         session['_flashes'] = flashes
-    resp = make_response(render_template('login.html', saved_username=saved_username))
+    resp = make_response(render_template('login.html', saved_username=saved_username,
+                                         support_email=Config.SUPPORT_EMAIL))
 
 
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
+
+@app.route('/login/assistance', methods=['POST'])
+def login_assistance_submit():
+    """Contact Admin (login page): no session needed. The reply never says whether the
+    account reference exists; nothing is unlocked or reset by submitting."""
+    data = request.get_json(silent=True) or request.form
+    conn = get_db_connection()
+    try:
+        reference, job = _loginhelp.submit(conn, Config, data.get('account_reference'), data.get('concern'),
+                                           data.get('description'), _client_ip())
+    except _loginhelp.AssistanceError as e:
+        return jsonify({'success': False, 'error': e.message, 'code': e.code}), e.status
+    except Exception as e:
+        print(f"[login_assistance] submit failed: {type(e).__name__}: {e}", flush=True)
+        return jsonify({'success': False, 'error': 'Your request could not be submitted. Please try again.'}), 500
+    finally:
+        conn.close()
+    _loginhelp.dispatch(job)
+    return jsonify({'success': True, 'reference': reference, 'message': _loginhelp.SUCCESS_MESSAGE})
+
+
+_ASSISTANCE_PAGE_SIZE = 15
+
+@app.route('/admin/account-assistance')
+def admin_account_assistance():
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    q      = request.args.get('q', '').strip()
+    status = request.args.get('status', 'Pending')
+    if status not in ('All', 'Open') + _loginhelp.STATUSES: status = 'Pending'
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    where, args = [], []
+    if status == 'Open':
+        where.append("r.status IN ('Pending', 'In Progress')")
+    elif status != 'All':
+        where.append("r.status = %s"); args.append(status)
+    if q:
+        like = f"%{q}%"
+        where.append("""(r.reference ILIKE %s OR r.account_reference ILIKE %s OR a.username ILIKE %s
+                         OR CONCAT_WS(' ', f.firstname, f.lastname) ILIKE %s)""")
+        args += [like, like, like, like]
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    base = f"""
+        FROM login_assistance_request r
+        LEFT JOIN accounts a ON a.userid = r.userid
+        LEFT JOIN faculty f  ON f.employeenumber = a.employeenumber
+        LEFT JOIN login_throttle lt
+               ON a.username IS NOT NULL
+              AND lt.username_key = ENCODE(SHA256(CONVERT_TO(LOWER(a.username), 'UTF8')), 'hex')
+        {where_sql}
+    """
+    counts = query_db("""
+        SELECT COUNT(*) FILTER (WHERE status = 'Pending')     AS pending,
+               COUNT(*) FILTER (WHERE status = 'In Progress') AS in_progress,
+               COUNT(*) FILTER (WHERE status = 'Resolved')    AS resolved,
+               COUNT(*)                                        AS total
+        FROM login_assistance_request
+    """, one=True)
+    matched = query_db("SELECT COUNT(*) AS n " + base, tuple(args), one=True)['n']
+    pages = max(1, -(-matched // _ASSISTANCE_PAGE_SIZE))
+    page = min(page, pages)
+    rows = query_db(f"""
+        SELECT r.*, a.username AS matched_username, a.role AS matched_role, a.isactive AS matched_active,
+               a.employeenumber AS matched_empnum,
+               NULLIF(TRIM(CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END), '') AS matched_email,
+               NULLIF(TRIM(f.contactnumber), '') AS matched_contact,
+               NULLIF(CONCAT_WS(' ', f.firstname, f.lastname), '') AS matched_name,
+               (lt.locked_until IS NOT NULL AND lt.locked_until > NOW()) AS matched_locked
+        {base}
+        ORDER BY CASE r.status WHEN 'Pending' THEN 0 WHEN 'In Progress' THEN 1 ELSE 2 END, r.created_at DESC
+        LIMIT %s OFFSET %s
+    """, tuple(args) + (_ASSISTANCE_PAGE_SIZE, (page - 1) * _ASSISTANCE_PAGE_SIZE))
+    return render_template('admin/account_assistance_admin.html', requests=rows, counts=counts,
+                           matched=matched, page=page, pages=pages, page_size=_ASSISTANCE_PAGE_SIZE,
+                           statuses=_loginhelp.STATUSES, verify_methods=_loginhelp.VERIFY_METHODS,
+                           filters={'q': q, 'status': status})
+
+
+def _assistance_back(form):
+    nxt = form.get('next') or ''
+    return redirect(nxt if nxt.startswith('/admin/account-assistance') and '//' not in nxt
+                    else url_for('admin_account_assistance'))
+
+
+@app.route('/admin/account-assistance/<int:request_id>/<action>', methods=['POST'])
+def admin_account_assistance_action(request_id, action):
+    if session.get('role') != 'Admin': return redirect(url_for('login'))
+    back, admin, f = _assistance_back(request.form), session.get('username'), request.form
+    conn = get_db_connection()
+    try:
+        if action == 'update':
+            ref = _loginhelp.update_status(conn, request_id, admin, f.get('status'), f.get('admin_remarks'),
+                                           f.get('resolution'))
+            flash(f"Support request {ref} updated.", "success")
+        elif action == 'verify':
+            _loginhelp.verify_identity(conn, request_id, admin, f.get('identity_method'), f.get('identity_notes'))
+            flash("Identity verification recorded. You can now use the account recovery actions.", "success")
+        elif action == 'unlock':
+            user = _loginhelp.clear_lock(conn, request_id, admin)
+            flash(f"The temporary login lock for '{user}' was cleared.", "success")
+        elif action == 'reset-password':
+            user = _loginhelp.reset_password(conn, request_id, admin)
+            flash(f"Password for '{user}' reset to: PUP@{user}. They must change it on next login.", "success")
+        else:
+            flash("Unknown action.", "error")
+    except _loginhelp.AssistanceError as e:
+        flash(e.message, "error")
+    except Exception as e:
+        print(f"[account assistance] {action} failed: {type(e).__name__}: {e}", flush=True)
+        flash("The request could not be updated because of a database error. Nothing was changed.", "error")
+    finally:
+        conn.close()
+    return back
+
 
 def _dashboard_url_for_role(role):
     return {'Admin': 'admin_dashboard', 'Academic Head': 'academic_my_dashboard',
@@ -24715,19 +24848,12 @@ def account_reset_password():
     username = request.form.get('username', '').strip()
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        new_pw = generate_password_hash(f"PUP@{username}")
         # Temporary password → required password change → dashboard. Only the
         # password is reset: account_setup_complete (and the email / photo /
         # contact the faculty already set up) stays as it is, so a completed
         # profile setup is not restarted. Pending Forgot Password codes for the
         # account stop working.
-        cur.execute("""
-            UPDATE accounts SET passwordhash = %s, must_change_password = TRUE
-            WHERE userid = %s
-        """, (new_pw, user_id))
-        cur.execute("""UPDATE password_reset_requests
-                       SET invalidated_at = NOW(), code_hash = NULL, reset_token_hash = NULL
-                       WHERE userid = %s AND used_at IS NULL AND invalidated_at IS NULL""", (user_id,))
+        _loginhelp.reset_to_temporary_password(cur, user_id, username)
         conn.commit()
         flash(f"Password for '{username}' reset to: PUP@{username}. They must change it on next login.", "success")
     except Exception as e:
@@ -38675,6 +38801,14 @@ def _run_startup_migrations():
     # the database so they survive restarts (see password_reset.py /
     # migrations/2026-09-29_password_reset_requests.sql).
     _step('sm_password_reset_requests', _pwreset.ENSURE_SCHEMA_SQL)
+
+    # Login protection: failed-attempt counter + temporary lockout + per-IP failures
+    # (see login_security.py / migrations/2026-10-15_login_lockout.sql).
+    _step('sm_login_lockout', _loginsec.ENSURE_SCHEMA_SQL)
+
+    # Login assistance requests (Contact Admin on the login page; see login_assistance.py /
+    # migrations/2026-10-15_login_assistance.sql).
+    _step('sm_login_assistance', _loginhelp.ENSURE_SCHEMA_SQL)
     try:
         import mailer as _mailer
         if not _mailer.configured(Config):

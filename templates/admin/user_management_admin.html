@@ -65,6 +65,15 @@
     }
 
     /* Correction Requests button: pending count in a white pill */
+    .um-header-actions { display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn-assistance { background-color: #fff !important; color: #800000 !important; border: 1.5px solid #800000 !important; }
+    .btn-assistance i { color: #800000 !important; }
+    .btn-assistance:hover { background-color: #fdf3f3 !important; }
+    .la-count {
+        min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px;
+        background: #800000; color: #ffffff; font-size: 11px; font-weight: 800;
+        display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+    }
     .cr-count {
         min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px;
         background: #ffffff; color: #800000; font-size: 11px; font-weight: 800;
@@ -72,6 +81,7 @@
     }
     @media (max-width: 520px) {
         .page-header { flex-wrap: wrap; gap: 12px; }
+        .um-header-actions { width: 100%; }
         .btn-corrections { width: 100%; justify-content: center; }
     }
 
@@ -315,11 +325,18 @@
     <!-- Header -->
     <div class="page-header">
         <h1>USER MANAGEMENT</h1>
+        <span class="um-header-actions">
+        <a href="{{ url_for('admin_account_assistance') }}" class="btn-add-user btn-corrections btn-assistance"
+           {% if pending_assistance_count %}aria-label="Account Assistance, {{ pending_assistance_count }} pending"{% endif %}>
+            <i class="fas fa-life-ring"></i> Account Assistance
+            {% if pending_assistance_count %}<span class="la-count">{{ pending_assistance_count }}</span>{% endif %}
+        </a>
         <a href="{{ url_for('admin_account_corrections') }}" class="btn-add-user btn-corrections"
            {% if pending_correction_count %}aria-label="Correction Requests, {{ pending_correction_count }} pending"{% endif %}>
             <i class="fas fa-user-pen"></i> Correction Requests
             {% if pending_correction_count %}<span class="cr-count">{{ pending_correction_count }}</span>{% endif %}
         </a>
+        </span>
     </div>
 
     <!-- Table Container -->
