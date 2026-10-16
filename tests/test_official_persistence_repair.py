@@ -456,6 +456,19 @@ def test_unselected_slices_of_the_published_subject_stay_draft(tx, scope, client
 
 
 @requires_db
+def test_generation_approve_retires_a_regenerated_subjects_old_draft(tx, scope, client, clean_gates):
+    """Generate -> Save as Draft -> Re-generate one subject (new day/time) -> Approve:
+    the Generate page publishes each subject's complete result, so the subject's
+    pre-regeneration Draft slice must not be left behind as a Draft."""
+    A = scope['A']
+    _seed(tx, scope, 'Draft', 1, [_row(scope, A, 'Monday', '07:30', '09:00')])
+    r = _approve(client, scope, [_row(scope, A, 'Wednesday', '07:30', '09:00')],
+                 replace_subject_drafts=True)
+    assert r.get_json()['success'], r.get_json()
+    assert _state(tx, scope) == {(A, 'Published'): [('Wednesday', '07:30')]}
+
+
+@requires_db
 def test_edited_draft_slice_is_consumed_by_sessionid(tx, scope, client, clean_gates):
     """Saturday slice moved to Tuesday then published: the old Saturday Draft row must not linger."""
     A = scope['A']

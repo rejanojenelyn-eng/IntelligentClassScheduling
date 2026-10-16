@@ -4232,6 +4232,20 @@ class IntelligentScheduler:
                                          if _has_load_capacity(f, nominal_hrs)]
                 if taught_with_capacity:
                     taught_candidates = taught_with_capacity
+                elif taught_candidates:
+                    # Everyone who has taught it is already at their load limit. If
+                    # faculty with the SAME specialization as those instructors still
+                    # have room, pick among them (P4 below) instead of overloading the
+                    # same person on every run — a guaranteed HC9 that Re-generate
+                    # could never fix.
+                    _taught_specs = {(f.get('specializationname') or '').strip()
+                                     for f in taught_candidates} - {''}
+                    same_spec = [f for f in faculty_list
+                                 if (f.get('specializationname') or '').strip() in _taught_specs
+                                 and _has_load_capacity(f, nominal_hrs)]
+                    if same_spec:
+                        taught_candidates, qualified_faculty = [], same_spec
+                        pref_fnum = hist_fnum = wide_fnum = cross_fnum = None
                 taught_night_ok = [f for f in taught_candidates if _fits_locked_night(f)]
                 if taught_night_ok:
                     taught_candidates = taught_night_ok

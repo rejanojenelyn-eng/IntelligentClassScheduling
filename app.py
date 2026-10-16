@@ -26719,10 +26719,7 @@ def admin_reports():
     statuses = query_db("SELECT DISTINCT employeestatus FROM faculty WHERE employeestatus IS NOT NULL ORDER BY employeestatus")
     buildings = query_db("SELECT buildingid, buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
     room_types = query_db("SELECT DISTINCT roomtype FROM room WHERE roomtype IS NOT NULL ORDER BY roomtype")
-    # Room and Designation filter dropdowns (the "for r in rooms" / "for d in designations"
-    # loops further down in reports_admin.html) were never passed here — Jinja's default
-    # Undefined just iterates as empty rather than raising, so both dropdowns silently
-    # rendered with no options at all instead of erroring.
+
     rooms = query_db("""
         SELECT r.roomid, r.roomname, b.buildingname
         FROM room r LEFT JOIN building b ON r.buildingid = b.buildingid
@@ -27049,11 +27046,6 @@ def _generic_gen_csv(columns, rows, campus_header=False, title=''):
     out = io.StringIO()
     w   = csv.writer(out)
     if campus_header:
-        # Text-only letterhead (no logo in a CSV) — the exact same two lines
-        # of text the web preview's letterhead shows (title + campus banner;
-        # the preview's third letterhead element is a logo *image*, which a
-        # CSV can't hold, so it's simply omitted here rather than replaced
-        # with text the preview never actually displays).
         w.writerow([str(title).upper()])
         w.writerow(['LOPEZ, QUEZON CAMPUS'])
         w.writerow([])
@@ -27210,18 +27202,7 @@ def _generic_gen_pdf(title, columns, rows, filters_text='', campus_header=False)
     story.append(Spacer(1, 0.3*cm))
 
     if rows:
-        # Column widths, measured with the real font rather than guessed from
-        # character counts. Two widths matter per column:
-        #   min_w  - the widest single *unsplittable* token (a Paragraph only
-        #            wraps at whitespace, so a column narrower than its widest
-        #            token forces a mid-word character break — which both
-        #            looks wrong and, read back through pdfplumber on a PDF
-        #            re-import, comes back as a spurious inserted space).
-        #   pref_w - the widest whole value, i.e. what it'd take to avoid
-        #            wrapping at all.
-        # Every column gets at least min_w; any leftover page width is handed
-        # out proportionally to whichever columns want more (pref_w > min_w)
-        # so the table still fills the page instead of leaving dead space.
+
         from reportlab.pdfbase.pdfmetrics import stringWidth
         FONT, FONT_SIZE, PAD = 'Helvetica', 8, 10
         avail_w = page[0] - 3*cm
@@ -27251,18 +27232,6 @@ def _generic_gen_pdf(title, columns, rows, filters_text='', campus_header=False)
             col_w = [m + (slack * w / total_w if total_w else slack / len(min_w))
                      for m, w in zip(min_w, wants)]
 
-        # Every cell is a Paragraph, not a bare string — a plain string wider
-        # than its column doesn't wrap in a reportlab Table, it just overflows
-        # past the cell's border into the neighboring column. With this many
-        # columns that overflow was constant (e.g. "Specialization" bleeding
-        # into "Designation"), and worse, it also corrupts a PDF-to-table
-        # re-import of this export, since pdfplumber assigns each glyph to
-        # whichever cell it visually falls inside. Wrapping forces long text
-        # to grow the row instead of spilling sideways.
-        # Faculty List's table uses the same clean white-background look as
-        # its web preview (.rpt-table-clean: pale-gray header, dark text, no
-        # maroon fill, no zebra stripes) — every other flat-table report
-        # keeps the original dark-maroon-header / pink-stripe style.
         LGRAY = colors.HexColor('#F7F7F7')
         DARKTXT = colors.HexColor('#222222')
         hdr_cell_style  = ParagraphStyle('HdrCell', parent=styles['Normal'], fontSize=8,
@@ -27438,32 +27407,6 @@ def _generic_export_response(title, columns, rows, formats, filename, campus_hea
         return Response(buf.read(), mimetype='application/zip',
                         headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Reports > Curriculum List — official Program → Curriculum Code → Year
-# Level → Semester grouped layout (each subject table ending in a TOTAL
-# UNITS row), the same "official report" principle as Class Schedule /
-# Room Schedule / Faculty List, replacing a flat one-row-per-subject table
-# that repeated Program/Curriculum Code on every single row.
-# ═══════════════════════════════════════════════════════════════════════════
-# Two column layouts, both matching the Curriculum tab's own Import exactly,
-# because the import mechanism differs by format:
-#  - CSV/XLSX (analyze_curriculum_csv/xlsx) map columns purely by *position*
-#    (col_0..col_10, defaulting to this exact order — no header-name or
-#    context matching at all), so every field — including Curriculum Code /
-#    Year Level / Semester, which the grouped headers below already show —
-#    must also be a literal per-row column in this exact order, or the
-#    import silently reads the wrong field into the wrong slot.
-#  - PDF/DOCX (pdf_curriculum_parser.py / docx_curriculum_parser.py) instead
-#    infer Year Level/Semester from the surrounding "1ST YEAR" / "1st
-#    Semester" heading text (exactly what the grouped layout already
-#    provides) and match the remaining columns by header text. Adding
-#    Curriculum Code as a column there is actively harmful, not just
-#    redundant: docx_curriculum_parser's header matching is a plain
-#    substring search, and "Curriculum Code" contains "cu" — one of the
-#    Units column's own recognized abbreviations — so it gets mistaken for
-#    the Units column. Program is never a column in either layout —
-#    Curriculum Import targets one Program + Curriculum Year chosen on the
 #    import screen itself, never per-row.
 _CURR_CSV_HEADERS = ['Curriculum Code', 'Year Level', 'Semester', 'Subject Code', 'Pre-requisite',
                      'Co-requisite', 'Subject Name', 'Lec Hours', 'Lab Hours', 'Units', 'Tuition Hours']
@@ -28030,14 +27973,6 @@ def _curr_report_gen_pdf(programs):
     buf.seek(0)
     return buf.read()
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Reports > Room and Building List — official Building → Room grouped layout,
-# the same "official report" principle as Class Schedule / Room Schedule /
-# Faculty List / Curriculum List, replacing a flat one-row-per-room table
-# that repeated nothing structurally but had no visual separation between
-# buildings and no letterhead, unlike every other report.
-# ═══════════════════════════════════════════════════════════════════════════
 _BLDG_RPT_HEADERS = ['Room Name', 'Type', 'Capacity', 'Status']
 
 def _bldg_official_row(r):
@@ -32393,6 +32328,61 @@ def _check_designee_night_limit(schedule_list, faculty_map, sem_id,
     return violations
 
 
+def _release_night_cap_locks(locked_sessions, program, year_level, term, acad_year, section_id) -> list:
+    """Re-generate: release the kept Time/Days of rows that put a designee over
+    their designation's night allowance (same rule as _check_designee_night_limit,
+    other sections of the term included). An explicit Academic Head time lock is
+    never released. Mutates the entries in place (schedule unlocked, selected) and
+    returns the released subject codes."""
+    from scheduler import (is_night_service_slice, collect_designee_night_days,
+                           designee_night_allowance)
+
+    def _t(v):
+        return _parse_time_str(v) if isinstance(v, str) else v
+
+    kept = [ls for ls in (locked_sessions or []) if (ls.get('lock') or {}).get('schedule')]
+    if not kept:
+        return []
+    sem_id = None
+    conn = get_db_connection()
+    if conn is not None:
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            sem_id = _get_semester_id(cur, acad_year, term)
+            cur.close()
+        except Exception:
+            sem_id = None   # unknown term: this schedule's own nights are still checked
+        finally:
+            conn.close()
+    codes = sorted({(ls.get('subject_code') or '').strip().upper() for ls in locked_sessions
+                    if (ls.get('subject_code') or '').strip()})
+    fmap = _load_faculty_map()
+    violations = _check_designee_night_limit(
+        kept, fmap, sem_id,
+        exclude_program=program, exclude_year_level=year_level,
+        exclude_section_id=section_id, replaced_codes=codes)
+
+    released = []
+    over = {v['faculty_id'] for v in violations}
+    # This schedule's own nights, even if the other-sections lookup was unavailable.
+    _own = [dict(ls, start_time=_t(ls.get('start_time')), end_time=_t(ls.get('end_time'))) for ls in kept]
+    for fid, by_day in collect_designee_night_days(_own, fmap).items():
+        if len(by_day) > designee_night_allowance(fmap[fid]):
+            over.add(fid)
+    for ls in kept:
+        fid = ls.get('faculty_id') or ls.get('employeenumber')
+        if fid not in over or (ls.get('user_lock') or {}).get('schedule'):
+            continue
+        if not is_night_service_slice(_t(ls.get('start_time')), _t(ls.get('end_time'))):
+            continue
+        ls['lock']['schedule'] = False
+        ls['selected'] = True
+        code = (ls.get('subject_code') or '').strip().upper()
+        if code and code not in released:
+            released.append(code)
+    return released
+
+
 def _parse_days(days_str: str) -> list:
     """Canonical day normalization for this module — delegates to
     scheduler.normalize_day_tokens (the same function CBR historical retrieval
@@ -32660,7 +32650,8 @@ def _insert_removal_drafts(cur, scheduleids_by_code, version_number, source):
 
 
 def _consume_published_drafts(cur, semester_id, section_id, published_rows,
-                              subject_codes, removed_codes=(), version_number=None):
+                              subject_codes, removed_codes=(), version_number=None,
+                              replace_subjects=False):
     """Retire the Official Draft content that a Publish actually replaced.
 
     Only Drafts of the subjects being published (subject_codes) or explicitly removed
@@ -32671,7 +32662,11 @@ def _consume_published_drafts(cur, semester_id, section_id, published_rows,
     of that very slice) or publish the same subject+day+start. A published subject's
     remaining Draft slices (e.g. ones the user left unselected in the publish dialog) are
     re-saved as that subject's new Draft so nothing pending is lost. Removed subjects lose
-    their whole Draft. Returns the version_number used for re-saved remainders, or None.
+    their whole Draft. With replace_subjects (Generate Schedule publishes each subject's
+    complete generated result), the published rows ARE each subject's whole schedule, so a
+    published subject's old Draft is retired entirely — e.g. a regenerated subject's Draft
+    from before it moved to a new day/time is not left behind. Returns the version_number
+    used for re-saved remainders, or None.
     """
     codes = sorted({str(c).upper() for c in subject_codes if c} | {str(c).upper() for c in removed_codes if c})
     if not codes:
@@ -32713,7 +32708,7 @@ def _consume_published_drafts(cur, semester_id, section_id, published_rows,
             FROM public.schedule_sessions WHERE versionid = %s ORDER BY sessionid
         """, (d['versionid'],))
         sessions = cur.fetchall() or []
-        if d['code'] in removed:
+        if d['code'] in removed or replace_subjects:
             remaining = []
         else:
             remaining = [s for s in sessions
@@ -34065,9 +34060,19 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
                 code = code.strip().upper()
                 if code: pairing_flagged.add(code)
         elif rule in _EVAL_CRITERION_RULES['facultyLoadCompliance']:
-            # HC9's (was HC8's) 'subject' field is just 'multiple' — the
-            # faculty is only identifiable from their fullname at the start
-            # of 'detail'.
+            # Faculty identity, most reliable first: the violation's own
+            # faculty_id (HC8/HC9), else the faculty teaching the flagged
+            # subject(s) here (HC1-HC4 availability messages never name them),
+            # else a fullname at the start of 'detail'.
+            if v.get('faculty_id'):
+                load_flagged_faculty.add(v['faculty_id'])
+                continue
+            codes = {c.strip().upper() for c in (v.get('subject') or '').split('/')} - {'', 'MULTIPLE'}
+            by_subject = {s.get('faculty_id') for s in schedule_data
+                          if s.get('faculty_id') and subject_of(s) in codes}
+            if by_subject:
+                load_flagged_faculty |= by_subject
+                continue
             detail = v.get('detail') or ''
             for name, eid in name_to_id.items():
                 if name and detail.startswith(name):
@@ -34964,6 +34969,10 @@ _MAX_REGEN_ROUNDS = 5
 _FRESH_GEN_ATTEMPTS = 8
 _FRESH_GEN_MAX_NO_GAIN = 2
 _FRESH_GEN_RETRY_BUDGET_S = 30
+# Then, if classes are still incomplete, re-solve only those (completed rows kept):
+# at most this many attempts within this many seconds.
+_TARGETED_RETRY_ATTEMPTS = 8
+_TARGETED_RETRY_BUDGET_S = 25
 import random
 
 
@@ -35012,6 +35021,51 @@ def _generation_load_notices(schedule_rows, violations):
                                   if mine else 'their classes in this section.'),
                     'suggestion': 'Give one of these classes to another instructor (Manual Editor), '
                                   'or raise this instructor\'s load limit if that is allowed.'})
+    return out
+
+
+def _merge_candidates(code, term, acad_year_id, section_id, limit=3):
+    """Other sections' existing classes of the same subject this term (Published first,
+    then Draft) that a class the generator could not place may be merged with in the
+    Manual Editor — one entry per section: 'BSED-MT-1 — Sunday 7:30 AM–10:30 AM,
+    Instructor X, Room Y'. [] when the subject is outside the Class Merging scope."""
+    cfg = load_scheduler_config()
+    if not faculty_load.is_merge_in_scope(code, cfg):
+        return []
+    rows = query_db("""
+        SELECT DISTINCT ON (sc.sectionid, ss.daydesc, ss.starttimeid)
+               sc.sectionid, sec.sectionname, sv.status, ss.daydesc,
+               ts_s.timevalue AS start_time, ts_e.timevalue AS end_time,
+               COALESCE(r.roomname, 'TBA') AS room,
+               CONCAT(f.lastname, ', ', f.firstname) AS instructor
+        FROM schedule_sessions ss
+        JOIN schedule_version sv    ON ss.versionid = sv.versionid
+        JOIN schedule sc            ON sv.scheduleid = sc.scheduleid
+        JOIN sections sec           ON sec.sectionid = sc.sectionid
+        JOIN curriculumsubject cs   ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN semester sem           ON sc.semesterid = sem.semesterid
+        LEFT JOIN timeslot ts_s     ON ss.starttimeid = ts_s.timeid
+        LEFT JOIN timeslot ts_e     ON ss.endtimeid = ts_e.timeid
+        LEFT JOIN room r            ON r.roomid = ss.roomid
+        LEFT JOIN faculty f         ON f.employeenumber = COALESCE(sv.employeenumber, sc.employeenumber)
+        WHERE sem.academicyearid = %s AND UPPER(sem.semestertype) = UPPER(%s)
+          AND UPPER(cs.subjectcode) = %s
+          AND sv.status IN ('Published', 'Draft') AND sv.source IS DISTINCT FROM 'local'
+          AND sc.sectionid IS DISTINCT FROM %s
+          AND ss.daydesc IS NOT NULL AND ts_s.timevalue IS NOT NULL
+        ORDER BY sc.sectionid, ss.daydesc, ss.starttimeid, (sv.status = 'Published') DESC
+    """, (acad_year_id, term, (code or '').strip().upper(), _section_id_or_none(section_id))) or []
+    out, seen = [], set()
+    for r in sorted(rows, key=lambda r: (r['status'] != 'Published', r['sectionname'] or '')):
+        if r['sectionid'] in seen:
+            continue
+        seen.add(r['sectionid'])
+        who = (r['instructor'] or '').strip(', ') or 'no instructor yet'
+        out.append(f"{r['sectionname']} — {r['daydesc']} {_display_time_range(r['start_time'], r['end_time'])}, "
+                   f"{who}, Room {r['room']}"
+                   + (' (Draft)' if r['status'] != 'Published' else ''))
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -35117,6 +35171,31 @@ def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, 
             notices.append(dict(base, kind='other', title='Could not be completed',
                 message=(g.get('incomplete_reason') or ['This class could not be fully scheduled.'])[0],
                 suggestion='Review it in the table, or place it yourself in the Manual Editor.'))
+    # Last resort for a class that cannot be placed on its own (e.g. NSTP with every
+    # NSTP instructor already teaching on Sunday): if merging is allowed for the subject
+    # and other sections already have it, say so — the rest of the schedule can be saved
+    # now and this class merged with one of those in the Manual Editor.
+    _merge_opts, _merge_shown = {}, set()
+    for n in notices:
+        if n.get('kind') not in ('no_room', 'no_room_at_time', 'no_faculty', 'no_time'):
+            continue
+        code = n.get('subject_code') or ''
+        if code not in _merge_opts:
+            try:
+                _merge_opts[code] = _merge_candidates(code, term, acad_year_id, section_id)
+            except Exception as e:
+                print(f"[shortage notices] merge candidates unavailable: {e}")
+                _merge_opts[code] = []
+        opts = _merge_opts[code]
+        if not opts or code in _merge_shown:
+            continue
+        _merge_shown.add(code)
+        n['merge_options'] = opts
+        n['suggestion'] = (
+            f"Merge it with another section's {code} class: save this schedule as a Draft now "
+            f"(only {code} stays incomplete), then in the Manual Editor give {code} the same day, "
+            f"time, room and instructor as one of these — " + '; '.join(opts) + '. '
+            + n.get('suggestion', ''))
     return notices + load_notices
 
 
@@ -35155,6 +35234,17 @@ def api_generate_schedule():
                 ls['user_lock'][f] = False
         code = (ls.get('subject_code') or '').strip().upper()
         if code and not all(ls['lock'].get(f) for f in REGEN_LOCK_FIELDS) and code not in mutable_codes:
+            mutable_codes.append(code)
+    # A kept (unchecked or auto-kept) time that puts a designee over their
+    # designation's night allowance can never be approved, so it is not kept:
+    # its Time/Days are released and the solver re-places it (instructor and
+    # room stay auto-kept). Only an explicit Academic Head time lock is kept.
+    night_released = _release_night_cap_locks(
+        locked_sessions, program, year_level, term, data.get('acadYear', ''),
+        _section_id_or_none(data.get('section') or data.get('section_id') or data.get('sectionId')))
+    for code in night_released:
+        any_selected = True
+        if code not in mutable_codes:
             mutable_codes.append(code)
     if any_selected and not mutable_codes:
         return jsonify({
@@ -35195,7 +35285,7 @@ def api_generate_schedule():
     for ls in locked_sessions:
         by_code.setdefault((ls.get('subject_code') or '').strip().upper(), []).append(ls)
     sessions  = copy.deepcopy(locked_sessions)
-    released  = {}
+    released  = {c: ['schedule'] for c in night_released}
     frozen    = set()
     problems  = {}
     retried_without_release = False
@@ -35279,6 +35369,33 @@ def api_generate_schedule():
                 _no_gain = 0
             else:
                 _no_gain += 1
+
+        # Still incomplete: re-solve ONLY the incomplete classes with every completed
+        # row kept as-is — what Re-generate Selected does by hand, and often enough to
+        # place a class (e.g. NSTP) that a whole new run kept missing. Accepted only
+        # when strictly better.
+        _targeted_deadline = _time_mod.monotonic() + _TARGETED_RETRY_BUDGET_S
+        for _attempt in range(_TARGETED_RETRY_ATTEMPTS):
+            _inc = {(g.get('subject_code') or '').strip().upper()
+                    for g in (res.get('schedule_data') or []) if g.get('incomplete')}
+            if not _inc or _time_mod.monotonic() > _targeted_deadline:
+                break
+            _keep = {f: True for f in REGEN_LOCK_FIELDS}
+            _free = {f: False for f in REGEN_LOCK_FIELDS}
+            _sessions = []
+            for g in res['schedule_data']:
+                code = (g.get('subject_code') or '').strip().upper()
+                mutable = code in _inc
+                _sessions.append(dict(copy.deepcopy(g), row_key=code, selected=mutable,
+                                      lock=dict(_free if mutable else _keep), user_lock=dict(_free)))
+            _r2 = _solve(_sessions, seed=random.randrange(1, 2**31))
+            _s2 = _r2.get('result_status') or ('COMPLETE_VALID' if _r2.get('success') else 'GENERATION_ERROR')
+            if _s2 == 'GENERATION_ERROR' or not _r2.get('schedule_data'):
+                continue
+            _cv2, _cc2 = _cross(_r2['schedule_data'])
+            _b2 = _badness(_r2, _cv2)
+            if _b2 < _best_bad:
+                res, result_status, cross_violations, cross_conflict_count, _best_bad = _r2, _s2, _cv2, _cc2, _b2
 
     # The same advisory (e.g. one specialization notice) is raised once per session of a
     # subject — list each distinct notice once.
@@ -35981,7 +36098,9 @@ def api_save_draft():
         # cross-section checks below) are returned as `draft_warnings` and the
         # draft is still saved. The SAME checks remain blocking at Approve/
         # Publish (api_approve_schedule), which is where a schedule must be
-        # complete and hard-constraint clean.
+        # complete and hard-constraint clean. Exceptions blocked here too: an
+        # overlapping slice, an invalid merged class, and the designee night
+        # limit (HC8).
         # HC7 (Required Day Pairing) is checked here too. HC6 is Standard
         # Time-Slot Compliance in the frozen HC1-HC17 inventory.
         draft_warnings = []
@@ -36058,17 +36177,40 @@ def api_save_draft():
         # ── #11: Cross-program faculty load check ─────────────────────────────
         # Block saving if any faculty in THIS schedule would exceed their total
         # teaching load limit when combined with other sections already saved.
+        # Blocking, same as Approve: an overloaded faculty is never written as a Draft.
         _load_viols = _check_cross_program_faculty_loads(
             schedule_list, _fmap_pre, sem_id,
             exclude_program=program, exclude_year_level=year_level,
             exclude_section_id=ctx_section_id,
         )
-        draft_warnings += [{'rule': 'HC9', 'subject': 'multiple',
-                            'detail': f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} hrs "
-                                      f"(+{v['overload_by']} over limit) across all sections"}
-                           for v in (_load_viols or [])]
+        if _load_viols:
+            conn.rollback(); cur.close(); conn.close()
+            return jsonify({
+                'success': False,
+                'error': 'Cannot save draft: faculty load limit exceeded — ' + '; '.join(
+                    f"{v['faculty_name']}: {v['total_load']}/{v['max_load']} hrs "
+                    f"(+{v['overload_by']} over limit)" for v in _load_viols),
+                'code': 'HC9_FACULTY_LOAD',
+                'load_violations': _load_viols,
+            }), 400
+        if _pre_rehydrated:
+            # Same rule within this schedule (+ other sections' hours via existing_load),
+            # e.g. when the cross-section lookup above was unavailable.
+            _hc9 = [v for v in _viols_pre if v.get('rule') == 'HC9']
+            if _hc9:
+                conn.rollback(); cur.close(); conn.close()
+                return jsonify({
+                    'success': False,
+                    'error': 'Cannot save draft: faculty load limit exceeded — '
+                             + '; '.join(v.get('detail') or '' for v in _hc9),
+                    'code': 'HC9_FACULTY_LOAD',
+                    'violations': _hc9,
+                }), 400
 
         # ── Designee night-cap check (PT/Night Teaching Service) ──────────────
+        # Blocking, like an overlapping slice: a designee teaching on more nights
+        # than their designation allows (0 = none) is not work in progress but an
+        # assignment that can never be approved, so it is never written as a Draft.
         _night_viols = _check_designee_night_limit(
             schedule_list, _fmap_pre, sem_id,
             exclude_program=program, exclude_year_level=year_level,
@@ -36076,8 +36218,19 @@ def api_save_draft():
             replaced_codes=submitted_codes + [str(c).strip().upper()
                                               for c in (data.get('removed_subjects') or [])],
         )
-        draft_warnings += [{'rule': 'HC8', 'subject': 'multiple', 'detail': v['detail']}
-                           for v in (_night_viols or [])]
+        if not _night_viols and _pre_rehydrated:
+            # Same rule within this schedule alone (covers a failed cross-section lookup).
+            _night_viols = [v for v in _viols_pre if v.get('rule') == 'HC8']
+        if _night_viols:
+            conn.rollback(); cur.close(); conn.close()
+            return jsonify({
+                'success': False,
+                'error': 'Cannot save draft: designee night-teaching limit exceeded — '
+                         + '; '.join(v['detail'] for v in _night_viols)
+                         + ' Move the night class to an allowed time or assign another instructor.',
+                'code': 'HC8_NIGHT_LIMIT',
+                'night_violations': _night_viols,
+            }), 400
 
         # ── Server-side section conflict check ──
         # Phase A2 audit note (NOT removed -- see the Phase A2 report):
@@ -37339,6 +37492,7 @@ def api_approve_schedule():
         _consume_published_drafts(
             cur, sem_id, _ctx_section_id, sched_data, submitted_codes,
             removed_codes=removed_subjects, version_number=max_v + 2,
+            replace_subjects=bool(data.get('replace_subject_drafts')),
         )
 
         # Surface the section's latest remaining Draft revision to the caller.

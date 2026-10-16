@@ -2145,7 +2145,7 @@ document.getElementById('btnManualApprove').addEventListener('click', async () =
             await showValidationModal('Constraint Violations', errorMsg);
         } else if (data.load_violations && data.load_violations.length) {
             const details = data.load_violations.map(v =>
-                `• ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                `• ${v.faculty_name}: ${v.total_load}/${v.max_load} hrs (+${v.overload_by} over limit)`
             ).join('\n');
             await showValidationModal('Faculty Load Exceeded',
                 `Cannot approve — the following faculty exceed their allowed teaching load across all sections this term:\n\n${details}`);

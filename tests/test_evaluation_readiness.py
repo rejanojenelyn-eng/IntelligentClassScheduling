@@ -185,3 +185,13 @@ def test_ui_6_7_8_regeneration_fixes_counts_and_enables_approval_only_when_both_
     assert r2['approveDisabled'] is False and r2['readinessHidden'] is True          # 8
     assert r2['eligibleBadgeHidden'] is False and 'eval-good' in r2['scoreClass']
     assert r2['bannerListAfter'] == ''                                               # no stale row names
+
+
+@requires_db
+def test_teaching_window_violation_without_a_faculty_name_lowers_faculty_load_compliance():
+    # HC4's detail never starts with the faculty's name ("06:00 AM–07:30 AM on Monday is
+    # outside designee teaching hours..."), so the faculty is found from the flagged subject.
+    ev = _eval([CLEAN[0], _row(subject_code='GEED 003', start_time=time(6, 0), end_time=time(9, 0),
+                               time='6:00 AM - 9:00 AM')])
+    assert [c['rule'] for c in ev['conflicts']] == ['HC4']
+    assert ev['categories']['constraintCompliance']['criteria']['facultyLoadCompliance'] < 100

@@ -1718,10 +1718,16 @@ document.addEventListener('DOMContentLoaded', () => {
             .concat(hard.filter(v => !(v.rule === 'HC9' && notices.some(n => n.kind === 'faculty_load'))
                                  && !(v.rule === 'HC13' && explained.has(String(v.subject || '').trim())))
                         .map(v => v.detail || v.type || v.rule || 'Hard-constraint violation'));
+        // A designee night-limit (HC8) violation also blocks Save as Draft (server-side).
+        const nightBlocked = hard.some(v => v.rule === 'HC8');
         let html = 'A schedule was generated, but some assignments could not be completed or still '
-            + 'require correction.<br><br>You can review the generated result and save it as a draft, '
-            + 'but approval is disabled until all required assignments are complete and all blocking '
-            + 'constraints are resolved.';
+            + 'require correction.<br><br>'
+            + (nightBlocked
+                ? 'A designee is scheduled beyond their allowed night teaching, so this result cannot be '
+                  + 'saved as a draft or approved until that class is moved or reassigned.'
+                : 'You can review the generated result and save it as a draft, '
+                  + 'but approval is disabled until all required assignments are complete and all blocking '
+                  + 'constraints are resolved.');
         if (notices.length) {
             html += '<div class="shortage-notices">'
                 + notices.map(n =>
@@ -2313,7 +2319,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const lvs = data.load_violations || [];
                 if (lvs.length) {
                     const details = lvs.map(v =>
-                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} hrs (+${v.overload_by} over limit)`
                     ).join('<br>');
                     await showInfo('Conflict: Faculty Load',
                         'Cannot save draft — the following faculty exceed their load limit '
@@ -2508,6 +2514,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     schedule_data: currentScheduleData,
                     context:       ctx,
                     override:      override,
+                    // The generated rows are each subject's complete schedule: retire
+                    // those subjects' old Drafts entirely (a regenerated subject's
+                    // pre-regeneration Draft must not be left behind).
+                    replace_subject_drafts: true,
                 }),
                 signal: _approveAbort.signal,
             });
@@ -2567,7 +2577,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const lvs = data.load_violations || [];
                 if (lvs.length) {
                     const details = lvs.map(v =>
-                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} units (+${v.overload_by} over limit)`
+                        `• ${v.type || 'Conflict: Faculty Load'} — ${v.faculty_name}: ${v.total_load}/${v.max_load} hrs (+${v.overload_by} over limit)`
                     ).join('<br>');
                     await showInfo('Conflict: Faculty Load',
                         'Cannot approve — the following faculty exceed their load limit '
