@@ -1649,12 +1649,12 @@
             </div>
             <div class="adj-grid3">
                 <div class="mu-field">
-                    <label class="mu-label" for="adjSectionSel"><b>*</b> SECTION <small>(SELECT SUBJECT FIRST)</small></label>
+                    <label class="mu-label" for="adjSectionSel"><b>*</b> SECTION</label>
                     <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-users"></i></span>
                         <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
-                            <option value="">— Select subject first —</option>
+                            <option value="">— Select section —</option>
                         </select></div>
-                    <div class="adj-hint">Section options will appear after selecting a subject.</div>
+                    <div class="adj-hint">Choose the section for this class.</div>
                 </div>
                 <div class="mu-field">
                     <label class="mu-label">PROGRAM</label>
@@ -1668,6 +1668,17 @@
                         <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled"></div>
                     <div class="adj-hint">This will be filled automatically.</div>
                 </div>
+            </div>
+
+            <!-- The exact Official class meeting being moved (a class meeting twice a
+                 week has two). The request binds to it (official_sessionid). -->
+            <div class="mu-field">
+                <label class="mu-label" for="adjMeetingSel"><b>*</b> CLASS MEETING TO CHANGE</label>
+                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-clock-rotate-left"></i></span>
+                    <select id="adjMeetingSel">
+                        <option value="">— Select subject and section first —</option>
+                    </select></div>
+                <div class="adj-hint">Choose which of this class's current meetings you want to move.</div>
             </div>
 
             <!-- Conflict Warning Banner -->
@@ -1865,17 +1876,45 @@ function _buildSubjectSelects() {
         }
     });
     muCascade('reset');   // Make-up form: Program → Year level → Section → Subject
-    ['adjSubjectSel'].forEach(id => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        sel.innerHTML = '<option value="">— Select your assigned subject —</option>';
-        opts.forEach(a => {
-            const o = document.createElement('option');
-            o.value = a.subjectcode;
-            o.textContent = `${a.subjectcode} — ${a.subjectname || ''}`;
-            sel.appendChild(o);
+    _adjPairChanged('reset');   // Adjustment form: Subject ⇄ Section, either order
+}
+
+
+/* Schedule Adjustment: Subject and Section can be picked in EITHER order. Each list
+   shows only what this faculty teaches given the other pick (a section shows only the
+   subjects taught there, a subject only its sections); a single remaining choice is
+   picked automatically. src: 'subject' | 'section' | 'reset'. */
+function _adjPairChanged(src) {
+    const subjSel = document.getElementById('adjSubjectSel');
+    const secSel  = document.getElementById('adjSectionSel');
+    if (!subjSel || !secSel) return;
+    if (src === 'reset') { subjSel.value = ''; secSel.value = ''; }
+    const fill = (src2) => {
+        const subj = subjSel.value, sec = secSel.value;
+        const subjects = new Map(), sections = new Map();
+        _myAssignments.forEach(a => {
+            if (!sec || String(a.sectionid) === sec) subjects.set(a.subjectcode, a);
+            if (a.sectionid && (!subj || a.subjectcode === subj)) sections.set(String(a.sectionid), a);
         });
-    });
+        subjSel.innerHTML = '<option value="">— Select subject —</option>' + [...subjects.values()]
+            .map(a => `<option value="${a.subjectcode}">${a.subjectcode} — ${a.subjectname || ''}</option>`).join('');
+        secSel.innerHTML = '<option value="">— Select section —</option>' + [...sections.entries()]
+            .map(([sid, a]) => `<option value="${sid}" data-prog="${a.programcode || ''}" data-yl="${a.yearlevel || ''}"`
+                             + ` data-name="${a.sectionname || ''}">${a.sectionname || 'Section ' + sid}</option>`).join('');
+        subjSel.value = subjects.has(subj) ? subj : '';
+        secSel.value  = sections.has(sec)  ? sec  : '';
+        // The pick just made narrows the other list; take its only option.
+        if (src2 === 'subject' && subjSel.value && !secSel.value && sections.size === 1) {
+            secSel.value = [...sections.keys()][0]; return true;
+        }
+        if (src2 === 'section' && secSel.value && !subjSel.value && subjects.size === 1) {
+            subjSel.value = [...subjects.keys()][0]; return true;
+        }
+        return false;
+    };
+    if (fill(src)) fill('');   // re-filter after an automatic pick
+    document.getElementById('adjSubject').value = subjSel.value;
+    _reqApplySection('adj');
 }
 
 
@@ -1944,6 +1983,7 @@ function muCount(el) {
 /* Called when subject dropdown changes — populate section select */
 function reqSubjectChanged(p) {
     if (p === 'mu') { muCascade('reset'); return; }
+    if (p === 'adj') { _adjPairChanged('subject'); return; }
     const code = document.getElementById(p + 'SubjectSel').value;
     // Clear hidden fields & displays
     ['Subject','Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
@@ -1986,6 +2026,14 @@ function reqSubjectChanged(p) {
 
 /* Called when section dropdown changes */
 function reqSectionChanged(p) {
+    if (p === 'adj') { _adjPairChanged('section'); return; }
+    _reqApplySection(p);
+}
+
+
+/* Fill the hidden Section/Program/Year fields from the section dropdown, then refresh
+   conflicts, blocked times and (Adjustment) the class's meetings. */
+function _reqApplySection(p) {
     const secSel = document.getElementById(p + 'SectionSel');
     if (!secSel) return;
     const opt = secSel.options[secSel.selectedIndex];
@@ -1993,6 +2041,7 @@ function reqSectionChanged(p) {
         ['Section','Program','Yl'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
         ['ProgramDisplay','YlDisplay'].forEach(f => { const el=document.getElementById(p+f); if(el) el.value=''; });
         _hideConflictBanner(p);
+        if (p === 'adj') _adjBuildMeetings();
         return;
     }
     document.getElementById(p + 'Section').value        = opt.value;
@@ -2003,7 +2052,37 @@ function reqSectionChanged(p) {
     _checkConflicts(p);
     // Re-check time dropdowns now that we know the section — block its existing class slots
     if (p === 'mu') _muRefreshTimeDropdowns();
-    else            _adjRefreshTimeDropdowns();
+    else          { _adjRefreshTimeDropdowns(); _adjBuildMeetings(); }
+}
+
+
+/* Schedule Adjustment: the class's current meetings for the chosen subject + section
+   (one per Official occurrence), auto-selected when there is only one. */
+function _adjBuildMeetings() {
+    const sel = document.getElementById('adjMeetingSel');
+    if (!sel) return;
+    const code = document.getElementById('adjSubject').value;
+    const sec  = document.getElementById('adjSection').value;
+    if (!code || !sec) {
+        sel.innerHTML = '<option value="">— Select subject and section first —</option>';
+        return;
+    }
+    const dayIdx = d => ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(d);
+    const seen = new Set();
+    const meetings = _myAssignments
+        .filter(a => a.subjectcode === code && String(a.sectionid) === String(sec) && a.official_sessionid)
+        .filter(a => !seen.has(String(a.official_sessionid)) && seen.add(String(a.official_sessionid)))
+        .sort((a, b) => dayIdx(a.daydesc) - dayIdx(b.daydesc) || String(a.start_time).localeCompare(String(b.start_time)));
+    if (!meetings.length) {
+        sel.innerHTML = '<option value="">No published meeting found for this class</option>';
+        return;
+    }
+    sel.innerHTML = (meetings.length > 1 ? '<option value="">— Select a meeting —</option>' : '')
+        + meetings.map(a => {
+            const room = a.roomname ? ` · ${a.roomname}` : '';
+            const local = a.source === 'Local' ? ' (Local schedule)' : '';
+            return `<option value="${a.official_sessionid}">${a.daydesc} ${a.start_time} – ${a.end_time}${room}${local}</option>`;
+        }).join('');
 }
 
 
@@ -2449,7 +2528,8 @@ function _resetReqForm(p) {
 
     const subjSel = document.getElementById(p + 'SubjectSel');
     if (subjSel) subjSel.value = '';
-    reqSubjectChanged(p); // clears Subject/Section/Program/Yl hidden fields + section select placeholder
+    if (p === 'adj') _adjPairChanged('reset');   // clears Subject + Section and both lists
+    else reqSubjectChanged(p); // clears Subject/Section/Program/Yl hidden fields + section select placeholder
 
 
     const reasonEl = document.getElementById(p + 'Reason');
@@ -2563,6 +2643,7 @@ async function reqSubmit(type) {
         payload.note         = document.getElementById('muNote').value;
     } else {
         payload.day = document.getElementById('adjDay').value;
+        payload.official_sessionid = document.getElementById('adjMeetingSel').value || null;
     }
 
 
@@ -2570,6 +2651,9 @@ async function reqSubmit(type) {
     if (!payload.room_id)      return showToast('Please select a room.', 'warning');
     if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
     if (!payload.section_id)   return showToast('Please select a section.', 'warning');
+    if (!isMakeup && !payload.official_sessionid) {
+        return showToast('Please select which class meeting you want to change.', 'warning');
+    }
     if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
     if (isMakeup && (!payload.start_time || !payload.end_time)) {
         return showToast('Please select both a start and an end time.', 'warning');
@@ -2660,10 +2744,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // here — they're now the .frs-combo pickers in room_schedule.faculty.js, which build
     // their own option list on demand (_frsTimeOptions), so nothing to populate up front.
     _reqInitFacultyData();
-    // Prevent past date selection for make-up class
-    const today = new Date().toISOString().split('T')[0];
-    const muDateEl = document.getElementById('muDate');
-    if (muDateEl) muDateEl.min = today;
+    // No past dates in any date picker on this page (make-up class, Available Rooms).
+    // LOCAL date — toISOString() is UTC, which before 8:00 AM (UTC+8) is still
+    // yesterday and left yesterday selectable.
+    const _now = new Date();
+    const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+    ['muDate', 'frsAvailDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.min = today;
+        // A typed date bypasses the picker's min: clear it instead of keeping a past date.
+        el.addEventListener('change', () => { if (el.value && el.value < el.min) el.value = ''; }, true);
+    });
 });
 
 /* Dashboard deep links: ?view=available opens the Available Rooms tab; ?request=1 also

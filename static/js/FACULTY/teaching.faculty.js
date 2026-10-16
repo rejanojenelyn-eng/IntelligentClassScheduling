@@ -35,15 +35,22 @@ function showTab(name, el) {
     document.getElementById('taPageTitle').textContent = name === 'weekly' ? 'MY WEEKLY SCHEDULE' : 'MY TEACHING ASSIGNMENT';
     document.querySelectorAll('.tab-link').forEach(t => t.classList.remove('active'));
     if (el) el.classList.add('active');
-
+    // Teaching Assignment shows the Official load only: no Official/Local toggle there,
+    // and a Local mode chosen on the Weekly tab switches back to Official.
+    document.getElementById('scheduleToggleGroup').style.display = name === 'assignment' ? 'none' : '';
+    if (name === 'assignment' && _scheduleMode !== 'official') {
+        _scheduleMode = 'official';
+        document.getElementById('btnOfficial').classList.add('active');
+        document.getElementById('btnLocal').classList.remove('active');
+    }
 
     if (name === 'weekly')     renderCalendar();
     if (name === 'assignment') renderAssignment();
 }
 
 
-// ── Schedule mode toggle (Official/Local — shared by both tabs; Weekly filters
-//    its pills by it, Teaching Assignment switches which load dataset shows) ──
+// ── Schedule mode toggle (Official/Local — Weekly tab only; it filters the
+//    calendar pills. Teaching Assignment always shows the Official load) ──
 function setScheduleMode(mode) {
     _scheduleMode = mode;
     document.getElementById('btnOfficial').classList.toggle('active', mode === 'official');

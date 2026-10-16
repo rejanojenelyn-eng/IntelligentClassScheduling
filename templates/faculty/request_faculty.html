@@ -391,6 +391,14 @@ const _RF_SLOTS = [
    INIT
 ═══════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
+    // A typed past date bypasses the picker's min: clear it instead of keeping it.
+    ['editMuDate', 'editAdjFrom', 'editAdjEndDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', () => {
+            if (el.value && el.min && el.value < el.min) el.value = '';
+            if (id === 'editAdjFrom') _rfApplyDateMins();
+        }, true);
+    });
     _rfPopulateTimeSelects();
     rfLoadRequests();
 });
@@ -508,6 +516,24 @@ function _rfStatusBadge(status, remarks) {
 /* ═══════════════════════════════════════════
    EDIT FLOW
 ═══════════════════════════════════════════ */
+/* Local today as YYYY-MM-DD (toISOString() is UTC — yesterday before 8:00 AM, UTC+8). */
+function _rfToday() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* No past dates in the edit pickers; an adjustment's end date is never before its start. */
+function _rfApplyDateMins() {
+    const today = _rfToday();
+    ['editMuDate', 'editAdjFrom', 'editAdjEndDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.min = today;
+    });
+    const from = document.getElementById('editAdjFrom');
+    const end  = document.getElementById('editAdjEndDate');
+    if (from && end && from.value && from.value > today) end.min = from.value;
+}
+
 function rfOpenEdit(req) {
     if (typeof req === 'string') req = JSON.parse(req);
     if (req.req_type === 'makeup') {
@@ -516,6 +542,7 @@ function rfOpenEdit(req) {
         _rfSetSelect('editMuStart', req.start_time);
         _rfSetSelect('editMuEnd',   req.end_time);
         document.getElementById('editMuReason').value = req.reason || '';
+        _rfApplyDateMins();
         document.getElementById('editMakeupOverlay').classList.add('open');
         editMuLoadRooms(req.roomid);
     } else {
@@ -529,6 +556,7 @@ function rfOpenEdit(req) {
         document.getElementById('editAdjFrom').value    = req.effective_from || '';
         document.getElementById('editAdjEndDate').value = req.end_date || '';
         document.getElementById('editAdjReason').value  = req.reason || '';
+        _rfApplyDateMins();
         document.getElementById('editAdjOverlay').classList.add('open');
         editAdjLoadRooms(req.roomid);
     }

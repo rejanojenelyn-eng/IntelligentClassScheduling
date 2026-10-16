@@ -21,6 +21,16 @@
         color: #fff;
         font-weight: 600;
         cursor: default;
+        /* Read-only values: size to the full text ("A.Y 2026-2027", "1st Semester")
+           instead of the shared 130px box, and drop the dropdown arrow that
+           both clipped the text and suggested it could be changed. */
+        width: auto;
+        min-width: 130px;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        text-overflow: clip;
+        padding-right: 10px;
     }
 
 
