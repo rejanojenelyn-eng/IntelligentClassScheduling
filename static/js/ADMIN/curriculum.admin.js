@@ -1788,3 +1788,30 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!e.target.closest('.cm-select')) _cmDdClose();
     });
 });
+
+
+// Curriculum Year boxes (CSV / Excel / PDF / Word import): check the value as it is
+// typed, with the same rule as Analyze and the server (_academicYearError), so an
+// invalid year like 2011-2013 is flagged right under the box instead of only after
+// Analyze. Partial input is left alone until it is complete or the box loses focus.
+document.addEventListener('DOMContentLoaded', () => {
+    ['modalCurriculumYear', 'xlsxModalCurriculumYear', 'pdfCurriculumYear', 'docxCurriculumYear'].forEach(id => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.maxLength = 9;
+        const msg = document.createElement('div');
+        msg.className = 'curr-year-error';
+        msg.style.cssText = 'display:none;color:#b00020;font-size:.75rem;margin-top:4px;line-height:1.35;';
+        input.insertAdjacentElement('afterend', msg);
+        const check = (final) => {
+            const v = input.value.trim();
+            const err = v && (final || v.length >= 9) ? _academicYearError(v) : '';
+            msg.textContent = err;
+            msg.style.display = err ? '' : 'none';
+            input.style.borderColor = err ? '#b00020' : '';
+            input.setAttribute('aria-invalid', err ? 'true' : 'false');
+        };
+        input.addEventListener('input', () => check(false));
+        input.addEventListener('blur', () => check(true));
+    });
+});

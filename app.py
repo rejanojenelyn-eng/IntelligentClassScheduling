@@ -536,6 +536,37 @@ app = Flask(__name__)
 app.secret_key = Config.SECRET_KEY # Required for Login Sessions
 
 
+# Static files (CSS/JS/fonts/images): every url_for('static', ...) carries ?v=<file
+# mtime>, so the browser can keep a file for a year and still fetches the new copy the
+# moment it changes. Without this every page load re-requested every stylesheet and
+# script; while the server was busy (e.g. a long generation) those requests queued,
+# pages slowed down and text showed in the browser's default font until the CSS came.
+_STATIC_VERSIONS = {}
+
+
+@app.url_defaults
+def _static_cache_bust(endpoint, values):
+    if endpoint != 'static' or 'v' in values or not values.get('filename'):
+        return
+    name = values['filename']
+    # Re-read in debug (files change while developing); once per file otherwise.
+    if app.debug or name not in _STATIC_VERSIONS:
+        try:
+            _STATIC_VERSIONS[name] = int(os.stat(os.path.join(app.static_folder, name)).st_mtime)
+        except OSError:
+            return
+    values['v'] = _STATIC_VERSIONS[name]
+
+
+def _static_max_age(filename):
+    # Versioned URL: cache for a year. Unversioned (e.g. a CSS @import or a
+    # hard-coded path): revalidate each time, so a change is never missed.
+    return 31536000 if request.args.get('v') else None
+
+
+app.get_send_file_max_age = _static_max_age
+
+
 @app.after_request
 def _no_store_pages(resp):
     """Browsers must not keep copies of the app's pages or API data. Otherwise
@@ -2257,6 +2288,27 @@ def api_dashboard_requests_list():
 
 # ── REQUESTS HUB: List, Validate, Decide ──────────────────────────────────────
 
+# The requested class's current (Published) weekly meetings, Monday-first — the
+# "before" side of a request on the Academic Head's Requests page.
+_REQ_ORIGINAL_MEETINGS_SQL = """
+    SELECT COALESCE(json_agg(json_build_object(
+               'day',   ms.daydesc,
+               'start', TO_CHAR(mts_s.timevalue, 'HH12:MI AM'),
+               'end',   TO_CHAR(mts_e.timevalue, 'HH12:MI AM'),
+               'room',  COALESCE(mb.buildingname || ' – ' || mr.roomname, mr.roomname, 'TBA'))
+             ORDER BY array_position(ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday',
+                                           'Saturday','Sunday']::text[], ms.daydesc::text),
+                      mts_s.timevalue), '[]'::json)
+    FROM schedule_version msv
+    JOIN schedule_sessions ms ON ms.versionid = msv.versionid
+    LEFT JOIN timeslot mts_s ON ms.starttimeid = mts_s.timeid
+    LEFT JOIN timeslot mts_e ON ms.endtimeid   = mts_e.timeid
+    LEFT JOIN room mr ON ms.roomid = mr.roomid
+    LEFT JOIN building mb ON mr.buildingid = mb.buildingid
+    WHERE msv.scheduleid = sc.scheduleid AND msv.status = 'Published'
+"""
+
+
 @app.route('/api/requests/list')
 def api_requests_list():
     _ensure_request_tables()
@@ -2291,7 +2343,9 @@ def api_requests_list():
                 COALESCE(pyl.yearlevel::text, '')       AS year_level,
                 COALESCE(sec.sectionname, '')           AS section_name,
                 COALESCE(TO_CHAR(ts_s.timevalue, 'HH12:MI AM'), '') AS start_time,
-                COALESCE(TO_CHAR(ts_e.timevalue, 'HH12:MI AM'), '') AS end_time
+                COALESCE(TO_CHAR(ts_e.timevalue, 'HH12:MI AM'), '') AS end_time,
+                TO_CHAR(cmr.requested_date, 'FMDay')    AS requested_weekday,
+                (""" + _REQ_ORIGINAL_MEETINGS_SQL + """) AS orig_meetings
             FROM class_meeting_request cmr
             JOIN schedule sc ON cmr.scheduleid = sc.scheduleid
             JOIN faculty f ON sc.employeenumber = f.employeenumber
@@ -2331,7 +2385,12 @@ def api_requests_list():
                 COALESCE(TO_CHAR(ts_e.timevalue, 'HH12:MI AM'), '') AS end_time,
                 COALESCE(scr.new_daydesc, '')           AS new_daydesc,
                 COALESCE(scr.change_type, '')           AS change_type,
-                scr.official_sessionid, scr.new_starttimeid, scr.new_endtimeid, scr.new_roomid
+                scr.official_sessionid, scr.new_starttimeid, scr.new_endtimeid, scr.new_roomid,
+                COALESCE(os.daydesc, '')                AS orig_day,
+                COALESCE(TO_CHAR(ots_s.timevalue, 'HH12:MI AM'), '') AS orig_start,
+                COALESCE(TO_CHAR(ots_e.timevalue, 'HH12:MI AM'), '') AS orig_end,
+                COALESCE(ob.buildingname || ' – ' || orr.roomname, orr.roomname, '') AS orig_room,
+                (""" + _REQ_ORIGINAL_MEETINGS_SQL + """) AS orig_meetings
             FROM schedule_change_request scr
             JOIN schedule sc ON scr.scheduleid = sc.scheduleid
             JOIN faculty f ON sc.employeenumber = f.employeenumber
@@ -2344,6 +2403,11 @@ def api_requests_list():
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             LEFT JOIN timeslot ts_s ON scr.new_starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON scr.new_endtimeid   = ts_e.timeid
+            LEFT JOIN schedule_sessions os ON os.sessionid = scr.official_sessionid
+            LEFT JOIN timeslot ots_s ON os.starttimeid = ots_s.timeid
+            LEFT JOIN timeslot ots_e ON os.endtimeid   = ots_e.timeid
+            LEFT JOIN room orr ON os.roomid = orr.roomid
+            LEFT JOIN building ob ON orr.buildingid = ob.buildingid
             ORDER BY scr.created_at DESC
         """
         makeup_rows = [dict(r) for r in (query_db(makeup_sql) or [])]
@@ -2796,9 +2860,11 @@ def _request_conflict_summary(req_type, req_id):
             SELECT scr.*, sc.employeenumber, sc.scheduleid AS orig_sched,
                    ts_s.timevalue AS start_t, ts_e.timevalue AS end_t,
                    ss.daydesc AS official_daydesc, ss.roomid AS official_roomid,
-                   ots_s.timevalue AS official_start_t, ots_e.timevalue AS official_end_t
+                   ots_s.timevalue AS official_start_t, ots_e.timevalue AS official_end_t,
+                   cs.subjectcode
             FROM schedule_change_request scr
             JOIN schedule sc ON scr.scheduleid = sc.scheduleid
+            JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             LEFT JOIN timeslot ts_s ON scr.new_starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON scr.new_endtimeid   = ts_e.timeid
             LEFT JOIN schedule_sessions ss ON ss.sessionid = scr.official_sessionid
@@ -2886,6 +2952,23 @@ def _request_conflict_summary(req_type, req_id):
                                                     'roomid': row.get('new_roomid')})],
             action='Schedule Adjustment request', targeted=True)
 
+    # Advisories (never block approval): a Schedule Adjustment that puts a lab class
+    # in a non-laboratory room becomes a Local arrangement, where HC13 is advisory.
+    warnings = []
+    if req_type == 'adjustment' and room_id:
+        _wconn = get_db_connection()
+        if _wconn is not None:
+            try:
+                _wcur = _wconn.cursor(cursor_factory=RealDictCursor)
+                _lab = _local_lab_room_advisory(_wcur, row.get('subjectcode'), room_id, occ_id)
+                _wcur.close()
+                if _lab:
+                    warnings.append({'rule': 'HC13', 'message': _lab})
+            except Exception as _we:
+                print(f'[request advisories] {_we}')
+            finally:
+                _wconn.close()
+
     # A dimension blocked ONLY by an approved make-up still to come says so (and when it frees up).
     conflicts = [r['error'] for r in merge_locked]
     if not room_available:
@@ -2904,6 +2987,7 @@ def _request_conflict_summary(req_type, req_id):
         'conflicts':      conflicts,
         'all_ok':         room_available and faculty_free and program_ok and not merge_locked,
         'merge_restrictions': merge_locked,
+        'warnings':       warnings,
         # Phase 3D: semantic mapping only. The SQL above intentionally
         # remains date/database-aware; these IDs identify the frozen
         # constraint dimensions without replacing request-specific scope.
@@ -14791,7 +14875,56 @@ def _local_day_name(value):
     return day.title() if day else None
 
 
-def _validate_local_editable_dimensions(cur, sess, faculty_employeenumber):
+def _local_lab_room_advisory(cur, subject, room_id, official_sessionid=None):
+    """Advisory (never blocking) for a Local arrangement / Schedule Adjustment that puts
+    the LAB PART of a lab subject in a non-laboratory room. HC13 stays a hard rule for
+    the Official schedule; a Local arrangement is the faculty's own adjustment, so it is
+    only flagged for the Academic Head to see. The lab part is identified by the bound
+    Official occurrence's room (a Laboratory room there), or — Official room unknown —
+    by the subject having no lecture part. Returns the message, or None."""
+    from database import load_scheduler_config as _load_local_sched_cfg
+    from scheduler import is_laboratory_room_type
+    if room_id is None or not subject:
+        return None
+    if not bool(_load_local_sched_cfg().get('hc_lab_session_enabled', 1)):
+        return None
+    cur.execute("SELECT roomname, roomtype FROM public.room WHERE roomid = %s LIMIT 1", (int(room_id),))
+    room = cur.fetchone()
+    if not room or is_laboratory_room_type(room.get('roomtype')):
+        return None
+    cur.execute("""
+        SELECT COALESCE(cs.laboratoryhours, 0) AS laboratoryhours,
+               COALESCE(cs.lecturehours, 0) AS lecturehours
+        FROM public.curriculumsubject cs
+        WHERE UPPER(cs.subjectcode) = UPPER(%s)
+        ORDER BY cs.curriculumsubjectid DESC
+        LIMIT 1
+    """, (subject,))
+    subject_row = cur.fetchone() or {}
+    if float(subject_row.get('laboratoryhours') or 0) <= 0:
+        return None
+    official_room_type = None
+    if str(official_sessionid or '').isdigit():
+        cur.execute("""
+            SELECT r.roomtype
+            FROM public.schedule_sessions ss
+            LEFT JOIN public.room r ON ss.roomid = r.roomid
+            WHERE ss.sessionid = %s
+            LIMIT 1
+        """, (int(official_sessionid),))
+        official_room_type = (cur.fetchone() or {}).get('roomtype')
+    if official_room_type:
+        is_lab_part = is_laboratory_room_type(official_room_type)
+    else:
+        is_lab_part = float(subject_row.get('lecturehours') or 0) <= 0
+    if not is_lab_part:
+        return None
+    return (f'{subject} has laboratory hours but this meeting would be in '
+            f'{room.get("roomname") or "a non-laboratory room"} (not a Laboratory room). '
+            f'Allowed for a Local arrangement — advisory only.')
+
+
+def _validate_local_editable_dimensions(cur, sess, faculty_employeenumber, advisories=None):
     """Validate the only Local-editable dimensions (Day, Time, Room) of ONE Local
     occurrence against the active scheduling policy, using the same shared rule
     definitions as CSPValidator:
@@ -14799,10 +14932,11 @@ def _validate_local_editable_dimensions(cur, sess, faculty_employeenumber):
       * HC5  restricted day -- scheduler.subject_allowed_on_restricted_day
              (NSTP/OU under the default rule, exactly as CSP);
       * HC6  standard time blocks -- CSPValidator._check_standard_slots;
-      * HC13 laboratory room -- required for the LAB PART of a lab subject: the
-             bound Official occurrence was in a Laboratory room, or (Official
-             room unknown) the subject has no lecture part. The lecture part of
-             a lecture+lab subject may use a lecture room, as in CSP.
+      * HC13 laboratory room -- ADVISORY ONLY for Local arrangements: the lab
+             part of a lab subject in a non-laboratory room is reported through
+             `advisories` (see _local_lab_room_advisory), never rejected. A Local
+             arrangement is the faculty's own adjustment; HC13 stays a hard rule
+             for the Official schedule.
 
     Faculty service windows (HC1-HC4) and the designee night limit (HC8) depend
     on the faculty's whole effective schedule, so they are validated per Local
@@ -14838,39 +14972,14 @@ def _validate_local_editable_dimensions(cur, sess, faculty_employeenumber):
     if not room:
         return False, f'{subject} references a room that does not exist or is inactive.'
 
-    cur.execute("""
-        SELECT COALESCE(cs.laboratoryhours, 0) AS laboratoryhours,
-               COALESCE(cs.lecturehours, 0) AS lecturehours
-        FROM public.curriculumsubject cs
-        WHERE UPPER(cs.subjectcode) = UPPER(%s)
-        ORDER BY cs.curriculumsubjectid DESC
-        LIMIT 1
-    """, (subject,))
-    subject_row = cur.fetchone() or {}
+    # HC13 is advisory for a Local arrangement (hc_lab_session_enabled is read by
+    # _local_lab_room_advisory): reported, never rejected.
+    _lab_note = _local_lab_room_advisory(
+        cur, subject, room_id, sess.get('official_sessionid') or sess.get('officialSessionId'))
+    if _lab_note and advisories is not None:
+        advisories.append(_lab_note)
 
     cfg = _load_local_sched_cfg()
-    if (bool(cfg.get('hc_lab_session_enabled', 1))
-            and float(subject_row.get('laboratoryhours') or 0) > 0
-            and not is_laboratory_room_type(room.get('roomtype'))):
-        # Which part of the subject is this occurrence? Its bound Official
-        # occurrence says: a Laboratory room there means the lab part.
-        official_room_type = None
-        official_id = sess.get('official_sessionid') or sess.get('officialSessionId')
-        if str(official_id or '').isdigit():
-            cur.execute("""
-                SELECT r.roomtype
-                FROM public.schedule_sessions ss
-                LEFT JOIN public.room r ON ss.roomid = r.roomid
-                WHERE ss.sessionid = %s
-                LIMIT 1
-            """, (int(official_id),))
-            official_room_type = (cur.fetchone() or {}).get('roomtype')
-        if official_room_type:
-            is_lab_part = is_laboratory_room_type(official_room_type)
-        else:
-            is_lab_part = float(subject_row.get('lecturehours') or 0) <= 0
-        if is_lab_part:
-            return False, f'{subject} requires a laboratory room under the active laboratory constraint.'
 
     if bool(cfg.get('hc_weekend_enabled', 1)):
         restricted_days = {str(d).strip().upper() for d in _parse_weekend_days(cfg.get('hc_weekend_day'))}
@@ -16944,8 +17053,12 @@ def api_get_faculty_schedule():
     program    = request.args.get('program')
     year_level = request.args.get('year_level')
     prefer_draft = request.args.get('prefer_draft') == '1' and bool(emp_num and ay_id and semester)
+    # official_only=1: Published Official only — Local arrangements neither replace an
+    # Official meeting nor get added (a faculty's "Official Schedule" view). The Local
+    # view reads /api/faculty/my_local_schedule. Default: the effective calendar.
+    official_only = request.args.get('official_only') == '1'
 
-    filters = ["sv.status IN ('Published','Draft')"] if prefer_draft else [
+    filters = ["sv.status IN ('Published','Draft')"] if prefer_draft else ["sv.status = 'Published'"] if official_only else [
         "sv.status = 'Published'",
         # PHASE 6.2-A — effective Faculty Schedule: suppress only the exact
         # Official occurrence replaced by an active Published Local session.
@@ -17026,7 +17139,7 @@ def api_get_faculty_schedule():
         # Draft-preferred mode is an Official editor view and intentionally
         # remains Official-only. The normal Published view is the effective
         # faculty calendar, so add active Published Local replacement sessions.
-        if not prefer_draft:
+        if not prefer_draft and not official_only:
             local_filters = [
                 "la.status = 'Published'",
                 "la.is_active = TRUE"
@@ -27537,16 +27650,7 @@ def _curr_report_context(cur, programs_f, curriculum_ids, curr_single, sem):
 
 
 def _curr_report_gen_csv(programs):
-    # Curriculum Import's CSV analyzer always treats row 1 as the header and
-    # maps every column after it purely by *position* — it has no per-row
-    # concept of "this is a section label, skip it" beyond an empty Subject
-    # Code cell. So the column-header row is written exactly once here (not
-    # once per semester, the way the human-readable PDF/DOCX tables repeat
-    # it) — a repeated header row would otherwise read back as a bogus
-    # subject literally named "Subject Code". Every Program / Curriculum
-    # Code / Year Level / Semester label below is a single-cell row, which
-    # is safe: its Subject Code column (index 3) is blank, so the importer's
-    # own "if not sc: continue" skips it automatically.
+
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(_CURR_CSV_HEADERS)
@@ -31176,6 +31280,10 @@ def api_faculty_schedule_full():
     year_level = request.args.get('year_level', '').strip()
     section_id = request.args.get('section_id', '').strip()
     emp_num    = request.args.get('emp_num', '').strip()
+    # official_only=1: the Official (Published) schedule exactly as published — an
+    # approved Local arrangement does not replace its Official meeting here, and no
+    # Local session is added (the Official Class Schedule view). Default: effective.
+    official_only = request.args.get('official_only') == '1'
 
     filters = [
         "sv.status = 'Published'",
@@ -31192,6 +31300,8 @@ def api_faculty_schedule_full():
         )"""
     ]
     params  = []
+    if official_only:
+        filters = filters[:1]      # keep sv.status = 'Published'; drop the Local supersession
 
     if ay_id and semester:
         filters.append("""sc.semesterid = (
@@ -31258,6 +31368,10 @@ def api_faculty_schedule_full():
 
         # This is the endpoint consumed by schedule.faculty.js. Merge Local here
         # once; the frontend must not make a second Local request.
+        if official_only:
+            rows = [dict(r) for r in rows]
+            rows.sort(key=lambda r: (str(r.get('start_time') or ''), str(r.get('daydesc') or '')))
+            return jsonify({'success': True, 'sessions': rows})
         local_filters = ["la.status = 'Published'", "la.is_active = TRUE"]
         local_params = []
         if ay_id and semester:

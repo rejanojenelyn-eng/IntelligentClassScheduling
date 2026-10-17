@@ -27,7 +27,7 @@ def test_faculty_official_rows_expose_source_identity():
 
 def test_faculty_draft_preferred_editor_does_not_merge_local():
     b=block("api_get_faculty_schedule","api_faculty_my_local_schedule")
-    assert "if not prefer_draft:" in b
+    assert "if not prefer_draft and not official_only:" in b   # Local merged only in the effective view
     assert "Draft-preferred mode is an Official editor view" in b
 
 def test_faculty_local_merge_respects_requested_filters():

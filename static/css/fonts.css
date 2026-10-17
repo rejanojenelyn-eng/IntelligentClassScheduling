@@ -1,0 +1,9 @@
+/* Inter, served by this app instead of Google Fonts: pages keep their font when the
+   network to Google is slow or blocked. One variable file covers weights 100-900. */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url('../fonts/inter-latin-wght-normal.woff2') format('woff2');
+}

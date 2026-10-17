@@ -228,7 +228,9 @@ async function fcsLoadSchedule() {
     _fcsController = new AbortController();
 
     try {
-        const resp = await fetch('/api/faculty/schedule?' + params.toString() + '&_t=' + Date.now(), {
+        // Official Class Schedule: the published Official schedule only (Local arrangements
+        // do not replace its meetings here).
+        const resp = await fetch('/api/faculty/schedule?' + params.toString() + '&official_only=1&_t=' + Date.now(), {
             signal: _fcsController.signal, cache: 'no-store'
         });
         if (!resp.ok) { console.error('[fcs] API error:', resp.status); return; }

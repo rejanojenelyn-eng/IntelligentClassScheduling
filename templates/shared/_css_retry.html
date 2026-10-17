@@ -1,0 +1,20 @@
+<script>
+/* A stylesheet whose request fails (connection dropped or server restarting while the
+   page loads) left the whole page unstyled until a manual reload. Retry it instead:
+   up to 3 times, 1 s / 2 s / 3 s apart. Must run before the <link> tags below it. */
+(function () {
+    document.addEventListener('error', function (e) {
+        var link = e.target;
+        if (!link || link.tagName !== 'LINK' || !/stylesheet/i.test(link.rel)) return;
+        var tries = +(link.getAttribute('data-css-retry') || 0);
+        if (tries >= 3) return;
+        setTimeout(function () {
+            var again = link.cloneNode();
+            again.setAttribute('data-css-retry', tries + 1);
+            again.href = link.href.replace(/([?&])css_retry=\d+/, '$1css_retry=' + (tries + 1));
+            if (again.href === link.href) again.href += (link.href.indexOf('?') < 0 ? '?' : '&') + 'css_retry=' + (tries + 1);
+            link.parentNode.replaceChild(again, link);
+        }, 1000 * (tries + 1));
+    }, true);
+})();
+</script>

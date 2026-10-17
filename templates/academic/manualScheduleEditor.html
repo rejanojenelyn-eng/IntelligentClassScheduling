@@ -1,8 +1,8 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}?v=20260519">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}?v=20261010a">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
 <style>
     /* ── DSS dropdown styles ── */
     .dss-select-wrapper { position: relative; width: 100%; }
@@ -1561,8 +1561,8 @@
      data-my-emp-num="{{ my_emp_num or '' }}"
      hidden></div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}?v=20261010b"></script>
-<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.mergeGroups.js') }}?v=20261009a"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.mergeGroups.js') }}"></script>
 
 <script>
 const SCHED_MODE = "{{ scheduler_mode }}";
@@ -2989,7 +2989,7 @@ window.confirmAndPlace = async function() {
                         _mergeConfirmed = true;
                         break;
                     }
-                    await showConflictModal(`Room conflict: "${c.subject_name}" is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                    await showConflictModal(`Room conflict: "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
                     return;
                 }
             }
@@ -3015,7 +3015,7 @@ window.confirmAndPlace = async function() {
                     // Also skip if this is an already-confirmed merge class
                     if (_mergeConfirmed && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
                     await showConflictModal(
-                        `Faculty conflict: ${facName} already has "${s.subjectname}" on ${dayVal} — ` +
+                        `Faculty conflict: ${facName} already has "${_classLabel(s.subjectcode, s.subjectname)}"${_classWhere(s.programcode, s.sectionname)} on ${dayVal} — ` +
                         `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
                         `Faculty cannot have overlapping schedules.`
                     );
@@ -3038,7 +3038,7 @@ window.confirmAndPlace = async function() {
                 // Skip when this faculty is teaching the same subject under a valid merge
                 if (_inlineMergeMode !== 'none' && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
                 if (_mergeConfirmed && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
-                await showConflictModal(`Faculty conflict: This faculty is already teaching "${c.subject_name}" on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                await showConflictModal(`Faculty conflict: This faculty is already teaching "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
                 return;
             }
         }
@@ -4809,8 +4809,8 @@ async function _findFacultySliceConflict(facId, facName) {
         const sl = slices.find(x => hit(x, s.daydesc, s.starttimeid, s.endtimeid) &&
             !(typeof _mgSameEvent === 'function' && _mgSameEvent(s, x.ev, sect)) && !_mergeAt(s, x));
         if (sl) {
-            return `${facName} already has "${s.subjectname || s.subjectcode}"` +
-                `${s.sectionname ? ` (${s.sectionname})` : ''} on ${s.daydesc} — ` +
+            return `${facName} already has "${_classLabel(s.subjectcode, s.subjectname)}"` +
+                `${_classWhere(s.programcode, s.sectionname)} on ${s.daydesc} — ` +
                 `${fmt(s.starttimeid)} to ${fmt(s.endtimeid)}, which overlaps this subject's ` +
                 `${sl.day} ${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
         }
@@ -4824,7 +4824,7 @@ async function _findFacultySliceConflict(facId, facName) {
         const cs = getTimeSlotIndex(c.start_time), ce = getTimeSlotIndex(c.end_time);
         const sl = slices.find(x => hit(x, c.day, cs, ce));
         if (sl) {
-            return `${facName} is already placed in "${c.subject_name || c.subject_code}" on ${c.day} — ` +
+            return `${facName} is already placed in "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${c.day} — ` +
                 `${c.start_time} to ${c.end_time}, which overlaps this subject's ${sl.day} ` +
                 `${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
         }

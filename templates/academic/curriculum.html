@@ -1,7 +1,7 @@
 {% extends "academic/base.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}?v=20261005e">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 {% endblock %}
@@ -276,5 +276,5 @@
     <button class="curr-exp-toast-close" onclick="document.getElementById('currExpToast').style.display='none'">&#215;</button>
 </div>
 
-<script src="{{ url_for('static', filename='js/ACAD HEAD/curriculum.acad.js') }}?v=20261005b"></script>
+<script src="{{ url_for('static', filename='js/ACAD HEAD/curriculum.acad.js') }}"></script>
 {% endblock %}

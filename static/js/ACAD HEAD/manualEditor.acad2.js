@@ -628,6 +628,27 @@ async function onFacultySelect(empNum) {
     if (typeof _mgScheduleRefresh === 'function') _mgScheduleRefresh();
 }
 
+// " (BSIT 1)" / " (BSCE – CE 3-1)": which program/section an existing class belongs
+// to, for conflict messages. The program is not repeated when the section name already
+// starts with it. '' when neither is known.
+function _classWhere(prog, sect) {
+    prog = String(prog || '').trim();
+    sect = String(sect || '').trim();
+    if (!prog && !sect) return '';
+    const norm  = x => x.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const label = (prog && sect && norm(sect).startsWith(norm(prog))) ? sect
+                : [prog, sect].filter(Boolean).join(' – ');
+    return ` (${label})`;
+}
+
+// "COMP 002 – Computer Programming 1" (or whichever part is known).
+function _classLabel(code, name) {
+    code = String(code || '').trim();
+    name = String(name || '').trim();
+    if (name && code && name.toUpperCase().startsWith(code.toUpperCase())) return name;
+    return [code, name].filter(Boolean).join(' – ');
+}
+
 function _checkFacultySpecWarning() {
     const container = document.getElementById('fac-spec-warning');
     if (!container) return;
@@ -644,12 +665,16 @@ function _checkFacultySpecWarning() {
     const facValNow  = (document.getElementById('sel_faculty')?.value || '').trim();
     if (isImported && window._specWarnBaselineFacId && facValNow === window._specWarnBaselineFacId) return;
 
+    // Collapsed to one line by default (the full advisory took most of the side panel);
+    // click it to read the details. Advisory only — never blocks saving.
     container.innerHTML =
-        `<div style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
-        `padding:10px 14px;margin-top:8px;font-size:13px;color:#7d4000;display:flex;gap:8px;align-items:flex-start;">` +
-        `<span style="font-size:15px;margin-top:1px">&#8505;</span>` +
-        `<span><strong>SC9 — Specialization Advisory:</strong> ${facName} (${spec || 'none on file'}) ` +
-        `may not match ${subjCode}. Expected: ${required}. This is a soft preference and does not block saving.</span></div>`;
+        `<details class="fac-spec-adv" style="background:#fdf3e7;border:1.5px solid #e67e22;border-radius:8px;` +
+        `margin-top:8px;font-size:12px;color:#7d4000;">` +
+        `<summary style="cursor:pointer;padding:6px 10px;font-weight:700;list-style-position:inside;">` +
+        `&#8505; SC9 — Specialization Advisory</summary>` +
+        `<div style="padding:0 10px 8px;line-height:1.4;">${facName} (${spec || 'none on file'}) ` +
+        `may not match ${subjCode}. Expected: ${required}. This is a soft preference and does not block saving.</div>` +
+        `</details>`;
 }
 
 async function onDayChange() {
@@ -1996,7 +2021,7 @@ async function confirmAndPlace() {
                 if (!proceed) return;
                 break; // merge confirmed
             }
-            await showConflictModal(`"${c.subject_name}" is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+            await showConflictModal(`"${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
             return;
         }
     }
@@ -2019,7 +2044,7 @@ async function confirmAndPlace() {
                         continue;
                     }
                     await showConflictModal(
-                        `This faculty already has "${s.subjectname}" on ${dayVal} — ` +
+                        `This faculty already has "${_classLabel(s.subjectcode, s.subjectname)}"${_classWhere(s.programcode, s.sectionname)} on ${dayVal} — ` +
                         `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
                         `Faculty cannot have overlapping schedules.`
                     );
@@ -2042,7 +2067,7 @@ async function confirmAndPlace() {
                 continue;
             }
             await showConflictModal(
-                `This faculty is already placed in "${c.subject_name}" on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
+                `This faculty is already placed in "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
                 `Faculty cannot have overlapping schedules.`
             );
             return;

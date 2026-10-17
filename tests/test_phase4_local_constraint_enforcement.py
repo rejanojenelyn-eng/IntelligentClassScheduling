@@ -49,6 +49,8 @@ class _Cur:
     def fetchone(self):
         if 'SELECT roomtype FROM public.room' in self.sql:
             return {'roomtype': self.room}
+        if 'SELECT roomname, roomtype FROM public.room' in self.sql:   # HC13 advisory
+            return {'roomname': 'R1', 'roomtype': self.room}
         if 'FROM public.curriculumsubject' in self.sql:
             return dict(self.subject)
         if 'LEFT JOIN public.room r ON ss.roomid = r.roomid' in self.sql:
@@ -65,10 +67,10 @@ def cfg(monkeypatch):
     return current
 
 
-def _edit(cur, code='IT101', day='Monday', start=2, end=3, official=None):
+def _edit(cur, code='IT101', day='Monday', start=2, end=3, official=None, advisories=None):
     sess = {'subjectcode': code, 'daydesc': day, 'starttimeid': start, 'endtimeid': end,
             'roomid': 1, 'official_sessionid': official}
-    return app_module._validate_local_editable_dimensions(cur, sess, 'F1')
+    return app_module._validate_local_editable_dimensions(cur, sess, 'F1', advisories)
 
 
 # ── HC5 restricted day: same NSTP/OU rule as CSP ────────────────────────────
@@ -100,7 +102,9 @@ def test_hc6_off_grid_time_rejected_and_standard_block_allowed(cfg):
     assert _edit(_Cur(), start=4, end=3)[0]
 
 
-# ── HC13 laboratory room for the lab part only ──────────────────────────────
+# ── HC13 laboratory room for the lab part only — ADVISORY in a Local arrangement ──
+# (a Local arrangement is the faculty's own adjustment: a lab class in a lecture room
+# is flagged for the Academic Head, never rejected; HC13 stays hard for Official.)
 
 LEC_LAB = {'laboratoryhours': 3, 'lecturehours': 2}
 LAB_ONLY = {'laboratoryhours': 3, 'lecturehours': 0}
@@ -111,17 +115,23 @@ def test_hc13_lecture_part_of_lec_lab_subject_may_use_lecture_room(cfg):
     assert ok, err            # old Local rule forced every session of a lab subject into a lab
 
 
-def test_hc13_lab_part_moved_to_lecture_room_is_rejected(cfg):
-    ok, err = _edit(_Cur(room='Lecture', subject=LEC_LAB, official_room='Laboratory'), official=55)
-    assert not ok and 'laboratory room' in err
+def test_hc13_lab_part_moved_to_lecture_room_is_allowed_with_an_advisory(cfg):
+    notes = []
+    ok, err = _edit(_Cur(room='Lecture', subject=LEC_LAB, official_room='Laboratory'),
+                    official=55, advisories=notes)
+    assert ok, err
+    assert len(notes) == 1 and 'laboratory hours' in notes[0] and 'advisory only' in notes[0]
 
 
-def test_hc13_lab_only_subject_needs_lab_room_and_lab_room_always_passes(cfg):
-    assert not _edit(_Cur(room='Lecture', subject=LAB_ONLY))[0]
-    assert _edit(_Cur(room='Laboratory', subject=LAB_ONLY))[0]
+def test_hc13_lab_only_subject_in_lecture_room_is_advisory_and_lab_room_is_silent(cfg):
+    notes = []
+    assert _edit(_Cur(room='Lecture', subject=LAB_ONLY), advisories=notes)[0] and len(notes) == 1
+    notes = []
+    assert _edit(_Cur(room='Laboratory', subject=LAB_ONLY), advisories=notes)[0] and notes == []
     assert _edit(_Cur(room='Laboratory', subject=LEC_LAB, official_room='Laboratory'), official=55)[0]
     cfg['hc_lab_session_enabled'] = 0
-    assert _edit(_Cur(room='Lecture', subject=LAB_ONLY))[0]
+    notes = []
+    assert _edit(_Cur(room='Lecture', subject=LAB_ONLY), advisories=notes)[0] and notes == []
 
 
 # ── HC1-HC4 / HC8 faculty service rules (transaction level) ────────────────

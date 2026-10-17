@@ -474,6 +474,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const _LS_KEY = 'schedGen_lastResult';
 
+    // ── Unsaved-result guard ─────────────────────────────────────────────────
+    // A generated (or regenerated) schedule lives only on this page until it is
+    // saved as a Draft or approved. Leaving by any link (View Draft List, the
+    // sidebar, ...), reloading or closing the tab asks first instead of silently
+    // discarding it. Cleared by Save as Draft, Approve, loading a saved Draft and
+    // the hand-off to the Manual Editor (which carries the schedule over itself).
+    let _unsavedResult = false;
+    window.addEventListener('beforeunload', e => {
+        if (!_unsavedResult) return;
+        e.preventDefault();
+        e.returnValue = '';
+    });
+    document.addEventListener('click', async e => {
+        if (!_unsavedResult || e.defaultPrevented || e.button !== 0
+            || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        const a = e.target.closest('a[href]');
+        if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
+        const href = a.getAttribute('href') || '';
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const leave = await showInfo(
+            'Unsaved Schedule',
+            'The generated schedule has not been saved as a Draft or approved yet. '
+            + 'If you leave this page now, it will be lost.<br><br>'
+            + '<strong>Stay</strong> &mdash; go back and save it as a Draft first.<br>'
+            + '<strong>Leave without saving</strong> &mdash; discard it and continue.',
+            'confirm',
+            { confirmLabel: 'Leave without saving', cancelLabel: 'Stay' }
+        );
+        if (leave) {
+            _unsavedResult = false;
+            window.location.href = a.href;
+        }
+    }, true);
+
     // #1: Reset everything to a clean initial state after saving as Draft.
     function _resetPageState() {
         currentScheduleData = [];
@@ -481,6 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
         canPublish          = false;
         currentEvaluation   = null;
         rowSelectionState.clear();
+        _unsavedResult = false;
         try { localStorage.removeItem(_LS_KEY); } catch(e) {}
 
         document.getElementById('scheduleTableBody').innerHTML = `
@@ -651,6 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.success && data.schedule_data && data.schedule_data.length) {
                 currentScheduleData = data.schedule_data;
                 currentBatchId      = `DRAFT-V${data.version || 'LATEST'}`;
+                _unsavedResult      = false;   // a saved Draft from the database
                 canPublish          = false; // re-validate before approving
 
                 renderTable(currentScheduleData, sortSelect.value);
@@ -1423,6 +1461,7 @@ document.addEventListener('DOMContentLoaded', () => {
         _beginScheduleState();
         currentScheduleData = data.schedule_data || [];
         currentBatchId      = data.batch_id || 'DRAFT-NEW-001';
+        _unsavedResult      = currentScheduleData.length > 0;
 
         // The evaluation object (when the generate response carries one) is the
         // authoritative source for Approve gating — a high weighted score never
@@ -2312,6 +2351,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // has (see _submitApproval above). Selecting a different Program to
                 // generate for still clears/replaces this normally via Generate Schedule.
                 saved = true;
+                _unsavedResult = false;
                 btnSaveDraft.disabled  = true;
                 btnSaveDraft.innerHTML = '<i class="fas fa-check-circle"></i> Saved as Draft';
             } else {
@@ -2487,6 +2527,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 + `&sect=${encodeURIComponent(ctx.section)}`
                 + `&sect_name=${encodeURIComponent(sectName)}`
                 + `&from_generator=1`;
+            _unsavedResult = false;   // carried over to the Manual Editor (Draft / hand-off above)
             window.location.href = url;
         } catch (e) {
             btnManualEditor.disabled = false;
@@ -2536,6 +2577,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     'success'
                 );
                 published = true;
+                _unsavedResult = false;
                 btnApprove.disabled = true;
                 btnApprove.innerHTML = '<i class="fas fa-check-circle"></i> Published';
 
@@ -2626,6 +2668,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 rowSelectionState.clear();   // a different schedule: old selections don't apply
                 currentScheduleData = data.schedule_data || [];
                 currentBatchId = `DRAFT-${versionId}`;
+                _unsavedResult = false;   // a saved Draft from the database
 
                 if (data.context) {
                     acadYear.value  = data.context.acadYear  || '';

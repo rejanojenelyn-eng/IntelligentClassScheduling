@@ -696,7 +696,7 @@
 
     /* ── Toast Notifications ── */
     #toast-container {
-        position: fixed; bottom: 28px; right: 28px;
+        position: fixed; top: 112px; right: 28px;
         z-index: 99999; display: flex; flex-direction: column; gap: 10px;
         pointer-events: none;
     }
@@ -725,8 +725,8 @@
         cursor: pointer; padding: 0; flex-shrink: 0; line-height: 1; }
     .toast-close:hover { color: #555; }
     .toast-fade-out { animation: toastOut .3s ease forwards; }
-    @keyframes toastIn  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-    @keyframes toastOut { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(8px); } }
+    @keyframes toastIn  { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes toastOut { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(-8px); } }
 
 
     /* ══════════════════════════════════════════════════════════════════
@@ -1596,19 +1596,16 @@
                             <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
                             <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
                         </select></div>
-                    <div class="adj-hint">Choose the new day for the class.</div>
                 </div>
                 <div class="mu-field">
                     <label class="mu-label" for="adjStart"><b>*</b> NEW START TIME</label>
                     <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
                         <select id="adjStart" onchange="adjTimeSelectChanged()"><option value="">Select time</option></select></div>
-                    <div class="adj-hint">Choose the new start time.</div>
                 </div>
                 <div class="mu-field">
                     <label class="mu-label" for="adjEnd"><b>*</b> NEW END TIME</label>
                     <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
                         <select id="adjEnd" onchange="adjTimeSelectChanged()"><option value="">Select time</option></select></div>
-                    <div class="adj-hint">Choose the new end time.</div>
                 </div>
             </div>
             <div class="mu-field">
@@ -1626,7 +1623,6 @@
                         <input type="hidden" id="adjRoom">
                     </div>
                 </div>
-                <div class="adj-hint">Room options will be available after selecting day and time.</div>
             </div>
 
             <div class="mu-sec-title"><i class="fas fa-user"></i> CLASS INFORMATION</div>
@@ -1641,7 +1637,6 @@
                     <select id="adjSubjectSel" onchange="reqSubjectChanged('adj')">
                         <option value="">— Select your assigned subject —</option>
                     </select></div>
-                <div class="adj-hint">Choose the subject for this schedule adjustment.</div>
                 <input type="hidden" id="adjSubject">
                 <input type="hidden" id="adjSection">
                 <input type="hidden" id="adjProgram">
@@ -1654,19 +1649,16 @@
                         <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
                             <option value="">— Select section —</option>
                         </select></div>
-                    <div class="adj-hint">Choose the section for this class.</div>
                 </div>
                 <div class="mu-field">
                     <label class="mu-label">PROGRAM</label>
                     <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-graduation-cap"></i></span>
                         <input type="text" id="adjProgramDisplay" readonly placeholder="Auto-filled"></div>
-                    <div class="adj-hint">This will be filled automatically.</div>
                 </div>
                 <div class="mu-field">
                     <label class="mu-label">YEAR LEVEL</label>
                     <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-signal"></i></span>
                         <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled"></div>
-                    <div class="adj-hint">This will be filled automatically.</div>
                 </div>
             </div>
 
@@ -1678,7 +1670,6 @@
                     <select id="adjMeetingSel">
                         <option value="">— Select subject and section first —</option>
                     </select></div>
-                <div class="adj-hint">Choose which of this class's current meetings you want to move.</div>
             </div>
 
             <!-- Conflict Warning Banner -->
@@ -1693,7 +1684,7 @@
                 <div class="mu-ctl mu-ctl-area adj-area"><span class="mu-ico"><i class="fas fa-file-lines"></i></span>
                     <textarea id="adjReason" maxlength="500" oninput="muCount(this)" aria-label="Reason for request"
                         placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea></div>
-                <div class="adj-foot"><span class="adj-hint">Provide a clear reason for the schedule adjustment.</span>
+                <div class="adj-foot"><span></span>
                     <span class="mu-count" id="adjReasonCount">0/500</span></div>
             </div>
         </div>
@@ -2791,7 +2782,7 @@ document.addEventListener('DOMContentLoaded', () => {
      hidden></div>
 
 
-<script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}?v=20261007a"></script>
+<script src="{{ url_for('static', filename='js/FACULTY/room_schedule.faculty.js') }}"></script>
 
 
 <!-- Toast Container -->

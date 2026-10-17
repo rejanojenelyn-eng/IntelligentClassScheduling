@@ -301,6 +301,56 @@
 .rhub-dbox-val::before { content: '• '; }
 .rhub-dbox-sub { font-size: 0.68rem; color: #777; margin-top: 3px; font-weight: 600; }
 
+/* Schedule comparison: current (before) → requested (after) */
+.rhub-cmp {
+    display: grid;
+    grid-template-columns: 1fr 34px 1fr;
+    align-items: stretch;
+    margin-bottom: 14px;
+}
+.rhub-cmp-side { border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.rhub-cmp-old  { background: #f7f7f8; border: 1px solid #e3e3e6; }
+.rhub-cmp-new  { background: #f2faf5; border: 1.5px solid #9fd3b2; }
+.rhub-cmp-hd {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 0.56rem; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+    margin-bottom: 10px;
+}
+.rhub-cmp-old .rhub-cmp-hd { color: #777; }
+.rhub-cmp-new .rhub-cmp-hd { color: #1a6b3c; }
+.rhub-cmp-tag {
+    margin-left: auto; font-size: 0.5rem; padding: 2px 8px; border-radius: 10px;
+    letter-spacing: .6px;
+}
+.rhub-cmp-old .rhub-cmp-tag { background: #e6e6ea; color: #666; }
+.rhub-cmp-new .rhub-cmp-tag { background: #d4edda; color: #155724; }
+.rhub-cmp-arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: #800000; font-size: 1rem;
+}
+.rhub-cmp-row {
+    display: grid; grid-template-columns: 52px 1fr; gap: 8px;
+    padding: 6px 0; border-top: 1px dashed #e2e2e2; font-size: 0.78rem;
+}
+.rhub-cmp-row:first-of-type { border-top: 0; }
+.rhub-cmp-k { font-size: 0.56rem; font-weight: 900; color: #999; text-transform: uppercase; letter-spacing: .6px; padding-top: 2px; }
+.rhub-cmp-v { font-weight: 700; color: #333; line-height: 1.35; overflow-wrap: anywhere; }
+.rhub-cmp-new .rhub-cmp-v.changed { color: #1a6b3c; }
+.rhub-cmp-new .rhub-cmp-v.same    { color: #999; font-weight: 600; }
+.rhub-cmp-chg {
+    display: inline-block; margin-left: 6px; font-size: 0.5rem; font-weight: 900;
+    padding: 1px 6px; border-radius: 8px; background: #1a6b3c; color: #fff;
+    letter-spacing: .5px; vertical-align: 1px;
+}
+.rhub-cmp-meet { font-size: 0.74rem; color: #444; font-weight: 600; padding: 3px 0; line-height: 1.35; }
+.rhub-cmp-meet b { color: #333; }
+.rhub-cmp-meet.moving { color: #800000; }
+.rhub-cmp-note { font-size: 0.66rem; color: #888; margin-top: 8px; line-height: 1.4; font-style: italic; }
+@media (max-width: 760px) {
+    .rhub-cmp { grid-template-columns: 1fr; }
+    .rhub-cmp-arrow { transform: rotate(90deg); padding: 6px 0; }
+}
+
 /* Analytics */
 .rhub-analytics {
     border: 1px solid #e8e8e8;
@@ -703,13 +753,92 @@ function _rhubEsc(t) {
         c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* ════ SCHEDULE COMPARISON (current → requested) ════ */
+function _rhubMeetLine(m, cls) {
+    return `<div class="rhub-cmp-meet ${cls || ''}"><b>${_rhubEsc(m.day)}</b> · `
+         + `${_rhubEsc(m.start)} – ${_rhubEsc(m.end)} · ${_rhubEsc(m.room || 'TBA')}</div>`;
+}
+function _rhubCmpRow(label, value, cls, changed) {
+    return `<div class="rhub-cmp-row"><div class="rhub-cmp-k">${label}</div>`
+         + `<div class="rhub-cmp-v ${cls || ''}">${_rhubEsc(value || '—')}`
+         + `${changed ? '<span class="rhub-cmp-chg">CHANGED</span>' : ''}</div></div>`;
+}
+function rhubCompareHtml(req) {
+    const meetings = Array.isArray(req.orig_meetings) ? req.orig_meetings : [];
+    const reqTime  = (req.start_time && req.end_time) ? `${req.start_time} – ${req.end_time}` : '';
+    const reqRoom  = req.room_full || req.room_name || '';
+
+    if (req.req_type === 'makeup') {
+        // A make-up is ONE extra session on a date; the regular schedule stays as it is.
+        const oldSide = meetings.length
+            ? meetings.map(m => _rhubMeetLine(m)).join('')
+            : '<div class="rhub-cmp-meet">No published meetings found for this class.</div>';
+        const date = [req.requested_date_fmt, req.requested_weekday].filter(Boolean).join(' · ');
+        return `
+        <div class="rhub-cmp">
+            <div class="rhub-cmp-side rhub-cmp-old">
+                <div class="rhub-cmp-hd"><i class="fas fa-calendar-week"></i> Regular class schedule
+                    <span class="rhub-cmp-tag">CURRENT</span></div>
+                ${oldSide}
+            </div>
+            <div class="rhub-cmp-arrow"><i class="fas fa-plus"></i></div>
+            <div class="rhub-cmp-side rhub-cmp-new">
+                <div class="rhub-cmp-hd"><i class="fas fa-calendar-plus"></i> Make-up session
+                    <span class="rhub-cmp-tag">REQUESTED</span></div>
+                ${_rhubCmpRow('Date', date, 'changed')}
+                ${_rhubCmpRow('Time', reqTime, 'changed')}
+                ${_rhubCmpRow('Room', reqRoom, 'changed')}
+                <div class="rhub-cmp-note">One-time session on this date. The regular schedule does not change.</div>
+            </div>
+        </div>`;
+    }
+
+    // Schedule Adjustment: the exact meeting being moved, field by field.
+    const hasOrig = !!(req.orig_day || req.orig_start);
+    const oDay  = req.orig_day || '';
+    const oTime = (req.orig_start && req.orig_end) ? `${req.orig_start} – ${req.orig_end}` : '';
+    const oRoom = req.orig_room || '';
+    const nDay  = req.new_daydesc || oDay;
+    const nTime = reqTime || oTime;
+    const nRoom = reqRoom || oRoom;
+    const diff  = (a, b) => hasOrig && String(a || '').trim().toUpperCase() !== String(b || '').trim().toUpperCase();
+    const row   = (label, o, n) => _rhubCmpRow(label, n, diff(o, n) ? 'changed' : 'same', diff(o, n));
+
+    let oldSide;
+    if (hasOrig) {
+        const others = meetings.filter(m => !(m.day === oDay && m.start === req.orig_start));
+        oldSide = _rhubCmpRow('Day', oDay) + _rhubCmpRow('Time', oTime) + _rhubCmpRow('Room', oRoom)
+            + (others.length
+                ? `<div class="rhub-cmp-note" style="font-style:normal">Other meeting${others.length > 1 ? 's' : ''} of this class (not affected):</div>`
+                  + others.map(m => _rhubMeetLine(m)).join('')
+                : '');
+    } else {
+        oldSide = (meetings.length ? meetings.map(m => _rhubMeetLine(m)).join('')
+                                   : '<div class="rhub-cmp-meet">No published meetings found for this class.</div>')
+            + '<div class="rhub-cmp-note">This request was submitted before the exact meeting was recorded.</div>';
+    }
+    return `
+    <div class="rhub-cmp">
+        <div class="rhub-cmp-side rhub-cmp-old">
+            <div class="rhub-cmp-hd"><i class="fas fa-calendar-alt"></i> Current schedule
+                <span class="rhub-cmp-tag">BEFORE</span></div>
+            ${oldSide}
+        </div>
+        <div class="rhub-cmp-arrow"><i class="fas fa-arrow-right"></i></div>
+        <div class="rhub-cmp-side rhub-cmp-new">
+            <div class="rhub-cmp-hd"><i class="fas fa-calendar-check"></i> Requested schedule
+                <span class="rhub-cmp-tag">AFTER</span></div>
+            ${hasOrig ? row('Day', oDay, nDay) + row('Time', oTime, nTime) + row('Room', oRoom, nRoom)
+                      : _rhubCmpRow('Day', nDay, 'changed') + _rhubCmpRow('Time', nTime, 'changed') + _rhubCmpRow('Room', nRoom, 'changed')}
+        </div>
+    </div>`;
+}
+
 /* ════ RENDER DETAIL ════ */
 function rhubRenderDetail(req, v) {
     const body = document.getElementById('rhubDetailsBody');
 
     const reqLabel = req.req_type === 'makeup' ? 'MAKE-UP CLASS' : 'SCHEDULE ADJUSTMENT';
-    const timeStr  = (req.start_time && req.end_time) ? `${req.start_time} – ${req.end_time}` : '';
-    const dayExtra = (req.req_type === 'adjustment' && req.new_daydesc) ? ` (${req.new_daydesc})` : '';
 
     // Analytics section
     let analyticsHtml;
@@ -787,26 +916,17 @@ function rhubRenderDetail(req, v) {
             </div>
         </div>
 
+        <div class="rhub-dbox-lbl" style="margin-bottom:8px">${reqLabel}</div>
+        ${rhubCompareHtml(req)}
+
         <div class="rhub-detail-grid">
-            <div class="rhub-detail-box">
-                <div class="rhub-dbox-lbl">REQUESTED ADJUSTMENT</div>
-                <div class="rhub-dbox-val">${reqLabel}${dayExtra}</div>
-                ${timeStr ? `<div class="rhub-dbox-sub">${timeStr}</div>` : ''}
-                ${req.requested_date_fmt ? `<div class="rhub-dbox-sub">${req.requested_date_fmt}</div>` : ''}
-            </div>
             <div class="rhub-detail-box">
                 <div class="rhub-dbox-lbl">PROGRAM/YEAR LEVEL</div>
                 <div class="rhub-dbox-val">${req.program_code ? req.program_code + ' – ' + req.year_level : 'N/A'}</div>
-                ${req.section_name ? `<div class="rhub-dbox-sub">Section: ${req.section_name}</div>` : ''}
-            </div>
-            <div class="rhub-detail-box">
-                <div class="rhub-dbox-lbl">TARGET BUILDING/ROOM</div>
-                <div class="rhub-dbox-val">${req.room_full || req.room_name || 'N/A'}</div>
             </div>
             <div class="rhub-detail-box">
                 <div class="rhub-dbox-lbl">SUBJECT</div>
-                <div class="rhub-dbox-val">${req.subjectcode || 'N/A'}</div>
-                ${req.subjectname ? `<div class="rhub-dbox-sub">${req.subjectname}</div>` : ''}
+                <div class="rhub-dbox-val">${req.subjectcode || 'N/A'}${req.subjectname ? ' – ' + req.subjectname : ''}</div>
             </div>
         </div>
 

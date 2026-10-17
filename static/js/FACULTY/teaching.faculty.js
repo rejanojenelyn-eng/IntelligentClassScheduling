@@ -192,7 +192,9 @@ async function loadData() {
 
 async function loadOfficialData() {
     try {
-        const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}`;
+        // official_only: the Official Schedule view shows the published Official meetings as
+        // they are; approved Local arrangements show under Local Schedule instead.
+        const url = `/api/get_faculty_schedule?emp_num=${encodeURIComponent(EMP_NUM)}&ay_id=${encodeURIComponent(AY_ID)}&semester=${encodeURIComponent(SEM)}&official_only=1`;
         const resp = await fetch(url);
         _sessions = await resp.json();
     } catch(e) {
