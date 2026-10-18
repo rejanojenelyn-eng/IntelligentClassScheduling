@@ -511,8 +511,16 @@ def _apply_request_tables():
                 created_at       TIMESTAMP DEFAULT NOW()
             )
         """)
-        for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT", "end_date DATE", "official_sessionid INT"]:
+        for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT", "end_date DATE", "official_sessionid INT",
+                     # Multi-meeting Schedule Adjustment: every row of one request (one row per
+                     # moved Official meeting) shares this id; NULL for a one-meeting request.
+                     "request_group VARCHAR(40)",
+                     # How an approved adjustment was applied: 'Local' (Local arrangement) or
+                     # 'Official' (republished into the Official schedule). NULL until approved.
+                     "applied_to VARCHAR(20)"]:
             _cur.execute(f"ALTER TABLE public.schedule_change_request ADD COLUMN IF NOT EXISTS {_col}")
+        _cur.execute("CREATE INDEX IF NOT EXISTS ix_schedule_change_request_group "
+                     "ON public.schedule_change_request (request_group)")
 
         _conn.commit()
         _request_tables_ensured = True
@@ -2390,6 +2398,7 @@ def api_requests_list():
                 COALESCE(TO_CHAR(ots_s.timevalue, 'HH12:MI AM'), '') AS orig_start,
                 COALESCE(TO_CHAR(ots_e.timevalue, 'HH12:MI AM'), '') AS orig_end,
                 COALESCE(ob.buildingname || ' – ' || orr.roomname, orr.roomname, '') AS orig_room,
+                scr.request_group, COALESCE(scr.applied_to, '') AS applied_to,
                 (""" + _REQ_ORIGINAL_MEETINGS_SQL + """) AS orig_meetings
             FROM schedule_change_request scr
             JOIN schedule sc ON scr.scheduleid = sc.scheduleid
@@ -2424,6 +2433,28 @@ def api_requests_list():
         for r in adj_rows:
             for _k in ('new_starttimeid', 'new_endtimeid', 'new_roomid'):
                 r.pop(_k, None)
+        # One inbox item per request: the rows of a multi-meeting adjustment (one row
+        # per moved meeting, sharing request_group) become `members` of one entry, which
+        # is decided as a whole (any member id identifies it).
+        _MEMBER_KEYS = ('requestid', 'official_sessionid', 'orig_day', 'orig_start', 'orig_end',
+                        'orig_room', 'new_daydesc', 'start_time', 'end_time', 'room_full', 'room_name')
+        _grouped, _by_group = [], {}
+        for r in adj_rows:
+            member = {k: r.get(k) for k in _MEMBER_KEYS}
+            g = r.get('request_group')
+            if g and g in _by_group:
+                head = _by_group[g]
+                head['members'].append(member)
+                if r.get('merge_restriction') and not head.get('merge_restriction'):
+                    head['merge_restriction'] = r['merge_restriction']
+                continue
+            r['members'] = [member]
+            if g:
+                _by_group[g] = r
+            _grouped.append(r)
+        for r in _grouped:
+            r['members'].sort(key=lambda m: m.get('requestid') or 0)
+        adj_rows = _grouped
         all_rows    = makeup_rows + adj_rows
         all_rows.sort(key=lambda r: r.get('created_at_raw') or '', reverse=True)
 
@@ -2506,7 +2537,13 @@ def _request_local_conflict(schedule_id, day, start_t, end_t, *,
     if section_id is not None:
         base.append("la.sectionid = %s")
         params.append(section_id)
-    if exclude_official_sessionid is not None:
+    if isinstance(exclude_official_sessionid, (list, tuple, set)):
+        # A multi-meeting adjustment vacates every meeting it moves.
+        _ex = [int(x) for x in exclude_official_sessionid if x is not None]
+        if _ex:
+            base.append("(las.official_sessionid IS NULL OR NOT (las.official_sessionid = ANY(%s)))")
+            params.append(_ex)
+    elif exclude_official_sessionid is not None:
         base.append("las.official_sessionid IS DISTINCT FROM %s")
         params.append(exclude_official_sessionid)
 
@@ -2708,10 +2745,18 @@ def api_requests_validate():
     req_id   = request.args.get('id',   '').strip()
 
     try:
-        summary, error = _request_conflict_summary(req_type, req_id)
+        summary, error = _request_group_summary(req_type, req_id)
         if error:
             message, status = error
             return jsonify({'success': False, 'error': message}), status
+        # "Approve & Update Official" is offered only when the request would actually
+        # pass the Official Publish checks (dry run; nothing written).
+        if req_type == 'adjustment' and summary.get('all_ok'):
+            _st = query_db("SELECT status FROM schedule_change_request WHERE requestid = %s",
+                           [req_id], one=True)
+            if _st and _st.get('status') == 'Pending':
+                ok, why = _official_publish_check(req_id)
+                summary = dict(summary, official_ok=ok, official_error=why)
         return jsonify(dict(summary, success=True))
     except Exception as e:
         print(f"[api_requests_validate] Error: {e}")
@@ -2752,7 +2797,12 @@ def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None
         where.append("sec.programyearlevelid = %s"); params.append(programyearlevelid)
     if section_id is not None:
         where.append("sc2.sectionid = %s"); params.append(section_id)
-    if exclude_official_sessionid is not None:
+    if isinstance(exclude_official_sessionid, (list, tuple, set)):
+        # A multi-meeting adjustment vacates every meeting it moves.
+        _ex = [int(x) for x in exclude_official_sessionid if x is not None]
+        if _ex:
+            where.append("NOT (ss.sessionid = ANY(%s))"); params.append(_ex)
+    elif exclude_official_sessionid is not None:
         where.append("ss.sessionid <> %s"); params.append(exclude_official_sessionid)
     if exclude_schedule_id is not None:
         where.append("sc2.scheduleid <> %s"); params.append(exclude_schedule_id)
@@ -2776,7 +2826,7 @@ def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None
     return next((r for r in rows if _request_occupant_blocks(requester, r, dimension)), None)
 
 
-def _request_conflict_summary(req_type, req_id):
+def _request_conflict_summary(req_type, req_id, exclude_ids=None):
     """Validate a Make-up or Schedule Adjustment request against the LATEST
     effective schedule. Shared by the Academic Head's Validate button and by
     approval (api_requests_decide), so a request that became invalid after it
@@ -2888,7 +2938,9 @@ def _request_conflict_summary(req_type, req_id):
         pyl_id    = (requester or {}).get('programyearlevelid')
         # Only the moved occurrence is vacated; legacy requests without one fall
         # back to excluding the whole class, as before.
-        own = ({'exclude_official_sessionid': occ_id} if occ_id is not None
+        # exclude_ids: every meeting a multi-meeting request moves (all are vacated).
+        _vacated = list(exclude_ids) if exclude_ids else occ_id
+        own = ({'exclude_official_sessionid': _vacated} if occ_id is not None
                else {'exclude_schedule_id': sched_id})
         today = _date.today()
 
@@ -2899,7 +2951,7 @@ def _request_conflict_summary(req_type, req_id):
                                             room_id=room_id, requester=requester)
             room_local = _request_local_conflict(
                 sched_id, day, start_t, end_t, room_id=room_id, requester=requester,
-                exclude_official_sessionid=occ_id
+                exclude_official_sessionid=_vacated
             )
             room_available = not rc1 and not rc2 and not room_local
             if rc2 and not rc1 and not room_local:
@@ -2914,7 +2966,7 @@ def _request_conflict_summary(req_type, req_id):
                                             employee_number=emp_num, requester=requester)
             faculty_local = _request_local_conflict(
                 sched_id, day, start_t, end_t, employee_number=emp_num, requester=requester,
-                exclude_official_sessionid=occ_id
+                exclude_official_sessionid=_vacated
             )
             faculty_free = not fc1 and not fc2 and not faculty_local
             if fc2 and not fc1 and not faculty_local:
@@ -2931,7 +2983,7 @@ def _request_conflict_summary(req_type, req_id):
                                             exclude_schedule_id=sched_id)
             program_local = _request_local_conflict(
                 sched_id, day, start_t, end_t, programyearlevelid=pyl_id,
-                exclude_official_sessionid=occ_id
+                exclude_official_sessionid=_vacated
             )
             program_ok = not pc1 and not pc2 and not program_local
             if pc2 and not pc1 and not program_local:
@@ -2999,6 +3051,187 @@ def _request_conflict_summary(req_type, req_id):
     }, None
 
 
+def _adjustment_group_ids(req_id, cur=None):
+    """Request ids of every row of the Schedule Adjustment `req_id` belongs to (one row
+    per moved Official meeting, sharing request_group), ordered; [req_id] for a
+    single-meeting request."""
+    sql = """
+        SELECT b.requestid
+        FROM schedule_change_request a
+        JOIN schedule_change_request b
+          ON b.requestid = a.requestid
+          OR (a.request_group IS NOT NULL AND b.request_group = a.request_group)
+        WHERE a.requestid = %s
+        ORDER BY b.requestid
+    """
+    if cur is not None:
+        cur.execute(sql, [req_id])
+        rows = cur.fetchall() or []
+    else:
+        rows = query_db(sql, [req_id]) or []
+    return [r['requestid'] for r in rows] or [req_id]
+
+
+def _official_publish_check(req_id):
+    """(ok, reason) — would approving this Schedule Adjustment INTO the Official schedule
+    pass every Publish gate (hard constraints + Settings)? A dry run of exactly what
+    'Approve & Update Official' publishes; nothing is written."""
+    conn = get_db_connection()
+    if conn is None:
+        return False, 'The Official schedule check could not run (database unavailable).'
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        adjs = []
+        for gid in _adjustment_group_ids(req_id, cur):
+            cur.execute("""
+                SELECT scr.*, sc.employeenumber, sc.semesterid, sc.sectionid,
+                       cs.subjectcode, pyl.programcode, pyl.yearlevel,
+                       ss.daydesc AS official_daydesc, ss.starttimeid AS official_starttimeid,
+                       ss.endtimeid AS official_endtimeid, ss.roomid AS official_roomid
+                FROM schedule_change_request scr
+                JOIN schedule sc ON scr.scheduleid = sc.scheduleid
+                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                JOIN sections sec ON sc.sectionid = sec.sectionid
+                LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                LEFT JOIN schedule_sessions ss
+                  ON ss.sessionid = scr.official_sessionid AND ss.versionid = scr.versionid
+                WHERE scr.requestid = %s
+            """, [gid])
+            row = cur.fetchone()
+            if row:
+                adjs.append(row)
+        if not adjs or any(not a.get('official_daydesc') for a in adjs):
+            return False, 'The Official meeting this request moves is no longer in the Official schedule.'
+        overrides = [{
+            'daydesc': a.get('new_daydesc') or a['official_daydesc'],
+            'starttimeid': a.get('new_starttimeid') or a['official_starttimeid'],
+            'endtimeid': a.get('new_endtimeid') or a['official_endtimeid'],
+            'roomid': a.get('new_roomid') or a['official_roomid'],
+            'official_sessionid': a['official_sessionid'],
+        } for a in adjs]
+        ok, resp = _apply_adjustment_to_official(cur, adjs, overrides, dry_run=True)
+        if ok:
+            return True, None
+        body = resp[0].get_json(silent=True) or {}
+        return False, body.get('error') or 'It does not pass the Official schedule checks.'
+    except Exception as e:
+        print(f'[official publish check] {e}')
+        return False, 'The Official schedule check could not run.'
+    finally:
+        conn.close()
+
+
+def _request_group_summary(req_type, req_id):
+    """_request_conflict_summary for a whole request. A Make-up or a one-meeting
+    adjustment is checked as before. A multi-meeting adjustment checks every new
+    meeting with ALL of the request's moved meetings vacated, and is approvable only
+    when every one of them is. Conflict messages name the meeting they belong to."""
+    if req_type != 'adjustment':
+        return _request_conflict_summary(req_type, req_id)
+    ids = _adjustment_group_ids(req_id)
+    if len(ids) == 1:
+        return _request_conflict_summary(req_type, ids[0])
+    members = query_db("""
+        SELECT scr.requestid, scr.official_sessionid, scr.new_daydesc,
+               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time
+        FROM schedule_change_request scr
+        LEFT JOIN timeslot ts_s ON scr.new_starttimeid = ts_s.timeid
+        LEFT JOIN timeslot ts_e ON scr.new_endtimeid   = ts_e.timeid
+        WHERE scr.requestid = ANY(%s)
+        ORDER BY scr.requestid
+    """, [ids]) or []
+    vacated = [m['official_sessionid'] for m in members if m.get('official_sessionid') is not None]
+    out = {'room_available': True, 'faculty_free': True, 'program_ok': True,
+           'conflicts': [], 'all_ok': True, 'merge_restrictions': [], 'warnings': [],
+           'constraint_rules': [], 'member_ids': ids}
+    for m in members:
+        summary, error = _request_conflict_summary('adjustment', m['requestid'], exclude_ids=vacated)
+        if error:
+            return None, error
+        label = f"{m.get('new_daydesc') or ''} {m.get('start_time') or ''}–{m.get('end_time') or ''}".strip()
+        for k in ('room_available', 'faculty_free', 'program_ok', 'all_ok'):
+            out[k] = out[k] and bool(summary.get(k))
+        out['conflicts'] += [f'{label}: {c}' for c in summary.get('conflicts') or []]
+        out['merge_restrictions'] += summary.get('merge_restrictions') or []
+        out['warnings'] += [dict(w, message=f"{label}: {w.get('message')}") for w in summary.get('warnings') or []]
+        for r in summary.get('constraint_rules') or []:
+            if r not in out['constraint_rules']:
+                out['constraint_rules'].append(r)
+    return out, None
+
+
+def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False):
+    """Approve a Schedule Adjustment INTO the Official schedule: the class's Published
+    meetings with the moved ones replaced are published as the section's next Official
+    version through api_approve_schedule itself — the same hard-constraint, Settings,
+    merge and completeness gates as the Manual Editor's Approve (no second publish
+    path). Local arrangements of this class are archived by that publish, since the
+    Official schedule now carries the change. Returns (True, None) or (False, response)."""
+    adj = adjs[0]
+    moved = {int(o['official_sessionid']): o for o in overrides}
+    cur.execute("""
+        SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid,
+               COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+               cs.subjectcode
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid
+        JOIN schedule sc ON sv.scheduleid = sc.scheduleid
+        JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+        WHERE sv.versionid = %s AND sv.status = 'Published'
+        ORDER BY ss.sessionid
+    """, [adj['versionid']])
+    current = cur.fetchall() or []
+    cur.execute("SELECT timeid, TO_CHAR(timevalue, 'HH24:MI') AS t FROM timeslot")
+    tmap = {r['timeid']: r['t'] for r in cur.fetchall() or []}
+    cur.execute("""
+        SELECT sem.academicyearid, sem.semestertype FROM semester sem WHERE sem.semesterid = %s
+    """, [adj['semesterid']])
+    sem = cur.fetchone() or {}
+
+    rows = []
+    for c in current:
+        o = moved.get(int(c['sessionid']))
+        day   = o['daydesc'] if o else c['daydesc']
+        start = o['starttimeid'] if o else c['starttimeid']
+        end   = o['endtimeid'] if o else c['endtimeid']
+        room  = o['roomid'] if o else c['roomid']
+        fac   = c.get('employeenumber') or adj.get('employeenumber')
+        rows.append({'subjectcode': c['subjectcode'], 'subject_code': c['subjectcode'],
+                     'daydesc': day, 'day': day, 'days_list': [day],
+                     'start_time': tmap.get(start), 'end_time': tmap.get(end),
+                     'roomid': room, 'room_id': room,
+                     'employeenumber': fac, 'faculty_id': fac})
+    payload = {
+        'schedule_data': rows,
+        'context': {'program': adj.get('programcode'), 'yearLevel': adj.get('yearlevel'),
+                    'term': sem.get('semestertype'), 'acadYear': sem.get('academicyearid'),
+                    'sectionId': adj.get('sectionid'), 'section_id': adj.get('sectionid')},
+        'override': True,
+        'dry_run': bool(dry_run),
+    }
+    keep = {k: session.get(k) for k in ('loggedin', 'role', 'username', 'employeenumber', 'id')}
+    with app.test_request_context('/api/schedule/approve', method='POST', json=payload):
+        for k, v in keep.items():
+            if v is not None:
+                session[k] = v
+        rv = api_approve_schedule()
+    resp, status = (rv[0], rv[1]) if isinstance(rv, tuple) else (rv, rv.status_code)
+    body = resp.get_json(silent=True) or {}
+    if status == 200 and body.get('success'):
+        return True, None
+    msg = body.get('error') or 'The Official schedule could not be updated.'
+    if body.get('needs_confirmation') or body.get('code') == 'MERGE_CONFIRMATION_REQUIRED':
+        msg = ('Updating the Official schedule needs a confirmation that only the Manual Editor '
+               'can give (e.g. a class merge). Make this change in the Manual Editor, or approve '
+               'it as a Local arrangement.')
+    return False, (jsonify({'success': False, 'error': msg if msg.startswith('Cannot')
+                            else f'Cannot update the Official schedule: {msg}',
+                            'code': body.get('code') or 'OFFICIAL_PUBLISH_BLOCKED',
+                            'details': {k: body[k] for k in ('violations', 'load_violations',
+                                                             'night_violations') if k in body}}), 409)
+
+
 @app.route('/api/requests/decide', methods=['POST'])
 def api_requests_decide():
     _ensure_request_tables()
@@ -3056,182 +3289,207 @@ def api_requests_decide():
             """, [decision, decided_by, remarks, decided_by, req_id])
 
         elif req_type == 'adjustment':
-            _cur.execute("""
-                SELECT scr.*, sc.employeenumber, sc.semesterid, sc.sectionid,
-                       cs.subjectcode, pyl.programcode, pyl.yearlevel,
-                       ss.daydesc AS official_daydesc,
-                       ss.starttimeid AS official_starttimeid,
-                       ss.endtimeid AS official_endtimeid,
-                       ss.roomid AS official_roomid
-                FROM schedule_change_request scr
-                JOIN schedule sc ON scr.scheduleid = sc.scheduleid
-                JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN sections sec ON sc.sectionid = sec.sectionid
-                LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-                LEFT JOIN schedule_sessions ss
-                  ON ss.sessionid = scr.official_sessionid AND ss.versionid = scr.versionid
-                WHERE scr.requestid = %s
-                -- Lock only the request row. A bare FOR UPDATE also targets the
-                -- LEFT JOINed tables, which PostgreSQL rejects ("FOR UPDATE cannot be
-                -- applied to the nullable side of an outer join") — every adjustment
-                -- approval/rejection failed with HTTP 500.
-                FOR UPDATE OF scr
-            """, [req_id])
-            adj = _cur.fetchone()
-            if not adj:
+            # A request may move several meetings of one class (rows sharing
+            # request_group): they are decided together, never half-applied.
+            # apply_to: 'local'    -> a Local arrangement (Official/SIS unchanged)
+            #           'official' -> republished into the Official schedule through
+            #                         the same Publish (api_approve_schedule) gates as the
+            #                         Manual Editor: every hard constraint + Settings.
+            apply_to = str(data.get('apply_to') or 'local').strip().lower()
+            if apply_to not in ('local', 'official'):
+                return jsonify({'success': False, 'error': 'Invalid apply_to.'}), 400
+            group_ids = _adjustment_group_ids(req_id, _cur)
+            adjs = []
+            for _gid in group_ids:
+                _cur.execute("""
+                    SELECT scr.*, sc.employeenumber, sc.semesterid, sc.sectionid,
+                           cs.subjectcode, pyl.programcode, pyl.yearlevel,
+                           ss.daydesc AS official_daydesc,
+                           ss.starttimeid AS official_starttimeid,
+                           ss.endtimeid AS official_endtimeid,
+                           ss.roomid AS official_roomid
+                    FROM schedule_change_request scr
+                    JOIN schedule sc ON scr.scheduleid = sc.scheduleid
+                    JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
+                    JOIN sections sec ON sc.sectionid = sec.sectionid
+                    LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+                    LEFT JOIN schedule_sessions ss
+                      ON ss.sessionid = scr.official_sessionid AND ss.versionid = scr.versionid
+                    WHERE scr.requestid = %s
+                    -- Lock only the request rows. A bare FOR UPDATE also targets the
+                    -- LEFT JOINed tables, which PostgreSQL rejects ("FOR UPDATE cannot be
+                    -- applied to the nullable side of an outer join") — every adjustment
+                    -- approval/rejection failed with HTTP 500.
+                    FOR UPDATE OF scr
+                """, [_gid])
+                _row = _cur.fetchone()
+                if _row:
+                    adjs.append(_row)
+            if not adjs:
                 return jsonify({'success': False, 'error': 'Schedule adjustment request not found.'}), 404
+            adj = adjs[0]   # class identity (subject / section / faculty) is shared by the rows
 
             if decision == 'Approved':
                 # HC16 group model (P6): never approve a change to a Merge Group member's
                 # meeting (rejecting the request stays possible).
                 _merge_locked = _merged_occurrence_restrictions(
-                    _cur, [(adj.get('official_sessionid'), {'daydesc': adj.get('new_daydesc'),
-                                                            'starttimeid': adj.get('new_starttimeid'),
-                                                            'endtimeid': adj.get('new_endtimeid'),
-                                                            'roomid': adj.get('new_roomid')})],
+                    _cur, [(a.get('official_sessionid'), {'daydesc': a.get('new_daydesc'),
+                                                          'starttimeid': a.get('new_starttimeid'),
+                                                          'endtimeid': a.get('new_endtimeid'),
+                                                          'roomid': a.get('new_roomid')})
+                           for a in adjs],
                     action='Schedule Adjustment request', targeted=True)
                 if _merge_locked:
                     _conn.rollback()
                     return _merged_restriction_response(_merge_locked)
-                if not adj.get('official_sessionid') or not adj.get('official_daydesc'):
-                    _conn.rollback()
-                    return jsonify({'success': False, 'error':
-                        'This is a legacy Schedule Adjustment without an exact Official meeting. Ask the faculty to submit the request again before approving it.'}), 409
-
-                _cur.execute("""
-                    SELECT 1 FROM schedule_sessions ss
-                    JOIN schedule_version sv ON ss.versionid = sv.versionid
-                    WHERE ss.sessionid=%s AND ss.versionid=%s
-                      AND sv.scheduleid=%s AND sv.status='Published'
-                    LIMIT 1
-                """, [adj['official_sessionid'], adj['versionid'], adj['scheduleid']])
-                if not _cur.fetchone():
-                    _conn.rollback()
-                    return jsonify({'success': False, 'error':
-                        'The Official meeting changed after this request was submitted. Please submit a new adjustment.'}), 409
-
-                reason_key = f"Approved Schedule Adjustment request #{req_id}"
-                _cur.execute("""
-                    SELECT la.arrangementid
-                    FROM public.local_arrangement la
-                    JOIN public.local_arrangement_sessions las ON las.arrangementid=la.arrangementid
-                    WHERE la.status='Published' AND la.is_active=TRUE
-                      AND las.official_sessionid=%s AND la.override_reason=%s
-                    LIMIT 1
-                """, [adj['official_sessionid'], reason_key])
-                existing = _cur.fetchone()
-
-                if not existing:
-                    # Revalidate the semester-long override against the LATEST
-                    # effective schedule (conflicts) and the Local Scheduler rules it
-                    # becomes subject to once published (Phase 4: HC1-HC6, HC8,
-                    # HC13; HC7/HC9 excluded). Nothing is written if it is invalid.
-                    summary, error = _request_conflict_summary('adjustment', req_id)
-                    if error or not summary['all_ok']:
-                        _conn.rollback()
-                        return jsonify({
-                            'success': False,
-                            'error': 'Cannot approve: ' + ' '.join(
-                                summary['conflicts'] if summary else [error[0]]),
-                            'code': 'REQUEST_NO_LONGER_VALID',
-                            'conflicts': summary['conflicts'] if summary else [],
-                        }), 409
-                    _override = {
-                        'subjectcode': adj['subjectcode'],
-                        'daydesc': adj.get('new_daydesc') or adj['official_daydesc'],
-                        'starttimeid': adj.get('new_starttimeid') or adj['official_starttimeid'],
-                        'endtimeid': adj.get('new_endtimeid') or adj['official_endtimeid'],
-                        'roomid': adj.get('new_roomid') or adj['official_roomid'],
-                        'official_sessionid': adj['official_sessionid'],
-                        'faculty': adj.get('employeenumber'),
-                    }
-                    rule_ok, rule_error = (_validate_local_editable_dimensions(
-                        _cur, _override, adj.get('employeenumber'))
-                        if _override['roomid'] is not None else (True, None))
-                    if rule_ok:
-                        rule_ok, rule_error = _validate_local_faculty_service_rules(
-                            _cur, [_override], adj.get('semesterid'))
-                    if not rule_ok:
-                        _conn.rollback()
-                        return jsonify({'success': False, 'error': f'Cannot approve: {rule_error}',
-                                        'code': 'INVALID_LOCAL_EDITABLE_DIMENSIONS'}), 409
-
-                    # The approved adjustment becomes part of the section's ONE Local
-                    # Published snapshot (uq_local_one_active_published_scope): the next
-                    # snapshot = the current active overrides + this override, replacing any
-                    # override of the same Official occurrence (C3 supersession). Built with
-                    # the same helpers as Local Scheduler Publish, so neither workflow can
-                    # silently discard the other's overrides.
-                    _scope_prog = str(adj.get('programcode') or '').upper()
-                    _cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (
-                        f"local-scope|{_scope_prog}|{adj.get('yearlevel')}|"
-                        f"{adj.get('sectionid')}|{adj.get('semesterid')}",))
-                    _anchor = _current_official_anchor(
-                        _cur, adj.get('programcode'), adj.get('yearlevel'),
-                        adj.get('sectionid'), adj.get('semesterid'))
-                    if not _anchor:
+                for a in adjs:
+                    if not a.get('official_sessionid') or not a.get('official_daydesc'):
                         _conn.rollback()
                         return jsonify({'success': False, 'error':
-                            'This section no longer has a Published Official Schedule. Ask the faculty to submit the request again.'}), 409
-
-                    new_day   = adj.get('new_daydesc')     or adj['official_daydesc']
-                    new_start = adj.get('new_starttimeid') or adj['official_starttimeid']
-                    new_end   = adj.get('new_endtimeid')   or adj['official_endtimeid']
-                    new_room  = adj.get('new_roomid')      or adj['official_roomid']
-
-                    _snapshot = _merge_local_overrides(
-                        _active_local_overrides(_cur, adj.get('programcode'), adj.get('yearlevel'),
-                                                adj.get('sectionid'), adj.get('semesterid'),
-                                                _anchor['versionid']),
-                        [{'subjectcode': adj['subjectcode'], 'daydesc': new_day,
-                          'starttimeid': new_start, 'endtimeid': new_end, 'roomid': new_room,
-                          'faculty_employeenumber': adj.get('employeenumber'),
-                          'official_sessionid': adj['official_sessionid']}])
-
+                            'This is a legacy Schedule Adjustment without an exact Official meeting. Ask the faculty to submit the request again before approving it.'}), 409
                     _cur.execute("""
-                        UPDATE public.local_arrangement
-                        SET status='Archived', is_active=FALSE,
-                            archive_reason='Superseded by a newer approved Schedule Adjustment',
-                            archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
-                        WHERE UPPER(programcode) = UPPER(%s) AND yearlevel = %s
-                          AND sectionid = %s AND semesterid = %s
-                          AND status='Published' AND is_active=TRUE
-                    """, (adj.get('programcode'), adj.get('yearlevel'),
-                          adj.get('sectionid'), adj.get('semesterid')))
+                        SELECT 1 FROM schedule_sessions ss
+                        JOIN schedule_version sv ON ss.versionid = sv.versionid
+                        WHERE ss.sessionid=%s AND ss.versionid=%s
+                          AND sv.scheduleid=%s AND sv.status='Published'
+                        LIMIT 1
+                    """, [a['official_sessionid'], a['versionid'], a['scheduleid']])
+                    if not _cur.fetchone():
+                        _conn.rollback()
+                        return jsonify({'success': False, 'error':
+                            'The Official meeting changed after this request was submitted. Please submit a new adjustment.'}), 409
 
+                # One override per moved Official meeting (unspecified fields keep the
+                # Official meeting's values).
+                _overrides = [{
+                    'subjectcode': a['subjectcode'],
+                    'daydesc': a.get('new_daydesc') or a['official_daydesc'],
+                    'starttimeid': a.get('new_starttimeid') or a['official_starttimeid'],
+                    'endtimeid': a.get('new_endtimeid') or a['official_endtimeid'],
+                    'roomid': a.get('new_roomid') or a['official_roomid'],
+                    'official_sessionid': a['official_sessionid'],
+                    'faculty': a.get('employeenumber'),
+                    'faculty_employeenumber': a.get('employeenumber'),
+                } for a in adjs]
+
+                # Revalidate against the LATEST effective schedule (every moved meeting
+                # vacated). Nothing is written if any new meeting is invalid.
+                summary, error = _request_group_summary('adjustment', req_id)
+                if error or not summary['all_ok']:
+                    _conn.rollback()
+                    return jsonify({
+                        'success': False,
+                        'error': 'Cannot approve: ' + ' '.join(
+                            summary['conflicts'] if summary else [error[0]]),
+                        'code': 'REQUEST_NO_LONGER_VALID',
+                        'conflicts': summary['conflicts'] if summary else [],
+                    }), 409
+
+                if apply_to == 'official':
+                    _pub_ok, _pub_resp = _apply_adjustment_to_official(_cur, adjs, _overrides)
+                    if not _pub_ok:
+                        _conn.rollback()
+                        return _pub_resp
+                else:
+                    reason_key = f"Approved Schedule Adjustment request #{req_id}"
                     _cur.execute("""
-                        INSERT INTO public.local_arrangement
-                            (description, programcode, yearlevel, sectionid, semesterid,
-                             ref_versionid, override_reason, reason, is_active, created_by, status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s,'Published')
-                        RETURNING arrangementid
-                    """, (f"Approved Schedule Adjustment #{req_id}", adj.get('programcode'),
-                          adj.get('yearlevel'), adj.get('sectionid'), adj.get('semesterid'),
-                          _anchor['versionid'], reason_key, reason_key, decided_by))
-                    arrangementid = _cur.fetchone()['arrangementid']
-                    for _o in _snapshot:
+                        SELECT la.arrangementid
+                        FROM public.local_arrangement la
+                        JOIN public.local_arrangement_sessions las ON las.arrangementid=la.arrangementid
+                        WHERE la.status='Published' AND la.is_active=TRUE
+                          AND las.official_sessionid=%s AND la.override_reason=%s
+                        LIMIT 1
+                    """, [adj['official_sessionid'], reason_key])
+                    existing = _cur.fetchone()
+
+                    if not existing:
+                        # The Local Scheduler rules each override becomes subject to once
+                        # published (Phase 4: HC1-HC6, HC8; HC13 advisory; HC7/HC9 excluded).
+                        for _o in _overrides:
+                            rule_ok, rule_error = (_validate_local_editable_dimensions(
+                                _cur, _o, adj.get('employeenumber'))
+                                if _o['roomid'] is not None else (True, None))
+                            if not rule_ok:
+                                break
+                        if rule_ok:
+                            rule_ok, rule_error = _validate_local_faculty_service_rules(
+                                _cur, _overrides, adj.get('semesterid'))
+                        if not rule_ok:
+                            _conn.rollback()
+                            return jsonify({'success': False, 'error': f'Cannot approve: {rule_error}',
+                                            'code': 'INVALID_LOCAL_EDITABLE_DIMENSIONS'}), 409
+
+                        # The approved adjustment becomes part of the section's ONE Local
+                        # Published snapshot (uq_local_one_active_published_scope): the next
+                        # snapshot = the current active overrides + these overrides, replacing
+                        # any override of the same Official occurrence (C3 supersession). Built
+                        # with the same helpers as Local Scheduler Publish, so neither workflow
+                        # can silently discard the other's overrides.
+                        _scope_prog = str(adj.get('programcode') or '').upper()
+                        _cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (
+                            f"local-scope|{_scope_prog}|{adj.get('yearlevel')}|"
+                            f"{adj.get('sectionid')}|{adj.get('semesterid')}",))
+                        _anchor = _current_official_anchor(
+                            _cur, adj.get('programcode'), adj.get('yearlevel'),
+                            adj.get('sectionid'), adj.get('semesterid'))
+                        if not _anchor:
+                            _conn.rollback()
+                            return jsonify({'success': False, 'error':
+                                'This section no longer has a Published Official Schedule. Ask the faculty to submit the request again.'}), 409
+
+                        _snapshot = _merge_local_overrides(
+                            _active_local_overrides(_cur, adj.get('programcode'), adj.get('yearlevel'),
+                                                    adj.get('sectionid'), adj.get('semesterid'),
+                                                    _anchor['versionid']),
+                            [{k: _o[k] for k in ('subjectcode', 'daydesc', 'starttimeid', 'endtimeid',
+                                                 'roomid', 'faculty_employeenumber', 'official_sessionid')}
+                             for _o in _overrides])
+
                         _cur.execute("""
-                            INSERT INTO public.local_arrangement_sessions
-                                (arrangementid, subjectcode, daydesc, starttimeid, endtimeid,
-                                 roomid, faculty_employeenumber, official_sessionid)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                        """, (arrangementid, _o['subjectcode'], _o['daydesc'], _o['starttimeid'],
-                              _o['endtimeid'], _o['roomid'], _o['faculty_employeenumber'],
-                              _o['official_sessionid']))
+                            UPDATE public.local_arrangement
+                            SET status='Archived', is_active=FALSE,
+                                archive_reason='Superseded by a newer approved Schedule Adjustment',
+                                archived_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                            WHERE UPPER(programcode) = UPPER(%s) AND yearlevel = %s
+                              AND sectionid = %s AND semesterid = %s
+                              AND status='Published' AND is_active=TRUE
+                        """, (adj.get('programcode'), adj.get('yearlevel'),
+                              adj.get('sectionid'), adj.get('semesterid')))
+
+                        _cur.execute("""
+                            INSERT INTO public.local_arrangement
+                                (description, programcode, yearlevel, sectionid, semesterid,
+                                 ref_versionid, override_reason, reason, is_active, created_by, status)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s,'Published')
+                            RETURNING arrangementid
+                        """, (f"Approved Schedule Adjustment #{adj['requestid']}", adj.get('programcode'),
+                              adj.get('yearlevel'), adj.get('sectionid'), adj.get('semesterid'),
+                              _anchor['versionid'], reason_key, reason_key, decided_by))
+                        arrangementid = _cur.fetchone()['arrangementid']
+                        for _o in _snapshot:
+                            _cur.execute("""
+                                INSERT INTO public.local_arrangement_sessions
+                                    (arrangementid, subjectcode, daydesc, starttimeid, endtimeid,
+                                     roomid, faculty_employeenumber, official_sessionid)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                            """, (arrangementid, _o['subjectcode'], _o['daydesc'], _o['starttimeid'],
+                                  _o['endtimeid'], _o['roomid'], _o['faculty_employeenumber'],
+                                  _o['official_sessionid']))
 
                 _cur.execute("""
                     UPDATE schedule_change_request
                     SET status=%s, decided_by=%s, decided_at=NOW(), remarks=%s,
-                        reviewed_by=%s, reviewed_at=NOW()
-                    WHERE requestid=%s
-                """, [decision, decided_by, remarks, decided_by, req_id])
+                        reviewed_by=%s, reviewed_at=NOW(), applied_to=%s
+                    WHERE requestid = ANY(%s)
+                """, [decision, decided_by, remarks, decided_by,
+                      'Official' if apply_to == 'official' else 'Local', group_ids])
             else:
                 _cur.execute("""
                     UPDATE schedule_change_request
                     SET status=%s, decided_by=%s, decided_at=NOW(), remarks=%s,
                         reviewed_by=%s, reviewed_at=NOW()
-                    WHERE requestid=%s
-                """, [decision, decided_by, remarks, decided_by, req_id])
+                    WHERE requestid = ANY(%s)
+                """, [decision, decided_by, remarks, decided_by, group_ids])
         else:
             return jsonify({'success': False, 'error': 'Invalid type'}), 400
 
@@ -30000,6 +30258,13 @@ def api_faculty_my_requests():
                 TO_CHAR(scr.effective_from,'YYYY-MM-DD') AS effective_from,
                 TO_CHAR(scr.end_date,'YYYY-MM-DD')    AS end_date,
                 COALESCE(scr.remarks,'')              AS remarks,
+                scr.request_group,
+                COALESCE(scr.applied_to,'')           AS applied_to,
+                scr.official_sessionid,
+                COALESCE(os.daydesc,'')               AS orig_day,
+                COALESCE(TO_CHAR(ots_s.timevalue,'HH12:MI AM'),'') AS orig_start,
+                COALESCE(TO_CHAR(ots_e.timevalue,'HH12:MI AM'),'') AS orig_end,
+                COALESCE(orr.roomname,'')             AS orig_room,
                 (SELECT ss2.daydesc
                  FROM schedule_sessions ss2
                  JOIN schedule_version sv2 ON ss2.versionid = sv2.versionid
@@ -30014,9 +30279,31 @@ def api_faculty_my_requests():
             LEFT JOIN building b     ON r.buildingid = b.buildingid
             LEFT JOIN timeslot ts_s  ON scr.new_starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e  ON scr.new_endtimeid   = ts_e.timeid
+            LEFT JOIN schedule_sessions os ON os.sessionid = scr.official_sessionid
+            LEFT JOIN timeslot ots_s ON os.starttimeid = ots_s.timeid
+            LEFT JOIN timeslot ots_e ON os.endtimeid   = ots_e.timeid
+            LEFT JOIN room orr       ON os.roomid = orr.roomid
             WHERE scr.submitted_by = %s
-            ORDER BY scr.created_at DESC
+            ORDER BY scr.created_at DESC, scr.requestid
         """, [emp_num]) or []
+
+        # A multi-meeting adjustment (rows sharing request_group) is ONE request.
+        _adj_items, _by_group = [], {}
+        _MKEYS = ('requestid', 'official_sessionid', 'orig_day', 'orig_start', 'orig_end', 'orig_room',
+                  'new_daydesc', 'start_time', 'end_time', 'roomname', 'buildingname')
+        for r in (dict(x) for x in adj):
+            member = {k: r.get(k) for k in _MKEYS}
+            g = r.get('request_group')
+            if g and g in _by_group:
+                _by_group[g]['members'].append(member)
+                continue
+            r['members'] = [member]
+            if g:
+                _by_group[g] = r
+            _adj_items.append(r)
+        for r in _adj_items:
+            r['members'].sort(key=lambda m: m.get('requestid') or 0)
+        adj = _adj_items
 
         combined = [dict(r) for r in makeup] + [dict(r) for r in adj]
         combined.sort(key=lambda x: x.get('date_submitted',''), reverse=True)
@@ -30068,23 +30355,20 @@ def api_faculty_update_request(req_type, req_id):
             return jsonify({'success': False, 'error': 'End Time must be later than Start Time.'}), 400
 
 
-        def _check_duration(scheduleid):
-            """Returns an error string if the new time span doesn't match the subject's
-            required contact hours (lecture + laboratory), else None."""
-            if not (scheduleid and start_tid and end_tid):
+        def _check_duration(official_sessionid):
+            """Error string when the new time span is not the length of the Official
+            meeting being moved (teaching hours never change), else None."""
+            if not (official_sessionid and start_tid and end_tid):
                 return None
-            subj_row = query_db("""
-                SELECT cs.subjectcode, cs.lecturehours, cs.laboratoryhours
-                FROM schedule sc JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                WHERE sc.scheduleid = %s
-            """, [scheduleid], one=True)
-            if not subj_row:
+            occ = query_db("SELECT starttimeid, endtimeid FROM schedule_sessions WHERE sessionid = %s",
+                           [official_sessionid], one=True)
+            if not occ:
                 return None
-            required_hours  = float(subj_row.get('lecturehours') or 0) + float(subj_row.get('laboratoryhours') or 0)
+            meeting_hours   = (occ['endtimeid'] - occ['starttimeid']) * 0.5
             requested_hours = (end_tid - start_tid) * 0.5
-            if required_hours > 0 and abs(requested_hours - required_hours) > 0.01:
-                return (f"Selected time span is {requested_hours:g}h, but {subj_row['subjectcode']} requires "
-                        f"{required_hours:g}h per session.")
+            if abs(requested_hours - meeting_hours) > 0.01:
+                return (f"Selected time span is {requested_hours:g}h, but the meeting being moved is "
+                        f"{meeting_hours:g}h. The hours must stay the same.")
             return None
 
 
@@ -30098,10 +30382,13 @@ def api_faculty_update_request(req_type, req_id):
                 eff_from = data.get('start_date') or None
                 end_date = data.get('end_date') or None
                 existing = query_db(
-                    "SELECT requestid, scheduleid, official_sessionid FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
+                    "SELECT requestid, scheduleid, official_sessionid, request_group FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
                     [req_id, emp_num], one=True)
                 if not existing:
                     return jsonify({'success': False, 'error': 'Request not found or not editable.'}), 404
+                if existing.get('request_group'):
+                    return jsonify({'success': False, 'error':
+                        'A request that moves several meetings cannot be edited. Cancel it and submit a new one.'}), 409
                 # HC16 group model (P6): editing cannot keep a Merge Group-locked request alive.
                 _merge_locked = _merged_occurrence_restrictions(
                     None, [(existing.get('official_sessionid'), {'daydesc': new_day, 'starttimeid': start_tid,
@@ -30109,7 +30396,7 @@ def api_faculty_update_request(req_type, req_id):
                     action='Schedule Adjustment request', targeted=True)
                 if _merge_locked:
                     return _merged_restriction_response(_merge_locked)
-                _dur_err = _check_duration(existing.get('scheduleid'))
+                _dur_err = _check_duration(existing.get('official_sessionid'))
                 if _dur_err:
                     return jsonify({'success': False, 'error': _dur_err}), 400
                 cur2.execute("""
@@ -30157,11 +30444,15 @@ def api_faculty_cancel_request(req_type, req_id):
                 cur3.execute("UPDATE class_meeting_request SET status='Cancelled' WHERE requestid=%s", [req_id])
             elif req_type == 'adjustment':
                 existing = query_db(
-                    "SELECT requestid FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
+                    "SELECT requestid, request_group FROM schedule_change_request WHERE requestid=%s AND submitted_by=%s AND status='Pending'",
                     [req_id, emp_num], one=True)
                 if not existing:
                     return jsonify({'success': False, 'error': 'Request not found or already decided.'}), 404
-                cur3.execute("UPDATE schedule_change_request SET status='Cancelled' WHERE requestid=%s", [req_id])
+                # A multi-meeting request is cancelled as a whole.
+                cur3.execute("""UPDATE schedule_change_request SET status='Cancelled'
+                                WHERE (requestid=%s OR (%s IS NOT NULL AND request_group=%s))
+                                  AND submitted_by=%s AND status='Pending'""",
+                             [req_id, existing.get('request_group'), existing.get('request_group'), emp_num])
             else:
                 return jsonify({'success': False, 'error': 'Unknown type.'}), 400
             conn3.commit()
@@ -31539,6 +31830,12 @@ def api_faculty_submit_request():
             submitted_by = acc_row[0]['employeenumber'] if acc_row else None
         if not submitted_by:
             return jsonify({'success': False, 'error': 'Could not determine faculty employee number.'}), 400
+        # A reason is required (chk_scr_reason / chk_cmr_reason) — say so plainly instead
+        # of failing on the database constraint.
+        if req_type in ('makeup', 'adjustment') and not str(reason or '').strip():
+            return jsonify({'success': False, 'error':
+                'Please provide a reason for the ' + ('make-up class' if req_type == 'makeup'
+                                                      else 'schedule adjustment') + ' request.'}), 400
 
         # Map "07:30 AM" → timeid in timeslot table
         def _time_to_id(t_str):
@@ -31572,10 +31869,9 @@ def api_faculty_submit_request():
                     _mu_err = _mu_rule(requested_hours, required_hours, subject)
                     if _mu_err:
                         return jsonify({'success': False, 'error': _mu_err}), 400
-                elif required_hours > 0 and abs(requested_hours - required_hours) > 0.01:
-                    return jsonify({'success': False, 'error':
-                        f"Selected time span is {requested_hours:g}h, but {subject} requires "
-                        f"{required_hours:g}h per session."}), 400
+                # Schedule Adjustment: the new meeting(s) must keep the hours of the
+                # meeting(s) being moved (checked per request below), not the subject's
+                # weekly total -- a 3h Wednesday meeting moves as 3h, never as 5h.
 
         # Resolve scheduleid (and versionid) from subject code + section
         sched_row = None
@@ -31645,58 +31941,156 @@ def api_faculty_submit_request():
                 """, (scheduleid, req_date, start_tid, end_tid, rid, reason, notes, submitted_by))
 
             elif req_type == 'adjustment':
-                day = data.get('day', '') or None
-                try:
-                    official_sessionid = int(official_sessionid)
-                except (TypeError, ValueError):
-                    return jsonify({'success': False,
-                        'error': 'Please select the exact class meeting to adjust.'}), 400
-
+                # One request may move SEVERAL meetings of the same class (Monday 2h +
+                # Wednesday 3h -> e.g. Tuesday 2.5h + Thursday 2.5h, or one 5h block).
+                # Each moved Official meeting is one row (one Local session replaces
+                # exactly one Official meeting); the rows share request_group.
+                # Legacy single-meeting payload: official_sessionid + day/start/end/room.
+                raw_meetings = data.get('meetings')
+                if not isinstance(raw_meetings, list) or not raw_meetings:
+                    raw_meetings = [{'official_sessionid': official_sessionid, 'day': data.get('day'),
+                                     'start_time': start_time, 'end_time': end_time,
+                                     'room_id': room_id}]
                 if not scheduleid or not versionid:
                     return jsonify({'success': False,
                         'error': 'No published schedule found for the given subject and section.'}), 400
 
-                occurrence = query_db("""
-                    SELECT ss.sessionid
+                rows, seen_ids, moved_hours, new_hours = [], set(), 0.0, 0.0
+                for m in raw_meetings:
+                    try:
+                        official_sessionid = int(m.get('official_sessionid'))
+                    except (TypeError, ValueError):
+                        return jsonify({'success': False,
+                            'error': 'Please select the exact class meeting to adjust.'}), 400
+                    if official_sessionid in seen_ids:
+                        return jsonify({'success': False,
+                            'error': 'The same class meeting was selected more than once.'}), 400
+                    seen_ids.add(official_sessionid)
+
+                    occurrence = query_db("""
+                        SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid
+                        FROM schedule_sessions ss
+                        JOIN schedule_version sv ON ss.versionid = sv.versionid
+                        WHERE ss.sessionid = %s
+                          AND sv.versionid = %s
+                          AND sv.scheduleid = %s
+                          AND sv.status = 'Published'
+                        LIMIT 1
+                    """, [official_sessionid, versionid, scheduleid], one=True)
+                    if not occurrence:
+                        return jsonify({'success': False,
+                            'error': 'The selected Official meeting is no longer available. Please select it again.'}), 400
+
+                    # A meeting already replaced by an approved Local arrangement, or with a
+                    # request still pending, cannot be requested again.
+                    _local_now = query_db("""
+                        SELECT las.daydesc, TO_CHAR(t1.timevalue, 'HH12:MI AM') AS st,
+                               TO_CHAR(t2.timevalue, 'HH12:MI AM') AS en, r.roomname
+                        FROM local_arrangement_sessions las
+                        JOIN local_arrangement la ON la.arrangementid = las.arrangementid
+                        LEFT JOIN timeslot t1 ON t1.timeid = las.starttimeid
+                        LEFT JOIN timeslot t2 ON t2.timeid = las.endtimeid
+                        LEFT JOIN room r ON r.roomid = las.roomid
+                        WHERE las.official_sessionid = %s
+                          AND la.status = 'Published' AND la.is_active = TRUE
+                        LIMIT 1
+                    """, [official_sessionid], one=True)
+                    if _local_now:
+                        return jsonify({'success': False, 'error':
+                            f"This meeting already has an approved Local arrangement "
+                            f"({_local_now['daydesc']} {_local_now['st']} – {_local_now['en']}"
+                            f"{' · ' + _local_now['roomname'] if _local_now.get('roomname') else ''}). "
+                            f"Ask the Academic Head to change it in the Local Scheduler."}), 409
+                    if query_db("""SELECT 1 FROM schedule_change_request
+                                   WHERE official_sessionid = %s AND status = 'Pending' LIMIT 1""",
+                                [official_sessionid], one=True):
+                        return jsonify({'success': False, 'error':
+                            'This meeting already has a pending adjustment request. '
+                            'Wait for the Academic Head\'s decision, or cancel that request first.'}), 409
+
+                    day = (m.get('day') or '').strip() or None
+                    # A time or room left out keeps the Official meeting's own value (as
+                    # approval does) — e.g. a day-only move.
+                    m_start = _time_to_id(m.get('start_time')) if m.get('start_time') else occurrence['starttimeid']
+                    m_end   = _time_to_id(m.get('end_time'))   if m.get('end_time')   else occurrence['endtimeid']
+                    m_room  = (int(m['room_id']) if str(m.get('room_id') or '').strip().isdigit()
+                               else occurrence.get('roomid'))
+                    if not day or not m_start or not m_end:
+                        return jsonify({'success': False,
+                            'error': 'Each new meeting needs a day, a start time and an end time.'}), 400
+                    if m_end <= m_start:
+                        return jsonify({'success': False, 'error': 'End Time must be later than Start Time.'}), 400
+                    if not m_room:
+                        return jsonify({'success': False, 'error': 'Please select a room for each new meeting.'}), 400
+                    moved_hours += (occurrence['endtimeid'] - occurrence['starttimeid']) * 0.5
+                    new_hours   += (m_end - m_start) * 0.5
+                    rows.append({'official_sessionid': official_sessionid, 'day': day,
+                                 'start': m_start, 'end': m_end, 'room': m_room,
+                                 'same_as_now': (day == occurrence.get('daydesc')
+                                                 and m_start == occurrence['starttimeid']
+                                                 and m_end == occurrence['endtimeid']
+                                                 and m_room == occurrence.get('roomid'))})
+
+                # Teaching hours never change: the new meetings carry exactly the hours of
+                # the meetings they replace (any split of that total).
+                if abs(new_hours - moved_hours) > 0.01:
+                    _what = 'selected meetings total' if len(rows) > 1 else 'selected meeting is'
+                    return jsonify({'success': False, 'error':
+                        f"The new schedule totals {new_hours:g}h, but the {_what} {moved_hours:g}h. "
+                        f"The hours must stay the same."}), 400
+                # A "change" to exactly the current day, time and room is no change.
+                if all(r['same_as_now'] for r in rows):
+                    return jsonify({'success': False, 'error':
+                        'The new schedule is the same as the current one. Change the day, time or room.'}), 400
+                # A new meeting can't overlap one of this class's meetings that is NOT being
+                # moved (the class would meet twice at once).
+                _kept = query_db("""
+                    SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid,
+                           TO_CHAR(t1.timevalue, 'HH12:MI AM') AS st, TO_CHAR(t2.timevalue, 'HH12:MI AM') AS en
                     FROM schedule_sessions ss
-                    JOIN schedule_version sv ON ss.versionid = sv.versionid
-                    WHERE ss.sessionid = %s
-                      AND sv.versionid = %s
-                      AND sv.scheduleid = %s
-                      AND sv.status = 'Published'
-                    LIMIT 1
-                """, [official_sessionid, versionid, scheduleid], one=True)
-                if not occurrence:
-                    return jsonify({'success': False,
-                        'error': 'The selected Official meeting is no longer available. Please select it again.'}), 400
+                    JOIN timeslot t1 ON t1.timeid = ss.starttimeid
+                    JOIN timeslot t2 ON t2.timeid = ss.endtimeid
+                    WHERE ss.versionid = %s AND NOT (ss.sessionid = ANY(%s))
+                """, [versionid, [r['official_sessionid'] for r in rows]]) or []
+                for r in rows:
+                    for k in _kept:
+                        if k['daydesc'] == r['day'] and r['start'] < k['endtimeid'] and k['starttimeid'] < r['end']:
+                            return jsonify({'success': False, 'error':
+                                f"The new {r['day']} meeting overlaps this class's own {k['daydesc']} "
+                                f"{k['st']} – {k['en']} meeting, which is not being moved. "
+                                f"Choose another time, or tick that meeting too."}), 400
+                # The new meetings of one class can't overlap each other.
+                for a_i, a in enumerate(rows):
+                    for b in rows[a_i + 1:]:
+                        if a['day'] == b['day'] and a['start'] < b['end'] and b['start'] < a['end']:
+                            return jsonify({'success': False, 'error':
+                                f"Two of the new meetings overlap on {a['day']}."}), 400
 
                 # HC16 group model (P6): a Merge Group member's meeting cannot be adjusted
                 # for one section (no-op under the legacy model).
                 _merge_locked = _merged_occurrence_restrictions(
-                    None, [(official_sessionid, {'daydesc': day, 'starttimeid': start_tid,
-                                                 'endtimeid': end_tid, 'roomid': rid})],
+                    None, [(r['official_sessionid'], {'daydesc': r['day'], 'starttimeid': r['start'],
+                                                      'endtimeid': r['end'], 'roomid': r['room']})
+                           for r in rows],
                     action='Schedule Adjustment request', targeted=True)
                 if _merge_locked:
                     return _merged_restriction_response(_merge_locked)
 
-                parts = []
-                if day:
-                    parts.append('Day')
-                if start_tid and end_tid:
-                    parts.append('Time')
-                if rid:
-                    parts.append('Room')
-                change_type = '+'.join(parts) if parts else 'Day'
-
-                cur.execute("""
-                    INSERT INTO schedule_change_request
-                        (scheduleid, versionid, official_sessionid, change_type, new_daydesc,
-                         new_starttimeid, new_endtimeid, new_roomid,
-                         effective_from, reason, submitted_by, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                            CURRENT_DATE, %s, %s, 'Pending')
-                """, (scheduleid, versionid, official_sessionid, change_type, day,
-                      start_tid, end_tid, rid, reason, submitted_by))
+                import uuid as _uuid
+                request_group = _uuid.uuid4().hex[:20] if len(rows) > 1 else None
+                for r in rows:
+                    official_sessionid, day = r['official_sessionid'], r['day']
+                    start_tid, end_tid, rid = r['start'], r['end'], r['room']
+                    change_type = 'Day+Time+Room'
+                    cur.execute("""
+                        INSERT INTO schedule_change_request
+                            (scheduleid, versionid, official_sessionid, change_type, new_daydesc,
+                             new_starttimeid, new_endtimeid, new_roomid,
+                             effective_from, reason, submitted_by, status, request_group)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                                CURRENT_DATE, %s, %s, 'Pending', %s)
+                    """, (scheduleid, versionid, official_sessionid, change_type, day,
+                          start_tid, end_tid, rid, reason, submitted_by, request_group))
             else:
                 return jsonify({'success': False, 'error': 'Unknown request type.'}), 400
 
@@ -31871,12 +32265,9 @@ def api_faculty_check_request_conflicts():
                         if _mu_err:
                             duration_conflict = True
                             duration_detail = _mu_err
-                    elif required_hours > 0 and abs(req_hours - required_hours) > 0.01:
-                        duration_conflict = True
-                        duration_detail = (
-                            f"This time span is {req_hours:g}h, but {subject_code} requires "
-                            f"{required_hours:g}h per session."
-                        )
+                    # Schedule Adjustment: a new meeting may be any length — the request's
+                    # total must equal the hours of the meetings being moved, which the
+                    # form shows live and api_faculty_submit_request enforces.
             except Exception:
                 pass
 
@@ -37542,6 +37933,13 @@ def api_approve_schedule():
                         'date':          _date_str,
                     },
                 }), 200
+
+        # dry_run: every Publish gate above passed — report that and write nothing
+        # (used to check a Schedule Adjustment against the Official rules before it is
+        # offered for "Approve & Update Official").
+        if data.get('dry_run'):
+            conn.rollback(); cur.close(); conn.close()
+            return jsonify({'success': True, 'dry_run': True})
 
         # One counter across every source (see _next_version_number): the new Published
         # snapshot is max_v + 1, a re-saved Draft remainder is max_v + 2.

@@ -22,4 +22,6 @@ def test_live_check_and_submit_use_the_makeup_rule_only_for_makeups():
     s = APP.index("def api_faculty_submit_request")
     sub = APP[s:APP.index("@app.route", s + 40)]
     assert "if req_type == 'makeup':" in sub and "makeup_duration_error as _mu_rule" in sub
-    assert "requires \"\n" in sub or "per session." in sub        # adjustments keep the full-session rule
+    # Adjustments: the new meeting(s) keep the hours of the meeting(s) being moved
+    # (not the subject's weekly total — a 3h meeting never has to become 5h).
+    assert "The hours must stay the same." in sub

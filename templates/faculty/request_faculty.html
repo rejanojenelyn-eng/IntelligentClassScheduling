@@ -476,10 +476,17 @@ function rfApplyFilters() {
         const typeChip = r.req_type === 'makeup'
             ? '<span class="req-type-chip chip-makeup">MAKE-UP CLASS</span>'
             : '<span class="req-type-chip chip-adj">SCHEDULE ADJUSTMENT</span>';
-        const room      = r.roomname ? `ROOM ${r.roomname}` : '—';
+        // A multi-meeting adjustment lists every room it requests; it is cancelled and
+        // resubmitted rather than edited.
+        const members   = Array.isArray(r.members) ? r.members : [];
+        const rooms     = members.length > 1
+            ? [...new Set(members.map(m => m.roomname).filter(Boolean))].join(', ') : r.roomname;
+        const room      = rooms ? `ROOM ${rooms}` : '—';
         const isPending = r.status === 'Pending';
+        const isGroup   = members.length > 1;
         const rJson     = JSON.stringify(r).replace(/"/g,'&quot;');
-        const editBtn   = `<button class="action-btn edit" title="Edit" ${isPending ? '' : 'disabled'}
+        const editBtn   = `<button class="action-btn edit" ${isPending && !isGroup ? '' : 'disabled'}
+            title="${isGroup ? 'A request that moves several meetings cannot be edited — cancel it and submit a new one' : 'Edit'}"
             onclick="event.stopPropagation(); rfOpenEdit(${rJson})"><i class="fas fa-pen"></i></button>`;
         const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
             onclick="event.stopPropagation(); rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-xmark"></i></button>`;
@@ -836,10 +843,19 @@ function rfOpenView(req) {
         html += field('far fa-calendar', 'DATE', req.requested_date);
         html += field('far fa-clock', 'TIME', time);
     } else {
-        html += field('far fa-calendar', 'NEW DAY', req.new_daydesc);
-        html += field('far fa-clock', 'TIME', time);
-        html += field('far fa-calendar-check', 'EFFECTIVE FROM', req.effective_from || req.requested_date);
-        if (req.end_date) html += field('far fa-calendar-xmark', 'END DATE', req.end_date);
+        // Each moved meeting: current Official meeting -> requested new meeting.
+        const members = (Array.isArray(req.members) && req.members.length) ? req.members : [req];
+        const meet = (d, a, b, r) => `${d || '—'} ${a || ''}${b ? ' – ' + b : ''}${r ? ' · ' + r : ''}`.trim();
+        members.forEach((m, i) => {
+            const label = members.length > 1 ? `MEETING ${i + 1}` : 'SCHEDULE CHANGE';
+            const from  = m.orig_day ? meet(m.orig_day, m.orig_start, m.orig_end, m.orig_room) : 'Current meeting';
+            html += field('fas fa-right-left', label,
+                `${from}  →  ${meet(m.new_daydesc, m.start_time, m.end_time, m.roomname)}`);
+        });
+        if (req.status === 'Approved' && req.applied_to) {
+            html += field('fas fa-landmark', 'APPLIED TO',
+                req.applied_to === 'Official' ? 'Official schedule (SIS)' : 'Local arrangement');
+        }
     }
     if (req.reason) html += field('far fa-file-lines', 'REASON', req.reason);
     if (req.notes)  html += field('far fa-note-sticky', 'ADDITIONAL NOTES', req.notes);

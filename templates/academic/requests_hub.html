@@ -351,6 +351,9 @@
     .rhub-cmp-arrow { transform: rotate(90deg); padding: 6px 0; }
 }
 
+.btn-rhub-official { background: #1a4a7a !important; }
+.btn-rhub-official:hover { background: #143a60 !important; }
+
 /* Analytics */
 .rhub-analytics {
     border: 1px solid #e8e8e8;
@@ -403,6 +406,7 @@
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+    flex-wrap: wrap;
     padding-top: 14px;
     border-top: 1px solid #eee;
 }
@@ -625,7 +629,7 @@
         <div class="rhub-modal-title" style="color:#1a6b3c;"><i class="fas fa-check-circle"></i> Approve Request</div>
         <p id="approveModalBody" style="font-size:0.88rem;color:#333;margin:12px 0 10px;line-height:1.5;"></p>
         <p style="font-size:0.78rem;color:#1a6b3c;background:#eafaf1;border:1px solid #a9dfbf;border-radius:6px;padding:8px 12px;margin:0 0 20px;">
-            <i class="fas fa-info-circle" style="margin-right:5px;"></i>This will be saved as a local arrangement for the remainder of the semester.
+            <i class="fas fa-info-circle" style="margin-right:5px;"></i><span id="approveModalNote">This will be saved as a local arrangement for the remainder of the semester.</span>
         </p>
         <div class="rhub-modal-actions">
             <button class="btn-modal-cancel" onclick="rhubCloseApprove()">CANCEL</button>
@@ -793,43 +797,81 @@ function rhubCompareHtml(req) {
         </div>`;
     }
 
-    // Schedule Adjustment: the exact meeting being moved, field by field.
-    const hasOrig = !!(req.orig_day || req.orig_start);
-    const oDay  = req.orig_day || '';
-    const oTime = (req.orig_start && req.orig_end) ? `${req.orig_start} – ${req.orig_end}` : '';
-    const oRoom = req.orig_room || '';
-    const nDay  = req.new_daydesc || oDay;
-    const nTime = reqTime || oTime;
-    const nRoom = reqRoom || oRoom;
-    const diff  = (a, b) => hasOrig && String(a || '').trim().toUpperCase() !== String(b || '').trim().toUpperCase();
-    const row   = (label, o, n) => _rhubCmpRow(label, n, diff(o, n) ? 'changed' : 'same', diff(o, n));
+    // Schedule Adjustment: the meeting(s) being moved -> the new meeting(s).
+    const members = (Array.isArray(req.members) && req.members.length) ? req.members : [req];
+    const hrs = (st, en) => {
+        const toMin = t => { const m = /(\d+):(\d+)\s*(AM|PM)/i.exec(t || ''); if (!m) return null;
+            let h = +m[1] % 12; if (/PM/i.test(m[3])) h += 12; return h * 60 + +m[2]; };
+        const a = toMin(st), b = toMin(en);
+        return (a == null || b == null) ? 0 : (b - a) / 60;
+    };
+    const movedIds = new Set(members.map(m => `${m.orig_day}|${m.orig_start}`));
+    const others   = meetings.filter(m => !movedIds.has(`${m.day}|${m.start}`));
+    const othersHtml = others.length
+        ? `<div class="rhub-cmp-note" style="font-style:normal">Other meeting${others.length > 1 ? 's' : ''} of this class (not affected):</div>`
+          + others.map(m => _rhubMeetLine(m)).join('')
+        : '';
 
-    let oldSide;
-    if (hasOrig) {
-        const others = meetings.filter(m => !(m.day === oDay && m.start === req.orig_start));
-        oldSide = _rhubCmpRow('Day', oDay) + _rhubCmpRow('Time', oTime) + _rhubCmpRow('Room', oRoom)
-            + (others.length
-                ? `<div class="rhub-cmp-note" style="font-style:normal">Other meeting${others.length > 1 ? 's' : ''} of this class (not affected):</div>`
-                  + others.map(m => _rhubMeetLine(m)).join('')
-                : '');
-    } else {
-        oldSide = (meetings.length ? meetings.map(m => _rhubMeetLine(m)).join('')
-                                   : '<div class="rhub-cmp-meet">No published meetings found for this class.</div>')
-            + '<div class="rhub-cmp-note">This request was submitted before the exact meeting was recorded.</div>';
+    if (members.length === 1) {
+        // One meeting: field-by-field, changes highlighted.
+        const m = members[0];
+        const hasOrig = !!(m.orig_day || m.orig_start);
+        const oDay  = m.orig_day || '';
+        const oTime = (m.orig_start && m.orig_end) ? `${m.orig_start} – ${m.orig_end}` : '';
+        const oRoom = m.orig_room || '';
+        const mTime = (m.start_time && m.end_time) ? `${m.start_time} – ${m.end_time}` : '';
+        const nDay  = m.new_daydesc || oDay;
+        const nTime = mTime || oTime;
+        const nRoom = m.room_full || m.room_name || oRoom;
+        const diff  = (x, y) => hasOrig && String(x || '').trim().toUpperCase() !== String(y || '').trim().toUpperCase();
+        const row   = (label, o, n) => _rhubCmpRow(label, n, diff(o, n) ? 'changed' : 'same', diff(o, n));
+        const oldSide = hasOrig
+            ? _rhubCmpRow('Day', oDay) + _rhubCmpRow('Time', oTime) + _rhubCmpRow('Room', oRoom) + othersHtml
+            : (meetings.length ? meetings.map(x => _rhubMeetLine(x)).join('')
+                               : '<div class="rhub-cmp-meet">No published meetings found for this class.</div>')
+              + '<div class="rhub-cmp-note">This request was submitted before the exact meeting was recorded.</div>';
+        return `
+        <div class="rhub-cmp">
+            <div class="rhub-cmp-side rhub-cmp-old">
+                <div class="rhub-cmp-hd"><i class="fas fa-calendar-alt"></i> Current schedule
+                    <span class="rhub-cmp-tag">BEFORE</span></div>
+                ${oldSide}
+            </div>
+            <div class="rhub-cmp-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="rhub-cmp-side rhub-cmp-new">
+                <div class="rhub-cmp-hd"><i class="fas fa-calendar-check"></i> Requested schedule
+                    <span class="rhub-cmp-tag">AFTER</span></div>
+                ${hasOrig ? row('Day', oDay, nDay) + row('Time', oTime, nTime) + row('Room', oRoom, nRoom)
+                          : _rhubCmpRow('Day', nDay, 'changed') + _rhubCmpRow('Time', nTime, 'changed') + _rhubCmpRow('Room', nRoom, 'changed')}
+            </div>
+        </div>`;
     }
+
+    // Several meetings: the moved meetings and the new meetings that replace them,
+    // with the hours on both sides (they always match).
+    const oldH = members.reduce((t, m) => t + hrs(m.orig_start, m.orig_end), 0);
+    const newH = members.reduce((t, m) => t + hrs(m.start_time, m.end_time), 0);
+    const oldLines = members.map(m => _rhubMeetLine(
+        { day: m.orig_day, start: m.orig_start, end: m.orig_end, room: m.orig_room }, 'moving')).join('');
+    const newLines = members.map(m =>
+        `<div class="rhub-cmp-meet" style="color:#1a6b3c"><b>${_rhubEsc(m.new_daydesc)}</b> · `
+        + `${_rhubEsc(m.start_time)} – ${_rhubEsc(m.end_time)} · ${_rhubEsc(m.room_full || m.room_name || 'TBA')}</div>`).join('');
     return `
     <div class="rhub-cmp">
         <div class="rhub-cmp-side rhub-cmp-old">
-            <div class="rhub-cmp-hd"><i class="fas fa-calendar-alt"></i> Current schedule
+            <div class="rhub-cmp-hd"><i class="fas fa-calendar-alt"></i> Meetings to move (${members.length})
                 <span class="rhub-cmp-tag">BEFORE</span></div>
-            ${oldSide}
+            ${oldLines}
+            <div class="rhub-cmp-note" style="font-style:normal">Total: <b>${oldH.toFixed(1).replace(/\.0$/, '')}h</b></div>
+            ${othersHtml}
         </div>
         <div class="rhub-cmp-arrow"><i class="fas fa-arrow-right"></i></div>
         <div class="rhub-cmp-side rhub-cmp-new">
-            <div class="rhub-cmp-hd"><i class="fas fa-calendar-check"></i> Requested schedule
+            <div class="rhub-cmp-hd"><i class="fas fa-calendar-check"></i> New meetings (${members.length})
                 <span class="rhub-cmp-tag">AFTER</span></div>
-            ${hasOrig ? row('Day', oDay, nDay) + row('Time', oTime, nTime) + row('Room', oRoom, nRoom)
-                      : _rhubCmpRow('Day', nDay, 'changed') + _rhubCmpRow('Time', nTime, 'changed') + _rhubCmpRow('Room', nRoom, 'changed')}
+            ${newLines}
+            <div class="rhub-cmp-note" style="font-style:normal">Total: <b>${newH.toFixed(1).replace(/\.0$/, '')}h</b>
+                — teaching hours unchanged. Approved or rejected as one request.</div>
         </div>
     </div>`;
 }
@@ -873,9 +915,14 @@ function rhubRenderDetail(req, v) {
         const mBadge = mergeLocks.length
             ? `<span class="rhub-chip chip-bad" title="${_rhubEsc(mergeLocks[0].error)}"><i class="fas fa-object-group"></i> MERGED CLASS — ${_rhubEsc(mergeLocks[0].group || '')}</span>`
             : '';
+        const offHtml = (req.req_type === 'adjustment' && v.official_ok !== undefined)
+            ? (v.official_ok
+                ? `<div class="rhub-analytics-msg" style="color:#1a4a7a"><i class="fas fa-landmark"></i> Can be applied to the Official schedule — every hard constraint and Setting passes.</div>`
+                : `<div class="rhub-analytics-msg" style="color:#8a5a00"><i class="fas fa-landmark"></i> Cannot be applied to the Official schedule: ${_rhubEsc(v.official_error || '')} It can still be approved as a Local arrangement.</div>`)
+            : '';
         analyticsHtml = `
             <div class="rhub-chips">${mBadge}${rBadge}${fBadge}${sBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}`;
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}${offHtml}`;
         // The server may know a newer status than the list (another reviewer decided it)
         if (v.status && v.status !== req.status) req.status = v.status;
     }
@@ -885,12 +932,33 @@ function rhubRenderDetail(req, v) {
     // and refuses), so don't offer the button — rejecting is still possible.
     const blocked = !!(v && req.req_type === 'makeup' && !v.all_ok) ||
         !!(v && (v.merge_restrictions || []).length) || !!req.merge_restriction;
+    const _dis = blocked
+        ? 'disabled data-blocked="1" title="Resolve the conflicts above before approving" style="opacity:.5;cursor:not-allowed"' : '';
+    // Update Official: only once the request is known to pass the Official Publish checks.
+    const _offOk  = !blocked && v && v.official_ok === true;
+    const _offWhy = !v ? 'Checking the Official schedule rules…'
+                  : blocked ? 'Resolve the conflicts above before approving'
+                  : (v.official_error || 'This change does not pass the Official schedule checks');
+    const _offDis   = _offOk ? '' : 'disabled style="opacity:.5;cursor:not-allowed"';
+    const _offTitle = _offOk ? 'Approve and update the Official schedule (SIS) — every hard constraint and Setting passed'
+                             : _rhubEsc(_offWhy);
+    // A Schedule Adjustment can be applied as a Local arrangement or written into the
+    // Official schedule (republished with every hard-constraint check).
+    const approveBtns = req.req_type === 'adjustment' ? `
+            <button class="btn-rhub-approve" onclick="rhubApprove('local')" ${_dis}
+                    title="Approve as a Local arrangement — the Official schedule (SIS) stays as it is">
+                <i class="fas fa-check-circle"></i> APPROVE AS LOCAL
+            </button>
+            <button class="btn-rhub-approve btn-rhub-official" onclick="rhubApprove('official')" ${_offDis}
+                    title="${_offTitle}">
+                <i class="fas fa-landmark"></i> APPROVE &amp; UPDATE OFFICIAL
+            </button>` : `
+            <button class="btn-rhub-approve" onclick="rhubApprove('local')" ${_dis}>
+                <i class="fas fa-check-circle"></i> APPROVE
+            </button>`;
     const actionBtns = req.status === 'Pending' ? `
         <div class="rhub-actions">
-            <button class="btn-rhub-approve" onclick="rhubApprove()" ${blocked
-                ? 'disabled data-blocked="1" title="Resolve the conflicts above before approving" style="opacity:.5;cursor:not-allowed"' : ''}>
-                <i class="fas fa-check-circle"></i> APPROVE
-            </button>
+            ${approveBtns}
             <button class="btn-rhub-reject" onclick="rhubReject()">
                 <i class="fas fa-times-circle"></i> REJECT
             </button>
@@ -916,7 +984,9 @@ function rhubRenderDetail(req, v) {
             </div>
         </div>
 
-        <div class="rhub-dbox-lbl" style="margin-bottom:8px">${reqLabel}</div>
+        <div class="rhub-dbox-lbl" style="margin-bottom:8px">${reqLabel}${
+            req.status === 'Approved' && req.applied_to
+                ? ` · <span style="color:#1a6b3c">APPLIED TO ${req.applied_to === 'Official' ? 'OFFICIAL SCHEDULE' : 'LOCAL ARRANGEMENT'}</span>` : ''}</div>
         ${rhubCompareHtml(req)}
 
         <div class="rhub-detail-grid">
@@ -979,11 +1049,23 @@ function rhubToggleSort() {
 }
 
 /* ════ APPROVE ════ */
-function rhubApprove() {
+let _approveApplyTo = 'local';
+function rhubApprove(applyTo) {
     const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
     if (!req) return;
+    _approveApplyTo = applyTo === 'official' ? 'official' : 'local';
+    const how = req.req_type !== 'adjustment' ? ''
+        : _approveApplyTo === 'official'
+            ? ' The Official schedule (SIS) will be updated and republished; every hard constraint and Setting is checked first.'
+            : ' It will be applied as a Local arrangement; the Official schedule (SIS) stays as it is.';
     document.getElementById('approveModalBody').textContent =
-        `Approve ${req.req_type_label} request from ${req.faculty_name}?`;
+        `Approve ${req.req_type_label} request from ${req.faculty_name}?${how}`;
+    const note = document.getElementById('approveModalNote');
+    if (note) note.textContent = req.req_type === 'makeup'
+        ? 'This is a one-time make-up session on the requested date; the regular schedule does not change.'
+        : _approveApplyTo === 'official'
+            ? 'The class\'s Official schedule (SIS) will be republished with this change. Any Local arrangement for these meetings will be archived.'
+            : 'This will be saved as a local arrangement for the remainder of the semester.';
     document.getElementById('approveModal').classList.add('open');
 }
 function rhubCloseApprove() {
@@ -997,13 +1079,17 @@ async function rhubConfirmApprove() {
         const res  = await fetch('/api/requests/decide', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Approved', remarks: '' })
+            body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Approved', remarks: '',
+                                   apply_to: _approveApplyTo })
         });
         const data = await res.json();
         if (data.success) {
             _activeKey = null;
             document.getElementById('rhubDetailsBody').innerHTML =
-                `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved successfully.</div>`;
+                `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved${
+                    req.req_type === 'adjustment'
+                        ? (_approveApplyTo === 'official' ? ' and the Official schedule was updated.' : ' as a Local arrangement.')
+                        : ' successfully.'}</div>`;
             rhubLoad();
         } else {
             alert('Error: ' + (data.error || 'Could not approve.'));

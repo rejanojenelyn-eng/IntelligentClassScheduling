@@ -148,10 +148,11 @@ def test_adjustment_approval_links_local_to_exact_official_occurrence():
 def test_adjustment_approval_preserves_unspecified_original_values():
     b=block("api_requests_decide","api_faculty_my_requests")
     a=b[b.index("elif req_type == 'adjustment':"):]
-    assert "or adj['official_daydesc']" in a
-    assert "or adj['official_starttimeid']" in a
-    assert "or adj['official_endtimeid']" in a
-    assert "or adj['official_roomid']" in a
+    # Per moved meeting `a` (a request may move several meetings of one class).
+    assert "or a['official_daydesc']" in a
+    assert "or a['official_starttimeid']" in a
+    assert "or a['official_endtimeid']" in a
+    assert "or a['official_roomid']" in a
 
 def test_legacy_adjustment_is_not_guessed_on_approval():
     b=block("api_requests_decide","api_faculty_my_requests")

@@ -590,7 +590,39 @@
     .adj-v2 .mu-label { font-size: .74rem; font-weight: 800; color: #7a0000; letter-spacing: .3px; }
     .adj-v2 .mu-label b { margin-right: 2px; }
     .adj-v2 .mu-label small { font-size: .66rem; font-weight: 600; color: #888; }
+    .req-form-msg { margin: 0 22px 10px; padding: 9px 12px; border-radius: 7px; background: #fdecea;
+        border: 1px solid #f5c2c0; color: #a61b1b; font-size: .78rem; font-weight: 600; line-height: 1.4;
+        display: flex; gap: 8px; align-items: flex-start; }
+    .req-form-msg i { margin-top: 2px; }
     .adj-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
+    /* Schedule Adjustment: current meetings (tick to move) + new meeting rows */
+    .adj-sec-hint { font-size: .62rem; font-weight: 600; color: #a05050; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+    .adj-empty { font-size: .78rem; color: #999; padding: 10px 12px; border: 1px dashed #e3c9c9; border-radius: 8px; margin-bottom: 12px; }
+    .adj-meetings { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .adj-meet { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1.5px solid #e6dede;
+                border-radius: 8px; cursor: pointer; background: #fff; transition: border-color .15s, background .15s; }
+    .adj-meet:hover { border-color: #c99; }
+    .adj-meet.sel { border-color: #800000; background: #fff6f6; }
+    .adj-meet input { margin-top: 3px; accent-color: #800000; }
+    .adj-meet.locked { cursor: not-allowed; background: #f7f7f7; border-color: #e3e3e3; }
+    .adj-meet.locked .adj-meet-main { color: #888; }
+    .adj-meet-lock { font-size: .7rem; color: #8a6d00; margin-top: 3px; }
+    .adj-meet-main { font-size: .82rem; font-weight: 700; color: #333; }
+    .adj-meet-hrs { font-size: .66rem; font-weight: 800; color: #800000; background: #fbe9e9; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
+    .adj-meet-now { font-size: .72rem; color: #1a4a7a; margin-top: 3px; }
+    .adj-hours { margin-left: auto; font-size: .7rem; font-weight: 800; padding: 2px 10px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
+    .adj-hours.ok  { background: #d4edda; color: #155724; }
+    .adj-hours.bad { background: #fdecea; color: #a61b1b; }
+    .adj-combine { display: flex; align-items: center; gap: 8px; font-size: .78rem; font-weight: 700; color: #555; margin: -4px 0 10px; cursor: pointer; }
+    .adj-combine input { accent-color: #800000; }
+    .adj-row { border: 1px solid #ecdcdc; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #fffdfd; }
+    .adj-row-hd { font-size: .68rem; font-weight: 800; color: #800000; margin-bottom: 8px; }
+    .adj-row-grid { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1.4fr; gap: 8px; }
+    .adj-row-grid select, .adj-row-grid input { width: 100%; padding: 7px 8px; border: 1px solid #d9cfcf; border-radius: 6px; font-size: .8rem; background: #fff; }
+    .adj-row-grid input[readonly] { background: #f3f1f1; color: #555; }
+    .adj-row-warn { font-size: .7rem; color: #9a5b00; margin-top: 6px; line-height: 1.4; }
+    .adj-row-warn.block { color: #a61b1b; font-weight: 600; }
+    @media (max-width: 620px) { .adj-row-grid { grid-template-columns: 1fr 1fr; } }
     .adj-hint { font-size: .7rem; color: #777; margin-top: 4px; line-height: 1.35; }
     .adj-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
     .adj-foot .mu-count { margin: 0; }
@@ -1563,6 +1595,7 @@
                 <div class="mu-count" id="muNoteCount">0/500</div>
             </div>
         </div>
+        <div class="req-form-msg" id="muFormMsg" role="alert" style="display:none"></div>
         <div class="req-modal-ftr mu-ftr">
             <button class="btn-req-cancel" onclick="frsCloseForm('makeup')"><i class="fas fa-xmark"></i> CANCEL</button>
             <button class="btn-req-submit" onclick="reqSubmit('makeup')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
@@ -1586,7 +1619,10 @@
         </div>
         <div class="req-modal-body mu-body">
 
-            <div class="mu-sec-title"><i class="far fa-calendar-alt"></i> NEW SCHEDULE DETAILS</div>
+            <!-- Legacy single-meeting fields: no longer shown (the meeting cards and new-
+                 meeting rows below replace them) but kept so shared form helpers still find
+                 their elements. -->
+            <div id="adjLegacyFields" style="display:none">
             <div class="adj-grid3">
                 <div class="mu-field">
                     <label class="mu-label" for="adjDay"><b>*</b> NEW DAY</label>
@@ -1623,6 +1659,7 @@
                         <input type="hidden" id="adjRoom">
                     </div>
                 </div>
+            </div>
             </div>
 
             <div class="mu-sec-title"><i class="fas fa-user"></i> CLASS INFORMATION</div>
@@ -1662,14 +1699,22 @@
                 </div>
             </div>
 
-            <!-- The exact Official class meeting being moved (a class meeting twice a
-                 week has two). The request binds to it (official_sessionid). -->
-            <div class="mu-field">
-                <label class="mu-label" for="adjMeetingSel"><b>*</b> CLASS MEETING TO CHANGE</label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-clock-rotate-left"></i></span>
-                    <select id="adjMeetingSel">
-                        <option value="">— Select subject and section first —</option>
-                    </select></div>
+            <!-- The class's Official meetings: tick the one(s) to move. Each moved meeting is
+                 bound to its Official occurrence (official_sessionid). -->
+            <div class="mu-sec-title"><i class="fas fa-calendar-week"></i> CURRENT SCHEDULE
+                <span class="adj-sec-hint">check the meeting(s) to move</span></div>
+            <div id="adjMeetingList" class="adj-meetings">
+                <div class="adj-empty">Select a subject and section to see this class's schedule.</div>
+            </div>
+
+            <div class="mu-sec-title"><i class="far fa-calendar-alt"></i> NEW SCHEDULE
+                <span id="adjHoursSummary" class="adj-hours"></span></div>
+            <label id="adjCombineWrap" class="adj-combine" style="display:none">
+                <input type="checkbox" id="adjCombine" onchange="_adjRenderRows()">
+                Combine into one continuous meeting
+            </label>
+            <div id="adjNewRows">
+                <div class="adj-empty">Tick the meeting(s) you want to move.</div>
             </div>
 
             <!-- Conflict Warning Banner -->
@@ -1688,6 +1733,7 @@
                     <span class="mu-count" id="adjReasonCount">0/500</span></div>
             </div>
         </div>
+        <div class="req-form-msg" id="adjFormMsg" role="alert" style="display:none"></div>
         <div class="req-modal-ftr mu-ftr">
             <button class="btn-req-cancel" onclick="frsCloseForm('adjustment')"><i class="fas fa-xmark"></i> CANCEL</button>
             <button class="btn-req-submit" onclick="reqSubmit('adjustment')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
@@ -1832,6 +1878,7 @@ async function _reqInitFacultyData() {
 
 
     try {
+        await _adjLoadOfficial();   // Schedule Adjustment: the Official meetings to choose from
         const r2   = await fetch('/api/faculty/my_assignments');
         const data = await r2.json();
         console.log('[my_assignments]', data);
@@ -2047,33 +2094,349 @@ function _reqApplySection(p) {
 }
 
 
-/* Schedule Adjustment: the class's current meetings for the chosen subject + section
-   (one per Official occurrence), auto-selected when there is only one. */
+/* ══════════════════════════════════════════
+   SCHEDULE ADJUSTMENT — meetings to move → new meetings
+   The class's Official meetings are listed (with any approved Local arrangement that
+   currently replaces one). The faculty ticks the meeting(s) to move and gives the new
+   meeting(s): one row per moved meeting (any split of the same total hours), or one
+   continuous meeting ("Combine"), which is sent as back-to-back pieces — one per moved
+   meeting — so every new meeting still replaces exactly one Official meeting.
+══════════════════════════════════════════ */
+let _adjOfficial  = [];          // Official meetings of every class (my_schedule_subjects)
+let _adjMeetings  = [];          // the selected class's Official meetings
+let _adjSelected  = new Set();   // official_sessionid(s) ticked
+let _adjRowState  = {};          // key -> {day,start,end,room}
+let _adjPendingIds = new Set();  // Official meetings with a request still pending
+const _ADJ_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+function _adjSlotIdx(t) { return _REQ_SLOTS.indexOf(String(t || '').trim().toUpperCase()); }
+function _adjHours(start, end) {
+    const a = _adjSlotIdx(start), b = _adjSlotIdx(end);
+    return (a < 0 || b < 0 || b <= a) ? 0 : (b - a) * 0.5;
+}
+function _adjFmtH(h) { return `${(+h).toFixed(1).replace(/\.0$/, '')}h`; }
+function _adjAddHours(start, h) {
+    const i = _adjSlotIdx(start);
+    const j = i + Math.round(h * 2);
+    return (i < 0 || j >= _REQ_SLOTS.length) ? '' : _REQ_SLOTS[j];
+}
+
+async function _adjLoadOfficial() {
+    try {
+        const r = await fetch('/api/faculty/my_schedule_subjects');
+        const d = await r.json();
+        _adjOfficial = (d && d.success && Array.isArray(d.subjects)) ? d.subjects : [];
+    } catch (e) { _adjOfficial = []; }
+    // Meetings already in a pending adjustment request can't be requested again.
+    try {
+        const r = await fetch('/api/faculty/my_requests');
+        const d = await r.json();
+        _adjPendingIds = new Set();
+        (d && d.requests || []).forEach(q => {
+            if (q.req_type !== 'adjustment' || q.status !== 'Pending') return;
+            (q.members || [q]).forEach(m => { if (m.official_sessionid) _adjPendingIds.add(String(m.official_sessionid)); });
+        });
+    } catch (e) { _adjPendingIds = new Set(); }
+}
+
 function _adjBuildMeetings() {
-    const sel = document.getElementById('adjMeetingSel');
-    if (!sel) return;
+    const list = document.getElementById('adjMeetingList');
+    if (!list) return;
     const code = document.getElementById('adjSubject').value;
     const sec  = document.getElementById('adjSection').value;
+    _adjSelected = new Set();
+    _adjRowState = {};
+    const combine = document.getElementById('adjCombine');
+    if (combine) combine.checked = false;
     if (!code || !sec) {
-        sel.innerHTML = '<option value="">— Select subject and section first —</option>';
+        _adjMeetings = [];
+        list.innerHTML = '<div class="adj-empty">Select a subject and section to see this class\'s schedule.</div>';
+        _adjRenderRows();
         return;
     }
-    const dayIdx = d => ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].indexOf(d);
     const seen = new Set();
-    const meetings = _myAssignments
-        .filter(a => a.subjectcode === code && String(a.sectionid) === String(sec) && a.official_sessionid)
-        .filter(a => !seen.has(String(a.official_sessionid)) && seen.add(String(a.official_sessionid)))
-        .sort((a, b) => dayIdx(a.daydesc) - dayIdx(b.daydesc) || String(a.start_time).localeCompare(String(b.start_time)));
-    if (!meetings.length) {
-        sel.innerHTML = '<option value="">No published meeting found for this class</option>';
+    _adjMeetings = _adjOfficial
+        .filter(m => m.subjectcode === code && String(m.sectionid) === String(sec) && m.official_sessionid)
+        .filter(m => !seen.has(String(m.official_sessionid)) && seen.add(String(m.official_sessionid)))
+        .sort((a, b) => _ADJ_DAYS.indexOf(a.daydesc) - _ADJ_DAYS.indexOf(b.daydesc)
+                     || _adjSlotIdx(a.start_time) - _adjSlotIdx(b.start_time));
+    if (!_adjMeetings.length) {
+        list.innerHTML = '<div class="adj-empty">No published meetings found for this class.</div>';
+        _adjRenderRows();
         return;
     }
-    sel.innerHTML = (meetings.length > 1 ? '<option value="">— Select a meeting —</option>' : '')
-        + meetings.map(a => {
-            const room = a.roomname ? ` · ${a.roomname}` : '';
-            const local = a.source === 'Local' ? ' (Local schedule)' : '';
-            return `<option value="${a.official_sessionid}">${a.daydesc} ${a.start_time} – ${a.end_time}${room}${local}</option>`;
-        }).join('');
+    const totalH = _adjMeetings.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
+    list.innerHTML = _adjMeetings.map(m => {
+        const id  = String(m.official_sessionid);
+        // An approved Local arrangement currently replacing this meeting
+        const now = _myAssignments.find(a => a.source === 'Local' && String(a.official_sessionid) === id);
+        const nowTxt = now ? `<div class="adj-meet-now"><i class="fas fa-arrow-right-long"></i> Currently: `
+            + `${now.daydesc} ${now.start_time} – ${now.end_time}${now.roomname ? ' · ' + now.roomname : ''} `
+            + `(approved Local arrangement)</div>` : '';
+        // Already adjusted (approved Local arrangement) or already requested (pending):
+        // not selectable again.
+        const pending = _adjPendingIds.has(id);
+        const lockTxt = now ? 'Already adjusted — ask the Academic Head to change it in the Local Scheduler.'
+                      : pending ? 'A request for this meeting is already pending.' : '';
+        return `<label class="adj-meet${lockTxt ? ' locked' : ''}" data-id="${id}">
+            <input type="checkbox" value="${id}" onchange="_adjToggleMeeting(this)"${lockTxt ? ' disabled' : ''}>
+            <div><div class="adj-meet-main">${m.daydesc} · ${m.start_time} – ${m.end_time}`
+            + `${m.roomname ? ' · ' + m.roomname : ''}<span class="adj-meet-hrs">${_adjFmtH(_adjHours(m.start_time, m.end_time))}</span></div>`
+            + `${nowTxt}${lockTxt ? `<div class="adj-meet-lock"><i class="fas fa-lock"></i> ${lockTxt}</div>` : ''}</div></label>`;
+    }).join('') + `<div class="adj-sec-hint" style="margin:0">Official schedule · ${_adjFmtH(totalH)} per week</div>`;
+    // A class meeting once a week: nothing to choose — tick it.
+    if (_adjMeetings.length === 1) {
+        const cb = list.querySelector('input[type=checkbox]:not(:disabled)');
+        if (cb) { cb.checked = true; _adjToggleMeeting(cb); return; }
+    }
+    _adjRenderRows();
+}
+
+function _adjToggleMeeting(cb) {
+    const id = String(cb.value);
+    if (cb.checked) _adjSelected.add(id); else _adjSelected.delete(id);
+    cb.closest('.adj-meet')?.classList.toggle('sel', cb.checked);
+    _adjRenderRows();
+}
+
+function _adjSelectedMeetings() {
+    return _adjMeetings.filter(m => _adjSelected.has(String(m.official_sessionid)));
+}
+
+/* One row per moved meeting, or a single row when combining. */
+function _adjRenderRows() {
+    const wrap = document.getElementById('adjNewRows');
+    if (!wrap) return;
+    const sel = _adjSelectedMeetings();
+    const combineWrap = document.getElementById('adjCombineWrap');
+    const combineEl   = document.getElementById('adjCombine');
+    if (combineWrap) combineWrap.style.display = sel.length > 1 ? '' : 'none';
+    if (combineEl && sel.length < 2) combineEl.checked = false;
+    const combine = !!(combineEl && combineEl.checked);
+    if (!sel.length) {
+        wrap.innerHTML = '<div class="adj-empty">Check the meeting(s) you want to move.</div>';
+        _adjUpdateSummary();
+        return;
+    }
+    const totalH = sel.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
+    const rows = combine
+        ? [{ key: 'combined', label: `One continuous meeting · ${_adjFmtH(totalH)}`, hours: totalH }]
+        : sel.map(m => ({ key: String(m.official_sessionid), hours: _adjHours(m.start_time, m.end_time),
+                          label: `Replaces ${m.daydesc} ${m.start_time} – ${m.end_time} · ${_adjFmtH(_adjHours(m.start_time, m.end_time))}` }));
+    const slotOpts = (val, ph) => `<option value="">${ph}</option>` + _REQ_SLOTS.map(t =>
+        `<option${t === val ? ' selected' : ''}>${t}</option>`).join('');
+    wrap.innerHTML = rows.map(r => {
+        const st = _adjRowState[r.key] || (_adjRowState[r.key] = { day: '', start: '', end: '', room: '' });
+        // Room preferred from the Available Rooms page ("Request this room") / its filters
+        if (!st.room && window._adjPrefill) {
+            st.day = st.day || window._adjPrefill.day || '';
+            st.start = st.start || window._adjPrefill.start || '';
+            st.room = window._adjPrefill.room || '';
+        }
+        const endField = combine
+            ? `<input type="text" readonly value="${st.start ? _adjAddHours(st.start, r.hours) : ''}" placeholder="End (auto)">`
+            : `<select onchange="_adjRowChanged('${r.key}','end',this.value)">${slotOpts(st.end, 'End')}</select>`;
+        return `<div class="adj-row" data-key="${r.key}" data-hours="${r.hours}">
+            <div class="adj-row-hd">${r.label}</div>
+            <div class="adj-row-grid">
+                <select onchange="_adjRowChanged('${r.key}','day',this.value)">
+                    <option value="">Day</option>${_ADJ_DAYS.map(d => `<option${d === st.day ? ' selected' : ''}>${d}</option>`).join('')}
+                </select>
+                <select onchange="_adjRowChanged('${r.key}','start',this.value)">${slotOpts(st.start, 'Start')}</select>
+                ${endField}
+                <select class="adj-room" onchange="_adjRowChanged('${r.key}','room',this.value)">
+                    <option value="">— Room (pick day &amp; time) —</option>
+                </select>
+            </div>
+            <div class="adj-row-warn" style="display:none"></div>
+        </div>`;
+    }).join('');
+    window._adjPrefill = null;
+    rows.forEach(r => _adjRowRefresh(r.key));
+    _adjUpdateSummary();
+}
+
+function _adjRowChanged(key, field, value) {
+    const st = _adjRowState[key] || (_adjRowState[key] = {});
+    st[field] = value;
+    const row = document.querySelector(`.adj-row[data-key="${key}"]`);
+    // Picking a start fills the end with this meeting's own length (still editable to re-split).
+    if (field === 'start' && key !== 'combined' && row) {
+        st.end = value ? _adjAddHours(value, +row.dataset.hours) : '';
+        const endSel = row.querySelectorAll('.adj-row-grid select')[2];
+        if (endSel) endSel.value = st.end;
+    }
+    if (field === 'start' && key === 'combined' && row) {
+        const endIn = row.querySelector('input[readonly]');
+        if (endIn) endIn.value = value ? _adjAddHours(value, +row.dataset.hours) : '';
+    }
+    if (field !== 'room') _adjRowRefresh(key);
+    else _adjRowConflicts(key);
+    _adjUpdateSummary();
+}
+
+function _adjRowTimes(key) {
+    const st  = _adjRowState[key] || {};
+    const row = document.querySelector(`.adj-row[data-key="${key}"]`);
+    const end = key === 'combined' ? (st.start ? _adjAddHours(st.start, +(row?.dataset.hours || 0)) : '') : st.end;
+    return { day: st.day, start: st.start, end };
+}
+
+/* Available rooms for the row's day + time (keeps the chosen room when still free). */
+async function _adjRowRefresh(key) {
+    const row = document.querySelector(`.adj-row[data-key="${key}"]`);
+    const sel = row?.querySelector('.adj-room');
+    if (!sel) return;
+    const { day, start, end } = _adjRowTimes(key);
+    const st = _adjRowState[key] || {};
+    if (!day || !start || !end || _adjHours(start, end) <= 0) {
+        sel.innerHTML = '<option value="">— Room (pick day &amp; time) —</option>';
+        _adjRowConflicts(key);
+        return;
+    }
+    sel.innerHTML = '<option value="">Loading rooms…</option>';
+    try {
+        const r = await fetch('/api/faculty/available_rooms?' + new URLSearchParams({ day, start_time: start, end_time: end }));
+        const d = await r.json();
+        const rooms = d.rooms || [];
+        sel.innerHTML = `<option value="">${rooms.length ? `— Select room (${rooms.length} free) —` : 'No free room at this time'}</option>`
+            + rooms.map(x => {
+                const lab = (x.roomtype || '').toLowerCase() === 'laboratory';
+                return `<option value="${x.roomid}"${String(x.roomid) === String(st.room) ? ' selected' : ''}>`
+                     + `${x.roomname} [${lab ? 'Lab' : 'Lecture'}]</option>`;
+            }).join('');
+        if (st.room && sel.value !== String(st.room)) st.room = '';
+    } catch (e) {
+        sel.innerHTML = '<option value="">Could not load rooms</option>';
+    }
+    _adjRowConflicts(key);
+}
+
+/* Problems the form can decide itself (blocking): the new meeting overlaps one of this
+   class's meetings that is not being moved, or is exactly the current meeting. */
+function _adjRowOwnProblem(key) {
+    const { day, start, end } = _adjRowTimes(key);
+    const st = _adjRowState[key] || {};
+    if (!day || !start || !end) return '';
+    const a = _adjSlotIdx(start), b = _adjSlotIdx(end);
+    const moving = new Set(_adjSelectedMeetings().map(m => String(m.official_sessionid)));
+    const kept = _adjMeetings.find(m => !moving.has(String(m.official_sessionid)) && m.daydesc === day
+        && a < _adjSlotIdx(m.end_time) && _adjSlotIdx(m.start_time) < b);
+    if (kept) {
+        return `Overlaps this class's own ${kept.daydesc} ${kept.start_time} – ${kept.end_time} meeting, `
+             + `which is not being moved. Choose another time, or check that meeting too.`;
+    }
+    const orig = _adjMeetings.find(m => String(m.official_sessionid) === String(key));
+    if (orig && orig.daydesc === day && orig.start_time === start && orig.end_time === end
+            && (!st.room || String(st.room) === String(orig.roomid))) {
+        return 'Same day, time and room as the current meeting — change at least one of them.';
+    }
+    return '';
+}
+
+/* Faculty/section/room hint for one new meeting (advisory — the Academic Head's review
+   re-checks everything), after the form's own blocking checks. */
+async function _adjRowConflicts(key) {
+    const row  = document.querySelector(`.adj-row[data-key="${key}"]`);
+    const warn = row?.querySelector('.adj-row-warn');
+    if (!warn) return;
+    const { day, start, end } = _adjRowTimes(key);
+    const st = _adjRowState[key] || {};
+    warn.style.display = 'none';
+    warn.classList.remove('block');
+    if (!day || !start || !end) return;
+    const own = _adjRowOwnProblem(key);
+    if (own) {
+        warn.innerHTML = `<i class="fas fa-ban"></i> ${own}`;
+        warn.classList.add('block');
+        warn.style.display = '';
+        _adjUpdateSummary();
+        return;
+    }
+    const cls = _myAssignments.find(a => a.subjectcode === document.getElementById('adjSubject').value
+                                      && String(a.sectionid) === String(document.getElementById('adjSection').value));
+    const params = new URLSearchParams({ day, start_time: start, end_time: end, request_type: 'adjustment' });
+    const sec = document.getElementById('adjSection').value;
+    if (sec) params.set('section_id', sec);
+    if (st.room) params.set('room_id', st.room);
+    if (cls && cls.scheduleid) params.set('schedule_id', cls.scheduleid);
+    try {
+        const d = await (await fetch('/api/faculty/check_request_conflicts?' + params)).json();
+        if (!d.success) return;
+        const lines = [];
+        if (d.room_conflict)    lines.push(`<b>Room:</b> ${d.room_detail}`);
+        if (d.faculty_conflict) lines.push(`<b>Faculty:</b> ${d.faculty_detail}`);
+        if (d.section_conflict) lines.push(`<b>Section:</b> ${d.section_detail}`);
+        if (lines.length) { warn.innerHTML = '<i class="fas fa-triangle-exclamation"></i> ' + lines.join('<br>'); warn.style.display = ''; }
+    } catch (e) { /* hint only */ }
+}
+
+function _adjSetSubmit(enabled, why) {
+    const btn = document.querySelector('#reqAdjOverlay .btn-req-submit');
+    if (!btn) return;
+    btn.disabled = !enabled;
+    btn.title = enabled ? '' : (why || '');
+    btn.style.opacity = enabled ? '' : '.55';
+    btn.style.cursor = enabled ? '' : 'not-allowed';
+}
+
+function _adjUpdateSummary() {
+    const el = document.getElementById('adjHoursSummary');
+    if (!el) return;
+    const sel = _adjSelectedMeetings();
+    if (!sel.length) {
+        el.textContent = ''; el.className = 'adj-hours';
+        _adjSetSubmit(false, 'Tick the class meeting(s) you want to move');
+        return;
+    }
+    const need = sel.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
+    let got = 0;
+    document.querySelectorAll('#adjNewRows .adj-row').forEach(r => {
+        const { start, end } = _adjRowTimes(r.dataset.key);
+        got += _adjHours(start, end);
+    });
+    const ok = Math.abs(got - need) < 0.01;
+    el.textContent = `${_adjFmtH(got)} of ${_adjFmtH(need)}${ok ? ' ✓' : ''}`;
+    el.className = 'adj-hours ' + (ok ? 'ok' : 'bad');
+    const blocked = [...document.querySelectorAll('#adjNewRows .adj-row')]
+        .some(r => _adjRowOwnProblem(r.dataset.key));
+    _adjSetSubmit(ok && !blocked, blocked ? 'Fix the problem shown under the new meeting'
+                                          : `The new meetings must total ${_adjFmtH(need)}`);
+}
+
+/* The meetings sent to the server: one per moved Official meeting. A combined
+   meeting is split back-to-back into one piece per moved meeting (same day + room). */
+function _adjCollectMeetings() {
+    const sel = _adjSelectedMeetings();
+    if (!sel.length) return { error: 'Please check the class meeting(s) you want to move.' };
+    const combine = !!document.getElementById('adjCombine')?.checked && sel.length > 1;
+    const out = [];
+    if (combine) {
+        const st = _adjRowState['combined'] || {};
+        if (!st.day || !st.start) return { error: 'Please choose the day and start time of the new meeting.' };
+        if (!st.room) return { error: 'Please choose a room for the new meeting.' };
+        let cur = st.start;
+        for (const m of sel) {
+            const end = _adjAddHours(cur, _adjHours(m.start_time, m.end_time));
+            if (!end) return { error: 'The combined meeting runs past the last time slot (9:00 PM).' };
+            out.push({ official_sessionid: m.official_sessionid, day: st.day, start_time: cur, end_time: end, room_id: st.room });
+            cur = end;
+        }
+        return { meetings: out };
+    }
+    for (const m of sel) {
+        const st = _adjRowState[String(m.official_sessionid)] || {};
+        if (!st.day || !st.start || !st.end) return { error: 'Please give each new meeting a day, start time and end time.' };
+        if (_adjHours(st.start, st.end) <= 0) return { error: 'End Time must be later than Start Time.' };
+        if (!st.room) return { error: 'Please choose a room for each new meeting.' };
+        out.push({ official_sessionid: m.official_sessionid, day: st.day, start_time: st.start, end_time: st.end, room_id: st.room });
+    }
+    const need = sel.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
+    const got  = out.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
+    if (Math.abs(got - need) > 0.01) {
+        return { error: `The new meetings total ${_adjFmtH(got)}, but the meetings you are moving total ${_adjFmtH(need)}. The hours must stay the same.` };
+    }
+    return { meetings: out };
 }
 
 
@@ -2494,6 +2857,7 @@ function _resetRoomDisplay(p, msg) {
    cancelled/closed attempt never leaves stale values (or a disabled room
    picker) behind for the next time the modal is opened. */
 function _resetReqForm(p) {
+    _reqFormMsg(p, '');
     const daySel = document.getElementById(p + 'Day');
     if (daySel) daySel.value = '';
     if (p === 'mu') { const d = document.getElementById('muDate'); if (d) d.value = ''; }
@@ -2562,6 +2926,11 @@ function frsOpenForm(type) {
         }
     } else {
         _resetReqForm('adj');
+        window._adjPrefill = {
+            day:   document.getElementById('frsAvailDay')?.value || '',
+            start: _toAmPm(document.getElementById('frsAvailStart')?.value || ''),
+            room:  window._preRoom ? String(window._preRoom.id) : '',
+        };
         document.getElementById('reqAdjOverlay').classList.add('open');
         const pre         = window._preRoom;
         const filterDay   = document.getElementById('frsAvailDay')?.value   || '';
@@ -2610,9 +2979,31 @@ document.addEventListener('click', function(e) {
 /* ══════════════════════════════════════════
    SUBMIT
 ══════════════════════════════════════════ */
+document.addEventListener('input', e => {
+    const ov = e.target.closest && e.target.closest('#reqAdjOverlay, #reqMakeupOverlay');
+    if (ov) _reqFormMsg(ov.id === 'reqAdjOverlay' ? 'adj' : 'mu', '');
+}, true);
+document.addEventListener('change', e => {
+    const ov = e.target.closest && e.target.closest('#reqAdjOverlay, #reqMakeupOverlay');
+    if (ov) _reqFormMsg(ov.id === 'reqAdjOverlay' ? 'adj' : 'mu', '');
+}, true);
+
+/* A problem with the request form, shown in the form itself (just above its buttons)
+   instead of a notice at the top of the page; '' clears it. */
+function _reqFormMsg(p, msg) {
+    const el = document.getElementById(p + 'FormMsg');
+    if (!el) { if (msg) showToast(msg, 'warning'); return; }
+    el.innerHTML = msg ? `<i class="fas fa-circle-exclamation"></i> <span></span>` : '';
+    if (msg) el.querySelector('span').textContent = msg;
+    el.style.display = msg ? '' : 'none';
+    if (msg) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+
 async function reqSubmit(type) {
     const isMakeup = type === 'makeup';
     const p = isMakeup ? 'mu' : 'adj';
+    _reqFormMsg(p, '');
 
 
     const payload = {
@@ -2633,29 +3024,35 @@ async function reqSubmit(type) {
         payload.request_date = document.getElementById('muDate').value;
         payload.note         = document.getElementById('muNote').value;
     } else {
-        payload.day = document.getElementById('adjDay').value;
-        payload.official_sessionid = document.getElementById('adjMeetingSel').value || null;
+        // One entry per moved Official meeting (see _adjCollectMeetings).
+        if (!payload.subject_code) return _reqFormMsg(p, 'Please select a subject.');
+        if (!payload.section_id)   return _reqFormMsg(p, 'Please select a section.');
+        const got = _adjCollectMeetings();
+        if (got.error) return _reqFormMsg(p, got.error);
+        if (!(payload.reason || '').trim()) {
+            document.getElementById('adjReason').focus();
+            return _reqFormMsg(p, 'Please provide a reason for the schedule adjustment request.');
+        }
+        payload.meetings = got.meetings;
+        delete payload.room_id; delete payload.start_time; delete payload.end_time;
     }
 
 
     // Basic validation
-    if (!payload.room_id)      return showToast('Please select a room.', 'warning');
-    if (!payload.subject_code) return showToast('Please select a subject.', 'warning');
-    if (!payload.section_id)   return showToast('Please select a section.', 'warning');
-    if (!isMakeup && !payload.official_sessionid) {
-        return showToast('Please select which class meeting you want to change.', 'warning');
-    }
-    if (isMakeup && !payload.request_date) return showToast('Please select a date.', 'warning');
+    if (isMakeup && !payload.room_id) return _reqFormMsg(p, 'Please select a room.');
+    if (!payload.subject_code) return _reqFormMsg(p, 'Please select a subject.');
+    if (!payload.section_id)   return _reqFormMsg(p, 'Please select a section.');
+    if (isMakeup && !payload.request_date) return _reqFormMsg(p, 'Please select a date.');
     if (isMakeup && (!payload.start_time || !payload.end_time)) {
-        return showToast('Please select both a start and an end time.', 'warning');
+        return _reqFormMsg(p, 'Please select both a start and an end time.');
     }
     if (isMakeup && !(payload.reason || '').trim()) {
         document.getElementById('muReason').focus();
-        return showToast('Please provide a reason for the make-up class request.', 'warning');
+        return _reqFormMsg(p, 'Please provide a reason for the make-up class request.');
     }
     if (payload.start_time && payload.end_time &&
         _REQ_SLOTS.indexOf(payload.end_time) <= _REQ_SLOTS.indexOf(payload.start_time)) {
-        return showToast('End Time must be later than Start Time.', 'warning');
+        return _reqFormMsg(p, 'End Time must be later than Start Time.');
     }
 
 
@@ -2671,6 +3068,7 @@ async function reqSubmit(type) {
         const data = await res.json();
         if (data.success) {
             frsCloseForm(type);
+            if (!isMakeup) _adjLoadOfficial();   // the just-requested meetings are now pending
             showToast('Request submitted successfully! The academic head will review your request.', 'success', 5000);
         } else if (data.error === 'schedule_conflict' && Array.isArray(data.conflicts)) {
             // Server is authoritative — show exactly which conflict(s) blocked the request
@@ -2682,12 +3080,12 @@ async function reqSubmit(type) {
                     .map(c => `<b>${labels[c.type] || 'Conflict'}:</b> ${c.message}`).join('<br>');
                 banner.style.display = '';
             }
-            showToast(data.message || 'The requested period conflicts with an existing schedule.', 'error', 6000);
+            _reqFormMsg(p, data.message || 'The requested period conflicts with an existing schedule.');
         } else {
-            showToast(data.message || data.error || 'Could not submit request.', 'error');
+            _reqFormMsg(p, data.message || data.error || 'Could not submit request.');
         }
     } catch(e) {
-        showToast('Network error. Please try again.', 'error');
+        _reqFormMsg(p, 'Network error. Please try again.');
     } finally {
         if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> SUBMIT REQUEST'; }
     }
