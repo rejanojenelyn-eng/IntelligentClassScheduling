@@ -1389,6 +1389,22 @@ class CSPValidator:
             if not any(pair == sorted_days for pair in self._day_pairs):
                 _flag(code, sorted_days)
 
+        # ── Check C: the subject as a whole (Lecture + Lab together) ──────────
+        # Check B keeps Lecture and Lab apart, so a 1-hour lecture alone on Wednesday
+        # plus a 3-hour lab alone on Thursday passed even though the subject meets on
+        # Wed + Thu. When all of a subject's parts land on exactly two days, those two
+        # days must be a configured pair. (A lab on a third day beside a lecture that
+        # already uses a pair is still allowed — that's 3 days, not a pairing.)
+        subj_days: dict = defaultdict(set)
+        for (code, _ctype, section_key), days_set in subj_type_days.items():
+            subj_days[(code, section_key)] |= days_set
+        for (code, _section_key), days_set in subj_days.items():
+            if len(days_set) != 2:
+                continue
+            sorted_days = _sort_day_pair(list(days_set))
+            if not any(pair == sorted_days for pair in self._day_pairs):
+                _flag(code, sorted_days)
+
         return violations
 
     # ── HC8 Night PT cap (final; internal function name unchanged) ────────────────────────────────────────
@@ -2777,7 +2793,16 @@ class IntelligentScheduler:
 
     # ── Database helpers ─────────────────────────────────────────
 
-    def fetch_data(self, program, year_level, term, curriculum_year):
+    def fetch_data(self, program, year_level, term, curriculum_year, curriculum_mode='regular'):
+        # curriculum_mode 'bridging' (chosen on the Generate page, only offered when the
+        # program has a WITH_BRIDGING curriculum for this year) schedules ONLY the subjects
+        # unique to the Bridging curriculum — the same set the Manual Editor's Bridging view
+        # shows. Anything else stays the Regular curriculum, so Bridging subjects can never
+        # mix into a Regular section.
+        if curriculum_mode == 'bridging':
+            _curr_filter = "c.curriculumtype = 'WITH_BRIDGING' AND cs.isbridging = TRUE"
+        else:
+            _curr_filter = REGULAR_CURRICULUM_SQL
         subjects_query = """
             SELECT cs.subjectcode, cs.subjectname, cs.lecturehours, cs.laboratoryhours,
                    cs.creditunits, cs.tuitionhours, c.programcode AS offeringcode
@@ -2787,7 +2812,7 @@ class IntelligentScheduler:
               AND c.curriculumyear = %s
               AND cs.yearlevel     = %s
               AND cs.semester      = %s
-              AND """ + REGULAR_CURRICULUM_SQL + """
+              AND """ + _curr_filter + """
         """
         subjects = query_db(subjects_query, (program, curriculum_year, year_level, term))
 
@@ -4314,8 +4339,12 @@ class IntelligentScheduler:
                 #   • full-length  → scheduler will choose a single day
                 # Splitting is not forced; the GA picks whichever fits best given
                 # faculty and room availability.
+                # NSTP/OU confined to the restricted day meets on that ONE day only, so
+                # a 1.5h split block would be placed once and lose half its hours
+                # (e.g. a 3h NSTP ending up as a single 1.5h Sunday meeting).
                 _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
-                if _day_pair_on and not is_lab_part and lec_hrs >= 3:
+                _one_day_only = is_nstp_ou and self._nstp_force_sunday
+                if _day_pair_on and not is_lab_part and lec_hrs >= 3 and not _one_day_only:
                     valid_blks = (get_blocks_for_hours(1.5)
                                   + get_blocks_for_hours(target_hrs, is_lab=False))
                 else:
@@ -4741,7 +4770,9 @@ class IntelligentScheduler:
                 target     = labh if is_lab else (lh or 3)
 
                 _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
-                if _day_pair_on and not is_lab and lh >= 3:
+                # Single restricted day → full-length blocks only (see _build_individual).
+                _one_day_only = is_nstp_ou and self._nstp_force_sunday
+                if _day_pair_on and not is_lab and lh >= 3 and not _one_day_only:
                     blks = (get_blocks_for_hours(1.5)
                             + get_blocks_for_hours(target, is_lab=False))
                 else:
@@ -4797,6 +4828,10 @@ class IntelligentScheduler:
                 others     = [t for t in slot_triples if t[0] != cur_days]
                 random.shuffle(others)
                 ordered = cur_first + others
+                # Days that keep the subject's Lecture + Lab on a valid pair come first;
+                # the rest only if no paired slot is free (HC7 then flags it).
+                ordered = ([t for t in ordered if self._subject_pair_ok(individual, gene_idx, t[0])]
+                           + [t for t in ordered if not self._subject_pair_ok(individual, gene_idx, t[0])])
 
                 for new_days, new_s, new_e in ordered:
                     if _slot_free(gene_idx, gene, new_s, new_e, new_days):
@@ -5052,7 +5087,11 @@ class IntelligentScheduler:
             if not fixed and fac_conflict:
                 rtype = cls.get('room_type', '')
                 alt_rooms = [r for r in rooms if (not rtype or r.get('roomtype') == rtype)] or list(rooms)
-                for new_days, new_s, new_e in _slot_triples_for(cls):
+                # Days keeping the subject's Lecture + Lab on a valid pair first (HC7).
+                _triples = _slot_triples_for(cls)
+                _triples = ([t for t in _triples if self._subject_pair_ok(individual, cls_idx, t[0])]
+                            + [t for t in _triples if not self._subject_pair_ok(individual, cls_idx, t[0])])
+                for new_days, new_s, new_e in _triples:
                     if not _pub_fac_free(fid, new_days, new_s, new_e):
                         continue  # faculty still busy at new time
                     if not _ind_fac_free(fid, new_days, new_s, new_e, cls_idx):
@@ -5588,6 +5627,27 @@ class IntelligentScheduler:
             sets = [list(c) for c in itertools.combinations(pool, n)]
         return [random.choice(sets)] if one else sets
 
+    def _subject_pair_ok(self, individual, gene_idx, new_days):
+        """HC7 for the subject as a whole (CSPValidator Check C): would moving
+        individual[gene_idx] to new_days leave the subject's parts (Lecture + Lab, same
+        section) on exactly two days that are NOT a configured pair? True when fine or
+        when Day Pairing is off."""
+        if not self._hc_cfg.get('hc_day_pairing_enabled', 1):
+            return True
+        gene = individual[gene_idx]
+        code = gene.get('subject_code')
+        sect = gene.get('section_id')
+        days = {d for d in new_days if d}
+        for j, other in enumerate(individual):
+            if j == gene_idx or other.get('subject_code') != code:
+                continue
+            if sect and other.get('section_id') and other.get('section_id') != sect:
+                continue
+            days |= {d for d in (other.get('days_list') or [other.get('day')]) if d}
+        if len(days) != 2:
+            return True
+        return _sort_day_pair(list(days)) in self._builder_pairs
+
     def _sync_days_to_hours(self, gene, target_hrs, avail_days, prefer_pairs=False):
         """Make len(days_list) == required hours / block length for this gene. Extra days
         are dropped (keeping the existing ones in order); missing days are added — as a
@@ -5645,7 +5705,9 @@ class IntelligentScheduler:
         # Mirror _build_individual: offer both split (1.5h) and single-session
         # blocks when pairing is on so mutations also have the same flexibility.
         _day_pair_on = bool(self._hc_cfg.get('hc_day_pairing_enabled', 1))
-        if _day_pair_on and not is_lab_part and lec_hrs >= 3:
+        # Single restricted day → full-length blocks only (see _build_individual).
+        _one_day_only = is_nstp_ou and self._nstp_force_sunday
+        if _day_pair_on and not is_lab_part and lec_hrs >= 3 and not _one_day_only:
             valid_blks = (get_blocks_for_hours(1.5)
                           + get_blocks_for_hours(target_hrs, is_lab=False))
         else:
@@ -5794,7 +5856,10 @@ class IntelligentScheduler:
                 _n_meetings = min(max(1, round(target_hrs / 3)), len(_avail_days))
                 days_list = random.sample(_avail_days, _n_meetings)
             else:
-                days_list = [random.choice(_avail_days)]
+                # Single-day part: keep it on the day paired with the subject's other
+                # part (e.g. a 1h lecture on Wednesday → its 3h lab on Saturday).
+                _paired_ok = [d for d in _avail_days if self._subject_pair_ok(child, idx, [d])]
+                days_list = [random.choice(_paired_ok or _avail_days)]
             gene['days_list'] = days_list
             gene['day']       = days_list[0]
             gene['days']      = '/'.join(d[:3].upper() for d in days_list)
@@ -5856,6 +5921,15 @@ class IntelligentScheduler:
                 _nd |= self._published_night_days(published_faculty_slots, faculty_map).get(_new_fid, set())
                 if len(_nd) > _allow:
                     child[idx] = orig_gene
+
+        # HC7 (subject as a whole): revert a mutation (time → day re-sync, faculty,
+        # day) that split the subject's Lecture and Lab onto two unpaired days —
+        # unless it was already unpaired, so the GA can still move it out of that.
+        if child[idx] is gene and not self._subject_pair_ok(
+                child, idx, gene.get('days_list') or [gene.get('day')]):
+            child[idx] = orig_gene
+            if not self._subject_pair_ok(child, idx, orig_gene.get('days_list') or [orig_gene.get('day')]):
+                child[idx] = gene
 
         return child
 
@@ -6096,7 +6170,8 @@ class IntelligentScheduler:
 
     def generate_draft(self, program, year_level, term, curriculum,
                        use_historical=False, acad_year_id: str = '',
-                       locked_sessions=None, seed: int = None, section_id: int = None):
+                       locked_sessions=None, seed: int = None, section_id: int = None,
+                       curriculum_mode: str = 'regular'):
         try:
             # Optional, for reproducible A/B comparisons (e.g. the CBR diagnostics
             # script) — production callers never pass this, so behavior is unchanged
@@ -6123,7 +6198,7 @@ class IntelligentScheduler:
             self._spec_enabled      = bool(self._hc_cfg.get('hc_faculty_spec_enabled', 1))
 
             subjects, faculty_list, faculty_map, rooms = self.fetch_data(
-                program, year_level, term, curriculum
+                program, year_level, term, curriculum, curriculum_mode
             )
 
             if not subjects:

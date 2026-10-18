@@ -91,6 +91,29 @@ function openAddModal() { document.getElementById("addEmployeeModal").style.disp
 function closeAddModal() { document.getElementById("addEmployeeModal").style.display = "none"; }
 function closeImportModal() { closeImportTypeModal(); }
 
+function openEditFromEl(el) {
+    const emp = JSON.parse(el.dataset.emp);
+    openEditModal(emp.employeenumber, emp.firstname, emp.middlename || '', emp.lastname,
+                  emp.email, emp.contactnumber, emp.specializationid,
+                  emp.employeetypeid, emp.designationid || '', emp.employeestatus);
+}
+
+function openEditModal(empNum, fName, mName, lName, email, contact, specId, typeId, desigId, status) {
+    document.getElementById("edit_emp_num").value = empNum;
+    document.getElementById("edit_f_name").value = fName;
+    document.getElementById("edit_m_name").value = mName;
+    document.getElementById("edit_l_name").value = lName;
+    document.getElementById("edit_email").value = email;
+    document.getElementById("edit_contact").value = contact;
+    document.getElementById("edit_spec").value = specId;
+    document.getElementById("edit_type").value = typeId;
+    document.getElementById("edit_designation").value = desigId;
+    document.getElementById("edit_status").value = status;
+    toggleDesignation('edit');
+    document.getElementById("editEmployeeModal").style.display = "block";
+}
+function closeEditModal() { document.getElementById("editEmployeeModal").style.display = "none"; }
+
 // ── Employee CSV/XLSX/PDF/DOCX analyze & review ───────────────────────────────
 let _empExtracted = [];
 let _empRawRows   = [];

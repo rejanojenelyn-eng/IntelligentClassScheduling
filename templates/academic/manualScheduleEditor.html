@@ -3204,8 +3204,9 @@ function _updateCurriculumModeSelectVisibility() {
             cgCy.innerHTML = `${_cgLabelText} <i class="fas fa-lock" style="font-size:0.8em;opacity:0.7;"></i>`;
             cgCy.classList.remove('cg-cy-clickable');
             cgCy.classList.add('cg-cy-locked');
-            cgCy.title = 'Curriculum locked — a faculty is already assigned under this curriculum ' +
-                'for this section this term. Clear all schedules/assignments for this section+term to change it.';
+            cgCy.title = _curriculumViewMode === 'bridging'
+                ? 'This section is set "With Bridging" in Program Management — only its Bridging subjects are scheduled here.'
+                : 'This section uses the Regular curriculum (Program Management → Sections → "With Bridging" is off).';
         } else {
             cgCy.textContent = _cgLabelText;
             cgCy.classList.add('cg-cy-clickable');

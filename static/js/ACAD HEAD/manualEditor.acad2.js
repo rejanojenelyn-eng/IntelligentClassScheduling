@@ -587,7 +587,7 @@ async function onFacultySelect(empNum) {
             const _subjectCode = (document.getElementById('sel_subj')?.value || '').trim();
             const d = await fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(empNum)}&subject_code=${encodeURIComponent(_subjectCode)}`).then(r => r.json());
             if (typeof _subjClickToken !== 'undefined' && _subjClickToken !== _mySubjToken) return;
-            if (d.success) _facInfo = d;
+            if (d.success) _facInfo = { ...d, _empNum: String(empNum) };   // whose info this is
         } catch(e) { _facInfo = null; }
 
         // When spec toggle is ON and this is a new assignment (not editing an imported session),
@@ -654,6 +654,11 @@ function _checkFacultySpecWarning() {
     if (!container) return;
     container.innerHTML = '';
     if (!SPEC_CONSTRAINT_ENABLED || !_facInfo || !_subjInfo) return;
+    // Only about the faculty actually selected right now — never leftover info from a
+    // previous subject/faculty while the picker is empty ("Select Faculty") or TBA.
+    const _selFac = (document.getElementById('sel_faculty')?.value || '').trim();
+    if (!_selFac || _selFac === 'TBA') return;
+    if (_facInfo._empNum && _facInfo._empNum !== _selFac) return;
 
     const spec     = (_facInfo.specializationname || '').trim();
     const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
@@ -1431,6 +1436,13 @@ async function triggerDSSLogic() {
 
     const subjCode = subjSel.value;
 
+    // Start the faculty/room recommendations right away, independent of everything below.
+    // They used to be fetched only at the very end of this function, so every early return
+    // on the way (existing sessions loaded, generator pre-fill, a stale existing_sessions
+    // response, the subject-changed guard) left the pickers on the page-load "ALL FACULTY"
+    // list — no recommendations even when the subject has history.
+    const _dssLoad = _loadDSSSuggestions(subjCode, labWarn);
+
     try {
         const siResp = await fetch(`/api/manual/subject_info?subject_code=${encodeURIComponent(subjCode)}`).then(r => r.json());
         if (siResp.success) _subjInfo = siResp;
@@ -1538,6 +1550,18 @@ async function triggerDSSLogic() {
         }
     }
 
+    // Callers that await triggerDSSLogic expect the pickers to be populated afterwards.
+    await _dssLoad;
+}
+
+let _dssSuggestSeq = 0;
+
+async function _loadDSSSuggestions(subjCode, labWarn) {
+    const _seq = ++_dssSuggestSeq;
+    // Only the newest request for the subject still on screen may touch the pickers.
+    const _isCurrent = () => _seq === _dssSuggestSeq &&
+        document.getElementById('sel_subj').value === subjCode;
+
     try {
         const _ay   = document.getElementById('sel_ay').value;
         const _sem  = document.getElementById('sel_sem').value;
@@ -1547,7 +1571,12 @@ async function triggerDSSLogic() {
         const _prog = document.getElementById('sel_prog')?.value || '';
         const _yl   = document.getElementById('sel_year')?.value || '';
         const data = await fetch(`/api/dss/suggest?subject_code=${encodeURIComponent(subjCode)}&ay_id=${encodeURIComponent(_ay)}&sem=${encodeURIComponent(_sem)}&program=${encodeURIComponent(_prog)}&year_level=${encodeURIComponent(_yl)}`).then(r => r.json());
-        if (!data.success) { initDSSMenus(); return; }
+        if (!_isCurrent()) return;
+        if (!data.success) {
+            console.warn('[DSS] suggest failed for', subjCode, data.error);
+            initDSSMenus();
+            return;
+        }
 
         console.log('[DSS] recommended faculty:', data.faculty.recommended.map(f => `${f.name} (src:${f._src||'?'}, hist:"${f._hist_name||''}", count:${f.count||0})`));
 
@@ -1596,6 +1625,7 @@ async function triggerDSSLogic() {
 
     } catch (e) {
         console.error('DSS suggest error:', e);
+        if (!_isCurrent()) return;
         initDSSMenus();
         labWarn.style.display = 'none';
     }
@@ -3615,23 +3645,32 @@ async function triggerCascade(skipGridRender = false) {
 
                 if (year && sem && !window.currentEditSession) {
                     const _tcSectId = document.getElementById('sel_section')?.value || '';
-                    const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}&ay_id=${encodeURIComponent(ay)}&section_id=${encodeURIComponent(_tcSectId)}&curriculum_mode=${_curriculumViewMode}`);
+                    const _tcMode   = _curriculumViewMode;
+                    const sResp = await fetch(`/api/get_subjects?curriculum_id=${data.curriculum_id}&year_level=${year}&semester=${sem}&ay_id=${encodeURIComponent(ay)}&section_id=${encodeURIComponent(_tcSectId)}&curriculum_mode=${_tcMode}`);
                     const sData = await sResp.json();
-                    subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
-                    if (sData.subjects && sData.subjects.length > 0) {
-                        sData.subjects.forEach(s => {
-                            const opt = document.createElement('option');
-                            opt.value = s.subjectcode;
-                            opt.textContent = s.subjectname;
-                            opt.dataset.units    = s.creditunits    || 0;
-                            opt.dataset.hours    = s.total_hours    || 0;
-                            opt.dataset.labhours = s.laboratoryhours || 0;
-                            opt.dataset.dbScheduled = s.scheduled_hours || 0;
-                            opt.dataset.isBridging = s.is_bridging ? '1' : '0';
-                            subjSelect.appendChild(opt);
-                        });
-                    } else {
-                        subjSelect.innerHTML = '<option value="">No subjects found</option>';
+                    // The section's curriculum lock (selectBcSect → _applyCurriculumLockForSection)
+                    // can land while this request is in flight — e.g. arriving from Schedule
+                    // Generation, where the cascade and the URL section start together. Its list
+                    // was then fetched under the wrong mode (Regular subjects under a section
+                    // locked to Bridging); selectBcSect already loaded the right one, so don't
+                    // overwrite it (the summary/list refresh below still runs).
+                    if (_curriculumViewMode === _tcMode) {
+                        subjSelect.innerHTML = '<option value="">-- Select Subject --</option>';
+                        if (sData.subjects && sData.subjects.length > 0) {
+                            sData.subjects.forEach(s => {
+                                const opt = document.createElement('option');
+                                opt.value = s.subjectcode;
+                                opt.textContent = s.subjectname;
+                                opt.dataset.units    = s.creditunits    || 0;
+                                opt.dataset.hours    = s.total_hours    || 0;
+                                opt.dataset.labhours = s.laboratoryhours || 0;
+                                opt.dataset.dbScheduled = s.scheduled_hours || 0;
+                                opt.dataset.isBridging = s.is_bridging ? '1' : '0';
+                                subjSelect.appendChild(opt);
+                            });
+                        } else {
+                            subjSelect.innerHTML = '<option value="">No subjects found</option>';
+                        }
                     }
                 }
             } else {

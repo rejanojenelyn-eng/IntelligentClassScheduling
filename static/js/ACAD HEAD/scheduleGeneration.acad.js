@@ -213,6 +213,57 @@ document.addEventListener('DOMContentLoaded', () => {
     const curriculum    = document.getElementById('curriculum');
     const curriculumText = document.getElementById('curriculumText');
     const useHistorical  = document.getElementById('useHistorical');
+    // ── Regular / Bridging curriculum ────────────────────────────────────────
+    // Set per SECTION in Program Management ("With Bridging", offered only for year levels
+    // that have Bridging subjects). Picking the section picks the curriculum: a With
+    // Bridging section schedules ONLY the subjects unique to the Bridging curriculum;
+    // every other section stays Regular. The server derives the same thing from the
+    // section and refuses any mix (see _curriculum_mode_problem in app.py).
+    function _curriculumMode() {
+        const opt = sectionFilter.options[sectionFilter.selectedIndex];
+        return opt && opt.dataset.withBridging === '1' ? 'bridging' : 'regular';
+    }
+
+    function _syncHistoricalForMode() {
+        const bridging = _curriculumMode() === 'bridging';
+        if (bridging) useHistorical.checked = false;
+        useHistorical.disabled = bridging;
+        useHistorical.title = bridging
+            ? 'Retrieve previous AY schedule is only available for the Regular curriculum.' : '';
+    }
+
+    // Curriculum box text follows the selected section ("CY 2022-2023 - BRIDGING").
+    function _syncCurriculumForSection() {
+        if (curriculum.value) {
+            curriculumText.textContent = `CY ${curriculum.value}`
+                + (_curriculumMode() === 'bridging' ? ' - BRIDGING' : '');
+        }
+        _syncHistoricalForMode();
+    }
+
+    // Resolve the program+year's curriculum (and whether it has a Bridging sibling).
+    async function _loadCurriculum() {
+        const prog = program.value, yl = yearLevel.value, ay = acadYear.value;
+        if (!prog || !yl) return;
+        curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+        try {
+            const params = new URLSearchParams({ program: prog, year_level: yl });
+            if (ay) params.set('ay_id', ay);
+            const res  = await fetch(`/api/get_curriculum?${params}`);
+            const data = await res.json();
+            if (data.success && data.curriculum_year) {
+                curriculum.value = data.curriculum_year;
+                _syncCurriculumForSection();
+            } else {
+                curriculumText.textContent = "No curriculum found";
+                curriculum.value = "";
+            }
+        } catch (e) {
+            curriculumText.textContent = "Error";
+            curriculum.value = "";
+        }
+    }
+
 
     const btnGenerate      = document.getElementById('btnGenerate');
     const btnRegenerate    = document.getElementById('btnRegenerate');
@@ -296,6 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const opt = document.createElement('option');
                 opt.value = sec.id;
                 opt.textContent = sec.name;
+                opt.dataset.withBridging = sec.withbridging ? '1' : '0';   // see _curriculumMode
                 sectionFilter.appendChild(opt);
             });
             // #6: Never auto-select a section; the user must choose manually.
@@ -311,6 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sectionFilter.innerHTML = '<option value="">SELECT</option>';
         curriculumText.textContent = "Select Year Level";
         curriculum.value = "";
+        _syncHistoricalForMode();
         try {
             const res  = await fetch(`/api/year-levels-by-program?program=${encodeURIComponent(programValue)}`);
             const data = await res.json();
@@ -386,6 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!programValue) {
             curriculumText.textContent = "Select Program first";
             curriculum.value = "";
+            _syncHistoricalForMode();
             yearLevel.innerHTML = '<option value="">SELECT</option>';
             sectionFilter.innerHTML = '<option value="">SELECT</option>';
             checkFormValidity();
@@ -402,31 +456,14 @@ document.addEventListener('DOMContentLoaded', () => {
     yearLevel.addEventListener('change', async function() {
         await loadSections();
         // Re-fetch curriculum now that both program + year level are known
-        const prog = program.value;
-        const yl   = yearLevel.value;
-        const ay   = acadYear.value;
-        if (prog && yl) {
-            curriculumText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-            try {
-                const params = new URLSearchParams({ program: prog, year_level: yl });
-                if (ay) params.set('ay_id', ay);
-                const res  = await fetch(`/api/get_curriculum?${params}`);
-                const data = await res.json();
-                if (data.success && data.curriculum_year) {
-                    curriculum.value = data.curriculum_year;
-                    curriculumText.textContent = `CY ${data.curriculum_year}`;
-                } else {
-                    curriculumText.textContent = "No curriculum found";
-                    curriculum.value = "";
-                }
-            } catch (e) {
-                curriculumText.textContent = "Error";
-                curriculum.value = "";
-            }
-        }
+        await _loadCurriculum();
         checkFormValidity();
     });
-    sectionFilter.addEventListener('change', checkFormValidity);
+    sectionFilter.addEventListener('change', () => {
+        _syncCurriculumForSection();
+        checkFormValidity();
+    });
+
     // When AY or term changes, section list must be reloaded (sections are AY-specific)
     [acadYear, term].forEach(el => {
         el.addEventListener('change', async () => {
@@ -466,6 +503,10 @@ document.addEventListener('DOMContentLoaded', () => {
             term:      term.value,
             acadYear:  acadYear.value,
             section:   sectionFilter.value,
+            // Regular / Bridging: sent with every generate / save / approve so the server
+            // can refuse a schedule mixing the two curricula.
+            curriculum:     curriculum.value,
+            curriculumMode: _curriculumMode(),
         };
     }
 
@@ -512,6 +553,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // #1: Reset everything to a clean initial state after saving as Draft.
     function _resetPageState() {
+        _clearGeneratedResult();
+        document.getElementById('tableTitle').innerHTML = 'WAITING FOR SELECTION...';
+        document.getElementById('calendarTitle').textContent = 'SCHEDULE TIMETABLE';
+
+        // Reset all form controls
+        acadYear.value = '';
+        term.value     = '';
+        program.value  = '';
+        yearLevel.innerHTML   = '<option value="">SELECT</option>';
+        sectionFilter.innerHTML = '<option value="">SELECT</option>';
+        curriculum.value      = '';
+        curriculumText.textContent = 'Select Program first';
+        _syncHistoricalForMode();
+        if (genProgTriggerText) genProgTriggerText.textContent = '-SELECT PROGRAM-';
+        if (genProgWrapper) genProgWrapper.classList.remove('open');
+        btnGenerate.disabled     = true;
+    }
+
+    // Discard the generated result on screen (table, calendar, evaluation, buttons),
+    // keeping the filters as they are.
+    function _clearGeneratedResult() {
         currentScheduleData = [];
         currentBatchId      = null;
         canPublish          = false;
@@ -528,26 +590,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 </td>
             </tr>`;
         document.getElementById('genGridWrapper').querySelectorAll('.schedule-pill').forEach(p => p.remove());
-        document.getElementById('tableTitle').innerHTML = 'WAITING FOR SELECTION...';
         document.getElementById('conflictBanner').classList.add('hidden');
-
-        // Reset all form controls
-        acadYear.value = '';
-        term.value     = '';
-        program.value  = '';
-        yearLevel.innerHTML   = '<option value="">SELECT</option>';
-        sectionFilter.innerHTML = '<option value="">SELECT</option>';
-        curriculum.value      = '';
-        curriculumText.textContent = 'Select Program first';
-        if (genProgTriggerText) genProgTriggerText.textContent = '-SELECT PROGRAM-';
-        if (genProgWrapper) genProgWrapper.classList.remove('open');
 
         btnRegenerate.disabled   = true;
         btnSaveDraft.disabled    = true;
         btnManualEditor.disabled = true;
         btnExport.disabled       = true;
         _refreshApprovalGate();   // no schedule: disabled, no reason shown
-        btnGenerate.disabled     = true;
 
         // Reset schedule evaluation panel
         const pctEl        = document.getElementById('evalScorePct');
@@ -579,6 +628,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     yearLevel: yearLevel.value,
                     section: sectionFilter.value,
                     curriculum: curriculum.value,
+                    curriculumMode: _curriculumMode(),
                 }
             }));
         } catch(e) {}
@@ -607,10 +657,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 yearLevel.value = fv.yearLevel;
                 await loadSections();
                 if (fv.section) sectionFilter.value = fv.section;
-                if (fv.curriculum) {
-                    curriculum.value = fv.curriculum;
-                    curriculumText.textContent = `CY ${fv.curriculum}`;
-                }
+                // Re-resolve (not just re-display) so the Bridging picker and the
+                // section's lock are current; the saved mode is the default.
+                await _loadCurriculum();   // also re-labels it from the restored section
             }
         }
     }
@@ -1397,10 +1446,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const ctx = getContext();
         const termName    = term.options[term.selectedIndex]?.text || ctx.term;
         const sectionText = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
-        const sectionPart = (sectionText && sectionText !== 'SELECT') ? ` — ${sectionText}` : '';
-        // Context strip format: [PROGRAM] — YEAR [YEAR LEVEL] — [SECTION] | [SEMESTER] | AY [ACADEMIC YEAR]
-        document.getElementById('tableTitle').innerHTML =
-            `<i class="fas fa-calendar-alt"></i> ${ctx.program || 'Program'} — YEAR ${ctx.yearLevel || '?'}${sectionPart} | ${termName} | AY ${ctx.acadYear || '—'}`;
+        // Context strip, same format as the Manual Editor header: [SECTION] | A.Y [YYYY-YYYY] | [SEMESTER].
+        // The section name already carries program + year level, so those only show
+        // while no section is picked; "AY2627" is spelled out as "A.Y 2026-2027".
+        const who = (sectionText && sectionText !== 'SELECT')
+            ? sectionText
+            : `${ctx.program || 'Program'} — YEAR ${ctx.yearLevel || '?'}`;
+        const ayMatch = /^AY(\d{2})(\d{2})$/i.exec(ctx.acadYear || '');
+        const ayText  = ayMatch ? `20${ayMatch[1]}-20${ayMatch[2]}` : (ctx.acadYear || '—');
+        // Title bar of both views (Table View's #tableTitle, Calendar View's SCHEDULE TIMETABLE bar).
+        const title = `${who} | A.Y ${ayText} | ${termName}`;
+        document.getElementById('tableTitle').textContent    = title;
+        document.getElementById('calendarTitle').textContent = title;
     }
 
     // Small top-right toast (reuses #successToast); kind 'warn' = amber variant.
@@ -1922,6 +1979,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         acadYear:  ctx.acadYear,
                         section:   ctx.section,
                         curriculum: curriculum.value,
+                        curriculumMode: ctx.curriculumMode,
                     }),
                 });
                 const data = await res.json();
@@ -1991,6 +2049,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         yearLevel:  ctx.yearLevel,
                         term:       ctx.term,
                         curriculum: curriculum.value,
+                        curriculumMode: ctx.curriculumMode,   // Regular / Bridging subjects
                         section:    ctx.section,
                         acadYear:   ctx.acadYear,  // #9: needed for faculty load lookup
                     }),
@@ -2124,6 +2183,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     yearLevel:  ctx.yearLevel,
                     term:       ctx.term,
                     curriculum: curriculum.value,
+                    curriculumMode: ctx.curriculumMode,
                     section:    ctx.section,
                     acadYear:   ctx.acadYear,
                     locked_sessions,

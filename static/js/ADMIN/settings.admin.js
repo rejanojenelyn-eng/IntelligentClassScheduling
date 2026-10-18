@@ -685,14 +685,26 @@ function _setHCSaveStatus(state) {
   }
 }
 
+/* Only the keys changed since the last save are sent. Sending the whole _hcState
+   (every value as it was when this page loaded) let a Settings tab left open
+   silently switch back constraints that were changed elsewhere since — e.g. turning
+   Day Pairing off again while only a different toggle was being edited. */
+let _hcSaved = {};   // values as last loaded from / saved to the server
+
 async function _saveHCToBackend() {
+  const changes = {};
+  Object.keys(_hcState).forEach(k => {
+    if (String(_hcState[k]) !== String(_hcSaved[k])) changes[k] = _hcState[k];
+  });
+  if (!Object.keys(changes).length) { _setHCSaveStatus('saved'); return; }
   try {
     const res = await fetch('/admin/settings/hard_constraints', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(_hcState),
+      body:    JSON.stringify(changes),
     });
     const json = await res.json();
+    if (json.success) Object.assign(_hcSaved, changes);   // failed keys are re-sent next save
     _setHCSaveStatus(json.success ? 'saved' : 'error');
   } catch {
     _setHCSaveStatus('error');
@@ -704,6 +716,7 @@ async function _loadHCFromBackend() {
     const res  = await fetch('/admin/settings/hard_constraints');
     const data = await res.json();
     _hcState   = data;
+    _hcSaved   = { ...data };
     return data;
   } catch {
     return {};
@@ -1936,13 +1949,16 @@ function _renderSectionsPage(page) {
     const secId = s.sectionid || '';
     const pylId = s.programyearlevelid || '';
     const sName = s.sectionname.replace(/'/g, "\\'");
+    const brBadge = s.withbridging
+      ? ' <span class="pmd-status-badge" style="background:#fdf3e7;color:#a0522d;border:1px solid #f0c9a0;margin-left:6px;">BRIDGING</span>'
+      : '';
     return `
     <tr>
-      <td><strong>${escHtml(s.sectionname)}</strong></td>
+      <td><strong>${escHtml(s.sectionname)}</strong>${brBadge}</td>
       <td>${_ordinalYear(s.yearlevel)}</td>
       <td><span class="pmd-status-badge ${sCls}"><span class="pmd-dot"></span>${sLbl}</span></td>
       <td style="white-space:nowrap;">
-        <button class="pmd-edit-btn" onclick="openEditSection('${secId}','${sName}',${pylId})">
+        <button class="pmd-edit-btn" onclick="openEditSection('${secId}','${sName}',${pylId},${Number(s.yearlevel) || 0},${s.withbridging ? 'true' : 'false'})">
           <i class="fas fa-edit"></i> Edit</button>
         <button class="pmd-del-btn"  onclick="openDeleteSection('${secId}','${sName}',${pylId})" style="margin-left:6px;">
           <i class="fas fa-trash"></i> Delete</button>
@@ -2147,13 +2163,40 @@ function _fillSuggestedSectionName() {
   const ylSel  = document.getElementById('addSecYearLevel');
   if (!nameEl || !ylSel || !PM_SELECTED) return;
   nameEl.value = _suggestSectionName(PM_SELECTED, ylSel.value);
+  _syncAddSecBridging();
+}
+
+/* ── "With Bridging" ─────────────────────────────────────
+   Offered only for year levels whose curriculum has Bridging subjects this AY
+   (PM_DATA.bridging_years, computed server-side by _bridging_year_levels). */
+function _ylHasBridging(progCode, yl) {
+  const yls = (PM_DATA.bridging_years || {})[String(progCode || '').toUpperCase()] || [];
+  return yls.map(Number).includes(Number(yl));
+}
+
+function _syncAddSecBridging() {
+  const wrap = document.getElementById('addSecBridgingWrap');
+  const chk  = document.getElementById('addSecBridging');
+  const ylSel = document.getElementById('addSecYearLevel');
+  if (!wrap || !chk || !ylSel) return;
+  const show = _ylHasBridging(PM_SELECTED, ylSel.value);
+  wrap.style.display = show ? '' : 'none';
+  if (!show) chk.checked = false;   // never submit Bridging for a year level without it
 }
 
 /* ── Edit section modal ─────────────────────────────── */
-function openEditSection(sectionId, sectionName, pylId) {
+function openEditSection(sectionId, sectionName, pylId, yearLevel, withBridging) {
   document.getElementById('editSecId').value    = sectionId  || '';
   document.getElementById('editSecName').value  = sectionName;
   document.getElementById('editSecPylId').value = pylId || '';
+  // Shown for a Bridging year level — or when it's already on, so it can be turned off.
+  const brWrap = document.getElementById('editSecBridgingWrap');
+  const brChk  = document.getElementById('editSecBridging');
+  if (brWrap && brChk) {
+    const show = !!withBridging || _ylHasBridging(PM_SELECTED, yearLevel);
+    brWrap.style.display = show ? '' : 'none';
+    brChk.checked = !!withBridging;
+  }
   const errWrap = document.getElementById('editSecErrorWrap');
   if (errWrap) errWrap.style.display = 'none';
   openSModal('modalEditSection');
@@ -2177,6 +2220,10 @@ async function _submitEditSection(e) {
     if (secId)  fd.append('section_id', secId);
     if (pylId)  fd.append('pyl_id', pylId);
     fd.append('section_name', newName);
+    const brWrap = document.getElementById('editSecBridgingWrap');
+    if (brWrap && brWrap.style.display !== 'none') {
+      fd.append('with_bridging', document.getElementById('editSecBridging').checked ? '1' : '0');
+    }
 
     const resp = await fetch('/admin/settings/section/edit', {
       method: 'POST', body: fd,
@@ -2188,12 +2235,12 @@ async function _submitEditSection(e) {
 
     if (data.success) {
       const match = _PM_CURRENT_SECTIONS.find(s => String(s.sectionid) === String(secId));
-      if (match) { match.sectionname = data.sectionname; match.sectionid = data.sectionid; }
+      if (match) { match.sectionname = data.sectionname; match.sectionid = data.sectionid; match.withbridging = !!data.withbridging; }
       const pm = (PM_DATA.sections || []).find(s => String(s.sectionid) === String(secId));
-      if (pm)    { pm.sectionname = data.sectionname; }
+      if (pm)    { pm.sectionname = data.sectionname; pm.withbridging = !!data.withbridging; }
       _renderSectionsPage(1);
       closeSModal('modalEditSection');
-      _showToast('success', `Section renamed to "${data.sectionname}".`);
+      _showToast('success', `Section "${data.sectionname}" saved${data.withbridging ? ' (With Bridging)' : ''}.`);
     } else {
       if (errWrap) errWrap.style.display = '';
       if (errEl)   errEl.textContent = data.error || 'Failed to rename section.';

@@ -366,7 +366,12 @@ function fcsRenderTable(sessions) {
         }
     });
 
-    const groupedRows = Object.values(grouped);
+    // Alphabetical by subject code, like the Manual Editor's subject list
+    // (numeric-aware, so "GEED 2" comes before "GEED 10"); ties by instructor, then section.
+    const _cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+    const groupedRows = Object.values(grouped)
+        .sort((a, b) => _cmp(a.subjectcode, b.subjectcode) || _cmp(a.instructor, b.instructor)
+                     || _cmp(a.sectionname, b.sectionname));
     const dataHtml = groupedRows.map(sess => {
         const yl = sess.yearlevel || '';
         const prog = sess.programcode || '';

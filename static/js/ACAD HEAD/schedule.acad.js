@@ -473,7 +473,11 @@ function renderTable(sessions, opts = {}) {
         }
     });
 
-    const groupedRows = Object.values(grouped);
+    // Alphabetical by subject code, like the Manual Editor's subject list
+    // (numeric-aware, so "GEED 2" comes before "GEED 10"); ties by instructor.
+    const _cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+    const groupedRows = Object.values(grouped)
+        .sort((a, b) => _cmp(a.subjectcode, b.subjectcode) || _cmp(a.instructor, b.instructor));
     const dataHtml = groupedRows.map(sess => {
         const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`

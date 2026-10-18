@@ -2,6 +2,7 @@
 
 {% block head %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/sis_schedule_page.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/manualSchedule.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/curriculum.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_export_modal.css') }}">
@@ -195,7 +196,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="schedule-page-container">
+<div class="schedule-page-container sis-schedule-page">
 
     <!-- Flash message popup now rendered once, globally, by academic/base.html
          (the shared .notif-overlay component) — no page-local copy needed here. -->

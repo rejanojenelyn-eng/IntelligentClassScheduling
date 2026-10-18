@@ -4,6 +4,7 @@
 {% block head %}
 {{ super() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_acad.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/sis_schedule_page.css') }}">
 <!-- Same Class Schedule export dialog as the Academic Head page -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/schedule_export_modal.css') }}">
 <style>
@@ -16,9 +17,9 @@
        select's text/background regardless of author CSS. */
     #view_ay:disabled, #view_sem:disabled {
         opacity: 1;
-        -webkit-text-fill-color: #fff;
-        background: rgba(255,255,255,0.13);
-        color: #fff;
+        -webkit-text-fill-color: var(--ink);   /* white Filter Controls card (sis_schedule_page.css) */
+        background: var(--surface);
+        color: var(--ink);
         font-weight: 600;
         cursor: default;
         /* Read-only values: size to the full text ("A.Y 2026-2027", "1st Semester")
@@ -58,7 +59,7 @@
 
 
 {% block content %}
-<div class="schedule-page-container">
+<div class="schedule-page-container sis-schedule-page">
 
 
     <!-- PAGE HEADER -->

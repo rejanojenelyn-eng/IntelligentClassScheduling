@@ -586,6 +586,122 @@ def _no_store_pages(resp):
         resp.headers['Expires'] = '0'
     return resp
 
+
+# The login cookie alone lives until the whole browser quits — closing just the tab,
+# or a browser that restores its last session, kept the user signed in indefinitely.
+# Every signed-in page checks in once a minute (static/js/session_guard.js), so:
+SESSION_CLOSED_LIMIT = timedelta(minutes=3)    # no open page has checked in → tabs were closed
+SESSION_IDLE_LIMIT   = timedelta(minutes=30)   # pages open but nobody has used them
+# Each loaded page also registers itself and sends a beacon when it closes. Once a
+# login has had NO open page for this long, the tabs/browser were closed: end it now
+# instead of waiting for SESSION_CLOSED_LIMIT. Navigating between pages is safe — the
+# next page's request reaches the server before the old page reports itself closed,
+# and the new page registers within milliseconds.
+SESSION_NO_PAGE_GRACE = timedelta(seconds=10)
+_SESSION_PUBLIC_ENDPOINTS = ('static', 'index', 'login', 'logout', 'favicon')
+
+# login id (session['sid']) -> {'pages': {page_id: last_seen}, 'closed_at': ts | None}.
+# In memory: the app runs as one gunicorn worker (Procfile). A login missing here
+# (e.g. after a restart) just falls back to the heartbeat limits above.
+_open_pages      = {}
+_open_pages_lock = threading.Lock()
+
+
+def _no_open_page_since(sid, now):
+    """Seconds since the login's last open page closed, or None while a page is open
+    (or when nothing is known about this login)."""
+    with _open_pages_lock:
+        entry = _open_pages.get(sid)
+        if not entry:
+            return None
+        stale = now - SESSION_CLOSED_LIMIT.total_seconds()
+        for pid in [p for p, seen in entry['pages'].items() if seen < stale]:
+            seen = entry['pages'].pop(pid)             # died without sending its beacon
+            entry['closed_at'] = max(entry['closed_at'] or 0, seen)
+        if entry['pages'] or not entry['closed_at']:
+            return None
+        return now - entry['closed_at']
+
+
+@app.before_request
+def _expire_stale_session():
+    if not session.get('loggedin') or request.endpoint == 'static':
+        return
+    now         = datetime.now().timestamp()
+    last_seen   = session.get('last_seen')
+    last_active = session.get('last_active') or last_seen
+    no_page_for = _no_open_page_since(session.get('sid'), now)
+    # Opening a page (landing, dashboard, any URL) while none of this login's pages is
+    # open means the tabs/browser were closed — strict, no grace. In-app navigation is
+    # unaffected: the browser requests the next page BEFORE the current one reports
+    # itself closed. Background API calls keep the short grace, since a freshly loaded
+    # page can fire them a moment before it registers.
+    _page_request = not request.path.startswith('/api/')
+    if (last_seen is None
+            or now - last_seen   > SESSION_CLOSED_LIMIT.total_seconds()
+            or now - last_active > SESSION_IDLE_LIMIT.total_seconds()
+            or (no_page_for is not None
+                and (_page_request or no_page_for > SESSION_NO_PAGE_GRACE.total_seconds()))):
+        with _open_pages_lock:
+            _open_pages.pop(session.get('sid'), None)
+        session.clear()
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'session_expired': True,
+                            'error': 'Your session has expired. Please log in again.'}), 401
+        if request.endpoint in _SESSION_PUBLIC_ENDPOINTS:
+            return   # the landing/login page simply renders as signed out
+        flash('Your session has expired. Please log in again.')
+        return redirect(url_for('login'))
+    if request.endpoint in _SESSION_PUBLIC_ENDPOINTS or request.endpoint == 'session_page_closed':
+        return   # neither the landing page nor a closing page is a signed-in page being open
+    session['last_seen'] = now
+    # A heartbeat only counts as activity when the user actually did something.
+    if request.endpoint != 'session_heartbeat' or (request.get_json(silent=True) or {}).get('active'):
+        session['last_active'] = now
+
+
+@app.route('/api/session/heartbeat', methods=['POST'])
+def session_heartbeat():
+    if not session.get('loggedin'):
+        return jsonify({'success': False, 'session_expired': True}), 401
+    page_id = str((request.get_json(silent=True) or {}).get('page') or '')[:64]
+    if page_id and session.get('sid'):
+        with _open_pages_lock:
+            entry = _open_pages.setdefault(session['sid'], {'pages': {}, 'closed_at': None})
+            entry['pages'][page_id] = datetime.now().timestamp()
+            entry['closed_at'] = None
+    return jsonify({'success': True})
+
+
+@app.route('/api/session/page_closed', methods=['POST'])
+def session_page_closed():
+    # Sent with navigator.sendBeacon from 'pagehide' — fires on navigation too, which
+    # SESSION_NO_PAGE_GRACE absorbs (see above).
+    data = request.get_json(silent=True, force=True) or {}
+    page_id = str(data.get('page') or '')[:64]
+    if page_id and session.get('sid'):
+        with _open_pages_lock:
+            entry = _open_pages.get(session['sid'])
+            if entry and entry['pages'].pop(page_id, None) is not None and not entry['pages']:
+                entry['closed_at'] = datetime.now().timestamp()
+    return ('', 204)
+
+
+@app.after_request
+def _inject_session_guard(resp):
+    """Add session_guard.js to every signed-in HTML page (see SESSION_CLOSED_LIMIT)."""
+    # The landing page gets it too while signed in, so leaving it open counts as an
+    # open page (it shows "Go to dashboard" and must not be logged out from under you).
+    if (session.get('loggedin') and resp.status_code == 200 and resp.mimetype == 'text/html'
+            and (request.endpoint == 'index' or request.endpoint not in _SESSION_PUBLIC_ENDPOINTS)
+            and not resp.direct_passthrough):
+        html = resp.get_data(as_text=True)
+        cut = html.lower().rfind('</body>')
+        if cut != -1:
+            tag = f'<script src="{url_for("static", filename="js/session_guard.js")}"></script>'
+            resp.set_data(html[:cut] + tag + html[cut:])
+    return resp
+
 def write_activity_log(action, details, category='system', color='gray'):
     """Insert one row into activity_log. Never raises — logging must not break the caller."""
     _ensure_activity_log_table()
@@ -1014,6 +1130,8 @@ def login():
         session['role']     = db_role
         session['must_change_password']   = must_change
         session['account_setup_complete'] = setup_done
+        session['last_seen'] = session['last_active'] = datetime.now().timestamp()
+        session['sid'] = uuid.uuid4().hex   # keys this login's open-page tracking
         try:
             _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
             _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
@@ -1328,9 +1446,112 @@ def _client_ip():
     return (request.remote_addr or '')[:64]
 
 
+def _entry_ay_code(entry_year):
+    """A cohort's entry year as program_yearlevel.startacademicyear: 2021 -> 'AY2122'.
+
+    Only a computed label (the row's AY start year minus year level - 1) used to find the
+    curriculum the program + year level follows — NOT a link to an academicyear record.
+    It used to be a foreign key, which (a) made an Academic Year undeletable whenever any
+    cohort counted from it, and (b) when no AY record went back that far, made every
+    writer fall back to the row's OWN AY, storing a wrong entry year."""
+    y = int(entry_year)
+    return f"AY{y % 100:02d}{(y + 1) % 100:02d}"
+
+
+# SQL twin of _entry_ay_code for a program_yearlevel row `pyl` joined to its own AY `ay`.
+_PYL_ENTRY_CODE_SQL = ("('AY' || LPAD(((ay.yearstart - (pyl.yearlevel - 1)) % 100)::text, 2, '0')"
+                       " || LPAD(((ay.yearstart - pyl.yearlevel + 2) % 100)::text, 2, '0'))")
+
+_cohort_entry_year_ensured = False
+
+
+def _ensure_cohort_entry_year_decoupled():
+    """Drop fk_pyl_startacademicyear and correct rows that stored their own AY as the
+    entry year (see _entry_ay_code). Idempotent; runs once per process."""
+    global _cohort_entry_year_ensured
+    if _cohort_entry_year_ensured:
+        return
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SET LOCAL lock_timeout = '5s'")
+        cur.execute("ALTER TABLE public.program_yearlevel DROP CONSTRAINT IF EXISTS fk_pyl_startacademicyear")
+        cur.execute(f"""
+            UPDATE public.program_yearlevel pyl
+            SET startacademicyear = {_PYL_ENTRY_CODE_SQL}
+            FROM public.academicyear ay
+            WHERE ay.academicyearid = pyl.academicyearid
+              AND ay.yearstart IS NOT NULL
+              AND pyl.startacademicyear IS DISTINCT FROM {_PYL_ENTRY_CODE_SQL}
+              AND NOT EXISTS (
+                  SELECT 1 FROM public.program_yearlevel d
+                  WHERE d.programcode = pyl.programcode AND d.academicyearid = pyl.academicyearid
+                    AND d.yearlevel = pyl.yearlevel AND d.startacademicyear = {_PYL_ENTRY_CODE_SQL}
+                    AND d.programyearlevelid <> pyl.programyearlevelid)
+        """)
+        conn.commit()
+        _cohort_entry_year_ensured = True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close(); conn.close()
+
+
+_section_bridging_ensured = False
+
+
+def _ensure_section_bridging_column():
+    """sections.withbridging — set per section in Program Management ("With Bridging",
+    offered only for year levels that have Bridging subjects). Schedule Generation and
+    the Manual Editor read the section's curriculum (Regular vs Bridging) from it.
+    When the column is first added, sections already locked to Bridging
+    (section_curriculum_lock) are switched on so their existing Bridging schedules keep
+    matching — but only where the year level really has Bridging subjects (SIS imports
+    locked every "BRIDGE"-labelled section, even for curricula without any). One-time:
+    later runs never re-flag a section an admin turned off."""
+    global _section_bridging_ensured
+    if _section_bridging_ensured:
+        return
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SET LOCAL lock_timeout = '5s'")
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'sections' AND column_name = 'withbridging'
+        """)
+        newly_added = cur.fetchone() is None
+        cur.execute("ALTER TABLE public.sections ADD COLUMN IF NOT EXISTS withbridging BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("SELECT to_regclass('public.section_curriculum_lock') IS NOT NULL")
+        if newly_added and cur.fetchone()[0]:
+            cur.execute("""
+                UPDATE public.sections s SET withbridging = TRUE
+                FROM public.program_yearlevel pyl
+                JOIN public.curriculum creg ON creg.curriculumid = pyl.curriculumid
+                WHERE pyl.programyearlevelid = s.programyearlevelid
+                  AND EXISTS (
+                      SELECT 1 FROM public.section_curriculum_lock l
+                      WHERE l.sectionid = s.sectionid AND UPPER(l.curriculum_mode) IN ('WITH_BRIDGING', 'BRIDGING'))
+                  AND EXISTS (
+                      SELECT 1 FROM public.curriculum cb
+                      JOIN public.curriculumsubject cs ON cs.curriculumid = cb.curriculumid
+                      WHERE UPPER(cb.programcode) = UPPER(pyl.programcode)
+                        AND cb.curriculumyear = creg.curriculumyear
+                        AND cb.curriculumtype = 'WITH_BRIDGING'
+                        AND cs.isbridging = TRUE AND cs.yearlevel = pyl.yearlevel)
+            """)
+        conn.commit()
+        _section_bridging_ensured = True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close(); conn.close()
+
+
 def _runtime_schema_ready():
     return (_schedule_version_schema_ready() and _local_tables_ensured
-            and _request_tables_ensured)
+            and _request_tables_ensured and _cohort_entry_year_ensured
+            and _section_bridging_ensured)
 
 
 def _ensure_runtime_schema():
@@ -1342,7 +1563,8 @@ def _ensure_runtime_schema():
     idempotent and flag-guarded; a failure is logged and retried on a later request.
     """
     _ensure_schedule_version_schema()
-    for _helper in (_ensure_local_tables, _ensure_request_tables):
+    for _helper in (_ensure_local_tables, _ensure_request_tables, _ensure_cohort_entry_year_decoupled,
+                    _ensure_section_bridging_column):
         try:
             _helper()
         except Exception as e:
@@ -4668,11 +4890,6 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
     if not all_ays:
         return 0
 
-    # startacademicyear is an FK to academicyear.academicyearid (e.g. "AY2223"),
-    # NOT a "YYYY-YYYY" display string -- map cohort entry-year -> real AY id
-    # so every row below resolves to a value that actually satisfies the FK.
-    _yearstart_to_ayid = {int(r['yearstart']): r['academicyearid'] for r in all_ays if r['yearstart'] is not None}
-
     # Active programs, optionally filtered to one program
     if prog_filter:
         cur.execute("""
@@ -4700,11 +4917,10 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
             ay_yearstart = int(ay_row['yearstart'])
 
             for yl in range(1, num_years + 1):
-                # Cohort's entry year: subtract (year_level - 1) from the AY start.
-                # Fall back to this row's own AY (always a valid FK target) when
-                # no academicyear row goes back that far.
+                # Cohort's entry year: subtract (year_level - 1) from the AY start —
+                # a computed label, no academicyear record needed (see _entry_ay_code).
                 start_yr = ay_yearstart - (yl - 1)
-                startacademicyear = _yearstart_to_ayid.get(start_yr, ay_id)
+                startacademicyear = _entry_ay_code(start_yr)
 
                 # Best curriculum: latest Regular whose curriculumyear start <= cohort's entry year.
                 # Bridging curricula are never auto-assigned — they only supplement the guide display.
@@ -4899,25 +5115,24 @@ def _reassign_curriculum_for_program(cur, programcode):
     cohort's primary teaching curriculum; it only supplements the guide display.
     Call this after any curriculum INSERT/UPDATE for that program.
 
-    pyl.startacademicyear stores an academicyear.academicyearid-style code
-    (e.g. "AY2223"), not a plain year — so its actual start year has to come
-    from a join to academicyear.yearstart rather than substring-parsing the
-    code itself (SUBSTRING('AY2223', 1, 4) is "AY22", not a number). The join
-    is a LEFT JOIN so a row whose startacademicyear doesn't match any real AY
-    (stale/malformed legacy data such as "AY21") just falls through to the
-    COALESCE fallback below instead of crashing the whole import.
+    The cohort's entry year is counted from the row's OWN academic year — its AY start
+    year minus (year level - 1) — the same count _auto_setup_program_yearlevels uses.
+    It never looks up an academicyear record for the entry year itself (see
+    _entry_ay_code): that used to make cohorts whose entry year had no AY record fall
+    through to the COALESCE below and keep whatever curriculum they had.
     """
     cur.execute("""
         UPDATE program_yearlevel pyl
         SET curriculumid = COALESCE(
             (
                 SELECT c.curriculumid
-                FROM curriculum c
-                LEFT JOIN academicyear ay2 ON ay2.academicyearid = pyl.startacademicyear
-                WHERE UPPER(c.programcode) = UPPER(pyl.programcode)
+                FROM curriculum c, academicyear ay_own
+                WHERE ay_own.academicyearid = pyl.academicyearid
+                  AND ay_own.yearstart IS NOT NULL
+                  AND UPPER(c.programcode) = UPPER(pyl.programcode)
                   AND c.curriculumtype = 'REGULAR'
-                  AND ay2.yearstart IS NOT NULL
-                  AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT) <= ay2.yearstart
+                  AND CAST(SUBSTRING(c.curriculumyear, 1, 4) AS INT)
+                      <= ay_own.yearstart - (pyl.yearlevel - 1)
                 ORDER BY c.curriculumyear DESC
                 LIMIT 1
             ),
@@ -10195,16 +10410,10 @@ def _resolve_historical_section(cur, course_raw, ay_id, create=False, manual_pro
         ay_yearstart = int(_ayr['yearstart']) if _ayr and _ayr['yearstart'] is not None else None
         entry_year   = (ay_yearstart - (yl - 1)) if ay_yearstart else None
 
-        # startacademicyear is an FK to academicyear.academicyearid (e.g.
-        # "AY2223"), NOT a "YYYY-YYYY" display string -- resolve the actual
-        # AY row for the cohort's entry year; fall back to this semester's
-        # own AY (guaranteed to exist) when no row goes back that far, which
-        # is the common case for a first-time historical import.
-        entry_ay_id = ay_id
-        if entry_year:
-            cur.execute("SELECT academicyearid FROM academicyear WHERE yearstart = %s LIMIT 1", (entry_year,))
-            _eayr = cur.fetchone()
-            if _eayr: entry_ay_id = _eayr['academicyearid']
+        # Cohort entry year as a computed label (see _entry_ay_code) — no academicyear
+        # record needed, so a first-time historical import no longer falls back to
+        # storing this semester's own AY as the entry year.
+        entry_ay_id = _entry_ay_code(entry_year) if entry_year else ay_id
 
         # program_yearlevel.curriculumid is NOT NULL, so it must be supplied
         # even though historical sections never use it for curriculumsubject
@@ -10638,7 +10847,9 @@ def import_schedule():
 
                     # 2. Find or create program_yearlevel
                     _pyl_id = None
-                    _start_ay_str = f"{_entry_year}-{_entry_year+1}" if _entry_year else ''
+                    # Entry-year label (see _entry_ay_code). This used to be "2021-2022", which
+                    # never matched the AY-code format every other writer uses.
+                    _start_ay_str = _entry_ay_code(_entry_year) if _entry_year else ''
                     if _start_ay_str:
                         cur.execute("""
                             SELECT programyearlevelid FROM program_yearlevel
@@ -12194,17 +12405,9 @@ def sis_import_confirm():
                         _ca2 = cur.fetchone()
                         if _ca2: best_curr_id = _ca2['curriculumid']
 
-                # Resolve entry academicyearid -- startacademicyear is an FK to
-                # academicyear.academicyearid (e.g. "AY2223"), NOT a "YYYY-YYYY"
-                # display string. Fall back to this semester's own AY (always
-                # a valid FK target) rather than fabricating an "AY{year}"
-                # string that may not correspond to any real row.
-                entry_ay_id = ay_id
-                if entry_year:
-                    cur.execute("SELECT academicyearid FROM academicyear WHERE yearstart=%s LIMIT 1",
-                                (entry_year,))
-                    _eayr = cur.fetchone()
-                    if _eayr: entry_ay_id = _eayr['academicyearid']
+                # Cohort entry year as a computed label (see _entry_ay_code) — not a
+                # link to an academicyear record.
+                entry_ay_id = _entry_ay_code(entry_year) if entry_year else ay_id
 
                 # ── Find or create program_yearlevel for this program+entry-year ──
                 _pyl_id = None
@@ -12319,6 +12522,9 @@ def sis_import_confirm():
                         VALUES (%s, %s, 'WITH_BRIDGING')
                         ON CONFLICT (sectionid, semesterid) DO NOTHING
                     """, (sec_id, sem_id))
+                    # The section's own "With Bridging" setting is what Generation and the
+                    # Manual Editor read (see _section_curriculum_mode).
+                    cur.execute("UPDATE sections SET withbridging = TRUE WHERE sectionid = %s", (sec_id,))
 
                 # NOTE: previously auto-created a curriculumsubject row here when the SIS
                 # schedule data referenced a code not already in the curriculum — that
@@ -16924,6 +17130,8 @@ def get_room_schedule(room_id):
         _ensure_local_tables()
         status_filter = "sv.status = 'Published'" if scheduler_mode == 'local' else "sv.status IN ('Published', 'Draft')"
         filters = ["ss.roomid = %s", status_filter]
+        if scheduler_mode != 'local':
+            filters.append(_superseded_published_sql('sv', 's', 'cs'))   # deleted/moved in a Draft
         params  = [room_id]
         joins = """ JOIN semester sem ON s.semesterid = sem.semesterid
             LEFT JOIN sections sec ON s.sectionid = sec.sectionid
@@ -17203,6 +17411,7 @@ def api_rooms_occupancy_by_day():
               AND sv.status IN ('Published', 'Draft')
               AND ss.roomid IS NOT NULL
               {period_sql}
+              AND {_superseded_published_sql('sv', 's', 'cs_o')}
               AND (
                     sv.status = 'Draft'
                     OR NOT EXISTS (
@@ -17619,7 +17828,8 @@ def api_manual_faculty_schedule():
 
     try:
         if scheduler_mode != 'local':
-            filters = ["sv.status IN ('Published', 'Draft')", "sc.employeenumber = %s"]
+            filters = ["sv.status IN ('Published', 'Draft')", "sc.employeenumber = %s",
+                       _superseded_published_sql('sv', 'sc', 'cs')]   # deleted/moved in a Draft
             params = [emp_num]
             if ay_id and semester:
                 filters.append("""sc.semesterid = (
@@ -18296,6 +18506,12 @@ def api_dss_suggest():
         # Also carries each session's program/year level (via sections → program_yearlevel)
         # so 7a below can tell "this room was used for THIS program+year" apart from
         # "this room was used for this subject somewhere else entirely."
+        #
+        # 'Archive' alone isn't proof of real usage: a Draft that was superseded by a later
+        # save, or deleted in the Manual Editor, is also flipped to 'Archive'. Counting those
+        # made whatever room was last tried (then abandoned) show up as MOST USED. Only count
+        # versions that were actually Published (or imported as past-term history, which
+        # lands as original_status='Archive') — never ones created as a Draft.
         cur.execute("""
             SELECT ss.roomid, pyl.programcode, pyl.yearlevel
             FROM schedule_sessions ss
@@ -18307,6 +18523,7 @@ def api_dss_suggest():
             WHERE UPPER(cs.subjectcode) = UPPER(%s)
               AND ss.roomid IS NOT NULL
               AND sv.status IN ('Published', 'Archive')
+              AND COALESCE(sv.original_status, sv.status) <> 'Draft'
         """, (subject_code,))
         sched_room_counts     = {}   # roomid -> total freq, any program/year (fallback signal)
         sched_room_ctx_counts = {}   # roomid -> freq scoped to THIS program+year level
@@ -18779,6 +18996,166 @@ def _ensure_curriculum_lock_table(cur):
                 CHECK (curriculum_mode IN ('REGULAR', 'WITH_BRIDGING'));
         EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     """)
+
+
+def _current_curriculum_lock(cur, section_id, sem_id):
+    """'regular' / 'bridging' when this section+term is locked to a curriculum, else None.
+
+    Self-healing reconciliation: a lock set purely from a confirmed faculty assignment
+    (the trigger — happens before any real time slice exists) shouldn't survive forever
+    if that assignment was later removed and nothing was ever actually scheduled. Verify
+    there's still real evidence of scheduling for this section+term before honoring the
+    lock; otherwise clear it so the curriculum choice becomes free again. The caller
+    commits (the clean-up DELETE rides on its transaction)."""
+    _ensure_curriculum_lock_table(cur)
+    cur.execute("""
+        SELECT curriculum_mode FROM public.section_curriculum_lock
+        WHERE sectionid = %s AND semesterid = %s
+    """, (int(section_id), sem_id))
+    row = cur.fetchone()
+    if not row:
+        return None
+    _ensure_faculty_assignment_table(cur)
+    cur.execute("""
+        SELECT 1 FROM public.subject_faculty_assignment
+        WHERE sectionid = %s AND semesterid = %s LIMIT 1
+    """, (int(section_id), sem_id))
+    has_reservation = cur.fetchone() is not None
+    cur.execute("""
+        SELECT 1 FROM public.schedule s
+        JOIN public.schedule_version sv ON sv.scheduleid = s.scheduleid
+        WHERE s.sectionid = %s AND s.semesterid = %s AND sv.status IN ('Draft','Published')
+        LIMIT 1
+    """, (int(section_id), sem_id))
+    has_schedule = cur.fetchone() is not None
+    if not has_reservation and not has_schedule:
+        cur.execute("DELETE FROM public.section_curriculum_lock WHERE sectionid = %s AND semesterid = %s",
+                    (int(section_id), sem_id))
+        return None
+    # DB stores the ASDBv11 enum-style code; callers use lowercase 'regular'/'bridging'.
+    return 'bridging' if row['curriculum_mode'] == 'WITH_BRIDGING' else 'regular'
+
+
+def _curriculum_subject_sets(cur, program, curriculum_year, year_level, semester):
+    """(regular_codes, bridging_codes) for one program / curriculum year / year level /
+    semester — exactly what Schedule Generation loads in each mode (scheduler.fetch_data):
+    Regular = the Regular curriculum (REGULAR_CURRICULUM_SQL), Bridging = the subjects
+    unique to the program's WITH_BRIDGING curriculum (IsBridging), the same set the
+    Manual Editor's Bridging view shows."""
+    from scheduler import REGULAR_CURRICULUM_SQL
+    cur.execute("""
+        SELECT DISTINCT UPPER(TRIM(cs.subjectcode)) AS code
+        FROM curriculumsubject cs JOIN curriculum c ON cs.curriculumid = c.curriculumid
+        WHERE UPPER(c.programcode) = UPPER(%s) AND c.curriculumyear = %s
+          AND cs.yearlevel = %s AND cs.semester = %s
+          AND """ + REGULAR_CURRICULUM_SQL, (program, curriculum_year, int(year_level), semester))
+    regular = {r['code'] for r in cur.fetchall()}
+    cur.execute("""
+        SELECT DISTINCT UPPER(TRIM(cs.subjectcode)) AS code
+        FROM curriculumsubject cs JOIN curriculum c ON cs.curriculumid = c.curriculumid
+        WHERE UPPER(c.programcode) = UPPER(%s) AND c.curriculumyear = %s
+          AND c.curriculumtype = 'WITH_BRIDGING' AND cs.isbridging = TRUE
+          AND cs.yearlevel = %s AND cs.semester = %s
+    """, (program, curriculum_year, int(year_level), semester))
+    bridging = {r['code'] for r in cur.fetchall()}
+    return regular, bridging
+
+
+def _bridging_year_levels(cur, academic_year_id, program=None):
+    """{programcode: {yearlevel, ...}} — the year levels that HAVE Bridging subjects in
+    the given AY: the program's WITH_BRIDGING curriculum for the same curriculum year as
+    the year level's own (Regular) curriculum has IsBridging subjects at that year level.
+    Drives the "With Bridging" toggle in Program Management."""
+    sql = """
+        SELECT DISTINCT UPPER(pyl.programcode) AS programcode, pyl.yearlevel
+        FROM program_yearlevel pyl
+        JOIN curriculum creg ON creg.curriculumid = pyl.curriculumid
+        JOIN curriculum cb   ON UPPER(cb.programcode) = UPPER(pyl.programcode)
+                            AND cb.curriculumyear = creg.curriculumyear
+                            AND cb.curriculumtype = 'WITH_BRIDGING'
+        JOIN curriculumsubject cs ON cs.curriculumid = cb.curriculumid
+                                 AND cs.isbridging = TRUE AND cs.yearlevel = pyl.yearlevel
+        WHERE pyl.academicyearid = %s"""
+    args = [academic_year_id]
+    if program:
+        sql += " AND UPPER(pyl.programcode) = UPPER(%s)"
+        args.append(program)
+    cur.execute(sql, args)
+    out = {}
+    for r in cur.fetchall():
+        code, yl = (r['programcode'], r['yearlevel']) if isinstance(r, dict) else (r[0], r[1])
+        out.setdefault(code, set()).add(int(yl))
+    return out
+
+
+def _section_curriculum_mode(cur, section_id):
+    """'bridging' when the section is set "With Bridging" in Program Management, else
+    'regular'; None when the section doesn't exist. THE source of a section's curriculum
+    for Schedule Generation and the Manual Editor."""
+    if not section_id:
+        return None
+    try:
+        cur.execute("SELECT withbridging FROM sections WHERE sectionid = %s", (int(section_id),))
+    except (ValueError, TypeError):
+        return None
+    row = cur.fetchone()
+    if not row:
+        return None
+    flag = row['withbridging'] if isinstance(row, dict) else row[0]
+    return 'bridging' if flag else 'regular'
+
+
+def _curriculum_mode_problem(cur, ctx, section_id, sem_id, schedule_rows=None):
+    """Guard for Schedule Generation's Regular / Bridging choice (ctx['curriculumMode']).
+    Returns an error message, or None when fine — and always None when the caller sent
+    no curriculumMode (the Manual Editor's own saves are unaffected).
+
+    Refuses: Bridging for a program/year/term with no Bridging subjects; a mode that
+    differs from the section's own setting (sections.withbridging — see
+    _section_curriculum_mode); and any row whose subject belongs to the other
+    curriculum — so no Bridging subject can land in a section that isn't set
+    "With Bridging" (or has no Bridging curriculum), and vice versa."""
+    mode = str(ctx.get('curriculumMode') or '').strip().lower()
+    if mode not in ('regular', 'bridging'):
+        return None
+    program, year_level = ctx.get('program'), ctx.get('yearLevel')
+    curriculum_year, semester = ctx.get('curriculum'), ctx.get('term')
+    if not (program and year_level and curriculum_year and semester):
+        return 'Missing program, year level, curriculum or semester for the curriculum check.'
+    regular, bridging = _curriculum_subject_sets(cur, program, curriculum_year, year_level, semester)
+    if mode == 'bridging' and not bridging:
+        return (f'{program} has no Bridging subjects for this year level and semester '
+                f'(curriculum {curriculum_year}). Use the Regular curriculum.')
+    if section_id:
+        # The section's own setting (Program Management → "With Bridging") decides.
+        section_mode = _section_curriculum_mode(cur, section_id)
+        if section_mode and section_mode != mode:
+            return (f'This section uses the {section_mode.title()} curriculum '
+                    f'(set in Program Management{" — With Bridging" if section_mode == "bridging" else ""}), '
+                    f'so it cannot be scheduled with the {mode.title()} curriculum.')
+    if schedule_rows:
+        codes = {str(r.get('subject_code') or r.get('subjectcode') or '').strip().upper()
+                 for r in schedule_rows} - {''}
+        wrong = sorted(codes & (bridging - regular)) if mode == 'regular' else sorted(codes - bridging)
+        if wrong:
+            other = 'Bridging' if mode == 'regular' else 'Regular'
+            return (f'{", ".join(wrong)} belong{"s" if len(wrong) == 1 else ""} to the {other} curriculum '
+                    f'and cannot be scheduled in a section using the {mode.title()} curriculum.')
+    return None
+
+
+def _lock_section_curriculum(cur, ctx, section_id, sem_id):
+    """After a Generation save: lock the section+term to its curriculum mode (first one
+    wins, same as the Manual Editor's faculty assignment), so the two pages agree."""
+    mode = str(ctx.get('curriculumMode') or '').strip().lower()
+    if mode not in ('regular', 'bridging') or not section_id or not sem_id:
+        return
+    _ensure_curriculum_lock_table(cur)
+    cur.execute("""
+        INSERT INTO public.section_curriculum_lock (sectionid, semesterid, curriculum_mode)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (sectionid, semesterid) DO NOTHING
+    """, (int(section_id), sem_id, 'WITH_BRIDGING' if mode == 'bridging' else 'REGULAR'))
 
 # Merged Class Faculty Load Policy (Settings → Class Merging Policy). Each row is a
 # rule: for `subjectcode`, when between `min_sections` and `max_sections` sections are
@@ -19715,58 +20092,20 @@ def api_manual_delete_assignment(subjectcode):
 
 @app.route('/api/manual/curriculum_lock')
 def api_manual_curriculum_lock():
-    """Whether a section's Regular-vs-Bridging curriculum choice is locked for a given term,
-    and if so, which mode it's locked to. See _ensure_curriculum_lock_table."""
+    """A section's curriculum (Regular vs Bridging) for the Manual Editor and Schedule
+    Generation. It comes from the section itself — Program Management → "With Bridging"
+    (sections.withbridging) — so it is always fixed ('locked') once a section is picked;
+    source='section' tells the client why."""
     section_id = request.args.get('section_id', '').strip()
-    ay         = request.args.get('ay_id', '').strip()
-    term       = request.args.get('sem', '').strip()
-    if not all([section_id, ay, term]):
+    if not section_id:
         return jsonify({'success': True, 'locked': False})
     try:
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-        sem_id = _get_semester_id(cur, ay, term)
-        _ensure_curriculum_lock_table(cur)
-        cur.execute("""
-            SELECT curriculum_mode FROM public.section_curriculum_lock
-            WHERE sectionid = %s AND semesterid = %s
-        """, (int(section_id), sem_id))
-        row = cur.fetchone()
-        if not row:
-            cur.close(); conn.close()
-            return jsonify({'success': True, 'locked': False})
-
-        # Self-healing reconciliation: a lock set purely from a confirmed faculty assignment
-        # (the trigger — happens before any real time slice exists) shouldn't survive forever
-        # if that assignment was later removed and nothing was ever actually scheduled. Verify
-        # there's still real evidence of scheduling for this section+term before honoring the
-        # lock; otherwise clear it so the curriculum picker becomes free to choose again.
-        _ensure_faculty_assignment_table(cur)
-        cur.execute("""
-            SELECT 1 FROM public.subject_faculty_assignment
-            WHERE sectionid = %s AND semesterid = %s LIMIT 1
-        """, (int(section_id), sem_id))
-        has_reservation = cur.fetchone() is not None
-
-        cur.execute("""
-            SELECT 1 FROM public.schedule s
-            JOIN public.schedule_version sv ON sv.scheduleid = s.scheduleid
-            WHERE s.sectionid = %s AND s.semesterid = %s AND sv.status IN ('Draft','Published')
-            LIMIT 1
-        """, (int(section_id), sem_id))
-        has_schedule = cur.fetchone() is not None
-
-        if not has_reservation and not has_schedule:
-            cur.execute("""
-                DELETE FROM public.section_curriculum_lock WHERE sectionid = %s AND semesterid = %s
-            """, (int(section_id), sem_id))
-            conn.commit(); cur.close(); conn.close()
-            return jsonify({'success': True, 'locked': False})
-
+        _mode = _section_curriculum_mode(cur, section_id)
         cur.close(); conn.close()
-        # DB stores the ASDBv11 enum-style code; the client contract has always been the
-        # lowercase 'regular'/'bridging' strings — map back on the way out.
-        _mode_out = 'bridging' if row['curriculum_mode'] == 'WITH_BRIDGING' else 'regular'
-        return jsonify({'success': True, 'locked': True, 'curriculum_mode': _mode_out})
+        if not _mode:
+            return jsonify({'success': True, 'locked': False})
+        return jsonify({'success': True, 'locked': True, 'curriculum_mode': _mode, 'source': 'section'})
     except Exception as e:
         return jsonify({'success': False, 'locked': False, 'error': str(e)})
 
@@ -24028,20 +24367,12 @@ def assign_curriculum():
             if not offering_code:
                 flash("Error: No program selected.")
                 return redirect(url_for('admin_curriculum'))
-            # startacademicyear is an FK to academicyear.academicyearid (e.g.
-            # "AY2223"), NOT a "YYYY-YYYY" display string -- resolve the
-            # actual AY row for the cohort's entry year, falling back to the
-            # selected academicyearid itself (always a valid FK target) when
-            # no AY goes back that far.
+            # Cohort entry year as a computed label (see _entry_ay_code).
             conn2 = get_db_connection(); cur2 = conn2.cursor(cursor_factory=RealDictCursor)
             cur2.execute("SELECT yearstart FROM academicyear WHERE academicyearid=%s", (academicyearid,))
             _ayr = cur2.fetchone()
             _ys = int(_ayr['yearstart']) if _ayr and _ayr['yearstart'] is not None else None
-            start_ay = academicyearid
-            if _ys is not None:
-                cur2.execute("SELECT academicyearid FROM academicyear WHERE yearstart=%s LIMIT 1", (_ys - (yearlevel - 1),))
-                _eayr = cur2.fetchone()
-                if _eayr: start_ay = _eayr['academicyearid']
+            start_ay = _entry_ay_code(_ys - (yearlevel - 1)) if _ys is not None else academicyearid
             cur2.close(); conn2.close()
             cur.execute("""
                 INSERT INTO program_yearlevel
@@ -25116,7 +25447,7 @@ def admin_program_management():
         # (defaults to the active AY; admin may switch to the next AY via mgmt_ay)
         cur.execute("""
             SELECT sec.sectionid, sec.sectionname, pyl.yearlevel,
-                   pyl.programcode, sec.isactive,
+                   pyl.programcode, sec.isactive, sec.withbridging,
                    pyl.programyearlevelid,
                    pyl.programyearlevelid AS cohortid,
                    pyl.academicyearid,
@@ -25133,6 +25464,11 @@ def admin_program_management():
             ORDER  BY pyl.programcode, pyl.yearlevel, sec.sectionname
         """, (selected_mgmt_ay,))
         sections_mgmt = to_dict(cur)
+
+        # Year levels that have Bridging subjects this AY — the Add/Edit Section dialogs
+        # offer "With Bridging" only for these.
+        bridging_years = {prog: sorted(yls) for prog, yls in
+                          _bridging_year_levels(cur, selected_mgmt_ay).items()} if selected_mgmt_ay else {}
 
         # Per-program year-level management — pick the selected-AY PYL row per program+yearlevel.
         # Section counts are scoped to that same AY (not spanning all historical AYs).
@@ -25171,6 +25507,7 @@ def admin_program_management():
         return render_template('admin/program_management_admin.html',
                                programs_mgmt=programs_mgmt,
                                sections_mgmt=sections_mgmt,
+                               bridging_years=bridging_years,
                                prog_yearlevel_mgmt=prog_yearlevel_mgmt,
                                active_ay_id=active_ay_id,
                                mgmt_ay_options=mgmt_ay_options,
@@ -26393,6 +26730,7 @@ def settings_add_section():
     year_level   = int(request.form.get('year_level', '1'))
     section_name = request.form.get('section_name', '').strip()
     ay_id        = request.form.get('ay_id', '').strip()
+    with_bridging = request.form.get('with_bridging') == '1'
     if not prog_code or not section_name:
         flash("Program code and section name are required.", "error")
         return redirect(url_for('admin_program_management'))
@@ -26444,6 +26782,11 @@ def settings_add_section():
 
         pyl_id = pyl_row['programyearlevelid']
 
+        # "With Bridging" only for a year level that actually has Bridging subjects.
+        if with_bridging and int(year_level) not in _bridging_year_levels(cur, ay_id, prog_code).get(prog_code, set()):
+            flash(f"{prog_code} Year {year_level} has no Bridging subjects, so the section can't be With Bridging.", "error")
+            return redirect(url_for('admin_program_management'))
+
         # Duplicate check
         cur.execute("""
             SELECT 1 FROM sections
@@ -26454,12 +26797,13 @@ def settings_add_section():
             flash(f"Section '{section_name}' already exists for Year {year_level}.", "warning")
         else:
             cur.execute("""
-                INSERT INTO sections (programyearlevelid, sectionname, isactive)
-                VALUES (%s, %s, TRUE)
+                INSERT INTO sections (programyearlevelid, sectionname, isactive, withbridging)
+                VALUES (%s, %s, TRUE, %s)
                 ON CONFLICT (programyearlevelid, sectionname) DO NOTHING
-            """, (pyl_id, section_name))
+            """, (pyl_id, section_name, with_bridging))
             conn.commit()
-            flash(f"Section '{section_name}' added for Year {year_level}.", "success")
+            flash(f"Section '{section_name}' added for Year {year_level}"
+                  f"{' (With Bridging)' if with_bridging else ''}.", "success")
             write_activity_log("Added Section",
                                f"Added section '{section_name}' (Year {year_level}) to program {prog_code}",
                                category='program', color=_LOG_COLORS.get('program', 'blue'))
@@ -26542,20 +26886,44 @@ def settings_edit_section():
     section_id = request.form.get('section_id', '').strip()
     pyl_id     = request.form.get('pyl_id',     '').strip()
     new_name   = request.form.get('section_name', '').strip()
+    _wb_raw    = request.form.get('with_bridging')   # absent = leave the setting unchanged
     if not new_name:
         return jsonify({'success': False, 'error': 'Section name is required.'})
     conn = None; cur = None
     try:
         conn = get_db_connection(); cur = conn.cursor()
         if section_id:
+            cur.execute("""
+                SELECT s.withbridging, pyl.programcode, pyl.yearlevel, pyl.academicyearid
+                FROM sections s JOIN program_yearlevel pyl ON pyl.programyearlevelid = s.programyearlevelid
+                WHERE s.sectionid = %s
+            """, (section_id,))
+            cur_row = cur.fetchone()
+            if not cur_row:
+                return jsonify({'success': False, 'error': 'Section not found.'})
+            old_wb, s_prog, s_yl, s_ay = bool(cur_row[0]), cur_row[1], cur_row[2], cur_row[3]
+            new_wb = old_wb if _wb_raw is None else (_wb_raw == '1')
+            if new_wb != old_wb:
+                # Its schedules were built for the other curriculum — switching now would
+                # leave Regular subjects in a Bridging section (or vice versa).
+                cur.execute("""
+                    SELECT 1 FROM schedule sc JOIN schedule_version sv ON sv.scheduleid = sc.scheduleid
+                    WHERE sc.sectionid = %s AND sv.status IN ('Draft', 'Published') LIMIT 1
+                """, (section_id,))
+                if cur.fetchone():
+                    return jsonify({'success': False, 'error':
+                        'This section already has Draft or Published schedules. Remove them first to '
+                        f'turn With Bridging {"on" if new_wb else "off"}.'})
+                if new_wb and int(s_yl) not in _bridging_year_levels(cur, s_ay, s_prog).get(str(s_prog).upper(), set()):
+                    return jsonify({'success': False, 'error':
+                        f"{s_prog} Year {s_yl} has no Bridging subjects, so the section can't be With Bridging."})
             cur.execute(
-                "UPDATE sections SET sectionname=%s WHERE sectionid=%s RETURNING sectionid, sectionname",
-                (new_name, section_id)
+                "UPDATE sections SET sectionname=%s, withbridging=%s WHERE sectionid=%s "
+                "RETURNING sectionid, sectionname, withbridging",
+                (new_name, new_wb, section_id)
             )
             row = cur.fetchone()
-            if not row:
-                return jsonify({'success': False, 'error': 'Section not found.'})
-            sid, sname = row[0], row[1]
+            sid, sname, swb = row[0], row[1], bool(row[2])
         elif pyl_id:
             # pyl_id is the actual programyearlevelid
             cur.execute("""
@@ -26563,10 +26931,10 @@ def settings_edit_section():
                 VALUES (%s, %s, TRUE)
                 ON CONFLICT (programyearlevelid, sectionname) DO UPDATE
                     SET sectionname = EXCLUDED.sectionname
-                RETURNING sectionid, sectionname
+                RETURNING sectionid, sectionname, withbridging
             """, (int(pyl_id), new_name))
             row = cur.fetchone()
-            sid, sname = row[0], row[1]
+            sid, sname, swb = row[0], row[1], bool(row[2])
         else:
             return jsonify({'success': False, 'error': 'Missing section_id or pyl_id.'})
         conn.commit()
@@ -26575,7 +26943,7 @@ def settings_edit_section():
                                f"Section renamed to '{sname}'",
                                category='program', color=_LOG_COLORS.get('program', 'blue'))
         except: pass
-        return jsonify({'success': True, 'sectionid': sid, 'sectionname': sname})
+        return jsonify({'success': True, 'sectionid': sid, 'sectionname': sname, 'withbridging': swb})
     except Exception as e:
         if conn: conn.rollback()
         return jsonify({'success': False, 'error': str(e)})
@@ -31180,9 +31548,9 @@ def api_search():
 
         # Faculty/Employees — all roles (Faculty role shows info-only, no nav)
         cur.execute("""
-            SELECT f.employeenumber, f.firstname, f.lastname, et.typename
+            SELECT f.employeenumber, f.firstname, f.lastname, s.specializationname
             FROM faculty f
-            LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+            LEFT JOIN specialization s ON f.specializationid = s.specializationid
             WHERE f.employeestatus != 'Archive'
               AND (f.firstname ILIKE %s OR f.lastname ILIKE %s
                    OR f.employeenumber ILIKE %s
@@ -31197,7 +31565,8 @@ def api_search():
             emp_url = None
         for row in cur.fetchall():
             results.append({'category': 'Faculty', 'label': f"{row['firstname']} {row['lastname']}",
-                'sub': ' · '.join(filter(None, [row.get('employeenumber'), row.get('typename')])),
+                # Specialization only — the employee number and faculty type are not shown here.
+                'sub': row.get('specializationname') or 'No specialization',
                 'url': emp_url, 'icon': 'fa-user'})
 
         # Programs — Academic Head and Admin
@@ -33112,6 +33481,25 @@ def _resolve_timeids(cur):
     return _resolve
 
 
+def _superseded_published_sql(sv='sv', sc='sc', cs='cs'):
+    """SQL condition (no parameters) that drops a Published Official version once the
+    SAME subject in the SAME section/semester has a current Official Draft — the Draft
+    moved it, or REMOVED it (a removal marker has no sessions). The Published row stays
+    live until that Draft is published, but the Manual Editor already treats the Draft as
+    the subject's schedule (see the section-schedule loader), so the old slot must not
+    keep blocking faculty / room checks: a schedule the user deleted kept raising
+    "Faculty conflict" for anything later placed at that time. Pass the query's aliases
+    for schedule_version, schedule and curriculumsubject."""
+    return f"""NOT ({sv}.status = 'Published' AND {sv}.source IS DISTINCT FROM 'local' AND EXISTS (
+        SELECT 1 FROM public.schedule_version dv_sup
+        JOIN public.schedule dsc_sup ON dsc_sup.scheduleid = dv_sup.scheduleid
+        JOIN public.curriculumsubject dcs_sup ON dcs_sup.curriculumsubjectid = dsc_sup.curriculumsubjectid
+        WHERE dv_sup.status = 'Draft' AND dv_sup.source IS DISTINCT FROM 'local'
+          AND dsc_sup.sectionid  = {sc}.sectionid
+          AND dsc_sup.semesterid = {sc}.semesterid
+          AND UPPER(dcs_sup.subjectcode) = UPPER({cs}.subjectcode)))"""
+
+
 def _removal_draft_codes(cur, semester_id, section_id, codes=None):
     """Subject codes whose current Official Draft in this section is a removal marker."""
     cur.execute("""
@@ -34362,10 +34750,12 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     standalone accuracy endpoint omits it.
 
     acad_year / section_id: the CURRENT academic year (and section) being
-    scheduled. Recommendation Quality compares ONLY against the immediately
+    scheduled. Historical Room/Schedule Match compare against the immediately
     previous AY's historical_data — the same year, rows and time normalization
     Retrieve Previous uses (_previous_academic_year / _fetch_previous_ay_history /
-    _resolve_historical_day_time). When acad_year is omitted, the active AY is used.
+    _resolve_historical_day_time). Historical Faculty Match counts a subject whose
+    faculty has taught it in ANY year or section. When acad_year is omitted, the
+    active AY is used.
 
     Completeness is computed HERE with the shared reference validation
     (_unresolved_components: a value must exist AND resolve to a real record —
@@ -34605,9 +34995,12 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     }
 
     # ── C. Recommendation Quality (10%) ─────────────────────────────────────────
-    # Compared ONLY against the immediately previous AY (same rule, rows and time
-    # normalization as Retrieve Previous) — never older years.
-    hist_rows, prev_time_rows = [], []
+    # Room / Schedule Match compare against the immediately previous AY (same rule,
+    # rows and time normalization as Retrieve Previous). Faculty Match instead asks
+    # "has this faculty taught this subject before?" — any year, any section.
+    hist_rows, prev_time_rows, fac_hist_rows = [], [], []
+    _norm_code = lambda x: _re.sub(r'[^A-Z0-9]', '', (x or '').upper())
+    _sched_codes = sorted({_norm_code(subject_of(s)) for s in schedule_data if subject_of(s)} - {''})
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -34629,6 +35022,12 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
         if prev_sem_id:
             hist_rows = _fetch_previous_ay_history(
                 cur, program, year_level, prev_ay_id, prev_sem_id, section_id)
+            # Section names don't always carry across years (e.g. "BSCE 1-1" now vs
+            # "BSCE 1" last year), and the section filter then drops every row. Fall
+            # back to the whole program + year level rather than reporting no history.
+            if not hist_rows and section_id:
+                hist_rows = _fetch_previous_ay_history(
+                    cur, program, year_level, prev_ay_id, prev_sem_id, None)
 
             # Published sessions of that same previous-AY semester — the time
             # reference for a subject whose historical row carries no usable time.
@@ -34649,6 +35048,18 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
                 ORDER BY cs.subjectcode, sv.datecreated DESC
             """, (program, year_level, prev_sem_id))
             prev_time_rows = cur.fetchall()
+
+        # Every historical_data row ever recorded for these subjects — any AY,
+        # semester, program or section — for Historical Faculty Match.
+        if _sched_codes:
+            cur.execute("""
+                SELECT REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS code,
+                       UPPER(TRIM(COALESCE(employeenumber, ''))) AS faculty_id,
+                       "Instructor" AS instructor
+                FROM   historical_data
+                WHERE  REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') = ANY(%s)
+            """, (_sched_codes,))
+            fac_hist_rows = cur.fetchall()
     finally:
         cur.close()
         conn.close()
@@ -34712,6 +35123,37 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
             if st or et:
                 prev_time_map[code] = (st, et)
 
+    def _name_key(name):
+        # ("LAST", "FIRSTTOKEN") — the same last name + first-name-prefix rule the
+        # historical faculty resolution uses (so "Ma." still matches "Maria").
+        last, _, first = (name or '').upper().partition(',')
+        first_tok = (first.strip().split() or [''])[0].rstrip('.')
+        return last.strip(), first_tok
+
+    fac_hist_map = _dd(lambda: {'faculty_ids': set(), 'instructors': set(), 'name_keys': set()})
+    for r in fac_hist_rows:
+        fh = fac_hist_map[r['code']]
+        if r['faculty_id']:
+            fh['faculty_ids'].add(r['faculty_id'])
+        if r['instructor']:
+            fh['instructors'] |= _norm_instr(r['instructor'])
+            fh['name_keys'].add(_name_key(r['instructor']))
+
+    def _taught_before(code, gen_fid, gen_instr):
+        fh = fac_hist_map.get(_norm_code(code))
+        if not fh:
+            return False
+        if gen_fid and gen_fid in fh['faculty_ids']:
+            return True
+        if _norm_instr(gen_instr) & fh['instructors']:
+            return True
+        g_last, g_first = _name_key(gen_instr)
+        if not g_last:
+            return False
+        return any(h_last == g_last and (not h_first or not g_first or
+                                         g_first.startswith(h_first) or h_first.startswith(g_first))
+                   for h_last, h_first in fh['name_keys'])
+
     def _norm_room_code(x):
         return _re.sub(r'[^A-Z0-9]', '', (x or '').upper())
 
@@ -34731,21 +35173,16 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
         gen_s, gen_e = get_session_times(s)
         gen_dnorm = norm_days(session_days(s))
 
-        if hentry:
-            hist_total += 1
-            # Employee number decides whenever both sides have one (so
-            # "DEL CASTILLO, Ma. Asuncion R." == "Del Castillo, Maria Asuncion");
-            # normalized names are only the fallback when an id is missing.
-            if gen_fid and hentry['faculty_ids']:
-                fac_ok = gen_fid in hentry['faculty_ids']
-            else:
-                fac_ok = bool(_norm_instr(gen_instr) & hentry['instructors'])
-            if fac_ok:
-                matched_fac += 1
-            if gen_room:
-                gen_room_norm = _norm_room_code(gen_room)
-                if any(_norm_room_code(h) == gen_room_norm for h in hentry['rooms']):
-                    matched_room += 1
+        # Every subject counts toward the denominator — one with no historical case
+        # is simply "not matched", never left out (which used to turn the whole
+        # criterion into N/A and drop the 10% from the score).
+        hist_total += 1
+        if _taught_before(code, gen_fid, gen_instr):
+            matched_fac += 1
+        if hentry and gen_room:
+            gen_room_norm = _norm_room_code(gen_room)
+            if any(_norm_room_code(h) == gen_room_norm for h in hentry['rooms']):
+                matched_room += 1
 
         # Historical Schedule Match — requires DAY and TIME to agree together, not
         # time alone (a time-only match with a different day is not a real match).
@@ -34753,25 +35190,20 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
         day_known = bool(hist_days_here)
         day_ok    = bool(gen_dnorm & hist_days_here) if day_known else True
 
+        time_total += 1
         if hentry and hentry['times']:
-            time_total += 1
             if (gen_s, gen_e) in hentry['times'] and day_ok:
                 matched_sched += 1
         elif code in prev_time_map:
-            time_total += 1
             prev_s, prev_e = prev_time_map[code]
             if gen_s == prev_s and gen_e == prev_e and day_ok:
                 matched_sched += 1
         elif day_known:
-            time_total += 1
             if day_ok:
                 matched_sched += 1
 
-    # No usable historical case (architecture spec section 12/28): hist_total/
-    # time_total are 0 when nothing in this schedule matched ANY historical_data
-    # row (e.g. right after historical data was deleted, or a program/term with
-    # no imported history at all) — report 'N/A', never a numeric fallback that
-    # would misleadingly read as "0% match" or (the actual prior bug) "100% match".
+    # Subjects without history now count as unmatched, so these totals are only 0
+    # for an empty schedule — the one case still reported as 'N/A'.
     hist_available  = hist_total  > 0
     sched_available = time_total  > 0
     recommendation_criteria = {
@@ -34827,6 +35259,49 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
         for r in list(reasons) + list(s.get('incomplete_reason') or []):
             if r not in entry['reasons']:
                 entry['reasons'].append(r)
+
+    # Hours shortfall: every row can have a valid day/time/room and the subject can
+    # still be short of its required hours (e.g. a 3h NSTP placed as one 1.5h or 2h
+    # Sunday meeting). Presence checks above can't see that, so compare the hours
+    # actually scheduled per subject with lecture + lab hours from the curriculum.
+    _sched_mins = _dd(int)
+    for s in schedule_data:
+        code = subject_of(s)
+        st, et = get_session_times(s)
+        if code and et > st:
+            # A row may carry its paired days as one "TUE / FRI" string instead of days_list.
+            _days = {d.strip().upper() for raw in session_days(s)
+                     for d in _re.split(r'[/,&]', str(raw)) if d.strip()}
+            _sched_mins[code] += (et - st) * max(1, len(_days))
+    _short_codes = set()
+    if _sched_mins:
+        try:
+            _req_sql = """
+                SELECT UPPER(TRIM(cs.subjectcode)) AS code,
+                       MAX(COALESCE(cs.lecturehours, 0) + COALESCE(cs.laboratoryhours, 0)) AS req
+                FROM   curriculumsubject cs
+                JOIN   curriculum c ON cs.curriculumid = c.curriculumid
+                WHERE  UPPER(TRIM(cs.subjectcode)) = ANY(%s)"""
+            _req_args = [list(_sched_mins)]
+            if program and curriculum:
+                _req_sql += " AND UPPER(c.programcode) = UPPER(%s) AND c.curriculumyear = %s"
+                _req_args += [program, curriculum]
+            _req_rows = query_db(_req_sql + " GROUP BY 1", tuple(_req_args)) or []
+        except Exception:
+            _req_rows = []
+        for r in _req_rows:
+            req_h = float(r['req'] or 0)
+            got_h = _sched_mins.get(r['code'], 0) / 60.0
+            if req_h > 0 and got_h + 0.01 < req_h:
+                _short_codes.add(r['code'])
+                entry = _incomplete_rows.setdefault((r['code'], '', 'hours'), {
+                    'subject_code': r['code'], 'components': set(), 'reasons': [],
+                    'targets': [{'subject_code': r['code'], 'faculty_id': None}],
+                })
+                entry['components'].add('schedule')
+                entry['reasons'].append(
+                    f'{r["code"]} has only {got_h:g} of its {req_h:g} required hours scheduled.')
+
     incomplete_list = [
         {'id': i + 1, 'subject_code': e['subject_code'],
          'components': [c for c in REGEN_LOCK_FIELDS + ('subject',) if c in e['components']],
@@ -34836,6 +35311,7 @@ def _compute_schedule_evaluation(schedule_data, program, year_level, term, cross
     _incomplete_genes = sum(
         1 for s in schedule_data
         if s.get('incomplete') or s.get('incomplete_components')
+        or subject_of(s) in _short_codes
         or _unresolved_components(_rehydrate_schedule([dict(s)])[0], _refs)[0])
     incomplete_count = max(int(incomplete_count or 0), _incomplete_genes)
     _computed_rate = round(100.0 * max(0, n - _incomplete_genes) / n, 1) if n else 100.0
@@ -35159,6 +35635,11 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
             cur.close(); conn.close(); return [], 0
         sem_id = sem_row['semesterid']
 
+        # Draft-level checks (include_drafts) treat each section's current Official Draft as
+        # its schedule, so a Published slot that Draft moved or removed no longer reserves
+        # anything (see _superseded_published_sql). The Publish gate (Published only)
+        # stays strict: both Published versions really are live until the other publishes.
+        _sup_sql = ('AND ' + _superseded_published_sql('sv', 'sc', 'cs')) if include_drafts else ''
         cur.execute("""
             SELECT ss.roomid,
                    sc.employeenumber          AS faculty_id,
@@ -35196,6 +35677,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                       )
               )
               AND  (%s IS NULL OR sc.sectionid <> %s)
+              """ + _sup_sql + """
               -- HC15 effective schedule: a Published Official occurrence that has
               -- been superseded by an active Published Local occurrence no longer
               -- reserves faculty/room/section resources at its old slot.
@@ -35757,6 +36239,30 @@ def api_generate_schedule():
             'error': 'Unlock at least one field to regenerate.',
         }), 400
 
+    # Regular / Bridging curriculum: the SECTION decides (Program Management → "With
+    # Bridging"); the request's curriculumMode is only used when no section is given.
+    # Bridging must exist for this program/year/term, and kept rows being regenerated
+    # must all belong to that curriculum.
+    curriculum_mode = 'bridging' if str(data.get('curriculumMode') or '').lower() == 'bridging' else 'regular'
+    _gen_section = _section_id_or_none(data.get('section') or data.get('section_id') or data.get('sectionId'))
+    _cm_conn = get_db_connection(); _cm_cur = _cm_conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        curriculum_mode = _section_curriculum_mode(_cm_cur, _gen_section) or curriculum_mode
+        try:
+            _cm_sem = _get_semester_id(_cm_cur, data.get('acadYear', ''), data.get('term'))
+        except Exception:
+            _cm_sem = None
+        _cm_problem = _curriculum_mode_problem(
+            _cm_cur, {'program': program, 'yearLevel': year_level, 'term': data.get('term'),
+                      'curriculum': data.get('curriculum'), 'curriculumMode': curriculum_mode},
+            _gen_section, _cm_sem, locked_sessions)
+        _cm_conn.commit()
+    finally:
+        _cm_cur.close(); _cm_conn.close()
+    if _cm_problem:
+        return jsonify({'success': False, 'result_status': 'GENERATION_ERROR',
+                        'code': 'CURRICULUM_MODE', 'error': _cm_problem}), 409
+
     def _solve(sessions, seed=None):
         return scheduler_engine.generate_draft(
             data.get('program'), year_level,
@@ -35765,8 +36271,8 @@ def api_generate_schedule():
             locked_sessions=sessions,
             seed=seed,
             # HC9: exclude only this section's own load (sibling sections count)
-            section_id=_section_id_or_none(
-                data.get('section') or data.get('section_id') or data.get('sectionId')),
+            section_id=_gen_section,
+            curriculum_mode=curriculum_mode,
         )
 
     def _cross(rows):
@@ -36263,6 +36769,12 @@ def api_retrieve_previous_schedule():
         term       = data.get('term', '')       # 'A', 'B', or 'C'
         acad_year  = data.get('acadYear', '')   # e.g. "AY2627"
         section_id = data.get('section') or data.get('section_id') or data.get('sectionId') or None
+        # Previous-AY retrieval maps history onto the REGULAR curriculum only — never
+        # silently fill a Bridging section with Regular subjects.
+        if str(data.get('curriculumMode') or '').lower() == 'bridging':
+            return jsonify({'success': False, 'code': 'CURRICULUM_MODE',
+                            'error': 'Retrieve previous AY schedule is only available for the Regular '
+                                     'curriculum. Generate the Bridging schedule instead.'}), 409
 
         conn = get_db_connection()
         cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -36577,7 +37089,14 @@ def api_save_draft():
         new_v = _next_version_number(cur, program, year_level, sem_id, ctx_section_id)
 
         schedule_list = list(data.get('schedule_data', []))
-        
+
+        # Regular / Bridging guard (Generation saves only): never write a Bridging subject
+        # into a Regular section, or a Regular one into a Bridging section.
+        _cm_problem = _curriculum_mode_problem(cur, ctx, ctx_section_id, sem_id, schedule_list)
+        if _cm_problem:
+            conn.rollback()
+            return jsonify({'success': False, 'code': 'CURRICULUM_MODE', 'error': _cm_problem}), 409
+
         # --- FIX: Kuhanin ang listahan ng mga subject na sadyang binura ---
         deleted_subjects = data.get('deleted_subjects', [])
         
@@ -36905,6 +37424,10 @@ def api_save_draft():
                 """, [program.upper(), year_level, sem_id] + submitted_codes)
             except Exception:
                 pass  # non-fatal: table may not exist yet on first save
+
+        # Generation saves: lock this section+term to the Regular/Bridging curriculum it
+        # was generated under (no-op for the Manual Editor, which sends no curriculumMode).
+        _lock_section_curriculum(cur, ctx, ctx_section_id, sem_id)
 
         conn.commit()
 
@@ -37725,6 +38248,12 @@ def api_approve_schedule():
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
 
+        # Regular / Bridging guard (Generation approvals only — see api_save_draft).
+        _cm_problem = _curriculum_mode_problem(cur, ctx, _ctx_section_id, sem_id, sched_data)
+        if _cm_problem:
+            conn.rollback(); cur.close(); conn.close()
+            return jsonify({'success': False, 'code': 'CURRICULUM_MODE', 'error': _cm_problem}), 409
+
         # ── Completeness gate (architecture spec section 6/14/18) ─────────────
         # A Draft saved with any unresolved required component
         # (schedule_version.is_incomplete, set at Save Draft time from
@@ -38018,6 +38547,7 @@ def api_approve_schedule():
         dv_row = cur.fetchone()
         new_draft_v = dv_row['max_draft_v'] if dv_row and dv_row['max_draft_v'] else None
 
+        _lock_section_curriculum(cur, ctx, _ctx_section_id, sem_id)
         conn.commit(); cur.close(); conn.close()
 
         write_activity_log(
@@ -39197,7 +39727,8 @@ def api_sections_by_program():
 
         sql = """
             SELECT DISTINCT sec.sectionid, sec.sectionname,
-                pyl.programcode AS offeringcode, pyl.yearlevel
+                pyl.programcode AS offeringcode, pyl.yearlevel,
+                COALESCE(sec.withbridging, FALSE) AS withbridging
             FROM sections sec
             JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             WHERE {where}
@@ -39207,7 +39738,8 @@ def api_sections_by_program():
         rows = query_db(sql, tuple(params)) if params else query_db(sql)
         return jsonify({'sections': [
             {'id': r['sectionid'], 'name': r['sectionname'],
-             'offeringcode': r['offeringcode'], 'yearlevel': r['yearlevel']}
+             'offeringcode': r['offeringcode'], 'yearlevel': r['yearlevel'],
+             'withbridging': bool(r['withbridging'])}
             for r in (rows or [])
         ]})
     except Exception as e:

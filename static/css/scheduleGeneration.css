@@ -1105,6 +1105,9 @@
 
 /* ── UTILITY ── */
 .hidden { display: none !important; }
+/* .form-group select (0,1,1) forces display:flex !important and out-ranks plain .hidden —
+   e.g. the Curriculum Regular/Bridging picker, hidden until Bridging is detected. */
+.form-group .hidden { display: none !important; }
 
 /* ── SUCCESS TOAST ── */
 .toast {

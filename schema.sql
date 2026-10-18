@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS public.sections
     sectionid             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     programyearlevelid    INTEGER NOT NULL,
     sectionname           VARCHAR(10) NOT NULL,
+    withbridging          BOOLEAN NOT NULL DEFAULT FALSE,   -- "With Bridging" (Program Management)
     isactive              BOOLEAN DEFAULT true,
     start_semestertype    VARCHAR(5),   -- A/B/C: first semester of its AY it exists in; NULL = whole AY
     CONSTRAINT uq_section

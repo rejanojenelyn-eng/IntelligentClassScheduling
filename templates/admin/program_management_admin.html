@@ -17,6 +17,7 @@
       "programs":    {{ programs_mgmt       | tojson }},
       "sections":    {{ sections_mgmt       | tojson }},
       "yearlevels":  {{ prog_yearlevel_mgmt | tojson }},
+      "bridging_years": {{ bridging_years | default({}) | tojson }},
       "active_ay_id": {{ selected_mgmt_ay | tojson }}
     }
   </script>
@@ -381,6 +382,21 @@
           <label>SECTION NAME</label>
           <input type="text" name="section_name" id="addSecName" class="m-input" placeholder="e.g. BSIT-1" required style="text-transform:uppercase;">
         </div>
+        <!-- "With Bridging" — only for year levels that have Bridging subjects. Schedule
+             Generation and the Manual Editor then schedule this section's Bridging subjects
+             (and only those); every other section stays on the Regular curriculum. -->
+        <div class="mf" id="addSecBridgingWrap" style="display:none;margin-top:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label class="ep-yl-toggle">
+              <input type="checkbox" id="addSecBridging" name="with_bridging" value="1">
+              <span class="ep-yl-slider"></span>
+            </label>
+            <span style="font-size:.8rem;font-weight:700;color:#630100;">WITH BRIDGING</span>
+          </div>
+          <span style="font-size:.72rem;color:#888;margin-top:4px;display:block;">
+            Schedules this section's Bridging subjects in Schedule Generation and the Manual Editor.
+          </span>
+        </div>
         <div id="addSecError" style="display:none;margin-top:8px;">
           <span style="color:#c0392b;font-size:.82rem;" id="addSecErrorMsg"></span>
         </div>
@@ -484,6 +500,21 @@
         <div class="mf">
           <label>Section Name <span style="color:#c0392b;">*</span></label>
           <input type="text" id="editSecName" class="m-input" required placeholder="Enter section name">
+        </div>
+        <!-- "With Bridging" — only for year levels that have Bridging subjects. Schedule
+             Generation and the Manual Editor then schedule this section's Bridging subjects
+             (and only those); every other section stays on the Regular curriculum. -->
+        <div class="mf" id="editSecBridgingWrap" style="display:none;margin-top:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label class="ep-yl-toggle">
+              <input type="checkbox" id="editSecBridging" value="1">
+              <span class="ep-yl-slider"></span>
+            </label>
+            <span style="font-size:.8rem;font-weight:700;color:#630100;">WITH BRIDGING</span>
+          </div>
+          <span style="font-size:.72rem;color:#888;margin-top:4px;display:block;">
+            Schedules this section's Bridging subjects in Schedule Generation and the Manual Editor.
+          </span>
         </div>
         <div id="editSecErrorWrap" style="display:none;margin-top:8px;">
           <span style="color:#c0392b;font-size:.82rem;" id="editSecError"></span>
