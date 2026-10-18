@@ -105,69 +105,7 @@
     <!-- Tables Grid Area -->
     <div class="tables-grid">
         
-        <!-- Left: Recent Requests Section -->
-        <div class="table-card" style="background-color: #f8f9fa;">
-            <div class="card-header-flex">
-                <h2>RECENT REQUESTS</h2>
-                <a href="{{ url_for('requests_view') }}" class="view-link">VIEW HUB &rarr;</a>
-            </div>
-            
-            <div class="table-container">
-                <div class="toolbar-red">
-                    <div class="toolbar-group">
-                        <span class="toolbar-label">CATEGORY</span>
-                        <select class="toolbar-select">
-                            <option>ALL</option>
-                        </select>
-                    </div>
-                    <div class="toolbar-group">
-                        <span class="toolbar-label">FACULTY</span>
-                        <select class="toolbar-select">
-                            <option>SELECT</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="req-list-wrapper">
-                    {% for req in recent_requests %}
-                    {% set st = req.status|lower %}
-                    <div class="req-card req-card-clickable"
-                         onclick="openReqDetail(this)"
-                         data-type="{{ req.req_type }}"
-                         data-faculty="{{ req.faculty_name }}"
-                         data-subject="{{ req.subjectcode }} — {{ req.subjectname }}"
-                         data-room="{{ req.roomname or 'TBA' }}"
-                         data-status="{{ req.status }}"
-                         data-date="{{ req.date_sub|upper }}"
-                         data-reqdate="{{ req.requested_date or '—' }}"
-                         data-start="{{ req.start_time or '—' }}"
-                         data-end="{{ req.end_time or '—' }}"
-                         data-program="{{ req.programcode }}{% if req.yearlevel %} - {{ req.yearlevel }}{% endif %}{% if req.sectionname %} ({{ req.sectionname }}){% endif %}"
-                         data-reason="{{ req.reason or '' }}"
-                         data-remarks="{{ req.remarks or '' }}">
-                        <div class="req-card-top">
-                            <h3 class="req-name">{{ req.faculty_name }}</h3>
-                            <div class="req-status-pill req-status-{{ st }}">{{ req.status|upper }}</div>
-                        </div>
-                        <p class="req-subtitle">{{ req.subjectcode }}{% if req.roomname %} · ROOM {{ req.roomname }}{% endif %}</p>
-                        {% if req.req_type == 'MAKE-UP CLASS' %}
-                            <span class="req-pill makeup">{{ req.req_type }}</span>
-                        {% else %}
-                            <span class="req-pill adjust">{{ req.req_type }}</span>
-                        {% endif %}
-                        {% if req.remarks and st in ['rejected', 'approved'] %}
-                        <p class="req-remark-preview">{{ req.remarks[:60] }}{% if req.remarks|length > 60 %}…{% endif %}</p>
-                        {% endif %}
-                        <div class="req-date">DATE SUBMITTED:<br><b>{{ req.date_sub|upper }}</b></div>
-                    </div>
-                    {% else %}
-                    <div style="padding:30px;text-align:center;color:#aaa;font-size:0.85rem;">No recent requests.</div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-
-        <!-- Right: Schedule List Table Section -->
+        <!-- Left: Schedule List Table Section -->
         <div class="table-card">
             <div class="card-header-flex">
                 <h2>SCHEDULE LIST</h2>
@@ -227,6 +165,68 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Right: Recent Requests Section -->
+        <div class="table-card" style="background-color: #f8f9fa;">
+            <div class="card-header-flex">
+                <h2>RECENT REQUESTS</h2>
+                <a href="{{ url_for('requests_view') }}" class="view-link">VIEW HUB &rarr;</a>
+            </div>
+            
+            <div class="table-container">
+                <div class="toolbar-red">
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">CATEGORY</span>
+                        <select class="toolbar-select">
+                            <option>ALL</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <span class="toolbar-label">FACULTY</span>
+                        <select class="toolbar-select">
+                            <option>SELECT</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="req-list-wrapper">
+                    {% for req in recent_requests %}
+                    {% set st = req.status|lower %}
+                    <div class="req-card req-card-clickable"
+                         onclick="openReqDetail(this)"
+                         data-type="{{ req.req_type }}"
+                         data-faculty="{{ req.faculty_name }}"
+                         data-subject="{{ req.subjectcode }} — {{ req.subjectname }}"
+                         data-room="{{ req.roomname or 'TBA' }}"
+                         data-status="{{ req.status }}"
+                         data-date="{{ req.date_sub|upper }}"
+                         data-reqdate="{{ req.requested_date or '—' }}"
+                         data-start="{{ req.start_time or '—' }}"
+                         data-end="{{ req.end_time or '—' }}"
+                         data-program="{{ req.programcode }}{% if req.yearlevel %} - {{ req.yearlevel }}{% endif %}{% if req.sectionname %} ({{ req.sectionname }}){% endif %}"
+                         data-reason="{{ req.reason or '' }}"
+                         data-remarks="{{ req.remarks or '' }}">
+                        <div class="req-card-top">
+                            <h3 class="req-name">{{ req.faculty_name }}</h3>
+                            <div class="req-status-pill req-status-{{ st }}">{{ req.status|upper }}</div>
+                        </div>
+                        <p class="req-subtitle">{{ req.subjectcode }}{% if req.roomname %} · ROOM {{ req.roomname }}{% endif %}</p>
+                        {% if req.req_type == 'MAKE-UP CLASS' %}
+                            <span class="req-pill makeup">{{ req.req_type }}</span>
+                        {% else %}
+                            <span class="req-pill adjust">{{ req.req_type }}</span>
+                        {% endif %}
+                        {% if req.remarks and st in ['rejected', 'approved'] %}
+                        <p class="req-remark-preview">{{ req.remarks[:60] }}{% if req.remarks|length > 60 %}…{% endif %}</p>
+                        {% endif %}
+                        <div class="req-date">DATE SUBMITTED:<br><b>{{ req.date_sub|upper }}</b></div>
+                    </div>
+                    {% else %}
+                    <div style="padding:30px;text-align:center;color:#aaa;font-size:0.85rem;">No recent requests.</div>
+                    {% endfor %}
+                </div>
             </div>
         </div>
     </div>

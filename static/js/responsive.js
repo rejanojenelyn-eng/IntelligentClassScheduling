@@ -39,6 +39,9 @@
         sidebar.addEventListener('click', function (e) {
             const link = e.target.closest('a[href]');
             if (link && TABLET.matches && !link.getAttribute('href').startsWith('javascript')) setDrawer(false);
+            // Sign out opens the logout dialog (its href is "#"/javascript:) — close the
+            // drawer so only the dialog and its own backdrop are showing.
+            if (TABLET.matches && e.target.closest('.signout-container')) setDrawer(false);
         });
         TABLET.addEventListener('change', () => setDrawer(false));
 

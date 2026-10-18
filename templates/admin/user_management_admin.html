@@ -325,11 +325,6 @@
     <div class="page-header">
         <h1>USER MANAGEMENT</h1>
         <span class="um-header-actions">
-        <a href="{{ url_for('admin_account_assistance') }}" class="btn-add-user btn-corrections btn-assistance"
-           {% if pending_assistance_count %}aria-label="Account Assistance, {{ pending_assistance_count }} pending"{% endif %}>
-            <i class="fas fa-life-ring"></i> Account Assistance
-            {% if pending_assistance_count %}<span class="la-count">{{ pending_assistance_count }}</span>{% endif %}
-        </a>
         <a href="{{ url_for('admin_account_corrections') }}" class="btn-add-user btn-corrections"
            {% if pending_correction_count %}aria-label="Correction Requests, {{ pending_correction_count }} pending"{% endif %}>
             <i class="fas fa-user-pen"></i> Correction Requests

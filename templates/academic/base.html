@@ -60,11 +60,11 @@
             <nav class="sidebar-nav-container">
                 <ul class="nav-list">
 
-                    <!-- Personal Faculty Section -->
+                    <li class="nav-divider nav-divider--center"><span class="nav-section-label">PERSONAL WORKSPACE</span></li>
                     <li class="nav-item {{ 'active' if request.path == url_for('academic_my_dashboard') }}">
                         <a href="{{ url_for('academic_my_dashboard') }}" class="nav-link">
                             <i class="fas fa-th-large"></i>
-                            <span class="nav-label">Faculty Dashboard</span>
+                            <span class="nav-label">Dashboard</span>
                         </a>
                     </li>
                     <li class="nav-item {{ 'active' if request.path == url_for('academic_my_teaching_assignment') }}">
@@ -74,119 +74,84 @@
                         </a>
                     </li>
 
-                    <div class="nav-divider">
-                        <span class="nav-section-label">ACADEMIC MANAGEMENT</span>
-                    </div>
-
-                    <!-- Dashboard -->
+                    <li class="nav-divider nav-divider--center"><span class="nav-section-label">ACADEMIC MANAGEMENT</span></li>
                     <li class="nav-item {{ 'active' if request.path == url_for('dashboard') }}">
                         <a href="{{ url_for('dashboard') }}" class="nav-link">
                             <i class="fas fa-chart-line"></i>
-                            <span class="nav-label">Dashboard</span>
+                            <span class="nav-label">Academic Dashboard</span>
                         </a>
                     </li>
-
-                    <!-- Employee Management -->
-                    <li class="nav-item-dropdown {{ 'open' if 'employee' in request.path }}">
-                        <div class="nav-link-wrapper {{ 'active' if 'employee' in request.path }}"
-                             onclick="toggleDropdown(event, 'employeeSubMenu', 'employeeArrow')">
-                            <span class="nav-link-main">
-                                <i class="fas fa-users"></i>
-                                <span class="nav-label">Faculty Management</span>
-                            </span>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if 'employee' in request.path }}" id="employeeArrow"></i>
-                        </div>
-                        <ul class="sub-menu {{ 'show-submenu' if 'employee' in request.path }}" id="employeeSubMenu">
-                            <li>
-                                <a href="{{ url_for('employee') }}"
-                                   class="sub-menu-link {{ 'active' if request.path == url_for('employee') }}">
-                                    Faculty List
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('archived_employees') }}"
-                                   class="sub-menu-link {{ 'active' if '/employee/archived' in request.path }}">
-                                    Archived Faculty
-                                </a>
-                            </li>
-                        </ul>
+                    <!-- One link: Archived Faculty is reached from the Faculty page's "VIEW ARCHIVE". -->
+                    <li class="nav-item {{ 'active' if 'employee' in request.path }}">
+                        <a href="{{ url_for('employee') }}" class="nav-link">
+                            <i class="fas fa-users"></i>
+                            <span class="nav-label">Faculty</span>
+                        </a>
                     </li>
-
-                    <!-- Curriculum -->
                     <li class="nav-item {{ 'active' if request.path == '/curriculum' or request.path.startswith('/curriculum/') }}">
                         <a href="/curriculum" class="nav-link">
                             <i class="fas fa-book"></i>
                             <span class="nav-label">Curriculum</span>
                         </a>
                     </li>
-
-                    <!-- Rooms -->
                     <li class="nav-item {{ 'active' if request.path == '/room' or request.path.startswith('/room/') }}">
                         <a href="/room" class="nav-link">
                             <i class="fas fa-door-open"></i>
                             <span class="nav-label">Rooms</span>
                         </a>
                     </li>
-
-                    <!-- Schedule Dropdown -->
-                    {% set schedule_active = request.path.startswith('/schedule') or request.path == url_for('schedule_generation_view') %}
-                    <li class="nav-item-dropdown {{ 'open' if schedule_active }}">
-                        <div class="nav-link-wrapper {{ 'active' if schedule_active }}"
-                            onclick="toggleDropdown(event, 'scheduleSubMenu', 'scheduleArrow')">
-                            <span class="nav-link-main">
-                                <i class="fas fa-calendar-alt"></i>
-                                <span class="nav-label">Schedule</span>
-                            </span>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if schedule_active }}"
-                                id="scheduleArrow"></i>
-                        </div>
-                        <ul class="sub-menu {{ 'show-submenu' if schedule_active }}" id="scheduleSubMenu">
-                            <li>
-                                <a href="{{ url_for('schedule_generation_view') }}"
-                                    class="sub-menu-link {{ 'active' if request.path == url_for('schedule_generation_view') }}">
-                                    Generate Schedule
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('manual_schedule_editor') }}"
-                                    class="sub-menu-link {{ 'active' if request.path == url_for('manual_schedule_editor') }}">
-                                    Manual Editor
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('schedule') }}"
-                                    class="sub-menu-link {{ 'active' if request.path == url_for('schedule') }}">
-                                    Class Schedule (SIS)
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('room_schedule_view') }}"
-                                    class="sub-menu-link {{ 'active' if '/schedule/room-schedule' in request.path }}">
-                                    Room Schedule
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('schedule_drafts_list') }}"
-                                    class="sub-menu-link {{ 'active' if '/schedule/drafts' in request.path }}">
-                                    Draft List
-                                </a>
-                            </li>
-                        </ul>
-                    </li>
-
-                    <!-- Requests -->
                     <li class="nav-item {{ 'active' if request.path == '/requests' }}">
                         <a href="/requests" class="nav-link">
                             <i class="fas fa-inbox"></i>
                             <span class="nav-label">Requests</span>
                         </a>
                     </li>
-
-                    <!-- Reports -->
                     <li class="nav-item {{ 'active' if request.path == '/reports' or request.path.startswith('/reports/') }}">
                         <a href="/reports" class="nav-link">
                             <i class="fas fa-file-alt"></i>
                             <span class="nav-label">Reports</span>
+                        </a>
+                    </li>
+
+                    <!-- Schedule Management: every page listed in full while the sidebar is
+                         expanded; collapsed, they fold into ONE calendar icon that re-expands the
+                         sidebar so a page can be picked (see expandSidebarGroup in base.acad.js). -->
+                    {% set schedule_active = request.path.startswith('/schedule') or request.path == url_for('schedule_generation_view') %}
+                    <li class="nav-divider nav-divider--center"><span class="nav-section-label">SCHEDULE MANAGEMENT</span></li>
+                    <li class="nav-item nav-group-trigger {{ 'active' if schedule_active }}">
+                        <a href="{{ url_for('schedule_generation_view') }}" class="nav-link" onclick="expandSidebarGroup(event)" title="Schedule Management">
+                            <i class="fas fa-calendar-alt"></i>
+                            <span class="nav-label">Schedule Management</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group-item {{ 'active' if request.path == url_for('schedule_generation_view') }}">
+                        <a href="{{ url_for('schedule_generation_view') }}" class="nav-link">
+                            <i class="fas fa-wand-magic-sparkles"></i>
+                            <span class="nav-label">Generate Schedule</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group-item {{ 'active' if request.path == url_for('manual_schedule_editor') }}">
+                        <a href="{{ url_for('manual_schedule_editor') }}" class="nav-link">
+                            <i class="fas fa-pen-to-square"></i>
+                            <span class="nav-label">Manual Editor</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group-item {{ 'active' if request.path == url_for('schedule') }}">
+                        <a href="{{ url_for('schedule') }}" class="nav-link">
+                            <i class="fas fa-calendar-days"></i>
+                            <span class="nav-label">Class Schedule (SIS)</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group-item {{ 'active' if '/schedule/room-schedule' in request.path }}">
+                        <a href="{{ url_for('room_schedule_view') }}" class="nav-link">
+                            <i class="fas fa-door-closed"></i>
+                            <span class="nav-label">Room Schedule</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group-item {{ 'active' if '/schedule/drafts' in request.path }}">
+                        <a href="{{ url_for('schedule_drafts_list') }}" class="nav-link">
+                            <i class="fas fa-file-lines"></i>
+                            <span class="nav-label">Draft List</span>
                         </a>
                     </li>
 

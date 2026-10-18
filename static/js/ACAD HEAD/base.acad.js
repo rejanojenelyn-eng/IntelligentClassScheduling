@@ -10,6 +10,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Collapsed sidebar: a group (Schedule Management) folds into one icon. The icon is a
+// link to the group's first page (Generate Schedule); clicking it also leaves the
+// sidebar expanded (remembered like the ☰ toggle), so on arrival every page in the
+// group is listed for further selection. Expanded, the icon is hidden.
+function expandSidebarGroup(event) {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.classList.remove('collapsed');
+    localStorage.setItem('sidebarCollapsed', 'false');
+    // no preventDefault: the link then opens Generate Schedule
+}
+
 function toggleDropdown(event, menuId, arrowId) {
     event.preventDefault(); event.stopPropagation();
     const menu  = document.getElementById(menuId);

@@ -15,13 +15,10 @@
     <div class="page-header-row">
         <h1 class="page-title">FACULTY MANAGEMENT</h1>
         <div class="header-actions">
-            <button class="btn-top btn-add-new" onclick="openAddModal()">
-                <i class="fas fa-user-plus"></i> ADD NEW FACULTY
-            </button>
             <button class="btn-top btn-view-archive" onclick="openFacSubExportModal()">
                 <i class="fas fa-chalkboard-teacher"></i> ASSIGNMENT EXPORT
             </button>
-            <a href="{{ url_for('archived_employees') }}" class="btn-top btn-view-archive">
+            <a href="{{ url_for('archived_employees') }}" class="btn-top btn-archive-solid">
                 <i class="fas fa-archive"></i> VIEW ARCHIVE
             </a>
         </div>
@@ -122,10 +119,10 @@
             </div>
         </div>
 
-        <!-- Sort, Export and Import Buttons -->
+        <!-- Add, Export and Import Buttons (sorting is on the Faculty Name column) -->
                <div class="filter-secondary-actions">
-            <button class="btn-secondary" onclick="sortTable()">
-                <i id="sortIcon" class="fas fa-sort-alpha-down"></i> <span id="sortDirection">SORT: A-Z</span> <i class="fas fa-chevron-down" style="font-size:10px; margin-left:4px;"></i>
+            <button class="btn-secondary" onclick="openAddModal()">
+                <i class="fas fa-user-plus"></i> ADD NEW FACULTY
             </button>
             <button class="btn-outline-action" onclick="openExportModal()">
                 <i class="fas fa-upload"></i> EXPORT
@@ -150,7 +147,9 @@
                 <tr>
                     <th style="width: 40px; text-align:center;"><input type="checkbox" id="selectAll" class="custom-checkbox"></th>
                     <th>Employee ID</th>
-                    <th>Faculty Name</th>
+                    <th class="th-sortable" id="thFacultyName" onclick="sortTable()" title="Sort by faculty name">
+                        Faculty Name <i id="sortIcon" class="fas fa-sort"></i>
+                    </th>
                     <th>Specialization</th>
                     <th>Email</th>
                     <th>Contact</th>

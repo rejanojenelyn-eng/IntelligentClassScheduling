@@ -328,3 +328,68 @@ body, * {
     color: #800000;
     font-size: 14px;
 }
+/* ── Dashboard charts: Daily Active Users & Logins / Schedule Publishing Progress ── */
+.dash-chart-box {
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 14px 16px 10px;
+    margin-bottom: 16px;
+    background: #fff;
+}
+.dash-chart-title {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #800000;
+}
+.dash-line-wrap { position: relative; height: 170px; }
+
+.dash-donut-row {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    flex-wrap: wrap;
+}
+.dash-donut-wrap {
+    position: relative;
+    width: 170px;
+    height: 170px;
+    flex-shrink: 0;
+}
+.dash-donut-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    text-align: center;
+}
+.dash-donut-lbl { font-size: 9px; font-weight: 700; color: #6c757d; letter-spacing: 0.4px; line-height: 1.2; }
+.dash-donut-num { font-size: 24px; font-weight: 800; color: #212529; line-height: 1.1; margin-top: 2px; }
+
+.dash-legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    flex: 1;
+    min-width: 200px;
+}
+.dash-legend li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #f1f1f1;
+    font-size: 13px;
+}
+.dash-legend li:last-child { border-bottom: none; }
+.dl-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.dl-pub   { background: #7a0000; }
+.dl-pend  { background: #e8a93a; }
+.dl-draft { background: #9aa0a6; }
+.dl-name  { flex: 1; color: #495057; font-weight: 600; }
+.dl-count { font-weight: 800; color: #212529; min-width: 36px; text-align: right; }
+.dl-pct   { color: #6c757d; font-weight: 600; min-width: 42px; text-align: right; }

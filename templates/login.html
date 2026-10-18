@@ -157,7 +157,7 @@
         }
         .warn-msg i { color: #ffeb3b; margin-right: 4px; }
 
-        /* Temporary lockout notice with Forgot Password / Contact Admin */
+        /* Temporary lockout notice with Forgot Password */
         .lock-box {
             margin-top: 14px; padding: 14px 16px; border-radius: 12px;
             background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.35);
@@ -175,59 +175,7 @@
         .lock-btn-outline { background: transparent; color: #fff; border-color: rgba(255,255,255,0.7); }
         .lock-btn-outline:hover { background: rgba(255,255,255,0.15); }
 
-        /* ── Contact Admin modal (login assistance request) ── */
         .lock-btn { font-family: inherit; cursor: pointer; }
-        .ca-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20,0,0,0.6);
-            display: flex; align-items: center; justify-content: center; padding: 16px; }
-        .ca-overlay[hidden] { display: none; }
-        .ca-dialog { background: #fff; color: #222; width: 100%; max-width: 460px; max-height: calc(100vh - 32px);
-            border-radius: 18px; overflow: hidden; display: flex; flex-direction: column;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.45); animation: caIn .18s ease; }
-        @keyframes caIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-        .ca-head { background: linear-gradient(145deg, #4b0a0a 0%, #800000 70%); color: #fff;
-            padding: 18px 20px; display: flex; align-items: flex-start; gap: 12px; }
-        .ca-head-icon { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: rgba(255,255,255,0.15);
-            display: flex; align-items: center; justify-content: center; }
-        .ca-title { font-size: 1.1rem; font-weight: 800; }
-        .ca-sub { font-size: 0.78rem; opacity: 0.85; margin-top: 2px; }
-        .ca-close { margin-left: auto; background: none; border: none; color: #fff; font-size: 1.1rem; cursor: pointer;
-            width: 32px; height: 32px; border-radius: 8px; }
-        .ca-close:hover { background: rgba(255,255,255,0.15); }
-        .ca-body { padding: 18px 20px 6px; overflow-y: auto; }
-        .ca-field { margin-bottom: 14px; }
-        .ca-field label { display: block; color: #4b0a0a; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.6px;
-            text-transform: uppercase; margin-bottom: 6px; opacity: 1; }
-        .ca-field label small { text-transform: none; letter-spacing: 0; font-weight: 600; color: #888; }
-        .ca-body input[type="text"], .ca-body select, .ca-body textarea {
-            width: 100%; padding: 11px 13px; border: 1px solid #d9d9d9; border-radius: 8px; background: #fff;
-            font-size: 0.92rem; color: #222; font-family: inherit; outline: none; transition: border-color .15s, box-shadow .15s; }
-        .ca-body textarea { resize: vertical; min-height: 78px; }
-        .ca-body input:focus, .ca-body select:focus, .ca-body textarea:focus {
-            border-color: #800000; box-shadow: 0 0 0 3px rgba(128,0,0,0.12); }
-        .ca-hint { font-size: 0.72rem; color: #888; margin-top: 5px; }
-        .ca-count { text-align: right; }
-        .ca-error { display: none; align-items: flex-start; gap: 8px; background: #fdecec; border: 1px solid #f5b5b5;
-            color: #9b1c1c; border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; font-weight: 600; margin-bottom: 12px; }
-        .ca-foot { display: flex; gap: 10px; justify-content: flex-end; padding: 14px 20px 18px; border-top: 1px solid #f0e6e6; }
-        .ca-btn { padding: 11px 20px; border-radius: 50px; font-weight: 800; font-size: 0.86rem; cursor: pointer;
-            font-family: inherit; display: inline-flex; align-items: center; gap: 8px; transition: 0.2s; }
-        .ca-btn-cancel { background: #fff; color: #4b0a0a; border: 1.5px solid #d6c3c3; }
-        .ca-btn-cancel:hover { background: #fbf4f4; }
-        .ca-btn-submit { background: #800000; color: #fff; border: 1.5px solid #800000; }
-        .ca-btn-submit:hover:not(:disabled) { background: #5c0000; }
-        .ca-btn:disabled { opacity: 0.65; cursor: not-allowed; }
-        .ca-done { text-align: center; padding: 26px 22px 8px; }
-        .ca-done-icon { width: 64px; height: 64px; border-radius: 50%; background: #eef8f1; color: #1a6b3c; margin: 0 auto 14px;
-            display: flex; align-items: center; justify-content: center; font-size: 1.8rem; }
-        .ca-done p { font-size: 0.92rem; color: #333; line-height: 1.5; }
-        .ca-ref { display: inline-block; margin-top: 14px; background: #fdf0f0; color: #800000; border: 1px dashed #d9a3a3;
-            border-radius: 10px; padding: 8px 16px; font-weight: 800; letter-spacing: 1px; }
-        .ca-ref-label { display: block; font-size: 0.7rem; color: #888; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-top: 14px; }
-        @media (max-width: 480px) {
-            .ca-foot { flex-direction: column-reverse; }
-            .ca-btn { justify-content: center; width: 100%; }
-            .ca-body input[type="text"], .ca-body select, .ca-body textarea { font-size: 16px; }
-        }
 
     </style>
 </head>
@@ -273,14 +221,12 @@
             {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 {% if category == 'locked' %}
-                {# Too many wrong passwords: temporary lock + the two ways to get help #}
+                {# Too many wrong passwords: temporary lock + Forgot Password #}
                 <div class="lock-box" role="alert">
                     <div class="lock-head"><i class="fas fa-lock"></i> Account temporarily locked</div>
                     <p>{{ message }}</p>
                     <div class="lock-actions">
                         <a href="{{ url_for('forgot_password', restart=1) }}" class="lock-btn"><i class="fas fa-key"></i> Forgot Password</a>
-                        <button type="button" class="lock-btn lock-btn-outline" onclick="openContactAdmin('Account Temporarily Locked')"
-                                aria-haspopup="dialog"><i class="fas fa-headset"></i> Contact Admin</button>
                     </div>
                 </div>
                 {% elif category == 'warning' %}
@@ -293,61 +239,6 @@
         </div>
     </div>
 
-
-    <!-- Contact Admin: login assistance request (no sign-in needed). It never unlocks the
-         account or resets a password by itself; the System Administrator handles it. -->
-    <div class="ca-overlay" id="caModal" role="dialog" aria-modal="true" aria-labelledby="caTitle" hidden
-         onclick="if (event.target === this) closeContactAdmin()">
-        <div class="ca-dialog">
-            <div class="ca-head">
-                <span class="ca-head-icon"><i class="fas fa-headset"></i></span>
-                <div>
-                    <div class="ca-title" id="caTitle">Contact Admin</div>
-                    <div class="ca-sub">Send a login assistance request to the System Administrator.</div>
-                </div>
-                <button type="button" class="ca-close" onclick="closeContactAdmin()" aria-label="Close"><i class="fas fa-times"></i></button>
-            </div>
-
-            <form id="caForm" novalidate onsubmit="submitContactAdmin(event)">
-                <div class="ca-body">
-                    <div class="ca-error" id="caError" role="alert"><i class="fas fa-circle-exclamation"></i><span></span></div>
-                    <div class="ca-field">
-                        <label for="caRef">Username or Employee ID</label>
-                        <input type="text" id="caRef" maxlength="60" value="{{ saved_username }}" autocomplete="off" required>
-                        <div class="ca-hint">Used only to find your account. Never enter your password here.</div>
-                    </div>
-                    <div class="ca-field">
-                        <label for="caConcern">Concern</label>
-                        <select id="caConcern" required>
-                            <option value="Account Temporarily Locked">Account Temporarily Locked</option>
-                            <option value="Forgot Password">Forgot Password</option>
-                            <option value="Unable to Access Account">Unable to Access Account</option>
-                            <option value="Other Login Concern">Other Login Concern</option>
-                        </select>
-                    </div>
-                    <div class="ca-field">
-                        <label for="caDesc">Description <small>(optional)</small></label>
-                        <textarea id="caDesc" rows="3" maxlength="1000" placeholder="Tell us what happened (do not include your password)."></textarea>
-                        <div class="ca-hint ca-count"><span id="caCount">0</span>/1000</div>
-                    </div>
-                </div>
-                <div class="ca-foot">
-                    <button type="button" class="ca-btn ca-btn-cancel" onclick="closeContactAdmin()">Cancel</button>
-                    <button type="submit" class="ca-btn ca-btn-submit" id="caSubmit"><i class="fas fa-paper-plane"></i> Submit Request</button>
-                </div>
-            </form>
-
-            <div id="caDone" hidden>
-                <div class="ca-done">
-                    <div class="ca-done-icon"><i class="fas fa-check"></i></div>
-                    <p id="caDoneMsg"></p>
-                    <span class="ca-ref-label">Request reference</span>
-                    <span class="ca-ref" id="caDoneRef"></span>
-                </div>
-                <div class="ca-foot"><button type="button" class="ca-btn ca-btn-submit" onclick="closeContactAdmin()">Close</button></div>
-            </div>
-        </div>
-    </div>
 
 <script>
     function togglePw(inputId, btn) {
@@ -367,51 +258,6 @@
     if (document.querySelector('.error-msg')) {
         document.getElementById('mainPassword')?.focus();
     }
-    // ── Contact Admin (login assistance request) ──
-    const _ca = id => document.getElementById(id);
-    function _caError(msg) {
-        const box = _ca('caError');
-        box.querySelector('span').textContent = msg || '';
-        box.style.display = msg ? 'flex' : 'none';
-    }
-    function openContactAdmin(concern) {
-        _ca('caForm').hidden = false; _ca('caDone').hidden = true; _caError('');
-        if (concern) _ca('caConcern').value = concern;
-        const user = document.querySelector('input[name="username"]')?.value.trim();
-        if (user && !_ca('caRef').value.trim()) _ca('caRef').value = user;
-        _ca('caModal').hidden = false;
-        (_ca('caRef').value.trim() ? _ca('caConcern') : _ca('caRef')).focus();
-    }
-    function closeContactAdmin() { _ca('caModal').hidden = true; }
-    async function submitContactAdmin(e) {
-        e.preventDefault();
-        _caError('');
-        const ref = _ca('caRef').value.trim();
-        if (!ref) { _caError('Please enter your username or Employee ID.'); return _ca('caRef').focus(); }
-        if (!/^[A-Za-z0-9._@-]{1,60}$/.test(ref)) {
-            _caError('Please enter a valid username or Employee ID (letters, numbers, . _ @ - only).'); return _ca('caRef').focus();
-        }
-        const btn = _ca('caSubmit'), label = btn.innerHTML;
-        btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting…';
-        try {
-            const res = await fetch('{{ url_for("login_assistance_submit") }}', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ account_reference: ref, concern: _ca('caConcern').value,
-                                       description: _ca('caDesc').value.trim() }) });
-            const data = await res.json().catch(() => ({}));
-            if (!data.success) { _caError(data.error || 'Your request could not be submitted. Please try again.'); return; }
-            _ca('caDoneMsg').textContent = data.message;
-            _ca('caDoneRef').textContent = data.reference;
-            _ca('caForm').hidden = true; _ca('caDone').hidden = false;
-            _ca('caDesc').value = ''; _ca('caCount').textContent = '0';
-        } catch (err) {
-            _caError('Network error. Please check your connection and try again.');
-        } finally {
-            btn.disabled = false; btn.innerHTML = label;
-        }
-    }
-    _ca('caDesc').addEventListener('input', () => { _ca('caCount').textContent = _ca('caDesc').value.length; });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !_ca('caModal').hidden) closeContactAdmin(); });
 </script>
 </body>
 </html>

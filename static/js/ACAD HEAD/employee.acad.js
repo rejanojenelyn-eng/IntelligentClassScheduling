@@ -736,26 +736,17 @@ function openFacultyTypeModal(type) {
 }
 function closeFacultyTypeModal() { document.getElementById('facultyTypeListModal').style.display = 'none'; }
 
-// --- SORTING ---
+// --- SORTING (click the Faculty Name column header: A-Z, then Z-A) ---
 function sortTable() {
-    const sortDirectionSpan = document.getElementById("sortDirection");
-    const icon = document.getElementById("sortIcon");
-    const table = document.getElementById("instructorTable");
-    const tbody = table.querySelector("tbody");
-    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const th    = document.getElementById("thFacultyName");
+    const icon  = document.getElementById("sortIcon");
+    const tbody = document.getElementById("instructorTable").querySelector("tbody");
+    const rows  = Array.from(tbody.querySelectorAll("tr")).filter(r => r.querySelector(".emp-name"));
 
-    const currentText = sortDirectionSpan.innerText.trim();
-    let direction;
-
-    if (currentText === 'Ascending') {
-        direction = -1;
-        sortDirectionSpan.innerText = 'Descending';
-        icon.className = 'fas fa-sort-amount-up';
-    } else {
-        direction = 1;
-        sortDirectionSpan.innerText = 'Ascending';
-        icon.className = 'fas fa-sort-amount-down-alt';
-    }
+    const direction = th.dataset.dir === 'asc' ? -1 : 1;   // first click = A-Z
+    th.dataset.dir  = direction === 1 ? 'asc' : 'desc';
+    icon.className  = direction === 1 ? 'fas fa-sort-up' : 'fas fa-sort-down';
+    th.title        = direction === 1 ? 'Sorted A-Z — click for Z-A' : 'Sorted Z-A — click for A-Z';
 
     rows.sort((a, b) => {
         const nameA = a.querySelector(".emp-name").innerText.toLowerCase();

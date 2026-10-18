@@ -62,35 +62,20 @@
         <aside class="sidebar" id="sidebar">
             <nav class="sidebar-nav-container">
                 <!-- Inside templates/admin/base_admin.html -->
+                <!-- Grouped flat menu: Dashboard, then labelled sections. Archived Faculty is
+                     reached from Faculty Management's "VIEW ARCHIVE" button. -->
                 <ul class="nav-list">
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_dashboard' }}">
                         <a href="{{ url_for('admin_dashboard') }}" class="nav-link">
                             <i class="fas fa-th-large"></i><span class="nav-label">Dashboard</span>
                         </a>
                     </li>
-                    <li class="nav-item-dropdown {{ 'open' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}">
-                        <div class="nav-link-wrapper {{ 'active' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}"
-                             onclick="toggleDropdown(event, 'adminEmpSubMenu', 'adminEmpArrow')">
-                            <span class="nav-link-main">
-                                <i class="fas fa-users"></i>
-                                <span class="nav-label">Faculty Management</span>
-                            </span>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}" id="adminEmpArrow"></i>
-                        </div>
-                        <ul class="sub-menu {{ 'show-submenu' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}" id="adminEmpSubMenu">
-                            <li>
-                                <a href="{{ url_for('admin_employee') }}"
-                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_employee' }}">
-                                    Faculty List
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('admin_archived_employees') }}"
-                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_archived_employees' }}">
-                                    Archived Faculty
-                                </a>
-                            </li>
-                        </ul>
+
+                    <li class="nav-divider nav-divider--lines"><span class="nav-section-label">ACADEMIC MANAGEMENT</span></li>
+                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_program_management' }}">
+                        <a href="{{ url_for('admin_program_management') }}" class="nav-link">
+                            <i class="fas fa-users"></i><span class="nav-label">Program Management</span>
+                        </a>
                     </li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_curriculum' }}">
                         <a href="{{ url_for('admin_curriculum') }}" class="nav-link">
@@ -102,45 +87,37 @@
                             <i class="fas fa-door-open"></i><span class="nav-label">Rooms</span>
                         </a>
                     </li>
-                    <li class="nav-item-dropdown {{ 'open' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}">
-                        <div class="nav-link-wrapper {{ 'active' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}"
-                             onclick="toggleDropdown(event, 'adminSchedSubMenu', 'adminSchedArrow')">
-                            <span class="nav-link-main">
-                                <i class="fas fa-calendar-alt"></i>
-                                <span class="nav-label">Schedule</span>
-                            </span>
-                            <i class="fas fa-caret-down nav-arrow {{ 'rotated' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}" id="adminSchedArrow"></i>
-                        </div>
-                        <ul class="sub-menu {{ 'show-submenu' if request.endpoint in ['admin_schedule', 'admin_class_schedule_sis', 'admin_room_schedule'] }}" id="adminSchedSubMenu">
-                            <li>
-                                <a href="{{ url_for('admin_class_schedule_sis') }}"
-                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_class_schedule_sis' }}">
-                                    Class Schedule (SIS)
-                                </a>
-                            </li>
-                            <li>
-                                <a href="{{ url_for('admin_room_schedule') }}"
-                                   class="sub-menu-link {{ 'active' if request.endpoint == 'admin_room_schedule' }}">
-                                    Room Schedule
-                                </a>
-                            </li>
-                        </ul>
-                    </li>
                     <li class="nav-item {{ 'active' if request.endpoint in ['admin_reports', 'report_preview', 'report_export'] }}">
                         <a href="{{ url_for('admin_reports') }}" class="nav-link">
                             <i class="fas fa-file-lines"></i><span class="nav-label">Reports</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_user_management', 'admin_account_corrections', 'admin_account_assistance'] }}">
+
+                    <li class="nav-divider nav-divider--lines"><span class="nav-section-label">SCHEDULE</span></li>
+                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_class_schedule_sis', 'admin_schedule'] }}">
+                        <a href="{{ url_for('admin_class_schedule_sis') }}" class="nav-link">
+                            <i class="fas fa-calendar-days"></i><span class="nav-label">Class Schedule (SIS)</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_room_schedule' }}">
+                        <a href="{{ url_for('admin_room_schedule') }}" class="nav-link">
+                            <i class="fas fa-door-closed"></i><span class="nav-label">Room Schedule</span>
+                        </a>
+                    </li>
+
+                    <li class="nav-divider nav-divider--lines"><span class="nav-section-label">PEOPLE &amp; ACCESS</span></li>
+                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_employee', 'admin_archived_employees'] }}">
+                        <a href="{{ url_for('admin_employee') }}" class="nav-link">
+                            <i class="fas fa-user-shield"></i><span class="nav-label">Faculty Management</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {{ 'active' if request.endpoint in ['admin_user_management', 'admin_account_corrections'] }}">
                         <a href="{{ url_for('admin_user_management') }}" class="nav-link">
-                            <i class="fas fa-user-shield"></i><span class="nav-label">User Management </span>
+                            <i class="fas fa-user-group"></i><span class="nav-label">User Management</span>
                         </a>
                     </li>
-                    <li class="nav-item {{ 'active' if request.endpoint == 'admin_program_management' }}">
-                        <a href="{{ url_for('admin_program_management') }}" class="nav-link">
-                            <i class="fas fa-graduation-cap"></i><span class="nav-label">Program Management</span>
-                        </a>
-                    </li>
+
+                    <li class="nav-divider nav-divider--lines"><span class="nav-section-label">SYSTEM</span></li>
                     <li class="nav-item {{ 'active' if request.endpoint == 'admin_settings' }}">
                         <a href="{{ url_for('admin_settings') }}" class="nav-link">
                             <i class="fas fa-gear"></i><span class="nav-label">Settings</span>

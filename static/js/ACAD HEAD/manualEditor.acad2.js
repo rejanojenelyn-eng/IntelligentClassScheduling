@@ -2320,6 +2320,45 @@ async function _dropSessionImpl(sessDataEncoded) {
         ? _allVids
         : (sd.versionid ? [sd.versionid, ...(_deleteSiblingsToo ? _siblingVids : [])] : []);
 
+    // A pill without its versionid (carried over from Schedule Generation, or rebuilt from
+    // memory) may still be a SAVED Draft — let the server find it by section + subject +
+    // day + start (dbKey = CODE_Day_startIdx). It used to be only removed from the board,
+    // so the Draft stayed: still blocking the faculty and listed as a Pending Assignment.
+    if (!_vidsToDelete.length && !sd.versionid && !_isMergedPill && sd.dbKey && sd.subjectcode) {
+        const _k = String(sd.dbKey).split('_');
+        const _ident = {
+            section_id:   document.getElementById('sel_section')?.value || '',
+            subject_code: sd.subjectcode,
+            daydesc:      _k[_k.length - 2] || '',
+            starttimeid:  _k[_k.length - 1] || '',
+            ay_id:        document.getElementById('sel_ay')?.value  || '',
+            semester:     document.getElementById('sel_sem')?.value || '',
+        };
+        if (Object.values(_ident).every(v => v !== '' && v != null)) {
+            try {
+                const resp = await fetch('/api/schedule/delete_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(_ident)
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    if (typeof showValidationModal === 'function')
+                        await showValidationModal('Delete Failed', data.error || 'Could not delete session.');
+                    return;
+                }
+                if (data.version_id && data.whole_version_deleted !== false) {
+                    if (window._deletedVersionIds) window._deletedVersionIds.add(String(data.version_id));
+                    hiddenDbSchedules.add(`v:${data.version_id}`);
+                }
+            } catch (e) {
+                if (typeof showValidationModal === 'function')
+                    await showValidationModal('Connection Error', 'Could not reach the server.');
+                return;
+            }
+        }
+    }
+
     // Call DELETE API for each versionid
     if (_vidsToDelete.length > 0) {
         try {

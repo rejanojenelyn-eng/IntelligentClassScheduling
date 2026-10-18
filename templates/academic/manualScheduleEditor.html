@@ -6201,7 +6201,20 @@ async function removeTimeSlot(id) {
         if (!ok2) return;
 
         const versionid = sess.versionid || null;
-        if (versionid) {
+        // A slice without its database ids (carried over from Schedule Generation, or
+        // rebuilt from memory) may still be a SAVED Draft: let the server find it by
+        // section + subject + day + start. It used to be only removed from the board, so
+        // the Draft stayed — still blocking the faculty and listed as a Pending Assignment.
+        const _delIdentity = versionid ? null : {
+            section_id:   document.getElementById('sel_section')?.value || '',
+            subject_code: sess.subjectcode || '',
+            daydesc:      sess.daydesc || '',
+            starttimeid:  sess.starttimeid || '',
+            ay_id:        document.getElementById('sel_ay')?.value || '',
+            semester:     document.getElementById('sel_sem')?.value || '',
+        };
+        const _canIdentify = _delIdentity && Object.values(_delIdentity).every(v => v !== '' && v != null);
+        if (versionid || _canIdentify) {
             try {
                 // sessionid targets just this one meeting — a day-paired or multi-meeting
                 // version (see api_delete_session) would otherwise have ALL its sibling
@@ -6209,7 +6222,9 @@ async function removeTimeSlot(id) {
                 const resp = await fetch('/api/schedule/delete_session', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ version_id: versionid, session_id: sess.sessionid || null })
+                    body: JSON.stringify(versionid
+                        ? { version_id: versionid, session_id: sess.sessionid || null }
+                        : _delIdentity)
                 });
                 const data = await resp.json();
                 if (!data.success) {
@@ -6223,8 +6238,9 @@ async function removeTimeSlot(id) {
                 // here unconditionally used to make that surviving session vanish from the
                 // Time Allotment panel (filtered out as "deleted") even though its own DB
                 // row was never touched — it just silently stopped being reachable.
-                if (data.whole_version_deleted !== false) {
-                    window._deletedVersionIds.add(String(versionid));
+                const _deletedVid = versionid || data.version_id;
+                if (_deletedVid && data.whole_version_deleted !== false) {
+                    window._deletedVersionIds.add(String(_deletedVid));
                 }
             } catch(e) {
                 if (typeof showValidationModal === 'function')

@@ -77,6 +77,19 @@
 }
 .btn-view-archive:hover { background-color: #fdf4f4; }
 
+/* VIEW ARCHIVE — solid maroon. */
+.btn-archive-solid {
+    background-color: var(--pup-maroon);
+    color: #fff;
+    border: 1px solid var(--pup-maroon);
+}
+.btn-archive-solid:hover { background-color: #5c0000; border-color: #5c0000; }
+
+/* Faculty Name column header sorts the table (sortTable in employee.acad.js). */
+.th-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.th-sortable i { margin-left: 6px; font-size: 0.8em; opacity: 0.85; }
+.th-sortable:hover i { opacity: 1; }
+
 /* STATS CARDS SECTION */
 .stats-row {
     display: grid;

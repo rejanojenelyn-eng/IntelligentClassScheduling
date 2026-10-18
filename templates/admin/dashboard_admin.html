@@ -4,6 +4,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_admin.css') }}">
     <!-- Ensure FontAwesome is loaded for the icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -75,6 +76,12 @@
                 <h2>ACTIVITY LOGS</h2>
                 <a href="{{ url_for('admin_settings') }}" class="view-link">VIEW LOGS &rarr;</a>
             </div>
+
+            <!-- Daily Active Users & Logins (last 7 days) -->
+            <div class="dash-chart-box">
+                <h3 class="dash-chart-title">DAILY ACTIVE USERS &amp; LOGINS</h3>
+                <div class="dash-line-wrap"><canvas id="loginChart"></canvas></div>
+            </div>
             
             <div class="table-container">
                 <div class="toolbar-red">
@@ -123,6 +130,35 @@
             <div class="card-header-flex">
                 <h2>SCHEDULE LIST</h2>
                 <a href="{{ url_for('admin_schedule') }}" class="view-link">VIEW FULL LIST &rarr;</a>
+            </div>
+
+            <!-- Schedule Publishing Progress (active term, one count per active section) -->
+            {% set pp = publish_progress or {'published': 0, 'draft': 0, 'pending': 0, 'total': 0} %}
+            {% set pp_total = pp.total or 0 %}
+            <div class="dash-chart-box">
+                <h3 class="dash-chart-title">SCHEDULE PUBLISHING PROGRESS</h3>
+                <div class="dash-donut-row">
+                    <div class="dash-donut-wrap">
+                        <canvas id="publishChart"></canvas>
+                        <div class="dash-donut-center">
+                            <span class="dash-donut-lbl">TOTAL<br>SCHEDULES</span>
+                            <span class="dash-donut-num">{{ pp_total }}</span>
+                        </div>
+                    </div>
+                    <ul class="dash-legend">
+                        {% for key, label, cls, hint in [
+                            ('published', 'Published', 'dl-pub',   'Section has a Published schedule'),
+                            ('pending',   'Pending',   'dl-pend',  'Section has no schedule yet'),
+                            ('draft',     'Draft',     'dl-draft', 'Section has unapproved Draft changes')] %}
+                        <li title="{{ hint }}">
+                            <span class="dl-dot {{ cls }}"></span>
+                            <span class="dl-name">{{ label }}</span>
+                            <span class="dl-count">{{ pp[key] }}</span>
+                            <span class="dl-pct">{{ ((pp[key] * 100 / pp_total) | round | int) if pp_total else 0 }}%</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
 
             <div class="table-container" style="border:none;">
@@ -178,6 +214,66 @@
 </div>
 
 <script>
+const LOGIN_CHART      = {{ login_chart | default([]) | tojson }};
+const PUBLISH_PROGRESS = {{ publish_progress | default({}) | tojson }};
+
+document.addEventListener('DOMContentLoaded', function () {
+    if (!window.Chart) return;
+
+    const lc = document.getElementById('loginChart');
+    if (lc) {
+        new Chart(lc, {
+            type: 'line',
+            data: {
+                labels: LOGIN_CHART.map(d => d.label),
+                datasets: [
+                    { label: 'Active Users', data: LOGIN_CHART.map(d => d.active_users),
+                      borderColor: '#800000', backgroundColor: 'rgba(128,0,0,0.12)', fill: true,
+                      tension: 0.35, pointRadius: 3, pointBackgroundColor: '#800000', borderWidth: 2 },
+                    { label: 'Logins', data: LOGIN_CHART.map(d => d.logins),
+                      borderColor: '#d9a441', backgroundColor: 'transparent', fill: false,
+                      tension: 0.35, pointRadius: 3, pointBackgroundColor: '#d9a441', borderWidth: 2,
+                      borderDash: [4, 3] }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10, weight: '600' } } } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } }, grid: { color: '#f1f1f1' } },
+                    x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    const pc = document.getElementById('publishChart');
+    if (pc) {
+        const vals = [PUBLISH_PROGRESS.published || 0, PUBLISH_PROGRESS.pending || 0, PUBLISH_PROGRESS.draft || 0];
+        const total = vals.reduce((a, b) => a + b, 0);
+        new Chart(pc, {
+            type: 'doughnut',
+            data: {
+                labels: ['Published', 'Pending', 'Draft'],
+                datasets: [{
+                    data: total ? vals : [1],
+                    backgroundColor: total ? ['#7a0000', '#e8a93a', '#9aa0a6'] : ['#ececec'],
+                    borderColor: '#fff', borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '64%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: total > 0, callbacks: {
+                        label: c => ` ${c.label}: ${c.raw} (${Math.round(c.raw * 100 / total)}%)` } }
+                }
+            }
+        });
+    }
+});
+
 function openKpiModal(type) {
     const modal = document.getElementById('kpiModal');
     const title = document.getElementById('modalTitle');

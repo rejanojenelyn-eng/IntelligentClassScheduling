@@ -780,13 +780,7 @@ def inject_pending_corrections():
         if session.get('role') == 'Admin':
             row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
                            "WHERE status = 'Pending'", one=True)
-            out = {'pending_correction_count': row['n'] if row else 0}
-            try:
-                la = query_db("SELECT COUNT(*) AS n FROM login_assistance_request WHERE status = 'Pending'", one=True)
-                out['pending_assistance_count'] = la['n'] if la else 0
-            except Exception:
-                out['pending_assistance_count'] = 0
-            return out
+            return {'pending_correction_count': row['n'] if row else 0}
         row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
                        "WHERE status = 'Pending' AND username = %s", (username,), one=True)
         return {'my_pending_correction_count': row['n'] if row else 0}
@@ -1135,6 +1129,14 @@ def login():
         try:
             _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
             _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
+            # Admin dashboard "Daily Active Users & Logins" (see _ensure_login_log_table).
+            _cur2.execute("SAVEPOINT login_log")
+            try:
+                _cur2.execute("INSERT INTO login_log (username, role) VALUES (%s, %s)",
+                              (user_data.get('username'), db_role))
+                _cur2.execute("RELEASE SAVEPOINT login_log")
+            except Exception:
+                _cur2.execute("ROLLBACK TO SAVEPOINT login_log")   # never blocks the login
             _conn2.commit(); _cur2.close(); _conn2.close()
         except Exception: pass
 
@@ -1165,120 +1167,9 @@ def login():
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
 
-@app.route('/login/assistance', methods=['POST'])
-def login_assistance_submit():
-    """Contact Admin (login page): no session needed. The reply never says whether the
-    account reference exists; nothing is unlocked or reset by submitting."""
-    data = request.get_json(silent=True) or request.form
-    conn = get_db_connection()
-    try:
-        reference, job = _loginhelp.submit(conn, Config, data.get('account_reference'), data.get('concern'),
-                                           data.get('description'), _client_ip())
-    except _loginhelp.AssistanceError as e:
-        return jsonify({'success': False, 'error': e.message, 'code': e.code}), e.status
-    except Exception as e:
-        print(f"[login_assistance] submit failed: {type(e).__name__}: {e}", flush=True)
-        return jsonify({'success': False, 'error': 'Your request could not be submitted. Please try again.'}), 500
-    finally:
-        conn.close()
-    _loginhelp.dispatch(job)
-    return jsonify({'success': True, 'reference': reference, 'message': _loginhelp.SUCCESS_MESSAGE})
-
-
-_ASSISTANCE_PAGE_SIZE = 15
-
-@app.route('/admin/account-assistance')
-def admin_account_assistance():
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
-    q      = request.args.get('q', '').strip()
-    status = request.args.get('status', 'Pending')
-    if status not in ('All', 'Open') + _loginhelp.STATUSES: status = 'Pending'
-    try:
-        page = max(1, int(request.args.get('page', 1)))
-    except ValueError:
-        page = 1
-    where, args = [], []
-    if status == 'Open':
-        where.append("r.status IN ('Pending', 'In Progress')")
-    elif status != 'All':
-        where.append("r.status = %s"); args.append(status)
-    if q:
-        like = f"%{q}%"
-        where.append("""(r.reference ILIKE %s OR r.account_reference ILIKE %s OR a.username ILIKE %s
-                         OR CONCAT_WS(' ', f.firstname, f.lastname) ILIKE %s)""")
-        args += [like, like, like, like]
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    base = f"""
-        FROM login_assistance_request r
-        LEFT JOIN accounts a ON a.userid = r.userid
-        LEFT JOIN faculty f  ON f.employeenumber = a.employeenumber
-        LEFT JOIN login_throttle lt
-               ON a.username IS NOT NULL
-              AND lt.username_key = ENCODE(SHA256(CONVERT_TO(LOWER(a.username), 'UTF8')), 'hex')
-        {where_sql}
-    """
-    counts = query_db("""
-        SELECT COUNT(*) FILTER (WHERE status = 'Pending')     AS pending,
-               COUNT(*) FILTER (WHERE status = 'In Progress') AS in_progress,
-               COUNT(*) FILTER (WHERE status = 'Resolved')    AS resolved,
-               COUNT(*)                                        AS total
-        FROM login_assistance_request
-    """, one=True)
-    matched = query_db("SELECT COUNT(*) AS n " + base, tuple(args), one=True)['n']
-    pages = max(1, -(-matched // _ASSISTANCE_PAGE_SIZE))
-    page = min(page, pages)
-    rows = query_db(f"""
-        SELECT r.*, a.username AS matched_username, a.role AS matched_role, a.isactive AS matched_active,
-               a.employeenumber AS matched_empnum,
-               NULLIF(TRIM(CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END), '') AS matched_email,
-               NULLIF(TRIM(f.contactnumber), '') AS matched_contact,
-               NULLIF(CONCAT_WS(' ', f.firstname, f.lastname), '') AS matched_name,
-               (lt.locked_until IS NOT NULL AND lt.locked_until > NOW()) AS matched_locked
-        {base}
-        ORDER BY CASE r.status WHEN 'Pending' THEN 0 WHEN 'In Progress' THEN 1 ELSE 2 END, r.created_at DESC
-        LIMIT %s OFFSET %s
-    """, tuple(args) + (_ASSISTANCE_PAGE_SIZE, (page - 1) * _ASSISTANCE_PAGE_SIZE))
-    return render_template('admin/account_assistance_admin.html', requests=rows, counts=counts,
-                           matched=matched, page=page, pages=pages, page_size=_ASSISTANCE_PAGE_SIZE,
-                           statuses=_loginhelp.STATUSES, verify_methods=_loginhelp.VERIFY_METHODS,
-                           filters={'q': q, 'status': status})
-
-
-def _assistance_back(form):
-    nxt = form.get('next') or ''
-    return redirect(nxt if nxt.startswith('/admin/account-assistance') and '//' not in nxt
-                    else url_for('admin_account_assistance'))
-
-
-@app.route('/admin/account-assistance/<int:request_id>/<action>', methods=['POST'])
-def admin_account_assistance_action(request_id, action):
-    if session.get('role') != 'Admin': return redirect(url_for('login'))
-    back, admin, f = _assistance_back(request.form), session.get('username'), request.form
-    conn = get_db_connection()
-    try:
-        if action == 'update':
-            ref = _loginhelp.update_status(conn, request_id, admin, f.get('status'), f.get('admin_remarks'),
-                                           f.get('resolution'))
-            flash(f"Support request {ref} updated.", "success")
-        elif action == 'verify':
-            _loginhelp.verify_identity(conn, request_id, admin, f.get('identity_method'), f.get('identity_notes'))
-            flash("Identity verification recorded. You can now use the account recovery actions.", "success")
-        elif action == 'unlock':
-            user = _loginhelp.clear_lock(conn, request_id, admin)
-            flash(f"The temporary login lock for '{user}' was cleared.", "success")
-        elif action == 'reset-password':
-            user = _loginhelp.reset_password(conn, request_id, admin)
-            flash(f"Password for '{user}' reset to: PUP@{user}. They must change it on next login.", "success")
-        else:
-            flash("Unknown action.", "error")
-    except _loginhelp.AssistanceError as e:
-        flash(e.message, "error")
-    except Exception as e:
-        print(f"[account assistance] {action} failed: {type(e).__name__}: {e}", flush=True)
-        flash("The request could not be updated because of a database error. Nothing was changed.", "error")
-    finally:
-        conn.close()
-    return back
+# Account Assistance (login-page "Contact Admin" requests and its Admin page) was removed —
+# Correction Requests covers the same need. login_assistance.py stays: password reset and
+# the startup schema still use it, and past requests remain in login_assistance_request.
 
 
 def _dashboard_url_for_role(role):
@@ -1548,10 +1439,40 @@ def _ensure_section_bridging_column():
         cur.close(); conn.close()
 
 
+_login_log_ensured = False
+
+
+def _ensure_login_log_table():
+    """One row per successful login — the Admin dashboard's "Daily Active Users &
+    Logins" chart (accounts.last_login only keeps the latest one)."""
+    global _login_log_ensured
+    if _login_log_ensured:
+        return
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SET LOCAL lock_timeout = '5s'")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.login_log (
+                loginid      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                username     VARCHAR(100) NOT NULL,
+                role         VARCHAR(50),
+                logged_in_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_login_log_time ON public.login_log (logged_in_at)")
+        conn.commit()
+        _login_log_ensured = True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close(); conn.close()
+
+
 def _runtime_schema_ready():
     return (_schedule_version_schema_ready() and _local_tables_ensured
             and _request_tables_ensured and _cohort_entry_year_ensured
-            and _section_bridging_ensured)
+            and _section_bridging_ensured and _login_log_ensured)
 
 
 def _ensure_runtime_schema():
@@ -1564,7 +1485,7 @@ def _ensure_runtime_schema():
     """
     _ensure_schedule_version_schema()
     for _helper in (_ensure_local_tables, _ensure_request_tables, _ensure_cohort_entry_year_decoupled,
-                    _ensure_section_bridging_column):
+                    _ensure_section_bridging_column, _ensure_login_log_table):
         try:
             _helper()
         except Exception as e:
@@ -20803,6 +20724,90 @@ def reports():
 # --- ADMIN SPECIFIC ROUTES ---
 # ==============================================================================
 
+def _dashboard_login_chart(cur, days=7):
+    """Last `days` days (today included) for the Admin dashboard's "Daily Active Users &
+    Logins" chart: logins = successful logins (login_log); active users = distinct
+    accounts that logged in OR did anything recorded in the activity log that day — so
+    the line has history even from before login_log existed."""
+    cur.execute("SAVEPOINT dash_login")
+    try:
+        cur.execute("""
+            WITH d AS (
+                SELECT generate_series(CURRENT_DATE - (%s - 1), CURRENT_DATE, INTERVAL '1 day')::date AS day
+            ),
+            logins AS (
+                SELECT logged_in_at::date AS day, username FROM login_log
+                WHERE logged_in_at >= CURRENT_DATE - (%s - 1)
+            ),
+            acts AS (
+                SELECT logtime::date AS day, initiated_by AS username FROM activity_log
+                WHERE logtime >= CURRENT_DATE - (%s - 1)
+                  AND initiated_by IS NOT NULL AND initiated_by <> 'System'
+            )
+            SELECT d.day,
+                   (SELECT COUNT(*) FROM logins l WHERE l.day = d.day) AS logins,
+                   (SELECT COUNT(DISTINCT u.username) FROM (
+                        SELECT username FROM logins WHERE day = d.day
+                        UNION SELECT username FROM acts WHERE day = d.day) u) AS active_users
+            FROM d ORDER BY d.day
+        """, (days, days, days))
+        rows = cur.fetchall()
+        cur.execute("RELEASE SAVEPOINT dash_login")
+    except Exception as e:
+        cur.execute("ROLLBACK TO SAVEPOINT dash_login")   # e.g. login_log not created yet
+        print(f"[dashboard] login chart unavailable: {e}")
+        return []
+    return [{'label': r['day'].strftime('%b %d'), 'logins': int(r['logins']),
+             'active_users': int(r['active_users'])} for r in rows]
+
+
+def _dashboard_publish_progress(cur):
+    """Schedule Publishing Progress for the active term, one count per active section:
+    Draft = has an Official Draft (unapproved changes), Published = has a Published
+    schedule and no pending Draft, Pending = nothing scheduled yet."""
+    cur.execute("SAVEPOINT dash_pub")
+    try:
+        cur.execute("""
+            SELECT sem.semesterid, sem.academicyearid, sem.semestertype
+            FROM semester sem WHERE sem.isactive = TRUE LIMIT 1
+        """)
+        term = cur.fetchone()
+        if not term:
+            cur.execute("RELEASE SAVEPOINT dash_pub")
+            return {'published': 0, 'draft': 0, 'pending': 0, 'total': 0}
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE has_draft)                    AS draft,
+                COUNT(*) FILTER (WHERE NOT has_draft AND has_pub)     AS published,
+                COUNT(*) FILTER (WHERE NOT has_draft AND NOT has_pub) AS pending
+            FROM (
+                SELECT sec.sectionid,
+                       EXISTS (SELECT 1 FROM schedule s JOIN schedule_version sv ON sv.scheduleid = s.scheduleid
+                               WHERE s.sectionid = sec.sectionid AND s.semesterid = %(sem)s
+                                 AND sv.status = 'Draft' AND sv.source IS DISTINCT FROM 'local') AS has_draft,
+                       EXISTS (SELECT 1 FROM schedule s JOIN schedule_version sv ON sv.scheduleid = s.scheduleid
+                               WHERE s.sectionid = sec.sectionid AND s.semesterid = %(sem)s
+                                 AND sv.status = 'Published' AND sv.source IS DISTINCT FROM 'local') AS has_pub
+                FROM sections sec
+                JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+                JOIN programs p ON p.programcode = pyl.programcode
+                WHERE pyl.academicyearid = %(ay)s
+                  AND sec.isactive = TRUE AND p.isactive = TRUE
+                  AND pyl.isactive IS DISTINCT FROM FALSE
+                  AND (sec.start_semestertype IS NULL OR sec.start_semestertype <= %(st)s)
+            ) x
+        """, {'sem': term['semesterid'], 'ay': term['academicyearid'], 'st': term['semestertype']})
+        r = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT dash_pub")
+    except Exception as e:
+        cur.execute("ROLLBACK TO SAVEPOINT dash_pub")
+        print(f"[dashboard] publishing progress unavailable: {e}")
+        return {'published': 0, 'draft': 0, 'pending': 0, 'total': 0}
+    out = {k: int(r[k] or 0) for k in ('published', 'draft', 'pending')}
+    out['total'] = sum(out.values())
+    return out
+
+
 @app.route('/admin/dashboard')
 def admin_dashboard():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -20856,19 +20861,26 @@ def admin_dashboard():
         """)
         scheds = cur.fetchall()
 
-        return render_template('admin/dashboard_admin.html', 
+        login_chart     = _dashboard_login_chart(cur)
+        publish_progress = _dashboard_publish_progress(cur)
+
+        return render_template('admin/dashboard_admin.html',
                                current_date=now,
                                program_count=prog_data['t'] if prog_data else 0,
                                faculty_count=fac_data['t'] if fac_data else 0,
                                room_count=room_data['t'] if room_data else 0,
                                building_count=bldg_data['t'] if bldg_data else 0,
                                activity_logs=logs,
-                               schedules=scheds)
+                               schedules=scheds,
+                               login_chart=login_chart,
+                               publish_progress=publish_progress)
     except Exception as e:
         print(f"Dashboard Database Error: {e}")
-        return render_template('admin/dashboard_admin.html', 
+        return render_template('admin/dashboard_admin.html',
                                current_date="N/A", program_count=0, faculty_count=0,
-                               room_count=0, building_count=0, activity_logs=[], schedules=[])
+                               room_count=0, building_count=0, activity_logs=[], schedules=[],
+                               login_chart=[], publish_progress={'published': 0, 'draft': 0,
+                                                                 'pending': 0, 'total': 0})
     finally:
         cur.close()
         conn.close()
@@ -37533,7 +37545,33 @@ def api_delete_session():
     version_id = data.get('version_id')
     session_id = data.get('session_id')
     if not version_id:
-        return jsonify({'success': False, 'error': 'Missing version_id'}), 400
+        # A slice the editor holds WITHOUT its database ids — e.g. carried over from
+        # Schedule Generation or rebuilt from the editor's memory — is identified by
+        # section + subject + day + start instead. Before this, such a delete only removed
+        # it from the board: the saved Draft stayed, kept blocking the faculty ("Faculty
+        # conflict") and still showed in Faculty Load's Pending Assignments.
+        ident = (data.get('section_id'), data.get('subject_code'), data.get('daydesc'),
+                 data.get('starttimeid'), data.get('ay_id'), data.get('semester'))
+        if not all(ident):
+            return jsonify({'success': False, 'error': 'Missing version_id'}), 400
+        _sec, _code, _day, _start, _ay, _sem = ident
+        match = query_db("""
+            SELECT ss.sessionid, ss.versionid
+            FROM schedule_sessions ss
+            JOIN schedule_version sv  ON sv.versionid = ss.versionid
+            JOIN schedule sc          ON sc.scheduleid = sv.scheduleid
+            JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+            WHERE sv.status = 'Draft' AND sv.source IS DISTINCT FROM 'local'
+              AND sc.sectionid = %s AND UPPER(cs.subjectcode) = UPPER(%s)
+              AND ss.daydesc = %s AND ss.starttimeid = %s
+              AND sc.semesterid = (SELECT semesterid FROM semester
+                                   WHERE academicyearid = %s AND semestertype = %s LIMIT 1)
+            ORDER BY sv.versionid DESC LIMIT 1
+        """, (int(_sec), _code, _day, int(_start), _ay, _sem), one=True)
+        if not match:
+            # Never saved — nothing on the server to remove.
+            return jsonify({'success': True, 'whole_version_deleted': True, 'not_saved': True})
+        version_id, session_id = match['versionid'], match['sessionid']
     try:
         conn = get_db_connection()
         cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -37604,7 +37642,8 @@ def api_delete_session():
         # sibling session under the same version survives, the caller must NOT do that,
         # or the surviving meeting silently disappears from the UI even though its own
         # schedule_sessions row is still there.
-        return jsonify({'success': True, 'whole_version_deleted': whole_version_deleted})
+        return jsonify({'success': True, 'whole_version_deleted': whole_version_deleted,
+                        'version_id': int(version_id)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

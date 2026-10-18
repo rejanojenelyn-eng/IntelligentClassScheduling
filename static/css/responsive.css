@@ -36,7 +36,13 @@
     .sidebar.collapsed .nav-arrow { display: initial; }
     .sidebar.collapsed .sub-menu.show-submenu { display: block; }
     .sidebar.collapsed .nav-divider::before { display: block; }
+    .sidebar.collapsed .nav-divider:not(.nav-divider--lines):not(.nav-divider--center)::after { display: none; }
+    .sidebar.collapsed .nav-divider--lines::after,
+    .sidebar.collapsed .nav-divider--center::after { flex: 1; width: auto; }
     .sidebar.collapsed .nav-divider { padding: 28px 20px 10px; justify-content: flex-start; }
+    /* Folding groups are listed in full in the drawer, never as the single icon. */
+    .sidebar.collapsed .nav-group-trigger { display: none; }
+    .sidebar.collapsed .nav-group-item { display: block; }
     .sidebar.collapsed .nav-link,
     .sidebar.collapsed .nav-link-wrapper,
     .sidebar.collapsed .nav-link-main { justify-content: flex-start; }

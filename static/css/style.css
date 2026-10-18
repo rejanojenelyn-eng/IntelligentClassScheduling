@@ -795,6 +795,26 @@ body {
     white-space: nowrap;
 }
 
+/* Lines on both sides of the label (short before, long after) — Admin sidebar groups.
+   As an <li> inside .nav-list it also needs the list styling reset. */
+.nav-divider--lines { list-style: none; padding: 22px 20px 8px; }
+.nav-divider--lines::before { flex: 0 0 28px; }
+.nav-divider--lines::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-light);
+}
+
+/* Centered title: equal lines on both sides (Academic Head sidebar). */
+.nav-divider--center { list-style: none; }
+.nav-divider--center::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-light);
+}
+
 /* ── Regular Nav Item ── */
 .nav-item {
     margin: 3px 10px;
@@ -966,6 +986,22 @@ body {
 .sidebar.collapsed .nav-arrow,
 .sidebar.collapsed .sub-menu,
 .sidebar.collapsed .nav-divider::before { display: none; }
+/* Collapsed: each section shows as a short line between its icons. */
+.sidebar.collapsed .nav-divider::after {
+    content: '';
+    display: block;
+    flex: none;
+    width: 28px;
+    height: 1px;
+    background: var(--border-light);
+}
+
+/* Folding group (Academic Head → Schedule Management): pages listed in full when the
+   sidebar is expanded; collapsed, they hide behind one icon (.nav-group-trigger)
+   that re-expands the sidebar — see expandSidebarGroup in base.acad.js. */
+.nav-group-trigger { display: none; }
+.sidebar.collapsed .nav-group-trigger { display: block; }
+.sidebar.collapsed .nav-group-item { display: none; }
 
 .sidebar.collapsed .nav-divider { padding: 10px 0; justify-content: center; }
 
@@ -1238,7 +1274,9 @@ body {
 .logout-modal {
     display: none;
     position: fixed;
-    z-index: 2000;
+    /* Above the small-screen sidebar drawer (2500) and its backdrop (2400), so Sign out
+       opened from the drawer is never covered/dimmed by them (responsive.css). */
+    z-index: 3000;
     inset: 0;
     background: rgba(0,0,0,.45);
     backdrop-filter: blur(4px);
