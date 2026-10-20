@@ -581,6 +581,12 @@ async function onFacultySelect(empNum) {
     // faculty data (that race is what caused a stale "may not be the ideal fit" note to show
     // up against a freshly-selected/TBA subject that was never actually checked against it).
     const _mySubjToken = typeof _subjClickToken !== 'undefined' ? _subjClickToken : 0;
+    // Only a faculty the user just PICKED asks "Specialization Mismatch — proceed?". A faculty
+    // loaded from saved/generated data (opening a subject, a Generate hand-off, a restored
+    // assignment) is already assigned: it only gets the inline note. Asking on every load
+    // made the same prompt come back after each OK until the tab was reloaded.
+    const _userPick = !!empNum && window._facPickedByUser === String(empNum);
+    window._facPickedByUser = null;
     _facInfo = null;
     if (empNum) {
         try {
@@ -592,7 +598,8 @@ async function onFacultySelect(empNum) {
 
         // When spec toggle is ON and this is a new assignment (not editing an imported session),
         // show a confirm prompt on mismatch — user can still proceed, it's not a block.
-        if (SPEC_CONSTRAINT_ENABLED && _facInfo && _subjInfo && !window.currentEditSession) {
+        if (SPEC_CONSTRAINT_ENABLED && _userPick && _facInfo && _subjInfo && !window.currentEditSession
+                && !window._specPromptOpen) {
             const spec     = (_facInfo.specializationname || '').trim();
             const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
             const compat   = _getSpecCompatibility(spec, subjCode);
@@ -600,11 +607,17 @@ async function onFacultySelect(empNum) {
                 const facName = (_facInfo.fullname || 'This faculty').trim();
                 const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
                 const primary = group ? group.primary : 'the required field';
-                const proceed = await showConfirmModal(
-                    `${facName}'s specialization (${spec || 'none on file'}) may not match ${subjCode}, ` +
-                    `which expects ${primary} specialization.\n\nDo you still want to proceed with this assignment?`,
-                    'Specialization Mismatch'
-                );
+                window._specPromptOpen = true;   // never stack a second copy of this prompt
+                let proceed;
+                try {
+                    proceed = await showConfirmModal(
+                        `${facName}'s specialization (${spec || 'none on file'}) may not match ${subjCode}, ` +
+                        `which expects ${primary} specialization.\n\nDo you still want to proceed with this assignment?`,
+                        'Specialization Mismatch'
+                    );
+                } finally {
+                    window._specPromptOpen = false;
+                }
                 if (!proceed) {
                     _facInfo = null;
                     document.getElementById('sel_faculty').value            = '';
@@ -793,6 +806,8 @@ function _boardHasUnsavedRows() {
 // Browser fallback only (closing the tab, typing a URL, reload): its "Leave site?" dialog
 // is drawn by the browser and cannot be styled. Every in-app navigation goes through
 // _guardedNavigate below instead, which shows the app's own Unsaved Changes popup.
+// Lets the Logout modal warn about unsaved changes itself (see base.acad.js).
+window.pageHasUnsavedWork = () => !window.isLeavingIntentionally && hasUnsavedChanges();
 window.addEventListener('beforeunload', function (e) {
     if (window.isLeavingIntentionally) return;
     if (hasUnsavedChanges()) {
@@ -858,7 +873,12 @@ async function selectDSSOption(type, value, displayText) {
     document.getElementById(`${type}_menu`).style.display = 'none';
 
     if (type === 'room') selectRoom(value, displayText);
-    if (type === 'fac')  await onFacultySelect(value);
+    if (type === 'fac') {
+        // The user picked this faculty from the dropdown — the only case that asks to
+        // confirm a specialization mismatch (see onFacultySelect).
+        window._facPickedByUser = String(value);
+        await onFacultySelect(value);
+    }
     updateSummary();
     if (typeof _updateWorkflowBar === 'function') _updateWorkflowBar();
 }
@@ -1316,7 +1336,7 @@ function _renderProgPills(sessions, prog, yl) {
             } else {
                 const _pDbKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
                 const _pLabel = `${sess.subjectcode} — ${sess.daydesc} | ${roomDisp}`;
-                const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null, room_id: sess.room_id || sess.roomid || null }));
+                const _pSd    = encodeURIComponent(JSON.stringify({ temp_id: sess.temp_id || null, versionid: sess.versionid || null, dbKey: _pDbKey, label: _pLabel, subjectcode: sess.subjectcode || null, status: sess.status || null, room_id: sess.room_id || sess.roomid || null }));
                 const dropBtn = `<button class="pill-drop-btn" onmousedown="event.stopPropagation()" onclick="_dropSession('${_pSd}', event)" title="Remove"><i class="fas fa-times"></i></button>`;
                 pill.innerHTML = compact
                     ? `${dropBtn}<div class="pill-subject" style="margin-top:6px;font-size:0.65rem;">${sess.subjectcode}</div>`
@@ -1330,7 +1350,7 @@ function _renderProgPills(sessions, prog, yl) {
                            <div style="font-size:0.55rem;opacity:0.8;margin-top:2px;"><i class="fas fa-door-open" style="margin-right:2px;"></i>${roomDisp}</div>`;
 
                 pill.onclick = (e) => {
-                    if (e.target.closest('.pill-drop-btn')) return;
+                    if (e.target.closest('.pill-drop-btn') || _nearPillDropBtn(pill, e)) return;
                     const forEdit = {
                         ...sess,
                         starttimeid: startIdx,
@@ -2017,10 +2037,12 @@ async function confirmAndPlace() {
                     if (!proceed) return;
                     break; // merge confirmed — stop checking further room sessions
                 }
-                await showConflictModal(
-                    `"${s.subjectname}" (${s.instructor || 'TBA'}) is already scheduled in ${roomName} on ${dayVal} — ` +
-                    `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}.`
-                );
+                await showConflictModal(_conflictDetail({
+                    kind: 'room', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                    start: timeSlots[s.starttimeid - 1], end: timeSlots[s.endtimeid - 1],
+                    faculty: s.instructor || 'TBA',
+                    section: _sectionLabel(s.programcode, s.sectionname, s.year_level), room: roomName,
+                }));
                 return;
             }
         }
@@ -2051,7 +2073,11 @@ async function confirmAndPlace() {
                 if (!proceed) return;
                 break; // merge confirmed
             }
-            await showConflictModal(`"${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+            await showConflictModal(_conflictDetail({
+                kind: 'room', code: c.subject_code, name: c.subject_name, day: dayVal,
+                start: c.start_time, end: c.end_time, faculty: c.instructor || c.faculty_name || 'TBA',
+                section: _sectionLabel(c.course, c.section_name, c.year_level), room: roomName,
+            }));
             return;
         }
     }
@@ -2073,11 +2099,12 @@ async function confirmAndPlace() {
                         (s.subjectcode || '').toUpperCase() === currentSubjCode) {
                         continue;
                     }
-                    await showConflictModal(
-                        `This faculty already has "${_classLabel(s.subjectcode, s.subjectname)}"${_classWhere(s.programcode, s.sectionname)} on ${dayVal} — ` +
-                        `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
-                        `Faculty cannot have overlapping schedules.`
-                    );
+                    await showConflictModal(_conflictDetail({
+                        kind: 'faculty', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                        start: timeSlots[s.starttimeid - 1], end: timeSlots[s.endtimeid - 1], faculty: facName,
+                        section: _sectionLabel(s.programcode, s.sectionname, s.year_level),
+                        room: s.roomname || s.room || 'TBA',
+                    }));
                     return;
                 }
             }
@@ -2096,10 +2123,11 @@ async function confirmAndPlace() {
                 (c.subject_code || '').toUpperCase() === currentSubjCode) {
                 continue;
             }
-            await showConflictModal(
-                `This faculty is already placed in "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
-                `Faculty cannot have overlapping schedules.`
-            );
+            await showConflictModal(_conflictDetail({
+                kind: 'faculty', code: c.subject_code, name: c.subject_name, day: dayVal,
+                start: c.start_time, end: c.end_time, faculty: facName,
+                section: _sectionLabel(c.course, c.section_name, c.year_level), room: c.room || 'TBA',
+            }));
             return;
         }
     }
@@ -2118,12 +2146,12 @@ async function confirmAndPlace() {
                     s.daydesc     === window.currentEditSession.daydesc &&
                     s.starttimeid === window.currentEditSession.starttimeid) continue;
                 if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
-                    await showConflictModal(
-                        `Section conflict: "${s.subjectname || s.subjectcode}" is already scheduled ` +
-                        `for ${prog} Year ${yl} on ${dayVal} — ` +
-                        `${timeSlots[s.starttimeid - 1]} to ${timeSlots[s.endtimeid - 1]}. ` +
-                        `A section cannot have two classes at the same time.`
-                    );
+                    await showConflictModal(_conflictDetail({
+                        kind: 'section', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                        start: timeSlots[s.starttimeid - 1], end: timeSlots[s.endtimeid - 1],
+                        faculty: s.instructor || 'TBA',
+                        section: _currentSectionLabel() || `${prog} ${yl}`, room: s.roomname || s.room || 'TBA',
+                    }));
                     return;
                 }
             }
@@ -2137,11 +2165,11 @@ async function confirmAndPlace() {
             const cStart = getTimeSlotIndex(c.start_time);
             const cEnd   = getTimeSlotIndex(c.end_time);
             if (newStartIdx < cEnd && newEndIdx > cStart) {
-                await showConflictModal(
-                    `Section conflict: "${c.subject_name}" is already placed for ` +
-                    `${prog} Year ${yl} on ${dayVal} — ${c.start_time} to ${c.end_time}. ` +
-                    `A section cannot have two classes at the same time.`
-                );
+                await showConflictModal(_conflictDetail({
+                    kind: 'section', code: c.subject_code, name: c.subject_name, day: dayVal,
+                    start: c.start_time, end: c.end_time, faculty: c.instructor || c.faculty_name || 'TBA',
+                    section: _currentSectionLabel() || `${prog} ${yl}`, room: c.room || 'TBA',
+                }));
                 return;
             }
         }
@@ -2210,6 +2238,15 @@ async function confirmAndPlace() {
     }
 }
 
+// A click that just misses a pill's small × (aimed at delete) must not open that schedule.
+function _nearPillDropBtn(pill, e) {
+    const b = pill && pill.querySelector('.pill-drop-btn');
+    if (!b || e.clientX == null) return false;
+    const r = b.getBoundingClientRect(), pad = 14;
+    return e.clientX >= r.left - pad && e.clientX <= r.right + pad &&
+           e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+}
+
 /* ── Two-step session deletion (works for local pending AND saved DB sessions) ── */
 window._dropSession = async function(sessDataEncoded, event) {
     event.stopPropagation();
@@ -2254,8 +2291,11 @@ async function _dropSessionImpl(sessDataEncoded) {
     }
 
     // Step 1
+    const _isPub = String(sd.status || '').toLowerCase() === 'published';
     const ok1 = await (typeof showConfirmModal === 'function'
-        ? showConfirmModal(`You are about to delete this schedule:\n\n${sd.label}`, 'Delete Schedule')
+        ? showConfirmModal(`You are about to delete this schedule:\n\n${sd.label}` +
+            (_isPub ? '\n\nThis slice is PUBLISHED — deleting it updates the live published schedule right away.' : ''),
+            'Delete Schedule')
         : Promise.resolve(window.confirm(`You are about to delete:\n${sd.label}`)));
     if (!ok1) return;
 
@@ -2370,6 +2410,12 @@ async function _dropSessionImpl(sessDataEncoded) {
                 });
                 const data = await resp.json();
                 if (!data.success) {
+                    // Live Published slice: already double-confirmed above — republish its
+                    // subject without it (see _deletePublishedSlice).
+                    if (data.code === 'PUBLISHED_IMMUTABLE') {
+                        if (await _deletePublishedSlice(sd, vid, _vidsToDelete)) await _afterPublishedDelete(sd);
+                        return;
+                    }
                     if (typeof showValidationModal === 'function')
                         await showValidationModal('Delete Failed', data.error || 'Could not delete session.');
                     return;
@@ -2455,6 +2501,127 @@ async function _dropSessionImpl(sessDataEncoded) {
         if (!isNaN(rId) && typeof _applyRoomAvailabilityFilter === 'function') _applyRoomAvailabilityFilter(rId);
     });
 };
+
+// A Published slice is never deleted in place: the live schedule only changes through
+// Publish. After the two delete confirmations, republish its subject WITHOUT that slice —
+// or remove the subject from the live schedule when it was its last slice — through the
+// same /api/schedule/approve gates a normal Publish uses (validation, Local Scheduler
+// impact). Returns true once the live schedule no longer has the slice.
+async function _deletePublishedSlice(sd, vid, alsoVids = []) {
+    const enc  = encodeURIComponent;
+    const up   = v => String(v || '').trim().toUpperCase();
+    const ay   = formAyFilter(), sem = formSemFilter();
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    const code = up(sd.subjectcode || String(sd.dbKey || '').split('_')[0]);
+    if (!(ay && sem && prog && yl && sect && code)) {
+        await showValidationModal('Delete Failed',
+            'Select the Academic Year, Semester, Program, Year Level and Section first.');
+        return false;
+    }
+    if (window._approveInFlight) {
+        await showValidationModal('Still Publishing',
+            'Another publish is still being processed. Please try again in a moment.');
+        return false;
+    }
+    window._approveInFlight = true;
+    try {
+        const q = `program=${enc(prog)}&year_level=${enc(yl)}&ay_id=${enc(ay)}&sem=${enc(sem)}&section_id=${enc(sect)}`;
+        const [pub, drafts] = await Promise.all([
+            _approveFetch(`/api/schedule/draft_sessions?${q}&status=published`).then(r => r.json()),
+            _approveFetch(`/api/schedule/draft_sessions?${q}`).then(r => r.json()),
+        ]);
+        if (!pub.success) throw new Error(pub.error || 'lookup failed');
+        // Publishing the subject would also retire its pending Draft — never as a side
+        // effect of a delete. Let the user publish or delete that Draft first.
+        if ((drafts.sessions || []).some(s => up(s.subject_code) === code) ||
+                (drafts.removed_subjects || []).map(up).includes(code)) {
+            await showValidationModal('Delete Failed',
+                `${code} has a saved Draft that is not published yet. Publish or delete that Draft first, then delete this slice.`);
+            return false;
+        }
+        const k = String(sd.dbKey || '').split('_');
+        const day = k.length >= 3 ? k[k.length - 2] : '', start = k.length >= 3 ? k[k.length - 1] : '';
+        const live = (pub.sessions || []).filter(s => up(s.subject_code) === code);
+        const isTarget = s => String(s.versionid) === String(vid) &&
+            (!day || (s.daydesc === day && String(s.starttimeid) === String(start)));
+        let remaining = live.filter(s => !isTarget(s));
+        if (remaining.length === live.length) remaining = live.filter(s => String(s.versionid) !== String(vid));
+        // Related sessions the user also chose to delete ("Delete Related Sessions").
+        const _also = new Set((alsoVids || []).map(String).filter(v => v !== String(vid)));
+        remaining = remaining.filter(s => !_also.has(String(s.versionid)));
+        const removed = remaining.length ? [] : [code];
+
+        const ok = await _confirmLocalRepublishImpact(remaining, prog, yl, ay, sem, sect, removed);
+        if (!ok) return false;
+        const res = await _approveFetch('/api/schedule/approve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                schedule_data: remaining, removed_subjects: removed, override: true,
+                context: { program: prog, yearLevel: parseInt(yl), term: sem, acadYear: ay, sectionId: sect },
+            }),
+        }, 120000);
+        let data;
+        try { data = await res.json(); }
+        catch (_pe) { data = { success: false, error: `Server error (HTTP ${res.status}). Nothing was deleted.` }; }
+        if (!data.success) {
+            if (data.violations && data.violations.length && typeof _showFirstViolation === 'function') {
+                await _showFirstViolation(data.violations, {
+                    title: 'Cannot Delete',
+                    intro: 'The published schedule could not be updated without this slice:' });
+            } else {
+                await showValidationModal('Delete Failed', data.error || 'The published schedule could not be updated.');
+            }
+            return false;
+        }
+        return true;
+    } catch (e) {
+        await showValidationModal('Connection Error', e && e.name === 'AbortError'
+            ? 'The server took too long to respond. The published schedule is unchanged; please try again.'
+            : 'Could not reach the server. Nothing was deleted.');
+        return false;
+    } finally {
+        window._approveInFlight = false;
+    }
+}
+
+// After _deletePublishedSlice: the section got a new Published snapshot (new ids), so
+// reload the editor from the server — same refresh a successful Publish does.
+async function _afterPublishedDelete(sd) {
+    const ay = formAyFilter(), sem = formSemFilter();
+    const code = String(sd.subjectcode || String(sd.dbKey || '').split('_')[0]).toUpperCase();
+    pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem && (
+        String(c.subject_code || c.subjectcode || '').toUpperCase() === code ||
+        (c.fromExisting && String(c.status || '').toLowerCase() === 'published'))));
+    _rebuildHiddenDbSchedules();
+    _invalidateOccupancyCaches(ay, sem);
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    const cur  = document.getElementById('sel_subj')?.value || '';
+    // Only the deleted subject's panel is reloaded — another open subject may hold unsaved slices.
+    if (cur && cur.toUpperCase() === code) {
+        try {
+            const r = await _approveFetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(cur)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(sect)}`);
+            const d = await r.json();
+            if (d.success && d.sessions && d.sessions.length && typeof _loadExistingSessionsIntoSlices === 'function') {
+                await _loadExistingSessionsIntoSlices(d.sessions);
+            } else {
+                document.getElementById('time-slots-container').innerHTML = '';
+                if (typeof addNewTimeSlot === 'function') addNewTimeSlot('', '', '', '', '', true);
+            }
+        } catch (e) { /* the grid below still reflects the server */ }
+    }
+    if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+    if (currentMode === 'program') renderProgramTimetable();
+    else renderGrid(document.getElementById('sel_room').value, ay, sem);
+    if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
+    _refreshCurrentFacUnitDisplay();
+    await showValidationModal('Schedule Deleted',
+        'The slice was removed and the published schedule was updated.');
+}
 
 // Recomputes the right-panel "Max/Assigned/Remaining" stats for whichever faculty is
 // currently active (locked for this subject, or selected in the dropdown). Deleting a
@@ -2566,7 +2733,15 @@ window._runManualApprove = async function(opts = {}) {
     // ts-rows at once. That race corrupted shared state: slices silently went missing from
     // what got published, and re-approving afterward showed progressively fewer slices,
     // recoverable only with a full page reload.
-    if (window._approveInFlight) return false;
+    if (window._approveInFlight) {
+        // Never a silent no-op: say why nothing happened (unless a dialog of this
+        // approval is already on screen and waiting for the user).
+        if (!opts.auto && !_approveDialogOpen()) {
+            await showValidationModal('Still Publishing',
+                'The previous Approve is still being processed. Please wait a moment and try again.');
+        }
+        return false;
+    }
     window._approveInFlight = true;
     // Client-side transaction: approval temporarily promotes slice rows into
     // pendingManualSchedule (removing/re-creating mirrors) before the server decides.
@@ -2584,6 +2759,21 @@ window._runManualApprove = async function(opts = {}) {
         window._approveInFlight = false;
     }
 };
+
+// A dialog of the Approve flow (validation, confirm, slice picker, Local impact, merge notice)
+// is open and waiting for the user.
+function _approveDialogOpen() {
+    return !!document.querySelector('#validationModal.active, #confirmModal.active, ' +
+        '#localImpactModal.open, .merge-notice-overlay, .publish-select-overlay');
+}
+
+// fetch that gives up after `ms` — every request awaited while Approve holds its in-flight
+// guard must end, or a stalled one would keep the button dead until a reload.
+function _approveFetch(url, opts = {}, ms = 30000) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms);
+    return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
+}
 
 function _snapshotApproveState() {
     return {
@@ -2622,7 +2812,7 @@ async function _confirmLocalRepublishImpact(selectedDrafts, prog, yl, ay, sem, s
     if (!sectionId) return true;
     let sessions = [];
     try {
-        const r = await fetch(`/api/schedule/local_republish_impact?program=${encodeURIComponent(prog)}` +
+        const r = await _approveFetch(`/api/schedule/local_republish_impact?program=${encodeURIComponent(prog)}` +
             `&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}` +
             `&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(sectionId)}`);
         const d = await r.json();
@@ -2853,7 +3043,7 @@ window._runManualApproveImpl = async function(opts = {}) {
     if (contextDrafts.length === 0 || !currentSubj) {
         // Try loading saved Draft sessions from DB (scoped to current subject)
         try {
-            const dbResp = await fetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(document.getElementById('sel_section')?.value || '')}`);
+            const dbResp = await _approveFetch(`/api/schedule/draft_sessions?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(document.getElementById('sel_section')?.value || '')}`);
             const dbData = await dbResp.json();
             if (dbData.success && Array.isArray(dbData.removed_subjects)) {
                 _dbRemovedSubjects = dbData.removed_subjects.map(c => String(c).toUpperCase());
@@ -3151,7 +3341,7 @@ window._runManualApproveImpl = async function(opts = {}) {
                         // Use existing_sessions (returns both Draft and Published with correct statuses)
                         // so the editor immediately shows the correct Published/remaining-Draft state.
                         const _sectId2 = document.getElementById('sel_section')?.value || '';
-                        const exResp2 = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
+                        const exResp2 = await _approveFetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
                         const exData2 = await exResp2.json();
                         if (exData2.success && exData2.sessions && exData2.sessions.length) {
                             if (typeof _loadExistingSessionsIntoSlices === 'function') {
@@ -3508,6 +3698,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     dbKey:      _dbKey,
                     label:      _label,
                     subjectcode: sess.subjectcode || null,
+                    status:     _delTgt.status || sess.status || null,
                     room_id:    roomId,
                     // Pass all merged versionids so delete-all can be triggered if needed
                     _allVersionIds: _mergedSects.map(ms => ms.versionid).filter(Boolean)
@@ -3534,7 +3725,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     ${_sectHtml}`;
 
                 pill.onclick = (e) => {
-                    if (e.target.closest('.pill-drop-btn')) return;
+                    if (e.target.closest('.pill-drop-btn') || _nearPillDropBtn(pill, e)) return;
                     // Edit the section matching the current context (_deleteTarget), not the
                     // merged pill's representative — see _ctxMatch above. Using the raw
                     // representative here meant editing a merged pill could silently apply
@@ -3876,6 +4067,12 @@ document.getElementById('sel_year').addEventListener('change', triggerCascade);
 document.getElementById('sel_subj').addEventListener('change', updateSummary);
 document.getElementById('sel_faculty').addEventListener('change', updateSummary);
 
+// Every caller still waiting on this modal. A second message can open on top of one that
+// is still awaited (e.g. a fire-and-forget load warning during Approve); closing the modal
+// releases them all. Keeping only the latest resolver left the earlier caller waiting
+// forever — which froze Approve Schedule (its in-flight guard never cleared, so every
+// later click did nothing) until the page was reloaded.
+const _validationResolvers = [];
 function showValidationModal(title, message) {
     return new Promise(resolve => {
         document.getElementById('validationModalTitle').textContent   = title;
@@ -3883,12 +4080,12 @@ function showValidationModal(title, message) {
         _vm.style.whiteSpace = 'pre-line';   // keep the message's own line breaks
         _vm.textContent = message;
         document.getElementById('validationModal').classList.add('active');
-        window._validationResolve = resolve;
+        _validationResolvers.push(resolve);
     });
 }
 function closeValidationModal() {
     document.getElementById('validationModal').classList.remove('active');
-    if (window._validationResolve) { window._validationResolve(); window._validationResolve = null; }
+    _validationResolvers.splice(0).forEach(r => r());
 }
 
 // Shows violations one at a time with prev/next navigation, as a readable card:
@@ -3974,23 +4171,93 @@ function closeNochangeModal() {
     if (window._nochangeResolve) { window._nochangeResolve(); window._nochangeResolve = null; }
 }
 
+// Conflict details as a labelled list, so the clash can be identified at a glance:
+// Type of conflict · Class · Time and day · Faculty · Section · Room. `detail` is either
+// a plain string (older callers) or { kind: 'room'|'faculty'|'section', code, name, day,
+// start, end, faculty, section, room } describing the class ALREADY in that slot.
+const _CONFLICT_KINDS = {
+    room:    { label: 'Room conflict',    field: 'room',
+               why: 'This room is already in use at this time.',
+               fix: 'Choose another room, or move this slice to another day or time.' },
+    faculty: { label: 'Faculty conflict', field: 'faculty',
+               why: 'This faculty is already teaching another class at this time.',
+               fix: 'Move this slice to another day or time, or choose another faculty.' },
+    section: { label: 'Section conflict', field: 'section',
+               why: 'This section already has another class at this time.',
+               fix: 'Move this slice to another day or time.' },
+};
+// A conflict detail object that still reads as the old one-line sentence wherever it is
+// used as text (logs, string checks): String(_conflictDetail({...})).
+function _conflictDetail(d) {
+    return Object.assign({ toString() { return _conflictText(this); } }, d);
+}
+function _conflictText(d) {
+    const cls = `"${_classLabel(d.code, d.name)}"${d.section ? ` (${d.section})` : ''}`;
+    const when = `on ${d.day} — ${d.start} to ${d.end}`;
+    const mine = d.mine ? `, which overlaps this subject's ${d.mine} slice` : '';
+    if (d.kind === 'faculty')
+        return `Faculty conflict: ${d.faculty || 'This faculty'} already has ${cls} ${when}${mine}. Faculty cannot have overlapping schedules.`;
+    if (d.kind === 'section')
+        return `Section conflict: ${cls} is already scheduled ${when}${mine}. A section cannot have two classes at the same time.`;
+    return `Room conflict: ${cls} is already scheduled in ${d.room || 'this room'} ${when}${mine}.`;
+}
+function _conflictDetailHtml(d) {
+    const esc = t => String(t == null || t === '' ? '—' : t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const k = _CONFLICT_KINDS[d.kind] || { label: 'Schedule conflict', field: '', why: '', fix: '' };
+    const when = [d.day, d.start && d.end ? `${d.start} – ${d.end}` : ''].filter(Boolean).join(' · ');
+    const rows = [
+        ['Type of conflict', k.label, 'type'],
+        ['Class',            _classLabel(d.code, d.name), ''],
+        ['Time and day',     when, 'time'],
+        ['Faculty',          d.faculty || 'TBA', 'faculty'],
+        ['Section',          d.section, 'section'],
+        ['Room',             d.room || 'TBA', 'room'],
+    ];
+    if (d.mine) rows.push(["This subject's slice", d.mine, '']);
+    return `<span class="cf-why">${esc(k.why)} It clashes with:</span>` +
+        `<table class="cf-table">${rows.map(([lbl, val, key]) =>
+            `<tr class="${key === 'type' || key === k.field || key === 'time' ? 'cf-hit' : ''}">` +
+            `<th>${lbl}</th><td>${esc(val)}</td></tr>`).join('')}</table>` +
+        (k.fix ? `<span class="cf-fix"><i class="fas fa-lightbulb"></i> ${esc(k.fix)}</span>` : '');
+}
+// The open section's label (e.g. "BSND 3-1") for conflicts inside this section.
+function _currentSectionLabel() {
+    const t = (document.getElementById('bc-sect-text')?.textContent || '').trim();
+    if (t) return t;
+    const s = document.getElementById('sel_section');
+    return (s && s.selectedIndex >= 0 && s.options[s.selectedIndex]) ? s.options[s.selectedIndex].text : '';
+}
+// "BSND – BSND 3-1" style label without the surrounding brackets of _classWhere.
+function _sectionLabel(prog, sect, yl) {
+    const w = _classWhere(prog, sect).trim().replace(/^\(|\)$/g, '');
+    return w || (prog && yl ? `${prog} ${yl}` : '');
+}
+
+const _conflictResolvers = [];
 function showConflictModal(detail) {
     return new Promise(resolve => {
         const detailEl = document.getElementById('conflictModalDetail');
-        if (detail) {
+        if (detail && typeof detail === 'object') {
+            detailEl.innerHTML = _conflictDetailHtml(detail);
+            detailEl.classList.add('cf-structured');
+            detailEl.style.display = 'block';
+        } else if (detail) {
             detailEl.textContent = detail;
+            detailEl.classList.remove('cf-structured');
             detailEl.style.display = 'block';
         } else {
             detailEl.style.display = 'none';
         }
         document.getElementById('conflictModal').classList.add('active');
-        window._conflictResolve = resolve;
+        // Same as showValidationModal: a second conflict on top must not strand the first caller.
+        _conflictResolvers.push(resolve);
     });
 }
 
 function closeConflictModal() {
     document.getElementById('conflictModal').classList.remove('active');
-    if (window._conflictResolve) { window._conflictResolve(); window._conflictResolve = null; }
+    _conflictResolvers.splice(0).forEach(r => r());
 }
 
 

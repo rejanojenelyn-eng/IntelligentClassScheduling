@@ -124,12 +124,12 @@ def test_email_empty_continue_stays_and_skip_proceeds(env):
 
 def test_email_continue_requires_a_verified_address(env):
     # Continue never saves a typed address: only the emailed-code check does that.
-    before = env.q("SELECT f.email FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+    before = env.q("SELECT a.email FROM accounts a "
                    "WHERE a.username = %s", (env.username,))[0][0]
     r = env.client.post('/account-setup/email', data={'action': 'continue', 'email': 'not.verified@example.com'},
                         follow_redirects=True)
     assert b'Please verify this email address with the code we send, or choose Skip.' in r.data
-    after = env.q("SELECT f.email FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+    after = env.q("SELECT a.email FROM accounts a "
                   "WHERE a.username = %s", (env.username,))[0][0]
     assert after == before
     if before:   # the address already on file counts as verified
@@ -163,8 +163,7 @@ def test_contact_empty_continue_stays_and_skip_proceeds(env):
 # ---- Review step -----------------------------------------------------------------
 
 def test_review_shows_not_provided_for_skipped_fields(env):
-    env.q("UPDATE faculty SET contactnumber = NULL WHERE employeenumber = "
-          "(SELECT employeenumber FROM accounts WHERE username = %s) RETURNING 1", (env.username,))
+    env.q("UPDATE accounts SET contactnumber = NULL WHERE username = %s RETURNING 1", (env.username,))
     env.q("UPDATE accounts SET profile_photo = NULL WHERE username = %s RETURNING 1", (env.username,))
     r = env.client.get('/account-setup/verify')
     assert r.status_code == 200
@@ -238,9 +237,9 @@ def test_contact_requires_a_valid_ph_mobile_number(env):
     r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 912 345 6789'})
     assert r.headers['Location'].endswith('/account-setup/verify')
     def saved():
-        return env.q("SELECT f.contactnumber FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber "
+        return env.q("SELECT a.contactnumber FROM accounts a "
                      "WHERE a.username = %s", (env.username,))[0][0]
-    assert saved() == '09123456789'          # same local form as existing records; fits varchar(15)
+    assert saved() == '09123456789'          # same local form as existing records
     r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+65 6123 4567'})
     assert r.headers['Location'].endswith('/account-setup/verify')
     assert saved() == '+6561234567'

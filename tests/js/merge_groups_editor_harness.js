@@ -356,7 +356,7 @@ const SCENARIOS = {
             env.getEl(`ts-row-${r1}`).dataset.mergeEvent = '1:11';
             env.routes.unshift(['/api/manual/faculty_schedule', [{ subjectcode: 'NSTP 001', subjectname: 'NSTP',
                 daydesc: 'Sunday', starttimeid: 4, endtimeid: 10, section_id: 10, sectionname: 'BSCS 1-A', merge_event: ev }]]);
-            out[name] = await g(env, '_findFacultySliceConflict')('F2', 'Santos, Ana');
+            out[name] = String(await g(env, '_findFacultySliceConflict')('F2', 'Santos, Ana'));
         }
         // P7: the same subject taught by this faculty in another section at exactly this
         // slice's day/time/room is a merge, not a conflict; anywhere else it still is.
@@ -366,7 +366,7 @@ const SCENARIOS = {
             env.routes.unshift(['/api/manual/faculty_schedule', [{ subjectcode: 'NSTP 001', subjectname: 'NSTP',
                 daydesc: 'Sunday', starttimeid: st, endtimeid: 10, section_id: 10, sectionname: 'BSCS 1-A',
                 roomid: room, employee_number: 'F1', merge_event: null }]]);
-            out[name] = await g(env, '_findFacultySliceConflict')('F1', 'Dela Cruz, Juan');
+            out[name] = String(await g(env, '_findFacultySliceConflict')('F1', 'Dela Cruz, Juan'));
         }
         return out;
     },

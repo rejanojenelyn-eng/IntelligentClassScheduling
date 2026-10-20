@@ -594,6 +594,42 @@ def align_user_locked_sessions(locked_sessions, subjects) -> dict:
     return out
 
 
+def schedule_pin(lock_entry):
+    """
+    Separate Day / Time locks (Generate Schedule page): lock['day'] keeps the
+    meeting days, lock['time'] keeps the start/end time, while the other half
+    stays free for the solver. Returns (days, (start, end)) — each None when
+    that half is not pinned. Both None when the WHOLE slot is locked
+    (lock['schedule'], handled by the existing full-slot paths) or nothing is.
+    A flag without a real value pins nothing (same completeness guard as the
+    full-slot lock).
+    """
+    if not lock_entry:
+        return None, None
+    flags = lock_entry.get('lock') or {}
+    if flags.get('schedule'):
+        return None, None
+    days = None
+    if flags.get('day'):
+        days = list(lock_entry.get('days_list')
+                    or ([lock_entry['day']] if lock_entry.get('day') else [])) or None
+    time_ = None
+    if (flags.get('time') and lock_entry.get('start_time') is not None
+            and lock_entry.get('end_time') is not None):
+        time_ = (lock_entry['start_time'], lock_entry['end_time'])
+    return days, time_
+
+
+def fits_schedule_pin(pin, days, start, end) -> bool:
+    """True when (days, start, end) keeps whatever half of the slot `pin` holds."""
+    pin_days, pin_time = pin or (None, None)
+    if pin_days is not None and sorted(days or []) != sorted(pin_days):
+        return False
+    if pin_time is not None and (start, end) != pin_time:
+        return False
+    return True
+
+
 # Formal, human-readable label per hard-constraint rule code — shown as the "type" of a
 # conflict/violation everywhere one gets displayed (Manual Editor, Save as Draft, Approve,
 # Schedule Generation), so a person sees e.g. "Conflict: Faculty Schedule" above the plain-
@@ -4391,6 +4427,15 @@ class IntelligentScheduler:
                     valid_rooms = [_locked_room_obj]
                 if _schedule_locked:
                     valid_blks = [(_part_lock['start_time'], _part_lock['end_time'])]
+                # Separate Day / Time lock: keep that half, search the other.
+                _pin_days, _pin_time = schedule_pin(_part_lock)
+                if _pin_time is not None:
+                    valid_blks = [_pin_time]
+                elif _pin_days is not None:
+                    # Days kept, time free: only blocks that meet exactly that many days.
+                    valid_blks = [(s, e) for (s, e) in valid_blks
+                                  if (self._meetings_needed(target_hrs, duration_hours(s, e)) or 1)
+                                  == len(_pin_days)] or valid_blks
 
                 # Room preference from preference map (re-checked per part type)
                 pref_room_id = pref.get('room_id')
@@ -4431,6 +4476,8 @@ class IntelligentScheduler:
                     """
                     if _schedule_locked:
                         return [list(_locked_days)]
+                    if _pin_days is not None:
+                        return [list(_pin_days)]
                     _dur = duration_hours(_s, _e)
                     if is_nstp_ou and self._nstp_force_sunday:
                         return [['Sunday']]
@@ -4646,7 +4693,24 @@ class IntelligentScheduler:
                     gene['day']  = _lock_days[0]
                     gene['time'] = lock.get('time', gene.get('time', ''))
                     gene['days'] = lock.get('days', gene.get('days', ''))
+            self._apply_schedule_pin(gene, schedule_pin(lock))
             gene['_lock'] = lock
+
+    @staticmethod
+    def _apply_schedule_pin(gene: dict, pin):
+        """Force the half of the slot a separate Day / Time lock keeps (see schedule_pin)."""
+        pin_days, pin_time = pin or (None, None)
+        if pin_days is not None:
+            gene['days_list'] = list(pin_days)
+            gene['day']  = pin_days[0]
+            gene['days'] = '/'.join(d[:3].upper() for d in pin_days)
+        if pin_time is not None:
+            gene['start_time'], gene['end_time'] = pin_time
+            gene['time'] = f"{format_time_12h(pin_time[0])} – {format_time_12h(pin_time[1])}"
+        if (pin_days is not None or pin_time is not None) and gene.get('start_time') is not None \
+                and gene.get('end_time') is not None and gene.get('days_list'):
+            gene['duration_hrs'] = round(
+                duration_hours(gene['start_time'], gene['end_time']) * len(gene['days_list']), 2)
 
     @staticmethod
     def _user_lock_flags(gene: dict, locked_parts: dict) -> dict:
@@ -4690,6 +4754,8 @@ class IntelligentScheduler:
                         and gene.get('end_time') is not None and gene.get('days_list'):
                     gene['duration_hrs'] = round(
                         duration_hours(gene['start_time'], gene['end_time']) * len(gene['days_list']), 2)
+            # Separate Day / Time lock: that half leaves the solver exactly as it came in.
+            self._apply_schedule_pin(gene, schedule_pin(lock))
 
     # ── Overlap repair ───────────────────────────────────────────
 
@@ -4832,6 +4898,15 @@ class IntelligentScheduler:
                 # the rest only if no paired slot is free (HC7 then flags it).
                 ordered = ([t for t in ordered if self._subject_pair_ok(individual, gene_idx, t[0])]
                            + [t for t in ordered if not self._subject_pair_ok(individual, gene_idx, t[0])])
+                # Separate Day / Time lock: only move the half that is free.
+                _pin = schedule_pin(_lock)
+                if _pin != (None, None):
+                    ordered = [t for t in ordered if fits_schedule_pin(_pin, *t)]
+                    if _pin[0] is not None and _pin[1] is None:
+                        # Days kept, time free: the pinned days with any block meeting that often.
+                        ordered += [(list(_pin[0]), s, e) for (s, e) in cands
+                                    if (self._meetings_needed(target, duration_hours(s, e)) or 1) == len(_pin[0])
+                                    and (list(_pin[0]), s, e) not in ordered]
 
                 for new_days, new_s, new_e in ordered:
                     if _slot_free(gene_idx, gene, new_s, new_e, new_days):
@@ -5089,6 +5164,13 @@ class IntelligentScheduler:
                 alt_rooms = [r for r in rooms if (not rtype or r.get('roomtype') == rtype)] or list(rooms)
                 # Days keeping the subject's Lecture + Lab on a valid pair first (HC7).
                 _triples = _slot_triples_for(cls)
+                _pin = schedule_pin(_lock)   # separate Day / Time lock: keep that half
+                if _pin[1] is not None:
+                    _triples = [t for t in _triples if fits_schedule_pin(_pin, *t)] \
+                        or ([(list(_pin[0] or days), _pin[1][0], _pin[1][1])])
+                elif _pin[0] is not None:
+                    _triples = [(list(_pin[0]), s, e) for (_d, s, e) in _triples
+                                if len(_d) == len(_pin[0])]
                 _triples = ([t for t in _triples if self._subject_pair_ok(individual, cls_idx, t[0])]
                             + [t for t in _triples if not self._subject_pair_ok(individual, cls_idx, t[0])])
                 for new_days, new_s, new_e in _triples:
@@ -5324,18 +5406,24 @@ class IntelligentScheduler:
                 fac = faculty_map.get(fid, {}) if fid else {}
                 allowed_blks = (self._get_allowed_blocks_for_faculty(fac, blks)
                                 if fac else [(s, e, 'regular') for (s, e) in blks])
+                # Separate Day / Time lock: keep that half, fill only the other.
+                _pin_days, _pin_time = schedule_pin((locked_parts or {}).get(
+                    (gene.get('subject_code'), gene.get('class_type'), gene.get('course'))))
+                if _pin_time is not None:
+                    allowed_blks = [(_pin_time[0], _pin_time[1], 'regular')]
+                day_sets = [list(_pin_days)] if _pin_days is not None else [[d] for d in day_pool]
                 for (s, e, _k) in allowed_blks:
                     if gene.get('start_time') is not None:
                         break
-                    for d in day_pool:
-                        if _free(fid, rid, [d], s, e, gene):
+                    for ds in day_sets:
+                        if _free(fid, rid, ds, s, e, gene):
                             gene['start_time'] = s
                             gene['end_time']   = e
-                            gene['days_list']  = [d]
-                            gene['day']        = d
+                            gene['days_list']  = list(ds)
+                            gene['day']        = ds[0]
                             gene['time']  = f"{format_time_12h(s)} – {format_time_12h(e)}"
-                            gene['days']  = d[:3].upper()
-                            gene['duration_hrs'] = round(duration_hours(s, e), 2)
+                            gene['days']  = '/'.join(d[:3].upper() for d in ds)
+                            gene['duration_hrs'] = round(duration_hours(s, e) * len(ds), 2)
                             break
 
             days = gene.get('days_list') or ([gene['day']] if gene.get('day') else [])
@@ -5357,8 +5445,9 @@ class IntelligentScheduler:
                 # where the section, its instructor and such a room are all free, instead
                 # of leaving "Room is TBA" while other times work (a user-locked time or a
                 # merge-group meeting is never moved).
+                _ulf = self._user_lock_flags(gene, locked_parts)
                 if (not gene.get('room_id') and not gene.get('_group_set')
-                        and not self._user_lock_flags(gene, locked_parts).get('schedule')):
+                        and not (_ulf.get('schedule') or _ulf.get('day') or _ulf.get('time'))):
                     self._relocate_for_room(gene, individual, pool, days, s, e, faculty_map, _free)
 
             if 'faculty' in missing and days and s is not None and e is not None:
@@ -5721,8 +5810,18 @@ class IntelligentScheduler:
             _mut_choices.append('faculty')
         if not _flags.get('room'):
             _mut_choices.append('room')
+        # Separate Day / Time lock: only the free half may mutate.
+        _pin_days, _pin_time = schedule_pin(_lock)
         if not _flags.get('schedule'):
-            _mut_choices += ['time', 'day']
+            if _pin_time is None:
+                _mut_choices.append('time')
+            if _pin_days is None:
+                _mut_choices.append('day')
+        if _pin_days is not None:
+            # Days kept: a new time must still meet exactly that many days.
+            valid_blks = [(s, e) for (s, e) in valid_blks
+                          if (self._meetings_needed(target_hrs, duration_hours(s, e)) or 1)
+                          == len(_pin_days)] or valid_blks
         if not _mut_choices:
             return child   # every axis of this gene is locked — nothing safe to mutate
         mutation_type = random.choice(_mut_choices)
@@ -5814,7 +5913,7 @@ class IntelligentScheduler:
             # Day Pairing is on: days = required hours / block length. (Syncing only when
             # pairing was on let a paired lecture keep both days on a full-length block —
             # e.g. a 3-hour lecture scheduled 3h x 2 days = 6h.)
-            if not (is_nstp_ou and self._nstp_force_sunday):
+            if not (is_nstp_ou and self._nstp_force_sunday) and _pin_days is None:
                 _mut_avail = (
                     [d for d in ALL_DAYS if d not in self._weekend_day_scope]
                     if self._nstp_force_sunday
@@ -6680,7 +6779,9 @@ class IntelligentScheduler:
                         _days = gene.get('days_list') or ([gene['day']] if gene.get('day') else [])
                         if self._relocate_for_room(gene, best_schedule_global, _lab_pool, _days,
                                                    gene.get('start_time'), gene.get('end_time'),
-                                                   faculty_map, _free13, only_current=bool(_ul.get('schedule'))):
+                                                   faculty_map, _free13,
+                                                   only_current=bool(_ul.get('schedule') or _ul.get('day')
+                                                                     or _ul.get('time'))):
                             _moved = True
                             break
                 if _moved:
@@ -6836,7 +6937,8 @@ class IntelligentScheduler:
             # so it can never create a conflict. A schedule the USER locked is left
             # exactly as chosen.
             for _g in best_schedule_global:
-                if self._user_lock_flags(_g, locked_parts).get('schedule'):
+                _gf = self._user_lock_flags(_g, locked_parts)
+                if _gf.get('schedule') or _gf.get('day'):
                     continue
                 _st, _et = _g.get('start_time'), _g.get('end_time')
                 _days = list(_g.get('days_list') or [])

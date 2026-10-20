@@ -8,8 +8,7 @@ Flow (keyed to the logged-in session's username — never to form input):
                       code plus the address it was sent to, and emails it
   2. confirm()      — the code must match AND the address must be the one it
                       was sent to; max MAX_ATTEMPTS wrong tries, single use.
-                      Then faculty.email (or accounts.email for standalone
-                      accounts such as the system Admin) is updated.
+                      Then accounts.email is updated.
 
 
 Proving the user can read the new inbox matters because that address is
@@ -62,15 +61,13 @@ class EmailChangeError(Exception):
 def _load_account(cur, username, lock=False):
     cur.execute(f"""
         SELECT a.userid, a.employeenumber,
-               NULLIF(TRIM(CASE WHEN a.employeenumber IS NULL THEN a.email
-                                ELSE f.email END), '')        AS email,
+               NULLIF(TRIM(a.email), '')                     AS email,
                a.email_otp_hash, a.email_otp_new, a.email_otp_attempts,
                (a.email_otp_expires_at IS NOT NULL AND NOW() > a.email_otp_expires_at) AS code_expired,
                GREATEST(0, CEIL(EXTRACT(EPOCH FROM
                    (a.email_otp_sent_at + INTERVAL '{RESEND_COOLDOWN_SEC} seconds' - NOW()))))::int
                    AS resend_wait
         FROM accounts a
-        LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
         WHERE a.username = %s
         {'FOR UPDATE OF a' if lock else ''}
     """, [username])
@@ -88,15 +85,11 @@ def _clean_new_email(cur, acc, new_email):
         raise EmailChangeError(400, 'invalid_email', 'Please enter a valid email address.')
     if acc['email'] and acc['email'].lower() == new_email.lower():
         raise EmailChangeError(400, 'same_email', 'That is already your current email address.')
-    # faculty.email is UNIQUE; standalone accounts.email must not collide with anyone either.
+    # accounts.email is unique across every account (ux_accounts_email_normalized).
     cur.execute("""
-        SELECT 1 FROM faculty  WHERE LOWER(TRIM(email)) = LOWER(%s)
-                                 AND employeenumber IS DISTINCT FROM %s
-        UNION ALL
-        SELECT 1 FROM accounts WHERE LOWER(TRIM(email)) = LOWER(%s) AND employeenumber IS NULL
-                                 AND userid <> %s
+        SELECT 1 FROM accounts WHERE LOWER(TRIM(email)) = LOWER(%s) AND userid <> %s
         LIMIT 1
-    """, [new_email, acc['employeenumber'], new_email, acc['userid']])
+    """, [new_email, acc['userid']])
     if cur.fetchone():
         raise EmailChangeError(409, 'email_taken', 'That email address is already used by another account.')
     return new_email
@@ -192,12 +185,7 @@ def confirm(conn, username, new_email, code):
         saved = acc['email_otp_new']
         # Re-check: someone else may have taken the address since the code was sent.
         _clean_new_email(cur, acc, saved)
-        if acc['employeenumber']:
-            cur.execute("UPDATE faculty SET email = %s WHERE employeenumber = %s", [saved, acc['employeenumber']])
-        else:
-            # Standalone accounts (the system Admin) keep their email on accounts.
-            cur.execute("UPDATE accounts SET email = %s WHERE userid = %s AND employeenumber IS NULL",
-                        [saved, acc['userid']])
+        cur.execute("UPDATE accounts SET email = %s WHERE userid = %s", [saved, acc['userid']])
         cur.execute("""UPDATE accounts SET email_otp_hash = NULL, email_otp_new = NULL,
                        email_otp_expires_at = NULL, email_otp_attempts = 0 WHERE userid = %s""",
                     [acc['userid']])

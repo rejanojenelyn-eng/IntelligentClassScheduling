@@ -172,8 +172,8 @@ def test_ui_review_leaves_the_working_tools_available(ui):
 
 
 def test_ui_5_select_incomplete_selects_exactly_the_affected_rows_all_unlocked(ui):
-    assert ui['selectIncomplete'] == {'ACCO 305': {'faculty': 'is-unlocked', 'schedule': 'is-unlocked',
-                                                   'room': 'is-unlocked', 'icons': 3}}
+    assert ui['selectIncomplete'] == {'ACCO 305': {'faculty': 'is-unlocked', 'day': 'is-unlocked', 'time': 'is-unlocked',
+                                                   'room': 'is-unlocked', 'icons': 4}}
 
 
 def test_ui_6_7_8_regeneration_fixes_counts_and_enables_approval_only_when_both_zero(ui):

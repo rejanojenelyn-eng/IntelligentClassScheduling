@@ -80,8 +80,7 @@ class PasswordChangeError(Exception):
 # ─────────────────────────────────────────────────────────────
 ENSURE_SCHEMA_SQL = [
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP NULL",
-    # Contact email for standalone accounts that have no faculty record (the
-    # system Admin). Faculty-linked accounts keep using faculty.email.
+    # The account's email (every role keeps it here; faculty no longer has one).
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email              VARCHAR(255) NULL",
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS pw_otp_hash        VARCHAR(255) NULL",
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS pw_otp_expires_at  TIMESTAMP NULL",
@@ -114,15 +113,12 @@ def _fmt_date(d):
 
 def _load_account(cur, username, lock=False):
     """The account row plus its eligibility, computed by the DB. The email is
-    the linked faculty record's (faculty.email) for Faculty / Academic Head
-    accounts, and the account's own accounts.email for standalone accounts
-    with no faculty record (the system Admin)."""
+    the account's own accounts.email for every role."""
     cur.execute(f"""
         SELECT a.userid, a.username, a.passwordhash, a.password_changed_at,
                a.pw_otp_hash, a.pw_otp_attempts,
                a.pw_otp_expires_at, a.pw_otp_sent_at, a.pw_otp_verified_at,
-               NULLIF(TRIM(CASE WHEN a.employeenumber IS NULL THEN a.email
-                                ELSE f.email END), '')        AS email,
+               NULLIF(TRIM(a.email), '')                     AS email,
                a.password_changed_at + INTERVAL '1 month'   AS next_allowed_at,
                (a.password_changed_at IS NULL
                 OR NOW() >= a.password_changed_at + INTERVAL '1 month') AS eligible,
@@ -134,7 +130,6 @@ def _load_account(cur, username, lock=False):
                 AND NOW() <= a.pw_otp_verified_at + INTERVAL '{VERIFIED_TTL_MINUTES} minutes')
                    AS verified_valid
         FROM accounts a
-        LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
         WHERE a.username = %s
         {'FOR UPDATE OF a' if lock else ''}
     """, [username])

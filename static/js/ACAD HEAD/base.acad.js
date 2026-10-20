@@ -30,13 +30,31 @@ function toggleDropdown(event, menuId, arrowId) {
 }
 function toggleSubMenu(event, menuId, arrowId) { toggleDropdown(event, menuId, arrowId); }
 
+// Pages with unsaved work register window.pageHasUnsavedWork = () => bool (Generate
+// Schedule, Manual Editor). The Logout modal then says so itself, and confirming it sets
+// window.isLeavingIntentionally so the page's beforeunload guard does not ALSO pop the
+// browser's own "Leave site?" dialog on top of it.
 function openLogoutModal(e) {
     if (e) e.preventDefault();
-    document.getElementById("logoutModal").style.display = "flex";
+    const modal = document.getElementById("logoutModal");
+    const unsaved = typeof window.pageHasUnsavedWork === 'function' && window.pageHasUnsavedWork();
+    const title = modal.querySelector('.modal-body-logout h2');
+    const text  = modal.querySelector('.modal-body-logout p');
+    const btn   = modal.querySelector('.btn-confirm-logout');
+    if (title) title.textContent = unsaved ? 'Log out without saving?' : 'Confirm Logout';
+    if (text)  text.textContent  = unsaved
+        ? 'You have unsaved changes on this page. If you log out now, they will be lost.'
+        : 'Are you sure you want to log out of the PUPLC System?';
+    if (btn)   btn.textContent   = unsaved ? 'Log out anyway' : 'Logout';
+    modal.classList.toggle('logout-unsaved', !!unsaved);
+    modal.style.display = "flex";
     closeUpDropdown();
 }
 function closeLogoutModal() { document.getElementById("logoutModal").style.display = "none"; }
-function proceedLogout()    { window.location.href = "/logout"; }
+function proceedLogout() {
+    window.isLeavingIntentionally = true;   // already confirmed here — no second browser dialog
+    window.location.href = "/logout";
+}
 
 window.onclick = function(event) {
     const modal = document.getElementById("logoutModal");

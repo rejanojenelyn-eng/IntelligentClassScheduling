@@ -29,7 +29,7 @@ L, U = 'is-locked', 'is-unlocked'
 
 
 def _locks(faculty, schedule, room):
-    return {'faculty': faculty, 'schedule': schedule, 'room': room, 'icons': 3}
+    return {'faculty': faculty, 'day': schedule, 'time': schedule, 'room': room, 'icons': 4}
 
 
 def _run(response, tmp_path):
@@ -91,7 +91,7 @@ def test_select_conflict_rows_opens_conflict_and_incomplete_components(beed4):
     # whose old Official clash was displaced by Published Local must not be selected.
     for code in ('EDUC 021', 'EDUC 022', 'EDUC 023'):
         if code in targeted:
-            assert s[code]['icons'] == 3
+            assert s[code]['icons'] == 4
         else:
             assert s[code]['icons'] == 0
 
@@ -152,13 +152,17 @@ def _conflict(code, affected, resolution=()):
             'targets': [{'subject_code': code, 'faculty_id': None}]}
 
 
-@pytest.mark.parametrize('affected', [['day'], ['time'], ['day', 'time'], ['days'], ['time_days'],
-                                      ['day_time'], ['time_day'], ['DAY', 'Time']])
-def test_day_and_or_time_conflict_opens_the_single_time_days_lock(tmp_path, affected):
+@pytest.mark.parametrize('affected, day, time_', [
+    (['day'], U, L), (['days'], U, L), (['time'], L, U),
+    (['day', 'time'], U, U), (['time_days'], U, U), (['day_time'], U, U), (['time_day'], U, U),
+    (['DAY', 'Time'], U, U)])
+def test_day_and_or_time_conflict_opens_its_own_lock(tmp_path, affected, day, time_):
+    # Days and Time lock separately: a day conflict opens Days, a time conflict
+    # opens Time, a whole-slot conflict opens both; the rest stays auto-kept.
     rows = [_row('A'), _row('B', time='1:00 PM - 4:00 PM')]
     r = _run(_response(rows, conflicts=[_conflict('A', affected)]), tmp_path)
     for path in ('manual', 'selectConflictRows', 'selectAll'):
-        assert r[path]['A'] == _locks(L, U, L), path   # one Time/Days lock, unlocked; rest auto-kept
+        assert r[path]['A'] == {'faculty': L, 'day': day, 'time': time_, 'room': L, 'icons': 4}, path
     assert r['manual']['B'] == _locks(U, U, U)         # no problem: whole row regenerable
 
 
@@ -191,7 +195,7 @@ def test_select_conflict_rows_and_select_incomplete_agree_on_a_row_with_both(tmp
 
 # ── Automatic selection of incomplete rows on display ───────────────────────
 
-_NO = {'faculty': None, 'schedule': None, 'room': None, 'icons': 0}
+_NO = {'faculty': None, 'day': None, 'time': None, 'room': None, 'icons': 0}
 
 
 @requires_db

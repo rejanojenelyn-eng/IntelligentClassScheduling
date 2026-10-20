@@ -917,6 +917,8 @@
     justify-content: space-between;
     gap: 6px;
 }
+/* Days keep their centered look; the Days lock sits right beside them. */
+.offerings-list-table td.td-days .cell-with-preserve { justify-content: center; }
 /* Per-field regeneration lock (checked rows only): small icon, no text label.
    Closed lock = keep this value (maroon); open lock = may regenerate (green). */
 .offerings-list-table tr.row-selected td { background: #fdf3f3; }

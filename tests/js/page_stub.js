@@ -74,7 +74,7 @@ function loadPage() {
     function lockState(code) {
         const html = rowHtml(code);
         const out = {};
-        for (const f of ['faculty', 'schedule', 'room']) {
+        for (const f of ['faculty', 'day', 'time', 'room']) {
             const m = html.match(new RegExp(`class="regen-lock (is-locked|is-unlocked)"[^>]*data-field="${f}"`));
             out[f] = m ? m[1] : null;
         }

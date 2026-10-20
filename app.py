@@ -32,19 +32,34 @@ import threading
 
 def _friendly_faculty_db_error(e):
     """Map a raw Faculty INSERT/UPDATE failure to a message safe to show a
-    user — never the raw Postgres exception text. faculty has exactly two
-    uniqueness constraints that can fire here — verified directly against
-    the live database (pg_constraint), since the live schema's actual
-    constraint names (pk_faculty / uq_faculty_email) differ from the
-    faculty_pkey / faculty_email_key names in the checked-in schema.sql."""
+    user — never the raw Postgres exception text. The faculty number is unique
+    on faculty (pk_faculty, faculty_pkey in the checked-in schema.sql); email
+    and contact number are unique on accounts, where they are kept."""
     if isinstance(e, psycopg2.errors.UniqueViolation):
         constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
         if constraint in ('pk_faculty', 'faculty_pkey'):
             return "This Faculty Number is already registered. Please use a different faculty number."
-        if constraint in ('uq_faculty_email', 'faculty_email_key'):
+        if constraint in ('ux_accounts_email_normalized', 'uq_faculty_email', 'faculty_email_key'):
             return "This email address is already registered. Please use a different email address."
+        if constraint == 'ux_accounts_contactnumber_normalized':
+            return "This contact number is already registered. Please use a different contact number."
         return "Unable to save faculty. This record conflicts with an existing one."
     return "Unable to save faculty. Please check the information and try again."
+
+def _save_faculty_contact(cur, emp_num, email, contact, role='Faculty'):
+    """A faculty member's email and contact number live on their account
+    (accounts.email / accounts.contactnumber), not on faculty. When the faculty
+    member has no account yet, one is created the way Add Employee creates it
+    (username and first password = employee number)."""
+    cur.execute("UPDATE Accounts SET Email = %s, ContactNumber = %s WHERE EmployeeNumber = %s",
+                (email or None, contact or None, emp_num))
+    if cur.rowcount == 0:
+        cur.execute("""
+            INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber, Email, ContactNumber,
+                                  must_change_password, account_setup_complete)
+            VALUES (%s, %s, %s, TRUE, %s, %s, %s, TRUE, FALSE)
+            ON CONFLICT (Username) DO NOTHING
+        """, (emp_num, generate_password_hash(emp_num), role, emp_num, email or None, contact or None))
 
 _SCHEMA_LOCK = threading.RLock()
 
@@ -634,9 +649,13 @@ def _expire_stale_session():
     # Opening a page (landing, dashboard, any URL) while none of this login's pages is
     # open means the tabs/browser were closed — strict, no grace. In-app navigation is
     # unaffected: the browser requests the next page BEFORE the current one reports
-    # itself closed. Background API calls keep the short grace, since a freshly loaded
-    # page can fire them a moment before it registers.
-    _page_request = not request.path.startswith('/api/')
+    # itself closed. Background calls keep the short grace, since a freshly loaded
+    # page can fire them a moment before it registers. "Page" = a real document
+    # navigation (Sec-Fetch-Mode), not the URL: a page's own load-time fetch of a
+    # non-/api/ URL (e.g. Program Management's /admin/settings/hard_constraints after
+    # Add Section's redirect) used to race its heartbeat and log the user out.
+    _fetch_mode = request.headers.get('Sec-Fetch-Mode')
+    _page_request = (_fetch_mode == 'navigate') if _fetch_mode else not request.path.startswith('/api/')
     if (last_seen is None
             or now - last_seen   > SESSION_CLOSED_LIMIT.total_seconds()
             or now - last_active > SESSION_IDLE_LIMIT.total_seconds()
@@ -1586,8 +1605,8 @@ def _setup_guard():
 def _setup_account():
     return query_db("""
         SELECT a.username, a.employeenumber, a.profile_photo, a.email AS account_email,
-               f.email AS faculty_email, f.contactnumber
-        FROM accounts a LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+               a.contactnumber
+        FROM accounts a
         WHERE a.username = %s
     """, (session.get('username'),), one=True) or {}
 
@@ -1597,7 +1616,7 @@ def account_setup_email():
     if guard:
         return guard
     acc = _setup_account()
-    on_file = (acc.get('faculty_email') if acc.get('employeenumber') else acc.get('account_email')) or ''
+    on_file = acc.get('account_email') or ''
 
 
     if request.method == 'POST':
@@ -1669,7 +1688,7 @@ def account_setup_contact():
         return guard
     acc = _setup_account()
     if not acc.get('employeenumber'):
-        # Standalone account (no faculty record): there is nowhere to keep a contact number.
+        # Standalone account (no faculty record, e.g. the system Admin) skips this step.
         if request.method == 'POST' and request.form.get('action') == 'back':
             return redirect(url_for('account_setup_email'))
         return redirect(url_for('account_setup_verify'))
@@ -1700,7 +1719,7 @@ def account_setup_contact():
             flash("Please enter a valid Philippine mobile number (e.g. 912 345 6789), or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
         draft_value = contact
-        # Stored compactly to fit faculty.contactnumber (varchar 15): a PH mobile in the
+        # Stored compactly, at most 15 characters: a PH mobile in the
         # local form every existing record uses (09XXXXXXXXX), any other number as +<digits>.
         if contact.startswith('+63'):
             contact = '0' + digits[2:]
@@ -1712,9 +1731,14 @@ def account_setup_contact():
             return redirect(_setup_url('account_setup_contact'))
         conn = get_db_connection(); cur = conn.cursor()
         try:
-            cur.execute("UPDATE faculty SET contactnumber = %s WHERE employeenumber = %s",
-                        (contact, acc['employeenumber']))
+            cur.execute("UPDATE accounts SET contactnumber = %s WHERE username = %s",
+                        (contact, session.get('username')))
             conn.commit()
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            _setup_set_draft(contact=draft_value)
+            flash("That contact number is already used by another account. Please enter a different one, or choose Skip.", "error")
+            return redirect(_setup_url('account_setup_contact'))
         except Exception as e:
             conn.rollback()
             _setup_set_draft(contact=contact)
@@ -1799,7 +1823,7 @@ def account_setup_verify():
     username = session.get('username')
     info = query_db("""
         SELECT f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
-               f.email, f.contactnumber, d.designationname, s.specializationname
+               a.email, a.contactnumber, d.designationname, s.specializationname
         FROM accounts a
         LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
         LEFT JOIN designation d ON f.designationid = d.designationid
@@ -1911,7 +1935,7 @@ def account_setup_done():
     if not session.pop('setup_just_completed', False):
         return redirect(dashboard)
     acc = _setup_account()
-    email = (acc.get('faculty_email') if acc.get('employeenumber') else acc.get('account_email')) or ''
+    email = acc.get('account_email') or ''
     return render_template('setup/setup_done.html', has_email=bool(email.strip()),
                            dashboard_url=dashboard, **_setup_ctx('verify'))
 
@@ -3673,10 +3697,11 @@ def employee():
 
         cur.execute("""
             SELECT
-                f.EmployeeNumber, f.FirstName, f.MiddleName, f.LastName, f.Email,
-                f.ContactNumber, f.EmployeeStatus, f.SpecializationID, f.EmployeeTypeID, f.DesignationID,
+                f.EmployeeNumber, f.FirstName, f.MiddleName, f.LastName, a.Email,
+                a.ContactNumber, f.EmployeeStatus, f.SpecializationID, f.EmployeeTypeID, f.DesignationID,
                 s.SpecializationName, et.TypeName, d.DesignationName
             FROM Faculty f
+            LEFT JOIN Accounts a ON a.EmployeeNumber = f.EmployeeNumber
             LEFT JOIN Specialization s ON f.SpecializationID = s.SpecializationID
             LEFT JOIN EmployeeType et ON f.EmployeeTypeID = et.EmployeeTypeID
             LEFT JOIN Designation d ON f.DesignationID = d.DesignationID
@@ -3755,7 +3780,8 @@ def add_employee():
         conn = get_db_connection()
         cur = conn.cursor()
         try:
-            cur.execute("INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+            cur.execute("INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (emp_num, f_name, m_name, l_name, spec_id, type_id, desig_id, status))
+            _save_faculty_contact(cur, emp_num, email, contact)
             conn.commit()
             flash("Employee added successfully!", "success")
         except Exception as e:
@@ -3787,10 +3813,11 @@ def edit_employee():
         try:
             cur.execute("""
                 UPDATE Faculty 
-                SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s, 
+                SET FirstName=%s, MiddleName=%s, LastName=%s, 
                     SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s 
                 WHERE EmployeeNumber=%s
-            """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+            """, (f_name, m_name, l_name, spec_id, type_id, desig_id, status, emp_num))
+            _save_faculty_contact(cur, emp_num, email, contact)
             conn.commit()
             flash("Employee details updated successfully!", "success")
         except Exception as e:
@@ -3856,8 +3883,10 @@ def _do_archive_employees(cur, emp_ids):
     placeholders = ', '.join(['%s'] * len(emp_ids))
     cur.execute(f"""
         INSERT INTO Faculty_Archive (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-        SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
-        FROM Faculty WHERE EmployeeNumber IN ({placeholders})
+        SELECT f.EmployeeNumber, f.FirstName, f.MiddleName, f.LastName, a.Email, a.ContactNumber,
+               f.SpecializationID, f.EmployeeTypeID, f.DesignationID, f.EmployeeStatus
+        FROM Faculty f LEFT JOIN Accounts a ON a.EmployeeNumber = f.EmployeeNumber
+        WHERE f.EmployeeNumber IN ({placeholders})
     """, tuple(emp_ids))
     cur.execute(f"UPDATE Accounts SET IsActive = FALSE, EmployeeNumber = NULL WHERE EmployeeNumber IN ({placeholders})", tuple(emp_ids))
     cur.execute(f"DELETE FROM Faculty WHERE EmployeeNumber IN ({placeholders})", tuple(emp_ids))
@@ -3887,8 +3916,9 @@ def api_add_employee():
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (emp_num, f_name, m_name, l_name, spec_id, type_id, desig_id, status))
+        _save_faculty_contact(cur, emp_num, email, contact)
         conn.commit()
         flash("Employee added successfully!", "success")
         return jsonify({'success': True})
@@ -3924,13 +3954,14 @@ def api_edit_employee():
     try:
         cur.execute("""
             UPDATE Faculty
-            SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s,
+            SET FirstName=%s, MiddleName=%s, LastName=%s,
                 SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
             WHERE EmployeeNumber=%s
-        """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+        """, (f_name, m_name, l_name, spec_id, type_id, desig_id, status, emp_num))
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({'success': False, 'error': f'Faculty {emp_num} was not found. It may have been archived or removed.'}), 404
+        _save_faculty_contact(cur, emp_num, email, contact)
         conn.commit()
         flash("Employee details updated successfully!", "success")
         return jsonify({'success': True})
@@ -4116,13 +4147,14 @@ def bulk_import():
 
                 cur.execute("""
                     INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
-                        Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                        SpecializationID, EmployeeTypeID,
                         DesignationID, EmployeeStatus)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (EmployeeNumber) DO NOTHING
                 """, (emp_num, first_name, middle_name or None, last_name,
-                      email or None, contact or None,
                       spec_id, etype_id, desig_id, status))
+                if cur.rowcount:
+                    _save_faculty_contact(cur, emp_num, email, contact)
 
             except ValueError as ve:
                 conn.rollback()
@@ -4263,18 +4295,21 @@ def _acad_insert_employees(rows, conn, cur):
                 continue
             cur.execute("""
                 INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
-                    Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                    SpecializationID, EmployeeTypeID,
                     DesignationID, EmployeeStatus)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (EmployeeNumber) DO NOTHING
             """, (emp_num, first_name, middle_name or None, last_name,
-                  email or None, contact or None, spec_id, etype_id, desig_id, status))
+                  spec_id, etype_id, desig_id, status))
+            inserted = cur.rowcount
             hashed_pw = generate_password_hash(emp_num)
             cur.execute("""
                 INSERT INTO Accounts (Username, PasswordHash, Role, IsActive, EmployeeNumber,
                                        must_change_password, account_setup_complete)
                 VALUES (%s, %s, 'Faculty', TRUE, %s, TRUE, FALSE) ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_pw, emp_num))
+            if inserted:
+                _save_faculty_contact(cur, emp_num, email, contact)
         except ValueError as ve:
             errors.append(f"Row {i}: {ve}")
     return errors
@@ -4641,9 +4676,9 @@ def acad_faculty_restore_archived():
             return jsonify({'error': 'Archived employee not found'}), 404
         emp_num = row[0]
         cur.execute("""
-            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
                 SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-            SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            SELECT EmployeeNumber, FirstName, MiddleName, LastName,
                 SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
             FROM Faculty_Archive WHERE FacultyArchiveID = %s
             ON CONFLICT (EmployeeNumber) DO NOTHING
@@ -4703,9 +4738,9 @@ def acad_restore_employee(archive_id):
         emp_num = result['employeenumber']
 
         cur.execute("""
-            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
                                  SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-            SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            SELECT EmployeeNumber, FirstName, MiddleName, LastName,
                    SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
             FROM Faculty_Archive WHERE FacultyArchiveID = %s
         """, (archive_id,))
@@ -4742,9 +4777,9 @@ def acad_bulk_restore():
 
         for aid in archive_ids:
             cur.execute("""
-                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
                                      SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-                SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+                SELECT EmployeeNumber, FirstName, MiddleName, LastName,
                        SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
                 FROM Faculty_Archive WHERE FacultyArchiveID = %s
             """, (aid,))
@@ -11848,10 +11883,11 @@ def _confirm_historical_import(cur, data, ay_id, rows, period_info):
                 continue
 
             cur.execute("""
-                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email,
-                                      ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (emp_num, fname, mname, lname, email, contact, spec_id, type_id, desig_id, status))
+                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                                      SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (emp_num, fname, mname, lname, spec_id, type_id, desig_id, status))
+            _save_faculty_contact(cur, emp_num, email, contact)
             used_new_empnums.add(emp_num)
             faculty_created += 1
             empnum_map[name] = emp_num
@@ -12175,10 +12211,11 @@ def sis_import_confirm():
                     _resolved_empnum_map[_name] = emp_num
                     continue
                 cur.execute("""
-                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email,
-                                          ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (emp_num, fname, mname, lname, email, contact, spec_id, type_id, desig_id, estatus))
+                    INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
+                                          SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (emp_num, fname, mname, lname, spec_id, type_id, desig_id, estatus))
+                _save_faculty_contact(cur, emp_num, email, contact)
                 _used_new_empnums.add(emp_num)
                 _new_faculty_created += 1
                 _resolved_empnum_map[_name] = emp_num
@@ -18813,6 +18850,15 @@ def _api_manual_faculty_load_impl():
                 (ay_id, sem), one=True)
             if sem_row:
                 _sem_id = sem_row['semesterid']
+                # A reservation its subject's real schedule already superseded is not load.
+                _dc = get_db_connection(); _dcur = _dc.cursor(cursor_factory=RealDictCursor)
+                try:
+                    _drop_superseded_faculty_reservations(_dcur, _sem_id, emp_num)
+                    _dc.commit()
+                except Exception as _de:
+                    _dc.rollback(); print(f"[faculty_load] stale reservations not cleared: {_de}")
+                finally:
+                    _dcur.close(); _dc.close()
                 # Subjects already in schedule sessions (don't double-count)
                 _sched_codes = set(r['subjectcode'].upper() for r in assigned_subjects)
                 pend_rows = query_db("""
@@ -18880,6 +18926,38 @@ def _ensure_faculty_assignment_table(cur):
     # _ensure_curriculum_lock_table) — nullable so existing rows / older callers that don't
     # pass a section stay valid; not added to the UNIQUE key so existing scoping is unchanged.
     cur.execute("ALTER TABLE public.subject_faculty_assignment ADD COLUMN IF NOT EXISTS sectionid INTEGER")
+
+def _drop_superseded_faculty_reservations(cur, sem_id, emp_num=None):
+    """A reservation ("Assign Faculty", no schedule yet) is stale once its subject has a
+    real active schedule in that section (sectionid; else its program + year level): the
+    schedule's own faculty is the assignment now. Only Save as Draft used to clear it, so
+    a subject scheduled or published another way (Generation → Approve, a faculty
+    reassignment on a Published subject) kept the OLD faculty's reservation — listed as
+    "Not scheduled" under their Pending Assignments and counted in their load.
+    Optionally scoped to one faculty. The caller commits."""
+    _ensure_faculty_assignment_table(cur)
+    cur.execute(f"""
+        DELETE FROM public.subject_faculty_assignment sfa
+        WHERE sfa.semesterid = %s {"AND sfa.employeenumber = %s" if emp_num else ""}
+          AND EXISTS (
+              SELECT 1
+              FROM public.schedule s
+              JOIN public.schedule_version sv   ON sv.scheduleid = s.scheduleid
+              JOIN public.curriculumsubject cs  ON cs.curriculumsubjectid = s.curriculumsubjectid
+              LEFT JOIN public.sections sec     ON sec.sectionid = s.sectionid
+              LEFT JOIN public.program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+              WHERE s.semesterid = sfa.semesterid
+                AND sv.status IN ('Draft', 'Published')
+                AND sv.source IS DISTINCT FROM 'local'
+                AND COALESCE(sv.is_removal, FALSE) = FALSE
+                AND UPPER(cs.subjectcode) = UPPER(sfa.subjectcode)
+                AND CASE WHEN sfa.sectionid IS NOT NULL THEN s.sectionid = sfa.sectionid
+                         ELSE UPPER(pyl.programcode) = UPPER(sfa.programcode)
+                              AND pyl.yearlevel = sfa.yearlevel END
+          )
+    """, (sem_id, str(emp_num)) if emp_num else (sem_id,))
+    return cur.rowcount
+
 
 # Once a section has a confirmed faculty assignment or real schedule under a given curriculum
 # (Regular vs Bridging), that choice must not silently change — see [[project-bridging-subjects]].
@@ -19175,6 +19253,9 @@ def api_list_merge_load_policies():
         _ensure_merge_load_policy_table(cur)
         import merge_groups as _mg
         _mg.ensure_hc17_schema(cur)
+        # Self-healing: merged classes created before auto-mapping existed (or while no
+        # policy matched yet) pick up their subject's policy here.
+        _auto_map_hc17_policies(cur)
         cur.execute("""
             SELECT policyid, policyname, subjectcode, min_sections, max_sections
             FROM public.merge_load_policy
@@ -19242,6 +19323,7 @@ def api_create_merge_load_policy():
             VALUES (%s, %s, %s, %s) RETURNING policyid
         """, (payload['subjectcode'], payload['min_sections'], payload['max_sections'], payload['policyname']))
         new_id = cur.fetchone()['policyid']
+        _auto_map_hc17_policies(cur, policy_ids=[new_id])   # existing merged classes of this subject
         conn.commit()
         return jsonify({'success': True, 'policyid': new_id})
     except Exception as e:
@@ -19294,6 +19376,7 @@ def api_update_merge_load_policy(policyid):
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({'success': False, 'error': 'Rule not found.'}), 404
+        _auto_map_hc17_policies(cur, policy_ids=[policyid])   # e.g. its subject changed
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -19301,6 +19384,81 @@ def api_update_merge_load_policy(policyid):
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
+
+
+def _ensure_hc17_optout_table(cur):
+    """(policy, merge group) pairs the admin un-mapped on purpose — auto-mapping skips them."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS public.merge_load_policy_group_optout (
+            policyid     INTEGER NOT NULL,
+            mergegroupid INTEGER NOT NULL,
+            created_by   VARCHAR(100),
+            created_at   TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (policyid, mergegroupid)
+        )
+    """)
+
+
+def _auto_map_hc17_policies(cur, group_ids=None, policy_ids=None, username='system (auto)'):
+    """Apply each HC17 policy to the merged classes of ITS subject automatically — the
+    same subject match the mapping editor suggests (_merge_policy_rules_for: exact code,
+    or the grouped 'NSTP' entry for every NSTP/OU variant). A merged class created in
+    the Manual Editor (e.g. NSTP 001 · BSAM-1 + BSEE-1) used to stay unmapped until an
+    admin mapped it by hand, so it still counted once PER SECTION in the faculty's load.
+    The mapping is stored (visible under "Applies to", removable there); a mapping that
+    would make a group ambiguous (overlapping ranges of two policies) is skipped.
+    Scope: `group_ids` (new/changed merged classes) or `policy_ids` (new/edited
+    policies); both None = every group of a semester that has not ended. Returns the
+    number of mappings added. The caller commits."""
+    import merge_groups as _mg
+    import psycopg2.errors as _pg_errors
+    _ensure_merge_load_policy_table(cur)
+    _mg.ensure_hc17_schema(cur)
+    if policy_ids:
+        cur.execute("SELECT policyid, policyname, subjectcode, min_sections, max_sections "
+                    "FROM public.merge_load_policy WHERE policyid = ANY(%s)", (list(policy_ids),))
+    else:
+        cur.execute("SELECT policyid, policyname, subjectcode, min_sections, max_sections FROM public.merge_load_policy")
+    policies = [dict(r) for r in cur.fetchall() or []]
+    if not policies:
+        return 0
+    cfg = load_scheduler_config()
+    if group_ids:
+        groups = _mg.load_groups(cur, cfg, group_ids=list(group_ids))
+    else:
+        sems = [s['semesterid'] for s in _mg.load_semesters(cur) if not s['ended']]
+        groups = _mg.load_groups(cur, cfg, semester_ids=sems) if sems else []
+    cur.execute("SELECT policyid, mergegroupid FROM public.merge_load_policy_group")
+    mapped = {(r['policyid'], r['mergegroupid']) for r in cur.fetchall() or []}
+    # A mapping the admin removed in the mapping editor is never re-added automatically.
+    _ensure_hc17_optout_table(cur)
+    cur.execute("SELECT policyid, mergegroupid FROM public.merge_load_policy_group_optout")
+    mapped |= {(r['policyid'], r['mergegroupid']) for r in cur.fetchall() or []}
+    added = 0
+    for g in groups:
+        codes = {m['subjectcode'] for m in g.get('members') or []} | {g.get('ref_subjectcode')}
+        for pol in policies:
+            key = (pol['policyid'], g['mergegroupid'])
+            if key in mapped:
+                continue
+            rules = {str(pol['subjectcode']).upper(): [pol]}
+            if not any(_merge_policy_rules_for(c, rules) for c in codes if c):
+                continue
+            if _mg.hc17_mapping_conflicts(cur, pol, [g['mergegroupid']]):
+                continue
+            cur.execute("SAVEPOINT hc17_auto")
+            try:
+                cur.execute("""
+                    INSERT INTO public.merge_load_policy_group (policyid, mergegroupid, created_by)
+                    VALUES (%s, %s, %s) ON CONFLICT (policyid, mergegroupid) DO NOTHING
+                """, (pol['policyid'], g['mergegroupid'], username))
+                _n = cur.rowcount or 0
+                cur.execute("RELEASE SAVEPOINT hc17_auto")
+                mapped.add(key)
+                added += max(_n, 0)
+            except _pg_errors.ExclusionViolation:
+                cur.execute("ROLLBACK TO SAVEPOINT hc17_auto")   # ambiguity trigger: leave it
+    return added
 
 
 def _hc17_mapping_conflicts(cur, policy, group_ids):
@@ -19368,7 +19526,21 @@ def api_set_merge_load_policy_groups(policyid):
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         _ensure_merge_load_policy_table(cur)
+        _mg.ensure_hc17_schema(cur)
+        cur.execute("SELECT mergegroupid FROM public.merge_load_policy_group WHERE policyid = %s", (policyid,))
+        _before = {r['mergegroupid'] for r in cur.fetchall() or []}
         res = _mg.set_policy_groups(cur, policyid, wanted, username=session.get('username') or 'Admin')
+        if res.get('ok'):
+            # Remember what the admin removed (auto-mapping must not put it back) and
+            # forget opt-outs for what they mapped again.
+            _ensure_hc17_optout_table(cur)
+            for _gid in sorted(_before - set(wanted)):
+                cur.execute("INSERT INTO public.merge_load_policy_group_optout (policyid, mergegroupid, created_by) "
+                            "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                            (policyid, _gid, session.get('username') or 'Admin'))
+            if wanted:
+                cur.execute("DELETE FROM public.merge_load_policy_group_optout "
+                            "WHERE policyid = %s AND mergegroupid = ANY(%s)", (policyid, wanted))
         if res.get('not_found'):
             conn.rollback()
             return jsonify({'success': False, 'error': 'Rule not found.'}), 404
@@ -19789,6 +19961,9 @@ def api_create_merge_set():
         result = _mg.create_merge_set(cur, _lsc(), data.get('semesterid'), data.get('section_ids') or [],
                                       data.get('subject_keys') or None,
                                       username=session.get('username') or 'Admin')
+        _set_gids = [g['mergegroupid'] for g in result['created'] + result['extended']]
+        if _set_gids:
+            _auto_map_hc17_policies(cur, group_ids=_set_gids)   # HC17 policy of their subject
         conn.commit()
         names = [g['groupname'] for g in result['created']] + [g['groupname'] for g in result['extended']]
         if names:
@@ -21640,10 +21815,11 @@ def admin_employee():
 
     cur.execute("""
         SELECT 
-            f.EmployeeNumber, f.FirstName, f.MiddleName, f.LastName, f.Email, 
-            f.ContactNumber, f.EmployeeStatus, f.SpecializationID, f.EmployeeTypeID, f.DesignationID,
+            f.EmployeeNumber, f.FirstName, f.MiddleName, f.LastName, a.Email,
+            a.ContactNumber, f.EmployeeStatus, f.SpecializationID, f.EmployeeTypeID, f.DesignationID,
             s.SpecializationName, et.TypeName, d.DesignationName
         FROM Faculty f
+        LEFT JOIN Accounts a ON a.EmployeeNumber = f.EmployeeNumber
         LEFT JOIN Specialization s ON f.SpecializationID = s.SpecializationID
         LEFT JOIN EmployeeType et ON f.EmployeeTypeID = et.EmployeeTypeID
         LEFT JOIN Designation d ON f.DesignationID = d.DesignationID
@@ -21721,7 +21897,7 @@ def admin_add_employee():
                 if designation and designation['designationname'] == 'Academic Head':
                     role = 'Academic Head'
 
-            cur.execute("INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+            cur.execute("INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (emp_num, f_name, m_name, l_name, spec_id, type_id, desig_id, status))
             
             hashed_password = generate_password_hash(emp_num)
             cur.execute("""
@@ -21730,7 +21906,8 @@ def admin_add_employee():
                 VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
                 ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_password, role, emp_num))
-           
+            _save_faculty_contact(cur, emp_num, email, contact, role)
+
             conn.commit()
             flash("Employee added successfully and account created!", "success")
         except Exception as e:
@@ -21766,10 +21943,10 @@ def admin_edit_employee():
         try:
             cur.execute("""
                 UPDATE Faculty
-                SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s, 
+                SET FirstName=%s, MiddleName=%s, LastName=%s, 
                     SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s 
                 WHERE EmployeeNumber=%s
-            """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+            """, (f_name, m_name, l_name, spec_id, type_id, desig_id, status, emp_num))
 
             role = 'Faculty' 
             if desig_id:
@@ -21779,7 +21956,8 @@ def admin_edit_employee():
                     role = 'Academic Head'
             
             cur.execute("UPDATE Accounts SET Role = %s WHERE Username = %s", (role, emp_num))
-            
+            _save_faculty_contact(cur, emp_num, email, contact, role)
+
             conn.commit()
             flash("Employee details updated successfully!", "success")
         except Exception as e:
@@ -21823,8 +22001,8 @@ def admin_api_add_employee():
 
 
         cur.execute(
-            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (emp_num, f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status))
+            "INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (emp_num, f_name, m_name, l_name, spec_id, type_id, desig_id, status))
 
 
         hashed_password = generate_password_hash(emp_num)
@@ -21834,6 +22012,7 @@ def admin_api_add_employee():
             VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
             ON CONFLICT (Username) DO NOTHING
         """, (emp_num, hashed_password, role, emp_num))
+        _save_faculty_contact(cur, emp_num, email, contact, role)
 
 
         conn.commit()
@@ -21871,10 +22050,10 @@ def admin_api_edit_employee():
     try:
         cur.execute("""
             UPDATE Faculty
-            SET FirstName=%s, MiddleName=%s, LastName=%s, Email=%s, ContactNumber=%s,
+            SET FirstName=%s, MiddleName=%s, LastName=%s,
                 SpecializationID=%s, EmployeeTypeID=%s, DesignationID=%s, EmployeeStatus=%s
             WHERE EmployeeNumber=%s
-        """, (f_name, m_name, l_name, email, contact, spec_id, type_id, desig_id, status, emp_num))
+        """, (f_name, m_name, l_name, spec_id, type_id, desig_id, status, emp_num))
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({'success': False, 'error': f'Faculty {emp_num} was not found. It may have been archived or removed.'}), 404
@@ -21887,6 +22066,7 @@ def admin_api_edit_employee():
             if designation and designation['designationname'] == 'Academic Head':
                 role = 'Academic Head'
         cur.execute("UPDATE Accounts SET Role = %s WHERE Username = %s", (role, emp_num))
+        _save_faculty_contact(cur, emp_num, email, contact, role)
 
 
         conn.commit()
@@ -22072,13 +22252,13 @@ def admin_bulk_import():
 
                 cur.execute("""
                     INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
-                        Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                        SpecializationID, EmployeeTypeID,
                         DesignationID, EmployeeStatus)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (EmployeeNumber) DO NOTHING
                 """, (emp_num, first_name, middle_name or None, last_name,
-                      email or None, contact or None,
                       spec_id, etype_id, desig_id, status))
+                inserted = cur.rowcount
 
                 # Determine account role from designation name
                 role = 'Faculty'
@@ -22098,6 +22278,8 @@ def admin_bulk_import():
                     VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE)
                     ON CONFLICT (Username) DO NOTHING
                 """, (emp_num, hashed_password, role, emp_num))
+                if inserted:
+                    _save_faculty_contact(cur, emp_num, email, contact, role)
 
             except ValueError as ve:
                 conn.rollback()
@@ -22205,13 +22387,13 @@ def _admin_insert_employees(rows, conn, cur):
 
             cur.execute("""
                 INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
-                    Email, ContactNumber, SpecializationID, EmployeeTypeID,
+                    SpecializationID, EmployeeTypeID,
                     DesignationID, EmployeeStatus)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (EmployeeNumber) DO NOTHING
             """, (emp_num, first_name, middle_name or None, last_name,
-                  email or None, contact or None,
                   spec_id, etype_id, desig_id, status))
+            inserted = cur.rowcount
 
             role = 'Faculty'
             if desig_id:
@@ -22226,6 +22408,8 @@ def _admin_insert_employees(rows, conn, cur):
                                        must_change_password, account_setup_complete)
                 VALUES (%s, %s, %s, TRUE, %s, TRUE, FALSE) ON CONFLICT (Username) DO NOTHING
             """, (emp_num, hashed_pw, role, emp_num))
+            if inserted:
+                _save_faculty_contact(cur, emp_num, email, contact, role)
 
         except ValueError as ve:
             errors.append(f"Row {i}: {ve}")
@@ -22418,9 +22602,9 @@ def admin_faculty_restore_archived():
             return jsonify({'error': 'Archived employee not found'}), 404
         emp_num = row[0]
         cur.execute("""
-            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
                 SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-            SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber,
+            SELECT EmployeeNumber, FirstName, MiddleName, LastName,
                 SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
             FROM Faculty_Archive WHERE FacultyArchiveID = %s
             ON CONFLICT (EmployeeNumber) DO NOTHING
@@ -22506,8 +22690,8 @@ def admin_restore_employee(archive_id):
         emp_num = result['employeenumber'] 
 
         cur.execute("""
-            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-            SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
+            INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
+            SELECT EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
             FROM Faculty_Archive WHERE FacultyArchiveID = %s
         """, (archive_id,))
         
@@ -22546,8 +22730,8 @@ def admin_bulk_restore():
 
         for aid in archive_ids:
             cur.execute("""
-                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
-                SELECT EmployeeNumber, FirstName, MiddleName, LastName, Email, ContactNumber, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
+                INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus)
+                SELECT EmployeeNumber, FirstName, MiddleName, LastName, SpecializationID, EmployeeTypeID, DesignationID, EmployeeStatus
                 FROM Faculty_Archive WHERE FacultyArchiveID = %s
             """, (aid,))
             cur.execute("DELETE FROM Faculty_Archive WHERE FacultyArchiveID = %s", (aid,))
@@ -29176,13 +29360,14 @@ def _fetch_report_data(report_type, params, cur):
                 f.lastname                         AS "LastName",
                 f.firstname                        AS "FirstName",
                 COALESCE(f.middlename,'')          AS "MiddleName",
-                COALESCE(f.email,'')               AS "Email",
-                COALESCE(f.contactnumber,'')       AS "Contact Number",
+                COALESCE(a.email,'')               AS "Email",
+                COALESCE(a.contactnumber,'')       AS "Contact Number",
                 COALESCE(s.specializationname,'')  AS "Specialization",
                 COALESCE(et.typename,'')           AS "EmployeeType",
                 f.employeestatus                   AS "EmployeeStatus",
                 COALESCE(d.designationname,'')     AS "Designation"
             FROM faculty f
+            LEFT JOIN accounts a       ON a.employeenumber   = f.employeenumber
             LEFT JOIN employeetype et  ON f.employeetypeid   = et.employeetypeid
             LEFT JOIN designation d    ON f.designationid    = d.designationid
             LEFT JOIN specialization s ON f.specializationid = s.specializationid
@@ -31642,7 +31827,7 @@ def api_user_me():
         cur.execute("""
             SELECT a.last_login, a.profile_photo,
                    f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
-                   CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END AS email,
+                   a.email,
                    f.employeestatus,
                    d.designationid, d.designationname,
                    s.specializationid, s.specializationname,
@@ -33087,6 +33272,83 @@ def _check_cross_program_faculty_loads(schedule_list, faculty_map, sem_id,
     return violations
 
 
+def _release_overloaded_faculty(rows, program, year_level, term, acad_year, section_id, faculty_map=None,
+                                keep=None):
+    """Never hand out an instructor the Save as Draft / Approve gate would reject: for
+    each faculty that _check_cross_program_faculty_loads (the SAME check, same
+    exclusions) finds over their load with these rows, release them from as few rows as
+    needed — Instructor becomes TBA and the row is incomplete, so the Generate page
+    auto-selects it and Re-generate picks someone with hours left. Rows are changed in
+    place; returns one notice per faculty released."""
+    if not rows or not acad_year or not term:
+        return []
+    sem = query_db("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                   (acad_year, (term or '').strip().upper()), one=True)
+    if not sem:
+        return []
+    fmap = faculty_map or _load_faculty_map()
+
+    def _t(v):
+        return _parse_time_str(v) if isinstance(v, str) else v
+
+    def _hrs(r):
+        st, et = _t(r.get('start_time')), _t(r.get('end_time'))
+        days = [d for d in (r.get('days_list') or [r.get('day')]) if d]
+        if st and et and et > st and days:
+            return (et.hour * 60 + et.minute - st.hour * 60 - st.minute) / 60.0 * len(days)
+        return float(r.get('lec_hours') or 0) + float(r.get('lab_hours') or 0)
+
+    def _over():
+        return _check_cross_program_faculty_loads(
+            rows, fmap, sem['semesterid'], exclude_program=(program or '').upper() or None,
+            exclude_year_level=year_level, exclude_section_id=section_id)
+
+    notices, stuck = [], set()
+    for _ in range(len(rows) + 1):       # each pass releases a row or retires a faculty
+        over = [x for x in _over() if str(x['faculty_id']) not in stuck]
+        if not over:
+            break
+        v = over[0]
+        fid = v['faculty_id']
+        mine = [r for r in rows if str(r.get('faculty_id') or r.get('employeenumber') or '') == str(fid)]
+        movable = [r for r in mine if not (keep and keep(r))]   # e.g. an Instructor the user locked
+        if not movable:
+            stuck.add(str(fid))          # only user-locked rows left: reported by the Save/Approve gate
+            continue
+        if len(movable) < len(mine):
+            # Locked rows stay; they use the room first.
+            v = dict(v, current_load=float(v['current_load']) + sum(_hrs(r) for r in mine if r not in movable))
+            mine = movable
+        # Keep the largest classes that still fit; release the rest (fewest changes).
+        room_left = float(v['max_load']) - float(v['current_load'])
+        released = []
+        for r in sorted(mine, key=_hrs, reverse=True):
+            h = _hrs(r)
+            if h <= room_left:
+                room_left -= h
+                continue
+            released.append(r)
+        if not released:                 # merge-aware totals differ slightly: drop the smallest
+            released = [min(mine, key=_hrs)]
+        name = v.get('faculty_name') or fid
+        why = (f"Instructor released: {name} already has {v['current_load']:g}/{v['max_load']:g} hrs this term "
+               f"and this class would exceed the load limit. Re-generate to assign another instructor.")
+        for r in released:
+            r['faculty_id'] = None
+            r['employeenumber'] = None
+            r['instructor'] = 'TBA'
+            r['incomplete'] = True
+            r['incomplete_components'] = sorted(set(r.get('incomplete_components') or []) | {'faculty'})
+            reasons = list(r.get('incomplete_reason') or [])
+            if why not in reasons:
+                reasons.append(why)
+            r['incomplete_reason'] = reasons
+        codes = sorted({(r.get('subject_code') or r.get('subjectcode') or '') for r in released})
+        notices.append(f"{name} already has {v['current_load']:g}/{v['max_load']:g} hours this term — "
+                       f"released from {', '.join(codes)} so the load limit is not exceeded.")
+    return notices
+
+
 def _check_designee_night_limit(schedule_list, faculty_map, sem_id,
                                 exclude_program=None, exclude_year_level=None,
                                 fail_closed=False, exclude_section_id=None,
@@ -33261,7 +33523,7 @@ def _release_night_cap_locks(locked_sessions, program, year_level, term, acad_ye
             continue
         if not is_night_service_slice(_t(ls.get('start_time')), _t(ls.get('end_time'))):
             continue
-        ls['lock']['schedule'] = False
+        _release_schedule_lock(ls['lock'], ls.get('user_lock'))
         ls['selected'] = True
         code = (ls.get('subject_code') or '').strip().upper()
         if code and code not in released:
@@ -34379,6 +34641,38 @@ def _resolve_historical_day_time(raw_days, raw_time):
 #   Subject    -> curriculumsubject of the selected curriculum/year/semester
 # Lock-field names: 'faculty' = Instructor, 'schedule' = Time/Days, 'room' = Room.
 REGEN_LOCK_FIELDS = ('faculty', 'schedule', 'room')
+# Time/Days has separate Day and Time locks on the Generate page: lock['day'] keeps the
+# meeting days, lock['time'] the start/end time (scheduler.schedule_pin). 'schedule'
+# stays the whole-slot flag every existing path reads, true only when both halves are.
+SCHEDULE_LOCK_HALVES = ('day', 'time')
+
+
+def _normalize_regen_locks(ls):
+    """Re-generate payload entry → lock / user_lock with the Day and Time halves
+    filled in. An entry without them (older page, internal rows) locks both halves
+    with 'schedule'. A USER lock only counts for a field that is actually kept."""
+    lock = dict(ls.get('lock') or {})
+    raw_user = ls.get('user_lock') or {}
+    for h in SCHEDULE_LOCK_HALVES:
+        if h not in lock:
+            lock[h] = bool(lock.get('schedule'))
+        lock[h] = bool(lock[h])
+    lock['schedule'] = lock['day'] and lock['time']
+    user = {f: bool(raw_user.get(f)) and bool(lock.get(f)) for f in REGEN_LOCK_FIELDS}
+    for h in SCHEDULE_LOCK_HALVES:
+        user[h] = bool(raw_user.get(h, raw_user.get('schedule'))) and lock[h]
+    user['schedule'] = user['day'] and user['time']
+    ls['lock'], ls['user_lock'] = lock, user
+    return ls
+
+
+def _release_schedule_lock(lock, user):
+    """Release a kept Time/Days: the whole slot, and each half the Academic Head did
+    not lock explicitly (a USER-locked Day or Time stays kept)."""
+    lock['schedule'] = False
+    for h in SCHEDULE_LOCK_HALVES:
+        if h in lock and not (user or {}).get(h):
+            lock[h] = False
 COMPONENT_LABELS  = {'faculty': 'Instructor', 'schedule': 'Time/Days', 'room': 'Room',
                      'subject': 'Subject'}
 _VALID_DAY_NAMES  = {'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'}
@@ -35462,6 +35756,11 @@ def _merge_confirmation_gate(cur, cfg, sem_id, section_id, rows, data):
             'notice': _mg.merge_notice_text(found['merges'])})), 409), []
     applied = _mg.apply_merges(cur, cfg, sem_id, found['merges'],
                                username=session.get('username') or 'Unknown')['applied']
+    # HC17: the new/extended merged class takes its subject's load policy right away
+    # (e.g. NSTP credited once for the shared faculty), not only after a manual mapping.
+    _gids = sorted({m['mergegroupid'] for m in applied if m.get('mergegroupid')})
+    if _gids:
+        _auto_map_hc17_policies(cur, group_ids=_gids)
     return None, applied
 
 
@@ -35647,11 +35946,14 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
             cur.close(); conn.close(); return [], 0
         sem_id = sem_row['semesterid']
 
-        # Draft-level checks (include_drafts) treat each section's current Official Draft as
-        # its schedule, so a Published slot that Draft moved or removed no longer reserves
-        # anything (see _superseded_published_sql). The Publish gate (Published only)
-        # stays strict: both Published versions really are live until the other publishes.
-        _sup_sql = ('AND ' + _superseded_published_sql('sv', 'sc', 'cs')) if include_drafts else ''
+        # Another section's Published class is LIVE until that section publishes again —
+        # even when a pending Draft of theirs moves or removes it. The editor may treat
+        # such a slot as freed (_superseded_published_sql), but Publish must not: dropping
+        # it here (it used to be, whenever include_drafts was set — i.e. for every
+        # Publish) let a section publish into a room/time another section still holds,
+        # leaving two Published classes double-booked in one room. Publish therefore
+        # counts every live Published row AND (include_drafts) other sections' Drafts.
+        _sup_sql = ''
         cur.execute("""
             SELECT ss.roomid,
                    sc.employeenumber          AS faculty_id,
@@ -36221,9 +36523,7 @@ def api_generate_schedule():
     # missing time) is never kept — there is nothing valid to preserve.
     mutable_codes, any_selected = [], False
     for ls in locked_sessions:
-        ls['lock'] = dict(ls.get('lock') or {})
-        ls['user_lock'] = {f: bool((ls.get('user_lock') or {}).get(f)) and bool(ls['lock'].get(f))
-                           for f in REGEN_LOCK_FIELDS}
+        _normalize_regen_locks(ls)
         if not ls.get('selected'):
             continue
         any_selected = True
@@ -36231,6 +36531,9 @@ def api_generate_schedule():
             if f in REGEN_LOCK_FIELDS:
                 ls['lock'][f] = False
                 ls['user_lock'][f] = False
+                if f == 'schedule':        # nothing valid to keep in either half
+                    for h in SCHEDULE_LOCK_HALVES:
+                        ls['lock'][h] = ls['user_lock'][h] = False
         code = (ls.get('subject_code') or '').strip().upper()
         if code and not all(ls['lock'].get(f) for f in REGEN_LOCK_FIELDS) and code not in mutable_codes:
             mutable_codes.append(code)
@@ -36335,10 +36638,17 @@ def api_generate_schedule():
                 lock = dict(current[0]['lock']) if current else {}
                 user = dict(current[0]['user_lock']) if current else {}
                 auto_kept = [f for f in REGEN_LOCK_FIELDS if lock.get(f) and not user.get(f)]
+                # An auto-kept Day or Time half (the other half unlocked) is releasable too.
+                if 'schedule' not in auto_kept and any(lock.get(h) and not user.get(h)
+                                                       for h in SCHEDULE_LOCK_HALVES):
+                    auto_kept.append('schedule')
                 pick = next((f for f in _PROGRESSIVE_RELEASE_ORDER if f in problems[code] and f in auto_kept), None) \
                     or next((f for f in _PROGRESSIVE_RELEASE_ORDER if f in auto_kept), None)
-                if pick:
+                if pick == 'schedule':
+                    _release_schedule_lock(lock, user)
+                elif pick:
                     lock[pick] = False
+                if pick:
                     released.setdefault(code, []).append(pick)
                     released_now = True
                 for e in entries:                         # retry from the ORIGINAL values
@@ -36441,9 +36751,13 @@ def api_generate_schedule():
             # Every AUTO-kept field has been released by now, so what is left is
             # the hard constraints and the Academic Head's own locks: name the
             # user lock(s) implicated by the remaining problem, else any that remain.
-            user_locked   = [f for f in REGEN_LOCK_FIELDS if (current.get('user_lock') or {}).get(f)]
-            user_blocking = [COMPONENT_LABELS[f] for f in (
-                [f for f in user_locked if f in problems[code]] or user_locked)]
+            _ul = current.get('user_lock') or {}
+            user_locked   = [f for f in REGEN_LOCK_FIELDS if _ul.get(f)]
+            if not _ul.get('schedule'):          # a separate Day / Time lock
+                user_locked += [h for h in SCHEDULE_LOCK_HALVES if _ul.get(h)]
+            _implicated = lambda f: f in problems[code] or (f in SCHEDULE_LOCK_HALVES and 'schedule' in problems[code])
+            user_blocking = [COMPONENT_LABELS.get(f, f.title()) for f in (
+                [f for f in user_locked if _implicated(f)] or user_locked)]
             if user_blocking:
                 msgs.append(f"{code} could not be resolved while {' and '.join(user_blocking)} "
                             f"{'is' if len(user_blocking) == 1 else 'are'} locked by you.")
@@ -36490,7 +36804,21 @@ def api_generate_schedule():
     # reference (e.g. an unselected row's Room "TBA") stays flagged incomplete.
     _annotate_unresolved(res['schedule_data'],
                          refs or _load_reference_data(program, year_level, term, data.get('curriculum')))
-    if partial_failed:
+    # Final guard: no instructor leaves Generate over their load limit by the SAME check
+    # Save as Draft / Approve apply (other sections included). The solver's own HC9 should
+    # already prevent it; anything it let through is released here (Instructor → TBA,
+    # incomplete) instead of failing later at Save Draft or reaching the Manual Editor.
+    # A kept Instructor (unselected row, or locked) is never changed.
+    _kept_fac = {(ls.get('subject_code') or '').strip().upper()
+                 for ls in locked_sessions if (ls.get('lock') or {}).get('faculty')}
+    overload_notices = []
+    try:
+        overload_notices = _release_overloaded_faculty(
+            res['schedule_data'], program, year_level, term, data.get('acadYear') or '', _gen_section,
+            keep=lambda r: (r.get('subject_code') or '').strip().upper() in _kept_fac)
+    except ConstraintCheckUnavailable:
+        overload_notices = []   # Save Draft / Approve still enforce it (fail-closed there)
+    if partial_failed or overload_notices:
         # Completeness of the combined (resolved + restored) schedule.
         _rows = res['schedule_data']
         _inc = sum(1 for g in _rows if g.get('incomplete'))
@@ -36584,6 +36912,9 @@ def api_generate_schedule():
         # Re-generate Selected: AUTO-kept fields released to resolve a row,
         # {subject_code: ['room' | 'schedule' | 'faculty', ...]}.
         'released_locks':       released,
+        # Instructors released because they would exceed their load (see
+        # _release_overloaded_faculty) — one plain-language line per faculty.
+        'overload_notices':     overload_notices,
         # REGENERATION_PARTIAL: the selected rows that could not be resolved
         # (sent back unchanged, still selected on the page for a retry).
         'failed_subjects':      partial_failed,
@@ -36942,52 +37273,15 @@ def api_retrieve_previous_schedule():
             program, year_level, term, data.get('curriculum') or None))
 
         # ── Step 4: current-term faculty load ────────────────────────────────
-        # What each retrieved faculty is already committed to in the CURRENT term
-        # (other programs/year levels — this section's own rows excluded so they
-        # aren't double counted), plus what this retrieval would add. Reported as
-        # a hard-constraint violation for review; the faculty is NOT silently
-        # replaced.
-        from collections import defaultdict as _dd2
-        fac_hours_retrieved: dict = _dd2(float)
-        for e in schedule_data:
-            fid = e.get('faculty_id')
-            hrs = float(e.get('lec_hours') or 0) + float(e.get('lab_hours') or 0)
-            if fid and hrs > 0:
-                fac_hours_retrieved[fid] += hrs
-
-        current_committed: dict = {}
-        if fac_hours_retrieved and acad_year and term:
-            current_committed = faculty_load.get_faculty_hours_batch(
-                cur, acad_year, term,
-                exclude_program=program, exclude_year_level=year_level)
+        # A previous-AY instructor who would exceed this term's load limit (other
+        # sections' load included — the exact Save as Draft / Approve check) is
+        # released right here: Instructor → TBA, row incomplete and auto-selected for
+        # Re-generate. Carrying them forward only failed later at Save Draft and put an
+        # overloaded faculty into the Manual Editor.
         cur.close(); conn.close()
-
-        _fmap_retrieve   = _load_faculty_map()
-        overload_notices = []
+        overload_notices = _release_overloaded_faculty(
+            schedule_data, program, year_level, term, acad_year, section_id)
         load_violations  = []
-        for fid, hrs in fac_hours_retrieved.items():
-            fac  = _fmap_retrieve.get(fid, {})
-            et   = fac.get('employeetype', {})
-            maxt = ((et.get('regularload') or 0)
-                    + (et.get('parttimeload') or 0)
-                    + (et.get('teachingsubstitution') or 0))
-            if maxt <= 0:
-                continue
-            already = float(current_committed.get(fid, 0))
-            if already + hrs > maxt:
-                name  = fac.get('fullname') or fid
-                codes = sorted({e['subject_code'] for e in schedule_data if e.get('faculty_id') == fid})
-                msg   = (f"{name} already has {already:.1f}/{maxt:.1f} hours this term; "
-                         f"this schedule adds {hrs:.1f}.")
-                overload_notices.append(msg)
-                load_violations.append({
-                    'rule':    'HC9',
-                    'type':    RULE_LABELS['HC9'],
-                    'subject': ' / '.join(codes),
-                    'detail':  msg,
-                    'faculty_id': fid,
-                    'affected_components': ['faculty'],
-                })
 
         # ── Step 5: validate against CURRENT AY constraints ─────────────────
         cross_violations = []
@@ -37660,6 +37954,9 @@ def api_draft_sessions():
     sem        = request.args.get('sem', '').strip()
     section_raw = request.args.get('section_id', '').strip()
     section_id = int(section_raw) if section_raw.isdigit() else None
+    # status=published: the section's live Published sessions in the same publish-ready
+    # shape — the Manual Editor republishes a subject without one deleted Published slice.
+    want_status = 'Published' if request.args.get('status', '').lower() == 'published' else 'Draft'
     if not (program and year_level and ay and sem):
         return jsonify({'success': False, 'error': 'Missing parameters'})
     try:
@@ -37686,7 +37983,7 @@ def api_draft_sessions():
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
-            WHERE sv.status = 'Draft'
+            WHERE sv.status = %s
               AND sv.source IS DISTINCT FROM 'local'
               AND UPPER(cu.programcode) = UPPER(%s)
               AND cs.yearlevel = %s
@@ -37694,7 +37991,7 @@ def api_draft_sessions():
                     SELECT semesterid FROM semester
                     WHERE academicyearid = %s AND semestertype = %s LIMIT 1)
               AND (%s::int IS NULL OR sc.sectionid = %s::int)
-        """, (program, int(year_level), ay, sem, section_id, section_id))
+        """, (want_status, program, int(year_level), ay, sem, section_id, section_id))
         sessions = []
         for r in (rows or []):
             sessions.append({
@@ -37723,7 +38020,7 @@ def api_draft_sessions():
                 'starttimeid':  r['starttimeid'],
                 'endtimeid':    r['endtimeid'],
                 'roomname':     r['roomname'] or '',
-                'status':       'Draft',
+                'status':       want_status,
                 'versionid':    r['versionid'],
                 'sessionid':    r['sessionid'],
                 'section_id':   r['sectionid'],
@@ -37731,7 +38028,7 @@ def api_draft_sessions():
         # Pending subject removals (removal-marker Drafts) — published only when the caller
         # passes them to /api/schedule/approve as removed_subjects.
         removed = []
-        if section_id:
+        if section_id and want_status == 'Draft':
             removed = [r['code'] for r in (query_db("""
                 SELECT DISTINCT UPPER(cs.subjectcode) AS code
                 FROM schedule_version sv
@@ -38586,6 +38883,10 @@ def api_approve_schedule():
         dv_row = cur.fetchone()
         new_draft_v = dv_row['max_draft_v'] if dv_row and dv_row['max_draft_v'] else None
 
+        # The published subjects now have a real schedule (and faculty): drop reservations
+        # it supersedes — e.g. the previous faculty's "Assign Faculty" before a reassignment.
+        _drop_superseded_faculty_reservations(cur, sem_id)
+
         _lock_section_curriculum(cur, ctx, _ctx_section_id, sem_id)
         conn.commit(); cur.close(); conn.close()
 
@@ -38994,6 +39295,7 @@ def api_faculty_teaching_assignments():
             _sem_row = cur.fetchone()
             if _sem_row:
                 _sem_id = _sem_row['semesterid']
+                _drop_superseded_faculty_reservations(cur, _sem_id, emp_num)
                 _sched_codes = set(s['subjectcode'].upper() for s in sessions)
                 # Only surface a reservation as "pending" if its subject genuinely belongs to
                 # the CURRENTLY active curriculum for that program+year+AY (via
@@ -39948,9 +40250,53 @@ def _run_startup_migrations():
         'REFERENCES public.faculty(employeenumber)',
     ])
 
-    _step('sm_faculty_optional_contact', [
-        'ALTER TABLE faculty ALTER COLUMN email DROP NOT NULL',
-        'ALTER TABLE faculty ALTER COLUMN contactnumber DROP NOT NULL',
+    # Email and contact number moved from faculty to accounts. On a database
+    # that still has faculty.email / faculty.contactnumber, copy them to the
+    # faculty member's account (only where the account has none and no other
+    # account uses the value) and make the old columns optional so faculty
+    # inserts, which no longer write them, still work. The old columns are
+    # left in place; nothing reads them any more.
+    _step('sm_contact_on_accounts', [
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS contactnumber VARCHAR(20)",
+        "ALTER TABLE faculty_archive ALTER COLUMN contactnumber TYPE VARCHAR(20)",
+        "ALTER TABLE faculty_archive ALTER COLUMN email TYPE VARCHAR(255)",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = 'faculty' AND column_name = 'email') THEN
+                ALTER TABLE faculty ALTER COLUMN email DROP NOT NULL;
+                UPDATE accounts a SET email = src.email
+                FROM (SELECT DISTINCT ON (LOWER(BTRIM(f.email))) f.employeenumber, BTRIM(f.email) AS email
+                      FROM faculty f WHERE BTRIM(COALESCE(f.email, '')) <> ''
+                      ORDER BY LOWER(BTRIM(f.email)), f.employeenumber) src
+                WHERE a.employeenumber = src.employeenumber
+                  AND BTRIM(COALESCE(a.email, '')) = ''
+                  AND NOT EXISTS (SELECT 1 FROM accounts o
+                                  WHERE LOWER(BTRIM(o.email)) = LOWER(src.email) AND o.userid <> a.userid);
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = 'faculty' AND column_name = 'contactnumber') THEN
+                ALTER TABLE faculty ALTER COLUMN contactnumber DROP NOT NULL;
+                UPDATE accounts a SET contactnumber = src.contactnumber
+                FROM (SELECT DISTINCT ON (BTRIM(f.contactnumber)) f.employeenumber, BTRIM(f.contactnumber) AS contactnumber
+                      FROM faculty f WHERE BTRIM(COALESCE(f.contactnumber, '')) <> ''
+                      ORDER BY BTRIM(f.contactnumber), f.employeenumber) src
+                WHERE a.employeenumber = src.employeenumber
+                  AND BTRIM(COALESCE(a.contactnumber, '')) = ''
+                  AND NOT EXISTS (SELECT 1 FROM accounts o
+                                  WHERE BTRIM(o.contactnumber) = src.contactnumber AND o.userid <> a.userid);
+            END IF;
+        END $$;
+        """,
+    ])
+    _step('sm_accounts_contact_unique', [
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_email_normalized
+               ON public.accounts (LOWER(BTRIM(email)))
+               WHERE email IS NOT NULL AND BTRIM(email) <> ''""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_contactnumber_normalized
+               ON public.accounts (BTRIM(contactnumber))
+               WHERE contactnumber IS NOT NULL AND BTRIM(contactnumber) <> ''""",
     ])
 
     _step('sm_schedule_version_incomplete_flag', [

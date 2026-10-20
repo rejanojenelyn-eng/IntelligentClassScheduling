@@ -17,5 +17,6 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById("logoutModal").style.display = "none";
         }
         function proceedLogout() {
+            window.isLeavingIntentionally = true;   // confirmed in the modal
             window.location.href = "/logout";
         }

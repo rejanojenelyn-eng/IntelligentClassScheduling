@@ -53,7 +53,7 @@ def _code(sent):
 
 def _faculty_email(conn, emp):
     cur = conn.cursor()
-    cur.execute("SELECT email FROM faculty WHERE employeenumber = %s", [emp])
+    cur.execute("SELECT email FROM accounts WHERE employeenumber = %s", [emp])
     return cur.fetchone()[0]
 
 
@@ -97,7 +97,7 @@ def test_address_used_by_another_faculty_is_refused(tx):
     conn = t.handle()
     acc = _faculty_account(conn)
     cur = conn.cursor()
-    cur.execute("""SELECT email FROM faculty WHERE employeenumber <> %s
+    cur.execute("""SELECT email FROM accounts WHERE employeenumber IS DISTINCT FROM %s
                    AND email IS NOT NULL AND TRIM(email) <> '' LIMIT 1""", [acc['employeenumber']])
     row = cur.fetchone()
     if not row:

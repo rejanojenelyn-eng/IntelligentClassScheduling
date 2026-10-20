@@ -24,9 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let _leavingIntentionally = false;
 
     // ── Selective regeneration: which rows are checked, and which of their
-    // three scheduler-controlled fields (faculty = Instructor, schedule =
-    // Time/Days, room = Room) are LOCKED (see renderTable() and btnRegenerate
-    // below). A newly checked row starts with all three UNLOCKED (regenerate
+    // four scheduler-controlled fields (faculty = Instructor, time = Time,
+    // day = Days, room = Room) are LOCKED (see renderTable() and btnRegenerate
+    // below). A newly checked row starts with all four UNLOCKED (regenerate
     // the whole assignment); the user locks only the values to preserve.
     // Matches the ORIGINAL table grouping (subject + faculty) rather than
     // splitting a subject's Lecture/Lab into separate rows, so a subject
@@ -37,23 +37,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // a subject that was left unchecked, its key changes too, so a *previous*
     // selection on that subject (if any) won't carry forward — acceptable,
     // since an unchecked row is meant to stay untouched anyway.
-    const rowSelectionState = new Map(); // rowKey -> { selected, locks: {faculty, schedule, room} }
+    const rowSelectionState = new Map(); // rowKey -> { selected, locks: {faculty, day, time, room} }
     function rowKeyOf(cls) {
         return (cls.subject_code || '') + '||' + (cls.faculty_id || cls.instructor || '');
     }
-    const REGEN_FIELDS = ['faculty', 'schedule', 'room'];
-    // Component names from any source -> the three UI locks. Time/Days is ONE
-    // lock: day and/or time (under any spelling) both map to 'schedule'.
+    // Time and Days lock separately: 'time' keeps the start/end time, 'day' the
+    // meeting days (server: lock.time / lock.day; lock.schedule = both).
+    const REGEN_FIELDS = ['faculty', 'day', 'time', 'room'];
+    // Component names from any source -> the UI locks. A whole-slot component
+    // (schedule, time_day, section, ...) opens both Day and Time.
+    const _BOTH = ['day', 'time'];
     const _COMPONENT_TO_LOCK = {
         instructor: 'faculty', faculty: 'faculty', room: 'room',
-        day: 'schedule', days: 'schedule', time: 'schedule', time_day: 'schedule',
-        time_days: 'schedule', day_time: 'schedule', section: 'schedule', schedule: 'schedule',
+        day: 'day', days: 'day', time: 'time', time_day: _BOTH,
+        time_days: _BOTH, day_time: _BOTH, section: _BOTH, schedule: _BOTH,
         subject: 'subject',
     };
     const _toLockFields = (names) => [...new Set((names || [])
-        .map(n => _COMPONENT_TO_LOCK[String(n).trim().toLowerCase()]).filter(Boolean))];
-    const allLocked   = () => ({ faculty: true,  schedule: true,  room: true  });
-    const allUnlocked = () => ({ faculty: false, schedule: false, room: false });
+        .flatMap(n => _COMPONENT_TO_LOCK[String(n).trim().toLowerCase()] || []))];
+    const allLocked   = () => ({ faculty: true,  day: true,  time: true,  room: true  });
+    const allUnlocked = () => ({ faculty: false, day: false, time: false, room: false });
 
     // ── Conflicts → rows ──────────────────────────────────────────────────────
     // The evaluation's de-duplicated `conflicts` list (see _build_conflict_list
@@ -142,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (REGEN_FIELDS.some(f => p.incomplete.has(f))) return allUnlocked();
         const open = new Set([...p.conflict, ...p.incomplete]);
         if (!REGEN_FIELDS.some(f => open.has(f))) return allUnlocked();
-        return { faculty: !open.has('faculty'), schedule: !open.has('schedule'), room: !open.has('room') };
+        return { faculty: !open.has('faculty'), day: !open.has('day'), time: !open.has('time'), room: !open.has('room') };
     }
     // prepareRowForRegeneration: the ONE preparation every selection path uses
     // (row checkbox, Select Conflict Rows, Select Incomplete, Select All).
@@ -522,8 +525,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // discarding it. Cleared by Save as Draft, Approve, loading a saved Draft and
     // the hand-off to the Manual Editor (which carries the schedule over itself).
     let _unsavedResult = false;
+    // Lets the Logout modal warn about it itself (see base.acad.js openLogoutModal).
+    window.pageHasUnsavedWork = () => _unsavedResult;
     window.addEventListener('beforeunload', e => {
-        if (!_unsavedResult) return;
+        if (!_unsavedResult || window.isLeavingIntentionally) return;
         e.preventDefault();
         e.returnValue = '';
     });
@@ -981,7 +986,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // icons — an unchecked row is fully protected as a whole, so a
             // per-field control on it would be meaningless. Closed lock =
             // keep this value; open lock = the scheduler may regenerate it.
-            const FIELD_LABEL = { faculty: 'Instructor', schedule: 'Time/Days', room: 'Room' };
+            const FIELD_LABEL = { faculty: 'Instructor', day: 'Days', time: 'Time', room: 'Room' };
             // Three states behind the same two icons: USER-locked (absolute —
             // never changed), AUTO-kept (kept if possible, may be released to
             // resolve the row), unlocked. An unresolved value (Room "TBA", a
@@ -1074,7 +1079,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <i class="fas fa-circle-question"></i>
                 </span>` : '';
             const _rowIncomplete = g.incomplete || unresolved.size > 0;
-            const _knownComps = ['faculty', 'schedule', 'room', 'subject'].some(c => unresolved.has(c));
+            const _knownComps = ['faculty', 'day', 'time', 'room', 'subject'].some(c => unresolved.has(c));
             const incompleteTip = g.incompleteReasons.join(' | ') || 'This component could not be resolved.';
             const incompleteFlag = (g.incomplete && !_knownComps) ? `
                 <span class="row-incomplete-flag" role="img" tabindex="0" aria-label="Incomplete: ${incompleteTip.replace(/"/g, '&quot;')}" title="${incompleteTip.replace(/"/g, '&quot;')}">
@@ -1091,12 +1096,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td class="td-num">${g.lab_hours}</td>
                 <td class="td-num">${g.credit_units}</td>
                 <td class="td-course">${g.course}</td>
-                <td class="td-time">${incCell('schedule')}${cellFlag(byCell.time)}${g.timeUnresolved ? `
+                <td class="td-time">${incCell('time')}${cellFlag(byCell.time)}${g.timeUnresolved ? `
                     <span class="cell-conflict-flag" role="img" tabindex="0" aria-label="Time could not be resolved unambiguously: ${g.timeUnresolvedReasons.join(', ').replace(/"/g, '&quot;')}" title="Time could not be resolved unambiguously: ${g.timeUnresolvedReasons.join(', ').replace(/"/g, '&quot;')}">
                         <i class="fas fa-circle-question"></i>
-                    </span>` : ''}${cellWithPreserve(g.times.map(t => `<span class="time-line">${t}</span>`).join(''), 'schedule')}</td>
+                    </span>` : ''}${cellWithPreserve(g.times.map(t => `<span class="time-line">${t}</span>`).join(''), 'time')}</td>
                 <td class="td-num">${g.lec_hours + g.lab_hours}</td>
-                <td class="td-days">${cellFlag(byCell.days)}${_sortDays(g.days_set).join(' / ')}</td>
+                <td class="td-days">${incCell('day')}${cellFlag(byCell.days)}${cellWithPreserve(_sortDays(g.days_set).join(' / '), 'day')}</td>
                 <td class="td-room">${incCell('room')}${cellFlag(byCell.room)}${cellWithPreserve(g.rooms.join('<br>'), 'room')}</td>
             </tr>`;
         }).join('');
@@ -1988,15 +1993,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.success) {
                     _replaceWorkingState();
                     applyScheduleResult(data, true);
-                    // #10: current-term load check — the retrieved faculty are kept
-                    // and flagged, so the Academic Head decides what to change.
+                    // #10: current-term load check — a previous-AY instructor who would
+                    // exceed their load limit was released (Instructor → TBA); those rows
+                    // are auto-selected, so Re-generate assigns someone with hours left.
                     const notices = data.overload_notices || [];
                     if (notices.length > 0) {
                         await showInfo(
                             'Faculty Load Notice',
                             'Some faculty from the previous schedule would exceed their load limit '
-                            + 'for this term. Select those rows and unlock <strong>Instructor</strong> '
-                            + 'to reassign them:<br><br>'
+                            + 'for this term, so they were not kept on these classes. The rows are '
+                            + 'selected — click <strong>Re-generate selected</strong> to assign another instructor:<br><br>'
                             + notices.map(n => `• ${n}`).join('<br>'),
                             'info'
                         );
@@ -2150,14 +2156,21 @@ document.addEventListener('DOMContentLoaded', () => {
             locked_sessions.push({
                 row_key:  key,
                 selected: mutable,
-                lock: { faculty: !!locks.faculty, room: !!locks.room, schedule: !!locks.schedule },
+                // Day and Time lock separately; 'schedule' (the whole slot) = both.
+                lock: { faculty: !!locks.faculty, room: !!locks.room,
+                        day: !!locks.day, time: !!locks.time, schedule: !!(locks.day && locks.time) },
                 // Only explicit Academic Head locks are absolute; every other kept
                 // field is AUTO-kept and may be released progressively server-side.
-                user_lock: {
-                    faculty:  !!(locks.faculty  && userSet.faculty),
-                    room:     !!(locks.room     && userSet.room),
-                    schedule: !!(locks.schedule && userSet.schedule),
-                },
+                user_lock: (() => {
+                    const u = {
+                        faculty: !!(locks.faculty && userSet.faculty),
+                        room:    !!(locks.room    && userSet.room),
+                        day:     !!(locks.day     && userSet.day),
+                        time:    !!(locks.time    && userSet.time),
+                    };
+                    u.schedule = u.day && u.time;
+                    return u;
+                })(),
                 ..._pluckGeneFields(cls),
             });
         });
@@ -2205,7 +2218,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 () => _finishRegeneratedRows(regeneratedCodes, failed));
             // Tell the Academic Head which AUTO-kept values had to change.
             const released = data.released_locks || {};
-            const _lbl = { faculty: 'Instructor', schedule: 'Time/Days', room: 'Room' };
+            const _lbl = { faculty: 'Instructor', schedule: 'Time/Days', day: 'Days', time: 'Time', room: 'Room' };
             const notes = Object.entries(released)
                 .map(([code, fields]) => `${fields.map(f => _lbl[f] || f).join(' and ')} for ${code}`);
             if (data.success && notes.length) {
@@ -2403,17 +2416,46 @@ document.addEventListener('DOMContentLoaded', () => {
                     : '';
                 await showInfo(
                     'Draft Saved!',
-                    `Schedule saved as <strong>Draft V${data.draft_version}</strong>.<br>You can edit it later from <em>View Drafts</em>.${_issueNote}`,
+                    `Schedule saved as <strong>Draft V${data.draft_version}</strong>.<br>`
+                    + `Opening it in the Manual Editor...${_issueNote}`,
                     'success'
                 );
-                // The generated schedule stays on screen after saving — just a
-                // confirmation, not a full page reset. Same behavior Approve already
-                // has (see _submitApproval above). Selecting a different Program to
-                // generate for still clears/replaces this normally via Generate Schedule.
                 saved = true;
                 _unsavedResult = false;
                 btnSaveDraft.disabled  = true;
                 btnSaveDraft.innerHTML = '<i class="fas fa-check-circle"></i> Saved as Draft';
+
+                // Same end state as Approve: the saved Draft is now authoritative, so open
+                // the Manual Editor on it. Subjects the Draft could not hold (fully
+                // unresolved, no day/time to store) travel along as unsaved rows — the
+                // same hand-off "Go to Manual Editor" uses — so nothing is lost.
+                try { sessionStorage.removeItem('_sched_gen_transfer'); } catch (_se) {}
+                const _unsavedCodes = new Set((data.unsaved_incomplete_subjects || [])
+                    .map(v => String(v || '').trim().toUpperCase()).filter(Boolean));
+                const _unsavedRows = (currentScheduleData || []).filter(row =>
+                    _unsavedCodes.has(String(row.subject_code || row.subjectcode || '').trim().toUpperCase()));
+                let _transfer = false;
+                if (_unsavedRows.length) {
+                    try {
+                        sessionStorage.setItem('_sched_gen_transfer', JSON.stringify({
+                            mode: 'unsaved_only', schedule_data: _unsavedRows, context: ctx,
+                            subject_codes: Array.from(_unsavedCodes),
+                        }));
+                        _transfer = true;
+                    } catch (_se) { /* the saved Draft still opens */ }
+                }
+                try { localStorage.removeItem(_LS_KEY); } catch (e) {}
+                const sectName = sectionFilter.options[sectionFilter.selectedIndex]?.text || '';
+                window.location.href = MANUAL_EDITOR_URL
+                    + `?mode=program`
+                    + `&prog=${encodeURIComponent(ctx.program)}`
+                    + `&yl=${encodeURIComponent(ctx.yearLevel)}`
+                    + `&ay=${encodeURIComponent(ctx.acadYear)}`
+                    + `&sem=${encodeURIComponent(ctx.term)}`
+                    + `&scheduler=official`
+                    + `&sect=${encodeURIComponent(ctx.section)}`
+                    + `&sect_name=${encodeURIComponent(sectName)}`
+                    + (_transfer ? `&from_generator=1` : '');
             } else {
                 // #11: Load violations get a dedicated message listing each faculty
                 const lvs = data.load_violations || [];

@@ -104,18 +104,25 @@
     .btn-assign-faculty.reassign { background: #7f8c8d; }
     .btn-assign-faculty.reassign:hover { background: #6c7a7d; }
 
+    /* Room offered only as a merge at another section's exact slot (see _applyRoomAvailabilityFilter). */
+    .ts-ss-item.room-merge-at .ts-merge-hint { color: #1f4f82; font-size: 0.68rem; font-weight: 700; }
+
     /* ── Pill drop button ── */
     .pill-drop-btn {
         position: absolute; top: 2px; right: 2px;
         background: rgba(231,76,60,0.9); color: white; border: none;
-        border-radius: 50%; width: 16px; height: 16px; font-size: 0.55rem;
+        border-radius: 50%; width: 18px; height: 18px; font-size: 0.6rem;
         cursor: pointer; display: flex; align-items: center; justify-content: center;
         z-index: 10; transition: background 0.2s;
     }
-    .pill-drop-btn:hover { background: #c0392b; transform: scale(1.1); }
+    /* Bigger invisible hit area around the small ×, so a slightly-off click still deletes
+       instead of opening the schedule underneath. */
+    .pill-drop-btn::before { content: ''; position: absolute; inset: -7px; border-radius: 50%; }
+    .pill-drop-btn:hover { background: #c0392b; }
+    /* No hover scaling on the pill or its ×: scaling moved the × out from under the cursor. */
     .schedule-pill { position: absolute; border-radius: 4px; padding: 4px; color: white;
-        font-size: 0.75rem; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: transform 0.1s; }
-    .schedule-pill:hover { transform: scale(1.02); z-index: 20; }
+        font-size: 0.75rem; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: box-shadow 0.1s; }
+    .schedule-pill:hover { transform: none; box-shadow: 0 3px 8px rgba(0,0,0,0.25); z-index: 20; }
 
     /* ── Conflict Modal ──
        Redesigned to read as a plain, calm heads-up rather than a hazard warning: no
@@ -125,7 +132,7 @@
         backdrop-filter:blur(2px); z-index:9999; align-items:center; justify-content:center; }
     .conflict-overlay.active { display:flex; }
     .conflict-box { background:#ffffff; border:1px solid #e5e5e5;
-        border-radius:14px; padding:32px 32px 26px; max-width:400px; width:90%; text-align:center;
+        border-radius:14px; padding:32px 32px 26px; max-width:460px; width:90%; text-align:center;
         box-shadow:0 12px 40px rgba(0,0,0,0.16); animation:conflictPop 0.18s ease-out; }
     @keyframes conflictPop { from{transform:scale(0.94);opacity:0} to{transform:scale(1);opacity:1} }
     .conflict-icon-wrap { margin:0 auto 16px; width:52px; height:52px; border-radius:50%;
@@ -133,6 +140,19 @@
     .conflict-icon-wrap i { color:#8b1a1a; font-size:1.3rem; }
     .conflict-title { color:#2c2c2c; font-size:1.15rem; font-weight:700; margin:0 0 8px; }
     .conflict-detail { color:#666; font-size:0.85rem; line-height:1.55; margin:0 0 22px; display:none; }
+    /* Structured conflict: Type · Class · Time and day · Faculty · Section · Room */
+    .conflict-detail.cf-structured { text-align:left; }
+    .cf-why { display:block; color:#555; margin-bottom:10px; text-align:center; }
+    .cf-table { width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:10px; }
+    .cf-table th { width:38%; text-align:left; font-weight:700; color:#7a7a7a; padding:6px 10px;
+        border-bottom:1px solid #f0eded; font-size:0.74rem; text-transform:uppercase; letter-spacing:0.3px; }
+    .cf-table td { padding:6px 10px; border-bottom:1px solid #f0eded; color:#333; font-weight:600; }
+    .cf-table tr.cf-hit td { color:#8b1a1a; font-weight:800; }
+    .cf-table tr.cf-hit th { color:#8b1a1a; }
+    .cf-table tr.cf-hit { background:#fdf3f3; }
+    .cf-fix { display:block; font-size:0.78rem; color:#5d4037; background:#fff8e1;
+        border-radius:6px; padding:7px 10px; }
+    .cf-fix i { color:#f9a825; margin-right:4px; }
     .conflict-btn { border:none; background:#8b1a1a; color:white; padding:10px 40px;
         border-radius:8px; font-weight:600; font-size:0.85rem;
         cursor:pointer; transition:background 0.15s; }
@@ -1838,6 +1858,7 @@ function _showPublishSelectModal(candidates, kept = []) {
     return new Promise(resolve => {
         const isSingle = candidates.length === 1;
         const overlay = document.createElement('div');
+        overlay.className = 'publish-select-overlay';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;';
 
         const box = document.createElement('div');
@@ -2951,10 +2972,12 @@ window.confirmAndPlace = async function() {
                         _mergeConfirmed = true;
                         break;
                     }
-                    await showConflictModal(
-                        `Room conflict: "${s.subjectname}" (${s.instructor || 'TBA'}) is already scheduled in ${roomName} on ${dayVal} — ` +
-                        `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}.`
-                    );
+                    await showConflictModal(_conflictDetail({
+                        kind: 'room', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                        start: (typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid), end: (typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid),
+                        faculty: s.instructor || 'TBA',
+                        section: _sectionLabel(s.programcode, s.sectionname, s.year_level), room: roomName,
+                    }));
                     return;
                 }
             }
@@ -2989,7 +3012,12 @@ window.confirmAndPlace = async function() {
                         _mergeConfirmed = true;
                         break;
                     }
-                    await showConflictModal(`Room conflict: "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} is already placed in ${roomName} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                    await showConflictModal(_conflictDetail({
+                        kind: 'room', code: c.subject_code, name: c.subject_name, day: dayVal,
+                        start: c.start_time, end: c.end_time,
+                        faculty: c.instructor || c.faculty_name || 'TBA',
+                        section: _sectionLabel(c.course, c.section_name, c.year_level), room: roomName,
+                    }));
                     return;
                 }
             }
@@ -3014,11 +3042,13 @@ window.confirmAndPlace = async function() {
                     if (_inlineMergeMode !== 'none' && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
                     // Also skip if this is an already-confirmed merge class
                     if (_mergeConfirmed && (s.subjectcode || '').toUpperCase() === _curSubjCode) continue;
-                    await showConflictModal(
-                        `Faculty conflict: ${facName} already has "${_classLabel(s.subjectcode, s.subjectname)}"${_classWhere(s.programcode, s.sectionname)} on ${dayVal} — ` +
-                        `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
-                        `Faculty cannot have overlapping schedules.`
-                    );
+                    await showConflictModal(_conflictDetail({
+                        kind: 'faculty', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                        start: (typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid), end: (typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid),
+                        faculty: facName,
+                        section: _sectionLabel(s.programcode, s.sectionname, s.year_level),
+                        room: s.roomname || s.room || 'TBA',
+                    }));
                     return;
                 }
             }
@@ -3038,7 +3068,11 @@ window.confirmAndPlace = async function() {
                 // Skip when this faculty is teaching the same subject under a valid merge
                 if (_inlineMergeMode !== 'none' && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
                 if (_mergeConfirmed && (c.subject_code || '').toUpperCase() === _curSubjCode) continue;
-                await showConflictModal(`Faculty conflict: This faculty is already teaching "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                await showConflictModal(_conflictDetail({
+                    kind: 'faculty', code: c.subject_code, name: c.subject_name, day: dayVal,
+                    start: c.start_time, end: c.end_time, faculty: facName,
+                    section: _sectionLabel(c.course, c.section_name, c.year_level), room: c.room || 'TBA',
+                }));
                 return;
             }
         }
@@ -3061,11 +3095,12 @@ window.confirmAndPlace = async function() {
                 s.daydesc     === window.currentEditSession.daydesc &&
                 s.starttimeid === window.currentEditSession.starttimeid) continue;
             if (newStartIdx < s.endtimeid && newEndIdx > s.starttimeid) {
-                await showConflictModal(
-                    `Section conflict: "${s.subjectname || s.subjectcode}" is already scheduled for ${prog} Year ${yl} on ${dayVal} — ` +
-                    `${typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid} to ${typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid}. ` +
-                    `A section cannot have two classes at the same time.`
-                );
+                await showConflictModal(_conflictDetail({
+                    kind: 'section', code: s.subjectcode, name: s.subjectname, day: dayVal,
+                    start: (typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid), end: (typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid),
+                    faculty: s.instructor || 'TBA',
+                    section: _currentSectionLabel() || `${prog} ${yl}`, room: s.roomname || s.room || 'TBA',
+                }));
                 return;
             }
         }
@@ -3082,7 +3117,11 @@ window.confirmAndPlace = async function() {
             const cStart = getTimeSlotIndex(c.start_time);
             const cEnd   = getTimeSlotIndex(c.end_time);
             if (newStartIdx < cEnd && newEndIdx > cStart) {
-                await showConflictModal(`Section conflict: "${c.subject_name}" is already placed for this section on ${dayVal} — ${c.start_time} to ${c.end_time}.`);
+                await showConflictModal(_conflictDetail({
+                    kind: 'section', code: c.subject_code, name: c.subject_name, day: dayVal,
+                    start: c.start_time, end: c.end_time, faculty: c.instructor || c.faculty_name || 'TBA',
+                    section: _currentSectionLabel() || `${prog} ${yl}`, room: c.room || 'TBA',
+                }));
                 return;
             }
         }
@@ -4810,10 +4849,14 @@ async function _findFacultySliceConflict(facId, facName) {
         const sl = slices.find(x => hit(x, s.daydesc, s.starttimeid, s.endtimeid) &&
             !(typeof _mgSameEvent === 'function' && _mgSameEvent(s, x.ev, sect)) && !_mergeAt(s, x));
         if (sl) {
-            return `${facName} already has "${_classLabel(s.subjectcode, s.subjectname)}"` +
-                `${_classWhere(s.programcode, s.sectionname)} on ${s.daydesc} — ` +
-                `${fmt(s.starttimeid)} to ${fmt(s.endtimeid)}, which overlaps this subject's ` +
-                `${sl.day} ${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
+            // Faculty cannot have overlapping schedules.
+            return _conflictDetail({
+                kind: 'faculty', code: s.subjectcode, name: s.subjectname, day: s.daydesc,
+                start: fmt(s.starttimeid), end: fmt(s.endtimeid), faculty: facName,
+                section: _sectionLabel(s.programcode, s.sectionname, s.year_level),
+                room: s.roomname || s.room || 'TBA',
+                mine: `${sl.day} ${fmt(sl.start)} – ${fmt(sl.end)}`,
+            });
         }
     }
 
@@ -4825,9 +4868,12 @@ async function _findFacultySliceConflict(facId, facName) {
         const cs = getTimeSlotIndex(c.start_time), ce = getTimeSlotIndex(c.end_time);
         const sl = slices.find(x => hit(x, c.day, cs, ce));
         if (sl) {
-            return `${facName} is already placed in "${_classLabel(c.subject_code, c.subject_name)}"${_classWhere(c.course, c.section_name)} on ${c.day} — ` +
-                `${c.start_time} to ${c.end_time}, which overlaps this subject's ${sl.day} ` +
-                `${fmt(sl.start)} – ${fmt(sl.end)} slice. Faculty cannot have overlapping schedules.`;
+            return _conflictDetail({
+                kind: 'faculty', code: c.subject_code, name: c.subject_name, day: c.day,
+                start: c.start_time, end: c.end_time, faculty: facName,
+                section: _sectionLabel(c.course, c.section_name, c.year_level), room: c.room || 'TBA',
+                mine: `${sl.day} ${fmt(sl.start)} – ${fmt(sl.end)}`,
+            });
         }
     }
     return '';
@@ -5520,8 +5566,25 @@ function _inferEndTime(typed, startVal) {
     return null;
 }
 
+// Fields whose blur came from leaving the window (see tsClose). On return, a field the
+// browser did not refocus (the user clicked elsewhere) is closed and validated then.
+const _tsDeferredClose = new Set();
+if (typeof window.addEventListener === 'function') window.addEventListener('focus', () => setTimeout(() => {
+    _tsDeferredClose.forEach(key => {
+        const [p, id] = key.split('|');
+        if (document.activeElement !== document.getElementById(`${p}-txt-${id}`)) tsClose(p, id);
+    });
+    _tsDeferredClose.clear();
+}, 0));
 function tsClose(p, id) {
     setTimeout(() => {
+        // Alt+Tab / switching to another window blurs the field too — that is not the user
+        // leaving it. Keep what they typed (and the open list): the browser puts the focus
+        // back on this field when they return, and a real blur later still validates it.
+        if (typeof document.hasFocus === 'function' && !document.hasFocus()) {
+            _tsDeferredClose.add(`${p}|${id}`);
+            return;
+        }
         const _cl = document.getElementById(`${p}-list-${id}`);
         if (_cl) {
             _cl.classList.remove('open');
@@ -5619,7 +5682,21 @@ function tsSel(p, id, val) {
     // RESET TO GROUP SLOT applies the server's group slot as is (server HC16/HC11 judge it).
     if (!window._mgApplying && item && (item.classList.contains('occ-dim') || item.classList.contains('before-start')
         || item.classList.contains('room-unavailable'))) return;
-    const label = item ? item.textContent.trim() : val;
+    // A room offered "merge at <time>": move the slice to that exact slot first.
+    if (p === 'tsr' && item && item.classList.contains('room-merge-at')) {
+        const ms = item.dataset.mergeStart, me = item.dataset.mergeEnd;
+        const lbl = item.dataset.label;
+        tsSel('tsst', id, ms);
+        tsSel('tset', id, me);
+        const txt = document.getElementById(`tsr-txt-${id}`);
+        const fresh = document.getElementById(`tsr-list-${id}`)?.querySelector(`.ts-ss-item[data-val="${val}"]`);
+        if (fresh && fresh.classList.contains('room-merge-at')) {
+            // Still not an exact free merge slot (e.g. the end time could not be set) — stop.
+            return;
+        }
+        if (txt && lbl) txt.value = lbl;
+    }
+    const label = item ? (item.dataset.label || item.textContent.trim()) : val;
     const txtEl = document.getElementById(`${p}-txt-${id}`);
     const hidEl = document.getElementById(`${p}-hid-${id}`);
     if (txtEl) txtEl.value = label;
@@ -8182,13 +8259,47 @@ document.addEventListener('DOMContentLoaded', () => {
         ].join('|');
     }
 
+    // Drop generator hand-off rows whose subject this section has saved since (Draft or
+    // Published) — from the editor and from the kept transfer — and repaint. Can't tell
+    // (lookup failed) → keep everything, as before.
+    async function _pruneSavedGeneratorTransfer(transfer, genCtx) {
+        try {
+            const _q = `program=${encodeURIComponent(genCtx.program || '')}&year_level=${encodeURIComponent(genCtx.yearLevel || '')}` +
+                       `&ay_id=${encodeURIComponent(genCtx.acadYear || '')}&sem=${encodeURIComponent(genCtx.term || '')}` +
+                       `&section_id=${encodeURIComponent(genCtx.section || genCtx.sectionId || '')}`;
+            const [_d, _p] = await Promise.all([
+                fetch(`/api/schedule/draft_sessions?${_q}`).then(r => r.json()),
+                fetch(`/api/schedule/draft_sessions?${_q}&status=published`).then(r => r.json()),
+            ]);
+            if (!(_d && _d.success && _p && _p.success)) return;
+            const saved = new Set([...(_d.sessions || []), ...(_p.sessions || [])]
+                .map(x => String(x.subject_code || '').toUpperCase()));
+            const code = r => String(r.subject_code || r.subjectcode || '').toUpperCase();
+            const left = (transfer.schedule_data || []).filter(r => !saved.has(code(r)));
+            if (left.length) sessionStorage.setItem('_sched_gen_transfer', JSON.stringify(Object.assign({}, transfer, { schedule_data: left })));
+            else sessionStorage.removeItem('_sched_gen_transfer');
+            const before = pendingManualSchedule.length;
+            pendingManualSchedule = pendingManualSchedule.filter(c => !(c.fromGenerator && saved.has(code(c))));
+            if (pendingManualSchedule.length !== before) {
+                if (typeof currentMode !== 'undefined' && currentMode === 'program') {
+                    if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
+                } else if (typeof renderGrid === 'function') {
+                    renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+                }
+            }
+        } catch (_pe) { /* keep the transfer as is */ }
+    }
+
     const _fromGenerator = initData.dataset.fromGenerator === '1';
     if (_fromGenerator) {
         try {
             const _transferStr = sessionStorage.getItem('_sched_gen_transfer');
             if (_transferStr) {
-                // Consume once. Reloading Manual Editor must not append the same fallback again.
-                sessionStorage.removeItem('_sched_gen_transfer');
+                // Kept (not consumed) until every transferred subject is saved: a reload used
+                // to lose the generated schedule whenever the hand-off save had failed. Rows
+                // are added right away (as before); the subjects this section has since saved
+                // (Draft or Published) are dropped just after, so a reload never duplicates
+                // what is already in the database.
                 const transfer = JSON.parse(_transferStr);
                 const genData  = Array.isArray(transfer.schedule_data) ? transfer.schedule_data : [];
                 const genCtx   = transfer.context || {};
@@ -8234,6 +8345,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                 }
+                _pruneSavedGeneratorTransfer(transfer, genCtx);
             }
         } catch (_ge) {
             console.error('[from_generator] Failed to load transfer data:', _ge);
@@ -8924,6 +9036,13 @@ function _applyRoomAvailabilityFilter(rowId) {
     if (!row || !list) return;
 
     list.querySelectorAll('.ts-ss-item.room-unavailable').forEach(i => i.classList.remove('room-unavailable'));
+    list.querySelectorAll('.ts-ss-item.room-merge-at').forEach(i => {
+        if (!i.classList.contains('room-merge-at')) return;
+        i.classList.remove('room-merge-at');
+        if (typeof i.querySelector === 'function') i.querySelector('.ts-merge-hint')?.remove();
+        delete i.dataset.mergeStart; delete i.dataset.mergeEnd;
+        if (typeof i.removeAttribute === 'function') i.removeAttribute('title');
+    });
 
     const day   = row.querySelector('.ts-day-sel')?.value       || '';
     const start = row.querySelector('.ts-start-hidden')?.value  || '';
@@ -8985,9 +9104,34 @@ function _applyRoomAvailabilityFilter(rowId) {
         const ranges = [...dbRanges, ...(localByRoom[rid] || [])]
             .filter(r => !(typeof _mgSameEvent === 'function' && _mgSameEvent(r, row.dataset.mergeEvent || '', _mgSect)))
             .map(r => (typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(r)) ? Object.assign({}, r, { merge: true }) : r);
-        const occupied = ranges.some(r => typeof _mgRangeBlocks === 'function'
-            ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx));
-        if (occupied) item.classList.add('room-unavailable');
+        const blocks = r => typeof _mgRangeBlocks === 'function'
+            ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx);
+        const blocking = ranges.filter(blocks);
+        if (!blocking.length) return;
+        // Blocked ONLY by a class this slice can merge with (same subject, same faculty or
+        // TBA) at a slightly different time: a merge needs the exact same slot, so offer the
+        // room at that slot instead of hiding it — choosing it moves the slice's time there
+        // (what choosing the room first leads to). Same rule as the server's detect_merges.
+        // Every blocker must be mergeable; offer the merge slot overlapping the chosen time
+        // most, provided nothing else in the room overlaps that slot.
+        const _ov = r => Math.min(endIdx, r.endIdx) - Math.max(startIdx, r.startIdx);
+        const m = blocking.every(r => r.merge)
+            ? blocking.slice().sort((a, b) => _ov(b) - _ov(a))[0] : null;
+        const mergeOnly = !!m && !ranges.some(r => (m.startIdx < r.endIdx && m.endIdx > r.startIdx)
+            && !(r.merge && r.startIdx === m.startIdx && r.endIdx === m.endIdx));
+        if (mergeOnly && _TS_TIMES[m.startIdx] && _TS_TIMES[m.endIdx]) {
+            const s = _TS_TIMES[m.startIdx], e = _TS_TIMES[m.endIdx];
+            item.classList.add('room-merge-at');
+            item.dataset.mergeStart = s; item.dataset.mergeEnd = e;
+            if (!item.dataset.label) item.dataset.label = item.textContent.trim();
+            item.title = `Merge with the same class of another section at ${s} – ${e}. Choosing this room moves this slice to that time.`;
+            const hint = document.createElement('span');
+            hint.className = 'ts-merge-hint';
+            hint.textContent = ` · merge at ${s} – ${e}`;
+            item.appendChild(hint);
+            return;
+        }
+        item.classList.add('room-unavailable');
     });
 }
 

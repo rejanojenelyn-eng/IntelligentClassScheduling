@@ -80,7 +80,8 @@ const [ELED, GEED1, GEED2] = ROWS;
     await setRow(ELED, true);
     await toggleLock(ELED, 'faculty');
     await toggleLock(ELED, 'room');
-    await toggleLock(ELED, 'schedule');
+    await toggleLock(ELED, 'day');
+    await toggleLock(ELED, 'time');
     R.allLockedState = lockState(ELED.subject_code);
     R.payloadAllLocked = await regenerate();                     // 5: no request
     R.allLockedToast = getEl('successToast').innerHTML;

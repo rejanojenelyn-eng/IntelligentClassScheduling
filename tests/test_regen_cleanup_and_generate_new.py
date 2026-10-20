@@ -22,8 +22,8 @@ import app as app_module
 from conftest import requires_db
 from test_reference_validation_and_progressive_regen import _ScriptedSolver, _regen, _sel, _fixed
 
-NO_ICONS = {'faculty': None, 'schedule': None, 'room': None, 'icons': 0}
-ALL_OPEN = {'faculty': 'is-unlocked', 'schedule': 'is-unlocked', 'room': 'is-unlocked', 'icons': 3}
+NO_ICONS = {'faculty': None, 'day': None, 'time': None, 'room': None, 'icons': 0}
+ALL_OPEN = {'faculty': 'is-unlocked', 'day': 'is-unlocked', 'time': 'is-unlocked', 'room': 'is-unlocked', 'icons': 4}
 
 
 @pytest.fixture(scope='module')
@@ -40,7 +40,7 @@ def ui():
 # ── Fix #4 ─────────────────────────────────────────────────────────────────
 
 def test_c1_successful_row_is_unchecked_and_its_locks_removed(ui):
-    assert ui['c1Selected']['checked'] and ui['c1Selected']['locks']['icons'] == 3
+    assert ui['c1Selected']['checked'] and ui['c1Selected']['locks']['icons'] == 4
     assert ui['c1Payload']['A 101']['selected'] is True
     assert ui['c1']['checked'] is False and ui['c1']['locks'] == NO_ICONS
     assert ui['c1']['time'] is True                      # regenerated value kept
@@ -96,7 +96,7 @@ def test_c10_unselected_rows_stay_unchanged(ui):
     assert all(o == {'checked': False, 'icons': 0} for o in ui['c1']['others'])
     assert ui['c10D'] == {'checked': False, 'icons': 0}
     for payload in (ui['c1Payload'], ui['c2Payload'], ui['c4Payload']):
-        assert payload['D 104'] == {'selected': False, 'lock': {'faculty': True, 'room': True, 'schedule': True}}
+        assert payload['D 104'] == {'selected': False, 'lock': {'faculty': True, 'room': True, 'day': True, 'time': True, 'schedule': True}}
 
 
 @requires_db

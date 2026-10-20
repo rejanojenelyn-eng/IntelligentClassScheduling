@@ -121,9 +121,8 @@ def attempt(conn, username, password, ip):
         failed = 0 if (row['locked_until'] is not None or row['stale']) else row['failed_count']
 
         cur.execute("""
-            SELECT a.*, NULLIF(TRIM(CASE WHEN a.employeenumber IS NULL THEN a.email ELSE f.email END), '')
-                        AS notify_email
-            FROM accounts a LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+            SELECT a.*, NULLIF(TRIM(a.email), '') AS notify_email
+            FROM accounts a
             WHERE a.username = %s
         """, (username,))
         user = cur.fetchone()

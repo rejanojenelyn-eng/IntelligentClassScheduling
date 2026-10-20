@@ -102,6 +102,34 @@ def test_existing_sessions_token_rules(h):
                                 'other_section': False, 'no_token': True}
 
 
+def test_approve_is_not_stranded_by_a_stacked_message(h):
+    # Approve waits on "Nothing to Publish"; a second message opens on top; one close
+    # releases both, so Approve finishes and the next Approve click runs again.
+    r = h['approve_survives_stacked_modal']
+    assert r['waiting'] is True and r['title1'] == 'Nothing to Publish'
+    assert r['approve_finished'] is True and r['other_finished'] is True
+    assert r['in_flight_after'] is False
+    assert r['second_run_title'] == 'Nothing to Publish' and r['second_finished'] is True
+
+
+def test_delete_published_slice_republishes_without_it(h):
+    r = h['delete_published_slice']
+    # One of two slices: the subject is republished with only the other one.
+    assert r['one_of_two']['approve'] == {'codes': ['A101@Monday'], 'removed': [], 'override': True, 'section': '9'}
+    assert r['one_of_two']['modals'] == ['Schedule Deleted']
+    # Its last slice: the subject is removed from the live schedule.
+    assert r['last_slice']['approve'] == {'codes': [], 'removed': ['A101'], 'override': True, 'section': '9'}
+    # A pending Draft of the subject is never published as a side effect of a delete.
+    assert r['pending_draft']['approve'] is None and r['pending_draft']['modals'] == ['Delete Failed']
+
+
+def test_specialization_prompt_only_when_the_user_picks_the_faculty(h):
+    r = h['spec_prompt_only_on_user_pick']
+    assert r['compat'] == 'mismatch'
+    assert r['afterLoad'] == 0 and r['afterSecondLoad'] == 0   # loading an assigned faculty never asks
+    assert r['afterUserPick'] == 1                             # picking one asks once
+
+
 def test_section_isolation(h):
     r = h['section_isolation']
     assert r['afterLate1A']['pending'] == r['loaded1A']['pending']   # late 1A response ignored on 1B

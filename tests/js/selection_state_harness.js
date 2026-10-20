@@ -62,7 +62,7 @@ const originOf = (code, field) => {
     const last = rows[rows.length - 1];
     await setRow(last, true);
     const before = lockState(last.subject_code);
-    const validField = ['faculty', 'schedule', 'room'].find(f => originOf(last.subject_code, f) !== 'unresolved');
+    const validField = ['faculty', 'day', 'time', 'room'].find(f => originOf(last.subject_code, f) !== 'unresolved');
     // Make it a USER lock: if it starts unlocked one click locks it; if it is
     // auto-kept, unlock then re-lock.
     if (before[validField] === 'is-unlocked') await toggleLock(last, validField);

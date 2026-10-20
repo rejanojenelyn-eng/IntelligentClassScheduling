@@ -32,6 +32,7 @@
         }
 
         function proceedLogout() {
+            window.isLeavingIntentionally = true;   // confirmed in the modal
             window.location.href = "/logout";
         }
 

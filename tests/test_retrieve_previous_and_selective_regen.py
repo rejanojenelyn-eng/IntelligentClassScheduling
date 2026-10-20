@@ -120,9 +120,9 @@ def test_infeasible_selected_row_reports_it_and_returns_no_schedule(monkeypatch)
 # checking rows, clicking lock icons, Select All / Select Incomplete, and
 # capturing the actual /api/schedule/generate payload.
 
-UNLOCKED = {'faculty': 'is-unlocked', 'schedule': 'is-unlocked', 'room': 'is-unlocked', 'icons': 3}
-NO_ICONS = {'faculty': None, 'schedule': None, 'room': None, 'icons': 0}
-FIXED = {'selected': False, 'lock': {'faculty': True, 'room': True, 'schedule': True}}
+UNLOCKED = {'faculty': 'is-unlocked', 'day': 'is-unlocked', 'time': 'is-unlocked', 'room': 'is-unlocked', 'icons': 4}
+NO_ICONS = {'faculty': None, 'day': None, 'time': None, 'room': None, 'icons': 0}
+FIXED = {'selected': False, 'lock': {'faculty': True, 'room': True, 'day': True, 'time': True, 'schedule': True}}
 
 
 @pytest.fixture(scope='module')
@@ -147,20 +147,20 @@ def test_ui_1_checking_a_row_starts_all_three_unlocked(ui):
 
 def test_ui_2_check_and_regenerate_sends_all_three_unlocked(ui):
     assert ui['payloadDefault']['ELED 116'] == {
-        'selected': True, 'lock': {'faculty': False, 'room': False, 'schedule': False}}
+        'selected': True, 'lock': {'faculty': False, 'room': False, 'day': False, 'time': False, 'schedule': False}}
 
 
 def test_ui_3_locking_instructor_preserves_only_instructor(ui):
     assert ui['lockedInstructor'] == dict(UNLOCKED, faculty='is-locked')
-    assert ui['payloadInstructor']['ELED 116']['lock'] == {'faculty': True, 'room': False, 'schedule': False}
+    assert ui['payloadInstructor']['ELED 116']['lock'] == {'faculty': True, 'room': False, 'day': False, 'time': False, 'schedule': False}
 
 
 def test_ui_4_locking_instructor_and_room_leaves_only_time_days(ui):
-    assert ui['payloadInstructorRoom']['ELED 116']['lock'] == {'faculty': True, 'room': True, 'schedule': False}
+    assert ui['payloadInstructorRoom']['ELED 116']['lock'] == {'faculty': True, 'room': True, 'day': False, 'time': False, 'schedule': False}
 
 
 def test_ui_5_all_three_locked_sends_nothing_and_says_so(ui):
-    assert ui['allLockedState'] == {'faculty': 'is-locked', 'schedule': 'is-locked', 'room': 'is-locked', 'icons': 3}
+    assert ui['allLockedState'] == {'faculty': 'is-locked', 'day': 'is-locked', 'time': 'is-locked', 'room': 'is-locked', 'icons': 4}
     assert ui['payloadAllLocked'] is None                       # no request made
     assert 'Unlock at least one field to regenerate.' in ui['allLockedToast']
 
@@ -216,11 +216,11 @@ def test_ui_loading_a_draft_re_evaluates(ui):
 # ── Conflict panel + conflict-aware selection (harness section "cp*") ────────
 
 L_, U_ = 'is-locked', 'is-unlocked'
-_NO = {'faculty': None, 'schedule': None, 'room': None, 'icons': 0}
+_NO = {'faculty': None, 'day': None, 'time': None, 'room': None, 'icons': 0}
 
 
 def _locks(faculty, schedule, room):
-    return {'faculty': faculty, 'schedule': schedule, 'room': room, 'icons': 3}
+    return {'faculty': faculty, 'day': schedule, 'time': schedule, 'room': room, 'icons': 4}
 
 
 # ELED 116: faculty clash (HC10) + time block (HC6) -> Instructor + Time/Days
@@ -263,9 +263,9 @@ def test_cp_select_conflict_rows_sets_conflict_locks_and_does_not_regenerate(ui)
 
 def test_cp_regenerate_sends_conflict_locks_and_unselected_rows_fully_locked(ui):
     p = ui['cpRegenPayload']
-    assert p['ELED 116'] == {'selected': True, 'lock': {'faculty': False, 'room': True, 'schedule': False}}
-    assert p['GEED 001'] == {'selected': True, 'lock': {'faculty': False, 'room': False, 'schedule': False}}
-    assert p['GEED 002'] == {'selected': True, 'lock': {'faculty': False, 'room': True, 'schedule': True}}
+    assert p['ELED 116'] == {'selected': True, 'lock': {'faculty': False, 'room': True, 'day': False, 'time': False, 'schedule': False}}
+    assert p['GEED 001'] == {'selected': True, 'lock': {'faculty': False, 'room': False, 'day': False, 'time': False, 'schedule': False}}
+    assert p['GEED 002'] == {'selected': True, 'lock': {'faculty': False, 'room': True, 'day': True, 'time': True, 'schedule': True}}
     assert p['NSTP 001'] == FIXED
 
 
@@ -341,13 +341,13 @@ def test_rs_auto_kept_vs_user_locked_and_payload(ui):
     assert ui['rsAutoOrigin'] == 'open'     # incomplete row: starts unlocked, nothing auto-kept
     assert ui['rsUserOrigin'] == 'user'     # after the Academic Head locks it
     p = ui['rsPayload']
-    assert p['EDUC 021'] == {'selected': True, 'lock': {'faculty': True, 'room': False, 'schedule': False},
-                             'user_lock': {'faculty': True, 'room': False, 'schedule': False}}
-    assert p['EDUC 022']['lock'] == {'faculty': False, 'room': False, 'schedule': False}
-    assert p['EDUC 023']['lock'] == {'faculty': False, 'room': False, 'schedule': False}
+    assert p['EDUC 021'] == {'selected': True, 'lock': {'faculty': True, 'room': False, 'day': False, 'time': False, 'schedule': False},
+                             'user_lock': {'faculty': True, 'room': False, 'day': False, 'time': False, 'schedule': False}}
+    assert p['EDUC 022']['lock'] == {'faculty': False, 'room': False, 'day': False, 'time': False, 'schedule': False}
+    assert p['EDUC 023']['lock'] == {'faculty': False, 'room': False, 'day': False, 'time': False, 'schedule': False}
     # Unselected rows: fully locked.
-    assert p['NSTP 001'] == {'selected': False, 'lock': {'faculty': True, 'room': True, 'schedule': True},
-                             'user_lock': {'faculty': False, 'room': False, 'schedule': False}}
+    assert p['NSTP 001'] == {'selected': False, 'lock': {'faculty': True, 'room': True, 'day': True, 'time': True, 'schedule': True},
+                             'user_lock': {'faculty': False, 'room': False, 'day': False, 'time': False, 'schedule': False}}
 
 
 def test_rs_after_regeneration_ui_state_follows_the_applied_result(ui):
@@ -368,8 +368,8 @@ def test_no_second_incomplete_popup_and_button_renamed():
 
 def test_frontend_static_contract():
     js = JS_PATH.read_text(encoding='utf-8')
-    assert "const REGEN_FIELDS = ['faculty', 'schedule', 'room'];" in js
-    assert js.count("cellWithPreserve(") == 3  # instructor, time and room cells only
+    assert "const REGEN_FIELDS = ['faculty', 'day', 'time', 'room'];" in js
+    assert js.count("cellWithPreserve(") == 4  # instructor, time, days and room cells only
     # Retrieve Previous: plain success toast, no fallback warning dialog.
     assert "Previous AY schedule retrieved from ${data.retrieved_from.ay_label}." in js
     assert "Exact Reuse Unavailable" not in js

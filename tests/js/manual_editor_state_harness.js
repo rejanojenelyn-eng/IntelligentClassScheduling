@@ -623,6 +623,96 @@ const SCENARIOS = {
             delete_called: env.fetchLog.some(f => f.url.includes('/api/schedule/delete_session')),
         };
     },
+    // A second message opening on top of a modal Approve is still awaiting (e.g. a
+    // fire-and-forget load warning) must not strand Approve: closing the modal releases
+    // both callers, so the in-flight guard clears and the next Approve runs.
+    async approve_survives_stacked_modal() {
+        const env = setup(() => []);
+        // setup() stubs the modals — put the REAL showValidationModal / closeValidationModal back.
+        const src = fs.readFileSync(path.join(ROOT, 'static', 'js', 'ACAD HEAD', 'manualEditor.acad2.js'), 'utf8');
+        const real = src.match(/function showValidationModal\([\s\S]*?\nfunction closeValidationModal\(\) \{[\s\S]*?\n\}/);
+        vm.runInContext(real[0], env.sandbox);
+        env.getEl('sel_subj').value = 'A101';
+        env.routes.unshift(['/api/schedule/draft_sessions', { success: true, sessions: [], removed_subjects: [] }]);
+        // Microtasks only: a macrotask flush would also run other scenarios' leftover work.
+        const flush = async () => { for (let i = 0; i < 500; i++) await Promise.resolve(); };
+        let finished = false;
+        const run = g(env, 'window._runManualApprove')().then(() => { finished = true; });
+        await flush();
+        const waiting = g(env, 'window._approveInFlight');
+        const title1 = env.getEl('validationModalTitle').textContent;
+        let otherDone = false;
+        g(env, 'showValidationModal')('Faculty Load Exceeded', 'x').then(() => { otherDone = true; });
+        g(env, 'closeValidationModal')();
+        await flush();
+        const approveFinished = finished, inFlightAfter = g(env, 'window._approveInFlight');
+        // The next Approve is not blocked: it reaches the same "Nothing to Publish" check.
+        env.getEl('validationModalTitle').textContent = '';
+        let finished2 = false;
+        g(env, 'window._runManualApprove')().then(() => { finished2 = true; });
+        await flush();
+        const title2 = env.getEl('validationModalTitle').textContent;
+        g(env, 'closeValidationModal')();
+        await flush();
+        return { waiting, title1, approve_finished: approveFinished, other_finished: otherDone,
+                 in_flight_after: inFlightAfter, second_run_title: title2, second_finished: finished2 };
+    },
+    // × on a Published pill: delete_session refuses (PUBLISHED_IMMUTABLE), so after the
+    // confirmations the editor republishes the subject without that one slice.
+    async delete_published_slice() {
+        const runCase = async (liveRows, sd, draftRows = []) => {
+            const env = setup(() => []);
+            const pub = s => Object.assign({ status: 'Published', ay: 'AY2627', sem: 'A' }, s);
+            env.routes.unshift(
+                ['/api/schedule/delete_session', { success: false, code: 'PUBLISHED_IMMUTABLE', error: 'live' }],
+                ['status=published', { success: true, sessions: liveRows.map(pub), removed_subjects: [] }],
+                ['/api/schedule/draft_sessions', { success: true, sessions: draftRows, removed_subjects: [] }],
+                ['/api/manual/existing_sessions', { success: true, sessions: [] }],
+                ['/api/schedule/local_republish_impact', { success: true, sessions: [] }],
+                ['/api/schedule/approve', { success: true }]);
+            await g(env, 'window._dropSession')(encodeURIComponent(JSON.stringify(sd)),
+                                                { stopPropagation() {}, preventDefault() {} });
+            const ap = env.fetchLog.find(f => f.url.includes('/api/schedule/approve'));
+            return { approve: ap ? { codes: ap.body.schedule_data.map(c => `${c.subject_code}@${c.daydesc}`),
+                                     removed: ap.body.removed_subjects, override: ap.body.override,
+                                     section: ap.body.context.sectionId } : null,
+                     modals: env.modals.slice() };
+        };
+        const A1 = { subject_code: 'A101', versionid: 11, sessionid: 1, daydesc: 'Monday', starttimeid: 3, day: 'Monday', start_time: '08:30 AM', end_time: '10:00 AM' };
+        const A2 = { subject_code: 'A101', versionid: 11, sessionid: 2, daydesc: 'Thursday', starttimeid: 3, day: 'Thursday', start_time: '08:30 AM', end_time: '10:00 AM' };
+        const B1 = { subject_code: 'B201', versionid: 12, sessionid: 3, daydesc: 'Friday', starttimeid: 5, day: 'Friday', start_time: '09:30 AM', end_time: '12:30 PM' };
+        const sd = (vid, key) => ({ versionid: vid, dbKey: key, label: 'x', subjectcode: key.split('_')[0], status: 'Published', room_id: '5' });
+        return {
+            one_of_two: await runCase([A1, A2, B1], sd(11, 'A101_Thursday_3')),
+            last_slice: await runCase([A1, B1], sd(11, 'A101_Monday_3')),
+            pending_draft: await runCase([A1, A2], sd(11, 'A101_Monday_3'), [{ subject_code: 'A101' }]),
+        };
+    },
+    // "Specialization Mismatch — proceed?" is asked only when the user PICKS the faculty;
+    // loading an already-assigned faculty (opening a subject, a Generate hand-off) never
+    // asks — it used to, on every load, so the same prompt kept coming back after OK.
+    async spec_prompt_only_on_user_pick() {
+        const env = setup(() => []);
+        let asked = 0;
+        env.sandbox.showConfirmModal = async () => { asked++; return true; };
+        // The subject's info is (re)established when the faculty lookup answers — what the
+        // real page has by then; other awaits in the editor reset it in this stub.
+        env.routes.unshift(['/api/manual/faculty_info', () => {
+            env.sandbox.__set('_subjInfo', { subjectcode: 'ACCO 312' });
+            return { success: true, specializationname: 'Architecture', fullname: 'Arch, Ann' };
+        }]);
+        env.getEl('sel_subj').value = 'ACCO 312';
+        env.sandbox.__set('_subjInfo', { subjectcode: 'ACCO 312' });
+        env.sandbox.__set('window.currentEditSession', null);
+        const sel = g(env, 'onFacultySelect');
+        try { await sel('F1'); } catch (e) { return { error: e.message }; }
+        const afterLoad = asked;
+        try { await sel('F1'); } catch (e) { return { error: e.message }; }
+        const afterSecondLoad = asked;
+        try { await g(env, 'selectDSSOption')('fac', 'F1', 'Arch, Ann'); } catch (e) { return { error: e.message }; }
+        return { afterLoad, afterSecondLoad, afterUserPick: asked,
+                 compat: g(env, '_getSpecCompatibility')('Architecture', 'ACCO 312').level };
+    },
     async token_rules() {
         const env = setup(() => []);
         const cur = g(env, '_existingLoadTokenIsCurrent');

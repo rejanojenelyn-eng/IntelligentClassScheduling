@@ -1877,29 +1877,39 @@ async function _reqInitFacultyData() {
     } catch(e) {}
 
 
-    try {
-        await _adjLoadOfficial();   // Schedule Adjustment: the Official meetings to choose from
-        const r2   = await fetch('/api/faculty/my_assignments');
-        const data = await r2.json();
-        console.log('[my_assignments]', data);
-        if (data.success && data.assignments && data.assignments.length) {
-            _myAssignments = data.assignments;
-            _buildSubjectSelects();
-        } else if (!data.success) {
-            ['muSubjectSel','adjSubjectSel'].forEach(id => {
-                const s = document.getElementById(id);
-                if (s) s.innerHTML = `<option value="">Error: ${data.error || 'unknown'}</option>`;
-            });
-        } else {
-            const emp = data._debug_emp || '?';
-            ['muSubjectSel','adjSubjectSel'].forEach(id => {
-                const s = document.getElementById(id);
-                if (s) s.innerHTML = `<option value="">No subjects found (emp#${emp})</option>`;
-            });
+    await _adjLoadOfficial();   // Schedule Adjustment: the Official meetings to choose from
+    await _reqLoadAssignments();
+}
+
+
+/* Fetch the faculty's live classes into _myAssignments and rebuild both forms' class
+   dropdowns. Called on init and again whenever a form opens with none loaded (a failed
+   or still-pending init load used to leave every class dropdown disabled for good). */
+let _myAssignmentsMsg = 'Loading classes...';   // why _myAssignments is empty — shown in the empty dropdowns
+let _myAssignmentsLoading = null;
+function _reqLoadAssignments() {
+    if (_myAssignmentsLoading) return _myAssignmentsLoading;
+    _myAssignmentsMsg = 'Loading classes...';
+    _myAssignmentsLoading = (async () => {
+        try {
+            const r2   = await fetch('/api/faculty/my_assignments');
+            const data = await r2.json();
+            console.log('[my_assignments]', data);
+            if (data.success && data.assignments && data.assignments.length) {
+                _myAssignments = data.assignments;
+                _myAssignmentsMsg = '';
+            } else if (!data.success) {
+                _myAssignmentsMsg = `Could not load classes: ${data.error || 'unknown error'}`;
+            } else {
+                _myAssignmentsMsg = 'No classes assigned this semester';
+            }
+        } catch(e) {
+            console.error('[my_assignments]', e);
+            _myAssignmentsMsg = 'Could not load classes — please reload the page';
         }
-    } catch(e) {
-        console.error('[my_assignments]', e);
-    }
+        _buildSubjectSelects();
+    })().finally(() => { _myAssignmentsLoading = null; });
+    return _myAssignmentsLoading;
 }
 
 
@@ -1990,7 +2000,8 @@ function muCascade(level) {
     const at = order.indexOf(level);
     const rows = _myAssignments.filter(a => a.sectionid);
 
-    if (at <= 0) _muFillSel('muProgSel', 'Select program', _muUniq(rows, 'programcode', a => a.programcode));
+    if (at <= 0) _muFillSel('muProgSel', rows.length ? 'Select program' : (_myAssignmentsMsg || 'No classes found'),
+                            _muUniq(rows, 'programcode', a => a.programcode));
     const prog = val('muProgSel');
     if (at <= 1) _muFillSel('muYlSel', 'Select year level',
         prog ? _muUniq(rows.filter(a => a.programcode === prog), 'yearlevel', a => `Year ${a.yearlevel}`) : []);
@@ -2953,6 +2964,7 @@ function frsOpenForm(type) {
         }
     }
     window._preRoom = null;
+    if (!_myAssignments.length) _reqLoadAssignments();   // init load failed or is still pending
 }
 
 

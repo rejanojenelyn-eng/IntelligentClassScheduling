@@ -111,10 +111,10 @@ def _new_code():
 # ─────────────────────────────────────────────────────────────
 def _find_account(cur, identifier):
     """Active Faculty / Academic Head account by username or employee number,
-    with the email from its faculty record (None when missing)."""
+    with its account email (None when missing)."""
     cur.execute("""
         SELECT a.userid, a.username, a.employeenumber,
-               NULLIF(TRIM(f.email), '') AS email
+               NULLIF(TRIM(a.email), '') AS email
         FROM accounts a
         JOIN faculty f ON f.employeenumber = a.employeenumber
         WHERE a.isactive AND a.role IN %s
@@ -129,7 +129,7 @@ def _find_account(cur, identifier):
 
 def _account_by_id(cur, userid):
     cur.execute("""
-        SELECT a.userid, a.username, a.employeenumber, NULLIF(TRIM(f.email), '') AS email
+        SELECT a.userid, a.username, a.employeenumber, NULLIF(TRIM(a.email), '') AS email
         FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber
         WHERE a.userid = %s AND a.isactive AND a.role IN %s
     """, [userid, ALLOWED_ROLES])
