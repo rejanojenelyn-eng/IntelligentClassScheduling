@@ -385,9 +385,18 @@
               </label>
             </div>
             <h3 class="card-title">Standard Time-Slot Compliance</h3>
-            <p class="card-desc">When enabled, class start and end times must form one whole block of the configured scheduling grid. When disabled, any start and end time on the grid may be used.</p>
+            <p class="card-desc">When enabled, a class that starts at a block's start time must end at that block's end time (e.g. with 3:00 PM to 6:00 PM below, every class starting at 3:00 PM ends at 6:00 PM). Classes starting at any other time may end at any time. Applies to generation, manual assignment and Local Scheduler adjustments.</p>
           </div>
-          <div class="card-body simple-status"><div class="status-row"><i class="fas fa-clock ic-green"></i><span>Uses the configured <code>hc_time_slots</code> grid during generation, manual assignment and Local Scheduler adjustments.</span></div></div>
+          <div class="card-body">
+            <div class="cparam-label"><i class="fas fa-sliders-h"></i> CONSTRAINT PARAMETERS CONFIGURATION</div>
+            <div class="pair-list-head">
+              <span class="param-sublabel">TIME BLOCKS (e.g. 3:00 PM to 6:00 PM)</span>
+              <button class="btn-add-item" onclick="addTimeSlot()"><i class="fas fa-plus"></i> ADD BLOCK</button>
+            </div>
+            <div id="time-slots-container" class="slots-grid"></div>
+            <div id="time-slots-empty" class="slot-empty" style="display:none">No time blocks — every start and end time is free.</div>
+            <div id="time-slots-note" class="slot-note" style="display:none"></div>
+          </div>
         </div>
 
         <!-- Card: Room Capacity (HC14) -->
@@ -956,9 +965,12 @@
 
         <div class="mf" style="margin-bottom:6px;">
           <label>ACADEMIC YEAR TAG</label>
-          <select id="ay_tag_display" class="m-input ay-tag-input">
-            <option value="">Select Academic Year&hellip;</option>
-          </select>
+          <!-- Typed (2027-2028, 27-28 or 2728); always saved as AY 27-28. -->
+          <input type="text" id="ay_tag_display" class="m-input ay-tag-input"
+                 placeholder="Type e.g. 2027-2028, 27-28 or 2728" autocomplete="off" spellcheck="false">
+          <div id="ay-tag-preview" style="display:none;margin:6px 0 12px;font-size:.78rem;color:#1e6b34;font-weight:600;">
+            <i class="fas fa-check-circle" style="margin-right:4px;"></i><span id="ay-tag-preview-text"></span>
+          </div>
         </div>
         <div id="ay-tag-error" style="display:none;margin-bottom:14px;padding:8px 12px;background:#fce4e4;border:1px solid #f5c6c6;border-radius:6px;">
           <i class="fas fa-exclamation-circle" style="color:#c0392b;margin-right:6px;"></i>

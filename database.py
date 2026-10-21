@@ -205,15 +205,10 @@ _SCHEDULER_CONFIG_DEFAULTS = {
     'hc_merge_section_pairs':      '[]',   # [["PROGRAMCODE-SECTIONNAME","PROGRAMCODE-SECTIONNAME"], ...] — only these pairs may merge
     'hc_day_pairs':
         '[["Monday","Thursday"],["Tuesday","Friday"],["Wednesday","Saturday"]]',
-    'hc_time_slots':
-        '[[7,30,9,0],[9,0,10,30],[10,30,12,0],[12,0,13,30],[13,30,15,0],'
-        '[15,0,16,30],[16,30,18,0],[18,0,19,30],[19,30,21,0],'
-        '[7,30,9,30],[9,0,11,0],[10,30,12,30],[12,0,14,0],[13,30,15,30],[14,30,16,30],'
-        '[16,30,18,30],[18,0,20,0],[19,0,21,0],'
-        '[10,30,13,30],[13,30,16,30],[7,30,10,30],[9,0,12,0],[16,30,19,30],[18,0,21,0],'
-        # 3:00-6:00 PM: confirmed institutional block (not a generator block;
-        # valid for HC6 through this configuration only).
-        '[15,0,18,0]]',
+    # HC6 anchors (the admin edits them in Settings → HC6): a class starting at an
+    # anchor's start time must end at its end time; other start/end times stay free.
+    # Seed for a fresh database: the confirmed 3:00-6:00 PM institutional block.
+    'hc_time_slots': '[[15,0,18,0]]',
     'hc_weekend_subject': 'nstp_only',
     'hc_weekend_day':     'sunday_only',
 }

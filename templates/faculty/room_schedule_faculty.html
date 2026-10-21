@@ -583,12 +583,68 @@
     .mu-v2 .mu-ftr .btn-req-cancel, .mu-v2 .mu-ftr .btn-req-submit { display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; }
     .mu-v2 .mu-ftr .btn-req-submit { background: #7a0000; }
 
+    /* ══════════ Make Up Class Request — 2026-10-22 design (same look as Rooms → Room Schedule) ══════════ */
+    .req-modal-box.mu3 { width: min(680px, 96vw); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; max-height: 92vh; }
+    .mu3-hdr { display: flex; align-items: center; gap: 16px; padding: 18px 22px; background: #800000; color: #fff; flex-shrink: 0; }
+    .mu3-hdr-icon { font-size: 1.9rem; flex-shrink: 0; line-height: 1; }
+    .mu3-hdr-title { font-size: 1.3rem; font-weight: 800; line-height: 1.2; }
+    .mu3-hdr-sub { font-size: .82rem; opacity: .85; margin-top: 3px; }
+    .mu3-hdr-close { margin-left: auto; align-self: center; background: none; border: 0; color: #fff; font-size: 1.3rem; cursor: pointer; opacity: .85; }
+    .mu3-hdr-close:hover { opacity: 1; }
+    .mu3 .mu3-body { padding: 16px 20px 8px; background: #fff; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+    .mu3-card { border: 1px solid #f0e2e4; border-radius: 12px; padding: 0 16px 14px; background: #fff; }
+    .mu3-card-title {
+        margin: 0 -16px 14px; padding: 9px 16px; background: #fdecee; color: #8b1a1a; border-radius: 12px 12px 0 0;
+        font-size: .78rem; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; display: flex; align-items: center; gap: 9px;
+    }
+    .mu3-faculty { display: flex; align-items: center; gap: 12px; background: #fdecee; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+    .mu3-fac-avatar { width: 38px; height: 38px; border-radius: 50%; background: #8b1a1a; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .mu3-fac-label { font-size: .66rem; font-weight: 800; color: #8b1a1a; letter-spacing: .4px; text-transform: uppercase; }
+    .mu3-faculty input { border: 0; background: transparent; padding: 0; font: 700 .92rem 'Inter', sans-serif; color: #2c2c2c; width: 100%; outline: none; }
+    .mu3-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+    .mu3-grid-sched { grid-template-columns: minmax(0, .9fr) minmax(0, 1.3fr); }
+    .mu3-field { margin-bottom: 12px; min-width: 0; }
+    .mu3-field > label { display: block; font-size: .76rem; font-weight: 700; color: #444; margin-bottom: 5px; }
+    .mu3-field > label b { color: #c0392b; }
+    .mu3-opt { font-weight: 500; color: #999; font-size: .7rem; }
+    .mu3-ctl { position: relative; display: flex; align-items: center; min-width: 0; flex: 1; }
+    .mu3-ctl > i { position: absolute; left: 11px; color: #8b1a1a; font-size: .82rem; pointer-events: none; z-index: 1; }
+    .mu3 .mu3-ctl > select, .mu3 .mu3-ctl > input {
+        width: 100%; height: 38px; padding: 0 10px 0 33px; border: 1px solid #dcdcdc; border-radius: 8px; background: #fff;
+        font: 400 .84rem 'Inter', sans-serif; color: #333; box-sizing: border-box; min-width: 0;
+    }
+    .mu3 .mu3-ctl-noicon > select { padding-left: 10px; }
+    .mu3 .mu3-ctl > select:focus, .mu3 .mu3-ctl > input:focus, .mu3 .mu3-area:focus { outline: none; border-color: #8b1a1a; box-shadow: 0 0 0 3px rgba(139,26,26,.08); }
+    .mu3 .mu3-ctl > select:disabled { background: #f6f6f7; color: #9a9a9a; cursor: not-allowed; }
+    .mu3-time { display: flex; align-items: center; gap: 8px; }
+    .mu3-to { font-size: .72rem; font-weight: 700; color: #888; }
+    .mu3-ctl-room .room-sel-wrap { flex: 1; min-width: 0; }
+    .mu3 .mu3-ctl-room .room-sel-box { min-height: 38px; border: 1px solid #dcdcdc; border-radius: 8px; padding-left: 33px; }
+    .mu3 .mu3-area {
+        width: 100%; box-sizing: border-box; min-height: 64px; padding: 9px 11px; border: 1px solid #dcdcdc; border-radius: 8px;
+        font: 400 .84rem 'Inter', sans-serif; color: #333; resize: vertical;
+    }
+    .mu3-conflict { background: #fff8e1; border: 1.5px solid #f0a500; border-radius: 10px; padding: 11px 14px; font-size: .78rem; color: #7a5200; }
+    .mu3-conflict-hd { font-weight: 800; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; text-transform: uppercase; letter-spacing: .3px; }
+    .mu3-conflict-hd i { color: #f0a500; }
+    .mu3-conflict-hint { margin-top: 7px; font-size: .71rem; opacity: .85; }
+    .mu3 .mu3-ftr { justify-content: flex-end; gap: 12px; padding: 12px 20px; border-top: 1px solid #f1e5e6; background: #fff; flex-shrink: 0; }
+    .mu3 .mu3-ftr .btn-req-cancel, .mu3 .mu3-ftr .btn-req-submit { display: inline-flex; align-items: center; gap: 8px; border-radius: 8px; padding: 10px 18px; }
+    .mu3 .mu3-ftr .btn-req-submit { background: #800000; }
+    .mu3 .mu3-ftr .btn-req-submit:hover { background: #6e1010; }
+    @media (max-width: 560px) {
+        .mu3-grid, .mu3-grid-sched { grid-template-columns: 1fr; }
+        .mu3-hdr { padding: 14px 16px; }
+        .mu3 .mu3-body { padding: 12px 12px 6px; }
+    }
+
     /* Schedule Adjustment — same look as the Make-up form, plus 3-column rows + hints */
     .req-modal-box.adj-v2 { width: min(660px, 96vw); }
     .adj-v2 .adj-hdr { background: #fdecec; border-bottom-color: #f5d5d5; }
     .adj-v2 .mu-hdr-title { letter-spacing: .4px; }
     .adj-v2 .mu-label { font-size: .74rem; font-weight: 800; color: #7a0000; letter-spacing: .3px; }
-    .adj-v2 .mu-label b { margin-right: 2px; }
+    .adj-v2 .mu-label b { margin-left: 2px; }
+    .adj-v2 .mu-label > i { width: 16px; margin-right: 5px; text-align: center; }
     .adj-v2 .mu-label small { font-size: .66rem; font-weight: 600; color: #888; }
     .req-form-msg { margin: 0 22px 10px; padding: 9px 12px; border-radius: 7px; background: #fdecea;
         border: 1px solid #f5c2c0; color: #a61b1b; font-size: .78rem; font-weight: 600; line-height: 1.4;
@@ -1498,105 +1554,117 @@
      MODAL 2 — Make Up Class Request
 ══════════════════════════════════════════ -->
 <div class="req-overlay" id="reqMakeupOverlay">
-    <div class="req-modal-box mu-v2">
-        <div class="mu-hdr">
-            <div class="mu-hdr-icon"><i class="far fa-calendar-check"></i></div>
+    <div class="req-modal-box mu-v2 mu3">
+        <div class="mu3-hdr">
+            <div class="mu3-hdr-icon"><i class="far fa-calendar-check"></i></div>
             <div>
-                <div class="mu-hdr-title">Make a Request</div>
-                <div class="mu-hdr-sub">Submit a request for a make-up class.</div>
+                <div class="mu3-hdr-title">Make Up Class Request</div>
+                <div class="mu3-hdr-sub">Request one extra meeting on a specific date for a class you teach.</div>
             </div>
-            <button type="button" class="mu-hdr-close" onclick="frsCloseForm('makeup')" aria-label="Close">&#10005;</button>
+            <button type="button" class="mu3-hdr-close" onclick="frsCloseForm('makeup')" aria-label="Close">&#10005;</button>
         </div>
-        <div class="req-modal-body mu-body">
+        <div class="req-modal-body mu-body mu3-body">
 
-            <div class="mu-sec-title"><i class="fas fa-book"></i> CLASS INFORMATION</div>
-            <div class="mu-field">
-                <label class="mu-label">Faculty</label>
-                <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-user"></i></span>
-                    <input type="text" id="muFaculty" readonly placeholder="Loading..."></div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muProgSel">Program <b>*</b></label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-graduation-cap"></i></span>
-                    <select id="muProgSel" onchange="muCascade('prog')"><option value="">Select program</option></select></div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muYlSel">Year level <b>*</b></label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-signal"></i></span>
-                    <select id="muYlSel" onchange="muCascade('yl')"><option value="">Select year level</option></select></div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muSectionSel">Section <b>*</b></label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-users"></i></span>
-                    <select id="muSectionSel" onchange="muCascade('sec')"><option value="">Select section</option></select></div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muSubjectSel">Subject <b>*</b></label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-book-open"></i></span>
-                    <select id="muSubjectSel" onchange="muCascade('subj')"><option value="">Select subject</option></select></div>
+            <!-- CLASS INFORMATION -->
+            <section class="mu3-card">
+                <div class="mu3-card-title"><i class="fas fa-book"></i> Class Information</div>
+                <div class="mu3-faculty">
+                    <span class="mu3-fac-avatar"><i class="fas fa-user"></i></span>
+                    <div>
+                        <div class="mu3-fac-label">Faculty</div>
+                        <input type="text" id="muFaculty" readonly placeholder="Loading...">
+                    </div>
+                </div>
+                <div class="mu3-grid">
+                    <div class="mu3-field">
+                        <label for="muProgSel">Program <b>*</b></label>
+                        <div class="mu3-ctl"><i class="fas fa-graduation-cap"></i>
+                            <select id="muProgSel" onchange="muCascade('prog')"><option value="">Select program</option></select></div>
+                    </div>
+                    <div class="mu3-field">
+                        <label for="muYlSel">Year level <b>*</b></label>
+                        <div class="mu3-ctl"><i class="fas fa-signal"></i>
+                            <select id="muYlSel" onchange="muCascade('yl')"><option value="">Select year level</option></select></div>
+                    </div>
+                    <div class="mu3-field">
+                        <label for="muSectionSel">Section <b>*</b></label>
+                        <div class="mu3-ctl"><i class="fas fa-users"></i>
+                            <select id="muSectionSel" onchange="muCascade('sec')"><option value="">Select section</option></select></div>
+                    </div>
+                    <div class="mu3-field">
+                        <label for="muSubjectSel">Subject <b>*</b></label>
+                        <div class="mu3-ctl"><i class="fas fa-book-open"></i>
+                            <select id="muSubjectSel" onchange="muCascade('subj')"><option value="">Select subject</option></select></div>
+                    </div>
+                </div>
                 <input type="hidden" id="muSubject">
                 <input type="hidden" id="muSection">
                 <input type="hidden" id="muProgram">
                 <input type="hidden" id="muYl">
-            </div>
+            </section>
 
-            <div class="mu-sec-title"><i class="far fa-calendar-alt"></i> REQUESTED SCHEDULE</div>
-            <div class="mu-field">
-                <label class="mu-label" for="muDate">Date <b>*</b></label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="far fa-calendar"></i></span>
-                    <input type="date" id="muDate" onchange="muOnDateTimeChange()"></div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muStart">Time <b>*</b></label>
-                <div class="mu-time-row">
-                    <div class="mu-ctl"><span class="mu-ico"><i class="far fa-clock"></i></span>
-                        <select id="muStart" onchange="muTimeSelectChanged()"><option value="">Start time</option></select></div>
-                    <span class="mu-dash">-</span>
-                    <div class="mu-ctl">
-                        <select id="muEnd" onchange="muTimeSelectChanged()"><option value="">End time</option></select></div>
-                </div>
-            </div>
-
-            <div class="mu-field">
-                <label class="mu-label">Room <b>*</b> <span class="req-room-status" id="muRoomStatus"></span></label>
-                <div class="mu-ctl mu-ctl-room"><span class="mu-ico"><i class="fas fa-door-open"></i></span>
-                    <div class="room-sel-wrap" id="muRoomWrap">
-                        <div class="room-sel-box" onclick="roomDropToggle('mu')">
-                            <span class="room-sel-text ph" id="muRoomDisplay">— Select date &amp; time first —</span>
-                            <i class="fas fa-chevron-down room-sel-arrow"></i>
+            <!-- REQUESTED SCHEDULE -->
+            <section class="mu3-card">
+                <div class="mu3-card-title"><i class="far fa-calendar-alt"></i> Requested Schedule</div>
+                <div class="mu3-grid mu3-grid-sched">
+                    <div class="mu3-field">
+                        <label for="muDate">Date <b>*</b></label>
+                        <div class="mu3-ctl"><i class="far fa-calendar"></i>
+                            <input type="date" id="muDate" onchange="muOnDateTimeChange()"></div>
+                    </div>
+                    <div class="mu3-field">
+                        <label for="muStart">Time <b>*</b></label>
+                        <div class="mu3-time">
+                            <div class="mu3-ctl"><i class="far fa-clock"></i>
+                                <select id="muStart" onchange="muTimeSelectChanged()"><option value="">Start time</option></select></div>
+                            <span class="mu3-to">to</span>
+                            <div class="mu3-ctl mu3-ctl-noicon">
+                                <select id="muEnd" onchange="muTimeSelectChanged()"><option value="">End time</option></select></div>
                         </div>
-                        <div class="room-sel-drop" id="muRoomDrop">
-                            <input type="text" class="room-sel-search" id="muRoomSearch" placeholder="Type to search room..." oninput="roomSearchFilter('mu')" autocomplete="off">
-                            <div class="room-sel-list" id="muRoomList"></div>
-                        </div>
-                        <input type="hidden" id="muRoom">
                     </div>
                 </div>
-            </div>
+                <div class="mu3-field">
+                    <label>Room <b>*</b> <span class="req-room-status" id="muRoomStatus"></span></label>
+                    <div class="mu3-ctl mu3-ctl-room"><i class="fas fa-door-open"></i>
+                        <div class="room-sel-wrap" id="muRoomWrap">
+                            <div class="room-sel-box" onclick="roomDropToggle('mu')">
+                                <span class="room-sel-text ph" id="muRoomDisplay">— Select date &amp; time first —</span>
+                                <i class="fas fa-chevron-down room-sel-arrow"></i>
+                            </div>
+                            <div class="room-sel-drop" id="muRoomDrop">
+                                <input type="text" class="room-sel-search" id="muRoomSearch" placeholder="Type to search room..." oninput="roomSearchFilter('mu')" autocomplete="off">
+                                <div class="room-sel-list" id="muRoomList"></div>
+                            </div>
+                            <input type="hidden" id="muRoom">
+                        </div>
+                    </div>
+                </div>
 
-            <!-- Conflict Warning Banner -->
-            <div id="muConflictBanner" style="display:none;background:#fff8e1;border:1.5px solid #f0a500;border-radius:7px;padding:12px 15px;font-size:0.78rem;color:#7a5200;">
-                <div style="font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:7px;"><i class="fas fa-triangle-exclamation" style="color:#f0a500;"></i> SCHEDULE CONFLICT DETECTED</div>
-                <div id="muConflictText"></div>
-                <div style="margin-top:8px;font-size:0.71rem;opacity:.8;">A make-up class can't be submitted while it conflicts. Choose another date, time, or room.</div>
-            </div>
+                <!-- Conflict Warning Banner -->
+                <div id="muConflictBanner" class="mu3-conflict" style="display:none;">
+                    <div class="mu3-conflict-hd"><i class="fas fa-triangle-exclamation"></i> Schedule conflict detected</div>
+                    <div id="muConflictText"></div>
+                    <div class="mu3-conflict-hint">A make-up class can't be submitted while it conflicts. Choose another date, time, or room.</div>
+                </div>
+            </section>
 
-            <div class="mu-sec-title"><i class="fas fa-file-lines"></i> ADDITIONAL INFO</div>
-            <div class="mu-field">
-                <label class="mu-label" for="muReason">Reason for request <b>*</b></label>
-                <div class="mu-ctl mu-ctl-area"><span class="mu-ico"><i class="far fa-file-lines"></i></span>
-                    <textarea id="muReason" required maxlength="500" oninput="muCount(this)" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea></div>
-                <div class="mu-count" id="muReasonCount">0/500</div>
-            </div>
-            <div class="mu-field">
-                <label class="mu-label" for="muNote">Additional notes</label>
-                <div class="mu-ctl mu-ctl-area"><span class="mu-ico"><i class="far fa-note-sticky"></i></span>
-                    <textarea id="muNote" maxlength="500" oninput="muCount(this)" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea></div>
-                <div class="mu-count" id="muNoteCount">0/500</div>
-            </div>
+            <!-- ADDITIONAL INFO -->
+            <section class="mu3-card">
+                <div class="mu3-card-title"><i class="fas fa-file-lines"></i> Additional Info</div>
+                <div class="mu3-field">
+                    <label for="muReason">Reason for request <b>*</b></label>
+                    <textarea id="muReason" class="mu3-area" required maxlength="500" oninput="muCount(this)" placeholder="e.g. Make-up for the missed class on June 14 due to an official faculty training or university event." autocomplete="off"></textarea>
+                    <div class="mu-count" id="muReasonCount">0/500</div>
+                </div>
+                <div class="mu3-field">
+                    <label for="muNote">Additional notes <span class="mu3-opt">(optional)</span></label>
+                    <textarea id="muNote" class="mu3-area" maxlength="500" oninput="muCount(this)" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea>
+                    <div class="mu-count" id="muNoteCount">0/500</div>
+                </div>
+            </section>
         </div>
         <div class="req-form-msg" id="muFormMsg" role="alert" style="display:none"></div>
-        <div class="req-modal-ftr mu-ftr">
+        <div class="req-modal-ftr mu-ftr mu3-ftr">
             <button class="btn-req-cancel" onclick="frsCloseForm('makeup')"><i class="fas fa-xmark"></i> CANCEL</button>
             <button class="btn-req-submit" onclick="reqSubmit('makeup')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
         </div>
@@ -1662,15 +1730,15 @@
             </div>
             </div>
 
-            <div class="mu-sec-title"><i class="fas fa-user"></i> CLASS INFORMATION</div>
+            <div class="mu-sec-title"><i class="fas fa-chalkboard"></i> CLASS INFORMATION</div>
             <div class="mu-field">
-                <label class="mu-label"><b>*</b> FACULTY NAME</label>
-                <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-user"></i></span>
+                <label class="mu-label" for="adjFaculty"><i class="fas fa-id-badge"></i> Faculty Name <b>*</b></label>
+                <div class="mu-ctl mu-ctl-ro">
                     <input type="text" id="adjFaculty" readonly placeholder="Loading..."></div>
             </div>
             <div class="mu-field">
-                <label class="mu-label" for="adjSubjectSel"><b>*</b> SUBJECT</label>
-                <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-book-open"></i></span>
+                <label class="mu-label" for="adjSubjectSel"><i class="fas fa-book-open"></i> Subject <b>*</b></label>
+                <div class="mu-ctl">
                     <select id="adjSubjectSel" onchange="reqSubjectChanged('adj')">
                         <option value="">— Select your assigned subject —</option>
                     </select></div>
@@ -1681,20 +1749,20 @@
             </div>
             <div class="adj-grid3">
                 <div class="mu-field">
-                    <label class="mu-label" for="adjSectionSel"><b>*</b> SECTION</label>
-                    <div class="mu-ctl"><span class="mu-ico"><i class="fas fa-users"></i></span>
+                    <label class="mu-label" for="adjSectionSel"><i class="fas fa-users"></i> Section <b>*</b></label>
+                    <div class="mu-ctl">
                         <select id="adjSectionSel" onchange="reqSectionChanged('adj')">
                             <option value="">— Select section —</option>
                         </select></div>
                 </div>
                 <div class="mu-field">
-                    <label class="mu-label">PROGRAM</label>
-                    <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-graduation-cap"></i></span>
+                    <label class="mu-label" for="adjProgramDisplay"><i class="fas fa-graduation-cap"></i> Program</label>
+                    <div class="mu-ctl mu-ctl-ro">
                         <input type="text" id="adjProgramDisplay" readonly placeholder="Auto-filled"></div>
                 </div>
                 <div class="mu-field">
-                    <label class="mu-label">YEAR LEVEL</label>
-                    <div class="mu-ctl mu-ctl-ro"><span class="mu-ico"><i class="fas fa-signal"></i></span>
+                    <label class="mu-label" for="adjYlDisplay"><i class="fas fa-signal"></i> Year Level</label>
+                    <div class="mu-ctl mu-ctl-ro">
                         <input type="text" id="adjYlDisplay" readonly placeholder="Auto-filled"></div>
                 </div>
             </div>
@@ -1726,7 +1794,8 @@
 
             <div class="mu-sec-title"><i class="fas fa-file-lines"></i> REASON FOR REQUEST</div>
             <div class="mu-field">
-                <div class="mu-ctl mu-ctl-area adj-area"><span class="mu-ico"><i class="fas fa-file-lines"></i></span>
+                <label class="mu-label" for="adjReason"><i class="fas fa-pen-to-square"></i> Reason for Request <b>*</b></label>
+                <div class="mu-ctl mu-ctl-area adj-area">
                     <textarea id="adjReason" maxlength="500" oninput="muCount(this)" aria-label="Reason for request"
                         placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea></div>
                 <div class="adj-foot"><span></span>

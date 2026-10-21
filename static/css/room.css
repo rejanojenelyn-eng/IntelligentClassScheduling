@@ -395,6 +395,14 @@
 }
 .rm-hdr-close:hover { opacity: 1; }
 
+/* Room Schedule (View) popup: wide, with the larger header of its design. */
+.rm-box.rm-box-roomsched { max-width: 1320px; width: 96vw; }
+.rm-header.rm-header-lg { padding: 20px 26px; align-items: center; gap: 18px; }
+.rm-header-lg .rm-hdr-icon { font-size: 2.1rem; margin-top: 0; }
+.rm-header-lg h2 { font-size: 1.45rem; font-weight: 800; margin: 0 0 2px; }
+.rm-header-lg p { font-size: .92rem; }
+.rm-header-lg .rm-hdr-close { font-size: 1.9rem; align-self: center; }
+
 .rm-body { padding: 20px 22px; }
 
 .rm-error {

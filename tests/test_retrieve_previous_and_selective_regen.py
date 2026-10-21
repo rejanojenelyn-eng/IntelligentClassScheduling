@@ -408,8 +408,8 @@ def test_c_historical_bare_times_use_school_day_convention_on_retrieval_only():
     assert by_code['GEED 002']['time'] == '9:00 AM - 12:00 PM'   # stored "9:00 - 12:00"
     assert by_code['PATHFIT 1']['time'] == '5:00 PM - 7:00 PM'   # stored "5:00 - 7:00"
     assert by_code['ELED 105']['days_list'] == ['Monday']
-    # The strict scheduler parser is NOT weakened.
-    assert scheduler.parse_historical_day_time_verbose('M', '3:00 - 6:00')[3] == 'unresolved'
+    # The strict scheduler parser is NOT weakened (5-7 is no HC6 block in either AM/PM reading).
+    assert scheduler.parse_historical_day_time_verbose('M', '5:00 - 7:00')[3] == 'unresolved'
 
 
 @requires_db

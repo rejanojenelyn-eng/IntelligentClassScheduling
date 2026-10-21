@@ -27,8 +27,9 @@ def _gene(**over):
 
 
 def test_hc6_is_dispatched_and_flags_off_grid_time():
-    csp = CSPValidator(config={})
-    off_grid = _gene(start_time=time(7, 45), end_time=time(8, 15))
+    # 3:00-6:00 PM anchor: a class starting at 3:00 PM must end at 6:00 PM.
+    csp = CSPValidator(config={"hc_time_slots": "[[15, 0, 18, 0]]"})
+    off_grid = _gene(start_time=time(15, 0), end_time=time(16, 30))
     violations = csp.validate([off_grid], {})
     rules = {v["rule"] for v in violations}
     assert "HC6" in rules
@@ -42,8 +43,8 @@ def test_hc6_passes_a_standard_block():
 
 
 def test_hc6_can_be_disabled_via_config():
-    csp = CSPValidator(config={"hc_time_blocks_enabled": 0})
-    off_grid = _gene(start_time=time(7, 45), end_time=time(8, 15))
+    csp = CSPValidator(config={"hc_time_blocks_enabled": 0, "hc_time_slots": "[[15, 0, 18, 0]]"})
+    off_grid = _gene(start_time=time(15, 0), end_time=time(16, 30))
     violations = csp.validate([off_grid], {})
     assert "HC6" not in {v["rule"] for v in violations}
 

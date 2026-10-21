@@ -95,11 +95,13 @@ def test_hc5_all_allowed_and_disabled(cfg):
 # ── HC6 standard time blocks ────────────────────────────────────────────────
 
 def test_hc6_off_grid_time_rejected_and_standard_block_allowed(cfg):
-    ok, err = _edit(_Cur(), start=4, end=3)          # 9:15-10:30
-    assert not ok and 'invalid start time' in err
-    assert _edit(_Cur(), start=2, end=3)[0]          # 9:00-10:30
+    cfg['hc_time_slots'] = '[[9, 0, 12, 0]]'          # anchor: 9:00 AM starts end at 12:00 PM
+    ok, err = _edit(_Cur(), start=2, end=3)          # 9:00-10:30
+    assert not ok and 'must end at 12:00 PM' in err
+    assert _edit(_Cur(), start=2, end=11)[0]         # 9:00-12:00
+    assert _edit(_Cur(), start=4, end=3)[0]          # 9:15-10:30: no anchor at 9:15, free
     cfg['hc_time_blocks_enabled'] = 0
-    assert _edit(_Cur(), start=4, end=3)[0]
+    assert _edit(_Cur(), start=2, end=3)[0]
 
 
 # ── HC13 laboratory room for the lab part only — ADVISORY in a Local arrangement ──

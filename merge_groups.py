@@ -403,12 +403,10 @@ def scheduling_completeness(ref_subject, meetings, *, valid_blocks=None, rooms=N
                 'warnings': [], 'required': required, 'scheduled': scheduled, 'complete_types': []}
     rooms = rooms or {}
     bad_types = set()
-    from scheduler import is_nstp_subject, nstp_time_problem
+    from scheduler import hc6_time_problem
     subject_code = (ref_subject or {}).get('subjectcode')
-    nstp = is_nstp_subject(subject_code)
-    if nstp and valid_blocks is not None:
-        _t = lambda s: time(int(s[:2]), int(s[3:5]))
-        block_times = {(_t(s), _t(e)) for s, e in valid_blocks}
+    _t = lambda s: time(int(s[:2]), int(s[3:5]))
+    anchors = [(_t(s), _t(e)) for s, e in (valid_blocks or ())]
     for i, mt in enumerate(meetings, 1):
         ctype = mt.get('class_type')
         start, end = hhmm(mt.get('start')), hhmm(mt.get('end'))
@@ -418,10 +416,9 @@ def scheduling_completeness(ref_subject, meetings, *, valid_blocks=None, rooms=N
             bad_types.add(ctype)
         if start and end:
             scheduled[ctype] = scheduled.get(ctype, 0.0) + (_minutes(end) - _minutes(start)) / 60.0
-            if valid_blocks is not None and (start, end) not in valid_blocks:
-                # NSTP may use any 3-hour session within the scheduling hours (same rule as CSP HC6).
-                problem = (nstp_time_problem(subject_code, _t(start), _t(end), block_times) if nstp
-                           else 'not a valid time block')
+            if valid_blocks is not None:
+                # Same HC6 rule as CSP: anchored start times, NSTP one 3-hour session.
+                problem = hc6_time_problem(subject_code, _t(start), _t(end), anchors)
                 if problem:
                     issues.append(f'{tag}: {problem} (HC6).')
                     bad_types.add(ctype)
@@ -1999,14 +1996,13 @@ def load_faculty(cur):
 
 
 def valid_time_blocks(cfg):
-    """HC6 blocks as {('HH:MM','HH:MM')}: the built-in STANDARD_BLOCKS plus the
-    configured hc_time_slots — the same set CSPValidator validates against. None
-    when HC6 is switched off."""
+    """HC6 anchors as {('HH:MM','HH:MM')}: the admin-configured hc_time_slots (a class
+    starting at an anchor's start must end at its end — scheduler.hc6_time_problem).
+    None when HC6 is switched off."""
     if not bool(_num((cfg or {}).get('hc_time_blocks_enabled', 1))):
         return None
-    from scheduler import STANDARD_BLOCKS, _parse_time_slot_pairs
-    raw = (cfg or {}).get('hc_time_slots', '')
-    pairs = set(STANDARD_BLOCKS) | (_parse_time_slot_pairs(raw) if raw else set())
+    from scheduler import _config_time_blocks
+    pairs = set(_config_time_blocks((cfg or {}).get('hc_time_slots', '')))
     return {(hhmm(s), hhmm(e)) for s, e in pairs}
 
 

@@ -112,27 +112,26 @@ def test_end_before_start_is_rejected():
 
 
 def test_grid_gated_wrapper_still_rejects_off_grid_time_regardless_of_am_pm():
-    # "3:00 PM-6:00 PM" is unambiguous, but this system's STANDARD_BLOCKS grid
-    # has no single block spanning exactly 15:00-18:00 (it pivots at 16:30) —
-    # _parse_historical_time (used by CBR locking) must still reject it exactly
-    # as it did before this fix, since HC5 checks start/end independently and
+    # "2:00 PM-5:00 PM" is unambiguous, but no HC6 block (the admin's hc_time_slots,
+    # loaded into STANDARD_BLOCKS) spans exactly 14:00-17:00 -- _parse_historical_time
+    # (used by CBR locking) must reject it, since HC5 checks start/end independently and
     # would NOT catch an off-grid pair on its own (see the module docstring on
     # _parse_historical_time). The verbose/display-oriented function is
     # unaffected — it correctly resolves the same string.
-    assert _parse_historical_time("3:00 PM-6:00 PM") is None
-    start, end, reason = _parse_historical_time_verbose("3:00 PM-6:00 PM")
-    assert (start, end) == (time(15, 0), time(18, 0))
+    assert _parse_historical_time("2:00 PM-5:00 PM") is None
+    start, end, reason = _parse_historical_time_verbose("2:00 PM-5:00 PM")
+    assert (start, end) == (time(14, 0), time(17, 0))
     assert reason is None
 
 
 def test_parse_historical_day_time_verbose_resolves_off_grid_times_for_display():
-    days, start, end, status, reason = parse_historical_day_time_verbose("MW", "3:00 PM-6:00 PM")
+    days, start, end, status, reason = parse_historical_day_time_verbose("MW", "2:00 PM-5:00 PM")
     assert status == "resolved" and reason is None
     assert days == ["Monday", "Wednesday"]
-    assert (start, end) == (time(15, 0), time(18, 0))
+    assert (start, end) == (time(14, 0), time(17, 0))
 
     # The grid-gated CBR variant must still refuse to lock this as a placeable slot.
-    days2, start2, end2, status2 = parse_historical_day_time("MW", "3:00 PM-6:00 PM")
+    days2, start2, end2, status2 = parse_historical_day_time("MW", "2:00 PM-5:00 PM")
     assert status2 != "resolved"
     assert start2 is None and end2 is None
 

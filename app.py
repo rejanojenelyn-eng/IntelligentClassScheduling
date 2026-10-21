@@ -3526,6 +3526,20 @@ def api_requests_decide():
                         return jsonify({'success': False, 'error':
                             'The Official meeting changed after this request was submitted. Please submit a new adjustment.'}), 409
 
+                # Teaching hours never change (same rule as submission): the new meetings
+                # carry exactly the hours of the meetings they replace. Requests submitted
+                # before submission checked this (e.g. a 2h meeting moved into a 5h slot)
+                # must not be approved.
+                _moved_h = sum((a['official_endtimeid'] - a['official_starttimeid']) * 0.5 for a in adjs)
+                _new_h = sum(((a.get('new_endtimeid') or a['official_endtimeid'])
+                              - (a.get('new_starttimeid') or a['official_starttimeid'])) * 0.5 for a in adjs)
+                if abs(_new_h - _moved_h) > 0.01:
+                    _conn.rollback()
+                    return jsonify({'success': False, 'code': 'HOURS_CHANGED', 'error':
+                        f"Cannot approve: the new schedule totals {_new_h:g}h, but the meeting"
+                        f"{'s being moved total' if len(adjs) > 1 else ' being moved is'} {_moved_h:g}h. "
+                        f"The hours must stay the same — reject it and ask the faculty to submit it again."}), 409
+
                 # One override per moved Official meeting (unspecified fields keep the
                 # Official meeting's values).
                 _overrides = [{
@@ -5295,6 +5309,7 @@ def room_view(room_id):
     try:
         room_info = query_db("""
             SELECT r.roomid, r.roomname, r.roomtype, r.roomcapacity,
+                   COALESCE(r.isactive, TRUE) AS isactive,
                    b.buildingname, b.buildingid
             FROM Room r
             JOIN Building b ON r.buildingid = b.buildingid
@@ -5310,7 +5325,8 @@ def room_view(room_id):
         buildings = query_db("SELECT buildingid, buildingname FROM Building WHERE IsActive = TRUE ORDER BY BuildingName ASC")
 
         raw_rooms = query_db("""
-            SELECT r.roomid, r.roomname, r.roomtype, b.buildingid, b.buildingname
+            SELECT r.roomid, r.roomname, r.roomtype, r.roomcapacity,
+                   COALESCE(r.isactive, TRUE) AS isactive, b.buildingid, b.buildingname
             FROM Room r
             JOIN Building b ON r.buildingid = b.buildingid
             WHERE b.isactive = TRUE
@@ -14163,7 +14179,8 @@ def manual_schedule_editor():
                                is_acad_head=is_acad_head,
                                # Lets the editor tell when the open subject is the Academic
                                # Head's own load (Make Up Class is only offered then).
-                               my_emp_num=str(session.get('employeenumber') or ''),
+                               my_emp_num=str(_session_employee_number() or ''),
+                               acad_head_emps=json.dumps(sorted(_academic_head_employee_numbers_q())),
                                acad_years=acad_years, programs=programs,
                                faculty=faculty, faculty_json=faculty_json,
                                buildings=buildings, rooms_json=json.dumps(rooms_list),
@@ -15393,6 +15410,26 @@ def _validate_local_editable_dimensions(cur, sess, faculty_employeenumber, advis
     room = cur.fetchone()
     if not room:
         return False, f'{subject} references a room that does not exist or is inactive.'
+
+    # A Local override moves ONE Official meeting: it keeps that meeting's hours (the same
+    # rule as a Schedule Adjustment request), e.g. a 2h meeting can't become 5h.
+    _off_id = sess.get('official_sessionid') or sess.get('officialSessionId')
+    if _off_id:
+        cur.execute("""
+            SELECT ts_s.timevalue AS st, ts_e.timevalue AS et
+            FROM public.schedule_sessions ss
+            JOIN public.timeslot ts_s ON ts_s.timeid = ss.starttimeid
+            JOIN public.timeslot ts_e ON ts_e.timeid = ss.endtimeid
+            WHERE ss.sessionid = %s
+        """, (int(_off_id),))
+        _off = cur.fetchone()
+        if _off:
+            _mins = lambda t: t.hour * 60 + t.minute
+            _old_h = (_mins(_off['et']) - _mins(_off['st'])) / 60
+            _new_h = (_mins(times[end_id]) - _mins(times[start_id])) / 60
+            if abs(_new_h - _old_h) > 0.01:
+                return False, (f'{subject}: the new time is {_new_h:g}h, but the Official meeting it '
+                               f'replaces is {_old_h:g}h. A Local arrangement keeps the same hours.')
 
     # HC13 is advisory for a Local arrangement (hc_lab_session_enabled is read by
     # _local_lab_room_advisory): reported, never rejected.
@@ -20363,8 +20400,24 @@ def api_manual_existing_sessions():
                 # (e.g. ACCO 202 Monday overridden, Thursday still Official).
                 overridden = {r['official_sessionid'] for r in la_rows if r.get('official_sessionid')}
                 untouched_official = [dict(r) for r in pub_rows if r['sessionid'] not in overridden]
-                return jsonify({'success': True,
-                                'sessions': [dict(r) for r in la_rows] + untouched_official})
+                # Each Local meeting carries the Official meeting it replaces, so the editor
+                # can show the old schedule under the Local one.
+                _off = {}
+                if overridden:
+                    for o in query_db("""
+                        SELECT ss.sessionid, ss.daydesc, r.roomname,
+                               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_fmt,
+                               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_fmt
+                        FROM schedule_sessions ss
+                        LEFT JOIN room r ON r.roomid = ss.roomid
+                        LEFT JOIN timeslot ts_s ON ts_s.timeid = ss.starttimeid
+                        LEFT JOIN timeslot ts_e ON ts_e.timeid = ss.endtimeid
+                        WHERE ss.sessionid = ANY(%s)
+                    """, (list(overridden),)) or []:
+                        _off[o['sessionid']] = {'daydesc': o['daydesc'], 'start_fmt': o['start_fmt'],
+                                                'end_fmt': o['end_fmt'], 'roomname': o['roomname'] or 'TBA'}
+                local_rows = [dict(r, official=_off.get(r.get('official_sessionid'))) for r in la_rows]
+                return jsonify({'success': True, 'sessions': local_rows + untouched_official})
 
         # No Local Arrangement found — fall back to Official Published sessions
         rows = [dict(r) for r in pub_rows]
@@ -25165,8 +25218,10 @@ def _validate_ay_no_gaps(cur, year_start, year_end, ay_id):
         min_year_start = int(row[0])
         max_year_end   = int(row[1])
 
-        # Forward gap: new AY skips years at the top of the sequence
-        if y_start > max_year_end + 1:
+        # Forward gap: new AY skips years at the top of the sequence. The next AY starts
+        # the year the last one ends (2026-2027 -> 2027-2028); `> max_year_end + 1` let
+        # 2028-2029 through and left AY 2027-2028 missing.
+        if y_start > max_year_end:
             next_expected = f"{max_year_end}–{max_year_end + 1}"
             return False, (
                 f"Cannot skip years. The next Academic Year to add must be "
@@ -25174,7 +25229,7 @@ def _validate_ay_no_gaps(cur, year_start, year_end, ay_id):
             )
 
         # Backward gap: new AY would create a hole below the earliest AY
-        if y_end < min_year_start - 1:
+        if y_end < min_year_start:
             return False, (
                 f"Cannot create Academic Year {year_start}–{year_end}. "
                 f"It would leave a gap before the existing sequence "
@@ -26063,7 +26118,32 @@ def delete_ay():
     return redirect(url_for('admin_settings'))
 
 
+def _flash_result_as_json(view):
+    """For a form posted with fetch (X-Requested-With: fetch), answer with JSON instead of
+    the flash + redirect: an error is returned to the still-open form (so nothing has to be
+    filled in again); on success the flash is kept for the page reload that follows."""
+    import functools
+
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        if request.headers.get('X-Requested-With') != 'fetch':
+            return view(*args, **kwargs)
+        if session.get('role') != 'Admin':
+            return jsonify({'success': False, 'error': 'Your session has ended. Please log in again.'}), 401
+        before = len(session.get('_flashes', []))
+        view(*args, **kwargs)
+        flashes = session.get('_flashes', [])
+        new = flashes[before:]
+        errors = [msg for cat, msg in new if cat == 'error']
+        if errors:
+            session['_flashes'] = flashes[:before] + [f for f in new if f[0] != 'error']
+            return jsonify({'success': False, 'error': errors[-1]})
+        return jsonify({'success': True})
+    return wrapper
+
+
 @app.route('/admin/settings/upsert_ay', methods=['POST'])
+@_flash_result_as_json
 def upsert_ay():
     """
     Create or update an Academic Year with comprehensive lifecycle validation.
@@ -26071,12 +26151,21 @@ def upsert_ay():
     """
     if session.get('role') != 'Admin': return redirect(url_for('login'))
 
-    y_start = request.form.get('year_start')
-    y_end = request.form.get('year_end')
+    y_start = (request.form.get('year_start') or '').strip()
+    y_end = (request.form.get('year_end') or '').strip()
 
     # Validate year format
     if not y_start or not y_end:
         flash("Both start and end years are required.", "error")
+        return redirect(url_for('admin_settings'))
+    # Strict: two 4-digit years one year apart (the page normalizes 27-28 / 2728 to
+    # 2027-2028 before posting). ay_id is built from them, so a short or malformed
+    # value must never reach it.
+    if not (re.fullmatch(r'20\d{2}', y_start) and re.fullmatch(r'20\d{2}', y_end)):
+        flash(f"Invalid Academic Year: {y_start}-{y_end}. Use 4-digit years, e.g. 2027-2028.", "error")
+        return redirect(url_for('admin_settings'))
+    if request.form.get('form_action', 'edit') == 'add' and int(y_end) <= datetime.now().year:
+        flash(f"Cannot create AY {y_start}-{y_end}. That Academic Year is already in the past.", "error")
         return redirect(url_for('admin_settings'))
 
     ay_id = f"AY{y_start[2:4]}{y_end[2:4]}"
@@ -26409,6 +26498,22 @@ def save_hard_constraints():
     # merge scope/pair keys are frozen (still enforced under 'legacy', read-only until
     # the migration to Merge Groups is confirmed and they are retired).
     import merge_groups as _mg
+    if 'hc_time_slots' in data:
+        # HC6 anchors (a class starting at an anchor's start must end at its end): whole
+        # 30-minute marks between 7:30 AM and 9:00 PM, start before end. Empty = no anchors.
+        try:
+            raw = data['hc_time_slots']
+            slots = json.loads(raw) if isinstance(raw, str) else raw
+            blocks = set()
+            for s in slots or []:
+                sh, sm, eh, em = (int(x) for x in s)
+                st, en = sh * 60 + sm, eh * 60 + em
+                if sm not in (0, 30) or em not in (0, 30) or not (450 <= st < en <= 1260):
+                    return jsonify({'error': 'Each time block must start before it ends, between 7:30 AM and 9:00 PM.'}), 400
+                blocks.add((sh, sm, eh, em))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid time block list.'}), 400
+        data['hc_time_slots'] = json.dumps(sorted(blocks))
     conn = get_db_connection(); cur = conn.cursor()
     try:
         for key, val in data.items():
@@ -32368,6 +32473,198 @@ def _save_makeup_request(data, faculty_empno, existing_requestid=None):
         conn.close()
 
 
+# --- Make Up Class for an ACADEMIC HEAD's class, from the Local Scheduler ---
+# Academic Heads approve make-up requests themselves, so a make-up for a class taught by an
+# Academic Head (the logged-in one or another) skips the request step: it is validated
+# exactly like a faculty submission (that faculty's class, date in the semester and not
+# past, duration, room) and then by the same check approval runs
+# (_request_conflict_summary), and is saved already Approved by the logged-in Academic
+# Head. Like any approved make-up it is ONE meeting on that date — the weekly Official /
+# Local schedule is untouched.
+def _academic_head_employee_numbers_q():
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        return _academic_head_employee_numbers(cur)
+    finally:
+        cur.close(); conn.close()
+
+
+def _academic_head_employee_numbers(cur):
+    """Faculty who are Academic Heads: designation 'Academic Head' or an active account
+    with the Academic Head role. Looked up every time — never a fixed list."""
+    cur.execute("""
+        SELECT f.employeenumber FROM public.faculty f
+        JOIN public.designation d ON d.designationid = f.designationid
+        WHERE LOWER(TRIM(d.designationname)) = 'academic head'
+        UNION
+        SELECT a.employeenumber FROM public.accounts a
+        WHERE a.role = 'Academic Head' AND a.isactive AND a.employeenumber IS NOT NULL
+    """)
+    return {str(r['employeenumber']) for r in cur.fetchall() or [] if r['employeenumber']}
+
+
+def _own_makeup_rows(cur, emp_num, scheduleid):
+    cur.execute("""
+        SELECT cmr.requestid, cmr.requested_date, cmr.status, cmr.reason, cmr.new_roomid,
+               TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time, r.roomname
+        FROM class_meeting_request cmr
+        JOIN timeslot ts_s ON ts_s.timeid = cmr.new_starttimeid
+        JOIN timeslot ts_e ON ts_e.timeid = cmr.new_endtimeid
+        LEFT JOIN room r   ON r.roomid = cmr.new_roomid
+        WHERE cmr.scheduleid = %s AND cmr.submitted_by = %s
+          AND cmr.status IN ('Pending', 'Approved')
+        ORDER BY cmr.requested_date, ts_s.timevalue
+    """, [scheduleid, str(emp_num)])
+    out = []
+    for r in cur.fetchall() or []:
+        d = r['requested_date']
+        out.append({'requestid': r['requestid'], 'date': d.isoformat(), 'day': d.strftime('%A'),
+                    'date_label': d.strftime('%a, %b %d, %Y'), 'status': r['status'],
+                    'start_time': r['start_time'], 'end_time': r['end_time'],
+                    'room_id': r['new_roomid'], 'room': r['roomname'] or 'TBA',
+                    'reason': r['reason'] or '', 'past': d < date.today()})
+    return out
+
+
+@app.route('/api/manual/own_makeups')
+def api_manual_own_makeups():
+    if session.get('role') != 'Academic Head':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    emp = _session_employee_number()
+    subject = (request.args.get('subject_code') or '').strip()
+    try:
+        section_id = int(request.args.get('section_id') or 0)
+    except ValueError:
+        section_id = 0
+    if not (emp and subject and section_id):
+        return jsonify({'success': True, 'makeups': [], 'mine': False})
+    _ensure_request_tables()
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        ctx = _makeup.schedule_context_by_subject_section(cur, subject, section_id)
+        fac = str((ctx or {}).get('employeenumber') or '')
+        mine = bool(fac) and fac in _academic_head_employee_numbers(cur)
+        return jsonify({'success': True, 'mine': mine,
+                        'makeups': _own_makeup_rows(cur, fac, ctx['scheduleid']) if mine else [],
+                        'semester_start': ctx['semstartdate'].isoformat() if ctx and ctx.get('semstartdate') else None,
+                        'semester_end': ctx['semenddate'].isoformat() if ctx and ctx.get('semenddate') else None})
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/manual/own_makeup', methods=['POST'])
+def api_manual_own_makeup():
+    if session.get('role') != 'Academic Head':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    emp = _session_employee_number()
+    if not emp:
+        return jsonify({'success': False, 'error': 'Your account is not linked to a faculty record.'}), 400
+    data = request.json or {}
+    _ensure_request_tables()
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    req_id = None
+    try:
+        try:
+            section_id = int(data.get('section_id'))
+        except (TypeError, ValueError):
+            raise _makeup.MakeupError(400, 'validation_error', 'Select the section first.')
+        ctx = _makeup.schedule_context_by_subject_section(
+            cur, (data.get('subject_code') or '').strip(), section_id)
+        fac = str((ctx or {}).get('employeenumber') or '')
+        if ctx and fac not in _academic_head_employee_numbers(cur):
+            raise _makeup.MakeupError(403, 'forbidden',
+                'A direct make-up class is only for classes taught by an Academic Head. '
+                'Other faculty submit a make-up request from their Room Schedule.')
+        vals = _makeup.validate_submission(
+            cur, faculty_empno=fac, ctx=ctx, request_date=data.get('request_date'),
+            start_time=data.get('start_time'), end_time=data.get('end_time'),
+            room_id=data.get('room_id'), reason=data.get('reason'))
+        # One make-up per date at a time for this class.
+        cur.execute("SELECT pg_advisory_xact_lock(%s, %s)",
+                    [_makeup._APPROVAL_LOCK_NS, vals['requested_date'].toordinal()])
+        cur.execute("""
+            INSERT INTO class_meeting_request
+                (scheduleid, requested_date, new_starttimeid, new_endtimeid,
+                 new_roomid, reason, notes, submitted_by, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+            RETURNING requestid
+        """, [vals['scheduleid'], vals['requested_date'], vals['starttimeid'], vals['endtimeid'],
+              vals['roomid'], vals['reason'], 'Academic Head make-up class (saved directly)', fac])
+        req_id = cur.fetchone()['requestid']
+        conn.commit()
+    except _makeup.MakeupError as me:
+        conn.rollback(); cur.close(); conn.close()
+        body = me.to_json()
+        body.setdefault('error', body.get('message'))
+        return jsonify(body), me.status
+    except Exception as e:
+        conn.rollback(); cur.close(); conn.close()
+        print(f"[own_makeup] {e}")
+        return jsonify({'success': False, 'error': 'The make-up class could not be saved. Please try again.'}), 500
+
+    # The same check approval runs, against the latest effective schedule of that date.
+    try:
+        summary, error = _request_conflict_summary('makeup', req_id)
+        ok = not error and summary and summary.get('all_ok')
+        if not ok:
+            cur.execute("DELETE FROM class_meeting_request WHERE requestid = %s AND status = 'Pending'", [req_id])
+            conn.commit()
+            msgs = (summary or {}).get('conflicts') or [error[0] if error else 'This time is not available.']
+            return jsonify({'success': False, 'error': 'Cannot save the make-up class: ' + ' '.join(msgs),
+                            'conflicts': (summary or {}).get('conflicts') or []}), 409
+        cur.execute("""
+            UPDATE class_meeting_request
+            SET status = 'Approved', decided_by = %s, decided_at = NOW(),
+                reviewed_by = %s, reviewed_at = NOW(), remarks = %s
+            WHERE requestid = %s AND status = 'Pending'
+        """, [str(emp), str(emp), 'Academic Head class — saved directly by the Academic Head', req_id])
+        conn.commit()
+        write_activity_log(
+            "Make-up Class Scheduled",
+            f"{ctx['subjectcode']} — make-up class on {vals['requested_date'].strftime('%b %d, %Y')} "
+            f"(Academic Head's class, saved directly)",
+            category='schedule', color=_LOG_COLORS.get('schedule', 'green'))
+        return jsonify({'success': True, 'requestid': req_id,
+                        'makeups': _own_makeup_rows(cur, fac, ctx['scheduleid'])})
+    except Exception as e:
+        conn.rollback()
+        try:
+            cur.execute("DELETE FROM class_meeting_request WHERE requestid = %s AND status = 'Pending'", [req_id])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        print(f"[own_makeup] {e}")
+        return jsonify({'success': False, 'error': 'The make-up class could not be saved. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/manual/own_makeup/<int:req_id>/cancel', methods=['POST'])
+def api_manual_own_makeup_cancel(req_id):
+    if session.get('role') != 'Academic Head':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        heads = list(_academic_head_employee_numbers(cur))
+        cur.execute("""
+            UPDATE class_meeting_request
+            SET status = 'Cancelled', reviewed_by = NULL, reviewed_at = NULL,   -- chk_cmr_review
+                remarks = 'Removed by the Academic Head'
+            WHERE requestid = %s AND submitted_by = ANY(%s) AND status IN ('Pending', 'Approved')
+              AND requested_date >= CURRENT_DATE
+            RETURNING scheduleid, submitted_by
+        """, [req_id, heads])
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'This make-up class can no longer be removed (already past or removed).'}), 409
+        conn.commit()
+        return jsonify({'success': True, 'makeups': _own_makeup_rows(cur, row['submitted_by'], row['scheduleid'])})
+    finally:
+        cur.close(); conn.close()
+
+
 # --- API: Submit a faculty room request ---
 @app.route('/api/faculty/submit_request', methods=['POST'])
 def api_faculty_submit_request():
@@ -33711,6 +34008,24 @@ def _schedule_delete_blocked_message(blockers):
     return ('Cannot delete: these schedules are referenced by ' + '; '.join(parts)
             + '. Deleting them would destroy request / Local Scheduler history. '
               'Archive or resolve those records first.')
+
+
+# Namespace for pg_advisory_xact_lock(ns, semesterid) taken by every Official writer
+# (Save Draft, Approve/Publish, Restore). merge_groups uses 4216/4217.
+_OFFICIAL_WRITE_LOCK_NS = 4218
+
+
+def _lock_official_semester(cur, semester_id):
+    """Serialize Official schedule writes for one semester, until this transaction ends.
+
+    Two Academic Heads may work at once. Without this, two Publishes of DIFFERENT
+    sections both run their cross-section room/faculty checks before either commits,
+    both pass, and the same room or faculty is double-booked; and two saves of the SAME
+    section read the same MAX(version_number) and one fails on uq_schedule_version_number.
+    Taken BEFORE those checks and the version numbering, so the second writer waits
+    (usually well under a second) and then sees the first one's committed rows."""
+    cur.execute('SELECT pg_advisory_xact_lock(%s, %s)',
+                (_OFFICIAL_WRITE_LOCK_NS, int(semester_id or 0)))
 
 
 def _next_version_number(cur, program, year_level, semester_id, section_id=None):
@@ -37388,6 +37703,9 @@ def api_save_draft():
 
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
+        # Another Academic Head saving/publishing this semester finishes first, so the
+        # cross-section checks and the version number below see their committed rows.
+        _lock_official_semester(cur, sem_id)
 
         # Each save creates a new revision number so that version history accumulates
         # R1, R2, R3... The counter spans ALL sources: UNIQUE(scheduleid, version_number)
@@ -37800,6 +38118,7 @@ def _keep_faculty_after_schedule_delete(cur, version_id):
         JOIN curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
         WHERE s.sectionid = %s AND s.semesterid = %s AND UPPER(cs.subjectcode) = %s
           AND sv.status IN ('Draft', 'Published') AND sv.source IS DISTINCT FROM 'local'
+          AND COALESCE(sv.is_removal, FALSE) = FALSE
         LIMIT 1
     """, (v['sectionid'], v['semesterid'], v['code']))
     if cur.fetchone():
@@ -38558,10 +38877,10 @@ def api_approve_schedule():
                 _gcur.close(); _gconn.close()
         _hc_cfg_csp = _mg_pub.with_policy(_hc_cfg, _merge_policy_for(
             _hc_cfg, ay=ay, term=term, section_id=_ctx_section_id))
+        _existing_load = _other_sections_faculty_hours(ay, term, program, year_level,
+                                                       section_id=_ctx_section_id)
         all_viols  = ConstraintService(SchedulingPolicy(_hc_cfg_csp)).validate_schedule(
-            sched_data, faculty_map,
-            existing_load=_other_sections_faculty_hours(ay, term, program, year_level,
-                                                        section_id=_ctx_section_id),
+            sched_data, faculty_map, existing_load=_existing_load,
         ).violations
         violations = [v for v in all_viols if v.get('severity') != 'warning' or v.get('blocks_publish')]
 
@@ -38583,6 +38902,27 @@ def api_approve_schedule():
 
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         sem_id = _get_semester_id(cur, ay, term)
+        # Another Academic Head publishing this semester finishes first; every check
+        # below (cross-schedule conflicts, version number) then sees their rows.
+        _lock_official_semester(cur, sem_id)
+        # The faculty-load check above ran before the lock: if another section was
+        # published meanwhile, judge this schedule again against the new load.
+        if publish_gate_on:
+            _existing_load_now = _other_sections_faculty_hours(ay, term, program, year_level,
+                                                               section_id=_ctx_section_id)
+            if _existing_load_now != _existing_load:
+                all_viols = ConstraintService(SchedulingPolicy(_hc_cfg_csp)).validate_schedule(
+                    sched_data, faculty_map, existing_load=_existing_load_now,
+                ).violations
+                violations = [v for v in all_viols
+                              if v.get('severity') != 'warning' or v.get('blocks_publish')]
+                if violations:
+                    conn.rollback(); cur.close(); conn.close()
+                    return _not_approvable(
+                        f'Cannot approve: {len(violations)} unresolved constraint violation(s) '
+                        '(another schedule was just published this term). '
+                        'Resolve all conflicts in the Manual Editor before approving.',
+                        len(sched_data), 0, len(violations), violations=violations)
 
         # Regular / Bridging guard (Generation approvals only — see api_save_draft).
         _cm_problem = _curriculum_mode_problem(cur, ctx, _ctx_section_id, sem_id, sched_data)
@@ -38834,6 +39174,21 @@ def api_approve_schedule():
         # archive every other section's (e.g. BSCE1-1's) already-Published schedule too.
         _pub_archive_sect = "AND s.sectionid = %s" if _ctx_section_id else ""
         _pub_archive_params = [program, year_level, sem_id] + ([_ctx_section_id] if _ctx_section_id else [])
+        # Removing a subject from the live schedule removes its day/time/room, not its
+        # faculty (e.g. deleting its last Published slice on the calendar): remember the
+        # versions being retired so their faculty is kept as the subject's assignment.
+        _removed_vids = []
+        if removed_subjects:
+            cur.execute("""
+                SELECT sv.versionid
+                FROM public.schedule_version sv
+                JOIN public.schedule s ON sv.scheduleid = s.scheduleid
+                JOIN public.curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                WHERE s.semesterid = %s AND s.sectionid = %s
+                  AND sv.status = 'Published' AND sv.source IS DISTINCT FROM 'local'
+                  AND UPPER(cs.subjectcode) = ANY(%s)
+            """, (sem_id, _ctx_section_id, removed_subjects))
+            _removed_vids = [r['versionid'] for r in (cur.fetchall() or [])]
         cur.execute(f"""
             UPDATE public.schedule_version sv
             SET status = 'Archive'
@@ -38882,6 +39237,17 @@ def api_approve_schedule():
         """, (sem_id, _ctx_section_id))
         dv_row = cur.fetchone()
         new_draft_v = dv_row['max_draft_v'] if dv_row and dv_row['max_draft_v'] else None
+
+        # A removed subject keeps its faculty (pending, not scheduled) until the user
+        # changes it — same as deleting a Draft schedule (api_delete_session).
+        for _rv in _removed_vids:
+            cur.execute("SAVEPOINT keep_faculty")
+            try:
+                _keep_faculty_after_schedule_delete(cur, int(_rv))
+                cur.execute("RELEASE SAVEPOINT keep_faculty")
+            except Exception as _kf:
+                cur.execute("ROLLBACK TO SAVEPOINT keep_faculty")   # never blocks the publish
+                print(f"[approve] faculty not kept for version {_rv}: {_kf}")
 
         # The published subjects now have a real schedule (and faculty): drop reservations
         # it supersedes — e.g. the previous faculty's "Assign Faculty" before a reassignment.
@@ -39606,6 +39972,9 @@ def api_restore_version(version_id):
             row['programcode'], row['yearlevel'], row['term'],
             row['semesterid'], row['src_vn'], row['sectionid']
         )
+
+        # Same per-semester lock as Save Draft / Approve (version numbering below).
+        _lock_official_semester(cur, sem_id)
 
         # Replace the section's existing Official Draft only (any non-Local source).
         # Published is left exactly as it is.

@@ -1102,7 +1102,7 @@ def test_phase_68g_frontend_save_publish_contract_is_consistent():
     assert "window.__lastLocalArrangementSaveResult = data" in html
     assert "data.arrangement_id" in html
     assert "data.arrangementid" not in html
-    assert "const draft = await saveLocalArrangement(true" in html
+    assert "const draft = _savedDraft ? null : await saveLocalArrangement(true" in html
     assert "silent: true" in html
 
 def test_phase_68g_publish_from_editor_has_network_and_double_click_protection():
@@ -1162,7 +1162,7 @@ def test_phase_68h_final_stale_and_concurrency_guards_remain_present():
 def test_phase_68h_final_frontend_publish_chain_matches_backend_contract():
     from pathlib import Path
     html=(Path(__file__).parents[1]/"templates/academic/manualScheduleEditor.html").read_text(encoding="utf-8")
-    assert "const draft = await saveLocalArrangement(true" in html
+    assert "const draft = _savedDraft ? null : await saveLocalArrangement(true" in html
     assert "draft.arrangement_id" in html
     assert "/publish`" in html
     assert "silent: true" in html

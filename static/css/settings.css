@@ -657,8 +657,11 @@
 /* ── Time Slots Grid ────────────────────────────────── */
 .slots-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 7px;
+  max-height: 430px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .slot-row {
@@ -683,6 +686,19 @@
   outline: none;
   min-width: 0;
 }
+
+.slot-len {
+  font-size: .62rem;
+  font-weight: 700;
+  color: var(--text-3);
+  white-space: nowrap;
+  min-width: 44px;
+  text-align: right;
+}
+.slot-row.slot-invalid { border-color: #c0392b; background: #fdecea; }
+.slot-row.slot-invalid .slot-len { color: #c0392b; }
+.slot-note { margin-top: 8px; font-size: .7rem; font-weight: 700; color: #c0392b; }
+.slot-empty { font-size: .72rem; color: var(--text-3); padding: 6px 2px; }
 
 .slot-sep {
   font-size: .68rem;

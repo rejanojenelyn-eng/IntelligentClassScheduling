@@ -4,9 +4,10 @@ Fix #3 — HC6 Standard Time-Slot Compliance investigation.
 Findings pinned here:
   * The "invalid start/end time ... Please select a standard time block" messages
     come only from CSPValidator._check_standard_slots (final HC6).
-  * Allowed endpoints = Settings `hc_time_slots` ∪ scheduler.STANDARD_BLOCKS
-    (the generator's own block list). The Settings grid is a subset of
-    STANDARD_BLOCKS, so the effective grid is exactly what generation produces.
+  * Settings `hc_time_slots` blocks are anchors: a class starting at an anchor's
+    start must end at its end; other start/end times are free. Generation applies
+    the anchors to its own times (scheduler.refresh_time_blocks), so whatever it
+    produces passes HC6.
   * The grid is day-independent: Saturday uses the same grid as weekdays.
     (Weekend SERVICE WINDOWS are a separate rule — HC3/HC5 — not HC6.)
   * 2:00 PM start / 5:00 PM end is on neither grid, so a historical
@@ -42,13 +43,18 @@ def _hc6(rows, cfg=CFG):
 
 
 def test_b1_every_block_the_generator_can_produce_passes_hc6():
-    durations = {round(duration_hours(s, e), 2) for (s, e) in STANDARD_BLOCKS}
-    produced = set(STANDARD_BLOCKS)
-    for d in durations:
-        produced |= set(get_blocks_for_hours(d)) | set(get_blocks_for_hours(d, is_lab=True))
-    for (s, e) in produced:
-        for day in ('Monday', 'Saturday'):
-            assert _hc6([_row(day, s, e)]) == [], (day, s, e)
+    saved = [[s.hour, s.minute, e.hour, e.minute] for s, e in STANDARD_BLOCKS]
+    scheduler.refresh_time_blocks(CFG)    # generation reads the same Settings list
+    try:
+        durations = {round(duration_hours(s, e), 2) for (s, e) in STANDARD_BLOCKS}
+        produced = set(STANDARD_BLOCKS)
+        for d in durations:
+            produced |= set(get_blocks_for_hours(d)) | set(get_blocks_for_hours(d, is_lab=True))
+        for (s, e) in produced:
+            for day in ('Monday', 'Saturday'):
+                assert _hc6([_row(day, s, e)]) == [], (day, s, e)
+    finally:
+        scheduler.refresh_time_blocks({'hc_time_slots': json.dumps(saved)})
 
 
 def test_b1b_settings_grid_adds_nothing_the_generator_cannot_produce():
@@ -62,8 +68,8 @@ def test_b2_manual_editor_validation_endpoint_uses_the_same_rule():
     client = app_module.app.test_client()
     bad = client.post('/api/schedule/validate', json={'schedule_data': [
         {'subject_code': 'GEED 006', 'day': 'Saturday', 'days_list': ['Saturday'],
-         'start_time': '02:00 PM', 'end_time': '05:00 PM', 'room_type': 'Lecture'}]}).get_json()
-    assert {v['rule'] for v in bad['violations']} >= {'HC6'}
+         'start_time': '03:00 PM', 'end_time': '04:30 PM', 'room_type': 'Lecture'}]}).get_json()
+    assert {v['rule'] for v in bad['violations']} >= {'HC6'}   # 3:00 PM is anchored to 6:00 PM
     good = client.post('/api/schedule/validate', json={'schedule_data': [
         {'subject_code': 'GEED 006', 'day': 'Saturday', 'days_list': ['Saturday'],
          'start_time': '01:30 PM', 'end_time': '04:30 PM', 'room_type': 'Lecture'}]}).get_json()
@@ -88,9 +94,11 @@ def test_b3_retrieved_historical_time_is_evaluated_by_the_current_rule():
     import app as app_module
     days, s, e, status, _ = app_module._resolve_historical_day_time('SAT', '2:00 - 5:00')
     assert (days, status) == (['Saturday'], 'resolved')
-    msgs = [v['detail'] for v in _hc6([_row(days[0], s, e)])]
-    assert any('invalid start time (02:00 PM)' in m for m in msgs)
-    assert any('invalid end time (05:00 PM)' in m for m in msgs)
+    # No anchor starts at 2:00 PM, so 2:00-5:00 is free; once one does, it must be kept.
+    assert _hc6([_row(days[0], s, e)]) == []
+    anchored = dict(CFG, hc_time_slots=json.dumps([[14, 0, 15, 30]]))
+    msgs = [v['detail'] for v in _hc6([_row(days[0], s, e)], cfg=anchored)]
+    assert any('starting at 02:00 PM must end at 03:30 PM' in m for m in msgs)
 
 
 def test_b4_duration_is_three_hours():
@@ -103,13 +111,14 @@ def test_b4_duration_is_three_hours():
 def test_b5_saturday_uses_the_same_grid_as_weekdays():
     for day in ('Monday', 'Saturday'):
         assert _hc6([_row(day, time(13, 30), time(16, 30))]) == []
-        assert len(_hc6([_row(day, time(14, 0), time(17, 0))])) == 2
+        assert _hc6([_row(day, time(14, 0), time(17, 0))]) == []
+        assert len(_hc6([_row(day, time(13, 30), time(17, 0))])) == 1   # 13:30 is anchored
 
 
 def test_b6_genuinely_invalid_historical_time_stays_flagged():
     import app as app_module
-    _d, s, e, _st, _ = app_module._resolve_historical_day_time('SAT', '5:30 - 8:30')
-    assert _hc6([_row('Saturday', s, e)])
+    _d, s, e, _st, _ = app_module._resolve_historical_day_time('SAT', '6:30 - 9:30')
+    assert 'outside the scheduling hours' in _hc6([_row('Saturday', s, e)])[0]['detail']
 
 
 def test_b7_valid_current_time_is_not_flagged():
@@ -132,4 +141,4 @@ def test_b3b_retrieve_previous_reports_hc6_for_bpa_saturday_2_to_5():
         pytest.skip('BPA 2 history no longer has GEED 006 SAT 2:00-5:00')
     hc6 = [c for c in body['evaluation']['conflicts']
            if c['rule'] == 'HC6' and 'GEED 006' in c['subject']]
-    assert hc6   # current rule applied; historical time preserved (not rewritten)
+    assert not hc6   # 2:00 PM is no anchor: free under the current rule; time kept as stored

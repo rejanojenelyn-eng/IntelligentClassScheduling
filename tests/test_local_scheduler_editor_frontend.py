@@ -424,14 +424,14 @@ def test_publish_without_changes_publishes_the_latest_saved_draft(harness):
 
 def test_publish_without_changes_or_draft_explains(harness):
     r = harness('no_changes_no_draft')
-    assert _titles(r) == ['No Draft to Publish']
+    assert _titles(r) == ['No Changes']   # told right away — no reason box, no Draft step
     assert not any('/publish' in u for u in _urls(r))
 
 
-def test_makeup_class_only_for_the_academic_heads_own_schedule():
+def test_makeup_class_only_for_an_academic_heads_class():
     tag = _button('btnSaveMakeupClass')
     assert 'style="display:none;"' in tag          # hidden until the faculty matches
-    assert "data-my-emp-num=" in HTML
+    assert "data-acad-head-emps=" in HTML          # Academic Heads, sent by the server
     s = HTML.index("function _updateMakeupClassBtn")
-    assert "String(empNum) === String(myEmpNum)" in HTML[s:s + 600]
+    assert "heads.map(String).includes(String(empNum))" in HTML[s:s + 900]
     assert "_updateMakeupClassBtn(empNum);" in HTML

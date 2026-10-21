@@ -816,6 +816,17 @@ window.addEventListener('beforeunload', function (e) {
     }
 });
 
+// The toolbar's Refresh: same styled confirmation instead of the browser's "Reload site?".
+async function _guardedReload() {
+    if (!window.isLeavingIntentionally && hasUnsavedChanges()) {
+        const ok = await showConfirmModal(
+            'You have unsaved changes on this page.\nRefresh and discard them?', 'Unsaved Changes');
+        if (!ok) return;
+    }
+    window.isLeavingIntentionally = true;   // skip the browser's own dialog
+    window.location.reload();
+}
+
 // In-app navigation with the styled Unsaved Changes confirmation.
 async function _guardedNavigate(url) {
     if (window.isLeavingIntentionally || !hasUnsavedChanges()) {
@@ -1201,6 +1212,102 @@ async function renderProgramTimetable() {
     } catch (e) { console.error('[renderProgramTimetable]', e); }
 }
 
+// ── Calendar / Table view (Room View + Program View) ─────────────────────────
+// The table lists exactly the sessions the calendar draws (renderGrid / _renderProgPills
+// hand them over via _setTableRows), so the two views can never disagree. A row's click
+// and × reuse that session's calendar pill (same edit and two-step delete).
+let _tableRows = { mode: '', rows: [] };
+window._calView = (() => { try { return localStorage.getItem('manualEditorCalView') || 'calendar'; } catch (e) { return 'calendar'; } })();
+
+function _setTableRows(mode, sessions) {
+    _tableRows = { mode, rows: Array.from(sessions || []) };
+    // After the caller has drawn this render's pills — rows act through them.
+    if (window._calView === 'table') setTimeout(_renderSessionTable, 0);
+}
+
+function _setCalView(view, opts = {}) {
+    view = view === 'table' ? 'table' : 'calendar';
+    window._calView = view;
+    if (!opts.keep) { try { localStorage.setItem('manualEditorCalView', view); } catch (e) {} }
+    document.getElementById('cvBtnCalendar')?.classList.toggle('active', view === 'calendar');
+    document.getElementById('cvBtnTable')?.classList.toggle('active', view === 'table');
+    const cal = document.getElementById('calendarViewContainer');
+    const tbl = document.getElementById('tableViewContainer');
+    if (cal) cal.classList.toggle('cv-collapsed', view === 'table');
+    if (tbl) tbl.style.display = view === 'table' ? '' : 'none';
+    if (view === 'table') _renderSessionTable();
+    else if (!opts.keep) {
+        // Back to the calendar: redraw so every pill is placed against the visible grid.
+        if (currentMode === 'program') renderProgramTimetable();
+        else renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+    }
+}
+
+function _sessionPill(key) {
+    return Array.from(document.querySelectorAll('#gridWrapper .schedule-pill'))
+        .find(p => p.dataset.pillKey === key) || null;
+}
+
+function _renderSessionTable() {
+    const body = document.getElementById('sessTableBody');
+    if (!body) return;
+    const esc = t => String(t == null || t === '' ? '—' : t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const room = _tableRows.mode === 'room';
+    const tbl = body.closest('table');
+    if (tbl) { tbl.classList.toggle('mode-room', room); tbl.classList.toggle('mode-program', !room); }
+    const startOf = s => s.starttimeid || timeStrToSlotIdx(s.start_time);
+    const endOf   = s => s.endtimeid   || timeStrToSlotIdx(s.end_time);
+    const rows = _tableRows.rows.filter(s => s.daydesc && startOf(s) && endOf(s) > startOf(s))
+        .sort((a, b) => (DAYS.indexOf(a.daydesc) - DAYS.indexOf(b.daydesc)) || (startOf(a) - startOf(b))
+                        || String(a.subjectcode).localeCompare(String(b.subjectcode)));
+    const count = document.getElementById('cvCount');
+    if (count) count.textContent = rows.length ? `${rows.length} session${rows.length === 1 ? '' : 's'}` : '';
+    if (!rows.length) {
+        body.innerHTML = `<tr class="st-empty"><td colspan="7">${room
+            ? 'No sessions in this room yet — or select a room above.'
+            : 'No sessions for this section yet — or select a section.'}</td></tr>`;
+        return;
+    }
+    const _curSect = (document.getElementById('bc-sect-text')?.textContent || '').trim();
+    body.innerHTML = rows.map(s => {
+        const st = startOf(s), et = endOf(s);
+        const key = `${s.subjectcode}_${s.daydesc}_${st}`;
+        const sects = (s._mergedSections || []).map(m => m.sectionname || (m.programcode ? `${m.programcode}-${m.year_level}` : ''))
+            .filter(Boolean);
+        const section = sects.length ? sects.join(', ')
+            : (s.sectionname || (!room ? _curSect : '') || (s.programcode ? `${s.programcode}-${s.year_level || ''}` : ''));
+        const status = s.status === 'GeneratorTransfer' ? ['unsaved', 'UNSAVED (GENERATED)']
+            : (s.isPreview || (!s.versionid && s.temp_id && String(s.status || '').toLowerCase() !== 'published')) ? ['unsaved', 'UNSAVED']
+            : s.isEdited ? ['unsaved', 'EDITED']
+            : String(s.status || '').toLowerCase() === 'published' ? ['pub', 'PUBLISHED'] : ['draft', 'DRAFT'];
+        const instr = (typeof _resolveInstructorName === 'function' ? _resolveInstructorName(s) : s.instructor) || 'TBA';
+        const canDel = !!(_sessionPill(key)?.querySelector('.pill-drop-btn'));
+        return `<tr data-key="${esc(key)}" onclick="_openSessionFromTable(this.dataset.key)">
+            <td class="st-when"><b>${esc(s.daydesc)}</b><span>${esc(timeSlots[st - 1] || s.start_time)} – ${esc(timeSlots[et - 1] || s.end_time)}</span></td>
+            <td class="st-subj" title="${esc(s.subjectname)}"><b>${esc(s.subjectcode)}</b><span>${esc(s.subjectname)}</span></td>
+            <td>${esc(instr)}</td>
+            <td>${esc(section)}</td>
+            <td>${esc(s.roomname || s.room)}</td>
+            <td><span class="st-badge ${status[0]}">${status[1]}</span></td>
+            <td>${canDel ? `<button type="button" class="st-del" title="Remove"
+                    onclick="event.stopPropagation(); _deleteSessionFromTable(this.closest('tr').dataset.key)">
+                    <i class="fas fa-times"></i></button>` : ''}</td>
+        </tr>`;
+    }).join('');
+}
+
+// Row click = clicking that session's calendar pill (opens it for editing).
+function _openSessionFromTable(key) {
+    const pill = _sessionPill(key);
+    if (pill && typeof pill.onclick === 'function') pill.onclick({ target: pill });
+}
+// × = that pill's own × (the same two-step delete, Published slices included).
+function _deleteSessionFromTable(key) {
+    _sessionPill(key)?.querySelector('.pill-drop-btn')?.click();
+}
+
 // Render-token guard: each call to _renderProgPills increments this counter.
 // A deferred RAF callback checks if its token still matches — if not, a newer
 // call already ran and the stale RAF is cancelled. Prevents duplicate pills
@@ -1209,6 +1316,7 @@ let _progPillsToken = 0;
 
 function _renderProgPills(sessions, prog, yl) {
     const token = ++_progPillsToken;
+    _setTableRows('program', sessions);
 
     const wrapper = document.getElementById('gridWrapper');
     const table   = document.getElementById('mainTimetable');
@@ -1465,7 +1573,9 @@ async function triggerDSSLogic() {
 
     try {
         const siResp = await fetch(`/api/manual/subject_info?subject_code=${encodeURIComponent(subjCode)}`).then(r => r.json());
-        if (siResp.success) _subjInfo = siResp;
+        // A slower response for a subject the user already left must not become _subjInfo
+        // (it would scope the new subject's Day list to the old one's restricted days).
+        if (siResp.success && subjSel.value === subjCode) _subjInfo = siResp;
     } catch(e) { _subjInfo = null; }
 
     // Re-evaluate specialization warning whenever subject changes
@@ -2450,6 +2560,17 @@ async function _dropSessionImpl(sessDataEncoded) {
 
     // Remove from pendingManualSchedule if it was a local entry
     if (sd.temp_id) {
+        // Only the schedule goes: when this was the subject's last unsaved slice, its faculty
+        // stays as the subject's assignment (shown again when the subject is reopened), the
+        // same as the server keeps it for a deleted saved schedule.
+        const _gone = pendingManualSchedule.find(c => c.temp_id === sd.temp_id);
+        const _gCode = String(_gone?.subject_code || '').toUpperCase();
+        if (_gone && _gCode && _gone.faculty_id && String(_gone.faculty_id).toUpperCase() !== 'TBA' &&
+                typeof _subjectFacultyAssignments !== 'undefined' && !_subjectFacultyAssignments[_gCode] &&
+                !pendingManualSchedule.some(c => c.temp_id !== sd.temp_id && c.ay === _gone.ay && c.sem === _gone.sem &&
+                    String(c.subject_code || '').toUpperCase() === _gCode)) {
+            _subjectFacultyAssignments[_gCode] = { id: _gone.faculty_id, name: _gone.instructor || '' };
+        }
         pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== sd.temp_id);
         if (window.currentEditSession && window.currentEditSession.temp_id === sd.temp_id) unlockFormFields();
     }
@@ -3587,6 +3708,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             return rep;
         });
 
+        _setTableRows('room', uniq);
         if (window._DEBUG_RENDERGRID) {
             console.log('[renderGrid] FINAL pills to draw:', uniq.length, '—',
                 uniq.map(s => `${s.subjectcode}/${s.daydesc}`));

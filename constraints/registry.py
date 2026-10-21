@@ -115,20 +115,17 @@ HARD_CONSTRAINTS = {
     ),
     "HC6": _hc(
         "HC6", "Standard Time-Slot Compliance",
-        "A class time must be one whole valid start-end block: a built-in "
-        "scheduler.STANDARD_BLOCKS block or an admin-configured hc_time_slots block. "
-        "A start and an end that each belong to some block are not enough -- the "
-        "pair itself must be a block. Adjacent blocks (e.g. 7:30-9:00 and 9:00-10:30) "
-        "touch but do not overlap. Applies to Local Scheduler adjustments too. "
-        "Exception: an NSTP class may start and end at any time (e.g. 2:00-5:00 PM) "
-        "as long as it is one 3-hour session within the scheduling hours "
-        "(earliest block start to latest block end); see scheduler.nstp_time_problem.",
+        "The admin-configured hc_time_slots blocks are anchors: a class that starts "
+        "at an anchor's start time must end at that anchor's end time (e.g. 3:00 PM -> "
+        "6:00 PM); a class starting at any other time may end at any time. Every class "
+        "lies within the scheduling hours (7:30 AM - 9:00 PM) and an NSTP class is one "
+        "3-hour session. Generation applies the anchors to its own placement times. "
+        "Applies to Local Scheduler adjustments too; see scheduler.hc6_time_problem.",
         ("time",),
         config_keys=("hc_time_blocks_enabled", "hc_time_slots"),
         implementation="CSPValidator._check_standard_slots",
-        notes="15:00-18:00 is a confirmed institutional block configured through "
-              "hc_time_slots (not a STANDARD_BLOCKS generator block); see "
-              "migrations/2026-09-30_hc6_time_slot_1500_1800.sql.",
+        notes="15:00-18:00 is the confirmed institutional block (seeded default); "
+              "see migrations/2026-09-30_hc6_time_slot_1500_1800.sql.",
     ),
     "HC7": _hc(
         "HC7", "Required Day Pairing",

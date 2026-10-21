@@ -263,9 +263,12 @@ def test_states_unscheduled_incomplete_scheduled():
 def test_completeness_checks_time_blocks_lab_rooms_and_types():
     rooms = ctx()['rooms']
     geed = subj(1, code='GEED 001', name='Understanding the Self')
-    off_grid = mg.scheduling_completeness(geed, [mt('Sunday', '08:00', '11:00')], valid_blocks=BLOCKS, rooms=rooms)
+    # BLOCKS anchors 9:00 AM to 10:30 AM: 9:00-12:00 breaks it; 8:00-11:00 is free.
+    off_grid = mg.scheduling_completeness(geed, [mt('Sunday', '09:00', '12:00')], valid_blocks=BLOCKS, rooms=rooms)
     assert any('HC6' in i for i in off_grid['issues'])
-    assert mg.scheduling_completeness(geed, [mt('Sunday', '08:00', '11:00')], valid_blocks=None,
+    assert mg.scheduling_completeness(geed, [mt('Sunday', '08:00', '11:00')], valid_blocks=BLOCKS,
+                                      rooms=rooms)['state'] == 'SCHEDULED'
+    assert mg.scheduling_completeness(geed, [mt('Sunday', '09:00', '12:00')], valid_blocks=None,
                                       rooms=rooms)['state'] == 'SCHEDULED'   # HC6 switched off
     # NSTP is not tied to the block grid: any 3-hour session within the scheduling hours.
     grid = mg.valid_time_blocks({})          # the real grid: 7:30 AM - 9:00 PM

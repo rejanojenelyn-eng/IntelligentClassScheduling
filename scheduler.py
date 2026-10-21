@@ -71,6 +71,7 @@ genuine soft preference term):
 import json
 import logging
 import random
+import threading
 import re
 import copy
 import itertools
@@ -154,29 +155,31 @@ def is_nstp_subject(subject_code) -> bool:
     return (subject_code or '').strip().upper().startswith(NSTP_PREFIX)
 
 
-def nstp_time_problem(subject_code, start, end, valid_pairs):
-    """Final HC6 exception for NSTP: an NSTP class may start and end at any time
-    (e.g. 2:00 PM - 5:00 PM), not only on a standard block, as long as it is one
-    whole NSTP_SESSION_HOURS session inside the scheduling day -- the earliest
-    block start to the latest block end of `valid_pairs` (7:30 AM - 9:00 PM by
-    default). A standard block stays valid exactly as before (e.g. the
-    generator's 1.5-hour pairs). Returns None when allowed, else a message.
-    Shared by CSPValidator and merge_groups.scheduling_completeness."""
-    if (start, end) in valid_pairs:
-        return None
+def hc6_time_problem(subject_code, start, end, anchors):
+    """Final HC6 Standard Time-Slot Compliance for one class time. The admin's blocks
+    (`anchors`, [(start, end)]) bind only the start times they name: a class starting
+    at 3:00 PM must end at 6:00 PM when 3:00-6:00 PM is configured, while a class
+    starting at any other time may end at any time. Every class lies inside the
+    scheduling day, and NSTP is one NSTP_SESSION_HOURS session (or a generator block). Returns None when
+    allowed, else a message. Shared by CSPValidator, Local and Merge Groups."""
     label = f'{format_time_12h(start)} – {format_time_12h(end)}'
-    day_open  = min(s for s, _ in valid_pairs)
-    day_close = max(e for _, e in valid_pairs)
     if start >= end:
         return f'"{subject_code}" — {label}: the end time must be after the start time.'
-    if start < day_open or end > day_close:
+    if start < SCHEDULING_DAY_OPEN or end > SCHEDULING_DAY_CLOSE:
         return (f'"{subject_code}" — {label} is outside the scheduling hours '
-                f'({format_time_12h(day_open)} – {format_time_12h(day_close)}).')
-    hours = duration_hours(start, end)
-    if abs(hours - NSTP_SESSION_HOURS) > 0.01:
-        return (f'"{subject_code}" — {label} is {hours:g} hour{"s" if hours != 1 else ""}. '
-                f'An NSTP class must be one {NSTP_SESSION_HOURS:g}-hour session '
-                f'(e.g. 2:00 PM – 5:00 PM).')
+                f'({format_time_12h(SCHEDULING_DAY_OPEN)} – {format_time_12h(SCHEDULING_DAY_CLOSE)}).')
+    ends = sorted({e for s, e in (anchors or ()) if s == start})
+    if ends and end not in ends:
+        must = ' or '.join(format_time_12h(e) for e in ends)
+        return (f'"{subject_code}" — {label}: a class starting at {format_time_12h(start)} '
+                f'must end at {must} (Settings → HC6 Standard Time Slots).')
+    # NSTP: one 3-hour session, or one of the generator's own times (its 1.5-hour pairs).
+    if is_nstp_subject(subject_code) and (start, end) not in STANDARD_BLOCKS:
+        hours = duration_hours(start, end)
+        if abs(hours - NSTP_SESSION_HOURS) > 0.01:
+            return (f'"{subject_code}" — {label} is {hours:g} hour{"s" if hours != 1 else ""}. '
+                    f'An NSTP class must be one {NSTP_SESSION_HOURS:g}-hour session '
+                    f'(e.g. 2:00 PM – 5:00 PM).')
     return None
 
 
@@ -279,7 +282,7 @@ def _parse_day_pairs(raw) -> list:
 
 def _parse_time_slot_pairs(raw) -> set:
     """Configured hc_time_slots JSON ([[sh, sm, eh, em], ...]) -> {(start, end)}.
-    Unparsable/empty -> empty set (the built-in STANDARD_BLOCKS still apply)."""
+    Unparsable/empty -> empty set."""
     try:
         data = json.loads(raw) if isinstance(raw, str) else raw
         return {(time(s[0], s[1]), time(s[2], s[3])) for s in (data or [])}
@@ -314,7 +317,14 @@ REGULAR_CURRICULUM_SQL = """(
     )
 )"""
 
-STANDARD_BLOCKS = [
+# The times generation may place a class in. HC6 (Settings → Standard Time-Slot
+# Compliance, hc_time_slots) does not replace this list -- an admin block is an ANCHOR:
+# a class that starts at an anchor's start time must end at that anchor's end time, and
+# every other start/end stays free. refresh_time_blocks applies the anchors to this list
+# (a generator block starting at an anchor's start is replaced by the anchor) and loads
+# the result into STANDARD_BLOCKS IN PLACE, so every `from scheduler import
+# STANDARD_BLOCKS` sees the current set.
+_GENERATOR_BLOCKS = [
     # 1-hour blocks (60 min) — subjects with exactly 1 contact hour (e.g. a 1-unit
     # lecture) get a real 1-hour meeting instead of being forced into the smallest
     # available block (1.5h), which used to overshoot every such subject by 0.5h.
@@ -356,16 +366,81 @@ STANDARD_BLOCKS = [
     (time(18,  0), time(21,  0)),   # evening 3-hr PT
 ]
 
-VALID_START_TIMES = {s for (s, _) in STANDARD_BLOCKS}
-VALID_END_TIMES   = {e for (_, e) in STANDARD_BLOCKS}
-
+STANDARD_BLOCKS: list = list(_GENERATOR_BLOCKS)
+VALID_START_TIMES: set = {s for (s, _) in STANDARD_BLOCKS}
+VALID_END_TIMES: set = {e for (_, e) in STANDARD_BLOCKS}
 # All (day, start, end) combinations that the scheduler may ever assign.
-_ALL_STANDARD_SLOTS: list = [
-    (day, s, e)
-    for day in ALL_DAYS
-    for (s, e) in STANDARD_BLOCKS
-]
+_ALL_STANDARD_SLOTS: list = [(day, s, e) for day in ALL_DAYS for (s, e) in STANDARD_BLOCKS]
 _TOTAL_STANDARD_CAPACITY = len(_ALL_STANDARD_SLOTS)
+
+# Scheduling day (the editor's time grid): every class starts and ends inside it.
+SCHEDULING_DAY_OPEN  = time(7, 30)
+SCHEDULING_DAY_CLOSE = time(21, 0)
+
+
+def _config_time_blocks(raw) -> list:
+    """hc_time_slots ([[sh, sm, eh, em], ...]) -> [(start, end)] anchors, start before
+    end, de-duplicated and ordered by (start, end). Unreadable -> []."""
+    blocks = set()
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        for s in data or []:
+            st, en = time(int(s[0]), int(s[1])), time(int(s[2]), int(s[3]))
+            if st < en:
+                blocks.add((st, en))
+    except Exception:
+        return []
+    return sorted(blocks)
+
+
+def hc6_anchors(cfg) -> list:
+    """The admin's HC6 anchors when HC6 is switched on, else []."""
+    cfg = cfg or {}
+    try:
+        on = bool(float(cfg.get('hc_time_blocks_enabled', 1)))
+    except (TypeError, ValueError):
+        on = True
+    return _config_time_blocks(cfg.get('hc_time_slots', '')) if on else []
+
+
+def apply_hc6_anchors(blocks, anchors) -> list:
+    """`blocks` with every block that starts at an anchor's start time replaced by the
+    anchor(s) for that start."""
+    if not anchors:
+        return list(blocks)
+    starts = {s for s, _ in anchors}
+    kept = [b for b in blocks if b[0] not in starts]
+    return kept + [a for a in anchors if a not in kept]
+
+
+_TIME_BLOCKS_LOCK = threading.Lock()
+
+
+def refresh_time_blocks(cfg=None) -> list:
+    """Load the generator's blocks, with the admin's HC6 anchors applied, into
+    STANDARD_BLOCKS (and the sets derived from it)."""
+    global _TOTAL_STANDARD_CAPACITY
+    if cfg is None:
+        try:
+            cfg = load_scheduler_config()
+        except Exception:
+            cfg = {}
+    blocks = apply_hc6_anchors(_GENERATOR_BLOCKS, hc6_anchors(cfg))
+    # Concurrent generations (two Academic Heads) share these module globals while
+    # other threads iterate them. Unchanged blocks (the normal case) are left alone;
+    # a real change is applied under a lock, adding before removing so a reader
+    # never sees an emptied set.
+    with _TIME_BLOCKS_LOCK:
+        if list(STANDARD_BLOCKS) == blocks and set(_VALID_BLOCK_SET) == set(blocks):
+            return STANDARD_BLOCKS
+        starts, ends = {s for (s, _) in blocks}, {e for (_, e) in blocks}
+        STANDARD_BLOCKS[:] = blocks
+        VALID_START_TIMES.update(starts); VALID_START_TIMES.intersection_update(starts)
+        VALID_END_TIMES.update(ends);     VALID_END_TIMES.intersection_update(ends)
+        _ALL_STANDARD_SLOTS[:] = [(day, s, e) for day in ALL_DAYS for (s, e) in blocks]
+        _TOTAL_STANDARD_CAPACITY = len(_ALL_STANDARD_SLOTS)
+        _VALID_BLOCK_SET.update(blocks); _VALID_BLOCK_SET.intersection_update(blocks)
+    return STANDARD_BLOCKS
 
 
 def _exclude_fully_booked_rooms(rooms: list, published_room_slots: dict) -> list:
@@ -900,6 +975,8 @@ class CSPValidator:
         except Exception:
             self._cfg = {}
         self._build_runtime_constants()
+        if config is None:
+            refresh_time_blocks(self._cfg)
 
     def _build_runtime_constants(self):
         cfg = self._cfg
@@ -911,16 +988,10 @@ class CSPValidator:
         ]
 
         # ── Valid time blocks (HC6) ────────────────────────────
-        # Final HC6 validates whole start-end BLOCKS: the built-in STANDARD_BLOCKS
-        # (always included, so generator-produced blocks are never flagged) plus
-        # any block an admin configured in Settings (hc_time_slots). A start and
-        # an end that each exist in SOME block are not enough on their own.
-        # Fresh sets are built here -- never mutate the module-level constants.
-        raw_slots = cfg.get('hc_time_slots', '')
-        configured = _parse_time_slot_pairs(raw_slots) if raw_slots else set()
-        self._valid_pairs  = set(STANDARD_BLOCKS) | configured
-        self._valid_starts = {s for (s, _) in self._valid_pairs}
-        self._valid_ends   = {e for (_, e) in self._valid_pairs}
+        # Final HC6: the admin's blocks (Settings, hc_time_slots) are anchors -- a class
+        # starting at an anchor's start must end at that anchor's end; any other start/end
+        # is free (see hc6_time_problem). _enabled() gates the check itself.
+        self._hc6_anchors = _config_time_blocks(cfg.get('hc_time_slots', ''))
 
         # ── AM/PM PT window bounds (HC1/HC2/HC3/HC4/HC8) ───────
         # Phase B checkpoint 1: these were previously the hardcoded module
@@ -1306,40 +1377,14 @@ class CSPValidator:
 
     def _check_standard_slots(self, schedule):
         violations = []
-        v_starts = self._valid_starts
-        v_ends   = self._valid_ends
         for cls in schedule:
             start = cls.get('start_time')
             end   = cls.get('end_time')
             subj = cls.get('subject_code', '?')
-            if start and end and is_nstp_subject(subj):
-                # NSTP is not tied to the block grid: any 3-hour session within the
-                # scheduling hours is valid (see nstp_time_problem).
-                problem = nstp_time_problem(subj, start, end, self._valid_pairs)
+            if start and end:
+                problem = hc6_time_problem(subj, start, end, self._hc6_anchors)
                 if problem:
                     violations.append({'rule': 'HC6', 'subject': subj, 'detail': problem})
-                continue
-            if start and start not in v_starts:
-                violations.append({
-                    'rule': 'HC6',
-                    'subject': subj,
-                    'detail': f'"{subj}" — invalid start time ({format_time_12h(start)}). Please select a standard time block.'
-                })
-            if end and end not in v_ends:
-                violations.append({
-                    'rule': 'HC6',
-                    'subject': subj,
-                    'detail': f'"{subj}" — invalid end time ({format_time_12h(end)}). Please select a standard time block.'
-                })
-            if (start and end and start in v_starts and end in v_ends
-                    and (start, end) not in self._valid_pairs):
-                violations.append({
-                    'rule': 'HC6',
-                    'subject': subj,
-                    'detail': (f'"{subj}" — {format_time_12h(start)}–{format_time_12h(end)} is not a '
-                               f'standard time block (its start and end belong to different blocks). '
-                               f'Please select a standard time block.')
-                })
         return violations
 
     # ── HC7 Day pairing ─────────────────────────────────────────
@@ -2236,7 +2281,7 @@ class CBRAssignment:
     raw_time:        str   = ''
 
 
-_VALID_BLOCK_SET = set(STANDARD_BLOCKS)
+_VALID_BLOCK_SET: set = set(STANDARD_BLOCKS)   # kept in step with STANDARD_BLOCKS by refresh_time_blocks
 
 _SUBJECT_CODE_STRIP_RE = re.compile(r'[^A-Z0-9]+')
 
@@ -2809,6 +2854,7 @@ class IntelligentScheduler:
             self._hc_cfg = load_scheduler_config()
         except Exception:
             self._hc_cfg = {}
+        refresh_time_blocks(self._hc_cfg)
         self.csp = CSPValidator(config=self._hc_cfg)
 
         # Runtime constants used by the builder
@@ -6283,6 +6329,7 @@ class IntelligentScheduler:
                 self._hc_cfg = load_scheduler_config()
             except Exception:
                 pass  # keep existing config if the DB is temporarily unavailable
+            refresh_time_blocks(self._hc_cfg)   # HC6 blocks = the admin's current list
             self.csp = CSPValidator(config=self._hc_cfg)
             raw_pairs = self._hc_cfg.get('hc_day_pairs', '')
             self._builder_pairs = (
@@ -7108,3 +7155,4 @@ def validate_draft(schedule_data: list, faculty_map: dict) -> dict:
         "violations":  violations,
         "can_publish": len(violations) == 0,
     }
+

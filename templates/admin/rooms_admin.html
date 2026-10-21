@@ -312,14 +312,14 @@
 
 <!-- ROOM SCHEDULE (VIEW) MODAL — popup only, never navigates away from this page -->
 <div id="modalRoomSchedule" class="rm-overlay" style="display:none;" onclick="if(event.target===this)closeRoomScheduleModal()">
-    <div class="rm-box rm-box-wide" style="max-width:1100px;">
-        <div class="rm-header">
+    <div class="rm-box rm-box-wide rm-box-roomsched">
+        <div class="rm-header rm-header-lg">
             <div class="rm-hdr-icon"><i class="fas fa-calendar-alt"></i></div>
             <div><h2>Room Schedule</h2><p>Room availability and published schedule.</p></div>
             <button class="rm-hdr-close" onclick="closeRoomScheduleModal()">&#215;</button>
         </div>
         <div class="rm-body" style="padding:0;">
-            <iframe id="roomScheduleFrame" src="about:blank" style="width:100%; height:72vh; border:0; display:block;"></iframe>
+            <iframe id="roomScheduleFrame" src="about:blank" style="width:100%; height:80vh; border:0; display:block;"></iframe>
         </div>
     </div>
 </div>

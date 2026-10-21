@@ -104,6 +104,58 @@
     .btn-assign-faculty.reassign { background: #7f8c8d; }
     .btn-assign-faculty.reassign:hover { background: #6c7a7d; }
 
+    /* ── Calendar / Table view toggle (Room View + Program View) ── */
+    .cv-toggle-bar { display:flex; align-items:center; gap:8px; padding:8px 16px; background:#fff;
+        border-bottom:1px solid #eee; }
+    .cv-toggle-btn { border:1.5px solid #8b1a1a; background:#fff; color:#8b1a1a; border-radius:6px;
+        padding:6px 14px; font-size:0.72rem; font-weight:800; letter-spacing:0.4px; cursor:pointer; }
+    .cv-toggle-btn i { margin-right:4px; }
+    .cv-toggle-btn.active { background:#8b1a1a; color:#fff; }
+    .cv-count { margin-left:auto; font-size:0.72rem; color:#888; font-style:italic; }
+    /* Table mode keeps the calendar laid out (pills are positioned from its measurements)
+       but out of sight. */
+    .grid-container.cv-collapsed { height:0 !important; min-height:0 !important; overflow:hidden !important;
+        visibility:hidden; padding:0 !important; border:0 !important; }
+    .sess-table-wrap { background:#fff; overflow:auto; max-height:calc(100vh - 260px); }
+    .sess-table { width:100%; border-collapse:collapse; font-size:0.78rem; table-layout:fixed; }
+    /* Fixed column widths so the table always fits the panel (no sideways scroll). */
+    .sess-table th:nth-child(1) { width:19%; } .sess-table th:nth-child(2) { width:29%; }
+    .sess-table th:nth-child(3) { width:19%; } .sess-table th:nth-child(4),
+    .sess-table th:nth-child(5) { width:13%; } .sess-table th:nth-child(6) { width:17%; }
+    .sess-table th:nth-child(7) { width:34px; }
+    .sess-table th, .sess-table td { padding-left:7px !important; padding-right:7px !important; }
+    .sess-table td { overflow:hidden; overflow-wrap:anywhere; }
+    .sess-table .st-when span { white-space:normal !important; }
+    .sess-table td:nth-child(7) { padding-left:2px !important; padding-right:6px !important; }
+    .sess-table .st-badge { font-size:0.58rem; padding:2px 5px; max-width:100%; overflow:hidden;
+        text-overflow:ellipsis; vertical-align:middle; }
+    .sess-table thead th { position:sticky; top:0; background:#6b0000; color:#fff; font-size:0.68rem;
+        font-weight:800; letter-spacing:0.4px; padding:9px 10px; text-align:left; white-space:nowrap; }
+    .sess-table td { padding:8px 10px; border-bottom:1px solid #f0eded; color:#333; vertical-align:middle; }
+    .sess-table tbody tr { cursor:pointer; }
+    .sess-table tbody tr:hover td { background:#fdf3f3; }
+    .sess-table .st-code { font-weight:800; color:#8b1a1a; white-space:nowrap; }
+    .sess-table .st-day  { font-weight:700; color:#6b0000; white-space:nowrap; }
+    .sess-table .st-time { white-space:nowrap; }
+    .sess-table .st-empty td { text-align:center; color:#999; font-style:italic; cursor:default; padding:22px; }
+    .sess-table .st-when b { display:block; color:#6b0000; }
+    .sess-table .st-when span { font-size:0.72rem; color:#555; white-space:nowrap; }
+    .sess-table .st-subj b { display:block; color:#8b1a1a; white-space:nowrap; }
+    .sess-table .st-subj span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+        overflow:hidden; font-size:0.72rem; color:#555; }
+    /* A column that is the same on every row of the view is left out:
+       Program View is one section (no SECTION), Room View is one room (no ROOM). */
+    .sess-table.mode-program th:nth-child(4), .sess-table.mode-program td:nth-child(4),
+    .sess-table.mode-room th:nth-child(5),    .sess-table.mode-room td:nth-child(5) { display:none; }
+    .st-badge { display:inline-block; font-size:0.62rem; font-weight:800; border-radius:4px; padding:2px 7px;
+        letter-spacing:0.3px; white-space:nowrap; }
+    .st-badge.pub   { background:#d4edda; color:#1e6b34; }
+    .st-badge.draft { background:#fff3cd; color:#856404; }
+    .st-badge.unsaved { background:#e3eef7; color:#1f4f82; }
+    .st-del { border:none; background:rgba(231,76,60,0.9); color:#fff; border-radius:50%; width:22px; height:22px;
+        cursor:pointer; font-size:0.65rem; }
+    .st-del:hover { background:#c0392b; }
+
     /* Room offered only as a merge at another section's exact slot (see _applyRoomAvailabilityFilter). */
     .ts-ss-item.room-merge-at .ts-merge-hint { color: #1f4f82; font-size: 0.68rem; font-weight: 700; }
 
@@ -226,6 +278,37 @@
     body:has(.schedule-container.local-mode) .viol-count { color:#c56a1c; background:#fdf0e3; }
     body:has(.schedule-container.local-mode) .viol-nav-btn { border-color:#e4812d; color:#c56a1c; }
     body:has(.schedule-container.local-mode) .viol-nav-btn:hover:not(:disabled) { background:#e4812d; color:#fff; }
+
+    /* ── Academic Head's own Make Up Class: cards under the slices + date modal ── */
+    .slice-status-tag.slice-status-localarr { background: #fde7d2; color: #b35a00; border: 1px solid #f5c08a; margin-left: 4px; white-space: nowrap; }
+    .ts-official-ref { margin-top: 10px; border: 1.5px dashed #b9b9b9; border-radius: 8px; background: #fafafa; padding: 7px 10px; }
+    .ts-official-ref-hd { font-size: .62rem; font-weight: 900; color: #666; letter-spacing: .5px; }
+    .ts-official-ref-hd span { font-weight: 700; color: #999; }
+    .ts-official-ref-hd i { margin-right: 4px; }
+    .ts-official-ref-body { font-size: .78rem; color: #444; margin-top: 3px; }
+    .own-mu-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .own-mu-card { border: 1.5px dashed #2c7be5; background: #f3f8ff; border-radius: 10px; padding: 10px 12px; position: relative; }
+    .own-mu-card.own-mu-past { opacity: .6; }
+    .own-mu-head { display: flex; align-items: center; gap: 6px; font-size: .68rem; font-weight: 900; color: #1d4f91; letter-spacing: .4px; }
+    .own-mu-tag { background: #2c7be5; color: #fff; border-radius: 10px; padding: 1px 8px; font-size: .6rem; }
+    .own-mu-status { background: #e3f6ea; color: #1a7f37; border-radius: 10px; padding: 1px 8px; font-size: .6rem; }
+    .own-mu-body { margin-top: 6px; font-size: .78rem; color: #2c3e50; line-height: 1.55; }
+    .own-mu-body b { color: #1d4f91; }
+    .own-mu-reason { font-size: .7rem; color: #777; margin-top: 2px; }
+    .own-mu-x { position: absolute; top: 8px; right: 8px; border: 0; background: none; color: #999; cursor: pointer; font-size: .85rem; }
+    .own-mu-x:hover { color: #c0392b; }
+    .own-mu-modal .mu-row { margin-bottom: 12px; }
+    .own-mu-modal label { display: block; font-size: .66rem; font-weight: 900; color: #555; letter-spacing: .5px; margin-bottom: 4px; text-transform: uppercase; }
+    .own-mu-modal input[type=date], .own-mu-modal textarea { width: 100%; box-sizing: border-box; border: 1.5px solid #ccc; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: .85rem; }
+    .own-mu-modal .mu-fixed { font-size: .85rem; color: #2c3e50; background: #f6f6f6; border-radius: 8px; padding: 8px 10px; }
+    .own-mu-modal .mu-hint { font-size: .7rem; color: #888; margin-top: 4px; }
+    .own-mu-modal .mu-conf { margin: 6px 0 0 16px; padding: 0; font-weight: 500; }
+    .own-mu-modal .mu-conf li { margin: 2px 0; }
+    .own-mu-modal .mu-conf-hint { margin-top: 6px; font-weight: 500; color: #8a3b3b; font-size: .72rem; }
+    .own-mu-modal select { width: 100%; box-sizing: border-box; border: 1.5px solid #ccc; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: .85rem; background: #fff; }
+    .own-mu-modal .mu-time { display: flex; align-items: center; gap: 8px; }
+    .own-mu-modal .mu-time span { font-size: .75rem; color: #888; font-weight: 700; }
+    .own-mu-modal .mu-err { display: none; background: #fce4e4; border: 1px solid #f5c6c6; color: #c0392b; border-radius: 8px; padding: 8px 10px; font-size: .78rem; font-weight: 600; margin-bottom: 12px; }
 
     /* ── Save as Local Arrangement: list of slices being saved ── */
     .lr-slices { margin:0 0 16px; padding:12px 14px; background:#fff7ef; border:1px solid #f5d3b3; border-radius:10px;
@@ -980,7 +1063,7 @@
                 <div class="mnav-left-tools">
                     <i class="fas fa-undo mnav-icon" id="mnavUndoIcon" title="Undo"></i>
                     <i class="fas fa-redo mnav-icon" id="mnavRedoIcon" title="Redo"></i>
-                    <i class="fas fa-sync-alt mnav-icon" title="Refresh" onclick="location.reload()"></i>
+                    <i class="fas fa-sync-alt mnav-icon" title="Refresh" onclick="_guardedReload()"></i>
                 </div>
                 <div class="manual-nav-tabs">
                     <a href="#" class="mnav-tab mnav-active" id="tab-room" onclick="switchEditorTab('room',this);return false;">ROOM VIEW</a>
@@ -1233,6 +1316,30 @@
                 </div>
             </div>
 
+            <!-- Calendar / Table toggle (Room View + Program View) -->
+            <div class="cv-toggle-bar" id="cvToggleBar">
+                <button type="button" class="cv-toggle-btn active" id="cvBtnCalendar" onclick="_setCalView('calendar')">
+                    <i class="fas fa-calendar-alt"></i> CALENDAR VIEW
+                </button>
+                <button type="button" class="cv-toggle-btn" id="cvBtnTable" onclick="_setCalView('table')">
+                    <i class="fas fa-table"></i> TABLE VIEW
+                </button>
+                <span class="cv-count" id="cvCount"></span>
+            </div>
+
+            <!-- Table View: the same sessions the calendar draws (see _renderSessionTable) -->
+            <div class="sess-table-wrap" id="tableViewContainer" style="display:none;">
+                <table class="sess-table">
+                    <thead>
+                        <tr>
+                            <th>DAY &amp; TIME</th><th>SUBJECT</th><th>INSTRUCTOR</th>
+                            <th>SECTION</th><th>ROOM</th><th>STATUS</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessTableBody"></tbody>
+                </table>
+            </div>
+
             <!-- Calendar Grid -->
             <div class="grid-container" id="calendarViewContainer">
                 <!-- Hidden rooms sidebar (kept for JS compat) -->
@@ -1418,6 +1525,7 @@
             </div>
             <div id="mg-banner" hidden></div>
             <div id="time-slots-container" class="time-slots-wrap"></div>
+            <div id="ownMakeupList" class="own-mu-list" style="display:none;"></div>
 
             <!-- Hidden legacy inputs for JS compatibility -->
             <div style="display:none;" aria-hidden="true">
@@ -1579,6 +1687,7 @@
      data-day-pairs="{{ day_pairs_json | e }}"
      data-from-generator="{{ init_from_generator }}"
      data-my-emp-num="{{ my_emp_num or '' }}"
+     data-acad-head-emps='{{ acad_head_emps or "[]" }}'
      hidden></div>
 
 <script src="{{ url_for('static', filename='js/ACAD HEAD/manualEditor.acad2.js') }}"></script>
@@ -3424,7 +3533,7 @@ async function _updateSubjectList() {
                 ${badgeText ? `<span class="${badgeCls}"${savedStatus === 'Published/Draft'
                     ? ' title="Pending Draft — the current Published schedule stays live until this Draft is approved."' : ''}>${badgeText}</span>` : ''}
             </div>`;
-        item.onclick = () => _onSubjectClick(code, name, units, hours);
+        item.onclick = async () => { await _onSubjectClick(code, name, units, hours); _focusSubjectSlice(code); };
         container.appendChild(item);
     });
 
@@ -4163,7 +4272,7 @@ async function _onSubjectClick(code, name, units, hours) {
             // so it re-caches from THIS (possibly different) subject's day set, not a stale one.
             delete sel.dataset.baseOptionsHtml;
             const _rid = Number(String(sel.id).replace('ts-day-', ''));
-            if (Number.isFinite(_rid)) _renderDayRecommendations(_rid);
+            if (Number.isFinite(_rid)) { _renderDayRecommendations(_rid); _refreshDayRestrictionWarn(_rid); }
         });
     }
 
@@ -5128,15 +5237,18 @@ let _facUnitDisplayToken = 0;
 // faculty_info (type + designation) per employee number, for the faculty panel's type line.
 const _facTypeCache = {};
 
-// Make Up Class is offered only for the Academic Head's own schedule: the open subject's
-// faculty must be the logged-in user. (The recursive locked-faculty call below re-runs
-// this with the real id when empNum is null.)
+// Make Up Class (saved directly, no request) is offered when the open subject's faculty is
+// an Academic Head — the logged-in one or another (the server sends who they are; the save
+// checks it again). (The recursive locked-faculty call below re-runs this with the real id
+// when empNum is null.)
 function _updateMakeupClassBtn(empNum) {
     const btn = document.getElementById('btnSaveMakeupClass');
     if (!btn) return;
-    const myEmpNum = document.querySelector('[data-my-emp-num]')?.dataset.myEmpNum || '';
-    const mine = !!myEmpNum && !!empNum && String(empNum) === String(myEmpNum);
+    let heads = [];
+    try { heads = JSON.parse(document.querySelector('[data-acad-head-emps]')?.dataset.acadHeadEmps || '[]'); } catch (e) {}
+    const mine = !!empNum && heads.map(String).includes(String(empNum));
     btn.style.display = mine ? '' : 'none';
+    if (typeof _loadOwnMakeups === 'function') _loadOwnMakeups(mine);
 }
 
 async function _updateFacultyUnitDisplay(empNum) {
@@ -5754,6 +5866,34 @@ function tsSel(p, id, val) {
 /* ══════════════════════════════════════════════════════════════
    TIME SLOT MANAGEMENT
    ══════════════════════════════════════════════════════════════ */
+// A loaded slice whose saved day this subject may not use (Settings → Restricted Day) gets a
+// warning on its card. Re-run whenever the Day list is rebuilt: a row can be built while
+// _subjInfo still holds the PREVIOUS subject (e.g. NSTP → Sunday-only), and the warning
+// stamped then must not survive once the right subject's days are in place.
+function _refreshDayRestrictionWarn(rowId) {
+    const row = document.getElementById(`ts-row-${rowId}`);
+    if (!row) return;
+    row.querySelector('.ts-day-warn')?.remove();
+    if (!row.dataset.existingJson || typeof _subjInfo === 'undefined' || !_subjInfo) return;
+    let dayVal = '';
+    try { dayVal = JSON.parse(row.dataset.existingJson).daydesc || ''; } catch(e) {}
+    const restricted = Array.isArray(_subjInfo.restricted_days) ? _subjInfo.restricted_days : [];
+    if (!dayVal || !restricted.length) return;
+    const subj = _currentSubjectCode || 'this subject';
+    let msg = '';
+    if (_subjInfo.is_restricted_ok && !restricted.includes(dayVal)) {
+        msg = `${subj} can only be on <b>${restricted.join(' / ')}</b> (Settings → Restricted Day). ` +
+              `Pick ${restricted.length === 1 ? restricted[0] : 'one of those days'}.`;
+    } else if (!_subjInfo.is_restricted_ok && restricted.includes(dayVal)) {
+        msg = `<b>${dayVal}</b> is reserved for NSTP subjects (Settings → Restricted Day). ` +
+              `Pick another day for ${subj}.`;
+    }
+    if (!msg) return;
+    const _w = document.createElement('div');
+    _w.className = 'ts-day-warn';
+    _w.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Saved on <b>${dayVal}</b>, but ${msg}`;
+    row.querySelector('.ts-card-hdr')?.after(_w);
+}
 function _buildDayOpts(sel) {
     // Restricted-Day Subject Requirement — NSTP/OU-exempt subjects are confined to
     // whichever day(s) are reserved (any admin-picked combination, not just Sunday);
@@ -6076,6 +6216,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                 </div>
             </div>
         </div>`;
+    if (existingJson) div.insertAdjacentHTML('beforeend', _officialRefHtml(existingJson));
     document.getElementById('time-slots-container').appendChild(div);
     _renumberSlices();
     if (startVal) _filterEndTimeItems(id, startVal);
@@ -6098,20 +6239,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     // A saved slice whose day this subject may no longer use (Settings → Restricted Day,
     // e.g. NSTP saved on Saturday while only Sunday is allowed) loads with an empty Day.
     // Say so on the slice right away instead of only when saving.
-    if (existingJson && dayVal) {
-        const _dsel = div.querySelector('.ts-day-sel');
-        const _base = document.createElement('select');
-        _base.innerHTML = _dsel?.dataset.baseOptionsHtml || _dsel?.innerHTML || '';
-        const _allowedDays = Array.from(_base.options).map(o => o.value).filter(Boolean);
-        if (_allowedDays.length && !_allowedDays.includes(dayVal)) {
-            const _w = document.createElement('div');
-            _w.className = 'ts-day-warn';
-            _w.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Saved on <b>${dayVal}</b>, but ` +
-                `${_currentSubjectCode || 'this subject'} can only be on <b>${_allowedDays.join(' / ')}</b> ` +
-                `(Settings → Restricted Day). Pick ${_allowedDays.length === 1 ? _allowedDays[0] : 'an allowed day'}.`;
-            div.querySelector('.ts-card-hdr')?.after(_w);
-        }
-    }
+    if (existingJson && dayVal) _refreshDayRestrictionWarn(id);
 
     // New (unsaved) slices start dirty and auto-selected
     if (!existingJson) {
@@ -6462,10 +6590,28 @@ async function _removePublishedSlice(row, sess, sliceDesc) {
 
 function _sliceStatusHtmlFor(existingJson) {
     if (!existingJson) return '';
-    let st = 'Draft';
-    try { st = JSON.parse(existingJson).status || 'Draft'; } catch(e) {}
+    let st = 'Draft', ej = {};
+    try { ej = JSON.parse(existingJson); st = ej.status || 'Draft'; } catch(e) {}
     const cls = st.toLowerCase().replace('/', '_');
-    return `<span style="color:#bbb;">&middot;</span><span class="slice-status-tag slice-status-${cls}">${st.toUpperCase()}</span>`;
+    // Local Scheduler: a slice that is a Local Arrangement (it replaces an Official meeting)
+    // says so — the Official meeting itself is shown at the bottom of the card.
+    const local = (IS_LOCAL && ej.official)
+        ? `<span class="slice-status-tag slice-status-localarr" title="Local Arrangement — replaces the Official schedule shown at the bottom of this slice">LOCAL</span>` : '';
+    return `<span style="color:#bbb;">&middot;</span><span class="slice-status-tag slice-status-${cls}">${st.toUpperCase()}</span>${local}`;
+}
+
+// The Official meeting a Local slice replaces, read-only, at the bottom of its card — so the
+// old schedule and the Local one can be compared.
+function _officialRefHtml(existingJson) {
+    if (!IS_LOCAL || !existingJson) return '';
+    let o = null;
+    try { o = JSON.parse(existingJson).official; } catch (e) {}
+    if (!o) return '';
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="ts-official-ref" title="The Official schedule this Local Arrangement replaces (read-only)">
+        <div class="ts-official-ref-hd"><i class="fas fa-landmark"></i> OFFICIAL SCHEDULE <span>(replaced)</span></div>
+        <div class="ts-official-ref-body">${esc(o.daydesc)} · ${esc(o.start_fmt)} – ${esc(o.end_fmt)} · ${esc(o.roomname)}</div>
+    </div>`;
 }
 
 function _renumberSlices() {
@@ -6889,7 +7035,7 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
             // so it re-caches from THIS (possibly different) subject's day set, not a stale one.
             delete sel.dataset.baseOptionsHtml;
             const _rid = Number(String(sel.id).replace('ts-day-', ''));
-            if (Number.isFinite(_rid)) _renderDayRecommendations(_rid);
+            if (Number.isFinite(_rid)) { _renderDayRecommendations(_rid); _refreshDayRestrictionWarn(_rid); }
         });
     }
 
@@ -8491,6 +8637,18 @@ function _releaseAutoSelectHold() {
     _localAutoSelectFirstSubject().catch(() => {});
 }
 
+// A click on a subject card opens it on the calendar in ONE click: its selected slice (or,
+// with none selected yet, its first slice) is selected, which switches to that slice's room,
+// gives its pill the gold ring and scrolls to it.
+function _focusSubjectSlice(code) {
+    if (_currentSubjectCode !== code) return;                  // a newer click took over
+    if (_activeSliceId != null && document.getElementById(`ts-row-${_activeSliceId}`)) {
+        _selectSlice(_activeSliceId, null);
+        return;
+    }
+    _autoSelectFirstSlice(code).catch(() => {});
+}
+
 // Local Scheduler: once the auto-picked subject has loaded, select its first slice so the
 // panel and calendar open on something concrete. Slices load asynchronously — wait briefly.
 async function _autoSelectFirstSlice(subjectCode) {
@@ -9408,10 +9566,15 @@ function switchEditorTab(tab, el) {
     const dlPanel   = document.getElementById('draftListPanel');
     const vhPanel   = document.getElementById('versionHistoryPanel');
 
+    const cvBar     = document.getElementById('cvToggleBar');
+    const tblView   = document.getElementById('tableViewContainer');
+
     // Hide all panels first
     if (bldgBar)  bldgBar.style.display  = 'none';
     if (pvHdr)    pvHdr.style.display    = 'none';
     if (calGrid)  calGrid.style.display  = 'none';
+    if (cvBar)    cvBar.style.display    = (tab === 'room' || tab === 'main') ? '' : 'none';
+    if (tblView)  tblView.style.display  = 'none';
     if (wfBar)    wfBar.style.display    = 'none';
     if (pvPanel)  pvPanel.style.display  = 'none';
     if (flPanel)  flPanel.style.display  = 'none';
@@ -9439,7 +9602,11 @@ function switchEditorTab(tab, el) {
         if (typeof _gridRenderToken !== 'undefined') _gridRenderToken++;
         currentMode = 'program';
         renderProgramTimetable();
-    } else if (tab === 'faculty') {
+    }
+    if ((tab === 'room' || tab === 'main') && typeof _setCalView === 'function') {
+        _setCalView(window._calView || 'calendar', { keep: true });   // re-apply the chosen view
+    }
+    if (tab === 'faculty') {
         if (flPanel) flPanel.style.display = 'flex';
         const _flAy  = document.getElementById('sel_ay')?.value  || '';
         const _flSem = document.getElementById('sel_sem')?.value || '';
@@ -9826,7 +9993,7 @@ function _showLocalReasonModal(changes) {
                         <div class="lr-slice-name">${esc(c.subject)}${c.slice ? ` · Slice ${c.slice}` : ''}</div>
                         ${c.from ? `<div class="lr-slice-from">${esc(c.from)}</div><i class="fas fa-arrow-down lr-slice-arrow"></i>` : '<div class="lr-slice-from">New slice</div>'}
                         <div class="lr-slice-to">${esc(c.to)}</div></div>`).join('')
-                    : `<div class="lr-slice-none">No changed slices — the current Local schedule will be saved as is.</div>`);
+                    : `<div class="lr-slice-none">No changed slices — the Local Arrangement saved earlier for this section will be published.</div>`);
                 box.style.display = '';
             } else {
                 box.innerHTML = ''; box.style.display = 'none';
@@ -9911,9 +10078,232 @@ async function publishLatestLocalDraft() {
     }
 }
 
-function saveAsMakeupClass() {
-    // TODO: implement make-up class save
-    console.log('Save as Make Up Class');
+/* ── Make Up Class (Academic Head's own class, Local Scheduler) ─────────────────────
+   A make-up is ONE meeting on a chosen DATE. The slice gives the time and room; the date is
+   picked in the dialog (it defaults to the next date on the slice's day). It is saved already
+   approved — she would only be approving her own request — after the same checks a faculty
+   request and its approval get. The slice itself goes back to its saved schedule, so a
+   Local Arrangement can still be made separately. Saved make-ups show as cards under the
+   slices ("MAKE UP CLASS"). */
+let _ownMuKey = '', _ownMuInfo = null;
+const _ownMuEsc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+async function _loadOwnMakeups(mine, force = false) {
+    const box = document.getElementById('ownMakeupList');
+    if (!box) return;
+    const code = _currentSubjectCode || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    if (!mine || !IS_LOCAL || !code || !sect) { box.style.display = 'none'; box.innerHTML = ''; _ownMuKey = ''; return; }
+    const key = `${code}|${sect}`;
+    if (key === _ownMuKey && !force) return;
+    _ownMuKey = key;
+    try {
+        const d = await fetch(`/api/manual/own_makeups?subject_code=${encodeURIComponent(code)}&section_id=${encodeURIComponent(sect)}`).then(r => r.json());
+        if (_ownMuKey !== key) return;                       // subject changed meanwhile
+        _ownMuInfo = d;
+        _renderOwnMakeups(d.success && d.mine ? d.makeups : []);
+    } catch (e) { /* the list is informational; the button still works */ }
+}
+
+function _renderOwnMakeups(list) {
+    const box = document.getElementById('ownMakeupList');
+    if (!box) return;
+    if (!list || !list.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = '';
+    box.innerHTML = list.map(m => `
+        <div class="own-mu-card${m.past ? ' own-mu-past' : ''}">
+            ${m.past ? '' : `<button type="button" class="own-mu-x" title="Remove this make-up class" onclick="_cancelOwnMakeup(${m.requestid})"><i class="fas fa-times"></i></button>`}
+            <div class="own-mu-head"><span class="own-mu-tag">MAKE UP CLASS</span><span class="own-mu-status">${m.status === 'Approved' ? 'APPROVED' : _ownMuEsc(m.status).toUpperCase()}</span>${m.past ? '<span>· DONE</span>' : ''}</div>
+            <div class="own-mu-body"><b>${_ownMuEsc(m.date_label)}</b><br>${_ownMuEsc(m.start_time)} – ${_ownMuEsc(m.end_time)} · ${_ownMuEsc(m.room)}
+                ${m.reason ? `<div class="own-mu-reason">${_ownMuEsc(m.reason)}</div>` : ''}</div>
+        </div>`).join('');
+}
+
+function _nextDateOnDay(dayName, minIso, maxIso) {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const want = days.indexOf(dayName);
+    const toIso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const d = minIso ? new Date(minIso + 'T00:00:00') : new Date();
+    d.setHours(0, 0, 0, 0);
+    if (want >= 0) d.setDate(d.getDate() + ((want - d.getDay() + 7) % 7));
+    const iso = toIso(d);
+    return (maxIso && iso > maxIso) ? minIso : iso;
+}
+
+// Put a slice back to the schedule it was loaded with (undoes edits made for the make-up).
+function _revertSliceToLoaded(rowId) {
+    const row = document.getElementById(`ts-row-${rowId}`);
+    if (!row || !row.dataset.existingJson) return;
+    let tempId;
+    try { tempId = JSON.parse(row.dataset.existingJson)._localTempId; } catch (e) { return; }
+    const c = (pendingManualSchedule || []).find(x => x.temp_id === tempId);
+    const o = c && c._loaded;
+    if (!o) return;
+    const daySel = row.querySelector('.ts-day-sel');
+    if (daySel && daySel.value !== o.day) {
+        if (![...daySel.options].some(op => op.value === o.day)) daySel.insertAdjacentHTML('beforeend', `<option value="${_ownMuEsc(o.day)}">${_ownMuEsc(o.day)}</option>`);
+        daySel.value = o.day;
+        _renderDayRecommendations(rowId);
+    }
+    window._mgApplying = true;      // its own saved slot is never "occupied" for it
+    try {
+        if (row.querySelector('.ts-start-hidden')?.value !== o.start_time) tsSel('tsst', rowId, o.start_time);
+        if (row.querySelector('.ts-end-hidden')?.value !== o.end_time) tsSel('tset', rowId, o.end_time);
+        if (String(row.querySelector('.ts-room-hidden')?.value || '') !== String(o.room_id ?? '')) tsSel('tsr', rowId, String(o.room_id ?? ''));
+    } finally { window._mgApplying = false; }
+    _syncSliceToPending(rowId);
+    // Back on its saved schedule: no longer an unsaved edit (no dot, no "Unsaved Changes").
+    _dirtySliceIds.delete(rowId);
+    row.dataset.dirty = '';
+}
+
+async function saveAsMakeupClass() {
+    const rows = [...document.querySelectorAll('.ts-row')];
+    const row = (_activeSliceId != null && document.getElementById(`ts-row-${_activeSliceId}`)) || rows[0];
+    if (!row) { await showValidationModal('No Slice', 'Open your subject first, then pick the slice to make up.'); return; }
+    const rowId = Number(row.id.replace('ts-row-', ''));
+    const day   = row.querySelector('.ts-day-sel')?.value || '';
+    const start = row.querySelector('.ts-start-hidden')?.value || '';
+    const end   = row.querySelector('.ts-end-hidden')?.value || '';
+    const room  = row.querySelector('.ts-room-hidden')?.value || '';
+    const sliceNo  = rows.indexOf(row) + 1;
+    const today = new Date(); const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const semStart = _ownMuInfo?.semester_start || '', semEnd = _ownMuInfo?.semester_end || '';
+    const minIso = semStart && semStart > todayIso ? semStart : todayIso;
+    // Default: the next day that is not the class's own meeting day (on that day, at that
+    // time, the class already meets — the make-up would clash with itself). Any date can be picked.
+    const defIso = (() => {
+        const d = new Date(minIso + 'T00:00:00'); d.setDate(d.getDate() + 1);
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        for (let i = 0; i < 7 && (days[d.getDay()] === day || d.getDay() === 0); i++) d.setDate(d.getDate() + 1);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return semEnd && iso > semEnd ? minIso : iso;
+    })();
+    const timeOpts = sel => _TS_TIMES.map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
+    const roomOpts = [...allRooms].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }))
+        .map(r => `<option value="${_ownMuEsc(r.id)}"${String(r.id) === String(room) ? ' selected' : ''}>${_ownMuEsc(r.name)}</option>`).join('');
+    const myEmp  = document.querySelector('[data-my-emp-num]')?.dataset.myEmpNum || '';
+    const facId  = (typeof _lockedFacultyId !== 'undefined' && _lockedFacultyId) || document.getElementById('sel_faculty')?.value || '';
+    const facNm  = (typeof _lockedFacultyName !== 'undefined' && _lockedFacultyName) || document.getElementById('fac_display_name')?.value || '';
+    const isMine = !!myEmp && String(facId) === String(myEmp);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'own-mu-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;max-width:440px;width:92%;box-shadow:0 8px 36px rgba(0,0,0,.25);overflow:hidden;font-family:inherit;">
+        <div style="background:#2c7be5;color:#fff;padding:14px 20px;">
+          <div style="font-size:.6rem;font-weight:800;letter-spacing:1px;opacity:.85;">LOCAL SCHEDULER · ${isMine ? 'YOUR OWN CLASS' : _ownMuEsc('CLASS OF ' + (facNm || 'AN ACADEMIC HEAD').toUpperCase())}</div>
+          <div style="font-size:.95rem;font-weight:900;letter-spacing:.5px;">MAKE UP CLASS — ${_ownMuEsc(_currentSubjectCode)}</div>
+        </div>
+        <div style="padding:16px 20px;">
+          <div class="mu-err" id="muErr"></div>
+          <div class="mu-row"><label>Date</label>
+            <input type="date" id="muDate" value="${defIso}" min="${minIso}"${semEnd ? ` max="${semEnd}"` : ''}>
+            <div class="mu-hint" id="muDayHint"></div></div>
+          <div class="mu-row"><label>Time</label>
+            <div class="mu-time"><select id="muStart">${timeOpts(start)}</select><span>to</span><select id="muEnd">${timeOpts(end)}</select></div>
+            <div class="mu-hint" id="muLen"></div></div>
+          <div class="mu-row"><label>Room</label>
+            <select id="muRoom"><option value="">-- Room --</option>${roomOpts}</select>
+            <div class="mu-hint">Filled in from Slice ${sliceNo}${day ? ` (its regular meeting: ${_ownMuEsc(day)} ${_ownMuEsc(start)} – ${_ownMuEsc(end)})` : ''} — change any of them here.</div></div>
+          <div class="mu-row"><label>Reason</label>
+            <textarea id="muReason" rows="3" placeholder="e.g. Class suspended on Oct 21 (typhoon)"></textarea></div>
+          <div class="mu-hint" style="margin-bottom:14px;">Saved as approved — ${isMine ? 'it is your own class' : "it is an Academic Head's class"}. It is one meeting on that date only; the weekly schedule does not change.</div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" id="muCancel" style="padding:9px 16px;border:1.5px solid #ccc;background:#fff;border-radius:8px;font-weight:800;cursor:pointer;">CANCEL</button>
+            <button type="button" id="muSave" style="padding:9px 16px;border:0;background:#2c7be5;color:#fff;border-radius:8px;font-weight:800;cursor:pointer;"><i class="fas fa-calendar-plus"></i> SAVE MAKE UP CLASS</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const $ = id => overlay.querySelector('#' + id);
+    // An error, and for a conflict each clash: what it is (Room / Faculty / Section) and with what.
+    const showErr = (msg, conflicts) => {
+        const e = $('muErr');
+        const kinds = { room: 'Room', faculty: 'Faculty', section: 'Section', program: 'Program' };
+        const items = (conflicts || []).map(c => typeof c === 'string' ? { message: c } : c).filter(c => c.message);
+        // A clash with this very class is its own regular meeting on that weekday.
+        const own = `${_currentSubjectCode} (`;
+        items.forEach(c => { if (String(c.message).includes(own)) c.message += ' — this class\'s own regular meeting'; });
+        e.innerHTML = _ownMuEsc(msg || '') + (items.length
+            ? `<ul class="mu-conf">${items.map(c => { const k = kinds[c.type] || c.type || ''; const m = String(c.message); const lead = k && !m.startsWith(k) ? `<b>${_ownMuEsc(k)}:</b> ` : ''; return `<li>${lead}${_ownMuEsc(m)}</li>`; }).join('')}</ul>`
+              + `<div class="mu-conf-hint">Pick another date, time or room above.</div>`
+            : '');
+        e.style.display = msg ? 'block' : 'none';
+    };
+    const syncDay = () => {
+        const v = $('muDate').value;
+        const d = v ? new Date(v + 'T00:00:00') : null;
+        $('muDayHint').textContent = d ? d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
+        showErr('');
+    };
+    $('muDate').addEventListener('change', syncDay);
+    syncDay();
+    const syncLen = () => {
+        const a = _TS_TIMES.indexOf($('muStart').value), b = _TS_TIMES.indexOf($('muEnd').value);
+        const h = (b - a) * 0.5;
+        $('muLen').textContent = h > 0 ? `${h % 1 ? h : h.toFixed(0)} hour${h === 1 ? '' : 's'}` : 'The end time must be after the start time.';
+        showErr('');
+    };
+    ['muStart', 'muEnd'].forEach(id => $(id).addEventListener('change', syncLen));
+    $('muRoom').addEventListener('change', () => showErr(''));
+    syncLen();
+    $('muReason').focus();
+    const close = () => overlay.remove();
+    $('muCancel').onclick = close;
+
+    $('muSave').onclick = async () => {
+        const date = $('muDate').value, reason = $('muReason').value.trim();
+        const start = $('muStart').value, end = $('muEnd').value, room = $('muRoom').value;
+        const roomName = (allRooms.find(r => String(r.id) === String(room)) || {}).name || room;
+        if (!date) return showErr('Pick the date of the make-up class.');
+        if (_TS_TIMES.indexOf(end) <= _TS_TIMES.indexOf(start)) return showErr('The end time must be after the start time.');
+        if (!room) return showErr('Pick a room for the make-up class.');
+        if (date < minIso) return showErr('The make-up class date cannot be in the past.');
+        if (semEnd && date > semEnd) return showErr('The date must be within this semester.');
+        if (!reason) return showErr('Please give a reason for the make-up class.');
+        const btn = $('muSave'); const lbl = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+        try {
+            const res = await fetch('/api/manual/own_makeup', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject_code: _currentSubjectCode,
+                    section_id: document.getElementById('sel_section')?.value || '',
+                    request_date: date, start_time: start, end_time: end, room_id: room, reason }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!data.success) {           // the dialog stays open with everything kept
+                const _conf = data.conflicts || [];
+                showErr(_conf.length ? 'This make-up class conflicts with:' : (data.message || data.error || 'The make-up class could not be saved.'), _conf);
+                btn.disabled = false; btn.innerHTML = lbl;
+                return;
+            }
+            close();
+            _revertSliceToLoaded(rowId);
+            _renderOwnMakeups(data.makeups || []);
+            const shown = new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+            await showValidationModal('Make Up Class Saved',
+                `${_currentSubjectCode}: make-up class on ${shown}, ${start} – ${end} in ${roomName}. It is listed under your slices as MAKE UP CLASS.`);
+        } catch (e) {
+            showErr('Could not reach the server. Nothing was saved.');
+            btn.disabled = false; btn.innerHTML = lbl;
+        }
+    };
+}
+
+async function _cancelOwnMakeup(reqId) {
+    const ok1 = await showConfirmModal('Remove this make-up class?', 'Remove Make Up Class');
+    if (!ok1) return;
+    const ok2 = await showConfirmModal('Are you sure? The make-up class will no longer be held on that date.', 'Final Confirmation');
+    if (!ok2) return;
+    try {
+        const data = await fetch(`/api/manual/own_makeup/${reqId}/cancel`, { method: 'POST' }).then(r => r.json());
+        if (!data.success) { await showValidationModal('Cannot Remove', data.error || 'The make-up class could not be removed.'); return; }
+        _renderOwnMakeups(data.makeups || []);
+    } catch (e) {
+        await showValidationModal('Connection Error', 'Could not reach the server.');
+    }
 }
 
 async function approveSchedule() {
@@ -10960,6 +11350,19 @@ async function publishLocalArrangementFromEditor() {
     // separate lifecycle transition so the active Published Local Arrangement
     // is never edited in place.
     const _changes = _localChangedSlices();
+    // Nothing changed: say so right away instead of asking for a reason and then failing.
+    // The one thing a no-change click can still do is publish a Local Draft saved earlier
+    // (e.g. from Version History) — there is no Draft step in this editor otherwise.
+    let _savedDraft = null;
+    if (!_changes.length) {
+        _savedDraft = await _latestLocalDraftIdForSection();
+        if (_savedDraft === undefined) return;          // lookup failure already reported
+        if (!_savedDraft) {
+            await showValidationModal('No Changes',
+                "Nothing has changed in this section's schedule yet. Change a slice's day, time or room, then save it as a Local Arrangement.");
+            return;
+        }
+    }
     const reason = (typeof _showLocalReasonModal === 'function')
         ? await _showLocalReasonModal(_changes)
         : window.prompt('Reason for publishing this Local Arrangement (optional):');
@@ -10976,17 +11379,17 @@ async function publishLocalArrangementFromEditor() {
         window.__lastLocalArrangementSaveResult = null;
         // Step 1: pending edits are saved (or the identical Draft reused) first — errors are
         // reported by the save itself. With no pending edits, publish the section's latest
-        // saved Draft instead.
-        const draft = await saveLocalArrangement(true, {
+        // saved Draft (found above) instead.
+        const draft = _savedDraft ? null : await saveLocalArrangement(true, {
             returnResult: true, reason: cleanReason, silent: true
         });
-        let draftId = draft && draft.success ? draft.arrangement_id : null;
+        let draftId = _savedDraft || (draft && draft.success ? draft.arrangement_id : null);
         if (!draftId && draft && draft.noChanges) {
             draftId = await _latestLocalDraftIdForSection();
             if (draftId === undefined) return;          // lookup failure already reported
             if (!draftId) {
-                await showValidationModal('No Draft to Publish',
-                    'Save a Local Arrangement as a draft first, then publish it.');
+                await showValidationModal('No Changes',
+                    "Nothing has changed in this section's schedule yet. Change a slice's day, time or room, then save it as a Local Arrangement.");
                 return;
             }
         }

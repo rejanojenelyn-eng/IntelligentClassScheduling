@@ -248,8 +248,9 @@ function _validateAYYears(ys, ye) {
     return `AY ${y1}–${y2} already exists. Use the edit (pencil) button on that row to modify it.`;
   }
 
-  // Block forward gaps (must extend the sequence by exactly 1 year)
-  if (isAddMode && maxExistingEnd > 0 && y1 > maxExistingEnd + 1) {
+  // Block forward gaps: the next AY starts the year the last one ends
+  // (2026-2027 -> 2027-2028). `> maxExistingEnd + 1` let 2028-2029 through.
+  if (isAddMode && maxExistingEnd > 0 && y1 > maxExistingEnd) {
     return `Cannot skip years. The next Academic Year to add must be AY ${maxExistingEnd}–${maxExistingEnd + 1}, not ${y1}–${y2}.`;
   }
 
@@ -262,31 +263,71 @@ function _requireAYYears(ys, ye) {
   return _validateAYYears(ys, ye);
 }
 
-/* Builds the AY dropdown options for Add mode. Offers a range of years so the
-   admin has a real choice — the first (sequential-next) option is pre-selected
-   since it's normally the valid one, but _validateAYYears (wired to the select's
-   change event) still catches and explains any invalid pick rather than hiding
-   the options outright. */
+/* The Academic Year tag is TYPED (or picked from suggestions). Accepted:
+   2027-2028 · 27-28 · 2728 · 20272028 — with or without "AY", spaces, "–" or "/".
+   Returns { y1, y2 } (full years) or { error }; '' (nothing typed) returns {}.
+   Saved and shown as "AY 27-28", the existing format. */
+function _parseAYTag(raw) {
+  const t = String(raw || '').trim().toUpperCase().replace(/^A\.?\s*Y\.?\s*/, '').replace(/\s+/g, ' ').trim();
+  if (!t) return {};
+  const HOW = 'Type the Academic Year as 2027-2028, 27-28 or 2728.';
+  let m, y1, y2;
+  if ((m = t.match(/^(\d{4})\s*[-–—/ ]\s*(\d{4})$/)) || (m = t.match(/^(\d{4})(\d{4})$/))) {
+    y1 = +m[1]; y2 = +m[2];
+  } else if ((m = t.match(/^(\d{2})\s*[-–—/ ]\s*(\d{2})$/)) || (m = t.match(/^(\d{2})(\d{2})$/))) {
+    y1 = 2000 + +m[1]; y2 = 2000 + +m[2];
+    // "2027" typed alone reads as 20-27 — not an AY. Say what is wrong instead.
+    if (/^\d{4}$/.test(t) && y2 - y1 !== 1) {
+      return { error: `"${t}" is not an Academic Year. ${HOW}` };
+    }
+  } else {
+    return { error: `"${String(raw).trim()}" is not a valid Academic Year. ${HOW}` };
+  }
+  if (y1 < 2000 || y2 > 2099) return { error: `${y1}–${y2} is out of range. ${HOW}` };
+  return { y1, y2 };
+}
+const _ayLabel = (y1, y2) => `AY ${String(y1).slice(2)}-${String(y2).slice(2)}`;
+
+/* Re-checks the typed tag: error, or the "will be saved as" preview + hidden fields. */
+function _syncAYTag({ final = false } = {}) {
+  // Edit mode: the tag is the existing row's identity (read-only) — nothing to re-check.
+  if ((document.getElementById('ay_form_action')?.value || 'add') === 'edit') return null;
+  const inp = document.getElementById('ay_tag_display');
+  const prev = document.getElementById('ay-tag-preview');
+  const prevTxt = document.getElementById('ay-tag-preview-text');
+  const setHidden = (a, b) => {
+    document.getElementById('ay_year_start').value = a;
+    document.getElementById('ay_year_end').value   = b;
+  };
+  if (prev) prev.style.display = 'none';
+  const p = _parseAYTag(inp ? inp.value : '');
+  if (p.error || p.y1 === undefined) {
+    setHidden('', '');
+    // While typing, only complain once it can no longer become valid; on blur/submit always.
+    const partial = !final && /^(A\.?\s*Y\.?\s*)?\d{0,4}\s*[-–—/ ]?\s*\d{0,4}$/i.test((inp?.value || '').trim());
+    _ayTagError(p.error && !partial ? p.error : (final && p.y1 === undefined ? 'Academic Year tag is required (e.g. 2027-2028).' : null));
+    return null;
+  }
+  const err = _validateAYYears(String(p.y1), String(p.y2));
+  if (err) { setHidden('', ''); _ayTagError(err); return null; }
+  _ayTagError(null);
+  setHidden(p.y1, p.y2);
+  if (prev && prevTxt) { prevTxt.textContent = `Will be saved as ${_ayLabel(p.y1, p.y2)}`; prev.style.display = ''; }
+  if (final && inp) inp.value = _ayLabel(p.y1, p.y2);   // tidy the field to the saved format
+  return p;
+}
+
+/* Add mode: the next Academic Year in sequence pre-filled; anything typed is still
+   parsed and validated (_syncAYTag). */
 function _buildAYOptions() {
-  const sel = document.getElementById('ay_tag_display');
-  if (!sel) return;
-  sel.innerHTML = '';
+  const inp = document.getElementById('ay_tag_display');
+  if (!inp) return;
   const maxEnd = parseInt(document.getElementById('ay_max_year_end')?.value || '0');
   const cy   = new Date().getFullYear();
   const base = maxEnd > 0 ? maxEnd : (cy - 1);
-  const opts = [];
-  for (let y1 = base; y1 <= base + 5; y1++) opts.push([y1, y1 + 1]);
-  opts.forEach(([y1, y2]) => {
-    const opt = document.createElement('option');
-    opt.value = `${y1}-${y2}`;
-    opt.textContent = `AY ${String(y1).slice(2)}-${String(y2).slice(2)}`;
-    sel.appendChild(opt);
-  });
-  if (opts.length) {
-    sel.value = `${opts[0][0]}-${opts[0][1]}`;
-    document.getElementById('ay_year_start').value = opts[0][0];
-    document.getElementById('ay_year_end').value   = opts[0][1];
-  }
+  inp.readOnly = false;
+  inp.value = _ayLabel(base, base + 1);
+  _syncAYTag();
 }
 
 function openAYModal() {
@@ -299,27 +340,12 @@ function openAYModal() {
   openEditModal('modalAY');
 }
 
-/* Selecting a year in the dropdown sets the hidden start/end year fields */
-document.getElementById('ay_tag_display')?.addEventListener('change', function() {
-  const val = this.value;
-  if (!val) {
-    document.getElementById('ay_year_start').value = '';
-    document.getElementById('ay_year_end').value   = '';
-    _ayTagError(null);
-    return;
-  }
-  const [y1, y2] = val.split('-');
-  const err = _validateAYYears(y1, y2);
-  if (err) {
-    _ayTagError(err);
-    document.getElementById('ay_year_start').value = '';
-    document.getElementById('ay_year_end').value   = '';
-    return;
-  }
-  _ayTagError(null);
-  document.getElementById('ay_year_start').value = y1;
-  document.getElementById('ay_year_end').value   = y2;
-});
+/* Typing / picking a suggestion re-checks the tag and sets the hidden start/end years */
+document.getElementById('ay_tag_display')?.addEventListener('input',  () => _syncAYTag());
+document.getElementById('ay_tag_display')?.addEventListener('change', () => _syncAYTag({ final: true }));
+document.getElementById('ay_tag_display')?.addEventListener('blur',   () => _syncAYTag({ final: true }));
+/* Editing a date after an error clears it; the next save re-checks everything. */
+document.querySelectorAll('#modalAY input[type="date"]').forEach(i => i.addEventListener('change', () => _ayTagError(null)));
 
 /* Returns an error string if the semester duration falls outside the configured
    min/max span (Settings → Hard Constraints → Semester Span Limits), else null.
@@ -354,8 +380,21 @@ function _checkSemDuration(startId, endId, label) {
    Re-parses the visible tag input so the correct error shows even when
    hidden year fields were cleared by a prior inline validation. */
 document.querySelector('#modalAY form')?.addEventListener('submit', function(e) {
-  const tagVal = (document.getElementById('ay_tag_display')?.value || '').trim();
-  const [y1, y2] = tagVal.split('-');
+  // Edit mode keeps the row's own years (the tag is read-only there).
+  const isEdit = (document.getElementById('ay_form_action')?.value || 'add') === 'edit';
+  let y1, y2;
+  if (isEdit) {
+    y1 = document.getElementById('ay_year_start').value;
+    y2 = document.getElementById('ay_year_end').value;
+  } else {
+    const p = _syncAYTag({ final: true });
+    if (!p) {
+      e.preventDefault();
+      document.getElementById('ay_tag_display')?.focus();
+      return false;
+    }
+    y1 = String(p.y1); y2 = String(p.y2);
+  }
 
   const err = _requireAYYears(y1, y2);
   if (err) {
@@ -371,8 +410,14 @@ document.querySelector('#modalAY form')?.addEventListener('submit', function(e) 
     _checkSemDuration('ay_s2s', 'ay_s2e', '2nd Semester'),
     _checkSemDuration('ay_s3s', 'ay_s3e', 'Summer'),
   ].filter(Boolean);
+  // Same rule the server applies: a semester's dates fall within the AY's two years.
+  [['ay_s1s', 'ay_s1e', '1st Semester'], ['ay_s2s', 'ay_s2e', '2nd Semester'], ['ay_s3s', 'ay_s3e', 'Summer']]
+    .forEach(([a, b, label]) => {
+      const ys = [a, b].map(id => document.getElementById(id)?.value).filter(Boolean).map(v => v.slice(0, 4));
+      if (ys.some(y => y !== y1 && y !== y2)) semErrors.push(`${label} dates must fall within ${y1} or ${y2}.`);
+    });
+  e.preventDefault();
   if (semErrors.length) {
-    e.preventDefault();
     _ayTagError(semErrors[0]);
     return false;
   }
@@ -380,7 +425,29 @@ document.querySelector('#modalAY form')?.addEventListener('submit', function(e) 
   // Sync hidden fields before the form posts (they may have been cleared)
   document.getElementById('ay_year_start').value = y1;
   document.getElementById('ay_year_end').value   = y2;
+  _submitAYForm(this);
 });
+
+/* Posted in the background: a server-side error is shown inside the still-open form, with
+   everything typed kept, instead of reloading the page and losing the form. */
+async function _submitAYForm(form) {
+  const btn = document.getElementById('ay_submit_btn');
+  const label = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; }
+  try {
+    const resp = await fetch(form.action, {
+      method: 'POST', body: new FormData(form),
+      headers: { 'X-Requested-With': 'fetch' }, credentials: 'same-origin',
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (data.success) { location.reload(); return; }
+    _ayTagError((data.error || 'Could not save the Academic Year.').replace(/^Validation Error:\s*/, ''));
+    document.getElementById('ay-tag-error')?.scrollIntoView({ block: 'nearest' });
+  } catch (err) {
+    _ayTagError('Network error — nothing was saved. Please try again.');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+}
 
 /* Populated once the user resolves the warning modal, then the edit modal is opened */
 let _pendingAYPopulate = null;
@@ -399,14 +466,13 @@ function prepareAY(el) {
     document.getElementById('ay_form_action').value      = 'edit';
     document.getElementById('ay_year_start').value = d.start;
     document.getElementById('ay_year_end').value   = d.end;
-    const sel = document.getElementById('ay_tag_display');
-    if (sel) {
-      sel.innerHTML = '';
-      const opt = document.createElement('option');
-      opt.value = `${d.start}-${d.end}`;
-      opt.textContent = `AY ${d.start?.slice(2)}-${d.end?.slice(2)}`;
-      sel.appendChild(opt);
-      sel.value = opt.value;
+    const inp = document.getElementById('ay_tag_display');
+    if (inp) {
+      // An existing Academic Year's tag is its identity — shown, not editable.
+      inp.value = `AY ${d.start?.slice(2)}-${d.end?.slice(2)}`;
+      inp.readOnly = true;
+      const prev = document.getElementById('ay-tag-preview');
+      if (prev) prev.style.display = 'none';
     }
     /* Forward-only rule: only enforce min=today on fields that are already today or future.
        Past-dated fields (already elapsed sems) get no min so they pass browser validation
@@ -605,17 +671,7 @@ const DEFAULT_PAIRS = [
   { from:'Wednesday', to:'Saturday' },
 ];
 
-const DEFAULT_SLOTS = [
-  { from:'07:30', to:'09:00' },
-  { from:'09:00', to:'10:30' },
-  { from:'10:30', to:'12:00' },
-  { from:'12:00', to:'13:30' },
-  { from:'13:30', to:'15:00' },
-  { from:'15:00', to:'16:30' },
-  { from:'16:30', to:'18:00' },
-  { from:'18:00', to:'19:30' },
-  { from:'19:30', to:'21:00' },
-];
+const DEFAULT_SLOTS = [ { from:'15:00', to:'18:00' } ];   /* HC6 anchors seed (database default) */
 
 const TOGGLE_MAP = [
   { id:'tog-weekend',     key:'hc_weekend_enabled'       },
@@ -1465,15 +1521,48 @@ function loadSlotsFromState() {
     }));
   } catch { return null; }
 }
+/* HC6 blocks are anchors (scheduler.hc6_time_problem): a class starting at a block's
+   start must end at its end. A row is saved only when it is a real block: start before
+   end, not a duplicate. */
+function _slotMinutes(v) { const [h, m] = String(v).split(':').map(Number); return h * 60 + m; }
+function _slotLength(mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return (h ? `${h} hr` : '') + (h && m ? ' ' : '') + (m ? `${m} min` : '');
+}
 function saveSlots() {
-  const data = [];
+  const data = [], seen = new Set();
+  let bad = 0, dup = 0;
   document.querySelectorAll('#time-slots-container .slot-row').forEach(row => {
     const sels = row.querySelectorAll('.slot-sel');
     if (sels.length !== 2) return;
+    const from = _slotMinutes(sels[0].value), to = _slotMinutes(sels[1].value);
+    const len  = row.querySelector('.slot-len');
+    row.classList.remove('slot-invalid');
+    if (to <= from) {
+      bad++; row.classList.add('slot-invalid');
+      if (len) len.textContent = 'ends before it starts';
+      return;
+    }
+    if (len) len.textContent = _slotLength(to - from);
+    const key = `${sels[0].value}-${sels[1].value}`;
+    if (seen.has(key)) { dup++; row.classList.add('slot-invalid'); if (len) len.textContent = 'duplicate'; return; }
+    seen.add(key);
     const [fh, fm] = sels[0].value.split(':').map(Number);
     const [th, tm] = sels[1].value.split(':').map(Number);
     data.push([fh, fm, th, tm]);
   });
+  const note = document.getElementById('time-slots-note');
+  if (note) {
+    const msgs = [];
+    if (bad) msgs.push(`${bad} block${bad > 1 ? 's end' : ' ends'} before ${bad > 1 ? 'they start' : 'it starts'}`);
+    if (dup) msgs.push(`${dup} duplicate block${dup > 1 ? 's' : ''}`);
+    note.style.display = msgs.length ? '' : 'none';
+    note.textContent = msgs.length ? `${msgs.join(' and ')} — not saved until fixed.` : '';
+  }
+  const empty = document.getElementById('time-slots-empty');
+  if (empty) empty.style.display = document.querySelector('#time-slots-container .slot-row') ? 'none' : '';
+  // Nothing is saved while a row is being fixed (saving the rest would drop that block).
+  if (bad || dup) return;
   _hcState.hc_time_slots = JSON.stringify(data);
   _scheduleHCSave();
 }
@@ -1484,16 +1573,20 @@ function renderSlot(slot, container) {
   const fSel   = document.createElement('select'); fSel.className = 'slot-sel'; fSel.addEventListener('change', saveSlots); buildTimeSelect(fSel, slot.from);
   const sep    = document.createElement('span');   sep.className  = 'slot-sep'; sep.textContent = 'to';
   const tSel   = document.createElement('select'); tSel.className = 'slot-sel'; tSel.addEventListener('change', saveSlots); buildTimeSelect(tSel, slot.to);
+  const len    = document.createElement('span');   len.className  = 'slot-len';
+  const mins   = _slotMinutes(slot.to) - _slotMinutes(slot.from);
+  len.textContent = mins > 0 ? _slotLength(mins) : '';
   const del    = document.createElement('button'); del.type = 'button'; del.className = 'btn-del'; del.innerHTML = '<i class="fas fa-times"></i>';
   del.addEventListener('click', () => {
     _confirmAction({
-      title: 'REMOVE TIME SLOT',
-      body: 'This takes effect immediately.',
+      title: 'REMOVE TIME BLOCK',
+      body: 'Classes starting at this time will no longer have to end at this block\'s end time. This takes effect immediately.',
       confirmLabel: 'Remove',
     }, () => { row.remove(); saveSlots(); });
   });
-  row.appendChild(fSel); row.appendChild(sep); row.appendChild(tSel); row.appendChild(del);
+  row.appendChild(fSel); row.appendChild(sep); row.appendChild(tSel); row.appendChild(len); row.appendChild(del);
   container.appendChild(row);
+  return row;
 }
 
 function initTimeSlots() {
@@ -1501,10 +1594,15 @@ function initTimeSlots() {
   if (!container) return;
   const slots = loadSlotsFromState() || DEFAULT_SLOTS;
   slots.forEach(s => renderSlot(s, container));
+  const empty = document.getElementById('time-slots-empty');
+  if (empty) empty.style.display = slots.length ? 'none' : '';
 }
 
 function addTimeSlot() {
-  renderSlot({ from:'07:30', to:'09:00' }, document.getElementById('time-slots-container'));
+  const container = document.getElementById('time-slots-container');
+  if (!container) return;
+  const row = renderSlot({ from:'15:00', to:'18:00' }, container);
+  row.scrollIntoView({ block: 'nearest' });
   saveSlots();
 }
 

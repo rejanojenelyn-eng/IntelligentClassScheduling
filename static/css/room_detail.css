@@ -1,301 +1,157 @@
-/* ═══════════════════════════════════════════════════════════
-   ROOM DETAIL PAGE  —  room_detail.css
-   ═══════════════════════════════════════════════════════════ */
+/* Room Schedule (Rooms → View): room info card, Room Category (buildings), Rooms list
+   with search, and the weekly schedule. Shared by the Academic Head's and the Admin's
+   Rooms pages (popup) and the full /room/view page. */
+:root {
+    --rd-maroon: #8b1a1a;
+    --rd-maroon-dk: #6e1010;
+    --rd-pink: #fdecee;
+    --rd-pink-2: #fbdde1;
+    --rd-pink-line: #f4c9cf;
+    --rd-sched: #fbdde1;
+    --rd-sched-edge: #c0392b;
+    --rd-unavail: #e3e3f1;
+    --rd-text: #2c2c2c;
+    --rd-muted: #6b6b6b;
+    --rd-line: #ececec;
+}
 
 .rd-container {
-    padding: 20px;
+    font-family: inherit;
+    color: var(--rd-text);
+    padding: 22px 24px;
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 14px;
+    box-sizing: border-box;
+    min-height: 100%;
 }
+.rd-in-modal { padding: 18px 22px 20px; background: #fff; }
 
-/* ── TOP HEADER BAR ─────────────────────────────────────── */
-.rd-header-bar {
-    background-color: var(--pup-maroon);
-    color: white;
-    padding: 14px 22px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-radius: 8px 8px 0 0;
-}
-
-.rd-title {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 1rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.rd-title i { font-size: 1.3rem; color: var(--pup-gold); }
-
-.rd-room-name {
-    color: var(--pup-gold);
-    font-size: 1.15rem;
-    letter-spacing: 1px;
-}
-
-.rd-room-meta {
-    font-size: 0.75rem;
-    font-weight: 500;
-    opacity: 0.8;
-    color: #f0d080;
-    margin-left: 6px;
-}
-
+.rd-page-top { display: flex; justify-content: flex-end; }
 .rd-btn-back {
-    background: white;
-    color: var(--pup-maroon);
-    border: none;
-    padding: 8px 18px;
-    border-radius: 4px;
-    font-weight: 800;
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    cursor: pointer;
-    text-decoration: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: 0.2s;
-    letter-spacing: 0.5px;
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    border: 1.5px solid var(--rd-maroon); color: var(--rd-maroon); background: #fff;
+    padding: 8px 14px; border-radius: 8px; font-weight: 800; font-size: .75rem; letter-spacing: .4px;
 }
-.rd-btn-back:hover { background: #f5e6e6; }
+.rd-btn-back:hover { background: var(--rd-maroon); color: #fff; }
 
-/* ── BUILDING TABS ──────────────────────────────────────── */
-.rd-building-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    background-color: #6a0000;
-    padding: 10px 18px;
-    gap: 4px;
+/* ── Room info card ── */
+.rd-info-card {
+    display: flex; align-items: center; gap: 18px;
+    background: var(--rd-pink); border-radius: 14px; padding: 16px 20px;
 }
+.rd-info-icon {
+    width: 72px; height: 72px; flex-shrink: 0; border-radius: 12px; background: var(--rd-pink-2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--rd-maroon); font-size: 2.1rem;
+}
+.rd-info-main { flex: 1; min-width: 0; }
+.rd-info-name { font-size: 1.6rem; font-weight: 900; color: var(--rd-maroon); line-height: 1.15; }
+.rd-info-sub { font-size: .92rem; color: var(--rd-muted); margin-top: 2px; }
+.rd-info-meta { display: flex; flex-wrap: wrap; gap: 6px 26px; margin-top: 8px; font-size: .82rem; color: var(--rd-muted); }
+.rd-info-meta i { margin-right: 6px; color: #555; }
+.rd-info-meta b { color: var(--rd-text); font-weight: 700; }
+.rd-info-status {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+    background: #e8f6ec; color: #1f5f33; border: 1px solid #c8e8d1; border-radius: 999px;
+    padding: 7px 14px; font-size: .78rem; font-weight: 700;
+}
+.rd-info-status .rd-dot { width: 9px; height: 9px; border-radius: 50%; background: #1a9b45; }
+.rd-info-status.rd-inactive { background: #f1f1f6; color: #555; border-color: #dcdcea; }
+.rd-info-status.rd-inactive .rd-dot { background: #9a9ab5; }
 
+/* ── Room Category (buildings) ── */
+.rd-section-title { font-size: .95rem; font-weight: 800; color: var(--rd-text); margin-top: 4px; }
+.rd-building-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .rd-tab-btn {
-    background: transparent;
-    color: white;
-    border: 1px solid rgba(255,255,255,0.45);
-    padding: 7px 16px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    cursor: pointer;
-    text-transform: uppercase;
-    transition: 0.2s;
-    letter-spacing: 0.4px;
+    border: 1px solid #dcdcdc; background: #fff; color: #333; border-radius: 8px;
+    padding: 8px 15px; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
 }
-.rd-tab-btn:hover { background: rgba(255,255,255,0.12); }
-.rd-tab-btn.active { background: white; color: var(--pup-maroon); border-color: white; }
+.rd-tab-btn:hover { border-color: var(--rd-maroon); color: var(--rd-maroon); }
+.rd-tab-btn.active { background: var(--rd-maroon); border-color: var(--rd-maroon); color: #fff; font-weight: 800; }
 
-/* ── MAIN BODY ──────────────────────────────────────────── */
-.rd-body {
-    display: flex;
-    background: white;
-    border-radius: 0 0 8px 8px;
-    overflow: hidden;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    min-height: 600px;
-}
+/* ── Rooms + weekly schedule ── */
+.rd-body { display: grid; grid-template-columns: 240px 1fr; gap: 14px; min-height: 0; }
 
-/* ── LEFT ROOM SIDEBAR ──────────────────────────────────── */
 .rd-room-sidebar {
-    width: 160px;
-    background-color: #800000;
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
+    background: #fafafa; border: 1px solid var(--rd-line); border-radius: 12px; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px; min-height: 0;
 }
-
-.rd-sidebar-label {
-    background-color: #5d0000;
-    color: var(--pup-gold);
-    text-align: center;
-    padding: 10px 8px;
-    font-size: 0.7rem;
-    font-weight: 800;
-    letter-spacing: 1px;
-    text-transform: uppercase;
+.rd-sidebar-label { font-size: .95rem; font-weight: 800; color: var(--rd-text); }
+.rd-search { position: relative; }
+.rd-search i { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: #888; font-size: .8rem; }
+.rd-search input {
+    width: 100%; box-sizing: border-box; border: 1px solid #dcdcdc; border-radius: 8px;
+    padding: 8px 10px 8px 32px; font: inherit; font-size: .8rem; background: #fff; outline: none;
 }
-
-.rd-room-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 8px;
-    overflow-y: auto;
-}
-
+.rd-search input:focus { border-color: var(--rd-maroon); }
+.rd-room-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 520px; padding-right: 2px; }
 .rd-room-btn {
-    background: transparent;
-    color: white;
-    border: 1px solid rgba(255,255,255,0.4);
-    padding: 8px 6px;
-    border-radius: 4px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    cursor: pointer;
-    text-transform: uppercase;
-    transition: 0.15s;
-    text-align: center;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #fff; border: 1px solid #ededed; border-left: 4px solid transparent; border-radius: 8px;
+    padding: 9px 12px; font: inherit; font-size: .85rem; color: #333; cursor: pointer; text-align: left;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.rd-room-btn:hover { background: rgba(255,255,255,0.15); }
-.rd-room-btn.active { background: white; color: var(--pup-maroon); border-color: white; }
-
-.rd-no-rooms {
-    color: rgba(255,255,255,0.5);
-    font-size: 0.75rem;
-    text-align: center;
-    padding: 12px 0;
+.rd-room-btn i { font-size: .7rem; color: #777; }
+.rd-room-btn:hover { border-color: var(--rd-pink-line); }
+.rd-room-btn.active {
+    background: var(--rd-pink); border-color: var(--rd-pink-line); border-left-color: var(--rd-maroon);
+    color: var(--rd-maroon); font-weight: 800;
 }
+.rd-room-btn.active i { color: var(--rd-maroon); }
+.rd-no-rooms { font-size: .78rem; color: #999; padding: 8px 4px; }
 
-/* ── CALENDAR AREA ──────────────────────────────────────── */
 .rd-calendar-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    position: relative;
+    border: 1px solid var(--rd-line); border-radius: 12px; padding: 14px 16px; background: #fff;
+    display: flex; flex-direction: column; gap: 12px; min-width: 0; position: relative;
 }
+.rd-cal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.rd-cal-title { font-size: 1.3rem; font-weight: 900; color: var(--rd-maroon); line-height: 1.1; }
+.rd-cal-sub { font-size: .85rem; color: var(--rd-muted); margin-top: 2px; }
+.rd-cal-legend { display: flex; gap: 16px; font-size: .75rem; color: var(--rd-muted); align-items: center; flex-wrap: wrap; }
+.rd-cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.rd-lg { width: 16px; height: 16px; border-radius: 4px; display: inline-block; }
+.rd-lg-sched { background: var(--rd-sched); }
+.rd-lg-unavail { background: var(--rd-unavail); }
+.rd-lg-avail { background: #fff; border: 1px solid #cfcfcf; }
 
-.rd-cal-header {
-    background-color: #f5f5f5;
-    padding: 10px 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 2px solid var(--pup-maroon);
-    font-weight: 800;
-    font-size: 0.95rem;
-    color: var(--pup-maroon);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+.rd-cal-scroll { overflow: auto; max-height: 560px; border: 1px solid var(--rd-line); border-radius: 8px; position: relative; }
+.rd-cal-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 760px; }
+.rd-cal-table thead th {
+    position: sticky; top: 0; z-index: 2; background: var(--rd-pink); color: var(--rd-maroon);
+    font-size: .78rem; font-weight: 800; padding: 10px 4px; border-bottom: 1px solid var(--rd-pink-line);
+    border-left: 1px solid var(--rd-line);
 }
-
-.rd-cal-legend {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.72rem;
-    color: #666;
-    font-weight: 600;
+.rd-cal-table thead th.rd-time-col { color: #333; border-left: 0; }
+.rd-time-col { width: 100px; }
+.rd-cal-table tbody td.rd-time-col {
+    font-size: .74rem; color: #444; text-align: center; background: #fafafa;
+    border-bottom: 1px solid #f1f1f1; white-space: nowrap;
 }
-
-.rd-legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #800000;
-    display: inline-block;
+.rd-cell { height: 28px; border-left: 1px solid var(--rd-line); border-bottom: 1px solid #f3f3f3; padding: 0; }
+.rd-cell.rd-unavail { background: var(--rd-unavail); }
+.rd-pill-cell { padding: 2px 3px; vertical-align: top; }
+.rd-pill {
+    height: 100%; box-sizing: border-box; background: var(--rd-sched); border-left: 4px solid var(--rd-sched-edge);
+    border-radius: 6px; padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(139,26,26,.08);
 }
+.rd-pill-code { font-size: .8rem; font-weight: 900; color: var(--rd-maroon-dk); }
+.rd-pill-sect, .rd-pill-time, .rd-pill-instr { font-size: .7rem; color: #5a4a4c; line-height: 1.3; }
+.rd-pill-instr { color: #7a6a6c; }
+.rd-pill-time, .rd-pill-code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-pill-time { font-size: .66rem; }
 
 .rd-loading {
-    display: none;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(255,255,255,0.92);
-    color: var(--pup-maroon);
-    font-weight: 800;
-    font-size: 0.9rem;
-    padding: 14px 28px;
-    border-radius: 6px;
-    border: 2px solid var(--pup-maroon);
-    z-index: 10;
+    display: none; position: absolute; top: 46px; left: 50%; transform: translateX(-50%);
+    background: #fff; border: 1px solid var(--rd-line); border-radius: 8px; padding: 6px 14px;
+    font-size: .78rem; color: var(--rd-muted); box-shadow: 0 2px 8px rgba(0,0,0,.08); z-index: 3;
 }
 
-.rd-cal-scroll {
-    overflow: auto;
-    flex: 1;
-}
-
-/* ── CALENDAR TABLE ─────────────────────────────────────── */
-.rd-cal-table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-}
-
-.rd-cal-table thead th {
-    background-color: #6a0000;
-    color: white;
-    padding: 10px 6px;
-    font-size: 0.78rem;
-    font-weight: 800;
-    text-align: center;
-    position: sticky;
-    top: 0;
-    z-index: 2;
-}
-
-.rd-cal-table .rd-time-col {
-    width: 80px;
-    background-color: #f9f4f4;
-    color: #800000;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-align: right;
-    padding: 4px 8px;
-    border-right: 2px solid #e0c0c0;
-    white-space: nowrap;
-}
-
-.rd-cal-table thead th.rd-time-col {
-    background-color: #6a0000;
-    color: var(--pup-gold);
-    border-right: 2px solid #5d0000;
-}
-
-.rd-cal-table tbody tr {
-    height: 28px;
-    border-bottom: 1px solid #f0e8e8;
-}
-
-.rd-cal-table tbody tr:nth-child(even) td:not(.rd-time-col):not(.rd-pill-cell) {
-    background-color: #fdf9f9;
-}
-
-.rd-cell {
-    padding: 0;
-    vertical-align: top;
-    border-right: 1px solid #ede0e0;
-    position: relative;
-}
-
-.rd-pill-cell {
-    padding: 3px;
-    vertical-align: top;
-}
-
-/* ── SCHEDULE PILL ──────────────────────────────────────── */
-.rd-pill {
-    background: linear-gradient(135deg, #800000, #a01b1b);
-    color: white;
-    border-radius: 4px;
-    padding: 5px 7px;
-    font-size: 0.68rem;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    height: 100%;
-    box-sizing: border-box;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-
-.rd-pill-subj {
-    font-weight: 800;
-    font-size: 0.68rem;
-    line-height: 1.2;
-    letter-spacing: 0.2px;
-}
-
-.rd-pill-instr {
-    font-weight: 500;
-    font-size: 0.63rem;
-    opacity: 0.88;
-    line-height: 1.2;
+@media (max-width: 820px) {
+    .rd-container { padding: 14px 16px; }
+    .rd-body { grid-template-columns: 1fr; }
+    .rd-room-list { max-height: 180px; }
+    .rd-info-card { flex-wrap: wrap; }
 }

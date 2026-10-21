@@ -7,23 +7,31 @@
 
 
 {% block content %}
-<div class="rd-container">
+<div class="rd-container{% if is_modal %} rd-in-modal{% endif %}">
 
-
-    <!-- TOP HEADER BAR -->
-    <div class="rd-header-bar">
-        <div class="rd-title">
-            <i class="fas fa-door-open"></i>
-            YOU'RE VIEWING &nbsp;<span class="rd-room-name">{{ room.roomname }}</span>
-            <span class="rd-room-meta">{{ room.roomtype }} &bull; Cap: {{ room.roomcapacity }} &bull; {{ room.buildingname }}</span>
-        </div>
-        {% if not is_modal %}
+    {% if not is_modal %}
+    <div class="rd-page-top">
         <a href="{{ rooms_home_url }}" class="rd-btn-back"><i class="fas fa-arrow-left"></i> BACK TO ROOMS &amp; BUILDINGS</a>
-        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ROOM INFO CARD -->
+    <div class="rd-info-card">
+        <div class="rd-info-icon"><i class="fas fa-door-closed"></i></div>
+        <div class="rd-info-main">
+            <div class="rd-info-name" id="rdInfoName">{{ room.roomname }}</div>
+            <div class="rd-info-sub" id="rdInfoSub">{{ room.buildingname }} &bull; {{ room.roomtype }}</div>
+            <div class="rd-info-meta">
+                <span><i class="fas fa-users"></i> Capacity: <b id="rdInfoCap">{{ room.roomcapacity }}</b></span>
+                <span><i class="fas fa-building"></i> Building: <b id="rdInfoBldg">{{ room.buildingname }}</b></span>
+                <span><i class="fas fa-calendar-check"></i> Classes this week: <b id="rdInfoCount">—</b></span>
+            </div>
+        </div>
+        <div class="rd-info-status" id="rdInfoStatus"><span class="rd-dot"></span> Published Schedule</div>
     </div>
 
-
-    <!-- HORIZONTAL BUILDING TABS -->
+    <!-- ROOM CATEGORY (buildings) -->
+    <div class="rd-section-title">Room Category</div>
     <div class="rd-building-tabs">
         {% for bldg in buildings %}
             <button class="rd-tab-btn {% if bldg.buildingid == room.buildingid %}active{% endif %}"
@@ -34,25 +42,28 @@
         {% endfor %}
     </div>
 
-
-    <!-- MAIN BODY: ROOM LIST + CALENDAR -->
+    <!-- ROOMS + WEEKLY SCHEDULE -->
     <div class="rd-body">
-
-
-        <!-- LEFT: ROOM LIST SIDEBAR -->
         <div class="rd-room-sidebar" id="rdRoomSidebar">
-            <div class="rd-sidebar-label">ROOMS</div>
-            <div id="rdRoomList" class="rd-room-list">
-                <!-- populated by JS -->
+            <div class="rd-sidebar-label">Rooms</div>
+            <div class="rd-search">
+                <i class="fas fa-search"></i>
+                <input type="text" id="rdRoomSearch" placeholder="Search room..." autocomplete="off" oninput="filterRooms(this.value)">
             </div>
+            <div id="rdRoomList" class="rd-room-list"><!-- populated by JS --></div>
         </div>
 
-
-        <!-- RIGHT: CALENDAR -->
         <div class="rd-calendar-wrap">
             <div class="rd-cal-header">
-                <span id="rdCalRoomLabel">{{ room.roomname }}</span>
-                <span class="rd-cal-legend"><span class="rd-legend-dot"></span> Published Schedule</span>
+                <div>
+                    <div class="rd-cal-title" id="rdCalRoomLabel">{{ room.roomname }}</div>
+                    <div class="rd-cal-sub">Weekly Schedule</div>
+                </div>
+                <div class="rd-cal-legend">
+                    <span><i class="rd-lg rd-lg-sched"></i> Scheduled</span>
+                    <span title="The room is inactive"><i class="rd-lg rd-lg-unavail"></i> Unavailable</span>
+                    <span><i class="rd-lg rd-lg-avail"></i> Available</span>
+                </div>
             </div>
             <div class="rd-cal-scroll">
                 <table class="rd-cal-table" id="rdCalTable">
@@ -62,12 +73,10 @@
                             <th>MON</th><th>TUE</th><th>WED</th><th>THU</th><th>FRI</th><th>SAT</th><th>SUN</th>
                         </tr>
                     </thead>
-                    <tbody id="rdCalBody">
-                        <!-- populated by JS -->
-                    </tbody>
+                    <tbody id="rdCalBody"><!-- populated by JS --></tbody>
                 </table>
+                <div id="rdLoading" class="rd-loading">Loading schedule...</div>
             </div>
-            <div id="rdLoading" class="rd-loading">Loading schedule...</div>
         </div>
     </div>
 </div>
@@ -79,6 +88,7 @@ const ACTIVE_AY_ID    = "{{ active_ay_id }}";
 const ACTIVE_SEM      = "{{ active_sem }}";
 const CURRENT_BLDG_ID = {{ room.buildingid }};
 const ROOMS_BY_BLDG   = {{ rooms_by_bldg_json | safe }};
+const ROOM_INFO       = {{ {'roomid': room.roomid, 'roomname': room.roomname, 'roomtype': room.roomtype, 'roomcapacity': room.roomcapacity, 'buildingname': room.buildingname, 'isactive': room.isactive} | tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/ACAD HEAD/roomDetail.acad.js') }}"></script>
 {% endblock %}

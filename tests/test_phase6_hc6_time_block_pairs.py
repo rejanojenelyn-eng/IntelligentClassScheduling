@@ -1,11 +1,11 @@
 """
-Constraint-fix Phase 6 (HC6): a class time must be one whole valid block --
-scheduler.STANDARD_BLOCKS plus the admin-configured hc_time_slots. A start and
-an end that each exist in SOME block are not enough on their own.
+Constraint-fix Phase 6 (HC6): the admin-configured hc_time_slots blocks are anchors --
+a class that starts at an anchor's start must end at that anchor's end; a class
+starting at any other time may end at any time (within the scheduling hours).
 
 15:00-18:00 was confirmed as an institutional block and is configured through
 hc_time_slots (defaults + migrations/2026-09-30_hc6_time_slot_1500_1800.sql),
-not special-cased in code. 10:30-13:00 and 7:30-12:30 are NOT configured.
+not special-cased in code.
 """
 import json
 from datetime import time
@@ -31,23 +31,22 @@ def test_every_standard_block_is_valid():
         assert _hc6(s, e) == [], (s, e)
 
 
-def test_endpoints_from_different_blocks_are_not_a_block():
-    # 10:30 starts a block and 13:00 ends one, but 10:30-13:00 is no block.
-    v = _hc6(time(10, 30), time(13, 0))
-    assert len(v) == 1 and 'is not a standard time block' in v[0]['detail']
-    assert len(_hc6(time(7, 30), time(12, 30))) == 1
+def test_an_anchored_start_must_keep_its_end():
+    # 7:30 and 9:00 are anchored in CONFIGURED; 10:30 is not.
+    v = _hc6(time(7, 30), time(12, 30), {'hc_time_slots': CONFIGURED})
+    assert len(v) == 1 and 'starting at 07:30 AM must end at 09:00 AM' in v[0]['detail']
+    assert _hc6(time(10, 30), time(13, 0), {'hc_time_slots': CONFIGURED}) == []
 
 
 def test_configured_block_is_valid_only_when_configured():
-    assert len(_hc6(time(15, 0), time(18, 0))) == 1                           # built-ins only
+    assert _hc6(time(15, 0), time(16, 30), {'hc_time_slots': CONFIGURED})                   # 3:00 PM anchored
     assert _hc6(time(15, 0), time(18, 0), {'hc_time_slots': CONFIGURED}) == []
+    assert _hc6(time(15, 0), time(16, 30), {'hc_time_slots': json.dumps([[7, 30, 9, 0]])}) == []  # admin removed it
 
 
-def test_off_grid_endpoints_keep_their_existing_messages():
-    v = _hc6(time(14, 0), time(17, 0))
-    assert len(v) == 2
-    assert any('invalid start time' in x['detail'] for x in v)
-    assert any('invalid end time' in x['detail'] for x in v)
+def test_unanchored_times_are_free():
+    assert _hc6(time(14, 0), time(17, 0), {'hc_time_slots': CONFIGURED}) == []
+    assert _hc6(time(7, 45), time(8, 15), {'hc_time_slots': CONFIGURED}) == []
 
 
 def _hc6_subject(code, start, end, cfg=None):
@@ -78,9 +77,9 @@ def test_nstp_still_needs_three_hours_and_scheduling_hours():
     assert not any('standard time block' in v['detail'] for v in two_h + late + early)
 
 
-def test_nstp_exception_does_not_touch_other_subjects():
-    assert len(_hc6_subject('GEED 006', time(14, 0), time(17, 0))) == 2   # still off-grid
-    assert len(_hc6_subject('OU 101', time(14, 0), time(17, 0))) == 2
+def test_nstp_three_hour_rule_does_not_touch_other_subjects():
+    assert _hc6_subject('GEED 006', time(14, 0), time(16, 0)) == []
+    assert _hc6_subject('OU 101', time(14, 0), time(16, 0)) == []
 
 
 def test_nstp_off_grid_keeps_conflict_checks():
@@ -110,9 +109,8 @@ def test_adjacent_blocks_are_valid_and_do_not_overlap():
 def test_bad_configuration_never_mutates_the_module_grid():
     starts, ends = set(scheduler.VALID_START_TIMES), set(scheduler.VALID_END_TIMES)
     csp = CSPValidator(config={'hc_time_slots': 'not json'})
-    csp._valid_starts.add(time(5, 55))
     assert scheduler.VALID_START_TIMES == starts and scheduler.VALID_END_TIMES == ends
-    assert csp._valid_pairs == set(STANDARD_BLOCKS)
+    assert csp._hc6_anchors == []
 
 
 def test_default_configuration_includes_the_confirmed_block():
@@ -131,7 +129,7 @@ def test_live_configuration_includes_the_confirmed_block():
 # ── Local inherits the same HC6 ─────────────────────────────────────────────
 
 class _Cur:
-    TIMES = {3: time(10, 30), 21: time(13, 0), 30: time(15, 0), 31: time(18, 0)}
+    TIMES = {3: time(10, 30), 21: time(13, 0), 30: time(15, 0), 31: time(18, 0), 32: time(16, 30)}
 
     def execute(self, sql, params=None):
         self.sql, self.params = sql, params
@@ -151,7 +149,7 @@ class _Cur:
         return None
 
 
-@pytest.mark.parametrize('start,end,ok', [(3, 21, False), (30, 31, True)])
+@pytest.mark.parametrize('start,end,ok', [(30, 32, False), (30, 31, True), (3, 21, True)])
 def test_local_adjustment_uses_the_same_block_pairs(monkeypatch, start, end, ok):
     import app as app_module
     monkeypatch.setattr(database, 'load_scheduler_config',
@@ -161,4 +159,4 @@ def test_local_adjustment_uses_the_same_block_pairs(monkeypatch, start, end, ok)
     result, err = app_module._validate_local_editable_dimensions(_Cur(), sess, 'F1')
     assert result is ok, err
     if not ok:
-        assert 'is not a standard time block' in err
+        assert 'must end at' in err
