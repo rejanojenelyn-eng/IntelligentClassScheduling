@@ -6218,6 +6218,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
         </div>`;
     if (existingJson) div.insertAdjacentHTML('beforeend', _officialRefHtml(existingJson));
     document.getElementById('time-slots-container').appendChild(div);
+    _refreshSliceEditingTag(div);   // reopened with edits still unsaved
     _renumberSlices();
     if (startVal) _filterEndTimeItems(id, startVal);
     if (dayVal && startVal && endVal) {
@@ -6600,6 +6601,20 @@ function _sliceStatusHtmlFor(existingJson) {
     return `<span style="color:#bbb;">&middot;</span><span class="slice-status-tag slice-status-${cls}">${st.toUpperCase()}</span>${local}`;
 }
 
+// A saved slice shows a blue EDITING tag instead of PUBLISHED/DRAFT while its day, time or
+// room differs from what was loaded — the same test (_isPendingEdited) that draws its
+// calendar pill white with a blue border.
+function _refreshSliceEditingTag(row) {
+    if (!row || !row.dataset.existingJson) return;
+    let tid;
+    try { tid = JSON.parse(row.dataset.existingJson)._localTempId; } catch (e) { return; }
+    const entry = tid && pendingManualSchedule.find(c => c.temp_id === tid);
+    row.classList.toggle('ts-editing', !!entry && _isPendingEdited(entry));
+}
+function _refreshSliceEditingTags() {
+    document.querySelectorAll('#time-slots-container > .ts-row').forEach(_refreshSliceEditingTag);
+}
+
 // The Official meeting a Local slice replaces, read-only, at the bottom of its card — so the
 // old schedule and the Local one can be compared.
 function _officialRefHtml(existingJson) {
@@ -6728,6 +6743,7 @@ function _syncSliceToPending(id) {
         entry.time       = (newStart && newEnd) ? `${newStart} - ${newEnd}` : '';
         entry.room_id    = newRoomId;
         entry.room       = newRoomNm;
+        _refreshSliceEditingTag(row);
 
         const gridRoom = newRoomId || oldRoomId;
         if (typeof renderGrid === 'function' && gridRoom) renderGrid(gridRoom, ay, sem);
@@ -9422,6 +9438,8 @@ function _applyRoomOccupancyFilter(sliceId) {
         // Add Schedule room-availability check reflects whatever just changed.
         window._roomsByDayCache = {};
         await _ogRG.call(this, roomId, ayFilter, semFilter);
+        // Slice tags follow the same entries the calendar was just drawn from (e.g. after a save).
+        _refreshSliceEditingTags();
         // Run in background — don't block the grid render. Back-to-back re-renders share
         // one fetch as long as it started after this render's invalidation.
         const _fresh = _roomDbInflight[_key] && _roomDbInflight[_key].seq > _seqAtInvalidate;
@@ -11307,7 +11325,7 @@ async function viewLocalArrangementInline(arrId) {
                 </div>
                 <div style="font-size:0.67rem;opacity:0.75;margin-top:3px;">
                     ${a.acadyear ? 'A.Y ' + String(a.acadyear).replace('AY','').trim() : '—'} &bull; ${a.sem_label||'—'}
-                    ${a.override_reason ? ' &bull; "' + a.override_reason + '"' : ''}
+                    ${a.override_reason ? ' &bull; "' + _ownMuEsc(a.override_reason) + '"' : ''}
                 </div>
             </div>
             <button style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:1.4rem;cursor:pointer;line-height:1;padding:0;flex-shrink:0;margin-top:2px;" title="Close">&#x2715;</button>
@@ -12098,36 +12116,178 @@ function _cloneEntry(c) {
     // else on a pendingManualSchedule entry is a scalar (string/number/boolean).
     return { ...c, days_list: Array.isArray(c.days_list) ? [...c.days_list] : c.days_list };
 }
-function _snapshotState() {
-    return { pending: pendingManualSchedule.map(_cloneEntry), hidden: new Set(hiddenDbSchedules) };
+// The Time Slice panel is part of the state. Restoring only the arrays reverted the
+// calendar while every slice kept its new Day/Time, and the next slice edit synced those
+// values straight back — Undo looked like it did nothing.
+function _sliceRowId(row) { return parseInt(String(row.id).replace('ts-row-', ''), 10); }
+function _panelCtx() {
+    return `${_currentSubjectCode || ''}|${document.getElementById('sel_section')?.value || ''}`;
 }
-function _pushHistorySnapshot() {
-    _undoStack.push(_snapshotState());
+function _snapshotPanel() {
+    const val = el => el ? el.value : '';
+    return {
+        ctx: _panelCtx(),
+        rows: Array.from(document.querySelectorAll('#time-slots-container > .ts-row')).map(row => {
+            const id = _sliceRowId(row);
+            const ds = { ...row.dataset };
+            delete ds.baseOptionsHtml;   // derived cache, rebuilt by the day filter
+            return {
+                id, cls: row.className, ds,
+                day:      val(row.querySelector('.ts-day-sel')),
+                start:    val(document.getElementById(`tsst-hid-${id}`)),
+                startTxt: val(document.getElementById(`tsst-txt-${id}`)),
+                end:      val(document.getElementById(`tset-hid-${id}`)),
+                endTxt:   val(document.getElementById(`tset-txt-${id}`)),
+                room:     val(document.getElementById(`tsr-hid-${id}`)),
+                roomTxt:  val(document.getElementById(`tsr-txt-${id}`)),
+                roomCss:  document.getElementById(`tsr-txt-${id}`)?.style.cssText || '',
+                bldg:     document.getElementById(`tsr-bldg-${id}`)?.textContent || '',
+            };
+        }),
+        dirty: Array.from(_dirtySliceIds),
+    };
+}
+function _snapshotState() {
+    return { pending: pendingManualSchedule.map(_cloneEntry), hidden: new Set(hiddenDbSchedules),
+             panel: _snapshotPanel() };
+}
+function _snapshotSig(s) {
+    return JSON.stringify([s.pending, Array.from(s.hidden),
+        s.panel.rows.map(r => [r.id, r.day, r.start, r.end, r.room])]);
+}
+// A snapshot belongs to the slice panel it was taken from. Opening another subject/section,
+// or reloading the panel, rebuilds every row under new ids — it can't be mapped back.
+function _snapshotFitsPanel(s) {
+    if (!s.panel || s.panel.ctx !== _panelCtx()) return false;
+    const live = Array.from(document.querySelectorAll('#time-slots-container > .ts-row')).map(_sliceRowId);
+    return !live.length || !s.panel.rows.length || s.panel.rows.some(r => live.includes(r.id));
+}
+function _pushHistorySnapshot(snap) {
+    _undoStack.push(snap || _snapshotState());
     if (_undoStack.length > _UNDO_MAX_DEPTH) _undoStack.shift();
     _redoStack.length = 0;
     _updateUndoRedoButtons();
+}
+// Runs one user action as ONE undo step, recorded only if it changed something: a choice
+// that needs several setters (a recommendation sets Start and End) used to leave one step
+// per setter, and a rejected or unchanged pick left a step that undid nothing.
+let _historyDepth = 0;
+function _historyStep(fn, args, self) {
+    if (_historyDepth) return fn.apply(self, args);
+    const before = _snapshotState();
+    _historyDepth++;
+    try { return fn.apply(self, args); }
+    finally {
+        _historyDepth--;
+        if (_snapshotSig(_snapshotState()) !== _snapshotSig(before)) _pushHistorySnapshot(before);
+    }
 }
 function _clearHistoryStacks() {
     _undoStack = []; _redoStack = [];
     _updateUndoRedoButtons();
 }
-function _restoreSnapshot(snap) {
-    pendingManualSchedule = snap.pending.map(_cloneEntry);
-    hiddenDbSchedules = new Set(snap.hidden);
+// Runs fn with calendar redraws held back. Every slice setter (Day, Start, End) redraws the
+// calendar on its own — a server fetch each — so a multi-field change (undo, a calendar
+// drag) fetched several times for one result. The caller redraws once afterwards.
+function _withRenderBatch(fn) {
+    const rg = renderGrid, rpt = renderProgramTimetable;
+    renderGrid = () => Promise.resolve();
+    renderProgramTimetable = () => Promise.resolve();
+    try { return fn(); }
+    finally { renderGrid = rg; renderProgramTimetable = rpt; }
+}
+function _renderCalendarNow() {
     const ay  = document.getElementById('sel_ay')?.value  || '';
     const sem = document.getElementById('sel_sem')?.value || '';
     const rm  = document.getElementById('sel_room')?.value || '';
-    if (currentMode === 'program') renderProgramTimetable();
-    else renderGrid(rm, ay, sem);
+    return currentMode === 'program' ? renderProgramTimetable() : renderGrid(rm, ay, sem);
+}
+function _restorePanel(p) {
+    const cont = document.getElementById('time-slots-container');
+    if (!cont || !p) return;
+    const inSnap = new Set(p.rows.map(r => r.id));
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    p.rows.forEach(r => {
+        let row = document.getElementById(`ts-row-${r.id}`);
+        if (!row) {
+            // Removed after the snapshot (a local slice delete): rebuild it under its old id
+            // so the other undo/redo steps still point at it.
+            const counter = _tsIdCounter;
+            _tsIdCounter = r.id - 1;
+            try { addNewTimeSlot(r.day, r.start, r.end, r.room, r.ds.existingJson || '', true); }
+            finally { _tsIdCounter = Math.max(counter, r.id); }
+            row = document.getElementById(`ts-row-${r.id}`);
+            if (!row) return;
+        }
+        row.className = r.cls;
+        Object.keys(row.dataset).forEach(k => {
+            if (k !== 'baseOptionsHtml' && !(k in r.ds)) delete row.dataset[k];
+        });
+        Object.assign(row.dataset, r.ds);
+        const daySel = row.querySelector('.ts-day-sel');
+        if (daySel) {
+            if (r.day && !Array.from(daySel.options).some(o => o.value === r.day))
+                daySel.innerHTML = daySel.dataset.baseOptionsHtml || _buildDayOpts(r.day);
+            daySel.value = r.day;
+        }
+        setVal(`tsd-txt-${r.id}`, r.day);
+        [['tsst', r.start, r.startTxt], ['tset', r.end, r.endTxt], ['tsr', r.room, r.roomTxt]]
+            .forEach(([pfx, v, txt]) => {
+                setVal(`${pfx}-hid-${r.id}`, v);
+                setVal(`${pfx}-txt-${r.id}`, txt);
+                document.getElementById(`${pfx}-list-${r.id}`)?.querySelectorAll('.ts-ss-item')
+                    .forEach(i => i.classList.toggle('active', i.dataset.val === String(v)));
+            });
+        const roomTxt = document.getElementById(`tsr-txt-${r.id}`);
+        if (roomTxt) roomTxt.style.cssText = r.roomCss;
+        const bldg = document.getElementById(`tsr-bldg-${r.id}`);
+        if (bldg) bldg.textContent = r.bldg;
+        cont.appendChild(row);   // back in snapshot order
+    });
+    // Slices added after the snapshot stay (adding one isn't an undo step); re-sync them so
+    // their calendar preview survives the restored array.
+    Array.from(cont.querySelectorAll(':scope > .ts-row')).forEach(row => {
+        if (inSnap.has(_sliceRowId(row))) return;
+        cont.appendChild(row);
+        _syncSliceToPending(_sliceRowId(row));
+    });
+    _dirtySliceIds.clear();
+    p.dirty.forEach(id => _dirtySliceIds.add(id));
+    _renumberSlices();
+    cont.querySelectorAll(':scope > .ts-row').forEach(row => {
+        const id = _sliceRowId(row);
+        const start = document.getElementById(`tsst-hid-${id}`)?.value || '';
+        if (start) _filterEndTimeItems(id, start);
+        _applyRoomOccupancyFilter(id);
+        _applyRoomAvailabilityFilter(id);
+        _renderTimeRecommendations(id);
+    });
+}
+function _restoreSnapshot(snap) {
+    pendingManualSchedule = snap.pending.map(_cloneEntry);
+    hiddenDbSchedules = new Set(snap.hidden);
+    _withRenderBatch(() => _restorePanel(snap.panel));
+    const ay   = document.getElementById('sel_ay')?.value  || '';
+    const sem  = document.getElementById('sel_sem')?.value || '';
+    const code = _currentSubjectCode || '';
+    if (code && ay && sem) {
+        const meta = (typeof _subjectMeta !== 'undefined' && _subjectMeta[code]) || {};
+        _updateUnitProgress(code, ay, sem, meta.units || 0, meta.total_hours || 0);
+    }
+    if (typeof _syncSubjectCardBars === 'function') _syncSubjectCardBars();
+    _updateWorkflowBar();
+    _renderCalendarNow();
     _updateUndoRedoButtons();
 }
 function _undo() {
-    if (!_undoStack.length) return;
+    if (window._dndBusy || !_undoStack.length) return;
+    if (!_snapshotFitsPanel(_undoStack[_undoStack.length - 1])) { _clearHistoryStacks(); return; }
     _redoStack.push(_snapshotState());
     _restoreSnapshot(_undoStack.pop());
 }
 function _redo() {
-    if (!_redoStack.length) return;
+    if (window._dndBusy || !_redoStack.length) return;
+    if (!_snapshotFitsPanel(_redoStack[_redoStack.length - 1])) { _clearHistoryStacks(); return; }
     _undoStack.push(_snapshotState());
     _restoreSnapshot(_redoStack.pop());
 }
@@ -12152,10 +12312,23 @@ document.addEventListener('keydown', (e) => {
 
 // Wrap the discrete user-action entry points so each becomes one undo step.
 const _origTsSel = tsSel;
-tsSel = function(p, id, val) { _pushHistorySnapshot(); return _origTsSel(p, id, val); };
+tsSel = function(p, id, val) { return _historyStep(_origTsSel, arguments, this); };
 
 const _origOnTsDayChange = onTsDayChange;
-onTsDayChange = function(id) { _pushHistorySnapshot(); return _origOnTsDayChange(id); };
+onTsDayChange = function(id) { return _historyStep(_origOnTsDayChange, arguments, this); };
+
+// A recommendation sets Day — or Start and End — in one click: one undo step.
+const _origChooseRecommendedDay = _chooseRecommendedDay;
+_chooseRecommendedDay = function() { return _historyStep(_origChooseRecommendedDay, arguments, this); };
+const _origChooseRecommendedTime = _chooseRecommendedTime;
+_chooseRecommendedTime = function() { return _historyStep(_origChooseRecommendedTime, arguments, this); };
+
+// Opening a subject rebuilds the slice panel; earlier steps belong to the old one.
+const _origOnSubjectClickHist = _onSubjectClick;
+_onSubjectClick = async function() {
+    _clearHistoryStacks();
+    return _origOnSubjectClickHist.apply(this, arguments);
+};
 
 const _origSaveIndividualSlice = saveIndividualSlice;
 saveIndividualSlice = async function(id) { _pushHistorySnapshot(); return _origSaveIndividualSlice(id); };
@@ -12167,6 +12340,381 @@ window.triggerCascade = async function(skipGridRender) {
     _clearHistoryStacks();
     return _origTriggerCascade3.call(this, skipGridRender);
 };
+
+// ── Calendar drag & drop ────────────────────────────────────────────────────
+// A pill of the open subject's own Time Slice can be dragged to another day/time in the
+// calendar it is shown in (Room View or Program View); the room stays. The move is applied
+// through the slice's own setters (_origOnTsDayChange / _origTsSel), so the slice, the
+// pending schedule, progress bars and every existing check stay in step, and it is one undo
+// step. While dragging only a ghost moves — no fetch and no redraw until the drop.
+(function _calendarDragDrop() {
+    const wrapper = document.getElementById('gridWrapper');
+    const table   = document.getElementById('mainTimetable');
+    if (!wrapper || !table) return;
+
+    const DAYS = _TS_DAYS_ALL;
+    const MOVE_THRESHOLD = 5;   // px before a press becomes a drag — a plain click stays a click
+    const EDGE = 28;            // px from the calendar edge that scrolls it while dragging
+    let press = null;           // pointer down on a draggable pill, not moved far enough yet
+    let drag  = null;           // drag in progress
+    let frame = 0, lastEvent = null, swallowClick = false;
+
+    const ayVal  = () => document.getElementById('sel_ay')?.value  || '';
+    const semVal = () => document.getElementById('sel_sem')?.value || '';
+    const clamp  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    // The open section's Time Slice this pill shows, or null when it isn't draggable.
+    function sliceFor(pill) {
+        const tid = pill.dataset.tempId || '';
+        if (!tid || !_currentSubjectCode) return null;
+        const row = tid.startsWith('PREVIEW_')
+            ? document.getElementById('ts-row-' + tid.slice(8))
+            : Array.from(document.querySelectorAll('#time-slots-container > .ts-row')).find(r => {
+                try { return !!r.dataset.existingJson && JSON.parse(r.dataset.existingJson)._localTempId === tid; }
+                catch (e) { return false; }
+            });
+        if (!row) return null;
+        const id = _sliceRowId(row);
+        if (!Number.isFinite(id)) return null;
+        // HC16: a group-controlled slice's day/time come only from its Merge Group.
+        if (typeof _mgRowLocked === 'function' && _mgRowLocked(id)) return null;
+        const day = row.querySelector('.ts-day-sel')?.value || '';
+        const si  = getTimeSlotIndex(row.querySelector('.ts-start-hidden')?.value || '');
+        const ei  = getTimeSlotIndex(row.querySelector('.ts-end-hidden')?.value   || '');
+        if (DAYS.indexOf(day) < 0 || !si || ei <= si) return null;
+        // The pill must show the slice as it is now, not a render from before an edit.
+        if (String(pill.dataset.pillKey || '').toUpperCase() !== `${_currentSubjectCode}_${day}_${si}`.toUpperCase()) return null;
+        let excludeTempId = 'PREVIEW_' + id, excludeVersionId = null;
+        if (row.dataset.existingJson) {
+            try {
+                const ej = JSON.parse(row.dataset.existingJson);
+                excludeTempId = ej._localTempId; excludeVersionId = ej.versionid || null;
+            } catch (e) {}
+        }
+        return { row, id, day, si, ei, dur: ei - si, excludeTempId, excludeVersionId,
+                 room: row.querySelector('.ts-room-hidden')?.value || '' };
+    }
+
+    // The open section's saved sessions (Published + Draft) — the same list Program View
+    // draws. Classes that aren't loaded in the editor are only here, not in the pending
+    // schedule, so without it a slice could be dropped onto another subject's saved class.
+    function loadSectionRows() {
+        const v = id => document.getElementById(id)?.value || '';
+        const sect = v('sel_section');
+        if (!sect) return Promise.resolve([]);
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(v('sel_prog'))}` +
+            `&year_level=${encodeURIComponent(v('sel_year'))}&semester=${encodeURIComponent(semVal())}` +
+            `&ay=${encodeURIComponent(ayVal())}&status=active&section_id=${encodeURIComponent(sect)}` +
+            `&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&_t=${Date.now()}`;
+        return fetch(url, { cache: 'no-store' })
+            .then(r => r.ok ? r.json() : null)
+            .then(raw => Array.isArray(raw) ? raw : null)
+            .catch(() => null);
+    }
+
+    // '' = the slice can move there, a message = why not, null = data not loaded yet.
+    function check(s, slot, secRows) {
+        const ei = slot.si + s.dur;
+        const a = _TS_TIMES.indexOf(timeSlots[slot.si - 1]);
+        const b = _TS_TIMES.indexOf(timeSlots[ei - 1]);
+        if (slot.si < 1 || a < 0 || b <= a) return 'That time is outside the scheduling hours.';
+        // Restricted days (Settings) — the same list the slice's Day dropdown is built from.
+        const daySel = s.row.querySelector('.ts-day-sel');
+        if (!(daySel?.dataset.baseOptionsHtml || _buildDayOpts('')).includes(`value="${slot.day}"`))
+            return `${_currentSubjectCode} cannot be scheduled on ${slot.day}.`;
+        const ay = ayVal(), sem = semVal();
+        if (s.room && s.room !== 'TBA') {
+            if (!(`${s.room}|${ay}|${sem}` in window._roomDbCache)) return null;
+            const ranges = _getOccupiedRanges(s.room, slot.day, ay, sem, s.excludeTempId,
+                                              s.excludeVersionId, s.row.dataset.mergeEvent || '');
+            if (ranges.some(r => typeof _mgRangeBlocks === 'function'
+                    ? _mgRangeBlocks(r, a, b) : (a < r.endIdx && b > r.startIdx)))
+                return `The room is already taken on ${slot.day}, ${timeSlots[slot.si - 1]} – ${timeSlots[ei - 1]}.`;
+        }
+        // The section can't have two classes at once (its loaded and unsaved slices).
+        const sect = String(document.getElementById('sel_section')?.value || '');
+        const clash = sect && pendingManualSchedule.find(c => {
+            if (c.temp_id === s.excludeTempId || c.temp_id === 'PREVIEW_' + s.id) return false;
+            if (c.ay !== ay || c.sem !== sem || c.day !== slot.day) return false;
+            // A leftover copy of this same slice at its current slot is not another class.
+            if (String(c.subject_code || '').toUpperCase() === String(_currentSubjectCode).toUpperCase() &&
+                c.day === s.day && getTimeSlotIndex(c.start_time) === s.si &&
+                getTimeSlotIndex(c.end_time) === s.ei) return false;
+            if (String(c.section_id || '') !== sect) return false;
+            const x = _TS_TIMES.indexOf(c.start_time), y = _TS_TIMES.indexOf(c.end_time);
+            return x >= 0 && y > x && a < y && b > x;
+        });
+        if (clash) return `This section already has ${clash.subject_code} on ${clash.day}, ${clash.start_time} – ${clash.end_time}.`;
+
+        if (!secRows) return null;
+        // Saved sessions, skipping the ones the editor shows from its own copies instead
+        // (hidden rows, generator-replaced subjects) — those were checked just above.
+        const genCodes = new Set(pendingManualSchedule.filter(c => c.fromGenerator &&
+            (!c.section_id || String(c.section_id) === sect)).map(c => c.subject_code));
+        const saved = secRows.find(r => {
+            if (r.daydesc !== slot.day || genCodes.has(r.subjectcode)) return false;
+            if (typeof _isDbRowHidden === 'function' && _isDbRowHidden(r)) return false;
+            const x = timeStrToSlotIdx(r.start_time), y = timeStrToSlotIdx(r.end_time);
+            if (!x || y <= x || hiddenDbSchedules.has(`${r.subjectcode}_${r.daydesc}_${x}`)) return false;
+            // This slice's own saved row, still at the slot it is being moved from.
+            if (String(r.subjectcode || '').toUpperCase() === String(_currentSubjectCode).toUpperCase() &&
+                r.daydesc === s.day && x === s.si && y === s.ei) return false;
+            return slot.si < y && ei > x;
+        });
+        if (saved) return `This section already has ${saved.subjectcode} on ${saved.daydesc}, ` +
+            `${timeSlots[timeStrToSlotIdx(saved.start_time) - 1]} – ${timeSlots[timeStrToSlotIdx(saved.end_time) - 1]}.`;
+        return '';
+    }
+
+    function geometry() {
+        const cell  = table.querySelector('tbody td:nth-child(2)');
+        const thead = table.querySelector('thead');
+        if (!cell || !thead || !cell.offsetWidth || !cell.offsetHeight) return null;
+        return { colW: cell.offsetWidth, rowH: cell.offsetHeight,
+                 left: table.querySelector('.time-col')?.offsetWidth || 0, top: thead.offsetHeight };
+    }
+
+    // Pointer position in the calendar's own (scrolling) coordinates — the pills' frame.
+    function contentPoint(e) {
+        const r = wrapper.getBoundingClientRect();
+        return { x: e.clientX - r.left - wrapper.clientLeft + wrapper.scrollLeft,
+                 y: e.clientY - r.top  - wrapper.clientTop  + wrapper.scrollTop };
+    }
+
+    function slotAt(pt) {
+        const g = drag.g;
+        const dayIdx = clamp(Math.floor((pt.x - g.left) / g.colW), 0, DAYS.length - 1);
+        const si = clamp(Math.floor((pt.y - g.top) / g.rowH) - drag.grab + 1, 1, timeSlots.length - drag.s.dur);
+        return { dayIdx, day: DAYS[dayIdx], si };
+    }
+
+    function place(pt) {
+        const slot = slotAt(pt);
+        if (drag.slot && drag.slot.dayIdx === slot.dayIdx && drag.slot.si === slot.si) return;
+        drag.slot = slot;
+        const g = drag.g, s = drag.s;
+        drag.ghost.style.left = (g.left + slot.dayIdx * g.colW + 3) + 'px';
+        drag.ghost.style.top  = (g.top + (slot.si - 1) * g.rowH + 3) + 'px';
+        const same = slot.day === s.day && slot.si === s.si;
+        const why  = same ? '' : check(s, slot, drag.secRows);
+        drag.ghost.classList.toggle('dnd-ok',  !same && why === '');
+        drag.ghost.classList.toggle('dnd-bad', !same && !!why);
+        drag.ghost.title = why || '';
+        // "Sat" over "1:30 – 3:00 PM": fits the narrow ghost (one long line was cut off).
+        const t = i => timeSlots[i].replace(/^0/, '');
+        const a = t(slot.si - 1), b = t(slot.si - 1 + s.dur);
+        drag.day.textContent   = slot.day.slice(0, 3);
+        drag.label.textContent = a.slice(-2) === b.slice(-2) ? `${a.slice(0, -3)} – ${b}` : `${a} – ${b}`;
+    }
+
+    function begin() {
+        const g = geometry();
+        if (!g) { press = null; return; }
+        const { pill, slice: s, pt, pointerId } = press;
+        press = null;
+        const ghost = document.createElement('div');
+        ghost.className = 'dnd-ghost';
+        ghost.style.width  = (g.colW - 8) + 'px';
+        ghost.style.height = pill.offsetHeight + 'px';
+        ghost.style.backgroundColor = pill.style.backgroundColor;
+        ghost.style.color = getComputedStyle(pill).color;   // light pills use dark text
+        ghost.innerHTML = '<div class="dnd-ghost-code"></div><div class="dnd-ghost-time">' +
+            '<span class="dnd-ghost-day"></span><span></span></div>';
+        ghost.firstChild.textContent = _currentSubjectCode;
+        wrapper.appendChild(ghost);
+        const timeEl = ghost.lastChild;
+        drag = { s, g, pill, ghost, day: timeEl.firstChild, label: timeEl.lastChild, slot: null, pointerId,
+                 grab: clamp(Math.floor((pt.y - pill.offsetTop) / g.rowH), 0, s.dur - 1) };
+        pill.classList.add('dnd-source');
+        document.body.classList.add('dnd-active');
+        window._dndBusy = true;   // no Undo/Redo or new drag until this one is settled
+        window.getSelection()?.removeAllRanges();
+        try { wrapper.setPointerCapture(pointerId); } catch (e) {}
+
+        const ay = ayVal(), sem = semVal();
+        // The green/red preview needs the room's bookings; a redraw may have just dropped them.
+        if (s.room && s.room !== 'TBA' && !(`${s.room}|${ay}|${sem}` in window._roomDbCache)) {
+            _prefetchRoomOccupancy(s.room, ay, sem, { join: true }).then(() => {
+                if (drag && drag.s === s) { drag.slot = null; place(drag.lastPt); }
+            }).catch(() => {});
+        }
+        // The section's saved classes, fetched while the user drags; the preview stays
+        // neutral (not green) until they arrive.
+        drag.secRows = null;
+        drag.secRowsP = loadSectionRows().then(rows => {
+            if (drag && drag.s === s) { drag.secRows = rows; drag.slot = null; place(drag.lastPt); }
+            return rows;
+        });
+        // The faculty's conflicts as they are now, fetched while the user drags — a drop is
+        // refused only for a conflict the move itself creates.
+        const facId = String(document.getElementById('sel_faculty')?.value || '');
+        drag.facBefore = facId && facId !== 'TBA'
+            ? _findFacultySliceConflict(facId, document.getElementById('fac_display_name')?.value || '')
+                .then(String, () => '')
+            : Promise.resolve('');
+        drag.lastPt = pt;
+        place(pt);
+    }
+
+    function end() {
+        if (frame) { cancelAnimationFrame(frame); frame = 0; }
+        if (!drag) return null;
+        const d = drag;
+        drag = null;
+        try { wrapper.releasePointerCapture(d.pointerId); } catch (e) {}
+        // The pointerup that ends a drag is followed by a click: it must not open the pill.
+        swallowClick = true;
+        setTimeout(() => { swallowClick = false; }, 0);
+        return d;
+    }
+    function cleanup(d) {
+        d.ghost.remove();
+        d.pill.classList.remove('dnd-source');
+        document.body.classList.remove('dnd-active');
+        window._dndBusy = false;
+    }
+    function cancel() { press = null; const d = end(); if (d) cleanup(d); }
+
+    async function drop() {
+        const d = end();
+        if (!d) return;
+        const slot = d.slot;
+        if (!slot || (slot.day === d.s.day && slot.si === d.s.si)) { cleanup(d); return; }
+        d.ghost.classList.add('dnd-pending');
+        try { await applyMove(d.s, slot, d.facBefore, d.secRowsP); }
+        catch (e) {
+            console.error('[calendar drag]', e);
+            showValidationModal('Cannot Move Schedule', 'The schedule could not be moved. Please try again.');
+        }
+        finally { cleanup(d); }
+    }
+
+    async function applyMove(s, slot, facBefore, secRowsP) {
+        const ay = ayVal(), sem = semVal();
+        if (s.room && s.room !== 'TBA' && !(`${s.room}|${ay}|${sem}` in window._roomDbCache)) {
+            try { await _prefetchRoomOccupancy(s.room, ay, sem, { join: true }); } catch (e) {}
+        }
+        const secRows = await secRowsP;
+        if (!s.row.isConnected) return;   // the subject was closed meanwhile
+        let why = check(s, slot, secRows);
+        if (why === null) why = 'The schedule could not be loaded to check for conflicts. Please try again.';
+        if (why) { showValidationModal('Cannot Move Schedule', why); return; }
+
+        const startStr = timeSlots[slot.si - 1], endStr = timeSlots[slot.si - 1 + s.dur];
+        const before = _snapshotState();
+        const applied = _withRenderBatch(() => {
+            if (slot.day !== s.day) {
+                const daySel = document.getElementById(`ts-day-${s.id}`);
+                if (!daySel) return false;
+                if (!Array.from(daySel.options).some(o => o.value === slot.day) && daySel.dataset.baseOptionsHtml)
+                    daySel.innerHTML = daySel.dataset.baseOptionsHtml;
+                daySel.value = slot.day;
+                if (daySel.value !== slot.day) return false;
+                const dayTxt = document.getElementById(`tsd-txt-${s.id}`);
+                if (dayTxt) dayTxt.value = slot.day;
+                _origOnTsDayChange(s.id);
+            }
+            _origTsSel('tsst', s.id, startStr);
+            _origTsSel('tset', s.id, endStr);
+            return s.row.querySelector('.ts-day-sel')?.value === slot.day
+                && s.row.querySelector('.ts-start-hidden')?.value === startStr
+                && s.row.querySelector('.ts-end-hidden')?.value === endStr;
+        });
+        if (!applied) {
+            _restoreSnapshot(before);
+            showValidationModal('Cannot Move Schedule', 'That day and time is not available for this slice.');
+            return;
+        }
+
+        // A faculty can't teach two classes at once — the check every faculty assignment uses.
+        const facId = String(document.getElementById('sel_faculty')?.value || '');
+        if (facId && facId !== 'TBA') {
+            const [was, now] = await Promise.all([
+                facBefore,
+                _findFacultySliceConflict(facId, document.getElementById('fac_display_name')?.value || ''),
+            ]);
+            if (now && String(now) !== was) {
+                _restoreSnapshot(before);
+                showConflictModal(now);
+                return;
+            }
+        }
+
+        _pushHistorySnapshot(before);
+        _activeSliceId = s.id;
+        document.querySelectorAll('.ts-row').forEach(r => r.classList.toggle('ts-row-active', r === s.row));
+        s.row.scrollIntoView({ block: 'nearest' });
+        // Keep the ghost in place until the redrawn pill is there.
+        try { await _renderCalendarNow(); } catch (e) {}
+    }
+
+    // Grab cursor only on pills that can actually be dragged.
+    wrapper.addEventListener('pointerover', e => {
+        const pill = e.target.closest?.('.schedule-pill');
+        if (pill && !drag) pill.classList.toggle('dnd-draggable', !!sliceFor(pill));
+    });
+
+    wrapper.addEventListener('pointerdown', e => {
+        if (drag || window._dndBusy || e.button !== 0 || e.pointerType === 'touch') return;
+        const pill = e.target.closest?.('.schedule-pill');
+        if (!pill || e.target.closest('.pill-drop-btn')) return;
+        const slice = sliceFor(pill);
+        if (!slice) return;   // not this subject's slice: a normal click opens it first
+        press = { pill, slice, x: e.clientX, y: e.clientY, pt: contentPoint(e), pointerId: e.pointerId };
+    });
+
+    window.addEventListener('pointermove', e => {
+        if (press && e.pointerId === press.pointerId &&
+            Math.hypot(e.clientX - press.x, e.clientY - press.y) >= MOVE_THRESHOLD) begin();
+        if (!drag || e.pointerId !== drag.pointerId) return;
+        e.preventDefault();
+        lastEvent = e;
+        if (!frame) frame = requestAnimationFrame(tick);
+    }, { passive: false });
+
+    // One frame: scroll if the pointer is at an edge, then move the ghost. Keeps running while
+    // the pointer rests at an edge, so it doesn't take a mouse wiggle per step.
+    // Returns whether anything actually scrolled.
+    function scrollBy(dx, dy) {
+        const top = wrapper.scrollTop, left = wrapper.scrollLeft;
+        const px = window.scrollX, py = window.scrollY;
+        wrapper.scrollTop += dy;
+        wrapper.scrollLeft += dx;
+        // The calendar can't scroll further that way: scroll the page (the calendar's own
+        // bottom is often below the window, where the pointer can't reach).
+        const pdx = wrapper.scrollLeft === left ? dx : 0, pdy = wrapper.scrollTop === top ? dy : 0;
+        if (pdx || pdy) window.scrollBy(pdx, pdy);
+        return wrapper.scrollTop !== top || wrapper.scrollLeft !== left
+            || window.scrollX !== px || window.scrollY !== py;
+    }
+    function tick() {
+        frame = 0;
+        if (!drag || !lastEvent) return;
+        // The calendar's VISIBLE edges — below the sticky day header, inside the window.
+        const r = wrapper.getBoundingClientRect();
+        const top    = Math.max(r.top + drag.g.top, 0) + EDGE;
+        const bottom = Math.min(r.bottom, window.innerHeight) - EDGE;
+        const left   = Math.max(r.left + drag.g.left, 0) + EDGE;
+        const right  = Math.min(r.right, window.innerWidth) - EDGE;
+        const dy = lastEvent.clientY < top ? -12 : lastEvent.clientY > bottom ? 12 : 0;
+        const dx = lastEvent.clientX < left ? -12 : lastEvent.clientX > right ? 12 : 0;
+        const scrolled = (dx || dy) ? scrollBy(dx, dy) : false;
+        drag.lastPt = contentPoint(lastEvent);
+        place(drag.lastPt);
+        if (scrolled) frame = requestAnimationFrame(tick);   // keep going while it can
+    }
+
+    window.addEventListener('pointerup', e => {
+        if (press && e.pointerId === press.pointerId) press = null;   // a plain click
+        if (drag && e.pointerId === drag.pointerId) drop();
+    });
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', cancel);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && (drag || press)) cancel(); });
+    window.addEventListener('click', e => {
+        if (swallowClick) { e.stopPropagation(); e.preventDefault(); swallowClick = false; }
+    }, true);
+})();
 </script>
 {% endblock %}
 

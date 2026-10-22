@@ -29,10 +29,12 @@ def test_adjustment_validation_checks_local_room_faculty_program():
     assert "program_local = _request_local_conflict" in a
 
 def test_faculty_makeup_submission_checks_local_faculty_commitment():
+    # The make-up rules live in _makeup_submit_problems, which the submit route calls.
     b=block("api_faculty_submit_request","api_faculty_check_request_conflicts")
-    assert "local_fac_conflict = _request_local_conflict" in b
-    assert "employee_number=submitted_by" in b
-    assert "Local Schedule commitment" in b
+    assert "_makeup_submit_problems(" in b
+    h=block("_makeup_submit_problems","_num_cfg")
+    assert "_request_local_conflict(sched_id, day, st_t, et_t, employee_number=faculty_empno" in h
+    assert "Local schedule commitment" in h
 
 # Constraint-fix Phase 5: a Make-up is ONE meeting on requested_date. The four
 # tests below used to pin the obsolete behavior where approval inserted a

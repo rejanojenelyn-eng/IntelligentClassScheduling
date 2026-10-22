@@ -2984,6 +2984,8 @@ function frsOpenForm(type) {
     document.getElementById('reqPickerOverlay').classList.remove('open');
     if (type === 'makeup') {
         _resetReqForm('mu');
+        // A make-up date can't be in the past (the server checks it too, plus the semester range).
+        document.getElementById('muDate').min = _reqTodayIso();
         document.getElementById('reqMakeupOverlay').classList.add('open');
         const pre = window._preRoom;
         const filterDate  = document.getElementById('frsAvailDate')?.value  || '';
@@ -3081,6 +3083,11 @@ function _reqFormMsg(p, msg) {
 }
 
 
+function _reqTodayIso() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 async function reqSubmit(type) {
     const isMakeup = type === 'makeup';
     const p = isMakeup ? 'mu' : 'adj';
@@ -3124,6 +3131,8 @@ async function reqSubmit(type) {
     if (!payload.subject_code) return _reqFormMsg(p, 'Please select a subject.');
     if (!payload.section_id)   return _reqFormMsg(p, 'Please select a section.');
     if (isMakeup && !payload.request_date) return _reqFormMsg(p, 'Please select a date.');
+    if (isMakeup && payload.request_date < _reqTodayIso())
+        return _reqFormMsg(p, 'The make-up class date cannot be in the past.');
     if (isMakeup && (!payload.start_time || !payload.end_time)) {
         return _reqFormMsg(p, 'Please select both a start and an end time.');
     }
@@ -3151,9 +3160,13 @@ async function reqSubmit(type) {
             frsCloseForm(type);
             if (!isMakeup) _adjLoadOfficial();   // the just-requested meetings are now pending
             showToast('Request submitted successfully! The academic head will review your request.', 'success', 5000);
+            // Notices that did not block the request (e.g. a lab subject in a non-laboratory room).
+            (data.advisories || []).forEach(a => showToast(
+                String(a).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
+                'warning', 9000));
         } else if (data.error === 'schedule_conflict' && Array.isArray(data.conflicts)) {
             // Server is authoritative — show exactly which conflict(s) blocked the request
-            const labels = { faculty: 'Faculty conflict', section: 'Section conflict', room: 'Room conflict' };
+            const labels = { faculty: 'Faculty conflict', section: 'Students\' class conflict', room: 'Room conflict', pending: 'Your pending request' };
             const banner = document.getElementById(p + 'ConflictBanner');
             const textEl = document.getElementById(p + 'ConflictText');
             if (banner && textEl) {

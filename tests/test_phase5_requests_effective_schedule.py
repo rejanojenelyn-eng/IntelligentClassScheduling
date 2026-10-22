@@ -306,7 +306,9 @@ def test_approved_makeup_never_enters_teaching_load():
 def test_faculty_submission_and_preview_use_the_effective_primitives():
     submit = APP_SRC[APP_SRC.index('def api_faculty_submit_request'):
                      APP_SRC.index('def api_faculty_check_request_conflicts')]
-    assert '_request_official_conflict(' in submit and '_request_makeup_occupancy(' in submit
+    rules = APP_SRC[APP_SRC.index('def _makeup_submit_problems'):APP_SRC.index('def _num_cfg')]
+    assert '_makeup_submit_problems(' in submit
+    assert '_request_official_conflict(' in rules and '_request_makeup_occupancy(' in rules
     preview = APP_SRC[APP_SRC.index('def api_faculty_check_request_conflicts'):
                       APP_SRC.index('def api_faculty_available_rooms')]
     assert '_request_official_conflict(' in preview and '_request_local_conflict(' in preview

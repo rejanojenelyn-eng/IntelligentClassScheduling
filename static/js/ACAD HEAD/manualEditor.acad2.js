@@ -100,9 +100,10 @@ let pendingManualSchedule = [];
 let hiddenDbSchedules = new Set();
 
 // True when a loaded (already saved) session has been moved in the editor — its day,
-// time or room no longer matches what was loaded. Such pills render gray until saved;
-// a save reloads the entry with a fresh _loaded snapshot, restoring its status color.
-const EDITED_PILL_COLOR = '#8e9ca0';
+// time or room no longer matches what was loaded. Such pills render white with a blue
+// border (.pill-edited) until saved — not gray, which is also the Official Draft color —
+// and a save reloads the entry with a fresh _loaded snapshot, restoring its status color.
+const EDITED_PILL_COLOR = '#ffffff';
 // A row from the server is Local when its schedule_source says so. A pending (editor)
 // entry is Local unless it mirrors an Official occurrence (fromExisting + versionid —
 // Local rows carry no versionid); new slices placed in the Local Scheduler are Local.
@@ -1381,6 +1382,7 @@ function _renderProgPills(sessions, prog, yl) {
             if (_isLightColor(pill.style.backgroundColor)) pill.classList.add('pill-light-bg');
             if (isGenTransfer)    pill.style.border = '2px dashed #264653';
             else if (isDraft || sess.isEdited) pill.style.border = '2px dashed #2c3e50';
+            if (sess.isEdited) pill.classList.add('pill-edited');
 
             // pill-merged class only when actually merged (multiple sections, data from server)
             const _pvMergedSects = sess._mergedSections || [];
@@ -1402,6 +1404,7 @@ function _renderProgPills(sessions, prog, yl) {
             pill.style.top    = (topOff  + (startIdx - 1) * rowHeight + 3) + 'px';
             pill.style.cursor = 'pointer';
             pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+            pill.dataset.tempId  = sess.temp_id || '';   // see renderGrid — drag & drop
             if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
 
             const _resolvedInstr = _resolveInstructorName(sess);
@@ -3776,6 +3779,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     : getSubjectColor(sess.subjectcode, sess.localSource);
                 if (_isLightColor(pill.style.backgroundColor)) pill.classList.add('pill-light-bg');
                 if (isDraft || sess.isEdited) pill.style.border = "2px dashed #2c3e50";
+                if (sess.isEdited) pill.classList.add('pill-edited');
 
                 const _mergedSects = sess._mergedSections || [];
                 const isMerged = _mergedSects.length > 1;
@@ -3796,6 +3800,8 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 pill.style.top    = (topOffset + ((start - 1) * rowHeight) + 3) + 'px';
                 pill.style.cursor = 'pointer';
                 pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
+                // The open section's own entry — lets calendar drag & drop find its Time Slice.
+                pill.dataset.tempId = (sess._deleteTarget || sess).temp_id || '';
                 if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
 
                 const instrLast = (_resolveInstructorName(sess) || 'TBA').split(',')[0].trim();

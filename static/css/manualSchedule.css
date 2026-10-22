@@ -876,6 +876,50 @@
 }
 .schedule-pill:hover { transform: scale(1.02); z-index: 25; }
 
+/* ── Calendar drag & drop (manualScheduleEditor.html, _calendarDragDrop) ── */
+#gridWrapper .schedule-pill { user-select: none; -webkit-user-select: none; }
+#gridWrapper .schedule-pill.dnd-draggable { cursor: grab !important; }   /* pills set cursor inline */
+#gridWrapper .schedule-pill.dnd-source { opacity: 0.35; }
+body.dnd-active, body.dnd-active * { cursor: grabbing !important; user-select: none !important; }
+body.dnd-active #gridWrapper .schedule-pill:hover { transform: none; }
+.dnd-ghost {
+    position: absolute;
+    z-index: 30;
+    pointer-events: none;
+    border-radius: 4px;
+    border: 2px dashed rgba(255,255,255,0.85);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    overflow: hidden;
+    opacity: 0.92;
+}
+.dnd-ghost.dnd-ok  { border: 2px solid #2e7d32; box-shadow: 0 0 0 3px rgba(46,125,50,0.35), 0 6px 18px rgba(0,0,0,0.3); }
+.dnd-ghost.dnd-bad { border: 2px solid #c62828; box-shadow: 0 0 0 3px rgba(198,40,40,0.35), 0 6px 18px rgba(0,0,0,0.3); opacity: 0.75; }
+.dnd-ghost.dnd-pending { opacity: 0.6; }
+.dnd-ghost-code { font-size: 0.72rem; font-weight: 900; text-transform: uppercase; }
+.dnd-ghost-time {
+    margin: 2px 3px 0;
+    padding: 1px 5px;
+    max-width: calc(100% - 6px);
+    box-sizing: border-box;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 0.58rem;
+    font-weight: 700;
+    line-height: 1.25;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.dnd-ghost-time > span { white-space: nowrap; }
+.dnd-ghost-day { font-weight: 900; letter-spacing: 0.3px; }
+
 .pill-subject { font-size: 0.72rem; font-weight: 900; margin-bottom: 2px; text-transform: uppercase; }
 
 /* Faculty Alert */
@@ -2321,6 +2365,28 @@
 .slice-status-draft      { background: #c8d6da; color: #2c3e50; }
 .slice-status-published  { background: #27ae60; color: #fff; }
 .slice-status-published_draft { background: linear-gradient(90deg,#27ae60 50%,#c8d6da 50%); color: #1a1a1a; }
+/* Saved slice with unsaved day/time/room changes (_refreshSliceEditingTag) — the label is
+   swapped in CSS so the row's real status stays in its markup for when the edit is undone. */
+.ts-row.ts-editing .slice-status-tag:not(.slice-status-localarr) {
+    background: #1e88e5; color: #fff; font-size: 0; letter-spacing: 0;
+}
+.ts-row.ts-editing .slice-status-tag:not(.slice-status-localarr)::after {
+    content: 'EDITING'; font-size: 0.6rem; letter-spacing: 0.4px;
+}
+
+/* Calendar pill of a saved session moved in the editor but not saved yet (acad2 renderers):
+   white with a blue border — gray is the Official Draft color and the two looked the same. */
+#gridWrapper .schedule-pill.pill-edited {
+    background-color: #fff !important;
+    border: 2.5px solid #1e88e5 !important;
+    color: #111 !important;
+}
+#gridWrapper .schedule-pill.pill-edited > div { color: #111 !important; }
+#gridWrapper .schedule-pill.pill-edited.pill-slice-active,
+#gridWrapper .schedule-pill.pill-edited.pill-editing {
+    outline-color: #1e88e5 !important;
+    box-shadow: 0 0 0 4px rgba(30,136,229,0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
+}
 
 /* ── Published/Draft combined badge on subject cards ── */
 .badge-pub-draft {

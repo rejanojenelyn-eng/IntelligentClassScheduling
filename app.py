@@ -3277,6 +3277,26 @@ def _request_conflict_summary(req_type, req_id, exclude_ids=None):
                 print(f'[request advisories] {_we}')
             finally:
                 _wconn.close()
+    # A make-up of a lab-only subject in a non-laboratory room: a notice, never a block
+    # (sometimes no Laboratory room is free on that date) — same rule as at submission.
+    if req_type == 'makeup' and room_id:
+        try:
+            _lab_mu = query_db("""
+                SELECT UPPER(cs.subjectcode) AS code, r.roomname, r.roomtype
+                FROM schedule sc
+                JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+                JOIN room r ON r.roomid = %s
+                WHERE sc.scheduleid = %s
+                  AND COALESCE(cs.lecturehours, 0) = 0 AND COALESCE(cs.laboratoryhours, 0) > 0
+                  AND LOWER(TRIM(COALESCE(r.roomtype, ''))) <> 'laboratory'
+            """, [room_id, sched_id], one=True)
+            from database import load_scheduler_config as _lsc_w
+            if _lab_mu and bool(_num_cfg(_lsc_w().get('hc_lab_session_enabled', 1))):
+                warnings.append({'rule': 'HC13', 'message':
+                    f"{_lab_mu['code']} is a laboratory subject, but {_lab_mu['roomname']} is a "
+                    f"{_lab_mu['roomtype'] or 'non-laboratory'} room."})
+        except Exception as _we:
+            print(f'[request advisories] {_we}')
 
     # A dimension blocked ONLY by an approved make-up still to come says so (and when it frees up).
     conflicts = [r['error'] for r in merge_locked]
@@ -3516,6 +3536,14 @@ def api_requests_decide():
             if not mk:
                 _conn.rollback()
                 return jsonify({'success': False, 'error': 'Make-up request not found.'}), 404
+            # Locked above: a second Approve/Reject (another Academic Head at the same
+            # moment, or a double click) waits here, then sees the first decision.
+            if mk.get('status') != 'Pending':
+                _conn.rollback()
+                return jsonify({'success': False, 'code': 'REQUEST_ALREADY_DECIDED',
+                                'current_status': mk.get('status'),
+                                'error': f"This request was already {str(mk.get('status')).lower()}. "
+                                         f"Refresh to see its current status."}), 409
             if decision == 'Approved':
                 if not (mk.get('scheduleid') and mk.get('new_starttimeid')
                         and mk.get('new_endtimeid') and mk.get('requested_date')):
@@ -3584,6 +3612,15 @@ def api_requests_decide():
                     adjs.append(_row)
             if not adjs:
                 return jsonify({'success': False, 'error': 'Schedule adjustment request not found.'}), 404
+            # Same guard as make-ups: only a still-Pending request can be decided (the
+            # rows are locked above, so a concurrent second decision lands here).
+            _decided = next((a for a in adjs if a.get('status') != 'Pending'), None)
+            if _decided:
+                _conn.rollback()
+                return jsonify({'success': False, 'code': 'REQUEST_ALREADY_DECIDED',
+                                'current_status': _decided.get('status'),
+                                'error': f"This request was already {str(_decided.get('status')).lower()}. "
+                                         f"Refresh to see its current status."}), 409
             adj = adjs[0]   # class identity (subject / section / faculty) is shared by the rows
 
             if decision == 'Approved':
@@ -3775,7 +3812,10 @@ def api_requests_decide():
     except Exception as e:
         _conn.rollback()
         print(f"[api_requests_decide] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # Rolled back: the request is still Pending.
+        return jsonify({'success': False, 'code': 'DECISION_NOT_SAVED',
+                        'error': 'The decision could not be saved, so nothing was changed — the request '
+                                 'is still Pending. Please try again.'}), 500
     finally:
         _cur.close()
         _conn.close()
@@ -32780,12 +32820,24 @@ def _save_makeup_request(data, faculty_empno, existing_requestid=None):
             ctx = _makeup.schedule_context_by_id(cur, existing['scheduleid'])
 
 
-        vals = _makeup.validate_submission(
-            cur, faculty_empno=faculty_empno, ctx=ctx,
-            request_date=data.get('request_date'),
-            start_time=data.get('start_time'), end_time=data.get('end_time'),
-            room_id=data.get('room_id'), reason=data.get('reason'),
-            exclude_requestid=existing_requestid)
+        # Same rules and conflict checks as a new submission (approval re-runs them).
+        _reason = _makeup.clean_reason(data.get('reason'))
+        _edit_notes = []
+        if not ctx:
+            raise _makeup.MakeupError(404, 'schedule_not_found',
+                                      'No published schedule was found for the selected subject and section.')
+        problem = _makeup_submit_problems(ctx['subjectcode'], ctx['sectionid'], faculty_empno,
+                                          data.get('request_date'), data.get('start_time'),
+                                          data.get('end_time'), data.get('room_id'),
+                                          exclude_request_id=existing_requestid, advisories=_edit_notes)
+        if problem:
+            conn.rollback()
+            return jsonify(problem), problem.pop('_status', 400)
+        _st = _makeup.resolve_timeslot(cur, data.get('start_time'), 'start')
+        _et = _makeup.resolve_timeslot(cur, data.get('end_time'), 'end')
+        vals = {'scheduleid': ctx['scheduleid'], 'requested_date': _makeup.parse_request_date(data.get('request_date')),
+                'starttimeid': _st['timeid'], 'endtimeid': _et['timeid'],
+                'roomid': int(data.get('room_id')), 'reason': _reason}
         notes = (data.get('note') or '').strip() or None
 
 
@@ -32809,7 +32861,7 @@ def _save_makeup_request(data, faculty_empno, existing_requestid=None):
                   vals['roomid'], vals['reason'], existing_requestid])
         saved = cur.fetchone()
         conn.commit()
-        return jsonify({'success': True, 'requestid': saved['requestid'], 'status': 'Pending'})
+        return jsonify({'success': True, 'requestid': saved['requestid'], 'status': 'Pending', 'advisories': _edit_notes})
     except _makeup.MakeupError as me:
         conn.rollback()
         return jsonify(me.to_json()), me.status
@@ -33015,6 +33067,158 @@ def api_manual_own_makeup_cancel(req_id):
         cur.close(); conn.close()
 
 
+# --- Make-up request: every rule a submission must pass ---------------------------------
+# One place for the faculty make-up form (and anything else that submits one). The slot
+# checks are the SAME helpers approval re-runs (_request_conflict_summary): effective weekly
+# Official (minus Local-superseded), approved make-ups on that date, published Local
+# arrangements — for the room, the faculty and the program/year cohort. On top of those:
+# the faculty's own PENDING make-ups that overlap, so two requests can't claim one slot.
+# Returns None when the request may be saved, else a JSON-ready error dict.
+def _makeup_submit_problems(subject, section_id, faculty_empno, request_date, start_time,
+                            end_time, room_id, exclude_request_id=None, advisories=None):
+    from datetime import datetime as _dtm
+    if not subject or not section_id:
+        return {'success': False, 'error': 'Please select the subject and section of the class to make up.'}
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        try:
+            ctx = _makeup.schedule_context_by_subject_section(cur, subject, int(section_id))
+            if not ctx:
+                raise _makeup.MakeupError(404, 'schedule_not_found',
+                                          'This class has no published schedule yet, so a make-up cannot be requested.')
+            if str(ctx.get('employeenumber') or '') != str(faculty_empno):
+                raise _makeup.MakeupError(403, 'forbidden', 'You can only request a make-up class for a class assigned to you.')
+            req_date = _makeup.parse_request_date(request_date)
+            if req_date < date.today():
+                raise _makeup.MakeupError(400, 'validation_error', 'The make-up class date cannot be in the past.')
+            sem_start, sem_end = ctx.get('semstartdate'), ctx.get('semenddate')
+            if (sem_start and req_date < sem_start) or (sem_end and req_date > sem_end):
+                rng = ' – '.join(d.strftime('%b %d, %Y') for d in (sem_start, sem_end) if d)
+                raise _makeup.MakeupError(400, 'validation_error',
+                                          f"The make-up date must be within this class's semester ({rng}).")
+            st = _makeup.resolve_timeslot(cur, start_time, 'start')
+            et = _makeup.resolve_timeslot(cur, end_time, 'end')
+            if et['timevalue'] <= st['timevalue']:
+                raise _makeup.MakeupError(400, 'validation_error', 'End Time must be later than Start Time.')
+            from scheduler import SCHEDULING_DAY_OPEN as _open, SCHEDULING_DAY_CLOSE as _close, format_time_12h as _f12
+            if st['timevalue'] < _open or et['timevalue'] > _close:
+                raise _makeup.MakeupError(400, 'validation_error',
+                    f"Classes are held between {_f12(_open)} and {_f12(_close)}. Pick a time within those hours.")
+            span = (_dtm.combine(req_date, et['timevalue']) - _dtm.combine(req_date, st['timevalue'])).total_seconds() / 3600
+            dur_err = _makeup.makeup_duration_error(
+                span, float(ctx.get('lecturehours') or 0) + float(ctx.get('laboratoryhours') or 0), ctx['subjectcode'])
+            if dur_err:
+                raise _makeup.MakeupError(400, 'validation_error', dur_err)
+            try:
+                rid = int(room_id)
+            except (TypeError, ValueError):
+                raise _makeup.MakeupError(400, 'validation_error', 'Please select a room.')
+            cur.execute("SELECT roomname, roomtype FROM room WHERE roomid = %s AND COALESCE(isactive, TRUE)", [rid])
+            room = cur.fetchone()
+            if not room:
+                raise _makeup.MakeupError(400, 'validation_error', 'The selected room no longer exists.')
+            # HC13 is a NOTICE for a make-up, never a block: sometimes no Laboratory room is
+            # free on that date. A lab-only subject in a non-laboratory room is reported
+            # (to the faculty on submit, and kept on the request for the Academic Head).
+            # A lecture+lab subject may be making up its lecture part, so it is not flagged.
+            from database import load_scheduler_config as _lsc_mu
+            if (advisories is not None and bool(_num_cfg(_lsc_mu().get('hc_lab_session_enabled', 1)))
+                    and float(ctx.get('laboratoryhours') or 0) > 0 and float(ctx.get('lecturehours') or 0) == 0
+                    and str(room['roomtype'] or '').strip().lower() != 'laboratory'):
+                advisories.append(
+                    f"{ctx['subjectcode']} is a laboratory subject, but {room['roomname']} is a "
+                    f"{room['roomtype'] or 'non-laboratory'} room. The request was still submitted; "
+                    f"use a Laboratory room if one is free.")
+        except _makeup.MakeupError as me:
+            body = me.to_json()
+            body['error_code'] = body.get('error')
+            body['error'] = body.get('message')
+            body['_status'] = me.status
+            return body
+    finally:
+        cur.close(); conn.close()
+
+    day = req_date.strftime('%A')
+    st_t, et_t = st['timevalue'], et['timevalue']
+    sched_id = ctx['scheduleid']
+    sem_id = _request_semester_id(sched_id)
+    requester = _request_requester(sched_id)
+    pyl_id = (requester or {}).get('programyearlevelid')
+    when = f"{req_date.strftime('%a, %b %d, %Y').replace(' 0', ' ')}"
+    conflicts = []
+
+    def _span(r):
+        a_, b_ = r.get('start_t') or r.get('st'), r.get('end_t') or r.get('et')
+        return f" ({a_}–{b_})" if a_ and b_ else ''
+
+    def _add(kind, msg):
+        conflicts.append({'type': kind, 'message': msg})
+
+    # Room
+    r = _request_official_conflict(sem_id, day, st_t, et_t, room_id=rid, requester=requester)
+    if r:
+        _add('room', f"Room {room['roomname']} is used by {r.get('subjectcode')}"
+                     f"{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}{_span(r)} on {when}.")
+    else:
+        r = _request_makeup_occupancy(sem_id, day, st_t, et_t, on_date=req_date, room_id=rid,
+                                      requester=requester, exclude_request_id=exclude_request_id)
+        if r:
+            _add('room', f"Room {room['roomname']} is booked by an approved make-up class of {r.get('subjectcode')}{_span(r)} on {when}.")
+        elif _request_local_conflict(sched_id, day, st_t, et_t, room_id=rid, requester=requester):
+            _add('room', f"Room {room['roomname']} is used by a Local arrangement at that time on {when}.")
+    # Faculty
+    r = _request_official_conflict(sem_id, day, st_t, et_t, employee_number=faculty_empno, requester=requester)
+    if r:
+        _add('faculty', f"You already teach {r.get('subjectcode')}"
+                        f"{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}{_span(r)} on {when}.")
+    else:
+        r = _request_makeup_occupancy(sem_id, day, st_t, et_t, on_date=req_date, employee_number=faculty_empno,
+                                      requester=requester, exclude_request_id=exclude_request_id)
+        if r:
+            _add('faculty', f"You already have an approved make-up class of {r.get('subjectcode')}{_span(r)} on {when}.")
+        elif _request_local_conflict(sched_id, day, st_t, et_t, employee_number=faculty_empno, requester=requester):
+            _add('faculty', f"You already have a Local schedule commitment at that time on {when}.")
+    # Program / year level (the students' other classes)
+    if pyl_id is not None:
+        r = (_request_official_conflict(sem_id, day, st_t, et_t, programyearlevelid=pyl_id, exclude_schedule_id=sched_id)
+             or _request_makeup_occupancy(sem_id, day, st_t, et_t, on_date=req_date, programyearlevelid=pyl_id,
+                                          exclude_request_id=exclude_request_id))
+        if r:
+            _add('section', f"The students already have {r.get('subjectcode')}"
+                            f"{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}{_span(r)} on {when}.")
+        elif _request_local_conflict(sched_id, day, st_t, et_t, programyearlevelid=pyl_id):
+            _add('section', f"The students have a Local arrangement class at that time on {when}.")
+    # The faculty's own pending make-up requests that overlap
+    _pend = query_db("""
+        SELECT UPPER(cs.subjectcode) AS subjectcode,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t, TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+        FROM class_meeting_request c
+        JOIN schedule sc ON sc.scheduleid = c.scheduleid
+        JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+        JOIN timeslot ts_s ON ts_s.timeid = c.new_starttimeid
+        JOIN timeslot ts_e ON ts_e.timeid = c.new_endtimeid
+        WHERE c.status = 'Pending' AND c.submitted_by = %s AND c.requested_date = %s
+          AND ts_s.timevalue < %s AND ts_e.timevalue > %s
+          AND c.requestid IS DISTINCT FROM %s
+        LIMIT 1
+    """, [str(faculty_empno), req_date, et_t, st_t, exclude_request_id], one=True)
+    if _pend:
+        _add('pending', f"It overlaps your pending make-up request for {_pend['subjectcode']}{_span(_pend)} on {when}. "
+                        f"Cancel or change that request first.")
+    if conflicts:
+        return {'success': False, 'error': 'schedule_conflict',
+                'message': 'This make-up class conflicts with an existing schedule.',
+                'conflicts': conflicts, '_status': 409}
+    return None
+
+
+def _num_cfg(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 1.0
+
+
 # --- API: Submit a faculty room request ---
 @app.route('/api/faculty/submit_request', methods=['POST'])
 def api_faculty_submit_request():
@@ -33111,47 +33315,20 @@ def api_faculty_submit_request():
         try:
             cur = conn.cursor()
             if req_type == 'makeup':
-                req_date = data.get('request_date') or None
-                if not scheduleid:
-                    return jsonify({'success': False,
-                        'error': 'No published schedule found for the given subject and section.'}), 400
-                if not start_tid or not end_tid:
-                    return jsonify({'success': False, 'error': 'Invalid time selection.'}), 400
-                # Block submission if faculty already has a committed schedule at the requested day/time
-                if req_date and start_time and end_time:
-                    try:
-                        _mk_date = _dt.strptime(req_date, '%Y-%m-%d').date()
-                        day_of_week = _mk_date.strftime('%A')
-                        _mk_start = _dt.strptime(start_time, '%I:%M %p').time()
-                        _mk_end   = _dt.strptime(end_time, '%I:%M %p').time()
-                        _mk_sem   = _request_semester_id(scheduleid)
-                        _mk_req   = _request_requester(scheduleid)
-                        # Effective schedule of that date: effective weekly Official
-                        # (minus Local-superseded) + other approved make-ups that day.
-                        fac_conflict = (
-                            _request_official_conflict(_mk_sem, day_of_week, _mk_start, _mk_end,
-                                                       employee_number=submitted_by, requester=_mk_req)
-                            or _request_makeup_occupancy(_mk_sem, day_of_week, _mk_start, _mk_end,
-                                                         on_date=_mk_date, employee_number=submitted_by,
-                                                         requester=_mk_req))
-                        if fac_conflict:
-                            return jsonify({'success': False,
-                                'error': f"You already have {fac_conflict['subjectcode']} scheduled on {day_of_week} at this time. Make-up class cannot be submitted when you have an existing commitment."}), 400
-                        local_fac_conflict = _request_local_conflict(
-                            scheduleid, day_of_week, _mk_start, _mk_end,
-                            employee_number=submitted_by, requester=_mk_req
-                        )
-                        if local_fac_conflict:
-                            return jsonify({'success': False,
-                                'error': f"You already have a Local Schedule commitment on {day_of_week} at this time. Make-up class cannot be submitted when you have an existing commitment."}), 400
-                    except Exception as _ce:
-                        print(f"[submit_request conflict check] {_ce}")
+                # Every rule a make-up must pass, with the same conflict rules approval
+                # re-checks (_makeup_submit_problems) — so what passes here is approvable.
+                _mu_notes = []
+                problem = _makeup_submit_problems(subject, section_id, submitted_by,
+                                                  data.get('request_date'), start_time, end_time, room_id,
+                                                  advisories=_mu_notes)
+                if problem:
+                    return jsonify(problem), problem.pop('_status', 400)
                 cur.execute("""
                     INSERT INTO class_meeting_request
                         (scheduleid, requested_date, new_starttimeid, new_endtimeid,
                          new_roomid, reason, notes, submitted_by, status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
-                """, (scheduleid, req_date, start_tid, end_tid, rid, reason, notes, submitted_by))
+                """, (scheduleid, data.get('request_date'), start_tid, end_tid, rid, reason, notes, submitted_by))
 
             elif req_type == 'adjustment':
                 # One request may move SEVERAL meetings of the same class (Monday 2h +
@@ -33291,6 +33468,7 @@ def api_faculty_submit_request():
 
                 import uuid as _uuid
                 request_group = _uuid.uuid4().hex[:20] if len(rows) > 1 else None
+                _adj_ids = []
                 for r in rows:
                     official_sessionid, day = r['official_sessionid'], r['day']
                     start_tid, end_tid, rid = r['start'], r['end'], r['room']
@@ -33302,19 +33480,43 @@ def api_faculty_submit_request():
                              effective_from, reason, submitted_by, status, request_group)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
                                 CURRENT_DATE, %s, %s, 'Pending', %s)
+                        RETURNING requestid
                     """, (scheduleid, versionid, official_sessionid, change_type, day,
                           start_tid, end_tid, rid, reason, submitted_by, request_group))
+                    _adj_ids.append(cur.fetchone()[0])
             else:
                 return jsonify({'success': False, 'error': 'Unknown request type.'}), 400
 
             conn.commit()
+            _advisories = _mu_notes if req_type == 'makeup' else []
+
+            # A Schedule Adjustment is checked by the SAME check approval runs (room,
+            # faculty, students' classes, Local arrangements, upcoming make-ups) for all of
+            # its meetings together; one that could never be approved is not kept.
+            if req_type == 'adjustment' and _adj_ids:
+                try:
+                    _sum, _err = _request_group_summary('adjustment', _adj_ids[0])
+                except Exception as _ce:
+                    print(f"[submit_request adjustment check] {_ce}")
+                    _sum, _err = None, ('The schedule could not be checked for conflicts. Please try again.', 503)
+                if _err or not _sum.get('all_ok'):
+                    cur.execute("DELETE FROM schedule_change_request WHERE requestid = ANY(%s) AND status = 'Pending'",
+                                (_adj_ids,))
+                    conn.commit()
+                    _msgs = (_sum or {}).get('conflicts') or []
+                    _msgs += [m.get('error') or str(m) for m in ((_sum or {}).get('merge_restrictions') or [])]
+                    if _err and not _msgs:
+                        _msgs = [_err[0]]
+                    return jsonify({'success': False, 'error': 'schedule_conflict',
+                                    'message': 'The new schedule conflicts with an existing schedule, so the request was not submitted.',
+                                    'conflicts': [{'type': 'conflict', 'message': m} for m in _msgs]}), 409
         finally:
             conn.close()
 
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'advisories': _advisories})
     except Exception as e:
         print(f"[api_faculty_submit_request] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'The request could not be submitted. Nothing was saved — please try again.'}), 500
 
 # --- API: Available rooms for a given day/time window ---
 @app.route('/api/faculty/check_request_conflicts')

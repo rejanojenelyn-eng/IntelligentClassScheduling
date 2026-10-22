@@ -975,7 +975,7 @@ function rhubRenderDetail(req, v) {
 
         <div class="rhub-fac-row">
             <div>
-                <div class="rhub-fac-name">${req.faculty_name}</div>
+                <div class="rhub-fac-name">${_rhubEsc(req.faculty_name)}</div>
                 <div class="rhub-fac-desig">${req.designation || 'FACULTY'}</div>
             </div>
             <div class="rhub-fac-date">
@@ -1003,13 +1003,13 @@ function rhubRenderDetail(req, v) {
         ${req.reason ? `
         <div class="rhub-reason-box">
             <div class="rhub-dbox-lbl">REASON FOR REQUEST</div>
-            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${req.reason}</div>
+            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${_rhubEsc(req.reason)}</div>
         </div>` : ''}
 
         ${req.notes ? `
         <div class="rhub-reason-box" style="border-left-color:#1a4a7a;background:#f0f5ff;">
             <div class="rhub-dbox-lbl" style="color:#1a4a7a;">NOTE</div>
-            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${req.notes}</div>
+            <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${_rhubEsc(req.notes)}</div>
         </div>` : ''}
 
         <div class="rhub-analytics">
@@ -1092,9 +1092,17 @@ async function rhubConfirmApprove() {
                         : ' successfully.'}</div>`;
             rhubLoad();
         } else {
-            alert('Error: ' + (data.error || 'Could not approve.'));
+            _rhubDecisionError(data, 'Could not approve.');
         }
-    } catch(e) { alert('Network error.'); }
+    } catch(e) { _rhubDecisionError({ error: 'Could not reach the server. Nothing was changed — please try again.' }); }
+}
+
+// Styled notice for a failed Approve/Reject. A request someone else already decided is
+// reloaded so its real status shows.
+function _rhubDecisionError(data, fallback) {
+    const msg = (data && data.error) || fallback || 'Something went wrong.';
+    if (typeof showAlertPopup === 'function') showAlertPopup('error', msg); else alert(msg);
+    if (data && data.code === 'REQUEST_ALREADY_DECIDED') { _activeKey = null; rhubLoad(); }
 }
 
 /* ════ REJECT ════ */
@@ -1143,9 +1151,9 @@ async function rhubConfirmReject() {
                 `<div class="rhub-empty-state"><i class="fas fa-times-circle" style="color:#c0392b"></i>Request rejected.</div>`;
             rhubLoad();
         } else {
-            alert('Error: ' + (data.error || 'Could not reject.'));
+            _rhubDecisionError(data, 'Could not reject.');
         }
-    } catch(e) { alert('Network error.'); }
+    } catch(e) { _rhubDecisionError({ error: 'Could not reach the server. Nothing was changed — please try again.' }); }
     finally { if (btn) btn.disabled = false; }
 }
 
