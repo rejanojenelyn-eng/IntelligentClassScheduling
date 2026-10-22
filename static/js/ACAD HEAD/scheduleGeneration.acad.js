@@ -853,6 +853,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ];
         let stepIndex = 0;
 
+        // A run that starts before the previous one cleared its timer must not leave two
+        // timers fighting over the bar.
+        if (btnGenerate._progressInterval) clearInterval(btnGenerate._progressInterval);
         const interval = setInterval(() => {
             // This bar is a fake animation (the actual /api/schedule/generate call is one
             // request with no real progress to report), only meant to reassure the user

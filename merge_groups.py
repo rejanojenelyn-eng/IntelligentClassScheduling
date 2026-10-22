@@ -38,6 +38,8 @@ The pure part (everything above the "Database layer" banner) needs no database,
 so it is unit-testable without PostgreSQL. The database helpers take the
 caller's cursor and never open their own connection.
 """
+import contextlib
+import contextvars
 import json
 import os
 from collections import defaultdict
@@ -1439,7 +1441,11 @@ def policy_for(cfg, semester_ids, *, cur=None, default_section_id=None):
         groups = load_groups(c, cfg, semester_ids=sem_ids)
         return groups, load_hc17_rules(c, [g['mergegroupid'] for g in groups])
 
-    if cur is not None:
+    memo = _policy_memo.get()
+    memo_key = (json.dumps(cfg or {}, sort_keys=True, default=str), tuple(sem_ids)) if memo is not None else None
+    if memo_key in (memo or {}):
+        groups, rules = memo[memo_key]
+    elif cur is not None:
         groups, rules = _load(cur)
     else:
         import database
@@ -1452,7 +1458,26 @@ def policy_for(cfg, semester_ids, *, cur=None, default_section_id=None):
         finally:
             own.close()
             conn.close()
+    if memo is not None:
+        memo[memo_key] = (groups, rules)
     return GroupMergePolicy(MergeIndex(groups), default_section_id=default_section_id, load_rules=rules)
+
+
+# Read-only operations (Generate) build the same policy several times per request — the
+# solver, the load checks and the evaluation each ask for it — and every build reloads
+# all groups and the semester's whole offered curriculum. Inside reuse_policies() the
+# groups and HC17 rules are loaded once per (config, semesters). Only for code that does
+# not change merge groups, policies or the curriculum while the block runs.
+_policy_memo = contextvars.ContextVar('merge_policy_memo', default=None)
+
+
+@contextlib.contextmanager
+def reuse_policies():
+    token = _policy_memo.set({})
+    try:
+        yield
+    finally:
+        _policy_memo.reset(token)
 
 
 HC17_SCHEMA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -1923,6 +1948,33 @@ def default_semester_ids(semesters):
 def load_offered(cur, semesterid):
     """Sections of the semester's academic year with every curriculum subject they
     take in that semester (regular curriculum + its bridging counterpart)."""
+    memo = _offered_memo.get()
+    if memo is not None and semesterid in memo:
+        return memo[semesterid]
+    result = _load_offered(cur, semesterid)
+    if memo is not None:
+        memo[semesterid] = result
+    return result
+
+
+# Every HC16 policy / validation-context build re-reads the semester's whole offered
+# curriculum (~2,700 rows); one Save Draft built it 4-6 times. Inside reuse_offered()
+# it is read once per semester. Only for code that does not change sections,
+# program_yearlevel, curriculum, curriculumsubject or semester while the block runs —
+# merge groups themselves may change (they are still reloaded every time).
+_offered_memo = contextvars.ContextVar('merge_offered_memo', default=None)
+
+
+@contextlib.contextmanager
+def reuse_offered():
+    token = _offered_memo.set({})
+    try:
+        yield
+    finally:
+        _offered_memo.reset(token)
+
+
+def _load_offered(cur, semesterid):
     cur.execute("""
         WITH sem AS (
             SELECT semesterid, academicyearid, semestertype FROM public.semester WHERE semesterid = %s

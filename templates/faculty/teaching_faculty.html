@@ -8,6 +8,22 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/export_modal.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/all.min.css">
     <style>
+        /* ── Faculty Preview: term switch + banner ── */
+        .ta-term-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .ta-term-label { font-size: .74rem; font-weight: 800; color: #6b6b6b; letter-spacing: .4px; text-transform: uppercase; margin-right: 4px; }
+        .ta-term-label i { margin-right: 4px; }
+        .ta-term-btn { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border: 1px solid #dcdcdc; border-radius: 8px;
+            background: #fff; color: #333; font-size: .8rem; font-weight: 700; text-decoration: none; }
+        .ta-term-btn:hover { border-color: #8b1a1a; color: #8b1a1a; }
+        .ta-term-btn.active { background: #8b1a1a; border-color: #8b1a1a; color: #fff; }
+        .ta-term-tag { font-size: .6rem; font-weight: 800; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; letter-spacing: .3px; }
+        .ta-tag-current { background: #e8f6ec; color: #1f5f33; }
+        .ta-tag-preview { background: #fff1d6; color: #8a5a00; }
+        .ta-term-btn.active .ta-term-tag { background: rgba(255,255,255,.22); color: #fff; }
+        .ta-preview-banner { display: flex; gap: 10px; align-items: flex-start; background: #fff8e6; border: 1px solid #f3d48a; color: #6b4a00;
+            border-radius: 10px; padding: 10px 14px; font-size: .8rem; margin-bottom: 14px; line-height: 1.45; }
+        .ta-preview-banner i { margin-top: 2px; }
+
         /* ── Calendar Grid ── */
         .cal-wrapper {
             position: relative;
@@ -167,6 +183,27 @@
 
 {% block content %}
 <div class="teaching-assignment-wrapper">
+
+    {% if ta_terms %}
+    <!-- Faculty Preview: switch between the current semester and an upcoming one the
+         Academic Head released (your own subjects only). -->
+    <div class="ta-term-bar">
+        <span class="ta-term-label"><i class="fa-regular fa-calendar"></i> Semester</span>
+        {% for t in ta_terms %}
+        <a class="ta-term-btn{% if t.ay_id == active_ay_id and t.sem == active_sem %} active{% endif %}"
+           href="{{ url_for('faculty_teaching_assignment') }}{% if t.preview %}?ay={{ t.ay_id }}&sem={{ t.sem }}{% endif %}">
+            {{ t.label }} <span class="ta-term-tag {{ 'ta-tag-preview' if t.preview else 'ta-tag-current' }}">{{ t.tag }}</span>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if is_preview %}
+    <div class="ta-preview-banner">
+        <i class="fa-solid fa-eye"></i>
+        <div><b>Preview of your upcoming schedule.</b> These are only your own subjects, released early by the Academic Head.
+            They take effect when the semester starts{% if sem_start %} ({{ sem_start }}){% endif %}; the full Class Schedule (SIS) shows them from then on.</div>
+    </div>
+    {% endif %}
 
 
     <!-- Page header: icon + title/subtitle, summary cards (per active tab) -->

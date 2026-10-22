@@ -986,7 +986,7 @@ function _showUpToast(msg) {
     if (!wrap) {
         wrap = document.createElement('div');
         wrap.id = 'upToastWrap';
-        wrap.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+        wrap.style.cssText = 'position:fixed;top:112px;right:28px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
         document.body.appendChild(wrap);
     }
     const t = document.createElement('div');

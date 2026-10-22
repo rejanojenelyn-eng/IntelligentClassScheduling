@@ -541,12 +541,12 @@
 
 /* ── Toast notification ───────────────────────────────── */
 .rm-toast {
-    position: fixed; bottom: 24px; right: 24px;
+    position: fixed; top: 112px; right: 28px;
     background: #fff; border-radius: 10px;
     padding: 13px 17px; min-width: 280px; max-width: 360px;
     box-shadow: 0 6px 28px rgba(0,0,0,0.14);
     display: flex; align-items: flex-start; gap: 12px;
-    z-index: 4000; transform: translateY(120px); opacity: 0;
+    z-index: 4000; transform: translateY(-16px); opacity: 0;
     transition: transform 0.3s ease, opacity 0.3s ease;
     pointer-events: none;
 }
@@ -962,7 +962,7 @@
 .room-exp-loading-sub  { font-size: .78rem; color: #888; }
 .room-exp-toast {
     display: none; position: fixed;
-    bottom: 24px; right: 24px; z-index: 10100;
+    top: 112px; right: 28px; z-index: 10100;
     background: #fff; border-radius: 10px;
     box-shadow: 0 8px 30px rgba(0,0,0,.18);
     padding: 14px 18px; min-width: 280px;

@@ -185,11 +185,38 @@
         .sl-del-footer { padding:14px 24px 20px; display:flex; gap:10px; justify-content:flex-end; border-top:1px solid #f0f0f0; margin-top:16px; }
         .sl-del-btn-cancel { padding:9px 22px; border-radius:6px; border:1.5px solid #ddd; background:#fff; color:#555; font-weight:800; font-size:.74rem; letter-spacing:.8px; text-transform:uppercase; cursor:pointer; font-family:inherit; transition:border-color .15s; }
         .sl-del-btn-cancel:hover { border-color:#999; }
+        /* Faculty Preview toggle */
+        .sl-switch { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+        .sl-switch input { position:absolute; opacity:0; width:0; height:0; }
+        .sl-slider { position:relative; width:38px; height:21px; border-radius:21px; background:#d6d6d6; transition:background .2s; flex-shrink:0; }
+        .sl-slider::after { content:''; position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:transform .2s; }
+        .sl-switch input:checked + .sl-slider { background:#2fb35a; }
+        .sl-switch input:checked + .sl-slider::after { transform:translateX(17px); }
+        .sl-switch input:disabled + .sl-slider { opacity:.6; }
+        .sl-switch input:focus-visible + .sl-slider { outline:2px solid #8b0000; outline-offset:2px; }
+        .sl-switch-txt { font-size:.68rem; font-weight:800; color:#777; letter-spacing:.5px; min-width:24px; }
+        .sl-switch input:checked ~ .sl-switch-txt { color:#1f7a3d; }
+        /* Faculty Preview for every schedule shown — a real switch on the maroon bar */
+        .sl-rel-all { display:inline-flex; align-items:center; gap:10px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.25);
+            border-radius:6px; padding:6px 12px; cursor:pointer; font-family:inherit; align-self:flex-end; transition:background .15s; }
+        .sl-rel-all:hover:not(:disabled) { background:rgba(255,255,255,.22); }
+        .sl-rel-all:disabled { opacity:.5; cursor:not-allowed; }
+        .sl-rel-all:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+        .sl-rel-all-lbl { color:#fff; font-size:.72rem; font-weight:800; letter-spacing:.4px; white-space:nowrap; }
+        .sl-rel-all-lbl i { margin-right:6px; opacity:.85; }
+        .sl-rel-all-track { position:relative; width:40px; height:22px; border-radius:22px; background:rgba(255,255,255,.28); flex-shrink:0; transition:background .2s; }
+        .sl-rel-all-knob { position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:transform .2s; }
+        .sl-rel-all[aria-checked="true"] .sl-rel-all-track { background:#2fb35a; }
+        .sl-rel-all[aria-checked="true"] .sl-rel-all-knob { transform:translateX(18px); }
+        .sl-rel-all[aria-checked="mixed"] .sl-rel-all-track { background:#e0a12b; }
+        .sl-rel-all[aria-checked="mixed"] .sl-rel-all-knob { transform:translateX(9px); }
+        .sl-rel-all-state { color:#fff; font-size:.7rem; font-weight:900; letter-spacing:.5px; min-width:32px; text-align:left; }
+        .sl-rel-note { font-size:.68rem; font-weight:800; color:#1f5f33; background:#e8f6ec; border-radius:10px; padding:3px 9px; letter-spacing:.3px; }
         .sl-del-btn-confirm { padding:9px 22px; border-radius:6px; border:none; background:#8b0000; color:#fff; font-weight:800; font-size:.74rem; letter-spacing:.8px; text-transform:uppercase; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:7px; transition:background .15s; }
         .sl-del-btn-confirm:hover { background:#a50000; }
         .sl-del-btn-confirm:disabled { background:#ccc; cursor:not-allowed; }
         /* ── Delete toast ── */
-        .sl-toast { position:fixed; bottom:28px; right:28px; padding:12px 20px; border-radius:8px; font-size:.8rem; font-weight:800; display:flex; align-items:center; gap:8px; box-shadow:0 4px 20px rgba(0,0,0,.2); z-index:99999; letter-spacing:.3px; animation:slFadeIn .2s ease; }
+        .sl-toast { position:fixed; top:112px; right:28px; padding:12px 20px; border-radius:8px; font-size:.8rem; font-weight:800; display:flex; align-items:center; gap:8px; box-shadow:0 4px 20px rgba(0,0,0,.2); z-index:99999; letter-spacing:.3px; animation:slFadeIn .2s ease; }
         .sl-toast.success { background:#1a7a2e; color:#fff; }
         .sl-toast.error   { background:#8b0000; color:#fff; }
     </style>
@@ -437,6 +464,13 @@
                 </select>
             </div>
             <div class="sl-filter-right">
+                <button type="button" class="sl-rel-all" id="slRelAll" role="switch" aria-checked="false"
+                        onclick="slReleaseAllToggle()"
+                        title="Faculty Preview for every schedule shown (use the filters to narrow it, e.g. 2nd Semester)">
+                    <span class="sl-rel-all-lbl"><i class="fas fa-eye"></i> FACULTY PREVIEW</span>
+                    <span class="sl-rel-all-track"><span class="sl-rel-all-knob"></span></span>
+                    <span class="sl-rel-all-state" id="slRelAllState">OFF</span>
+                </button>
                 <span class="sl-total-badge" id="slTotalCount">0 SCHEDULES</span>
                 <button class="sl-sort-btn" id="slSortBtn" onclick="toggleSlSort()">
                     <i class="fas fa-sort-alpha-down"></i>&nbsp; SORT: A-Z
@@ -453,11 +487,12 @@
                         <th>ACAD YEAR</th>
                         <th>SEMESTER</th>
                         <th>DATE IMPORTED</th>
+                        <th title="Let faculty see their own subjects of this schedule in My Teaching Assignment before the semester starts">FACULTY PREVIEW</th>
                         <th>ACTION</th>
                     </tr>
                 </thead>
                 <tbody id="slTableBody">
-                    <tr class="sl-empty-row"><td colspan="6">Loading...</td></tr>
+                    <tr class="sl-empty-row"><td colspan="7">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -547,13 +582,32 @@
         renderFilteredSchedList();
     };
 
+    let _slShown = [];
+    // The bar's switch shows the state of every shown schedule that has not started:
+    // on = all released, off = none, mixed = some. Started semesters are already visible.
+    function _syncReleaseAllBtns() {
+        const sw = document.getElementById('slRelAll'), st = document.getElementById('slRelAllState');
+        if (!sw) return;
+        const upcoming = _slShown.filter(s => !s.sem_started);
+        const on = upcoming.filter(s => s.released).length;
+        const state = !upcoming.length ? 'false' : on === upcoming.length ? 'true' : on ? 'mixed' : 'false';
+        sw.setAttribute('aria-checked', state);
+        sw.disabled = !upcoming.length;
+        if (st) st.textContent = !upcoming.length ? '—' : state === 'true' ? 'ON' : state === 'mixed' ? 'SOME' : 'OFF';
+        sw.title = !upcoming.length
+            ? 'Every schedule shown is for a semester that already started — faculty already see them'
+            : `Faculty Preview: ${on} of ${upcoming.length} shown upcoming schedule(s) on. Click to turn ${state === 'true' ? 'all off' : 'all on'}.`;
+    }
+
     function _renderRows(list) {
+        _slShown = list;
+        _syncReleaseAllBtns();
         const totalEl = document.getElementById('slTotalCount');
         if (totalEl) totalEl.textContent = `${list.length} SCHEDULE${list.length !== 1 ? 'S' : ''}`;
         const tbody = document.getElementById('slTableBody');
         if (!tbody) return;
         if (!list.length) {
-            tbody.innerHTML = '<tr class="sl-empty-row"><td colspan="6">No schedule records found.</td></tr>';
+            tbody.innerHTML = '<tr class="sl-empty-row"><td colspan="7">No schedule records found.</td></tr>';
             return;
         }
         tbody.innerHTML = list.map(s => {
@@ -568,6 +622,13 @@
                 <td><span class="sl-acad-year">${_esc(s.acad_year)}</span></td>
                 <td><span class="sl-sem-label">${semLabel}</span></td>
                 <td><span class="sl-date-badge">${_esc(s.date_imported)}</span></td>
+                <td>${s.sem_started
+                    ? `<span class="sl-rel-note" title="The semester has started — faculty already see this schedule">Visible</span>`
+                    : `<label class="sl-switch" title="${s.released ? 'Faculty can see their own subjects of this schedule in My Teaching Assignment' : 'Hidden from faculty until the semester starts'}">
+                        <input type="checkbox" ${s.released ? 'checked' : ''}
+                            onchange='slToggleRelease(this,${JSON.stringify(s.programcode)},${s.yearlevel},${JSON.stringify(s.academicyearid)},${JSON.stringify(s.semestertype)})'>
+                        <span class="sl-slider"></span><span class="sl-switch-txt">${s.released ? 'ON' : 'OFF'}</span>
+                       </label>`}</td>
                 <td>
                     <button class="sl-btn-delete"
                         onclick='slConfirmDelete(${JSON.stringify(s.programcode)},${s.yearlevel},${JSON.stringify(s.academicyearid)},${JSON.stringify(s.semestertype)},${JSON.stringify(s.acad_year)})'
@@ -582,6 +643,90 @@
     function _esc(s) {
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
+
+    /* ── Faculty Preview toggle ── */
+    window.slToggleRelease = async function(cb, prog, yl, ayId, sem) {
+        const on = cb.checked;
+        cb.disabled = true;
+        try {
+            const res = await fetch('/api/schedule/list/release', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ programcode: prog, yearlevel: yl, academicyearid: ayId, semestertype: sem, released: on }),
+            }).then(r => r.json());
+            if (!res.success) throw new Error(res.error || 'Could not save');
+            ALL_SCHEDULES.forEach(s => {
+                if (s.programcode === prog && s.yearlevel === yl && s.academicyearid === ayId && s.semestertype === sem) s.released = on;
+            });
+            const txt = cb.parentElement.querySelector('.sl-switch-txt');
+            if (txt) txt.textContent = on ? 'ON' : 'OFF';
+            _syncReleaseAllBtns();
+            _slShowToast(on
+                ? `Faculty Preview on — ${prog} ${_DEL_YL[yl] || yl} Year faculty can now see their own subjects in My Teaching Assignment`
+                : `Faculty Preview off — ${prog} ${_DEL_YL[yl] || yl} Year is hidden from faculty until the semester starts`, 'success');
+        } catch (e) {
+            cb.checked = !on;
+            _slShowToast('Faculty Preview: ' + e.message, 'error');
+        } finally {
+            cb.disabled = false;
+        }
+    };
+
+    /* ── Faculty Preview for every schedule shown ── */
+    // All on → turn all off; otherwise (off or only some on) → turn all on.
+    window.slReleaseAllToggle = function() {
+        const sw = document.getElementById('slRelAll');
+        if (!sw || sw.disabled) return;
+        slReleaseAll(sw.getAttribute('aria-checked') !== 'true');
+    };
+    window.slReleaseAll = function(on) {
+        const targets = _slShown.filter(s => !s.sem_started && !!s.released !== on);
+        if (!targets.length) return;
+        const n = targets.length;
+        const overlay = document.createElement('div');
+        overlay.className = 'sl-del-overlay';
+        overlay.innerHTML = `
+            <div class="sl-del-dialog" role="dialog" aria-modal="true">
+                <div class="sl-del-hdr"><i class="fas fa-eye"></i>
+                    <span class="sl-del-hdr-title">Faculty Preview — ${on ? 'Turn On' : 'Turn Off'} for All</span></div>
+                <div class="sl-del-body">
+                    <p style="margin:0 0 12px;font-size:.85rem;line-height:1.5;color:#444;">${on
+                        ? `Faculty will see <b>their own subjects</b> of ${n === 1 ? 'this' : 'these'} <b>${n}</b> schedule${n === 1 ? '' : 's'} in My Teaching Assignment before the semester starts. The full Class Schedule (SIS) still shows only once the semester starts.`
+                        : `${n === 1 ? 'This' : 'These'} <b>${n}</b> schedule${n === 1 ? '' : 's'} will be hidden from faculty again until the semester starts.`}</p>
+                    <div class="sl-del-info" style="max-height:180px;overflow-y:auto;">
+                        ${targets.map(s => `<div class="sl-del-info-row"><span class="sl-del-info-label">${_esc(s.programcode)} ${_DEL_YL[s.yearlevel] || s.yearlevel} Yr</span>
+                            <span class="sl-del-info-val">${_DEL_SEM[s.semestertype] || s.semestertype} ${_esc(s.acad_year)}</span></div>`).join('')}
+                    </div>
+                </div>
+                <div class="sl-del-footer">
+                    <button class="sl-del-btn-cancel" id="slRelCancel">Cancel</button>
+                    <button class="sl-del-btn-confirm" id="slRelConfirm"><i class="fas fa-${on ? 'eye' : 'eye-slash'}"></i> ${on ? 'Turn On' : 'Turn Off'} (${n})</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector('#slRelCancel').onclick = close;
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        overlay.querySelector('#slRelConfirm').onclick = async function() {
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+            try {
+                const res = await fetch('/api/schedule/list/release', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ released: on, entries: targets.map(s => ({
+                        programcode: s.programcode, yearlevel: s.yearlevel,
+                        academicyearid: s.academicyearid, semestertype: s.semestertype })) }),
+                }).then(r => r.json());
+                close();
+                if (!res.success) throw new Error(res.error || 'Could not save');
+                targets.forEach(s => { s.released = on; });
+                renderFilteredSchedList();
+                _slShowToast(`Faculty Preview ${on ? 'on' : 'off'} for ${n} schedule${n === 1 ? '' : 's'}`, 'success');
+            } catch (e) {
+                close();
+                _slShowToast('Faculty Preview: ' + e.message, 'error');
+            }
+        };
+    };
 
     /* ── Delete confirmation modal ── */
     const _DEL_SEM = { A: '1st Semester', B: '2nd Semester', C: 'Summer' };
@@ -607,7 +752,7 @@
                 <div class="sl-del-body">
                     <div class="sl-del-warn">
                         <i class="fas fa-exclamation-triangle"></i>
-                        <p>This will permanently delete all schedule sessions and version history for this entry. <strong>This action cannot be undone.</strong></p>
+                        <p>This removes the <strong>current schedule</strong> (Draft and Published) for this entry. Its <strong>Version History is kept</strong>, and each subject keeps its faculty as a pending assignment.</p>
                     </div>
                     <div class="sl-del-info">
                         <div class="sl-del-info-row">

@@ -1114,7 +1114,7 @@
 /* ── SUCCESS TOAST ── */
 .toast {
     position: fixed;
-    top: 20px; right: 20px;
+    top: 112px; right: 28px;
     background: var(--success);
     color: var(--white);
     padding: 12px 20px;

@@ -159,7 +159,7 @@ def test_17_approving_with_a_hard_violation_is_rejected():
 def test_approve_gate_ignores_advisories_and_keeps_its_gates():
     src = inspect.getsource(app_module.api_approve_schedule)
     assert "v.get('severity') != 'warning'" in src                  # SC9/HC_SPEC never blocks
-    assert src.count('_not_approvable(') == 3                        # payload incomplete, hard, saved-draft incomplete
+    assert src.count('_not_approvable(') == 4                        # payload incomplete, hard, hard again after the semester lock, saved-draft incomplete
 
 
 # ── Draft gate is not the approval gate ─────────────────────────────────────

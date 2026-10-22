@@ -258,7 +258,7 @@ def test_every_rule_gets_a_default_affected_components_via_label_violation():
 def _make_scheduler_with_fake_history(monkeypatch, hist_rows, violations_to_return):
     sch = IntelligentScheduler()
 
-    def _fake_fetch_data(program, year_level, term, curriculum):
+    def _fake_fetch_data(program, year_level, term, curriculum, curriculum_mode="regular"):
         return (
             [{"subjectcode": "IT101"}],           # subjects (non-empty)
             [{"employeenumber": "E001"}],          # faculty_list (non-empty)
@@ -337,7 +337,7 @@ def test_use_historical_does_not_crash_when_no_source_schedule_exists(monkeypatc
     # caller — see the implementation report).
     sch = IntelligentScheduler()
 
-    def _fake_fetch_data(program, year_level, term, curriculum):
+    def _fake_fetch_data(program, year_level, term, curriculum, curriculum_mode="regular"):
         return ([], [], {}, [])  # no subjects -> GENERATION_ERROR, by design
     monkeypatch.setattr(sch, "fetch_data", _fake_fetch_data)
     monkeypatch.setattr(sch, "fetch_historical_schedule", lambda *a, **kw: None)

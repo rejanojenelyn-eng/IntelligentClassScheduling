@@ -74,6 +74,7 @@ import random
 import threading
 import re
 import copy
+import functools
 import itertools
 from dataclasses import dataclass, field
 from datetime import time
@@ -226,6 +227,9 @@ _SUBJ_SPEC_MAP = [
 _ALL_RESTRICTED_SPECS: set = {sp for _, specs in _SUBJ_SPEC_MAP for sp in specs}
 
 
+# Pure function of two strings over the fixed map above; the generator asks it tens of
+# thousands of times per run for the same few (specialization, subject) pairs.
+@functools.lru_cache(maxsize=4096)
 def _spec_matches_subject(spec_name: str, subject_code: str) -> bool:
     """Return True if the faculty specialization is compatible with the subject code.
 
@@ -6642,6 +6646,22 @@ class IntelligentScheduler:
             # records an already-computed value; does not affect any GA decision.
             initial_fitness = None
 
+            # The elites (35% of the population) carry over unchanged and crossover often
+            # rebuilds a parent exactly, so the same schedule used to be fully re-validated
+            # generation after generation. _fitness depends only on the genes (faculty_map,
+            # existing_load, rooms and config are fixed for this run, and validation never
+            # writes into a gene), so a schedule is scored once per run.
+            _fitness_cache = {}
+
+            def _scored_fitness(ind):
+                key = tuple(repr(sorted(g.items(), key=lambda kv: kv[0])) for g in ind)
+                hit = _fitness_cache.get(key)
+                if hit is None:
+                    hit = _fitness_cache[key] = self._fitness(ind, faculty_map,
+                                                              existing_load=existing_load,
+                                                              rooms_by_id=rooms_by_id)
+                return hit
+
             for attempt in range(MAX_ATTEMPTS):
                 # Attempt 0: seed half the population with historical preferences.
                 # Later attempts: progressively reduce seeding to encourage diversity
@@ -6678,9 +6698,7 @@ class IntelligentScheduler:
                 for gen in range(GENERATIONS):
                     scored = []
                     for ind in population:
-                        score, n_violations = self._fitness(ind, faculty_map,
-                                                             existing_load=existing_load,
-                                                             rooms_by_id=rooms_by_id)
+                        score, n_violations = _scored_fitness(ind)
                         scored.append((score, n_violations, ind))
 
                         if self._is_better_candidate(score, n_violations, best_score, least_violations):

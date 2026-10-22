@@ -15,6 +15,7 @@ function showLoading(firstMsg) {
     ov.style.display = 'flex';
     _loaStep = 0;
     _setLoaStep(firstMsg || _LOA_STEPS[0], _LOA_PROGRESS[0]);
+    if (_loaTimer) clearInterval(_loaTimer);
     _loaTimer = setInterval(() => {
         _loaStep = Math.min(_loaStep + 1, _LOA_STEPS.length - 1);
         _setLoaStep(_LOA_STEPS[_loaStep], _LOA_PROGRESS[_loaStep]);

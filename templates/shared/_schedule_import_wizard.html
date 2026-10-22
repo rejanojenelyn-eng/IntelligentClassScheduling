@@ -1740,6 +1740,7 @@
     function _startLoad(steps) {
         steps = steps || STEPS_ANALYZE;
         let i = 0; _setLoad(steps[0], PCTS[0]);
+        clearInterval(_loadTmr);
         _loadTmr = setInterval(() => {
             i = Math.min(i + 1, steps.length - 1);
             _setLoad(steps[i], PCTS[i]);

@@ -872,7 +872,7 @@ function _showOverlayRestoreModal(title, message, primaryLabel, cancelLabel, sho
 
 function _showOverlayToast(msg) {
     const toast = document.createElement('div');
-    toast.style.cssText = 'position:fixed;bottom:28px;right:28px;background:#1a7a2e;color:#fff;padding:12px 20px;border-radius:8px;font-size:0.8rem;font-weight:800;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:99999;letter-spacing:0.3px;';
+    toast.style.cssText = 'position:fixed;top:112px;right:28px;background:#1a7a2e;color:#fff;padding:12px 20px;border-radius:8px;font-size:0.8rem;font-weight:800;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:99999;letter-spacing:0.3px;';
     toast.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);

@@ -113,7 +113,7 @@ class _ScriptedSolver:
         self.b_needs, self.calls = set(b_needs), []
 
     def __call__(self, program, year_level, term, curriculum, use_historical=False,
-                 acad_year_id='', locked_sessions=None, seed=None, section_id=None):
+                 acad_year_id='', locked_sessions=None, seed=None, section_id=None, curriculum_mode='regular'):
         self.calls.append(copy.deepcopy(locked_sessions))
         out = []
         for ls in locked_sessions:
@@ -136,7 +136,7 @@ def _regen(monkeypatch, solver, rows):
     monkeypatch.setattr(app_module, '_check_cross_schedule_conflicts', lambda *a, **k: ([], 0))
     payload = [app_module._serialize_class(r) for r in rows]
     return app_module.app.test_client().post('/api/schedule/generate', json={
-        'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627',
+        'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627', 'curriculum': '2022-2023',
         'locked_sessions': payload}).get_json()
 
 

@@ -1,7 +1,19 @@
 import os
 import re
+import sys
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response, make_response
+
+# Log lines use characters like '→' and '–'. On Windows, when the server's output is
+# redirected (a log file, a service, a pipe) it is cp1252, and print() of such a line
+# raised UnicodeEncodeError inside the request — e.g. a generation that repaired a room
+# failed with "'charmap' codec can't encode character". Never fail on a log line.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors='replace')
+    except (AttributeError, ValueError):
+        pass
+
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response, make_response, g
 import psycopg2.errors
 import makeup_requests as _makeup
 import password_change as _pwchange
@@ -28,6 +40,7 @@ from docx_curriculum_parser import parse_curriculum_docx
 from pdf_faculty_parser import parse_faculty_pdf
 from docx_faculty_parser import parse_faculty_docx
 import faculty_load
+import merge_groups
 import threading
 
 def _friendly_faculty_db_error(e):
@@ -164,6 +177,47 @@ def _ensure_original_status_col(cur=None):
 
 def _ensure_schedule_version_empnum_col(cur=None):
     _ensure_schedule_version_schema()
+
+
+# Tables created lazily by request code (faculty release, faculty assignment, curriculum
+# lock, HC17 policy / opt-out). Their DDL used to run on the request's own cursor on EVERY
+# call: ALTER TABLE takes an ACCESS EXCLUSIVE lock held until that request commits, so
+# concurrent requests queued behind one another (the curriculum-lock one also rewrote
+# every row each time). Now applied once per process on a dedicated connection, like
+# _ensure_schedule_version_schema; a failure is logged and retried on the next call.
+_lazy_tables_ensured = set()
+
+
+def _ensure_lazy_table(name, statements):
+    if name in _lazy_tables_ensured:
+        return True
+    with _SCHEMA_LOCK:
+        if name in _lazy_tables_ensured:
+            return True
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            for sql in statements:
+                cur.execute(sql)
+            conn.commit()
+            _lazy_tables_ensured.add(name)
+            return True
+        except Exception as e:
+            try:
+                if conn is not None:
+                    conn.rollback()
+            except Exception:
+                pass
+            print(f'[schema] {name} not ensured yet: {e}')
+            return False
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
 
 def _friendly_db_error(e):
     """Map a low-level DB/psycopg2 error to a message safe to show the Academic
@@ -607,11 +661,11 @@ def _no_store_pages(resp):
 # Every signed-in page checks in once a minute (static/js/session_guard.js), so:
 SESSION_CLOSED_LIMIT = timedelta(minutes=3)    # no open page has checked in → tabs were closed
 SESSION_IDLE_LIMIT   = timedelta(minutes=30)   # pages open but nobody has used them
-# Each loaded page also registers itself and sends a beacon when it closes. Once a
-# login has had NO open page for this long, the tabs/browser were closed: end it now
-# instead of waiting for SESSION_CLOSED_LIMIT. Navigating between pages is safe — the
-# next page's request reaches the server before the old page reports itself closed,
-# and the new page registers within milliseconds.
+# Each page is registered as open the moment the server sends it (_inject_session_guard)
+# and sends a beacon when it closes. Once a login has had NO open page for this long, the
+# tabs/browser were closed: end it now instead of waiting for SESSION_CLOSED_LIMIT.
+# Navigating between pages is safe — the next page is registered before the old page
+# reports itself closed, so there is no moment with no open page.
 SESSION_NO_PAGE_GRACE = timedelta(seconds=10)
 _SESSION_PUBLIC_ENDPOINTS = ('static', 'index', 'login', 'logout', 'favicon')
 
@@ -673,10 +727,25 @@ def _expire_stale_session():
         return redirect(url_for('login'))
     if request.endpoint in _SESSION_PUBLIC_ENDPOINTS or request.endpoint == 'session_page_closed':
         return   # neither the landing page nor a closing page is a signed-in page being open
-    session['last_seen'] = now
+    # Stamped when the response is sent (_stamp_session_seen), not now: the cookie a
+    # request returns carries the session as of its END. Stamped here, a long request
+    # (e.g. a 4-minute schedule generation) answered with the time it STARTED, overwrote
+    # the fresher cookie the heartbeats set meanwhile, and the next request found
+    # last_seen older than SESSION_CLOSED_LIMIT — logging the user out mid-work.
+    g.session_seen = True
     # A heartbeat only counts as activity when the user actually did something.
-    if request.endpoint != 'session_heartbeat' or (request.get_json(silent=True) or {}).get('active'):
-        session['last_active'] = now
+    g.session_active = (request.endpoint != 'session_heartbeat'
+                        or bool((request.get_json(silent=True) or {}).get('active')))
+
+
+@app.after_request
+def _stamp_session_seen(resp):
+    if g.get('session_seen') and session.get('loggedin'):   # not if the view logged out
+        now = datetime.now().timestamp()
+        session['last_seen'] = now
+        if g.get('session_active'):
+            session['last_active'] = now
+    return resp
 
 
 @app.route('/api/session/heartbeat', methods=['POST'])
@@ -717,7 +786,20 @@ def _inject_session_guard(resp):
         html = resp.get_data(as_text=True)
         cut = html.lower().rfind('</body>')
         if cut != -1:
-            tag = f'<script src="{url_for("static", filename="js/session_guard.js")}"></script>'
+            # Register the page as open NOW, before the browser even has it. Left to the
+            # page's first heartbeat, every navigation had a gap — old page already
+            # reported closed, new one not yet registered — and any request in that gap
+            # (e.g. Program Management's load-time /admin/settings/* fetches, or a slow
+            # load past SESSION_NO_PAGE_GRACE) ended the session as "all tabs closed".
+            # A page that never loads is pruned after SESSION_CLOSED_LIMIT like any other.
+            page_id = uuid.uuid4().hex[:16]
+            if session.get('sid'):
+                with _open_pages_lock:
+                    entry = _open_pages.setdefault(session['sid'], {'pages': {}, 'closed_at': None})
+                    entry['pages'][page_id] = datetime.now().timestamp()
+                    entry['closed_at'] = None
+            tag = (f'<script src="{url_for("static", filename="js/session_guard.js")}"'
+                   f' data-page="{page_id}"></script>')
             resp.set_data(html[:cut] + tag + html[cut:])
     return resp
 
@@ -1491,7 +1573,12 @@ def _ensure_login_log_table():
 def _runtime_schema_ready():
     return (_schedule_version_schema_ready() and _local_tables_ensured
             and _request_tables_ensured and _cohort_entry_year_ensured
-            and _section_bridging_ensured and _login_log_ensured)
+            and _section_bridging_ensured and _login_log_ensured
+            and _lazy_tables_ensured >= _LAZY_TABLE_NAMES)
+
+
+_LAZY_TABLE_NAMES = {'schedule_faculty_release', 'subject_faculty_assignment', 'section_curriculum_lock',
+                     'merge_load_policy', 'merge_load_policy_group_optout'}
 
 
 def _ensure_runtime_schema():
@@ -1504,7 +1591,10 @@ def _ensure_runtime_schema():
     """
     _ensure_schedule_version_schema()
     for _helper in (_ensure_local_tables, _ensure_request_tables, _ensure_cohort_entry_year_decoupled,
-                    _ensure_section_bridging_column, _ensure_login_log_table):
+                    _ensure_section_bridging_column, _ensure_login_log_table,
+                    _ensure_faculty_release_table, _ensure_faculty_assignment_table,
+                    _ensure_curriculum_lock_table, _ensure_merge_load_policy_table,
+                    _ensure_hc17_optout_table):
         try:
             _helper()
         except Exception as e:
@@ -4878,6 +4968,31 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
 
     upserted = 0
 
+    # Load the programs' Regular curricula and existing program_yearlevel rows once,
+    # instead of ~5 queries per (program, AY, year level). This runs on every Sections
+    # dropdown and on many admin pages; the per-row loop (plus an UPDATE of every row,
+    # changed or not) made those requests slow and locked program_yearlevel rows.
+    _codes = sorted({str(p['programcode']).upper() for p in programs})
+    cur.execute("""
+        SELECT UPPER(programcode) AS pc, curriculumid,
+               CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) AS start_yr
+        FROM curriculum
+        WHERE UPPER(programcode) = ANY(%s) AND curriculumtype = 'REGULAR'
+        ORDER BY curriculumyear DESC
+    """, (_codes,))
+    _curricula = {}
+    for r in cur.fetchall():
+        _curricula.setdefault(r['pc'], []).append(r)
+    cur.execute("""
+        SELECT programcode, academicyearid, startacademicyear, yearlevel, curriculumid, isactive
+        FROM program_yearlevel WHERE UPPER(programcode) = ANY(%s)
+    """, (_codes,))
+    _existing, _cohort_active = {}, {}
+    for r in cur.fetchall():
+        _existing[(r['programcode'], r['academicyearid'], r['startacademicyear'], r['yearlevel'])] = r['curriculumid']
+        _cohort_active.setdefault((str(r['programcode']).upper(), r['startacademicyear'], r['yearlevel']),
+                                  r['isactive'])
+
     for prog_row in programs:
         prog_code = prog_row['programcode']
         num_years = int(prog_row['numyearlevel'])
@@ -4894,15 +5009,18 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
 
                 # Best curriculum: latest Regular whose curriculumyear start <= cohort's entry year.
                 # Bridging curricula are never auto-assigned — they only supplement the guide display.
-                cur.execute("""
-                    SELECT curriculumid FROM curriculum
-                    WHERE UPPER(programcode) = UPPER(%s)
-                      AND curriculumtype = 'REGULAR'
-                      AND CAST(SUBSTRING(curriculumyear, 1, 4) AS INT) <= %s
-                    ORDER BY curriculumyear DESC LIMIT 1
-                """, (prog_code, start_yr))
-                best = cur.fetchone()
-                best_curr_id = best['curriculumid'] if best else None
+                best_curr_id = next((c['curriculumid'] for c in _curricula.get(prog_code.upper(), [])
+                                     if c['start_yr'] <= start_yr), None)
+
+                # No cohort curriculum: program_yearlevel.curriculumid is NOT NULL and Postgres
+                # checks it before ON CONFLICT, so the upsert below would always fail — skip it.
+                if best_curr_id is None:
+                    continue
+                # Existing row already on that curriculum: the upsert would change nothing.
+                key = (prog_code.upper(), ay_id, startacademicyear, yl)
+                if _existing.get(key) == best_curr_id:
+                    upserted += 1
+                    continue
 
                 # Default isactive for a BRAND NEW row only. Year 1 (new intake) always
                 # starts active. Later years inherit the same cohort's status from their
@@ -4912,15 +5030,9 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
                 # (brand new program), fall back to active.
                 default_active = True
                 if yl > 1:
-                    cur.execute("""
-                        SELECT isactive FROM program_yearlevel
-                        WHERE UPPER(programcode) = UPPER(%s)
-                          AND startacademicyear = %s
-                          AND yearlevel = %s
-                    """, (prog_code, startacademicyear, yl - 1))
-                    prev_row = cur.fetchone()
-                    if prev_row is not None:
-                        default_active = bool(prev_row['isactive'])
+                    prev_active = _cohort_active.get((prog_code.upper(), startacademicyear, yl - 1))
+                    if prev_active is not None:
+                        default_active = bool(prev_active)
 
                 # Upsert — COALESCE preserves a previously-set curriculumid when no cohort
                 # curriculum is found (avoids overwriting a manual assignment with NULL).
@@ -4940,6 +5052,9 @@ def _auto_setup_program_yearlevels(cur, prog_filter=None, extra_ay_id=None):
                     """, (prog_code.upper(), ay_id, startacademicyear, yl, best_curr_id, default_active))
                     cur.execute("RELEASE SAVEPOINT pyl_auto")
                     upserted += 1
+                    if key not in _existing:
+                        _cohort_active.setdefault((prog_code.upper(), startacademicyear, yl), default_active)
+                    _existing[key] = best_curr_id
                 except Exception:
                     cur.execute("ROLLBACK TO SAVEPOINT pyl_auto")
                     continue
@@ -5421,7 +5536,9 @@ def schedule():
             ay.academicyearid,
             ay.yearstart || '-' || ay.yearend AS acad_year,
             sem.semestertype,
-            TO_CHAR(MAX(sv.datecreated), 'MM/DD/YYYY') AS date_imported
+            TO_CHAR(MAX(sv.datecreated), 'MM/DD/YYYY') AS date_imported,
+            BOOL_OR(rel.programcode IS NOT NULL) AS released,
+            BOOL_OR(sem.isactive OR (sem.semstartdate IS NOT NULL AND sem.semstartdate <= CURRENT_DATE)) AS sem_started
         FROM schedule_version sv
         JOIN schedule s ON sv.scheduleid = s.scheduleid
         JOIN sections sec ON s.sectionid = sec.sectionid
@@ -5429,9 +5546,15 @@ def schedule():
         LEFT JOIN programs p ON pyl.programcode = p.programcode
         JOIN semester sem ON s.semesterid = sem.semesterid
         JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
+        LEFT JOIN schedule_faculty_release rel
+          ON UPPER(rel.programcode) = UPPER(pyl.programcode) AND rel.yearlevel = pyl.yearlevel
+         AND rel.semesterid = sem.semesterid
         GROUP BY p.programname, pyl.programcode, pyl.yearlevel, ay.academicyearid, ay.yearstart, ay.yearend, sem.semestertype
+        -- An entry whose current schedule was deleted keeps only its history (Archive).
+        HAVING BOOL_OR(sv.status IN ('Draft', 'Published'))
         ORDER BY MAX(sv.datecreated) DESC
     """
+    _ensure_faculty_release_table()
     status_list = query_db(status_query)
     import json as _json
     status_list_json = _json.dumps([
@@ -5443,6 +5566,8 @@ def schedule():
             'acad_year':     r['acad_year']     or '',
             'semestertype':  r['semestertype']  or '',
             'date_imported': r['date_imported'] or 'N/A',
+            'released':      bool(r.get('released')),
+            'sem_started':   bool(r.get('sem_started')),
         }
         for r in (status_list or [])
     ])
@@ -5483,6 +5608,136 @@ def schedule():
                            sem_json=sem_json,
                            faculty_json=faculty_json)
 
+# ── Faculty Preview (Schedule List toggle) ─────────────────────────────────────
+# Before a semester starts, faculty do not see its schedule anywhere (their pages show
+# the active semester). Turning "Faculty Preview" on for a Schedule List entry
+# (program + year level + semester) lets each faculty member see THEIR OWN subjects of
+# it in My Teaching Assignment ahead of time. The Class Schedule (SIS) is unchanged:
+# the whole schedule still shows only once the semester is active.
+def _ensure_faculty_release_table(cur=None):   # cur kept for call sites; not used
+    _ensure_lazy_table('schedule_faculty_release', ("""
+        CREATE TABLE IF NOT EXISTS public.schedule_faculty_release (
+            programcode  VARCHAR(20) NOT NULL,
+            yearlevel    INTEGER     NOT NULL,
+            semesterid   INTEGER     NOT NULL,
+            released_by  VARCHAR(50),
+            released_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (programcode, yearlevel, semesterid)
+        )
+    """,))
+
+
+def _semester_started(cur, semester_id):
+    cur.execute("SELECT isactive, semstartdate FROM semester WHERE semesterid = %s", (semester_id,))
+    r = cur.fetchone()
+    if not r:
+        return True
+    r = dict(r) if not isinstance(r, dict) else r
+    return bool(r.get('isactive')) or (r.get('semstartdate') is not None and r['semstartdate'] <= date.today())
+
+
+def _faculty_preview_semester(cur, ay_id, sem):
+    """For a Faculty user asking about a semester that has not started yet: that
+    semester's id (only released Schedule List entries may be shown). Otherwise None."""
+    if session.get('role') != 'Faculty' or not ay_id or not sem:
+        return None
+    cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                (ay_id, sem))
+    r = cur.fetchone()
+    if not r:
+        return None
+    sem_id = (dict(r) if not isinstance(r, dict) else r)['semesterid']
+    return None if _semester_started(cur, sem_id) else sem_id
+
+
+_RELEASED_SECTION_SQL = """EXISTS (
+    SELECT 1 FROM public.schedule_faculty_release rel
+    JOIN public.program_yearlevel pyl_rel
+      ON UPPER(pyl_rel.programcode) = UPPER(rel.programcode) AND pyl_rel.yearlevel = rel.yearlevel
+    JOIN public.sections sec_rel ON sec_rel.programyearlevelid = pyl_rel.programyearlevelid
+    WHERE rel.semesterid = {sem_col} AND sec_rel.sectionid = {sec_col}
+)"""
+
+
+def _released_section_ids(cur, semester_id):
+    _ensure_faculty_release_table(cur)
+    cur.execute("""
+        SELECT DISTINCT sec.sectionid
+        FROM public.schedule_faculty_release rel
+        JOIN public.program_yearlevel pyl
+          ON UPPER(pyl.programcode) = UPPER(rel.programcode) AND pyl.yearlevel = rel.yearlevel
+        JOIN public.sections sec ON sec.programyearlevelid = pyl.programyearlevelid
+        WHERE rel.semesterid = %s
+    """, (semester_id,))
+    return {(dict(r) if not isinstance(r, dict) else r)['sectionid'] for r in cur.fetchall() or []}
+
+
+@app.route('/api/schedule/list/release', methods=['POST'])
+def api_schedule_list_release():
+    if session.get('role') != 'Academic Head':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    released = bool(data.get('released'))
+    # One entry, or many at once ("entries": [...]) for the list's turn-all-on/off.
+    raw = data.get('entries') if isinstance(data.get('entries'), list) else [data]
+    entries = []
+    for e in raw:
+        e = e or {}
+        try:
+            yl = int(e.get('yearlevel'))
+        except (TypeError, ValueError):
+            yl = None
+        prog = (e.get('programcode') or '').strip().upper()
+        ay_id = (e.get('academicyearid') or '').strip()
+        sem = (e.get('semestertype') or '').strip()
+        if not (prog and yl and ay_id and sem):
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+        entries.append((prog, yl, ay_id, sem))
+    if not entries:
+        return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_faculty_release_table(cur)
+        who = str(_session_employee_number() or session.get('username'))
+        changed = []
+        for prog, yl, ay_id, sem in entries:
+            cur.execute("SELECT semesterid FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1",
+                        (ay_id, sem))
+            row = cur.fetchone()
+            if not row:
+                conn.rollback()
+                return jsonify({'success': False, 'error': f'Semester not found ({sem} {ay_id})'}), 404
+            if _semester_started(cur, row['semesterid']):
+                continue        # already visible to faculty — nothing to release
+            if released:
+                cur.execute("""
+                    INSERT INTO public.schedule_faculty_release (programcode, yearlevel, semesterid, released_by)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (programcode, yearlevel, semesterid)
+                    DO UPDATE SET released_by = EXCLUDED.released_by, released_at = NOW()
+                """, (prog, yl, row['semesterid'], who))
+            else:
+                cur.execute("""DELETE FROM public.schedule_faculty_release
+                               WHERE programcode = %s AND yearlevel = %s AND semesterid = %s""",
+                            (prog, yl, row['semesterid']))
+            changed.append(f"{prog} Year {yl} — {sem} {ay_id}")
+        conn.commit()
+        if changed:
+            write_activity_log(
+                "Faculty Preview " + ("On" if released else "Off"),
+                (f"{changed[0]}" if len(changed) == 1 else f"{len(changed)} schedules ({', '.join(changed[:5])}"
+                 + (', …' if len(changed) > 5 else '') + ")")
+                + (": faculty can now see their own subjects in Teaching Assignment" if released
+                   else ": hidden from faculty until the semester starts"),
+                category='schedule', color=_LOG_COLORS.get('schedule', 'green'))
+        return jsonify({'success': True, 'released': released, 'changed': len(changed)})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
 @app.route('/api/schedule/list/delete', methods=['POST'])
 def api_schedule_list_delete():
     if session.get('role') != 'Academic Head':
@@ -5507,27 +5762,55 @@ def api_schedule_list_delete():
             cur.close(); conn.close()
             return jsonify({'success': False, 'error': 'Semester not found'}), 404
         sem_id = sem_row['semesterid']
+        # Deleting a Schedule List entry removes only what is CURRENTLY scheduled (its
+        # Draft / Published versions are archived); the Version History stays. Nothing is
+        # hard-deleted any more.
+        _lock_official_semester(cur, sem_id)
         cur.execute("""
-            SELECT s.scheduleid FROM schedule s
+            SELECT sv.versionid, s.sectionid FROM schedule_version sv
+            JOIN schedule s ON s.scheduleid = sv.scheduleid
             JOIN sections sec ON s.sectionid = sec.sectionid
             JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.yearlevel = %s AND s.semesterid = %s
+              AND sv.status IN ('Draft', 'Published')
+            FOR UPDATE OF sv
         """, (programcode, yearlevel, sem_id))
-        sched_ids = [r['scheduleid'] for r in cur.fetchall()]
-        if not sched_ids:
-            cur.close(); conn.close()
-            return jsonify({'success': False, 'error': 'No schedule records found for this combination'}), 404
-        blockers = _schedule_delete_blockers(cur, sched_ids)
-        if blockers:
+        live = cur.fetchall()
+        if not live:
             conn.rollback(); cur.close(); conn.close()
-            return jsonify({'success': False, 'code': 'SCHEDULE_HISTORY_REFERENCED',
-                            'error': _schedule_delete_blocked_message(blockers),
-                            'references': blockers}), 409
-        cur.execute("DELETE FROM schedule_version WHERE scheduleid = ANY(%s)", (sched_ids,))
-        cur.execute("DELETE FROM schedule WHERE scheduleid = ANY(%s)", (sched_ids,))
+            return jsonify({'success': False, 'error': 'Nothing is currently scheduled for this entry.'}), 404
+        vids = [r['versionid'] for r in live]
+        section_ids = sorted({r['sectionid'] for r in live if r['sectionid']})
+        cur.execute("UPDATE schedule_version SET status = 'Archive' WHERE versionid = ANY(%s)", (vids,))
+        # Local Arrangements override meetings of the Official schedule just removed.
+        _ensure_local_tables()
+        cur.execute("""
+            UPDATE public.local_arrangement
+            SET status = 'Archived', is_active = FALSE,
+                archive_reason = 'Official schedule deleted from the Schedule List',
+                archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE semesterid = %s AND sectionid = ANY(%s) AND status IN ('Draft', 'Published')
+        """, (sem_id, section_ids))
+        archived_local = cur.rowcount
+        # Only the schedule goes: each subject keeps its faculty, shown as pending.
+        for _vid in vids:
+            cur.execute("SAVEPOINT keep_faculty")
+            try:
+                _keep_faculty_after_schedule_delete(cur, int(_vid))
+                cur.execute("RELEASE SAVEPOINT keep_faculty")
+            except Exception as _kf:
+                cur.execute("ROLLBACK TO SAVEPOINT keep_faculty")
+                print(f"[schedule list delete] faculty not kept for version {_vid}: {_kf}")
+        _sync_mergedclass_for_semester(cur, sem_id)
         conn.commit()
         cur.close(); conn.close()
-        return jsonify({'success': True, 'deleted': len(sched_ids)})
+        write_activity_log(
+            "Deleted Schedule",
+            f"{programcode} Year {yearlevel} — {semestertype} {academicyearid}: current schedule removed "
+            f"({len(vids)} version(s) archived; Version History kept)",
+            category='schedule', color=_LOG_COLORS.get('schedule', 'green'))
+        return jsonify({'success': True, 'archived_versions': len(vids),
+                        'archived_local_arrangements': archived_local})
     except Exception as e:
         if conn:
             conn.rollback()
@@ -17548,6 +17831,16 @@ def api_get_faculty_schedule():
             WHERE academicyearid = %s AND semestertype = %s LIMIT 1
         )""")
         params += [ay_id, semester]
+        # A semester that has not started: a faculty member sees only Schedule List
+        # entries released for Faculty Preview.
+        if session.get('role') == 'Faculty':
+            _ensure_faculty_release_table()
+            _pv_conn = get_db_connection(); _pv_cur = _pv_conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                if _faculty_preview_semester(_pv_cur, ay_id, semester):
+                    filters.append(_RELEASED_SECTION_SQL.format(sem_col='sc.semesterid', sec_col='sc.sectionid'))
+            finally:
+                _pv_cur.close(); _pv_conn.close()
 
     if program:
         filters.append("UPPER(pyl.programcode) = UPPER(%s)")
@@ -18946,8 +19239,8 @@ def _api_manual_faculty_load_impl():
 # button but have not yet been backed by saved schedule sessions.
 # Once sessions are saved (save_draft), this record is cleaned up automatically.
 
-def _ensure_faculty_assignment_table(cur):
-    cur.execute("""
+def _ensure_faculty_assignment_table(cur=None):   # cur kept for call sites; not used
+    _ensure_lazy_table('subject_faculty_assignment', ("""
         CREATE TABLE IF NOT EXISTS public.subject_faculty_assignment (
             id           SERIAL PRIMARY KEY,
             programcode  VARCHAR(20)  NOT NULL,
@@ -18958,11 +19251,11 @@ def _ensure_faculty_assignment_table(cur):
             createdat    TIMESTAMP    DEFAULT NOW(),
             UNIQUE (programcode, yearlevel, semesterid, subjectcode)
         )
-    """)
+    """,
     # sectionid: added for the per-section curriculum lock feature (see
     # _ensure_curriculum_lock_table) — nullable so existing rows / older callers that don't
     # pass a section stay valid; not added to the UNIQUE key so existing scoping is unchanged.
-    cur.execute("ALTER TABLE public.subject_faculty_assignment ADD COLUMN IF NOT EXISTS sectionid INTEGER")
+    "ALTER TABLE public.subject_faculty_assignment ADD COLUMN IF NOT EXISTS sectionid INTEGER"))
 
 def _drop_superseded_faculty_reservations(cur, sem_id, emp_num=None):
     """A reservation ("Assign Faculty", no schedule yet) is stale once its subject has a
@@ -19001,8 +19294,8 @@ def _drop_superseded_faculty_reservations(cur, sem_id, emp_num=None):
 # One row per (section, semester); first assignment wins (ON CONFLICT DO NOTHING at the insert
 # site) and the row is treated as authoritative until reconciliation finds nothing left backing
 # it (see api_manual_curriculum_lock), at which point it's cleared automatically.
-def _ensure_curriculum_lock_table(cur):
-    cur.execute("""
+def _ensure_curriculum_lock_table(cur=None):   # cur kept for call sites; not used
+    _ensure_lazy_table('section_curriculum_lock', ("""
         CREATE TABLE IF NOT EXISTS public.section_curriculum_lock (
             sectionid       INTEGER      NOT NULL,
             semesterid      INTEGER      NOT NULL,
@@ -19010,28 +19303,31 @@ def _ensure_curriculum_lock_table(cur):
             locked_at       TIMESTAMP    DEFAULT NOW(),
             PRIMARY KEY (sectionid, semesterid)
         )
-    """)
+    """,
     # Upgrade path: widen an older VARCHAR(10)/lowercase-default table (from before the
     # ASDBv11 enum-style convention) and normalize any 'regular'/'bridging' rows it wrote.
-    cur.execute("ALTER TABLE public.section_curriculum_lock ALTER COLUMN curriculum_mode TYPE VARCHAR(20)")
-    cur.execute("ALTER TABLE public.section_curriculum_lock ALTER COLUMN curriculum_mode SET DEFAULT 'REGULAR'")
-    cur.execute("""
+    # Only rows that actually change are touched.
+    "ALTER TABLE public.section_curriculum_lock ALTER COLUMN curriculum_mode TYPE VARCHAR(20)",
+    "ALTER TABLE public.section_curriculum_lock ALTER COLUMN curriculum_mode SET DEFAULT 'REGULAR'",
+    """
         UPDATE public.section_curriculum_lock
         SET curriculum_mode = 'WITH_BRIDGING'
         WHERE UPPER(curriculum_mode) IN ('BRIDGING', 'WITH_BRIDGING')
-    """)
-    cur.execute("""
+          AND curriculum_mode IS DISTINCT FROM 'WITH_BRIDGING'
+    """,
+    """
         UPDATE public.section_curriculum_lock
         SET curriculum_mode = 'REGULAR'
         WHERE curriculum_mode IS DISTINCT FROM 'WITH_BRIDGING'
-    """)
-    cur.execute("""
+          AND curriculum_mode IS DISTINCT FROM 'REGULAR'
+    """,
+    """
         DO $$ BEGIN
             ALTER TABLE public.section_curriculum_lock
                 ADD CONSTRAINT chk_section_curriculum_mode
                 CHECK (curriculum_mode IN ('REGULAR', 'WITH_BRIDGING'));
         EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-    """)
+    """))
 
 
 def _current_curriculum_lock(cur, section_id, sem_id):
@@ -19201,8 +19497,8 @@ def _lock_section_curriculum(cur, ctx, section_id, sem_id):
 # _subject_load_info and the merge-collapse block in api_faculty_teaching_assignments) —
 # the rule only decides WHETHER a given number of merged sections counts as "merged for
 # load purposes", never what to credit.
-def _ensure_merge_load_policy_table(cur):
-    cur.execute("""
+def _ensure_merge_load_policy_table(cur=None):   # cur kept for call sites; not used
+    _ensure_lazy_table('merge_load_policy', ("""
         CREATE TABLE IF NOT EXISTS public.merge_load_policy (
             policyid     SERIAL PRIMARY KEY,
             subjectcode  VARCHAR(50)   NOT NULL,
@@ -19210,11 +19506,11 @@ def _ensure_merge_load_policy_table(cur):
             max_sections INTEGER       NOT NULL,
             created_at   TIMESTAMP     DEFAULT NOW()
         )
-    """)
+    """,
     # Migration for installs created before manual equiv_units/equiv_hours entry was
     # removed in favor of always deriving from the subject's own record.
-    cur.execute("ALTER TABLE public.merge_load_policy DROP COLUMN IF EXISTS equiv_units")
-    cur.execute("ALTER TABLE public.merge_load_policy DROP COLUMN IF EXISTS equiv_hours")
+    "ALTER TABLE public.merge_load_policy DROP COLUMN IF EXISTS equiv_units",
+    "ALTER TABLE public.merge_load_policy DROP COLUMN IF EXISTS equiv_hours"))
 
 def _merge_policy_ranges_overlap(a_min, a_max, b_min, b_max):
     return a_min <= b_max and b_min <= a_max
@@ -19423,9 +19719,9 @@ def api_update_merge_load_policy(policyid):
         cur.close(); conn.close()
 
 
-def _ensure_hc17_optout_table(cur):
+def _ensure_hc17_optout_table(cur=None):   # cur kept for call sites; not used
     """(policy, merge group) pairs the admin un-mapped on purpose — auto-mapping skips them."""
-    cur.execute("""
+    _ensure_lazy_table('merge_load_policy_group_optout', ("""
         CREATE TABLE IF NOT EXISTS public.merge_load_policy_group_optout (
             policyid     INTEGER NOT NULL,
             mergegroupid INTEGER NOT NULL,
@@ -19433,7 +19729,7 @@ def _ensure_hc17_optout_table(cur):
             created_at   TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (policyid, mergegroupid)
         )
-    """)
+    """,))
 
 
 def _auto_map_hc17_policies(cur, group_ids=None, policy_ids=None, username='system (auto)'):
@@ -30727,12 +31023,60 @@ def faculty_teaching_assignment():
         active_ay_id = active['academicyearid'] if active else ''
         active_sem   = active['semestertype']    if active else 'A'
 
+        # Faculty Preview: upcoming semesters (not started) in which this faculty has
+        # Published subjects in a Schedule List entry the Academic Head released.
+        _ensure_faculty_release_table()
+        _c = get_db_connection(); _k = _c.cursor(cursor_factory=RealDictCursor)
+        try:
+            _k.execute(f"""
+                SELECT DISTINCT sem.academicyearid, sem.semestertype,
+                       TO_CHAR(sem.semstartdate, 'YYYY-MM-DD') AS sem_start,
+                       TO_CHAR(sem.semenddate,   'YYYY-MM-DD') AS sem_end,
+                       ay.yearstart, ay.yearend, sem.semstartdate
+                FROM schedule sc
+                JOIN schedule_version sv ON sv.scheduleid = sc.scheduleid AND sv.status = 'Published'
+                     AND sv.source IS DISTINCT FROM 'local'
+                JOIN semester sem ON sem.semesterid = sc.semesterid
+                JOIN academicyear ay ON ay.academicyearid = sem.academicyearid
+                WHERE sc.employeenumber = %s
+                  AND NOT COALESCE(sem.isactive, FALSE)
+                  AND sem.semstartdate > CURRENT_DATE
+                  AND {_RELEASED_SECTION_SQL.format(sem_col='sc.semesterid', sec_col='sc.sectionid')}
+                ORDER BY sem.semstartdate
+            """, (emp_num,))
+            preview_terms = [dict(r) for r in _k.fetchall() or []]
+        finally:
+            _k.close(); _c.close()
+        _sem_lbl = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
+        terms = []
+        if active:
+            terms.append({'ay_id': active_ay_id, 'sem': active_sem, 'preview': False,
+                          'label': _sem_lbl.get(active_sem, active_sem), 'tag': 'Current'})
+        for t in preview_terms:
+            terms.append({'ay_id': t['academicyearid'], 'sem': t['semestertype'], 'preview': True,
+                          'label': f"{_sem_lbl.get(t['semestertype'], t['semestertype'])} {t['yearstart']}-{t['yearend']}",
+                          'tag': 'Preview', 'sem_start': t['sem_start'], 'sem_end': t['sem_end']})
+
+        # ?ay=&sem= opens a preview term — only one offered above.
+        want = (request.args.get('ay') or '', request.args.get('sem') or '')
+        chosen = next((t for t in preview_terms
+                       if (t['academicyearid'], t['semestertype']) == want), None)
+        if chosen:
+            view_ay, view_sem = chosen['academicyearid'], chosen['semestertype']
+            view_start, view_end = chosen['sem_start'] or '', chosen['sem_end'] or ''
+        else:
+            view_ay, view_sem = active_ay_id, active_sem
+            view_start = (active or {}).get('sem_start') or ''
+            view_end = (active or {}).get('sem_end') or ''
+
         return render_template('faculty/teaching_faculty.html',
                                emp_num=emp_num,
-                               active_ay_id=active_ay_id,
-                               active_sem=active_sem,
-                               sem_start=(active or {}).get('sem_start') or '',
-                               sem_end=(active or {}).get('sem_end') or '')
+                               active_ay_id=view_ay,
+                               active_sem=view_sem,
+                               sem_start=view_start,
+                               sem_end=view_end,
+                               ta_terms=terms if preview_terms else [],
+                               is_preview=bool(chosen))
     except Exception as e:
         return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
 
@@ -31364,6 +31708,12 @@ def api_faculty_my_teaching_load():
             sessions = _local_teaching_sessions(cur, emp_num, ay_id, sem)
         else:
             sessions = faculty_load.get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=True)
+        # A semester that has not started: only Schedule List entries released for
+        # Faculty Preview (and never a Local arrangement — none exist before it starts).
+        _pv_sem = _faculty_preview_semester(cur, ay_id, sem)
+        if _pv_sem:
+            _ok = _released_section_ids(cur, _pv_sem)
+            sessions = [x for x in sessions if source == 'official' and x.get('sectionid') in _ok]
         # Group model: merged classes credited by the shared HC17 calculation (the same
         # numbers HC9 enforces); legacy: unchanged.
         buckets = faculty_load.compute_load_buckets(sessions, fac, config=_load_cfg_for(ay_id, sem, cur=cur))
@@ -36816,6 +37166,7 @@ def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, 
 
 
 @app.route('/api/schedule/generate', methods=['POST'])
+@merge_groups.reuse_policies()   # read-only: build the HC16/HC17 policy once, not once per check
 def api_generate_schedule():
     data = request.json or {}
     program    = (data.get('program') or '').strip().upper()
@@ -37677,6 +38028,7 @@ def api_retrieve_previous_schedule():
 
 
 @app.route('/api/schedule/save-draft', methods=['POST'])
+@merge_groups.reuse_offered()   # read the offered curriculum once per request (merge groups stay fresh)
 def api_save_draft():
     conn = None; cur = None
     try:
@@ -38365,6 +38717,7 @@ def api_draft_sessions():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/schedule/validate', methods=['POST'])
+@merge_groups.reuse_offered()   # read the offered curriculum once per request
 def api_validate_schedule():
     """Run CSP validation on submitted schedule_data and return violations without saving."""
     try:
@@ -38781,6 +39134,7 @@ def api_local_republish_impact():
 
 
 @app.route('/api/schedule/approve', methods=['POST'])
+@merge_groups.reuse_offered()   # read the offered curriculum once per request (merge groups stay fresh)
 def api_approve_schedule():
     try:
         data, ctx = request.json or {}, (request.json or {}).get('context', {})
