@@ -41,7 +41,7 @@ def test_all_lab_rooms_full_says_so_plainly(stub):
     stub['room_slots'] = {(rid, d): whole_day for rid in (1, 2) for d in DAYS}
     [n] = _notices([_lab_row()])
     assert n['kind'] == 'no_room' and n['title'] == 'All laboratory rooms are full'
-    assert 'All 2 laboratory rooms are already booked' in n['message'] and '3-hour block' in n['message']
+    assert n['message'] == 'Every laboratory room is booked at every usable time.'   # short and direct
     assert 'TBA' in n['suggestion']
     assert 'HC13' not in n['message']
 
@@ -49,7 +49,7 @@ def test_all_lab_rooms_full_says_so_plainly(stub):
 def test_free_labs_but_no_shared_time_is_explained(stub):
     [n] = _notices([_lab_row()])
     assert n['kind'] == 'no_room_at_time'
-    assert '2 of 2 laboratory rooms still have free 3-hour blocks' in n['message']
+    assert n['message'].startswith('No laboratory room is free when this section and')
     assert 'Argamosa, Arjay' in n['message']
 
 

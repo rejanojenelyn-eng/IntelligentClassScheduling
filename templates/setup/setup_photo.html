@@ -15,26 +15,56 @@
         }
         .avatar-cam:hover { background: #5c0000; }
 
-        .photo-btns { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 300px; }
-        .btn-upload, .btn-remove {
+
+        .photo-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 360px; }
+        .photo-btns .btn-remove { grid-column: span 2; }
+        .btn-upload, .btn-camera, .btn-remove {
             display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
             padding: 12px 16px; border-radius: 8px; font-weight: 700; font-size: 0.88rem; cursor: pointer;
-            transition: 0.2s; margin: 0; color: inherit;
+            transition: 0.2s; margin: 0; color: inherit; font-family: inherit;
         }
-        .btn-upload { background: #800000; border: 1.5px solid #800000; color: #fff; }
-        .btn-upload:hover { background: #5c0000; border-color: #5c0000; }
+        .btn-upload, .btn-camera { background: #800000; border: 1.5px solid #800000; color: #fff; }
+        .btn-upload:hover, .btn-camera:hover { background: #5c0000; border-color: #5c0000; }
         .btn-remove { background: #fff; border: 1.5px solid #d9d9d9; color: #444; }
         .btn-remove:hover:not(:disabled) { border-color: #800000; color: #800000; }
         .btn-remove:disabled { opacity: 0.5; cursor: not-allowed; }
+
 
         .photo-name { color: #555; font-size: 0.82rem; margin-top: 10px; min-height: 1.2em; text-align: center; }
         .photo-info { display: flex; gap: 14px; align-items: flex-start; background: #f5f5f6; border-radius: 10px;
             padding: 14px 18px; margin-top: 8px; width: 100%; max-width: 440px; color: #555; font-size: 0.82rem; line-height: 1.55; }
         .photo-info > i { font-size: 1.15rem; color: #666; margin-top: 2px; }
         .photo-info small { display: block; color: #888; font-size: 0.76rem; }
+
+
+        /* Take Photo: live camera preview */
+        .cam-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(30, 10, 10, 0.6);
+            display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .cam-overlay[hidden] { display: none; }
+        .cam-dialog { background: #fff; border-radius: 14px; width: 100%; max-width: 480px; padding: 20px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3); }
+        .cam-title { color: #800000; font-weight: 800; font-size: 1.1rem; margin-bottom: 4px; }
+        .cam-sub { color: #666; font-size: 0.82rem; margin-bottom: 14px; }
+        .cam-view { position: relative; background: #111; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; }
+        .cam-view video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+        .cam-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            text-align: center; padding: 20px; color: #fff; font-size: 0.86rem; line-height: 1.5; }
+        .cam-msg[hidden] { display: none; }
+        .cam-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+        .cam-actions button { padding: 10px 18px; border-radius: 8px; font-weight: 700; font-size: 0.84rem; cursor: pointer;
+            font-family: inherit; }
+        .cam-cancel { background: #fff; border: 1.5px solid #d0d0d0; color: #444; }
+        .cam-shoot { background: #800000; border: 1.5px solid #800000; color: #fff; display: inline-flex; align-items: center; gap: 8px; }
+        .cam-shoot:disabled { background: #d9a9a9; border-color: #d9a9a9; cursor: not-allowed; }
+        @media (max-width: 420px) {
+            .photo-btns { grid-template-columns: 1fr; }
+            .photo-btns .btn-remove { grid-column: auto; }
+        }
 {% endblock %}
 
+
 {% block lead %}Kindly add a profile picture to personalize your account.{% endblock %}
+
 
 {% block content %}
     <div class="photo-area">
@@ -47,33 +77,65 @@
             <label class="avatar-cam" for="photoInput" title="Choose a photo"><i class="fas fa-camera"></i><span class="sr-only">Choose a photo</span></label>
         </div>
 
+
         <div class="photo-btns">
             <label class="btn-upload" for="photoInput">
                 <i class="fas fa-arrow-up-from-bracket"></i> {{ 'Change Photo' if current_photo else 'Upload Photo' }}
             </label>
-            <button type="button" class="btn-remove" id="btnRemovePhoto" onclick="removePhoto()" disabled
-                    title="Removes the photo you just picked (it has not been saved yet)">Remove Photo</button>
+            <button type="button" class="btn-camera" id="btnTakePhoto" onclick="openCamera()">
+                <i class="fas fa-camera"></i> Take Photo
+            </button>
+            <button type="button" class="btn-remove" id="btnRemovePhoto" onclick="removePhoto()"
+                    {{ 'disabled' if not current_photo }}>
+                <i class="fas fa-trash-can"></i> Remove Photo
+            </button>
         </div>
         <input type="file" id="photoInput" name="photo" accept=".jpg,.jpeg,.png,image/jpeg,image/png" style="display:none" onchange="previewPhoto(this)">
+        {# Fallback where a live camera preview isn't available (it opens the phone camera). #}
+        <input type="file" id="cameraInput" accept="image/*" capture="user" style="display:none" onchange="cameraFilePicked(this)">
+
 
         <div class="photo-name" id="photoName">{{ 'Your current profile picture is shown above.' if current_photo else '' }}</div>
+
 
         <div class="photo-info">
             <i class="fas fa-circle-info"></i>
             <div>
-                You can upload a clear photo of your face.
+                Upload a clear photo of your face, or take one with your camera.
                 <small>Recommended: JPG or PNG, max 2 MB.</small>
                 <small>This will be used for your profile in the system.</small>
             </div>
         </div>
     </div>
+
+
+    <div class="cam-overlay" id="camDialog" role="dialog" aria-modal="true" aria-labelledby="camTitle" hidden
+         onclick="if (event.target === this) closeCamera()">
+        <div class="cam-dialog">
+            <div class="cam-title" id="camTitle">Take a Photo</div>
+            <div class="cam-sub">Face the camera, then press Capture. You can adjust the photo next.</div>
+            <div class="cam-view">
+                <video id="camVideo" autoplay playsinline muted></video>
+                <div class="cam-msg" id="camMsg" hidden></div>
+            </div>
+            <div class="cam-actions">
+                <button type="button" class="cam-cancel" onclick="closeCamera()">Cancel</button>
+                <button type="button" class="cam-shoot" id="btnCapture" onclick="capturePhoto()" disabled>
+                    <i class="fas fa-camera"></i> Capture</button>
+            </div>
+        </div>
+    </div>
 {% endblock %}
+
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/photo.cropper.js') }}"></script>
 <script>
-    const _currentPhoto = {{ (current_photo or '') | tojson }};
+    const _currentPhoto = {{ (current_photo or '') | tojson }};   // saved on the account
     let _croppedPhoto = null;   // the last photo the user cropped; kept if they cancel a later pick
+    let _camStream = null;
+
+
     window.setupValidateContinue = function () {
         const input = document.getElementById('photoInput');
         if (!_currentPhoto && !(input.files && input.files.length))
@@ -86,6 +148,27 @@
         if (src) { img.src = src; img.style.display = 'block'; ph.style.display = 'none'; }
         else     { img.removeAttribute('src'); img.style.display = 'none'; ph.style.display = ''; }
     }
+    const hasNewPick = () => { const i = document.getElementById('photoInput'); return !!(i.files && i.files.length); };
+    function syncRemove() {
+        document.getElementById('btnRemovePhoto').disabled = !hasNewPick() && !_currentPhoto;
+    }
+
+
+    // Fit the picture to the circle; the cropped image replaces the chosen file so the
+    // form submits exactly what the preview shows (saved on Save and Next, or Back).
+    async function usePhoto(file, label) {
+        const input = document.getElementById('photoInput');
+        const blob = await openPhotoCropper(file);
+        const dt = new DataTransfer();
+        if (blob) _croppedPhoto = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+        if (_croppedPhoto) dt.items.add(_croppedPhoto);
+        input.files = dt.files;
+        syncRemove();
+        if (!blob) return;
+        showPreview(URL.createObjectURL(blob));
+        document.getElementById('photoName').textContent = label;
+        if (window.setupClearErrors) window.setupClearErrors();
+    }
     async function previewPhoto(input) {
         const name = document.getElementById('photoName');
         if (!input.files || !input.files[0]) { name.textContent = ''; return; }
@@ -94,29 +177,102 @@
             name.textContent = 'That file is larger than 2 MB. Please choose a smaller photo.';
             input.value = ''; return;
         }
-        // Fit the picture to the circle; the cropped image replaces the chosen
-        // file so the form submits exactly what the preview shows.
-        const blob = await openPhotoCropper(f);
-        const dt = new DataTransfer();
-        if (blob) _croppedPhoto = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
-        if (_croppedPhoto) dt.items.add(_croppedPhoto);
-        input.files = dt.files;
-        if (!blob) return;
-        showPreview(URL.createObjectURL(blob));
-        name.textContent = f.name;
-        document.getElementById('btnRemovePhoto').disabled = false;
+        await usePhoto(f, f.name);
     }
-    // Discards the photo picked on this page (nothing is saved until Save and Next).
+
+
+    // Remove: a photo picked on this visit is just discarded; a photo already saved on the
+    // account is removed on the server (the page reloads without it).
     function removePhoto() {
         const input = document.getElementById('photoInput');
-        input.value = '';
-        input.files = new DataTransfer().files;
-        _croppedPhoto = null;
-        showPreview(_currentPhoto);
-        document.getElementById('photoName').textContent =
-            _currentPhoto ? 'Your current profile picture is shown above.' : '';
-        document.getElementById('btnRemovePhoto').disabled = true;
-        if (window.setupClearErrors) window.setupClearErrors();
+        if (hasNewPick()) {
+            input.value = '';
+            input.files = new DataTransfer().files;
+            _croppedPhoto = null;
+            showPreview(_currentPhoto);
+            document.getElementById('photoName').textContent =
+                _currentPhoto ? 'Your current profile picture is shown above.' : '';
+            syncRemove();
+            if (window.setupClearErrors) window.setupClearErrors();
+            return;
+        }
+        if (!_currentPhoto) return;
+        const form = document.getElementById('setupForm');
+        const action = document.createElement('input');
+        action.type = 'hidden'; action.name = 'action'; action.value = 'remove';
+        form.appendChild(action);
+        input.disabled = true;              // nothing to upload with a removal
+        form.submit();
     }
+
+
+    // ── Take Photo ──────────────────────────────────────────────────────────
+    function camMessage(text) {
+        const m = document.getElementById('camMsg');
+        m.textContent = text || ''; m.hidden = !text;
+    }
+    async function openCamera() {
+        // No live preview available (older browser, or a page not served over HTTPS):
+        // use the device's own camera picker instead.
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext) {
+            document.getElementById('cameraInput').click();
+            return;
+        }
+        const dlg = document.getElementById('camDialog');
+        dlg.hidden = false;
+        document.body.style.overflow = 'hidden';
+        document.getElementById('btnCapture').disabled = true;
+        camMessage('Starting the camera…');
+        try {
+            _camStream = await navigator.mediaDevices.getUserMedia(
+                { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+            if (dlg.hidden) { stopCamera(); return; }        // closed while waiting for permission
+            const video = document.getElementById('camVideo');
+            video.srcObject = _camStream;
+            await video.play().catch(() => {});
+            camMessage('');
+            document.getElementById('btnCapture').disabled = false;
+        } catch (e) {
+            camMessage(e && e.name === 'NotAllowedError'
+                ? 'Camera access was blocked. Allow the camera in your browser settings, or use Upload Photo instead.'
+                : e && e.name === 'NotFoundError'
+                    ? 'No camera was found on this device. Please use Upload Photo instead.'
+                    : 'The camera could not be started. Please use Upload Photo instead.');
+        }
+    }
+    function stopCamera() {
+        if (_camStream) { _camStream.getTracks().forEach(t => t.stop()); _camStream = null; }
+        const video = document.getElementById('camVideo');
+        if (video) video.srcObject = null;
+    }
+    function closeCamera() {
+        stopCamera();
+        document.getElementById('camDialog').hidden = true;
+        document.body.style.overflow = '';
+        document.getElementById('btnTakePhoto').focus();
+    }
+    function capturePhoto() {
+        const video = document.getElementById('camVideo');
+        if (!video.videoWidth) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.translate(canvas.width, 0); ctx.scale(-1, 1);      // same mirror view as the preview
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(async blob => {
+            closeCamera();
+            if (blob) await usePhoto(new File([blob], 'camera.jpg', { type: 'image/jpeg' }), 'Photo taken with your camera');
+        }, 'image/jpeg', 0.92);
+    }
+    // Fallback path: a photo from the device's camera picker.
+    async function cameraFilePicked(input) {
+        const f = input.files && input.files[0];
+        input.value = '';
+        if (f) await usePhoto(f, 'Photo taken with your camera');
+    }
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !document.getElementById('camDialog').hidden) closeCamera();
+    });
+    window.addEventListener('pagehide', stopCamera);
 </script>
 {% endblock %}

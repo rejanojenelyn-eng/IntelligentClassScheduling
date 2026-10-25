@@ -147,8 +147,10 @@ def request_code(conn, username, new_email, cfg):
 
 
 
-def confirm(conn, username, new_email, code):
-    """Checks the code and saves the new address. Returns the saved address."""
+def confirm(conn, username, new_email, code, save=True):
+    """Checks the code and saves the new address. Returns the saved address.
+    save=False only checks the code (Account Setup keeps the address as a draft
+    and saves it when the user confirms the whole setup)."""
     code = (code or '').strip()
     new_email = (new_email or '').strip()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -185,7 +187,8 @@ def confirm(conn, username, new_email, code):
         saved = acc['email_otp_new']
         # Re-check: someone else may have taken the address since the code was sent.
         _clean_new_email(cur, acc, saved)
-        cur.execute("UPDATE accounts SET email = %s WHERE userid = %s", [saved, acc['userid']])
+        if save:
+            cur.execute("UPDATE accounts SET email = %s WHERE userid = %s", [saved, acc['userid']])
         cur.execute("""UPDATE accounts SET email_otp_hash = NULL, email_otp_new = NULL,
                        email_otp_expires_at = NULL, email_otp_attempts = 0 WHERE userid = %s""",
                     [acc['userid']])

@@ -524,16 +524,69 @@ function _frsComboFilter(comboKey) {
     const cfg   = _frsCombos[comboKey];
     const input = document.getElementById(cfg.inputId);
     const menu  = document.getElementById(cfg.menuId);
-    // Time combos are read-only (click-to-open, like the Manual Editor's) — always
-    // show the full list rather than filtering on a value that's never typed into.
-    const q     = cfg.hiddenId ? '' : (input.value || '').trim().toLowerCase();
     const all   = cfg.options();
-    const filtered = !q ? all : all.filter(o => o.label.toLowerCase().includes(q));
+    let filtered;
+    if (cfg.hiddenId) {
+        // Time combos are typeable: "9", "930", "2 pm", "14" narrow the list; the field
+        // showing the already-chosen label lists everything (it is a click to re-pick).
+        const hidden = document.getElementById(cfg.hiddenId).value;
+        const shown  = (all.find(o => o.value === hidden) || {}).label;
+        const q      = (input.value || '').trim() === (shown || '') ? '' : input.value;
+        filtered = all.filter(o => _timeLabelMatches(o.label, q));
+    } else {
+        const q = (input.value || '').trim().toLowerCase();
+        filtered = !q ? all : all.filter(o => o.label.toLowerCase().includes(q));
+    }
     menu.innerHTML = filtered.length
         ? filtered.slice(0, 50).map(o => `<div class="frs-combo-option" data-val="${_esc(o.value)}">${_esc(o.label)}</div>`).join('')
-        : '<div class="frs-combo-empty">No matches</div>';
+        : `<div class="frs-combo-empty">${cfg.hiddenId ? 'No matching time — try 9:30 AM or 2 PM' : 'No matches'}</div>`;
     menu.classList.add('open');
 }
+
+/* Typed time in a filter time combo → snap to the nearest 30-min slot (Enter / leaving the
+   field). Not a time, or outside 7:30 AM–9:00 PM: the previous value is kept. */
+function _frsTimeCommit(comboKey) {
+    const cfg    = _frsCombos[comboKey];
+    const input  = document.getElementById(cfg.inputId);
+    const hidden = document.getElementById(cfg.hiddenId);
+    const menu   = document.getElementById(cfg.menuId);
+    const all    = cfg.options();
+    const text   = (input.value || '').trim();
+    const cur    = all.find(o => o.value === hidden.value);
+    menu.classList.remove('open');
+    if (cur && text === cur.label) return;                     // unchanged
+    if (!text) {
+        if (hidden.value) { hidden.value = ''; frsFindAvailable(); }
+        return;
+    }
+    const hit = _nearestTimeSlot(text, all, 'value');
+    if (!hit) {
+        input.value = cur ? cur.label : '';
+        input.classList.add('tc-bad');
+        input.title = 'Type a time between 7:30 AM and 9:00 PM, e.g. 9:30 AM or 2 PM';
+        setTimeout(() => { input.classList.remove('tc-bad'); input.title = ''; }, 1800);
+        return;
+    }
+    input.value = hit.label;
+    if (hidden.value !== hit.value) { hidden.value = hit.value; frsFindAvailable(); }
+}
+
+function _frsTimeKey(e, comboKey) {
+    const cfg = _frsCombos[comboKey];
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        _frsTimeCommit(comboKey);
+    } else if (e.key === 'Escape') {
+        const cur = cfg.options().find(o => o.value === document.getElementById(cfg.hiddenId).value);
+        document.getElementById(cfg.inputId).value = cur ? cur.label : '';
+        document.getElementById(cfg.menuId).classList.remove('open');
+    }
+}
+
+// Clicking a time in the list must not blur-commit the half-typed text first.
+document.addEventListener('mousedown', e => {
+    if (e.target.closest('#frsStartComboMenu, #frsEndComboMenu')) e.preventDefault();
+});
 
 document.addEventListener('click', (e) => {
     const optEl = e.target.closest('.frs-combo-option');

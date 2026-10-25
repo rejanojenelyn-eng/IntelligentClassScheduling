@@ -361,6 +361,21 @@
         color: #999;
         text-align: center;
     }
+    .frs-combo-option.tc-active { background: #FFF3F3; }
+    .frs-combo-input.tc-bad { border-color: #c0392b !important; box-shadow: 0 0 0 3px rgba(192,57,43,.12); }
+
+    /* Typeable time picker on the request forms (_enhanceTimeSelect) */
+    .tc-host { position: relative; }
+    .tc-cell { display: block; min-width: 0; }
+    .tc-input { cursor: text; }
+    .tc-input::placeholder { color: #9a9a9a; }
+    .tc-input.tc-warn { color: #b06000; font-weight: 600; }
+    .tc-input.tc-bad  { border-color: #c0392b !important; box-shadow: 0 0 0 3px rgba(192,57,43,.12) !important; }
+    .tc-menu { min-width: 150px; }
+    .frs-combo-option.tc-dis { color: #b5b5b5; cursor: not-allowed; font-weight: 600; }
+    .frs-combo-option.tc-dis:hover { background: transparent; }
+    .frs-combo-option.tc-sel { background: #800000; color: #fff; }
+    .frs-combo-option.tc-sel.tc-active { background: #6a0000; }
 
 
     /* Results */
@@ -613,7 +628,7 @@
         width: 100%; height: 38px; padding: 0 10px 0 33px; border: 1px solid #dcdcdc; border-radius: 8px; background: #fff;
         font: 400 .84rem 'Inter', sans-serif; color: #333; box-sizing: border-box; min-width: 0;
     }
-    .mu3 .mu3-ctl-noicon > select { padding-left: 10px; }
+    .mu3 .mu3-ctl-noicon > select, .mu3 .mu3-ctl-noicon > input { padding-left: 10px; }
     .mu3 .mu3-ctl > select:focus, .mu3 .mu3-ctl > input:focus, .mu3 .mu3-area:focus { outline: none; border-color: #8b1a1a; box-shadow: 0 0 0 3px rgba(139,26,26,.08); }
     .mu3 .mu3-ctl > select:disabled { background: #f6f6f7; color: #9a9a9a; cursor: not-allowed; }
     .mu3-time { display: flex; align-items: center; gap: 8px; }
@@ -1225,8 +1240,10 @@
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">Start Time</label>
                         <div class="frs-combo" id="frsStartCombo">
-                            <input type="text" id="frsAvailStartTxt" class="frs-combo-input" readonly
-                                   placeholder="Start time…" onclick="_frsComboFilter('frsStartCombo')">
+                            <input type="text" id="frsAvailStartTxt" class="frs-combo-input" autocomplete="off"
+                                   placeholder="Type or pick, e.g. 9:30 AM" onclick="_frsComboFilter('frsStartCombo')"
+                                   oninput="_frsComboFilter('frsStartCombo')" onkeydown="_frsTimeKey(event, 'frsStartCombo')"
+                                   onblur="_frsTimeCommit('frsStartCombo')">
                             <input type="hidden" id="frsAvailStart" value="">
                             <div class="frs-combo-menu" id="frsStartComboMenu"></div>
                         </div>
@@ -1236,8 +1253,10 @@
                     <div class="frs-avail-filter-group">
                         <label class="frs-avail-filter-label">End Time</label>
                         <div class="frs-combo" id="frsEndCombo">
-                            <input type="text" id="frsAvailEndTxt" class="frs-combo-input" readonly
-                                   placeholder="End time…" onclick="_frsComboFilter('frsEndCombo')">
+                            <input type="text" id="frsAvailEndTxt" class="frs-combo-input" autocomplete="off"
+                                   placeholder="Type or pick, e.g. 11 AM" onclick="_frsComboFilter('frsEndCombo')"
+                                   oninput="_frsComboFilter('frsEndCombo')" onkeydown="_frsTimeKey(event, 'frsEndCombo')"
+                                   onblur="_frsTimeCommit('frsEndCombo')">
                             <input type="hidden" id="frsAvailEnd" value="">
                             <div class="frs-combo-menu" id="frsEndComboMenu"></div>
                         </div>
@@ -1623,6 +1642,9 @@
                         </div>
                     </div>
                 </div>
+                <!-- Why the chosen time can't be used (faculty / section / room already has a class).
+                     The time is kept so the faculty sees what overlaps; it is never silently cleared. -->
+                <div id="muTimeNotice" role="status" style="display:none;margin:-4px 0 12px;padding:9px 12px;border-radius:8px;background:#fff8e6;border:1px solid #f0c36d;color:#7a4a00;font-size:0.8rem;line-height:1.45;"></div>
                 <div class="mu3-field">
                     <label>Room <b>*</b> <span class="req-room-status" id="muRoomStatus"></span></label>
                     <div class="mu3-ctl mu3-ctl-room"><i class="fas fa-door-open"></i>
@@ -1823,6 +1845,218 @@ const _REQ_SLOTS = [
 ];
 
 
+/* ══════════════════════════════════════════
+   TYPEABLE TIME PICKER (shared by the filters and the request forms)
+══════════════════════════════════════════ */
+/* Typed time → minutes since midnight, or null. Accepts "9", "9am", "930", "0930",
+   "9:30 pm", "9.30", "14:00", "2p". Without AM/PM, 1–6 means PM and 7–11 AM
+   (classes run 7:30 AM – 9:00 PM). */
+function _parseTypedTime(text) {
+    const t = String(text || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\./g, ':');
+    const m = t.match(/^(\d{1,2})(?::?(\d{2}))?(?:([ap])\.?m?\.?)?$/);
+    if (!m) return null;
+    let h = +m[1];
+    const min = m[2] ? +m[2] : 0;
+    if (min > 59 || h > 23) return null;
+    if (m[3]) {
+        if (h < 1 || h > 12) return null;
+        if (m[3] === 'p' && h < 12) h += 12;
+        if (m[3] === 'a' && h === 12) h = 0;
+    } else if (h >= 1 && h <= 6) {
+        h += 12;
+    }
+    return h * 60 + min;
+}
+
+/* "09:30 AM" / "09:30" (24h) → minutes since midnight. */
+function _slotMins(v) {
+    const m = String(v || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return null;
+    let h = +m[1];
+    if (m[3]) { const pm = m[3].toUpperCase() === 'PM'; if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; }
+    return h * 60 + +m[2];
+}
+
+/* The slot (any object with a time in `key`) nearest to typed text; null when the text
+   isn't a time or is more than 30 min from every slot (outside class hours). */
+function _nearestTimeSlot(text, slots, key) {
+    const want = _parseTypedTime(text);
+    if (want === null) return null;
+    let best = null, bestD = Infinity;
+    slots.forEach(s => { const d = Math.abs(_slotMins(s[key]) - want); if (d < bestD) { best = s; bestD = d; } });
+    return bestD <= 30 ? best : null;
+}
+
+/* Does slot label "09:30 AM" match what is being typed? Matches "9", "09", "930",
+   "9:3", "9:30p", "pm", and 24-hour hours like "14". */
+function _timeLabelMatches(label, q) {
+    q = String(q || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\./g, ':');
+    if (!q) return true;
+    let l = String(label).toLowerCase().replace(/\s+/g, '');              // "09:30am" or "9:30am"
+    if (/^\d:/.test(l)) l = '0' + l;                                       // pad so "09" matches too
+    const variants = [l, l.replace(/^0/, ''), l.replace(':', ''), l.replace(/^0/, '').replace(':', '')];
+    if (variants.some(v => v.startsWith(q))) return true;
+    if (q === 'am' || q === 'pm') return l.endsWith(q);
+    const h24 = q.match(/^(\d{1,2})(?::?(\d{0,2}))?$/);                    // "14", "14:3"
+    if (h24 && +h24[1] >= 13 && +h24[1] <= 23) {
+        const mins = _slotMins(label);
+        return Math.floor(mins / 60) === +h24[1] && String(mins % 60).padStart(2, '0').startsWith(h24[2] || '');
+    }
+    return false;
+}
+
+/* Turn a time <select> into a typeable combo. The <select> stays (hidden) as the single
+   source of truth — every existing reader/writer keeps working, its onchange still fires,
+   and its disabled / "— occupied" options show greyed in the list. Typing filters the
+   list; Enter or leaving the field snaps to the nearest slot. Programmatic changes to
+   the select (prefill, reset, re-marking occupied slots) are mirrored automatically. */
+function _enhanceTimeSelect(sel) {
+    if (!sel || sel._tc) return;
+    const parent = sel.parentElement;
+    let host = parent;
+    if (!parent.classList.contains('mu-ctl') && !parent.classList.contains('mu3-ctl')) {
+        host = document.createElement('span');             // e.g. a cell of the adjustment row grid
+        host.className = 'tc-cell';
+        parent.insertBefore(host, sel);
+        host.appendChild(sel);
+    }
+    host.classList.add('tc-host');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tc-input';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = (sel.options[0] && !sel.options[0].value ? sel.options[0].textContent : 'Time') + ' (type or pick)';
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-expanded', 'false');
+    if (sel.id) {
+        input.id = sel.id + 'Txt';
+        const lbl = document.querySelector(`label[for="${sel.id}"]`);
+        if (lbl) lbl.htmlFor = input.id;
+    }
+    const menu = document.createElement('div');
+    menu.className = 'frs-combo-menu tc-menu';
+    menu.setAttribute('role', 'listbox');
+    sel.style.display = 'none';
+    sel.tabIndex = -1;
+    sel.after(input, menu);
+
+    let items = [], active = -1, navigated = false;
+    const opts = () => [...sel.options].filter(o => o.value);
+    const esc  = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const sync = () => {
+        const o = sel.options[sel.selectedIndex];
+        if (document.activeElement !== input) input.value = o && o.value ? o.value : '';
+        // A kept-but-occupied pick (see _muApplyTimeRules) shows in the warning colour.
+        input.classList.toggle('tc-warn', !!(o && o.value && /—/.test(o.textContent)));
+        input.disabled = sel.disabled;
+    };
+    const close = () => { menu.classList.remove('open'); input.setAttribute('aria-expanded', 'false'); active = -1; };
+    const paint = () => {
+        [...menu.querySelectorAll('.tc-opt')].forEach((el, i) => el.classList.toggle('tc-active', i === active));
+        const a = menu.querySelector('.tc-active');
+        if (a) a.scrollIntoView({ block: 'nearest' });
+    };
+    const render = q => {
+        items = opts().filter(o => _timeLabelMatches(o.value, q));
+        menu.innerHTML = items.length
+            ? items.map((o, i) => `<div class="frs-combo-option tc-opt${o.disabled ? ' tc-dis' : ''}${o.value === sel.value ? ' tc-sel' : ''}" data-i="${i}" role="option"${o.disabled ? ' aria-disabled="true"' : ''}>${esc(o.textContent)}</div>`).join('')
+            : '<div class="frs-combo-empty">No matching time — try 9:30 AM or 2 PM</div>';
+        menu.classList.add('open');
+        input.setAttribute('aria-expanded', 'true');
+        active = q ? items.findIndex(o => !o.disabled) : items.findIndex(o => o.value === sel.value);
+        navigated = false;
+        paint();
+    };
+    const choose = o => {
+        close();
+        if (!o) { sync(); return; }
+        const changed = sel.value !== o.value;
+        sel.value = o.value;
+        input.value = o.value;
+        sync();
+        if (changed) sel.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const commit = () => {
+        const text = input.value.trim();
+        if (!text) {                                            // cleared by the user
+            close();
+            if (sel.value) { sel.value = ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+            sync();
+            return;
+        }
+        if (text === sel.value) { close(); sync(); return; }
+        // A typed time is accepted even when occupied: the form explains the overlap
+        // (it is never silently dropped). Only non-times / out-of-hours are refused.
+        const hit = _nearestTimeSlot(text, opts(), 'value');
+        if (!hit) {
+            input.classList.add('tc-bad');
+            input.title = 'Type a time between 7:30 AM and 9:00 PM, e.g. 9:30 AM or 2 PM';
+            setTimeout(() => { input.classList.remove('tc-bad'); input.title = ''; }, 1800);
+            close(); input.value = sel.value; sync();   // keep the previous time
+            return;
+        }
+        choose(hit);
+    };
+
+    input.addEventListener('focus', () => { input.select(); render(''); });
+    input.addEventListener('input', () => render(input.value));
+    input.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!menu.classList.contains('open')) render('');
+            const step = e.key === 'ArrowDown' ? 1 : -1;
+            let i = active;
+            for (let n = 0; n < items.length; n++) {
+                i = (i + step + items.length) % items.length;
+                if (!items[i].disabled) break;
+            }
+            active = i; navigated = true; paint();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (navigated && items[active]) choose(items[active]); else commit();
+        } else if (e.key === 'Escape') {
+            if (menu.classList.contains('open')) e.stopPropagation();   // close the list, not the modal
+            close(); input.value = sel.value; sync();
+        } else if (e.key === 'Tab') {
+            commit();
+        }
+    });
+    input.addEventListener('blur', () => { if (menu.classList.contains('open') || input.value.trim() !== sel.value) commit(); });
+    menu.addEventListener('mousedown', e => e.preventDefault());   // keep focus: no blur-commit first
+    menu.addEventListener('click', e => {
+        const el = e.target.closest('.tc-opt');
+        if (!el || el.classList.contains('tc-dis')) return;           // greyed = occupied / invalid
+        choose(items[+el.dataset.i]);
+        input.blur();
+    });
+
+    // Mirror every programmatic change: `sel.value = …` and option rebuilds / re-marking.
+    const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    Object.defineProperty(sel, 'value', {
+        configurable: true,
+        get() { return proto.get.call(this); },
+        set(v) { proto.set.call(this, v); sync(); },
+    });
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, characterData: true });
+    sel._tc = { input, sync };
+    _tcCombos.add(sel);
+    sync();
+}
+
+/* Safety net for the mirror above: an engine that bypasses the instance `value` setter, or
+   a selectedIndex write, is caught here. Cheap: a string compare per picker, 4×/second. */
+const _tcCombos = new Set();
+setInterval(() => {
+    if (document.hidden) return;
+    _tcCombos.forEach(sel => {
+        if (!sel.isConnected) { _tcCombos.delete(sel); return; }    // adjustment rows re-render
+        const inp = sel._tc.input;
+        if (document.activeElement !== inp && inp.value !== sel.value) sel._tc.sync();
+    });
+}, 250);
+
+
 let _myAssignments = [];   // faculty's published schedule assignments
 let _pendingRoom   = null; // room pre-selected from Available Rooms click
 let _muRoomChosen  = null; // { id, name, building } explicitly chosen for makeup
@@ -1837,6 +2071,7 @@ function _populateTimeSelects() {
         const sel = document.getElementById(id);
         if (!sel) return;
         _fillTimeSelect(sel, []);
+        _enhanceTimeSelect(sel);     // typeable picker on top of the select
     });
 }
 
@@ -1860,25 +2095,22 @@ function _fillTimeSelect(sel, blocked) {
 }
 
 
-/* Make-up times are HARD-blocked (a conflicting make-up can't be submitted anyway):
-   - Start: disabled when its first 30 min overlap the faculty's / section's / room's class.
-   - End:   disabled when it isn't after Start, or [Start, End) would run into an occupied slot.
-   A selection that becomes invalid is cleared. Returns true if anything was cleared. */
+/* Make-up time rules (a conflicting make-up can't be submitted — the server refuses it):
+   - Start: greyed out when its first 30 min overlap the faculty's / section's / room's class.
+   - End:   greyed out when it isn't after Start, or [Start, End) would run into an occupied slot.
+   Greying only affects NEW picks. A time already chosen (e.g. carried over from the Room
+   Schedule filter) is never cleared: it stays, and _muRenderTimeNotice says what it overlaps. */
 function _muApplyTimeRules() {
     const startSel = document.getElementById('muStart');
     const endSel   = document.getElementById('muEnd');
-    if (!startSel || !endSel) return false;
+    if (!startSel || !endSel) return;
     const blocks   = (_muBlockedSlots || []).map(b => [_amPmToMins(b.start_time), _amPmToMins(b.end_time)]);
     const overlaps = (s, e) => blocks.some(([bs, be]) => s < be && e > bs);
     const mark = (o, bad, tag) => {
-        o.disabled      = bad;
+        const keep = o.selected;     // the current pick stays selectable, so it is never dropped
+        o.disabled      = bad && !keep;
         o.textContent   = bad && tag ? `${o.value}  — ${tag}` : o.value;
-        o.style.color   = bad ? '#b5b5b5' : '';
-    };
-    let cleared = false;
-    const clearIfDisabled = sel => {
-        const o = sel.options[sel.selectedIndex];
-        if (o && o.value && o.disabled) { sel.value = ''; cleared = true; }
+        o.style.color   = bad ? (keep ? '#b06000' : '#b5b5b5') : '';
     };
 
     [...startSel.options].forEach(o => {
@@ -1886,7 +2118,6 @@ function _muApplyTimeRules() {
         const m = _amPmToMins(o.value);
         mark(o, overlaps(m, m + 30), 'occupied');
     });
-    clearIfDisabled(startSel);
 
     const st = startSel.value ? _amPmToMins(startSel.value) : null;
     [...endSel.options].forEach(o => {
@@ -1896,17 +2127,55 @@ function _muApplyTimeRules() {
         else if (m <= st) mark(o, true, '');
         else              mark(o, overlaps(st, m), 'occupied');
     });
-    clearIfDisabled(endSel);
-    return cleared;
+    _muRenderTimeNotice();
 }
 
-/* After a make-up time was cleared by _muApplyTimeRules: drop the stale room list + banner. */
-function _muTimeWasCleared(msg) {
-    _resetRoomDisplay('mu', '— Select date & time first —');
-    const st = document.getElementById('muRoomStatus');
-    if (st) st.textContent = '';
-    _hideConflictBanner('mu');
-    if (msg && typeof showToast === 'function') showToast(msg, 'warning', 5000);
+function _reqEsc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* The classes the chosen make-up time overlaps (from /api/faculty/blocked_times), deduplicated. */
+function _muTimeOverlaps() {
+    const sv = document.getElementById('muStart')?.value;
+    const ev = document.getElementById('muEnd')?.value;
+    if (!sv) return [];
+    const s = _amPmToMins(sv);
+    const e = ev && _amPmToMins(ev) > s ? _amPmToMins(ev) : s + 30;
+    const seen = new Set();
+    return (_muBlockedSlots || []).filter(b => {
+        if (!(s < _amPmToMins(b.end_time) && e > _amPmToMins(b.start_time))) return false;
+        // One line per class: the same class can block as faculty, room and section at once
+        // (the server lists faculty first, so that wording wins).
+        const k = [b.subjectcode, b.sectionname, b.start_time, b.end_time].join('|');
+        return !seen.has(k) && seen.add(k);
+    });
+}
+
+/* Inline notice under Time: why the chosen time can't be used. Hidden when it is fine. */
+function _muRenderTimeNotice() {
+    const box = document.getElementById('muTimeNotice');
+    if (!box) return;
+    const sv = document.getElementById('muStart')?.value;
+    const ev = document.getElementById('muEnd')?.value;
+    const lines = [];
+    if (sv && ev && _amPmToMins(ev) <= _amPmToMins(sv)) {
+        lines.push('The end time must be later than the start time.');
+    }
+    const hits = _muTimeOverlaps();
+    if (hits.length) {
+        const room = _muRoomChosen ? `Room ${_muRoomChosen.name}` : 'The room';
+        const cls  = b => `${_reqEsc(b.subjectcode || 'a class')}${b.sectionname ? ` (${_reqEsc(b.sectionname)})` : ''}`;
+        const what = b => b.kind === 'room'    ? `${_reqEsc(room)} is used by ${cls(b)}`
+                        : b.kind === 'section' ? `Section ${_reqEsc(b.sectionname || '')} already has ${_reqEsc(b.subjectcode || 'a class')}`
+                        :                        `You already teach ${cls(b)}`;
+        lines.push(`<b>The selected time ${_reqEsc(sv)}${ev ? '–' + _reqEsc(ev) : ''} overlaps an existing class,</b> so the make-up can't be submitted at this time. Please choose another time:` +
+            `<ul style="margin:4px 0 0 18px;padding:0;">${hits.map(b =>
+                `<li>${what(b)} — ${_reqEsc(b.start_time)}–${_reqEsc(b.end_time)}</li>`).join('')}</ul>`);
+    }
+    box.innerHTML = lines.length
+        ? `<i class="fas fa-exclamation-triangle" style="margin-right:5px;"></i>${lines.join('<br>')}` : '';
+    box.style.display = lines.length ? '' : 'none';
 }
 
 
@@ -2090,8 +2359,8 @@ function muCascade(level) {
     document.getElementById('muSection').value = done ? sec  : '';
     document.getElementById('muSubject').value = done ? subj : '';
     if (!done) { _hideConflictBanner('mu'); return; }
-    // Block the section's existing class slots first; check conflicts only if the picked time survived.
-    Promise.resolve(_muRefreshTimeDropdowns()).then(cleared => { if (!cleared) _checkConflicts('mu'); });
+    // Mark the section's existing class slots first (the picked time is kept), then check conflicts.
+    Promise.resolve(_muRefreshTimeDropdowns()).then(() => _checkConflicts('mu'));
 }
 function muCount(el) {
     const c = document.getElementById(el.id + 'Count');
@@ -2315,14 +2584,14 @@ function _adjRenderRows() {
         }
         const endField = combine
             ? `<input type="text" readonly value="${st.start ? _adjAddHours(st.start, r.hours) : ''}" placeholder="End (auto)">`
-            : `<select onchange="_adjRowChanged('${r.key}','end',this.value)">${slotOpts(st.end, 'End')}</select>`;
+            : `<select data-time onchange="_adjRowChanged('${r.key}','end',this.value)">${slotOpts(st.end, 'End')}</select>`;
         return `<div class="adj-row" data-key="${r.key}" data-hours="${r.hours}">
             <div class="adj-row-hd">${r.label}</div>
             <div class="adj-row-grid">
                 <select onchange="_adjRowChanged('${r.key}','day',this.value)">
                     <option value="">Day</option>${_ADJ_DAYS.map(d => `<option${d === st.day ? ' selected' : ''}>${d}</option>`).join('')}
                 </select>
-                <select onchange="_adjRowChanged('${r.key}','start',this.value)">${slotOpts(st.start, 'Start')}</select>
+                <select data-time onchange="_adjRowChanged('${r.key}','start',this.value)">${slotOpts(st.start, 'Start')}</select>
                 ${endField}
                 <select class="adj-room" onchange="_adjRowChanged('${r.key}','room',this.value)">
                     <option value="">— Room (pick day &amp; time) —</option>
@@ -2331,6 +2600,7 @@ function _adjRenderRows() {
             <div class="adj-row-warn" style="display:none"></div>
         </div>`;
     }).join('');
+    wrap.querySelectorAll('select[data-time]').forEach(_enhanceTimeSelect);
     window._adjPrefill = null;
     rows.forEach(r => _adjRowRefresh(r.key));
     _adjUpdateSummary();
@@ -2764,14 +3034,10 @@ async function _muRefreshTimeDropdowns() {
     const prevEnd   = document.getElementById('muEnd').value;
     _fillTimeSelect(document.getElementById('muStart'), _muBlockedSlots);
     _fillTimeSelect(document.getElementById('muEnd'),   _muBlockedSlots);
-    // Restore the previous picks, then drop any that are now occupied (hard-blocked).
+    // Restore the previous picks. An occupied one is kept and explained, never dropped.
     if (prevStart) document.getElementById('muStart').value = prevStart;
     if (prevEnd)   document.getElementById('muEnd').value   = prevEnd;
-    if (_muApplyTimeRules()) {
-        _muTimeWasCleared('The selected time is already occupied for this class. Please choose another time.');
-        return true;
-    }
-    return false;
+    _muApplyTimeRules();
 }
 
 
@@ -2791,7 +3057,7 @@ async function muOnDateTimeChange() {
 
 /* Make-up: when START or END time changes — reload available rooms only */
 async function muTimeSelectChanged() {
-    if (_muApplyTimeRules()) _muTimeWasCleared();   // e.g. Start moved past the chosen End
+    _muApplyTimeRules();   // re-marks End for the new Start; problems show in the notice
     const date  = document.getElementById('muDate').value;
     const start = document.getElementById('muStart').value;
     const end   = document.getElementById('muEnd').value;
@@ -2973,7 +3239,7 @@ function _resetReqForm(p) {
 
 
     if (p === 'adj') _adjBlockedSlots = [];
-    else             _muBlockedSlots  = [];
+    else           { _muBlockedSlots  = []; _muRenderTimeNotice(); }
 
 
     _hideConflictBanner(p);
@@ -3136,6 +3402,10 @@ async function reqSubmit(type) {
     if (isMakeup && (!payload.start_time || !payload.end_time)) {
         return _reqFormMsg(p, 'Please select both a start and an end time.');
     }
+    if (isMakeup && _muTimeOverlaps().length) {
+        _muRenderTimeNotice();
+        return _reqFormMsg(p, 'The selected time overlaps an existing class (see the note under Time). Please choose another time.');
+    }
     if (isMakeup && !(payload.reason || '').trim()) {
         document.getElementById('muReason').focus();
         return _reqFormMsg(p, 'Please provide a reason for the make-up class request.');
@@ -3192,13 +3462,14 @@ async function reqSubmit(type) {
 /* Convert "HH:MM" (24h) → "HH:MM AM/PM" (12h) */
 function _toAmPm(t) {
     if (!t || !t.includes(':')) return '';
-    // Already in AM/PM format — return as-is
-    if (/AM|PM/i.test(t)) return t.toUpperCase();
+    // Already in AM/PM format — zero-pad the hour to match the form's options ("09:00 AM")
+    const ampm = t.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (ampm) return `${ampm[1].padStart(2, '0')}:${ampm[2]} ${ampm[3].toUpperCase()}`;
     const [hStr, mStr] = t.split(':');
     let h = parseInt(hStr, 10), m = parseInt(mStr, 10);
     const ap = h >= 12 ? 'PM' : 'AM';
     if (h === 0) h = 12; else if (h > 12) h -= 12;
-    return `String(h).padStart(2,'0'):{String(m).padStart(2,'0')} ${ap}`;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`;
 }
 
 

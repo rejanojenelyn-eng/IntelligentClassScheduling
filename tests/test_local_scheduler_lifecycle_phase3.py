@@ -55,16 +55,15 @@ def test_restore_is_new_draft_not_in_place_edit():
 
 def test_editor_publish_sends_reason_json():
     html = _read("templates/academic/manualScheduleEditor.html")
-    assert "async function publishLocalArrangement(arrId, btn)" in html
-    assert "_publishLocalArrangementRequest(arrId, cleanReason)" in html
+    assert "_publishLocalArrangementRequest(draftId, cleanReason)" in html
+    assert "_publishLocalArrangementRequest(data.new_arrangementid, cleanReason)" in html
     assert "expected_updated_at: _localArrUpdatedAt[String(arrId)] || null," in html
     # The reason is optional for the user; a blank one gets an automatic audit reason.
-    assert "|| 'Published from Version History'" in html
+    assert "|| `Restored from Version History (#${arrId})`" in html
 
 def test_editor_publish_explains_archive_behavior():
     html = _read("templates/academic/manualScheduleEditor.html")
-    assert "previous Published Local Arrangement" in html
-    assert "will be archived" in html
+    assert "current Published Local Arrangement (if any) will be archived" in html
 
 def test_editor_has_explicit_publish_from_editor_flow():
     html = _read("templates/academic/manualScheduleEditor.html")

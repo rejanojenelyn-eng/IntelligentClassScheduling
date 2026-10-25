@@ -1,0 +1,134 @@
+/* ===== SHARE BUTTON (top bar) + SHARE POPUP ===== */
+
+/* Keep the nav links next to the share button on the right. */
+.topbar nav { margin-left: auto; align-items: center; }
+.share-btn {
+  flex: none; display: grid; place-items: center;
+  width: 42px; height: 42px; border-radius: 50%;
+  background: transparent; color: #fff; cursor: pointer;
+  border: 2px solid rgba(255,255,255,.85); transition: .2s;
+}
+.share-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.share-btn:hover, .share-btn:focus-visible { background: #fff; color: var(--maroon); outline: none; }
+
+@media (max-width: 680px) {
+  .menu-btn { margin-left: auto; }
+  .share-btn { width: 38px; height: 38px; }
+}
+
+/* ----- Popup ----- */
+.share-modal {
+  width: min(760px, calc(100% - 32px)); max-height: calc(100% - 32px);
+  margin: auto; padding: 1.6rem 1.8rem 1.2rem; border: 0; border-radius: 22px;
+  background: #fff; color: var(--text); font-family: var(--font);
+  box-shadow: 0 24px 60px rgba(40,0,0,.35);
+  overflow: auto;
+}
+.share-modal::backdrop { background: rgba(70,0,0,.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.share-modal[open] { animation: share-in .22s ease-out; }
+@keyframes share-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
+
+.share-modal h2, .share-modal h3 { color: var(--maroon); }
+.share-modal p { margin: 0; }
+
+.share-head {
+  display: flex; align-items: flex-start; gap: 1.1rem;
+  padding-bottom: 1.1rem; border-bottom: 1px solid #f0e6e6;
+}
+.share-badge {
+  flex: none; display: grid; place-items: center; width: 64px; height: 58px; border-radius: 14px;
+  background: linear-gradient(135deg, var(--crimson), var(--maroon-dark)); color: #fff;
+}
+.share-badge svg { width: 28px; height: 28px; fill: currentColor; }
+.share-head h2 { font-size: 1.35rem; font-weight: 700; line-height: 1.3; }
+.share-head p { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
+.share-close {
+  margin-left: auto; flex: none; width: 36px; height: 36px; border-radius: 50%;
+  border: 0; background: transparent; color: var(--text); font-size: 1.9rem; line-height: 1; cursor: pointer;
+}
+.share-close:hover, .share-close:focus-visible { background: #f6eeee; outline: none; }
+
+.share-body { display: grid; grid-template-columns: 250px 1fr; gap: 1.6rem; padding: 1.2rem 0; }
+
+.share-qr {
+  background: #fbf3f3; border-radius: 16px; padding: 1rem 1rem 1.1rem; text-align: center;
+}
+.share-qr-img {
+  width: 184px; margin: 0 auto .8rem; padding: 6px; background: #fff; border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(90,0,0,.08);
+}
+.share-qr-img img { width: 100%; height: auto; image-rendering: pixelated; }
+.share-qr h3 { color: var(--text); font-size: 1rem; }
+.share-qr p { color: var(--muted); font-size: .8rem; margin: .2rem 0 .9rem; }
+.share-download {
+  display: flex; align-items: center; justify-content: center; gap: .5rem;
+  padding: .7rem 1rem; border-radius: 10px; background: var(--maroon); color: #fff;
+  font-weight: 600; font-size: .9rem; transition: .2s;
+}
+.share-download svg { width: 18px; height: 18px; }
+.share-download:hover, .share-download:focus-visible { background: var(--maroon-dark); outline: none; }
+.share-download[aria-busy="true"] { opacity: .75; pointer-events: none; }
+
+.share-side { display: flex; flex-direction: column; gap: 1.2rem; min-width: 0; }
+.share-block + .share-block { border-top: 1px solid #f0e6e6; padding-top: 1.2rem; }
+.share-block h3 { display: flex; align-items: center; gap: .5rem; font-size: 1.02rem; color: var(--text); }
+.share-block h3 svg { width: 22px; height: 22px; color: var(--maroon); }
+.share-block > p { color: var(--muted); font-size: .8rem; margin: .1rem 0 .8rem 1.85rem; }
+
+.share-url { display: flex; background: #f5f1f1; border-radius: 12px; overflow: hidden; }
+.share-url input {
+  flex: 1; min-width: 0; border: 0; background: transparent; padding: .75rem .9rem;
+  font: inherit; font-size: .85rem; color: var(--text);
+}
+.share-url input:focus { outline: 2px solid var(--maroon-light); outline-offset: -2px; border-radius: 12px; }
+.share-url button {
+  flex: none; display: flex; align-items: center; gap: .4rem; padding: 0 1.1rem;
+  border: 0; border-radius: 12px; background: var(--maroon); color: #fff;
+  font: inherit; font-weight: 600; font-size: .9rem; cursor: pointer; transition: .2s;
+}
+.share-url button svg { width: 18px; height: 18px; }
+.share-url button:hover, .share-url button:focus-visible { background: var(--maroon-dark); outline: none; }
+
+.share-apps { list-style: none; display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; }
+.share-apps a {
+  display: flex; flex-direction: column; align-items: center; gap: .45rem;
+  font-size: .76rem; color: var(--text); text-align: center; padding: .3rem 0; border-radius: 10px;
+}
+.share-apps a:hover, .share-apps a:focus-visible { background: #fbf3f3; outline: none; }
+.share-apps .ico { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; transition: transform .2s; }
+.share-apps a:hover .ico { transform: translateY(-2px); }
+.share-apps .ico svg { width: 26px; height: 26px; }
+.ico.messenger { background: linear-gradient(45deg, #0a7cff, #a033ff 60%, #ff5c87); }
+.ico.facebook  { background: #1877f2; }
+.ico.x         { background: #000; }
+.ico.email     { background: #e53935; }
+.ico.whatsapp  { background: #25d366; }
+
+.share-note {
+  display: flex; gap: .8rem; align-items: flex-start;
+  background: #fbf1f1; border-radius: 12px; padding: .8rem 1rem;
+}
+.share-note .i {
+  flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--maroon); color: #fff; font-weight: 700; font-size: .85rem; font-family: Georgia, serif;
+}
+.share-note b { color: var(--maroon); font-size: .88rem; }
+.share-note p { color: var(--muted); font-size: .8rem; }
+
+.share-toast { min-height: 1.2em; margin-top: .6rem !important; text-align: center; font-size: .82rem; color: var(--maroon); font-weight: 600; }
+
+@media (max-width: 680px) {
+  .share-modal { padding: 1.2rem 1rem 1rem; }
+  .share-badge { width: 48px; height: 46px; }
+  .share-head h2 { font-size: 1.1rem; }
+  .share-body { grid-template-columns: minmax(0, 1fr); }
+  .share-block > p { margin-left: 0; }
+  .share-apps { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .share-apps .ico { width: 42px; height: 42px; }
+  .share-apps a { font-size: .68rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-modal[open] { animation: none; }
+  .share-apps .ico { transition: none; }
+}

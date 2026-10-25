@@ -5,8 +5,9 @@ Loads the REAL functions from manualScheduleEditor.html (plus getTimeSlotIndex f
 manualEditor.acad2.js) into Node with a stubbed DOM and scripted fetch(), then checks
 what each button actually sends and which message it shows:
   - Save → Draft-save only (never the publish endpoint), backend-shaped payload.
-  - Publish → save, then explicit publish carrying the updated_at the save returned.
-  - Version History Publish / Restore → send the stored updated_at, then refresh it.
+  - Publish → save, then explicit publish carrying the updated_at the save returned;
+    a rejected publish discards the staged Draft (Local has no Draft step).
+  - Version History Restore → sends the stored updated_at, then publishes the copy at once.
   - Only a rejected fetch() is labelled "Network Error".
 """
 import json
@@ -117,6 +118,7 @@ const OK_CONFLICTS = ['check_room_conflicts', [200, { success: true, conflicts: 
 const OK_SAVE      = ['save_arrangement', [200, { success: true, arrangement_id: 41, status: 'Draft', updated_at: T1 }]];
 const OK_PUBLISH   = ['/publish', [200, { success: true, arrangement_id: 41, status: 'Published', updated_at: T2 }]];
 const OK_RESTORE   = ['/restore', [200, { success: true, new_arrangementid: 42, updated_at: T3 }]];
+const OK_DISCARD   = ['/discard', [200, { success: true }]];
 
 const SCENARIOS = {
     save_only:            { routes: [OK_CONFLICTS, OK_SAVE, OK_PUBLISH], run: () => saveLocalArrangement() },
@@ -127,9 +129,10 @@ const SCENARIOS = {
     save_network:         { routes: [OK_CONFLICTS, ['save_arrangement', 'REJECT']], run: () => saveLocalArrangement() },
     conflict_network:     { routes: [['check_room_conflicts', 'REJECT'], OK_SAVE], run: () => saveLocalArrangement() },
     editor_publish:       { routes: [OK_CONFLICTS, OK_SAVE, OK_PUBLISH], run: () => publishLocalArrangementFromEditor() },
-    editor_publish_stale: { routes: [OK_CONFLICTS, OK_SAVE, ['/publish', [409, { success: false, code: 'STALE_LOCAL_ARRANGEMENT', error: 'This Local Arrangement changed after you opened it.' }]]], run: () => publishLocalArrangementFromEditor() },
-    history_publish:      { routes: [OK_PUBLISH], run: () => { _rememberLocalUpdatedAt(41, T1); return publishLocalArrangement(41, el('vhpBtn')); } },
-    history_restore:      { routes: [OK_RESTORE], run: () => { _rememberLocalUpdatedAt(30, T0); return restoreLocalArrangement(30, el('vhpRestore')); } },
+    editor_publish_stale: { routes: [OK_CONFLICTS, OK_SAVE, ['/publish', [409, { success: false, code: 'STALE_LOCAL_ARRANGEMENT', error: 'This Local Arrangement changed after you opened it.' }]], OK_DISCARD], run: () => publishLocalArrangementFromEditor() },
+    history_restore:      { routes: [OK_RESTORE, OK_PUBLISH], run: () => { _rememberLocalUpdatedAt(30, T0); return restoreLocalArrangement(30, el('vhpRestore')); } },
+    history_restore_rejected: { routes: [OK_RESTORE, ['/publish', [409, { success: false, error: 'Room conflict.' }]], OK_DISCARD],
+                            run: () => { _rememberLocalUpdatedAt(30, T0); return restoreLocalArrangement(30, el('vhpRestore')); } },
     room_only:            { routes: [OK_CONFLICTS, OK_SAVE], run: () => {
         acco();
         els['ts-row-1'] = sliceRow('DRAFT_C', 'Wednesday', '09:00 AM', '12:00 PM', '7');
@@ -152,12 +155,8 @@ const SCENARIOS = {
         return saveLocalArrangement();
     } },
     no_changes_save:      { routes: [OK_CONFLICTS, OK_SAVE], run: () => { acco(); return saveLocalArrangement(); } },
-    no_changes_publish:   { routes: [
-            ['/api/local/arrangements?', [200, { success: true, arrangements: [
-                { arrangementid: 40, status: 'Draft', created_at: '2026-09-28T08:00:00', updated_at: T0 },
-                { arrangementid: 41, status: 'Draft', created_at: '2026-09-28T09:00:00', updated_at: T1 }] }]],
-            OK_PUBLISH], run: () => { acco(); return publishLocalArrangementFromEditor(); } },
-    no_changes_no_draft:  { routes: [['/api/local/arrangements?', [200, { success: true, arrangements: [] }]], OK_PUBLISH],
+    no_changes_publish:   { routes: [['/api/local/arrangements?', [200, { success: true, arrangements: [
+                { arrangementid: 41, status: 'Draft', created_at: '2026-09-28T09:00:00', updated_at: T1 }] }]], OK_PUBLISH],
                             run: () => { acco(); return publishLocalArrangementFromEditor(); } },
     edit_then_save:       { routes: [OK_CONFLICTS, OK_SAVE], run: () => {
         acco();
@@ -316,26 +315,34 @@ def test_editor_publish_stale_shows_backend_message(harness):
     assert ['Cannot Publish', 'This Local Arrangement changed after you opened it.'] in r['modals']
     assert 'Network Error' not in _titles(r)
     assert r['stored']['41'] == '2026-09-28T09:15:30.123456'   # not advanced on failure
+    assert _urls(r)[-1] == '/api/local/arrangement/41/discard'  # the staged Draft never lingers
 
 
-def test_version_history_publish_sends_and_refreshes_updated_at(harness):
-    r = harness('history_publish')
-    assert r['calls'][0]['body']['expected_updated_at'] == '2026-09-28T09:15:30.123456'
-    assert r['stored']['41'] == '2026-09-28T09:20:01.654321'
-
-
-def test_restore_sends_and_stores_updated_at(harness):
+def test_restore_sends_updated_at_then_publishes_the_copy(harness):
     r = harness('history_restore')
     assert r['calls'][0]['url'] == '/api/local/arrangement/30/restore'
     assert r['calls'][0]['body'] == {'expected_updated_at': '2026-09-28T09:00:00.000001'}
-    assert r['stored']['42'] == '2026-09-28T09:25:07.111111'
+    assert r['calls'][1]['url'] == '/api/local/arrangement/42/publish'
+    assert r['calls'][1]['body'] == {'reason': 'Room swap', 'expected_updated_at': '2026-09-28T09:25:07.111111'}
+    assert r['stored']['42'] == '2026-09-28T09:20:01.654321'
+    assert 'Published' in _titles(r)
+
+
+def test_rejected_restore_discards_the_staged_copy(harness):
+    r = harness('history_restore_rejected')
+    assert _urls(r) == ['/api/local/arrangement/30/restore', '/api/local/arrangement/42/publish',
+                        '/api/local/arrangement/42/discard']
 
 
 def test_history_lists_refresh_stored_updated_at():
     panel = _slice(HTML, 'async function _loadVersionHistoryPanel()', 'function renderLocalCard')
     assert 'arr.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));' in panel
-    latest = _slice(HTML, 'async function publishLatestLocalDraft()', 'function saveAsMakeupClass()')
-    assert '_rememberLocalUpdatedAt(a.arrangementid, a.updated_at)' in latest
+
+
+def test_local_history_has_no_draft_section_or_draft_publish():
+    assert 'async function publishLocalArrangement(' not in HTML
+    assert 'publishLatestLocalDraft' not in HTML and '_latestLocalDraftIdForSection' not in HTML
+    assert "buildLocalSection(draftArr" not in HTML
 
 
 def test_local_arrangements_page_deactivate_sends_expected_updated_at():
@@ -413,19 +420,12 @@ def test_save_with_no_changes_sends_nothing(harness):
     assert _titles(r) == ['No Changes']
 
 
-def test_publish_without_changes_publishes_the_latest_saved_draft(harness):
+def test_publish_without_changes_never_publishes_an_old_draft(harness):
+    # Even if a leftover Draft existed, a no-change Publish only explains — it never
+    # looks one up or publishes it.
     r = harness('no_changes_publish')
-    assert 'status=Draft' in _urls(r)[0] and 'section_id=477' in _urls(r)[0]
-    assert _urls(r)[1] == '/api/local/arrangement/41/publish'           # newest Draft
-    assert r['calls'][1]['body']['expected_updated_at'] == '2026-09-28T09:15:30.123456'
-    assert not any('save_arrangement' in u for u in _urls(r))
-    assert ['Published', 'Local arrangement published successfully.'] in r['modals']
-
-
-def test_publish_without_changes_or_draft_explains(harness):
-    r = harness('no_changes_no_draft')
     assert _titles(r) == ['No Changes']   # told right away — no reason box, no Draft step
-    assert not any('/publish' in u for u in _urls(r))
+    assert r['calls'] == []
 
 
 def test_makeup_class_only_for_an_academic_heads_class():

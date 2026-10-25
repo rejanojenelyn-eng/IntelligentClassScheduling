@@ -178,8 +178,7 @@ def test_correction_is_saved_without_finishing_setup(env):
     assert _complete(env) is False
     page = env.client.get('/account-setup/verify').data
     assert b'Correction request submitted for Admin review' in page
-    assert b'Pending review' in page
-    assert b'// request-saved' in page            # unsent list is cleared only after a save
+    assert b'Waiting for Admin' in page
     with env.client.session_transaction() as s:
         assert s['account_setup_complete'] is False
 
@@ -234,15 +233,99 @@ def test_contact_requires_a_valid_ph_mobile_number(env):
     r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 812 345 6789'},
                         follow_redirects=True)
     assert b'Please enter a valid Philippine mobile number' in r.data
-    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 912 345 6789'})
-    assert r.headers['Location'].endswith('/account-setup/verify')
+    env.q("UPDATE accounts SET contactnumber = NULL WHERE username = %s RETURNING 1", (env.username,))
     def saved():
         return env.q("SELECT a.contactnumber FROM accounts a "
                      "WHERE a.username = %s", (env.username,))[0][0]
-    assert saved() == '09123456789'          # same local form as existing records
+    r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 912 345 6789'})
+    assert r.headers['Location'].endswith('/account-setup/verify')
+    with env.client.session_transaction() as s:
+        assert s['setup_draft']['contact'] == '09123456789'      # same local form as existing records
     r = env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+65 6123 4567'})
     assert r.headers['Location'].endswith('/account-setup/verify')
+    assert saved() is None                   # a draft until Save and Confirm
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})
     assert saved() == '+6561234567'
+
+
+# ---- nothing is saved until Save and Confirm ----------------------------------------
+
+def test_every_setup_page_renders(env):
+    _set_default_password(env)
+    assert env.client.get('/account-setup/password').status_code == 200
+    with env.client.session_transaction() as s:
+        s['must_change_password'] = False
+    for step in ('photo', 'email', 'contact', 'verify'):
+        r = env.client.get(f'/account-setup/{step}')
+        assert r.status_code == 200, step
+
+
+def _pending_password(env):
+    return env.q("SELECT passwordhash FROM account_setup_pending WHERE username = %s", (env.username,))
+
+
+def _set_default_password(env):
+    from werkzeug.security import generate_password_hash
+    env.q("UPDATE accounts SET passwordhash = %s, must_change_password = TRUE WHERE username = %s RETURNING 1",
+          (generate_password_hash('OldPass123'), env.username))
+    with env.client.session_transaction() as s:
+        s['must_change_password'] = True
+
+
+def test_new_password_is_kept_as_draft_until_confirm(env):
+    from werkzeug.security import check_password_hash
+    _set_default_password(env)
+    r = env.client.post('/account-setup/password', data={
+        'current_password': 'OldPass123', 'new_password': 'NewPass456x', 'confirm_password': 'NewPass456x'})
+    assert r.headers['Location'].endswith('/account-setup/photo')
+    hash_, must = env.q("SELECT passwordhash, must_change_password FROM accounts WHERE username = %s",
+                        (env.username,))[0]
+    assert check_password_hash(hash_, 'OldPass123') and must is True       # old password still works
+    assert _pending_password(env)
+    page = env.client.get('/account-setup/password').data
+    assert b'New password set' in page and b'Choose a different password' in page
+    r = env.client.post('/account-setup/verify', data={'action': 'confirm'})
+    assert r.headers['Location'].endswith('/account-setup/done')
+    hash_, must = env.q("SELECT passwordhash, must_change_password FROM accounts WHERE username = %s",
+                        (env.username,))[0]
+    assert check_password_hash(hash_, 'NewPass456x') and must is False
+    assert not _pending_password(env)
+
+
+def test_leave_setup_discards_everything_and_signs_out(env):
+    from werkzeug.security import check_password_hash
+    _set_default_password(env)
+    before = env.q("SELECT contactnumber, profile_photo FROM accounts WHERE username = %s", (env.username,))[0]
+    env.client.post('/account-setup/password', data={
+        'current_password': 'OldPass123', 'new_password': 'NewPass456x', 'confirm_password': 'NewPass456x'})
+    env.client.post('/account-setup/contact', data={'action': 'continue', 'contact_number': '+63 998 765 4321'})
+    page = env.client.get('/account-setup/password').data
+    assert b'action="/account-setup/leave"' in page
+    r = env.client.post('/account-setup/leave')
+    assert r.headers['Location'].endswith('/login')
+    with env.client.session_transaction() as s:
+        assert 'loggedin' not in s and 'setup_draft' not in s
+    hash_, must, contact, photo, done = env.q(
+        "SELECT passwordhash, must_change_password, contactnumber, profile_photo, account_setup_complete "
+        "FROM accounts WHERE username = %s", (env.username,))[0]
+    assert check_password_hash(hash_, 'OldPass123') and must is True and done is False
+    assert (contact, photo) == before
+    assert not _pending_password(env)
+
+
+def test_review_edit_is_a_draft_until_confirm(env):
+    spec = _spec_choice(env)
+    def saved_spec():
+        return env.q("""SELECT s.specializationname FROM accounts a JOIN faculty f ON f.employeenumber = a.employeenumber
+                        LEFT JOIN specialization s ON s.specializationid = f.specializationid
+                        WHERE a.username = %s""", (env.username,))[0][0]
+    before = saved_spec()
+    r = env.client.post('/account-setup/verify', data={'action': 'edit_employment', 'field': 'Specialization',
+                                                       'value': spec}, follow_redirects=True)
+    assert spec.encode() in r.data and b'when you press Save and Confirm' in r.data
+    assert saved_spec() == before
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})
+    assert saved_spec() == spec and _complete(env) is True
 
 
 def test_confirm_db_failure_keeps_account_unchanged(env, monkeypatch):

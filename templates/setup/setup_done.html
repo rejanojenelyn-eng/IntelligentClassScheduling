@@ -19,6 +19,7 @@
         .done-spark.s3 { right: 10px; top: 90px; color: #e8b923; font-size: 0.7rem; }
         .done-spark.s4 { left: 34px; bottom: 26px; color: #f0a5a5; font-size: 0.7rem; }
 
+
         .done-list { list-style: none; border: 1px solid #ececec; border-radius: 12px; background: #fafbfc; padding: 4px 18px; }
         .done-list li { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid #eee; }
         .done-list li:last-child { border-bottom: none; }
@@ -34,8 +35,10 @@
         }
 {% endblock %}
 
+
 {% block heading %}Great, your account is all set!{% endblock %}
 {% block lead %}You can now use the PUP Lopez Academic Scheduling System.{% endblock %}
+
 
 {% block form %}
     <div class="done-art" aria-hidden="true">
@@ -47,6 +50,7 @@
         <i class="fas fa-star done-spark s3"></i>
         <i class="fas fa-star done-spark s4"></i>
     </div>
+
 
     <ul class="done-list">
         <li>
@@ -65,6 +69,7 @@
                 <div class="done-text">You can now use all features according to your role and permissions.</div></div>
         </li>
     </ul>
+
 
     <div class="setup-actions done-actions">
         <a href="{{ dashboard_url }}" class="btn-continue">

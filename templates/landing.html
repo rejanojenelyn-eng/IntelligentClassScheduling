@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='landing/css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='landing/css/share.css') }}">
 </head>
 <body>
 
@@ -28,7 +29,78 @@
     <a href="#team">Team</a>
     <a class="nav-login" href="{{ login_href }}" data-login>{{ 'Go to dashboard' if logged_in else 'Log in' }}</a>
   </nav>
+  <button type="button" class="share-btn" data-share-open aria-label="Share PUPLC Scheduling System" title="Share">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+  </button>
 </header>
+
+<!-- ============ SHARE POPUP ============ -->
+<dialog class="share-modal" id="shareModal" aria-labelledby="shareTitle" data-share-url="{{ share_url }}">
+  <div class="share-head">
+    <span class="share-badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </span>
+    <div>
+      <h2 id="shareTitle">Share PUPLC Scheduling System</h2>
+      <p>Let others explore the system and learn more about smarter class scheduling.</p>
+    </div>
+    <button type="button" class="share-close" data-share-close aria-label="Close">&times;</button>
+  </div>
+
+  <div class="share-body">
+    <section class="share-qr">
+      <div class="share-qr-img">
+        <img src="{{ url_for('share_qr') }}" alt="QR code linking to {{ share_url }}" width="200" height="200">
+      </div>
+      <h3>Scan to visit the system</h3>
+      <p>Open the camera app on your device and scan the QR code.</p>
+      <a class="share-download" href="{{ url_for('share_qr_poster') }}" download="PUPLC_Scheduling_System_QR.png" data-share-download>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Download QR Code</span>
+      </a>
+    </section>
+
+    <section class="share-side">
+      <div class="share-block">
+        <h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>System URL</h3>
+        <p>Copy the link below to share the system.</p>
+        <div class="share-url">
+          <input type="text" value="{{ share_url }}" readonly aria-label="System URL" data-share-input>
+          <button type="button" data-share-copy>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="share-block">
+        <h3><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.4 13.3l7.2 4.4M15.6 6.3l-7.2 4.4" fill="none" stroke="currentColor" stroke-width="2"/></svg>Share via</h3>
+        <p>Share the system through your preferred platform.</p>
+        <ul class="share-apps">
+          <li><a href="#" data-share-to="messenger" target="_blank" rel="noopener">
+            <span class="ico messenger"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M12 2.5C6.6 2.5 2.5 6.4 2.5 11.6c0 2.7 1.1 5.1 3 6.7v3.2l3-1.7c1.1.3 2.3.5 3.5.5 5.4 0 9.5-3.9 9.5-9.1S17.4 2.5 12 2.5zm1 12.2l-2.4-2.6-4.7 2.6 5.2-5.5 2.5 2.6 4.6-2.6-5.2 5.5z"/></svg></span>Messenger</a></li>
+          <li><a href="#" data-share-to="facebook" target="_blank" rel="noopener">
+            <span class="ico facebook"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H7.8v3h2.6V21h3.1z"/></svg></span>Facebook</a></li>
+          <li><a href="#" data-share-to="x" target="_blank" rel="noopener">
+            <span class="ico x"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M17.8 3h3l-6.6 7.6L22 21h-6.1l-4.8-6.3L5.6 21h-3l7.1-8.1L2.3 3h6.2l4.3 5.7L17.8 3zm-1 16.2h1.7L7.3 4.7H5.5l11.3 14.5z"/></svg></span>X (Twitter)</a></li>
+          <li><a href="#" data-share-to="email">
+            <span class="ico email"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm8 7.2L20 7H4l8 5.2zM4 17h16V9.3l-8 5.2-8-5.2V17z"/></svg></span>Email</a></li>
+          <li><a href="#" data-share-to="whatsapp" target="_blank" rel="noopener">
+            <span class="ico whatsapp"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M12 2.3a9.6 9.6 0 0 0-8.3 14.5L2.4 21.7l5-1.3A9.6 9.6 0 1 0 12 2.3zm0 17.5c-1.5 0-2.9-.4-4.1-1.1l-.3-.2-3 .8.8-2.9-.2-.3A7.9 7.9 0 1 1 12 19.8zm4.4-5.9c-.2-.1-1.4-.7-1.7-.8-.2-.1-.4-.1-.5.1l-.8.9c-.1.2-.3.2-.5.1-1.4-.7-2.3-1.2-3.2-2.8-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.5-.4h-.5c-.2 0-.4.1-.7.3-.2.3-.9.9-.9 2.2s.9 2.5 1 2.7c.1.2 1.8 2.8 4.4 3.9 1.6.7 2.3.8 3.1.6.5-.1 1.4-.6 1.6-1.1.2-.6.2-1 .1-1.1l-.5-.3z"/></svg></span>WhatsApp</a></li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <div class="share-note" role="note">
+    <span class="i" aria-hidden="true">i</span>
+    <div>
+      <b>Anyone with the link can view the public landing page.</b>
+      <p>Login is required for restricted features such as managing schedules.</p>
+    </div>
+  </div>
+  <p class="share-toast" role="status" aria-live="polite" data-share-status></p>
+</dialog>
 
 <!-- ============ HERO ============ -->
 <section class="hero" id="home">
@@ -78,7 +150,7 @@
   <div class="grid three">
     <article class="persona"><span class="ico">📋</span><h3>Academic Head</h3><p>Build and approve schedules, review requests, and monitor scheduling activity from one dashboard.</p></article>
 
-    <article class="persona"><span class="ico">👩‍🏫</span><h3>Faculty</h3><p>View your assigned schedule, submit room requests, and raise schedule concerns.</p></article>
+    <article class="persona"><span class="ico">👩‍🏫</span><h3>Faculty</h3><p>View teaching assignments, find available rooms, and submit schedule requests.</p></article>
     <article class="persona"><span class="ico">🛠️</span><h3>Administrator</h3><p>Manage user accounts, system settings, academic configurations and records.</p></article>
   </div>
   <p class="roles-cta">Your view depends on your account role. <a class="btn btn-maroon" href="{{ login_href }}" data-login>{{ 'Go to dashboard' if logged_in else 'Log in' }}</a></p>
@@ -222,5 +294,6 @@
 </footer>
 
 <script src="{{ url_for('static', filename='landing/js/main.js') }}"></script>
+<script src="{{ url_for('static', filename='landing/js/share.js') }}"></script>
 </body>
 </html>

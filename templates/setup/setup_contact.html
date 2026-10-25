@@ -14,23 +14,22 @@
         }
 {% endblock %}
 
-{% block lead %}Update your contact number. This will be used for official announcements and important updates related to your class schedule.{% endblock %}
+
+{% block lead %}Add a mobile number for official announcements and important updates about your class schedule.{% endblock %}
+
 
 {% block content %}
     <div class="setup-section-head">
         <div class="setup-section-icon"><i class="fas fa-phone"></i></div>
         <div>
-            <div class="setup-section-title">Contact Number</div>
-            <div class="setup-section-sub">Review your current contact number and enter your new contact number.</div>
+            <div class="setup-section-title">Set Up Your Contact Number</div>
+            <div class="setup-section-sub">Enter the mobile number you want on your account.</div>
         </div>
     </div>
 
+
     <div class="form-group">
-        <label>Current Contact Number</label>
-        <input type="text" value="{{ current_contact or 'Not on file yet' }}" readonly>
-    </div>
-    <div class="form-group">
-        <label for="setupContactLocal">New Contact Number</label>
+        <label for="setupContactLocal">Contact Number</label>
         <div class="phone-row">
             <select id="setupCountry" aria-label="Country code">
                 <option value="+63" selected>+63</option>
@@ -45,21 +44,24 @@
                 <option value="+971">+971</option>
             </select>
             <input type="tel" id="setupContactLocal" inputmode="tel" autocomplete="tel-national"
-                   placeholder="Enter your new contact number">
+                   placeholder="09XXXXXXXXX" maxlength="20">
         </div>
-        <div class="field-hint">Example: 912 345 6789</div>
-        <!-- What the server saves: country code + number, e.g. "+63 912 345 6789". -->
+        <div class="field-hint">Philippine mobile number, e.g. 09123456789. For another country, choose its code first.</div>
+        <!-- What is sent to the server: country code + number, e.g. "+63 9123456789". -->
         <input type="hidden" id="setupContact" name="contact_number" value="{{ draft_contact }}">
     </div>
+
 
     <div class="setup-info">
         <i class="fas fa-circle-info"></i>
         <div>
             <strong>Your contact number is optional.</strong>
-            <small>It will be used for official announcements and important updates related to your class schedule.</small>
+            <small>It will be used for official announcements and important updates related to your class schedule.
+                It is saved when you confirm your information in the last step.</small>
         </div>
     </div>
 {% endblock %}
+
 
 {% block scripts %}
 <script>
@@ -68,11 +70,19 @@
         const local   = document.getElementById('setupContactLocal');
         const hidden  = document.getElementById('setupContact');
 
-        // Restore a draft ("+63 912 345 6789") into the two fields.
+
+        // Restore a draft ("+63 9123456789" or "+6561234567") into the two fields; a PH number shows as 09...
         const draft = hidden.value.trim();
-        const m = draft.match(/^(\+\d{1,4})\s*(.*)$/);
-        if (m && Array.from(country.options).some(o => o.value === m[1])) { country.value = m[1]; local.value = m[2]; }
-        else local.value = draft;
+        const code = Array.from(country.options).map(o => o.value).sort((a, b) => b.length - a.length)
+                          .find(c => draft.startsWith(c));
+        if (code) {
+            const rest = draft.slice(code.length).trim();
+            country.value = code;
+            local.value = code === '+63' && /^9/.test(rest) ? '0' + rest : rest;
+        } else {
+            local.value = draft;
+        }
+
 
         function sync() {
             let num = local.value.trim();
@@ -84,6 +94,8 @@
         country.addEventListener('change', sync);
         sync();
 
+
+        // Same rules as the server (which also checks no other account uses the number).
         window.setupValidateContinue = function () {
             sync();
             const num = local.value.trim();
@@ -91,9 +103,8 @@
             const digits = hidden.value.replace(/\D/g, '');
             if (!/^[0-9()\-\s]+$/.test(num) || digits.length < 7 || digits.length > 15)
                 return 'Please enter a valid contact number, or choose Skip.';
-            // Same rule as the server: +63 then a 10-digit mobile number starting with 9.
             if (country.value === '+63' && !/^\+63\s*9\d{2}[\s-]?\d{3}[\s-]?\d{4}$/.test(hidden.value))
-                return 'Please enter a valid Philippine mobile number (e.g. 912 345 6789), or choose Skip.';
+                return 'Please enter a valid Philippine mobile number (e.g. 09123456789), or choose Skip.';
             return '';
         };
     })();

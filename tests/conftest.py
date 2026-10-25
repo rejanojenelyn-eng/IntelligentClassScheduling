@@ -58,6 +58,9 @@ def _session_transaction_with_login_clock(self, *args, **kwargs):
             sess.setdefault('last_seen', now)
             sess.setdefault('last_active', now)
             sess.setdefault('sid', uuid.uuid4().hex)
+            import app as _app_module             # a real login is tracked as signed in since this run
+            if _app_module._login_unknown(sess['sid']):
+                _app_module._track_login(sess['sid'])
 
 
 _FlaskClient.session_transaction = _session_transaction_with_login_clock

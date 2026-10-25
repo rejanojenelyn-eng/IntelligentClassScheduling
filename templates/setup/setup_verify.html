@@ -1,13 +1,17 @@
 {% extends "setup/_setup_layout.html" %}
 
+
+{# A correction request sent earlier (from Profile Settings) that the Admin has not decided yet. #}
 {% macro pending_note(fields, pending_by_field) -%}
     {%- for f in fields if f in pending_by_field -%}
-        <span class="pending-to">{{ f }} → {{ pending_by_field[f].proposed_value or '(blank)' }} · <span class="pending-badge">Pending review</span></span>
+        <span class="pending-to">{{ f }} → {{ pending_by_field[f].proposed_value or '(blank)' }} · <span class="pending-badge">Waiting for Admin</span></span>
     {%- endfor -%}
 {%- endmacro %}
 
+
 {% block extra_css %}
         .setup-shell { max-width: 1080px; }
+
 
         /* Panels */
         .rv-panel { border: 1px solid #ececec; border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
@@ -20,8 +24,10 @@
             border-radius: 6px; padding: 4px 10px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.3px; }
         .rv-panel-body { padding: 16px; }
 
-        /* Account information */
-        .acc-grid { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; align-items: center; }
+
+        /* Account information: photo beside email + contact number */
+        .acc-grid { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; align-items: center;
+            padding-top: 14px; }
         .acc-photo { display: flex; flex-direction: column; align-items: center; gap: 10px; }
         .acc-avatar { width: 96px; height: 96px; border-radius: 50%; overflow: hidden; background: #e4e4e4;
             display: flex; align-items: flex-end; justify-content: center; border: 3px solid #fff;
@@ -44,221 +50,295 @@
         .acc-verified { display: inline-flex; align-items: center; gap: 6px; color: #1a6b3c; font-size: 0.8rem; font-weight: 700;
             white-space: nowrap; }
         .acc-edit { color: #800000; font-weight: 700; font-size: 0.85rem; text-decoration: none; padding: 6px 10px;
-            border-radius: 6px; margin-left: 6px; }
+            border-radius: 6px; margin-left: 6px; border: none; background: none; cursor: pointer; font-family: inherit; }
         .acc-edit:hover { background: #fdf3f3; }
 
-        /* Official faculty information */
-        .of-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px 16px; padding: 10px 0;
-            border-bottom: 1px solid #f0f0f0; }
-        .of-row:first-child { padding-top: 0; }
-        .of-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+        /* Field rows with inline editors */
         .of-label { color: #777; font-size: 0.74rem; }
         .of-value { color: #222; font-size: 0.88rem; font-weight: 600; word-break: break-word; }
-        .of-pair { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: baseline; }
-        .of-span2 { grid-column: span 2; }
-        .of-span4 { grid-column: span 4; }
+        .name-value { color: #222; font-size: 1.05rem; font-weight: 800; word-break: break-word; }
         .pending-to { display: block; font-size: 0.74rem; color: #a15c00; margin-top: 3px; font-weight: 500; }
         .pending-badge { display: inline-block; background: #fff8e1; color: #a15c00; border-radius: 10px;
             padding: 2px 8px; font-size: 0.64rem; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+        .ed-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0; }
+        .ed-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .ed-row:first-child { padding-top: 0; }
+        .ed-main { flex: 1; min-width: 0; }
+        .ed-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-height: 32px; }
+        .ed-hint { color: #888; font-size: 0.74rem; margin-top: 4px; line-height: 1.45; }
+        .ed-form { display: none; margin-top: 10px; background: #fdf6f6; border: 1px solid #f0d6d6; border-radius: 8px;
+            padding: 12px; }
+        .ed-form.open { display: block; }
+        .ed-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 110px; gap: 8px; margin-bottom: 10px; }
+        .ed-form input[type=text], .ed-form select { width: 100%; padding: 9px 11px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 0.86rem; font-family: inherit; background: #fff; color: #222; }
+        .ed-form .ed-one { max-width: 340px; margin-bottom: 10px; display: block; }
+        .ed-form label.ed-sub { display: block; font-size: 0.74rem; color: #555; font-weight: 700; margin: 0 0 4px; }
+        .ed-form-actions { display: flex; gap: 8px; }
+        .ed-btn { padding: 7px 14px; border-radius: 7px; font-weight: 700; font-size: 0.78rem; cursor: pointer;
+            border: 1.5px solid #800000; background: #800000; color: #fff; }
+        .ed-btn.ghost { background: #fff; color: #555; border-color: #ccc; }
+        .ot-note { color: #8a5a00; font-size: 0.74rem; margin: 0 0 8px; }
+        .ot-tag { display: inline-block; background: #eef4fd; color: #2c4a73; border-radius: 10px; padding: 2px 8px;
+            font-size: 0.64rem; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+        .ot-tag.used { background: #f2f2f2; color: #777; }
+        .rv-explain { color: #666; font-size: 0.78rem; margin: 0 0 12px; line-height: 1.5; }
+
 
         .rv-msg { display: flex; align-items: center; gap: 10px; border-radius: 10px; padding: 11px 14px; margin: 0 0 14px;
             font-size: 0.84rem; font-weight: 600; }
         .rv-msg.ok { background: #eef8f1; border: 1px solid #bfe3cb; color: #1a6b3c; }
         .rv-msg.err { background: #fdecec; border: 1px solid #f5b5b5; color: #9b1c1c; }
+        .rv-msg[hidden] { display: none; }      /* display:flex above would otherwise override [hidden] */
+
 
         /* Confirm + finish */
-        .rv-confirm { display: flex; align-items: center; gap: 10px; margin: 18px 0 0; color: #444; font-size: 0.86rem; cursor: pointer; }
+        /* The information sections scroll inside the card, so the page itself doesn't. */
+        .rv-scroll { max-height: max(260px, calc(100vh - 560px)); overflow-y: auto; padding-right: 6px;
+            margin-right: -6px; overscroll-behavior: contain; }
+        .rv-scroll .rv-panel:last-child { margin-bottom: 0; }
+        .rv-scroll::-webkit-scrollbar { width: 8px; }
+        .rv-scroll::-webkit-scrollbar-thumb { background: #d6c4c4; border-radius: 8px; }
+        .rv-scroll:focus-visible { outline: 2px solid rgba(128, 0, 0, 0.35); outline-offset: 2px; border-radius: 12px; }
+        .rv-confirm { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 18px 0 0;
+            color: #b22222; font-size: 0.86rem; font-weight: 700; cursor: pointer; }
         .rv-confirm input { width: 18px; height: 18px; accent-color: #800000; cursor: pointer; }
         .btn-continue:disabled { background: #c9a3a3; border-color: #c9a3a3; cursor: not-allowed; }
-        .finish-hint { color: #888; font-size: 0.78rem; text-align: right; margin-top: 8px; }
 
-        /* ── Request Information Correction (pop-up) ── */
-        .cr-overlay { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(30, 10, 10, 0.5);
-            align-items: center; justify-content: center; padding: 16px; }
-        .cr-overlay.open { display: flex; }
-        .cr-dialog { background: #fff; border-radius: 14px; width: 100%; max-width: 660px; max-height: calc(100vh - 32px);
-            display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3); }
-        .cr-head { display: flex; align-items: flex-start; gap: 14px; padding: 20px 22px 14px; }
-        .cr-head-icon { flex-shrink: 0; width: 46px; height: 46px; border-radius: 50%; background: #fbe4e4; color: #800000;
-            display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
-        .cr-title { color: #800000; font-weight: 800; font-size: 1.25rem; }
-        .cr-sub { color: #666; font-size: 0.84rem; margin-top: 2px; }
-        .cr-close { margin-left: auto; background: none; border: none; color: #777; font-size: 1.2rem; cursor: pointer;
-            width: 34px; height: 34px; border-radius: 8px; }
-        .cr-close:hover { background: #f3f3f3; color: #333; }
-        .cr-body { overflow-y: auto; padding: 0 22px 6px; }
-        .cr-note { display: flex; gap: 12px; align-items: flex-start; border-radius: 10px; padding: 11px 14px; margin-bottom: 14px;
-            font-size: 0.8rem; line-height: 1.5; background: #eef4fd; border: 1px solid #d4e3f8; color: #2c4a73; }
-        .cr-note i { font-size: 1.05rem; margin-top: 2px; }
-        .cr-note strong { display: block; }
-        .cr-dialog.has-changes .cr-note { background: #fdecec; border-color: #f5c6c6; color: #8a1c1c; }
-
-        .cr-item { display: flex; gap: 14px; border: 1px solid #ececec; border-radius: 10px; padding: 14px; margin-bottom: 10px;
-            transition: border-color 0.15s, background 0.15s; }
-        .cr-item.changing { border-color: #f0b8b8; background: #fffafa; }
-        .cr-item-icon { flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px; background: #fbe4e4; color: #800000;
-            display: flex; align-items: center; justify-content: center; }
-        .cr-item-main { flex: 1; min-width: 0; }
-        .cr-item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-        .cr-item-name { color: #222; font-weight: 800; font-size: 0.92rem; }
-        .cr-item-cur { color: #777; font-size: 0.74rem; margin: 2px 0 6px; }
-        .cr-current { background: #f2f3f5; border-radius: 6px; padding: 8px 12px; font-size: 0.86rem; color: #333;
-            max-width: 340px; word-break: break-word; }
-        .cr-ok { display: inline-flex; align-items: center; gap: 8px; font-size: 0.78rem; color: #333; cursor: pointer; white-space: nowrap; }
-        .cr-ok input { width: 17px; height: 17px; accent-color: #800000; cursor: pointer; }
-        .cr-item.changing .cr-ok { color: #b22222; }
-        .cr-proposed { display: none; margin-top: 12px; background: #fdf0f0; border-radius: 8px; padding: 10px 12px; }
-        .cr-item.changing .cr-proposed { display: block; }
-        .cr-proposed-label { color: #800000; font-size: 0.74rem; font-weight: 700; margin-bottom: 6px; }
-        .cr-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 110px; gap: 8px; }
-        .cr-proposed input, .cr-proposed select, .cr-reason textarea {
-            width: 100%; padding: 9px 11px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.86rem;
-            font-family: inherit; background: #fff; color: #222; outline: none;
-        }
-        .cr-proposed input:focus, .cr-proposed select:focus, .cr-reason textarea:focus {
-            border-color: #800000; box-shadow: 0 0 0 3px rgba(128, 0, 0, 0.1); }
-        .cr-warn { color: #a15c00; font-size: 0.74rem; margin-top: 6px; }
-        .cr-reason textarea { resize: vertical; min-height: 64px; }
-        .cr-count { text-align: right; color: #999; font-size: 0.72rem; margin-top: 4px; }
-        .cr-error { display: none; margin: 4px 0 8px; }
-        .cr-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px 18px; border-top: 1px solid #eee; }
-        .btn-cr-cancel { padding: 10px 20px; border-radius: 8px; border: 1.5px solid #d0d0d0; background: #fff; color: #444;
-            font-weight: 700; font-size: 0.84rem; cursor: pointer; }
-        .btn-cr-cancel:hover { background: #f5f5f5; }
-        .btn-cr-submit { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px;
-            border: 1.5px solid #800000; background: #800000; color: #fff; font-weight: 700; font-size: 0.84rem; cursor: pointer; }
-        .btn-cr-submit:hover:not(:disabled) { background: #5c0000; }
-        .btn-cr-submit:disabled { background: #d9a9a9; border-color: #d9a9a9; cursor: not-allowed; }
-
-        /* Unsent-correction notice */
-        .notice-overlay { display: none; position: fixed; inset: 0; z-index: 1100; background: rgba(40, 0, 0, 0.45);
-            align-items: center; justify-content: center; padding: 16px; }
-        .notice-overlay.open { display: flex; }
-        .notice-card { background: #fff; border-radius: 14px; width: 100%; max-width: 420px; padding: 26px 24px 22px;
-            text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.25); border-top: 5px solid #800000; }
-        .notice-icon { width: 52px; height: 52px; border-radius: 50%; background: #fff8e1; color: #d48806;
-            display: flex; align-items: center; justify-content: center; font-size: 1.3rem; margin: 0 auto 12px; }
-        .notice-title { color: #4b0a0a; font-size: 1.1rem; font-weight: 800; margin-bottom: 8px; }
-        .notice-text { color: #666; font-size: 0.88rem; line-height: 1.5; margin-bottom: 20px; }
-        .notice-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-        .notice-btn { padding: 11px 18px; border-radius: 8px; font-weight: 800; font-size: 0.82rem; cursor: pointer; flex: 1 1 160px; }
-        .notice-btn-primary { background: #800000; border: 2px solid #800000; color: #fff; }
-        .notice-btn-secondary { background: #fff; border: 2px solid #ccc; color: #666; }
 
         @media (max-width: 620px) {
             .acc-grid { grid-template-columns: 1fr; }
             .acc-row { flex-wrap: wrap; }
-            .of-row { grid-template-columns: 1fr 1fr; }
-            .of-span4 { grid-column: span 2; }
-            .of-pair { grid-template-columns: 1fr; gap: 2px; }
-            .cr-item-top { flex-direction: column; }
-            .cr-grid { grid-template-columns: 1fr 1fr; }
-            .cr-head, .cr-body, .cr-foot { padding-left: 16px; padding-right: 16px; }
-            .finish-hint { text-align: center; }
+            .ed-grid { grid-template-columns: 1fr 1fr; }
+            .ed-row { flex-wrap: wrap; }
+            .rv-scroll { max-height: 60vh; }
         }
 {% endblock %}
 
+
 {% block lead %}Review your information before completing your account setup.{% endblock %}
 
-{# Messages are shown inside the page (corrections in their own places) instead of at the top. #}
+
+{# Messages are shown inside the page instead of at the top. #}
 {% block messages %}{% endblock %}
+
 
 {% block form %}
 {% set pending_by_field = {} %}
 {% for p in pending_corrections or [] %}{% set _ = pending_by_field.update({p.field_name: p}) %}{% endfor %}
-{% set ns = namespace(correction_msgs=[], other_msgs=[]) %}
+{% set ns = namespace(other_msgs=[], edit_msgs=[]) %}
 {% for category, message in get_flashed_messages(with_categories=true) %}
-    {% if category.startswith('correction-') %}{% set ns.correction_msgs = ns.correction_msgs + [(category[11:], message)] %}
+    {% if category.startswith('edit-') %}{% set ns.edit_msgs = ns.edit_msgs + [(category[5:], message)] %}
     {% else %}{% set ns.other_msgs = ns.other_msgs + [(category, message)] %}{% endif %}
 {% endfor %}
-{% set correction_errors = ns.correction_msgs | selectattr(0, 'equalto', 'error') | list %}
-{% set correction_ok     = ns.correction_msgs | rejectattr(0, 'equalto', 'error') | list %}
+
 
     <div class="setup-section-head">
         <div class="setup-section-icon"><i class="fas fa-file-lines"></i></div>
         <div>
             <div class="setup-section-title">Check Your Information</div>
-            <div class="setup-section-sub">Please review the details below before completing your account setup.</div>
+            <div class="setup-section-sub">Review the details below. Use Edit to fix anything that is wrong &mdash; nothing is saved to your account until you press Save and Confirm.</div>
         </div>
     </div>
 
-    <!-- ACCOUNT INFORMATION: the user can change these directly -->
+
+    {% for category, message in ns.edit_msgs %}
+    <p class="rv-msg {{ 'err' if category == 'error' else 'ok' }}" role="{{ 'alert' if category == 'error' else 'status' }}">
+        <i class="fas {{ 'fa-circle-exclamation' if category == 'error' else 'fa-circle-check' }}"></i><span>{{ message }}</span></p>
+    {% endfor %}
+
+
+    {# Why a field has no Edit right now: a correction request (sent from Profile Settings before
+       a password reset reopened setup) is waiting for the Admin, or editing is unavailable. #}
+    {% macro locked_note(field, pending_by_field) -%}
+        {%- if field in pending_by_field -%}
+        <div class="ed-hint"><i class="fas fa-hourglass-half"></i> A correction request you sent earlier is waiting for the Administrator, so this can be edited once it is decided.</div>
+        {%- else -%}
+        <div class="ed-hint"><i class="fas fa-circle-exclamation"></i> Editing isn't available right now. Please try again later or contact the Administrator.</div>
+        {%- endif -%}
+    {%- endmacro %}
+
+
+    <div class="rv-scroll" id="rvScroll" tabindex="0" aria-label="Your information">
+    <!-- PERSONAL INFORMATION: name at the top, then the photo beside email + contact -->
     <section class="rv-panel" aria-labelledby="accTitle">
         <div class="rv-panel-head">
-            <span class="rv-panel-title" id="accTitle"><i class="fas fa-user"></i> Account Information</span>
+            <span class="rv-panel-title" id="accTitle"><i class="fas fa-user"></i> Personal Information</span>
             <span class="rv-tag"><i class="fas fa-pen"></i> YOU CAN EDIT</span>
         </div>
-        <div class="rv-panel-body acc-grid">
-            <div class="acc-photo">
-                <div class="acc-avatar">
-                    {% if profile_photo %}<img src="{{ profile_photo }}" alt="Your profile photo">
-                    {% else %}<i class="fas fa-user" aria-hidden="true"></i>{% endif %}
+        <div class="rv-panel-body">
+            <div class="ed-row">
+                <div class="ed-main">
+                    <div class="of-label">Full Name</div>
+                    <div class="name-value">{{ full_name or '—' }}</div>
+                    {{ pending_note(['First Name', 'Middle Name', 'Last Name', 'Suffix'], pending_by_field) }}
+                    <form class="ed-form" id="edName" method="POST">
+                        <input type="hidden" name="action" value="edit_name">
+                        <div class="ed-grid">
+                            {% for f in ['First Name', 'Middle Name', 'Last Name'] %}
+                            <input type="text" name="{{ f }}" value="{{ info[f] }}" maxlength="60" placeholder="{{ f }}"
+                                   aria-label="{{ f }}" {{ 'required' if f != 'Middle Name' }}>
+                            {% endfor %}
+                            <select name="Suffix" aria-label="Suffix (optional)">
+                                {% for s in name_suffixes | list + ([info['Suffix']] if info['Suffix'] and info['Suffix'] not in name_suffixes else []) %}
+                                <option value="{{ s }}" {{ 'selected' if s == info['Suffix'] }}>{{ s or 'No suffix' }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="ed-form-actions">
+                            <button type="submit" class="ed-btn">Save Name</button>
+                            <button type="button" class="ed-btn ghost" onclick="toggleEdit('edName', false)">Cancel</button>
+                        </div>
+                    </form>
                 </div>
-                {% if not profile_photo %}<div class="acc-photo-note">Not provided</div>{% endif %}
-                <a class="btn-outline-sm" href="{{ url_for('account_setup_photo', **{'from': 'review'}) }}">
-                    <i class="fas fa-camera"></i> {{ 'Edit Photo' if profile_photo else 'Add Photo' }}</a>
+                <div class="ed-actions">
+                    <button type="button" class="acc-edit" onclick="toggleEdit('edName', true)">Edit</button>
+                </div>
             </div>
-            <div class="acc-rows">
-                <div class="acc-row">
-                    <div class="acc-icon"><i class="fas fa-envelope"></i></div>
-                    <div class="acc-main">
-                        <div class="acc-label">Email Address</div>
-                        <div class="acc-value {{ 'muted' if not account_email }}">{{ account_email or 'Not provided' }}</div>
+            <div class="acc-grid">
+                <div class="acc-photo">
+                    <div class="acc-avatar">
+                        {% if profile_photo %}<img src="{{ profile_photo }}" alt="Your profile photo">
+                        {% else %}<i class="fas fa-user" aria-hidden="true"></i>{% endif %}
                     </div>
-                    {% if email_verified %}<span class="acc-verified"><i class="fas fa-circle-check"></i> Verified</span>{% endif %}
-                    <a class="acc-edit" href="{{ url_for('account_setup_email', **{'from': 'review'}) }}">Edit</a>
+                    {% if not profile_photo %}<div class="acc-photo-note">Not provided</div>{% endif %}
+                    <a class="btn-outline-sm" href="{{ url_for('account_setup_photo', **{'from': 'review'}) }}">
+                        <i class="fas fa-camera"></i> {{ 'Change Photo' if profile_photo else 'Add Photo' }}</a>
                 </div>
-                <div class="acc-row">
-                    <div class="acc-icon"><i class="fas fa-phone"></i></div>
-                    <div class="acc-main">
-                        <div class="acc-label">Contact Number</div>
-                        <div class="acc-value {{ 'muted' if not account_contact }}">{{ account_contact or 'Not provided' }}</div>
+                <div class="acc-rows">
+                    <div class="acc-row">
+                        <div class="acc-icon"><i class="fas fa-envelope"></i></div>
+                        <div class="acc-main">
+                            <div class="acc-label">Email Address</div>
+                            <div class="acc-value {{ 'muted' if not account_email }}">{{ account_email or 'Not provided' }}</div>
+                        </div>
+                        {% if email_verified %}<span class="acc-verified"><i class="fas fa-circle-check"></i> Verified</span>
+                        {% elif account_email %}<span class="ot-tag used">Not verified</span>{% endif %}
+                        <a class="acc-edit" href="{{ url_for('account_setup_email', **{'from': 'review'}) }}">Edit</a>
                     </div>
-                    <a class="acc-edit" href="{{ url_for('account_setup_contact', **{'from': 'review'}) }}">Edit</a>
+                    <div class="acc-row">
+                        <div class="acc-icon"><i class="fas fa-phone"></i></div>
+                        <div class="acc-main">
+                            <div class="acc-label">Contact Number</div>
+                            <div class="acc-value {{ 'muted' if not account_contact }}">{{ account_contact or 'Not provided' }}</div>
+                        </div>
+                        <a class="acc-edit" href="{{ url_for('account_setup_contact', **{'from': 'review'}) }}">Edit</a>
+                    </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- OFFICIAL FACULTY INFORMATION: only changed through an Admin-approved request -->
+
+    <!-- EMPLOYMENT INFORMATION (Employee ID first): every field is edited directly during first-time setup, with the
+         same choices as Add Faculty (Specialization / Employment Type / Designation from their
+         tables, Employment Status from faculty.chk_employeestatus). Designation exists only for
+         the Designee employment type. -->
+    {% set designation_names = designations | map(attribute='designationname') | list %}
     <section class="rv-panel" aria-labelledby="offTitle">
         <div class="rv-panel-head">
-            <span class="rv-panel-title" id="offTitle"><i class="fas fa-briefcase"></i> Official Faculty Information</span>
-            <button type="button" class="btn-outline-sm" id="openCorrectionBtn" onclick="openCorrection()"
-                    aria-haspopup="dialog" aria-controls="correctionDialog">
-                <i class="fas fa-pen"></i> Request Correction</button>
+            <span class="rv-panel-title" id="offTitle"><i class="fas fa-briefcase"></i> Employment Information</span>
+            <span class="rv-tag"><i class="fas fa-pen"></i> YOU CAN EDIT</span>
         </div>
         <div class="rv-panel-body">
-            <div class="of-row">
-                <div class="of-pair of-span4"><span class="of-label">Full Name</span>
-                    <span class="of-value">{{ full_name or '—' }}</span></div>
+            <p class="rv-explain"><i class="fas fa-circle-info"></i>
+                Edit anything that is wrong before you confirm. A Designation is only for the
+                <strong>{{ designee_type }}</strong> employment type.</p>
+            <div class="ed-row">
+                <div class="ed-main">
+                    <div class="of-label">Employee ID</div>
+                    <div class="of-value">{{ info['Employee ID'] }}</div>
+                    {% if edit_allowed['Employee ID'] %}
+                    <form class="ed-form" id="edEmpId" method="POST">
+                        <input type="hidden" name="action" value="edit_employee_id">
+                        <p class="ot-note"><i class="fas fa-triangle-exclamation"></i>
+                            Your Employee ID links your account to your schedules and records. Enter it exactly as it
+                            appears on your official ID. It must not belong to anyone else.</p>
+                        <input type="text" name="value" class="ed-one" value="{{ info['Employee ID'] }}" maxlength="30"
+                               required pattern="[A-Za-z0-9][A-Za-z0-9\-]{0,29}" aria-label="Employee ID"
+                               title="Up to 30 letters, numbers or hyphens">
+                        <div class="ed-form-actions">
+                            <button type="submit" class="ed-btn">Save Employee ID</button>
+                            <button type="button" class="ed-btn ghost" onclick="toggleEdit('edEmpId', false)">Cancel</button>
+                        </div>
+                    </form>
+                    {% else %}
+                    {{ pending_note(['Employee ID'], pending_by_field) }}{{ locked_note('Employee ID', pending_by_field) }}
+                    {% endif %}
+                </div>
+                <div class="ed-actions">
+                    {% if edit_allowed['Employee ID'] %}
+                    <button type="button" class="acc-edit" onclick="toggleEdit('edEmpId', true)">Edit</button>
+                    {% endif %}
+                </div>
             </div>
-            <div class="of-row">
-                {% for f in ['First Name', 'Middle Name', 'Last Name', 'Suffix'] %}
-                <div><div class="of-label">{{ f }}</div>
-                    <div class="of-value">{{ info[f] or '—' }}</div>
-                    {{ pending_note([f], pending_by_field) }}</div>
-                {% endfor %}
+            {% for field, key, options in [
+                ('Specialization', 'specialization', specializations | map(attribute='specializationname') | list),
+                ('Employment Type', 'employment_type', employment_types),
+                ('Designation', 'designation', ([''] + designation_names) if is_designee else ['']),
+                ('Employment Status', 'employment_status', employment_statuses)] %}
+            {% if field != 'Designation' or is_designee or info['Designation'] %}
+            {% set can_edit = edit_allowed[field] %}
+            {% if info[field] and info[field] not in options %}{% set options = [info[field]] + options %}{% endif %}
+            <div class="ed-row" id="row-{{ key }}">
+                <div class="ed-main">
+                    <div class="of-label">{{ field }}</div>
+                    <div class="of-value {{ 'muted' if not info[field] }}">{{ info[field] or ('No Designation' if field == 'Designation' else 'Not set') }}</div>
+                    {{ pending_note([field], pending_by_field) }}
+                    {% if field == 'Designation' and not is_designee %}
+                    <div class="ed-hint"><i class="fas fa-circle-info"></i> Only a {{ designee_type }} has a Designation. Remove it, or change your Employment Type to {{ designee_type }}.</div>
+                    {% endif %}
+                    {% if can_edit %}
+                    <form class="ed-form" id="ed-{{ key }}" method="POST">
+                        <input type="hidden" name="action" value="{{ 'edit_designation' if field == 'Designation' else 'edit_employment' }}">
+                        <input type="hidden" name="field" value="{{ field }}">
+                        <select name="value" class="ed-one" aria-label="{{ field }}" {{ 'required' if field != 'Designation' }}
+                                {% if field == 'Employment Type' %}onchange="syncTypeForm(this.form)"{% endif %}>
+                            {% for o in options %}<option value="{{ o }}" {{ 'selected' if o == info[field] }}>{{ o or 'No Designation' }}</option>{% endfor %}
+                        </select>
+                        {% if field == 'Employment Type' %}
+                        {# Designee: the Designation is chosen in the same save (optional, as in Add Faculty).
+                           Any other type: the Designation is removed when saving. #}
+                        <div class="ty-designation" hidden>
+                            <label class="ed-sub" for="tyDesignation">Designation</label>
+                            <select name="designation" id="tyDesignation" class="ed-one" disabled>
+                                <option value="">No Designation</option>
+                                {% for d in designation_names %}<option value="{{ d }}" {{ 'selected' if d == info['Designation'] }}>{{ d }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        {% if info['Designation'] %}
+                        <p class="ot-note ty-clear" hidden><i class="fas fa-triangle-exclamation"></i>
+                            Only a {{ designee_type }} has a Designation, so your Designation ({{ info['Designation'] }})
+                            will be removed when you save.</p>
+                        {% endif %}
+                        {% endif %}
+                        <div class="ed-form-actions">
+                            <button type="submit" class="ed-btn">Save {{ field }}</button>
+                            <button type="button" class="ed-btn ghost" onclick='toggleEdit({{ ("ed-" ~ key) | tojson }}, false)'>Cancel</button>
+                        </div>
+                    </form>
+                    {% else %}
+                    {{ locked_note(field, pending_by_field) }}
+                    {% endif %}
+                </div>
+                <div class="ed-actions">
+                    {% if can_edit %}
+                    <button type="button" class="acc-edit" onclick='toggleEdit({{ ("ed-" ~ key) | tojson }}, true)'>Edit</button>
+                    {% endif %}
+                </div>
             </div>
-            <div class="of-row">
-                <div class="of-pair of-span2"><span class="of-label">Employee ID</span>
-                    <span><span class="of-value">{{ info['Employee ID'] }}</span>{{ pending_note(['Employee ID'], pending_by_field) }}</span></div>
-                <div class="of-pair of-span2"><span class="of-label">Designation</span>
-                    <span><span class="of-value {{ 'muted' if not info['Designation'] }}">{{ info['Designation'] or 'Not set' }}</span>{{ pending_note(['Designation'], pending_by_field) }}</span></div>
-            </div>
-            <div class="of-row">
-                <div class="of-pair of-span4"><span class="of-label">Specialization</span>
-                    <span><span class="of-value {{ 'muted' if not info['Specialization'] }}">{{ info['Specialization'] or 'Not set' }}</span>{{ pending_note(['Specialization'], pending_by_field) }}</span></div>
-            </div>
+            {% endif %}
+            {% endfor %}
         </div>
     </section>
+    </div>
 
-    {% for category, message in correction_ok %}
-    <p class="rv-msg ok" role="status"><i class="fas fa-circle-check"></i><span>{{ message }}</span></p>
-    {% endfor %}
 
     <form method="POST" id="confirmForm" onsubmit="return confirmFinish()">
         <input type="hidden" name="action" value="confirm">
+        <p class="rv-msg err" id="unsavedMsg" role="alert" hidden><i class="fas fa-circle-exclamation"></i><span></span></p>
         {% for category, message in ns.other_msgs %}
         <p class="rv-msg {{ 'ok' if category == 'success' else 'err' }}" role="alert">
             <i class="fas {{ 'fa-circle-check' if category == 'success' else 'fa-circle-exclamation' }}"></i><span>{{ message }}</span></p>
@@ -270,281 +350,89 @@
         <div class="setup-actions">
             <a href="{{ back_url }}" class="btn-back"><i class="fas fa-arrow-left"></i> BACK</a>
             <button type="submit" class="btn-continue" id="btnFinish" disabled
-                    title="Tick the confirmation box first">COMPLETE SETUP <i class="fas fa-arrow-right"></i></button>
+                    title="Tick the confirmation box first">SAVE AND CONFIRM <i class="fas fa-arrow-right"></i></button>
         </div>
-        {% if pending_corrections %}
-        <p class="finish-hint">Pending correction requests don't stop you from finishing. Track them later in Profile Settings, under My Correction Requests.</p>
-        {% endif %}
     </form>
 
-    <!-- ── Request Information Correction (pop-up) ── -->
-    <div class="cr-overlay" id="correctionDialog" role="dialog" aria-modal="true" aria-labelledby="crTitle"
-         onclick="if (event.target === this) closeCorrection()">
-        <form class="cr-dialog" id="correctionPanel" method="POST" novalidate onsubmit="return submitCorrections()">
-            <input type="hidden" name="action" value="correction">
-            <input type="hidden" name="corrections_json" id="correctionsJsonInput">
-            <div class="cr-head">
-                <div class="cr-head-icon"><i class="fas fa-pen"></i></div>
-                <div>
-                    <div class="cr-title" id="crTitle">Request Information Correction</div>
-                    <div class="cr-sub">Review your information below. Uncheck any item that needs correction.</div>
-                </div>
-                <button type="button" class="cr-close" onclick="closeCorrection()" aria-label="Close"><i class="fas fa-xmark"></i></button>
-            </div>
-            <div class="cr-body">
-                <div class="cr-note">
-                    <i class="fas fa-circle-info"></i>
-                    <div><strong>Your request will be reviewed by the Administrator.</strong>
-                        Checked information is correct and will remain unchanged. Unchecked information requires a proposed correction.
-                        Your record changes only once the request is approved.</div>
-                </div>
-
-                {% set items = [
-                    ('empid', 'Employee ID', 'fa-id-card', ['Employee ID']),
-                    ('name', 'Full Name', 'fa-user', ['First Name', 'Middle Name', 'Last Name', 'Suffix']),
-                    ('designation', 'Designation', 'fa-briefcase', ['Designation']),
-                    ('specialization', 'Specialization', 'fa-graduation-cap', ['Specialization']),
-                ] %}
-                {% for key, label, icon, flds in items %}
-                {% set all_pending = flds | reject('in', pending_by_field) | list | length == 0 %}
-                <div class="cr-item" data-key="{{ key }}">
-                    <div class="cr-item-icon"><i class="fas {{ icon }}"></i></div>
-                    <div class="cr-item-main">
-                        <div class="cr-item-top">
-                            <div>
-                                <div class="cr-item-name">{{ label }}</div>
-                                <div class="cr-item-cur">Current {{ label }}</div>
-                                <div class="cr-current">{{ (full_name if key == 'name' else info[flds[0]]) or 'Not set' }}</div>
-                            </div>
-                            {% if all_pending %}
-                            <span class="pending-badge">Pending review</span>
-                            {% else %}
-                            <label class="cr-ok"><input type="checkbox" value="{{ key }}" checked onchange="toggleItem(this)">
-                                This information is correct</label>
-                            {% endif %}
-                        </div>
-                        {% if not all_pending %}
-                        <div class="cr-proposed">
-                            {% if key == 'name' %}
-                            <div class="cr-proposed-label">Proposed Full Name</div>
-                            <div class="cr-grid">
-                                {% for f, ph in [('First Name', 'First Name'), ('Middle Name', 'Middle Name'), ('Last Name', 'Last Name')] %}
-                                <input type="text" id="cp-{{ loop.index }}" data-field="{{ f }}" value="{{ info[f] }}" maxlength="60"
-                                       placeholder="{{ ph }}" aria-label="Proposed {{ f }}" {{ 'disabled' if f in pending_by_field }}>
-                                {% endfor %}
-                                {% set suffixes = ['', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V'] %}
-                                <select id="cp-4" data-field="Suffix" aria-label="Proposed Suffix (optional)" {{ 'disabled' if 'Suffix' in pending_by_field }}>
-                                    {% for s in suffixes + ([info['Suffix']] if info['Suffix'] and info['Suffix'] not in suffixes else []) %}
-                                    <option value="{{ s }}" {{ 'selected' if s == info['Suffix'] }}>{{ s or 'No suffix' }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            {% elif key == 'empid' %}
-                            <div class="cr-proposed-label">Proposed Employee ID</div>
-                            <input type="text" id="cp-empid" data-field="Employee ID" maxlength="30" placeholder="Enter correct Employee ID">
-                            <div class="cr-warn"><i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. The Administrator checks and updates it by hand.</div>
-                            {% else %}
-                            <div class="cr-proposed-label">Proposed {{ label }}</div>
-                            <select id="cp-{{ key }}" data-field="{{ label }}">
-                                <option value="">Select correct {{ label | lower }}</option>
-                                {% for o in (designations if key == 'designation' else specializations) %}
-                                {% set name = o.designationname if key == 'designation' else o.specializationname %}
-                                <option value="{{ name }}">{{ name }}</option>
-                                {% endfor %}
-                            </select>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endfor %}
-
-                <div class="cr-item cr-reason">
-                    <div class="cr-item-icon"><i class="fas fa-file-lines"></i></div>
-                    <div class="cr-item-main">
-                        <label class="cr-item-name" for="cpReason" style="display:block;margin-bottom:6px;">Reason for Correction <span style="color:#b22222;font-weight:600;">(required)</span></label>
-                        <textarea id="cpReason" name="remarks" rows="3" maxlength="1000"
-                                  placeholder="Explain why this needs to be corrected, with any details that help the Administrator review it."></textarea>
-                        <div class="cr-count"><span id="cpReasonCount">0</span>/1000</div>
-                    </div>
-                </div>
-
-                <p class="rv-msg err cr-error" id="cpError" role="alert"><i class="fas fa-circle-exclamation"></i><span>{{ correction_errors[0][1] if correction_errors else '' }}</span></p>
-            </div>
-            <div class="cr-foot">
-                <button type="button" class="btn-cr-cancel" onclick="cancelCorrection()">Cancel</button>
-                <button type="submit" class="btn-cr-submit" id="btnCrSubmit" disabled><i class="fas fa-paper-plane"></i> Submit Request</button>
-            </div>
-        </form>
-    </div>
-
-    <!-- Unsent correction notice (replaces the browser's confirm pop-up) -->
-    <div class="notice-overlay" id="finishDialog" role="dialog" aria-modal="true" aria-labelledby="finishDialogTitle"
-         onclick="if (event.target === this) closeFinishDialog(false)">
-        <div class="notice-card">
-            <div class="notice-icon"><i class="fas fa-triangle-exclamation"></i></div>
-            <h2 class="notice-title" id="finishDialogTitle">Correction not sent yet</h2>
-            <p class="notice-text">You started a correction request but haven't submitted it. If you finish now, it won't be sent to the Administrator.</p>
-            <div class="notice-actions">
-                <button type="button" class="notice-btn notice-btn-secondary" onclick="finishWithoutSending()">Finish without sending</button>
-                <button type="button" class="notice-btn notice-btn-primary" id="finishDialogReview" onclick="closeFinishDialog(true)">Go back to my request</button>
-            </div>
-        </div>
-    </div>
 
     <script>
-    const CURRENT = {{ info | tojson }};
-    // Unsent corrections survive Back / Edit, closing the pop-up and a failed submit (this browser tab only).
-    const DRAFT_KEY = 'setupCorrectionDraft:' + (CURRENT['Employee ID'] || '');
-    const SERVER_ERROR = {{ 'true' if correction_errors else 'false' }};
-    // The server confirmed the last request was saved: forget the draft.
-    {% if clear_cart %}clearDraft();  // request-saved{% endif %}
+    const DESIGNEE = {{ designee_type | tojson }};
 
-    function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {} }
-    const dlg   = () => document.getElementById('correctionDialog');
-    const panel = () => document.getElementById('correctionPanel');
-    const changing = () => [...panel().querySelectorAll('.cr-item[data-key] input[type=checkbox]')].filter(c => !c.checked);
 
-    function _saveDraft() {
-        const d = { unchecked: changing().map(c => c.value), values: {},
-                    reason: document.getElementById('cpReason').value };
-        panel().querySelectorAll('[data-field]').forEach(el => { d.values[el.id] = el.value; });
-        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
-    }
-    function _loadDraft() {
-        let d = null;
-        try { d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
-        if (!d) return false;
-        Object.entries(d.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el && !el.disabled) el.value = v; });
-        (d.unchecked || []).forEach(k => {
-            const c = panel().querySelector('.cr-item[data-key="' + k + '"] input[type=checkbox]');
-            if (c) { c.checked = false; toggleItem(c, true); }
-        });
-        document.getElementById('cpReason').value = d.reason || '';
-        return (d.unchecked || []).length > 0;
-    }
-    function _hasDraft() {
-        try { const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); return !!(d && (d.unchecked || []).length); }
-        catch (e) { return false; }
+    // Inline Edit forms. Opening or cancelling one changes nothing; Save stores that field right away.
+    function toggleEdit(id, open) {
+        const form = document.getElementById(id);
+        if (!form) return;
+        if (!open) form.reset();
+        if (form.querySelector('[name=designation]')) syncTypeForm(form);
+        form.classList.toggle('open', open);
+        if (open) (form.querySelector('input:not([type=hidden]), select') || form).focus();
     }
 
-    function _sync() {
-        const n = changing().length;
-        panel().classList.toggle('has-changes', n > 0);
-        document.getElementById('btnCrSubmit').disabled = n === 0;
-        document.getElementById('cpReasonCount').textContent = document.getElementById('cpReason').value.length;
-    }
-    function openCorrection() {
-        dlg().classList.add('open');
-        document.body.style.overflow = 'hidden';
-        const first = panel().querySelector('.cr-item[data-key] input[type=checkbox]') || panel().querySelector('.cr-close');
-        first.focus();
-    }
-    // Close keeps what was typed (reopen to continue); Cancel discards it.
-    function closeCorrection() {
-        dlg().classList.remove('open');
-        document.body.style.overflow = '';
-        document.getElementById('openCorrectionBtn').focus();
-    }
-    function cancelCorrection() {
-        panel().reset();
-        panel().querySelectorAll('.cr-item').forEach(o => o.classList.remove('changing'));
-        _showError(''); clearDraft(); _sync();
-        closeCorrection();
-    }
-    function toggleItem(box, silent) {
-        const item = box.closest('.cr-item');
-        item.classList.toggle('changing', !box.checked);
-        if (!box.checked && !silent) {
-            const first = item.querySelector('.cr-proposed [data-field]:not(:disabled)');
-            if (first) first.focus();
-        }
-        _showError('');
-        _sync();
-        if (!silent) _saveDraft();
-    }
-    function _showError(msg) {
-        const el = document.getElementById('cpError');
-        el.querySelector('span').textContent = msg;
-        el.style.display = msg ? 'flex' : 'none';
+
+    // Employment Type form: Designee shows the Designation picker (optional, as in Add Faculty);
+    // any other type hides it and notes that the Designation is removed. (The server enforces it.)
+    function syncTypeForm(form) {
+        const designee = form.querySelector('[name=value]').value === DESIGNEE;
+        const pick = form.querySelector('.ty-designation'), sel = form.querySelector('[name=designation]');
+        pick.hidden = !designee; sel.disabled = !designee;
+        const clear = form.querySelector('.ty-clear');
+        if (clear) clear.hidden = designee;
     }
 
-    // Build the request from the unchecked items; returns [items, error].
-    function _collect() {
-        const items = [];
-        const boxes = changing();
-        if (!boxes.length) return [null, 'Uncheck at least one item that needs correcting.'];
-        for (const box of boxes) {
-            const item = box.closest('.cr-item');
-            const label = item.querySelector('.cr-item-name').textContent.trim();
-            let changed = 0;
-            for (const el of item.querySelectorAll('[data-field]')) {
-                if (el.disabled) continue;
-                const field = el.dataset.field, value = el.value.trim(), current = CURRENT[field] || '';
-                if (value === current) continue;
-                if (!value && !['Middle Name', 'Suffix'].includes(field))
-                    return [null, 'Please enter the correct ' + field + '.'];
-                items.push({ field_name: field, proposed_value: value });
-                changed++;
-            }
-            if (!changed) return [null, 'The proposed ' + label + ' is the same as what is on file. Change it, or tick "This information is correct".'];
-        }
-        return [items, null];
+
+    // Open editors whose fields differ from what is saved.
+    function unsavedEditors() {
+        return Array.from(document.querySelectorAll('.ed-form.open')).filter(form =>
+            Array.from(form.querySelectorAll('input:not([type=hidden]), select')).some(el =>
+                el.tagName === 'SELECT'
+                    ? Array.from(el.options).some(o => o.selected !== o.defaultSelected)
+                    : el.value !== el.defaultValue));
     }
-    function submitCorrections() {
-        const [items, err] = _collect();
-        if (err) { _showError(err); return false; }
-        if (!document.getElementById('cpReason').value.trim()) {
-            _showError('Please explain the reason for your correction request.');
-            document.getElementById('cpReason').focus();
+    function confirmFinish() {
+        if (!document.getElementById('confirmCorrect').checked) return false;
+        const open = unsavedEditors();
+        const box = document.getElementById('unsavedMsg');
+        if (open.length) {
+            const names = open.map(f => (f.querySelector('.ed-btn') || {}).textContent.replace(/^Save /, ''));
+            box.querySelector('span').textContent =
+                `You have unsaved changes (${names.join(', ')}). Press Save or Cancel first, then Save and Confirm.`;
+            box.hidden = false;
+            fitScroll();
+            box.scrollIntoView && box.scrollIntoView({ block: 'center' });
             return false;
         }
-        _saveDraft();      // kept until the server confirms the request was saved
-        document.getElementById('correctionsJsonInput').value = JSON.stringify(items);
+        box.hidden = true;
         return true;
     }
 
-    // Complete Setup: needs the confirmation tick; an unsent correction is asked about first.
+
+    // Save and Confirm needs the confirmation tick.
     function syncFinish() {
         const ok = document.getElementById('confirmCorrect').checked;
         const btn = document.getElementById('btnFinish');
         btn.disabled = !ok;
         btn.title = ok ? '' : 'Tick the confirmation box first';
     }
-    let _finishConfirmed = false;
-    function confirmFinish() {
-        if (!document.getElementById('confirmCorrect').checked) return false;
-        if (_hasDraft() && !_finishConfirmed) {
-            document.getElementById('finishDialog').classList.add('open');
-            document.getElementById('finishDialogReview').focus();
-            return false;
-        }
-        clearDraft();
-        return true;
+    // Size the information area to the space the window leaves, so only it scrolls.
+    function fitScroll() {
+        const sc = document.getElementById('rvScroll'), shell = document.querySelector('.setup-shell');
+        if (!sc || !shell) return;
+        sc.style.maxHeight = 'none';
+        const fixed = shell.getBoundingClientRect().height - sc.getBoundingClientRect().height;
+        const body = getComputedStyle(document.body);
+        const room = window.innerHeight - fixed - parseFloat(body.paddingTop) - parseFloat(body.paddingBottom) - 4;
+        sc.style.maxHeight = Math.max(260, Math.floor(room)) + 'px';
     }
-    function closeFinishDialog(goToForm) {
-        document.getElementById('finishDialog').classList.remove('open');
-        if (goToForm) openCorrection();
-    }
-    function finishWithoutSending() {
-        _finishConfirmed = true;
-        closeFinishDialog(false);
-        clearDraft();
-        document.getElementById('confirmForm').submit();
-    }
-    document.addEventListener('keydown', e => {
-        if (e.key !== 'Escape') return;
-        if (document.getElementById('finishDialog').classList.contains('open')) closeFinishDialog(false);
-        else if (dlg().classList.contains('open')) closeCorrection();
-    });
+    window.addEventListener('resize', fitScroll);
+    window.addEventListener('load', fitScroll);
+
 
     document.addEventListener('DOMContentLoaded', () => {
-        _loadDraft();
-        _sync();
+        fitScroll();
+        const typeForm = document.getElementById('ed-employment_type');
+        if (typeForm) syncTypeForm(typeForm);
         syncFinish();
-        if (SERVER_ERROR) { _showError(document.querySelector('#cpError span').textContent); openCorrection(); }
-        panel().addEventListener('input', () => { _showError(''); _sync(); _saveDraft(); });
-        panel().addEventListener('change', () => { _sync(); _saveDraft(); });
     });
     </script>
 {% endblock %}

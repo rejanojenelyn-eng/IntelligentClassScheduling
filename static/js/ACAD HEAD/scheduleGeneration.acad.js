@@ -1824,25 +1824,38 @@ document.addEventListener('DOMContentLoaded', () => {
                         .map(v => v.detail || v.type || v.rule || 'Hard-constraint violation'));
         // A designee night-limit (HC8) violation also blocks Save as Draft (server-side).
         const nightBlocked = hard.some(v => v.rule === 'HC8');
-        let html = 'A schedule was generated, but some assignments could not be completed or still '
-            + 'require correction.<br><br>'
-            + (nightBlocked
-                ? 'A designee is scheduled beyond their allowed night teaching, so this result cannot be '
-                  + 'saved as a draft or approved until that class is moved or reassigned.'
-                : 'You can review the generated result and save it as a draft, '
-                  + 'but approval is disabled until all required assignments are complete and all blocking '
-                  + 'constraints are resolved.');
+        let html = (nightBlocked
+                ? 'A designee is over their night-teaching limit, so this result can\'t be saved or approved '
+                  + 'until that class is moved or reassigned.'
+                : 'Some classes couldn\'t be completed. You can save it as a draft; approval stays off until they\'re fixed.');
         if (notices.length) {
-            html += '<div class="shortage-notices">'
-                + notices.map(n =>
-                    '<div class="shortage-notice">'
-                    + `<div class="shortage-title"><i class="fas fa-exclamation-circle"></i> ${_escHtml(n.title || '')}</div>`
-                    + (n.subject ? `<div class="shortage-subject">${_escHtml(n.subject)}`
-                        + (n.class_info ? ` <span>(${_escHtml(n.class_info)})</span>` : '') + '</div>' : '')
-                    + `<div class="shortage-msg">${_escHtml(n.message || '')}</div>`
-                    + (n.suggestion ? `<div class="shortage-tip"><strong>What you can do:</strong> ${_escHtml(n.suggestion)}</div>` : '')
-                    + '</div>').join('')
-                + '</div>';
+            // One short card per class: what is missing, one line per reason, one "what to
+            // do" line. Auto-merged classes get a small green line instead.
+            const LBL = { room: 'Room', faculty: 'Instructor', schedule: 'Time/Days', subject: 'Subject' };
+            const merged = notices.filter(n => n.kind === 'merged');
+            const byCode = new Map();
+            notices.filter(n => n.kind !== 'merged').forEach(n => {
+                const k = n.subject_code || n.title;
+                if (!byCode.has(k)) byCode.set(k, []);
+                byCode.get(k).push(n);
+            });
+            html += '<div class="shortage-notices">';
+            merged.forEach(n => {
+                html += `<div class="shortage-merged"><i class="fas fa-link"></i> ${_escHtml(n.message || '')} `
+                    + `<span>${_escHtml(n.suggestion || '')}</span></div>`;
+            });
+            byCode.forEach((list, code) => {
+                const missing = [...new Set(list.flatMap(n => n.missing || []))].map(c => LBL[c] || c);
+                const tips = [...new Set(list.map(n => n.suggestion).filter(Boolean))];
+                html += '<div class="shortage-notice">'
+                    + `<div class="shortage-title"><i class="fas fa-exclamation-circle"></i> ${_escHtml(code)}`
+                    + (missing.length ? ` <span>— missing ${_escHtml(missing.join(', '))}</span>` : '') + '</div>'
+                    + '<ul class="shortage-msgs">'
+                    + list.map(n => `<li>${_escHtml(n.message || n.title || '')}</li>`).join('') + '</ul>'
+                    + (tips.length ? `<div class="shortage-tip"><strong>What to do:</strong> ${_escHtml(tips.join(' '))}</div>` : '')
+                    + '</div>';
+            });
+            html += '</div>';
         }
         if (counts.length) html += `<br><strong>${counts.map(_escHtml).join(' · ')}</strong>`;
         if (problems.length) {
@@ -1911,6 +1924,24 @@ document.addEventListener('DOMContentLoaded', () => {
         // Schedule Generated with Issues: the result stays pending (`data`) and
         // is applied ONLY on Review — Discard just drops it, so the schedule on
         // screen, the filters, selections and any saved draft are untouched.
+        // A class generation merged with another section's class: one click can take the
+        // result and save it as a Draft with that merge (no second merge question).
+        const hasMerge = (data.shortage_notices || []).some(n => n.kind === 'merged');
+        if (hasMerge && !isRegenerate) {
+            const pick = await showInfo(
+                'Schedule Generated with Issues',
+                _issuesSummaryHtml(data),
+                'partial',
+                { confirmLabel: 'Merge & Save as Draft', tertiaryLabel: 'Review First', cancelLabel: 'Discard Result' }
+            );
+            if (pick === 'secondary') apply();
+            if (pick === 'primary') {
+                apply();
+                _autoConfirmMerge = true;     // the merge was just chosen — don't ask again
+                setTimeout(() => btnSaveDraft.click(), 0);
+            }
+            return;
+        }
         const review = await showInfo(
             'Schedule Generated with Issues',
             _issuesSummaryHtml(data),
@@ -2398,12 +2429,24 @@ document.addEventListener('DOMContentLoaded', () => {
             // replace_draft: the server retires the section's existing Draft inside the SAME
             // transaction as this save, so a failed save leaves the old Draft intact. The
             // Published schedule is never touched by Save as Draft.
-            const result = await _postJson('/api/schedule/save-draft', {
+            const _draftBody = {
                 batch_id:      currentBatchId,
                 schedule_data: currentScheduleData,
                 context:       ctx,
                 replace_draft: !!existingCheck.exists,
-            });
+            };
+            let result = await _postJson('/api/schedule/save-draft', _draftBody);
+            // A class placed on another section's same class (e.g. an auto-merged NSTP)
+            // is a merge: confirm it, then save again.
+            if (!result.ok && result.data && result.data.code === 'MERGE_CONFIRMATION_REQUIRED') {
+                const _already = _autoConfirmMerge;
+                _autoConfirmMerge = false;
+                if (_already || await _confirmMerge(result.data)) {
+                    result = await _postJson('/api/schedule/save-draft', Object.assign({}, _draftBody, { confirm_merges: true }));
+                } else {
+                    result = { ok: false, data: { success: false, _mergeDeclined: true } };
+                }
+            }
             const data = result.data || { success: false, error: result.error };
 
             if (result.ok) {
@@ -2459,6 +2502,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     + `&sect=${encodeURIComponent(ctx.section)}`
                     + `&sect_name=${encodeURIComponent(sectName)}`
                     + (_transfer ? `&from_generator=1` : '');
+            } else if (data._mergeDeclined) {
+                // The Academic Head chose not to merge: nothing was saved; nothing to report.
             } else {
                 // #11: Load violations get a dedicated message listing each faculty
                 const lvs = data.load_violations || [];
@@ -2642,7 +2687,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Shared helper: call /api/schedule/approve and handle all response cases.
     // override=true skips the duplicate-schedule confirmation gate on the server.
-    async function _submitApproval(override) {
+    // Set by "Merge & Save as Draft" in the generation result: that click is the confirmation.
+    let _autoConfirmMerge = false;
+
+    // Merge notice (same wording idea as the Manual Editor): yes → resubmit confirmed.
+    async function _confirmMerge(data) {
+        const lines = (data.notice || []).map(t => `• ${_escHtml(t)}`).join('<br>');
+        return await showInfo('Merge Classes',
+            `This schedule merges classes with another section:<br><br>${lines}<br><br>`
+            + 'These sections will attend one class together (same subject, instructor, day, time and room). '
+            + 'The merge is recorded in Settings → Class Merging.', 'confirm');
+    }
+
+    async function _submitApproval(override, confirmMerges = false) {
         btnApprove.disabled = true;
         btnApprove.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing...';
 
@@ -2660,6 +2717,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     schedule_data: currentScheduleData,
                     context:       ctx,
                     override:      override,
+                    confirm_merges: confirmMerges,
                     // The generated rows are each subject's complete schedule: retire
                     // those subjects' old Drafts entirely (a regenerated subject's
                     // pre-regeneration Draft must not be left behind).
@@ -2701,6 +2759,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     + `&sect=${encodeURIComponent(ctx.section)}`
                     + `&sect_name=${encodeURIComponent(sectName)}`;
                 return;
+
+            } else if (data.code === 'MERGE_CONFIRMATION_REQUIRED' && !confirmMerges) {
+                if (await _confirmMerge(data)) {
+                    published = true;   // the nested call owns the button state from here
+                    await _submitApproval(override, true);
+                }
 
             } else if (data.needs_confirmation) {
                 // An existing Published schedule was found — notify, then auto-override

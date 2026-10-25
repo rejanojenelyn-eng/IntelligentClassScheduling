@@ -20,5 +20,5 @@ def test_reason_is_optional_with_automatic_fallback():
     body = _fn("async function publishLocalArrangementFromEditor()")
     assert "|| _localAutoReason(_changes)" in body
     assert "Reason Required" not in body
-    vh = _fn("async function publishLocalArrangement(arrId, btn)")
-    assert "|| 'Published from Version History'" in vh and "Reason Required" not in vh
+    vh = _fn("async function restoreLocalArrangement(arrId, btn)")
+    assert "|| `Restored from Version History (#${arrId})`" in vh and "Reason Required" not in vh

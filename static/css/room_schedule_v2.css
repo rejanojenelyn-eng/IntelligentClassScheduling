@@ -316,11 +316,12 @@
 .frs-v2 .frs-avail-card-clickable { cursor: pointer; transition: box-shadow .15s, transform .15s; }
 .frs-v2 .frs-avail-card-clickable:hover { box-shadow: 0 4px 18px rgba(128,0,0,.16); transform: translateY(-2px); }
 .frs-v2 .frs-avail-request-hint {
-    display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+    display: none; align-items: center; gap: 6px; margin-top: 8px;
     font-size: .68rem; font-weight: 700; color: #800000;
-    text-transform: uppercase; letter-spacing: .3px; opacity: .7;
+    text-transform: uppercase; letter-spacing: .3px;
 }
-.frs-v2 .frs-avail-card-clickable:hover .frs-avail-request-hint { opacity: 1; text-decoration: underline; }
+/* Shown only while the pointer is on the card. */
+.frs-v2 .frs-avail-card-clickable:hover .frs-avail-request-hint { display: inline-flex; text-decoration: underline; }
 
 .frs-v2 .frs-avail-dot { top: 8px; right: 8px; width: 9px; height: 9px; }
 /* List view */

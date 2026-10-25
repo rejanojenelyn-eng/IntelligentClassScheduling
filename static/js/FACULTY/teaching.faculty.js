@@ -495,18 +495,17 @@ function renderAssignment() {
         <td>${String(row.time_range || '').split(', ').join('<br>')}</td>
         <td>${row.days}</td>
         <td>${row.room}</td>
-        <td>${row.effectivity}</td>
     </tr>`;
 
 
     document.getElementById('tbl-regular').innerHTML = load.regular.length
         ? load.regular.map(makeRow).join('')
-        : `<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">${isLocal ? 'No Local Schedule.' : 'No regular load assigned.'}</td></tr>`;
+        : `<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">${isLocal ? 'No Local Schedule.' : 'No regular load assigned.'}</td></tr>`;
 
 
     document.getElementById('tbl-pt').innerHTML = load.partTime.length
         ? load.partTime.map(makeRow).join('')
-        : `<tr><td colspan="8" style="text-align:center;color:#999;padding:16px;">${isLocal ? 'No Local Schedule.' : 'No part-time load assigned.'}</td></tr>`;
+        : `<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">${isLocal ? 'No Local Schedule.' : 'No part-time load assigned.'}</td></tr>`;
 
 
     document.getElementById('total-regular-units').textContent = t.regularUnits || '—';

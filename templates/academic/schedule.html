@@ -446,6 +446,17 @@
                 </select>
             </div>
             <div class="sl-filter-unit">
+                <label>Year Level</label>
+                <select id="slFilterYl" onchange="renderFilteredSchedList()">
+                    <option value="">ALL YEAR LEVELS</option>
+                    <option value="1">1ST YEAR</option>
+                    <option value="2">2ND YEAR</option>
+                    <option value="3">3RD YEAR</option>
+                    <option value="4">4TH YEAR</option>
+                    <option value="5">5TH YEAR</option>
+                </select>
+            </div>
+            <div class="sl-filter-unit">
                 <label>Acad Year</label>
                 <select id="slFilterAy" onchange="renderFilteredSchedList()">
                     <option value="">ALL YEARS</option>
@@ -560,10 +571,12 @@
 
     window.renderFilteredSchedList = function() {
         const prog = (document.getElementById('slFilterProg') || {}).value || '';
+        const yl   = (document.getElementById('slFilterYl')   || {}).value || '';
         const ay   = (document.getElementById('slFilterAy')   || {}).value || '';
         const sem  = (document.getElementById('slFilterSem')  || {}).value || '';
         let list = ALL_SCHEDULES.filter(s =>
             (!prog || s.programcode === prog) &&
+            (!yl   || String(s.yearlevel) === yl) &&
             (!ay   || s.academicyearid === ay) &&
             (!sem  || s.semestertype === sem)
         );

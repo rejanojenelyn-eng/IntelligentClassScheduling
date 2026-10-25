@@ -23,6 +23,7 @@ import login_security as _loginsec
 import login_assistance as _loginhelp
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
+import qr_poster as _qr_poster
 from database import get_db_connection, query_db, load_scheduler_config
 from config import Config
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -241,6 +242,40 @@ def _ensure_local_tables(cur=None):   # cur param kept for backward-compat but n
             _apply_local_tables()
 
 
+_STALE_LOCAL_DRAFTS_PURGE_SQL = """
+    WITH stale AS (
+        SELECT arrangementid FROM public.local_arrangement
+        WHERE status = 'Draft'
+          AND COALESCE(updated_at, created_at) < NOW() - INTERVAL '1 hour'
+    ), d1 AS (
+        DELETE FROM public.local_displaced_subjects WHERE displaced_by IN (SELECT arrangementid FROM stale)
+    ), d2 AS (
+        DELETE FROM public.local_arrangement_sessions WHERE arrangementid IN (SELECT arrangementid FROM stale)
+    )
+    DELETE FROM public.local_arrangement
+    WHERE arrangementid IN (SELECT arrangementid FROM stale) AND status = 'Draft'
+"""
+
+
+def _discard_local_drafts(cur, arrangement_ids):
+    """Delete Local Draft rows (never Published/Archived) with their sessions. Drafts are
+    only a staging step of Local Publish/Restore, so one that did not get published is
+    discarded rather than kept. Returns the ids deleted."""
+    ids = [int(x) for x in arrangement_ids or []]
+    if not ids:
+        return []
+    cur.execute("SELECT arrangementid FROM public.local_arrangement "
+                "WHERE arrangementid = ANY(%s) AND status = 'Draft'", (ids,))
+    drafts = [r[0] if not isinstance(r, dict) else r['arrangementid'] for r in cur.fetchall() or []]
+    if not drafts:
+        return []
+    cur.execute("DELETE FROM public.local_displaced_subjects WHERE displaced_by = ANY(%s)", (drafts,))
+    cur.execute("DELETE FROM public.local_arrangement_sessions WHERE arrangementid = ANY(%s)", (drafts,))
+    cur.execute("DELETE FROM public.local_arrangement WHERE arrangementid = ANY(%s) AND status = 'Draft'",
+                (drafts,))
+    return drafts
+
+
 def _apply_local_tables():
     global _local_tables_ensured
     _conn = get_db_connection()
@@ -439,6 +474,10 @@ def _apply_local_tables():
             BEFORE UPDATE OR DELETE ON public.local_arrangement_sessions
             FOR EACH ROW EXECUTE FUNCTION public.guard_local_archived_sessions()
         """)
+        # The Local Scheduler has no Draft step: Publish (and Restore) stage a Draft row and
+        # publish it at once. A Draft still here an hour later is a leftover of a publish
+        # that was rejected or interrupted — remove it so it can never be published later.
+        _cur.execute(_STALE_LOCAL_DRAFTS_PURGE_SQL)
         _conn.commit()
         _local_tables_ensured = True
     except Exception:
@@ -667,13 +706,27 @@ SESSION_IDLE_LIMIT   = timedelta(minutes=30)   # pages open but nobody has used 
 # Navigating between pages is safe — the next page is registered before the old page
 # reports itself closed, so there is no moment with no open page.
 SESSION_NO_PAGE_GRACE = timedelta(seconds=10)
-_SESSION_PUBLIC_ENDPOINTS = ('static', 'index', 'login', 'logout', 'favicon')
+_SESSION_PUBLIC_ENDPOINTS = ('static', 'index', 'login', 'logout', 'favicon',
+                             'share_qr', 'share_qr_poster')
 
 # login id (session['sid']) -> {'pages': {page_id: last_seen}, 'closed_at': ts | None}.
-# In memory: the app runs as one gunicorn worker (Procfile). A login missing here
-# (e.g. after a restart) just falls back to the heartbeat limits above.
+# In memory: the app runs as one gunicorn worker (Procfile). Every login is added here
+# when it signs in, so a login missing here was made before the server (re)started:
+# opening a page with it ends it unless one of its open tabs has checked in since
+# (a heartbeat re-adds it). Otherwise a rerun within SESSION_CLOSED_LIMIT kept the
+# last account signed in on the landing page.
 _open_pages      = {}
 _open_pages_lock = threading.Lock()
+
+
+def _login_unknown(sid):
+    with _open_pages_lock:
+        return not sid or sid not in _open_pages
+
+
+def _track_login(sid):
+    with _open_pages_lock:
+        _open_pages[sid] = {'pages': {}, 'closed_at': None}
 
 
 def _no_open_page_since(sid, now):
@@ -714,7 +767,8 @@ def _expire_stale_session():
             or now - last_seen   > SESSION_CLOSED_LIMIT.total_seconds()
             or now - last_active > SESSION_IDLE_LIMIT.total_seconds()
             or (no_page_for is not None
-                and (_page_request or no_page_for > SESSION_NO_PAGE_GRACE.total_seconds()))):
+                and (_page_request or no_page_for > SESSION_NO_PAGE_GRACE.total_seconds()))
+            or (_page_request and _login_unknown(session.get('sid')))):
         with _open_pages_lock:
             _open_pages.pop(session.get('sid'), None)
         session.clear()
@@ -1123,7 +1177,40 @@ def inject_active_period():
 def index():
     # Public landing page. /login already sends signed-in users to their dashboard.
     logged_in = bool(session.get('loggedin')) and _dashboard_url_for_role(session.get('role')) != 'login'
-    return render_template('landing.html', login_href=url_for('login'), logged_in=logged_in)
+    return render_template('landing.html', login_href=url_for('login'), logged_in=logged_in,
+                           share_url=_public_site_url())
+
+
+def _public_site_url():
+    """The public landing page address the Share popup and QR code point to:
+    PUBLIC_SITE_URL when set, else the address this request came in on (https
+    when Railway's proxy says the visitor used it)."""
+    if Config.PUBLIC_SITE_URL:
+        return Config.PUBLIC_SITE_URL.rstrip('/') + '/'
+    root = request.url_root
+    proto = request.headers.get('X-Forwarded-Proto', '').split(',')[0].strip().lower()
+    if Config.TRUST_PROXY and proto == 'https' and root.startswith('http://'):
+        root = 'https://' + root[len('http://'):]
+    return root
+
+
+# QR code for the landing page's Share popup, and the printable poster behind
+# its Download QR Code button. Both are generated from the public URL.
+@app.route('/share/qr.png')
+def share_qr():
+    resp = make_response(_qr_poster.qr_png(_public_site_url()))
+    resp.mimetype = 'image/png'
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
+
+
+@app.route('/share/qr-poster.png')
+def share_qr_poster():
+    resp = make_response(_qr_poster.poster_png(_public_site_url()))
+    resp.mimetype = 'image/png'
+    resp.headers['Content-Disposition'] = 'attachment; filename="PUPLC_Scheduling_System_QR.png"'
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
 
 # Browsers request /favicon.ico for any page that doesn't name its own tab icon,
 # so serving the PUP logo here puts it on the tab of every page in the system.
@@ -1160,7 +1247,9 @@ def setup():
 # --- 3. AUTHENTICATION ROUTES ---
 @app.route('/logout')
 def logout():
-    session.clear() 
+    if session.get('username') and not session.get('account_setup_complete', True):
+        _setup_discard(session['username'])          # signing out mid-setup saves nothing
+    session.clear()
     return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1225,8 +1314,13 @@ def login():
         session['role']     = db_role
         session['must_change_password']   = must_change
         session['account_setup_complete'] = setup_done
+        if must_change or not setup_done:
+            # Whatever an earlier, unfinished Account Setup left (the tab was closed,
+            # the session expired) is thrown away: setup starts again from the saved account.
+            _setup_discard(user_data.get('username'))
         session['last_seen'] = session['last_active'] = datetime.now().timestamp()
         session['sid'] = uuid.uuid4().hex   # keys this login's open-page tracking
+        _track_login(session['sid'])
         try:
             _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
             _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
@@ -1609,6 +1703,7 @@ def _ensure_runtime_schema_before_views():
         _ensure_runtime_schema()
 
 
+
 @app.before_request
 def _enforce_account_setup():
     """Single enforcement point for every already-logged-in request:
@@ -1656,6 +1751,17 @@ _SETUP_STEPS = [
 # Philippine mobile number: +63 followed by 10 digits starting with 9 (e.g. +63 912 345 6789).
 _PH_MOBILE_RE = re.compile(r'\+63\s*9\d{2}[\s-]?\d{3}[\s-]?\d{4}')
 
+_NAME_SUFFIXES       = ('', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V')
+_EMPLOYMENT_STATUSES = ('Permanent', 'Temporary', 'Part-Time')     # faculty.chk_employeestatus
+_DESIGNEE_TYPE       = 'Designee'
+
+# Account Setup saves nothing until Save and Confirm on the Review step. Until then
+# every change is a draft: plain values in session['setup_draft'] (email, contact,
+# photo URL, Review-step edits), the new password's hash in account_setup_pending
+# (kept off the client cookie), and a picked photo as a file not yet linked to the
+# account. Leaving setup, signing out, or signing in again after the tab was closed
+# throws the drafts away (_setup_discard).
+
 def _setup_ctx(step):
     idx = [s[0] for s in _SETUP_STEPS].index(step)
     return {'steps': _SETUP_STEPS, 'step_index': idx, 'step_key': step}
@@ -1682,11 +1788,15 @@ def _setup_next(endpoint):
     """Where Continue / Skip goes: back to Review after an Edit, otherwise the next step."""
     return url_for('account_setup_verify') if request.args.get('from') == 'review' else url_for(endpoint)
 
+def _setup_needs_password():
+    """The default password must still be replaced and no new one was chosen in this setup."""
+    return bool(session.get('must_change_password')) and not session.get('setup_password_set')
+
 def _setup_guard():
     """Redirect for anyone who may NOT be on an optional step right now (or None)."""
     if 'loggedin' not in session:
         return redirect(url_for('login'))
-    if session.get('must_change_password'):
+    if _setup_needs_password():
         return redirect(url_for('account_setup_password'))      # never skippable
     if session.get('account_setup_complete', True):
         return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
@@ -1700,45 +1810,107 @@ def _setup_account():
         WHERE a.username = %s
     """, (session.get('username'),), one=True) or {}
 
+def _setup_store_password(username, pw_hash):
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO account_setup_pending (username, passwordhash) VALUES (%s, %s)
+            ON CONFLICT (username) DO UPDATE SET passwordhash = EXCLUDED.passwordhash, created_at = NOW()
+        """, (username, pw_hash))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[account setup] keeping new password failed: {type(e).__name__}")
+        return False
+    finally:
+        cur.close(); conn.close()
+
+def _setup_set_photo(url):
+    """Keep url ('' = remove the saved photo) as the draft photo, deleting the
+    previous draft file. A draft photo is always a new upload, never the saved one."""
+    old = _setup_draft().get('photo')
+    if old and old != url:
+        _delete_profile_photo_file(session.get('username'), old)
+    _setup_set_draft(photo=url)
+
+def _setup_discard(username):
+    """Throw away every unsaved Account Setup change for this account."""
+    keep = None
+    conn = get_db_connection()
+    if conn is not None:
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM account_setup_pending WHERE username = %s", (username,))
+            cur.execute("SELECT profile_photo FROM accounts WHERE username = %s", (username,))
+            row = cur.fetchone()
+            keep = (row[0] or '') if row else None
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[account setup] discard failed: {type(e).__name__}")
+        finally:
+            cur.close(); conn.close()
+    if keep is not None:                       # only when the saved photo is known
+        _sweep_profile_photo_files(username, keep)
+    for k in ('setup_draft', 'setup_password_set', 'email_verified'):
+        session.pop(k, None)
+
+@app.route('/account-setup/leave', methods=['POST'])
+def account_setup_leave():
+    """Back to Login from Account Setup: discard every draft and sign out."""
+    username = session.get('username')
+    if username and not session.get('account_setup_complete', True):
+        _setup_discard(username)
+    session.clear()
+    flash("You left Account Setup. Nothing was saved — sign in again to set up your account.", "warning")
+    return redirect(url_for('login'))
+
 @app.route('/account-setup/email', methods=['GET', 'POST'])
 def account_setup_email():
     guard = _setup_guard()
     if guard:
         return guard
     acc = _setup_account()
-    on_file = acc.get('account_email') or ''
+    draft = _setup_draft()
+    # The address that counts as verified: one verified with a code in this setup
+    # (a draft until Save and Confirm), otherwise the one already on the account.
+    verified = (draft['email'] if 'email' in draft else acc.get('account_email')) or ''
 
 
     if request.method == 'POST':
         action = request.form.get('action', 'continue')
         email  = request.form.get('email', '').strip()
         if action == 'back':
-            _setup_set_draft(email=email)
+            _setup_set_draft(email_typed=email)
             return redirect(url_for('account_setup_photo'))
         if action == 'skip':
-            _setup_clear_draft('email')
+            _setup_clear_draft('email', 'email_typed')
             return redirect(_setup_next('account_setup_contact'))
         if not email:
             # An empty field is never treated as Skip: the user must type one or press Skip.
-            _setup_clear_draft('email')
+            _setup_clear_draft('email_typed')
             flash("Please enter an email address, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_email'))
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 255:
-            _setup_set_draft(email=email)
+            _setup_set_draft(email_typed=email)
             flash("Please enter a valid email address, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_email'))
-        # The address is saved only by the code check (/api/user/email/update), which
-        # proves the user can read that inbox. Continue just confirms it is the one on file.
-        if email.lower() != on_file.strip().lower():
-            _setup_set_draft(email=email)
+        # The code check (/api/user/email/update) proves the user can read that inbox.
+        # Continue just confirms the address is the verified one.
+        if email.lower() != verified.strip().lower():
+            _setup_set_draft(email_typed=email)
             flash("Please verify this email address with the code we send, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_email'))
-        _setup_clear_draft('email')
+        _setup_clear_draft('email_typed')
         return redirect(_setup_next('account_setup_contact'))
 
 
-    return render_template('setup/setup_email.html', current_email=on_file,
-                           draft_email=_setup_draft().get('email', ''),
+    return render_template('setup/setup_email.html', verified_email=verified,
+                           draft_email=draft.get('email_typed', ''),
                            code_length=_emailchange.CODE_LENGTH, code_ttl=_emailchange.CODE_TTL_MINUTES,
                            **_setup_ctx('email'))
 
@@ -1748,28 +1920,33 @@ def account_setup_photo():
     if guard:
         return guard
     acc = _setup_account()
+    draft = _setup_draft()
+    current = (draft['photo'] if 'photo' in draft else acc.get('profile_photo')) or ''
 
 
     if request.method == 'POST':
         action = request.form.get('action', 'continue')
+        if action == 'remove':
+            _setup_set_photo('')
+            return redirect(_setup_url('account_setup_photo'))
         photo  = request.files.get('photo')
         chosen = bool(photo and photo.filename)
         if chosen and action in ('continue', 'back'):
-            # A picked photo is saved on Continue AND on Back, so going back loses nothing.
-            _url, err = _save_profile_photo(session.get('username'), photo)
+            # A picked photo is kept on Continue AND on Back, so going back loses nothing.
+            url, err = _write_profile_photo_file(session.get('username'), photo)
             if err:
                 flash(err, "error")
                 return redirect(_setup_url('account_setup_photo'))
+            _setup_set_photo(url)
         if action == 'back':
             return redirect(url_for('account_setup_password'))
-        if action == 'continue' and not chosen and not acc.get('profile_photo'):
+        if action == 'continue' and not chosen and not current:
             flash("Please choose a photo to upload, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_photo'))
         return redirect(_setup_next('account_setup_email'))
 
 
-    return render_template('setup/setup_photo.html', current_photo=acc.get('profile_photo') or '',
-                           **_setup_ctx('photo'))
+    return render_template('setup/setup_photo.html', current_photo=current, **_setup_ctx('photo'))
 
 @app.route('/account-setup/contact', methods=['GET', 'POST'])
 def account_setup_contact():
@@ -1782,33 +1959,31 @@ def account_setup_contact():
         if request.method == 'POST' and request.form.get('action') == 'back':
             return redirect(url_for('account_setup_email'))
         return redirect(url_for('account_setup_verify'))
-    on_file = acc.get('contactnumber') or ''
+    draft = _setup_draft()
 
 
     if request.method == 'POST':
         action  = request.form.get('action', 'continue')
         contact = request.form.get('contact_number', '').strip()
         if action == 'back':
-            _setup_set_draft(contact=contact)
+            _setup_set_draft(contact_typed=contact)
             return redirect(url_for('account_setup_email'))
         if action == 'skip':
-            _setup_clear_draft('contact')
-            return redirect(url_for('account_setup_verify'))
+            _setup_clear_draft('contact', 'contact_input', 'contact_typed')
+            return redirect(_setup_next('account_setup_verify'))
+        _setup_set_draft(contact_typed=contact)
         if not contact:
             # An empty field is never treated as Skip: the user must type one or press Skip.
-            _setup_clear_draft('contact')
             flash("Please enter a contact number, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
         digits = re.sub(r'\D', '', contact)
-        if not re.fullmatch(r'[0-9+()\-\s]+', contact or 'x') or not (7 <= len(digits) <= 15):
-            _setup_set_draft(contact=contact)
+        if not re.fullmatch(r'[0-9+()\-\s]+', contact) or not (7 <= len(digits) <= 15):
             flash("Please enter a valid contact number, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
         if contact.startswith('+63') and not _PH_MOBILE_RE.fullmatch(contact):
-            _setup_set_draft(contact=contact)
             flash("Please enter a valid Philippine mobile number (e.g. 912 345 6789), or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
-        draft_value = contact
+        typed = contact
         # Stored compactly, at most 15 characters: a PH mobile in the
         # local form every existing record uses (09XXXXXXXXX), any other number as +<digits>.
         if contact.startswith('+63'):
@@ -1816,33 +1991,21 @@ def account_setup_contact():
         elif contact.startswith('+'):
             contact = '+' + digits
         if len(contact) > 15:
-            _setup_set_draft(contact=draft_value)
             flash("That contact number is too long. Please check it, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
-        conn = get_db_connection(); cur = conn.cursor()
-        try:
-            cur.execute("UPDATE accounts SET contactnumber = %s WHERE username = %s",
-                        (contact, session.get('username')))
-            conn.commit()
-        except psycopg2.errors.UniqueViolation:
-            conn.rollback()
-            _setup_set_draft(contact=draft_value)
+        taken = query_db("SELECT 1 FROM accounts WHERE BTRIM(contactnumber) = %s AND username <> %s LIMIT 1",
+                         (contact, session.get('username')), one=True)
+        if taken:
             flash("That contact number is already used by another account. Please enter a different one, or choose Skip.", "error")
             return redirect(_setup_url('account_setup_contact'))
-        except Exception as e:
-            conn.rollback()
-            _setup_set_draft(contact=contact)
-            print(f"[account setup] contact save failed: {type(e).__name__}")
-            flash("Your contact number could not be saved. Please try again.", "error")
-            return redirect(_setup_url('account_setup_contact'))
-        finally:
-            cur.close(); conn.close()
-        _setup_clear_draft('contact')
+        _setup_set_draft(contact=contact, contact_input=typed)
+        _setup_clear_draft('contact_typed')
         return redirect(url_for('account_setup_verify'))
 
 
-    return render_template('setup/setup_contact.html', current_contact=on_file,
-                           draft_contact=_setup_draft().get('contact', ''), **_setup_ctx('contact'))
+    shown = (draft['contact_typed'] if 'contact_typed' in draft
+             else draft.get('contact_input') or acc.get('contactnumber') or '')
+    return render_template('setup/setup_contact.html', draft_contact=shown, **_setup_ctx('contact'))
 
 
 
@@ -1850,13 +2013,23 @@ def account_setup_contact():
 def account_setup_password():
     if 'loggedin' not in session:
         return redirect(url_for('login'))
+    in_setup = not session.get('account_setup_complete', True)
     if not session.get('must_change_password'):
-        if session.get('account_setup_complete', True):
+        if not in_setup:
             return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
         # Came Back to step 1 after already changing the password: show it as done.
         if request.method == 'POST':
             return redirect(url_for('account_setup_photo'))
         return render_template('setup/setup_password.html', password_done=True, **_setup_ctx('password'))
+
+
+    changing = request.args.get('change') == '1'
+    if in_setup and session.get('setup_password_set') and not changing:
+        # A new password was chosen in this setup; it takes effect on Save and Confirm.
+        if request.method == 'POST':
+            return redirect(url_for('account_setup_photo'))
+        return render_template('setup/setup_password.html', password_done=True, password_pending=True,
+                               **_setup_ctx('password'))
 
 
     if request.method == 'POST':
@@ -1875,6 +2048,11 @@ def account_setup_password():
             flash("New password and confirmation do not match.", "error")
         elif check_password_hash(row['passwordhash'], new_pw):
             flash("New password must be different from your current password.", "error")
+        elif in_setup:
+            if _setup_store_password(username, generate_password_hash(new_pw)):
+                session['setup_password_set'] = True
+                return redirect(url_for('account_setup_photo'))
+            flash("Your new password could not be kept. Please try again.", "error")
         else:
             conn = get_db_connection(); cur = conn.cursor()
             try:
@@ -1885,8 +2063,6 @@ def account_setup_password():
                 """, (generate_password_hash(new_pw), username))
                 conn.commit()
                 session['must_change_password'] = False
-                if not session.get('account_setup_complete', True):
-                    return redirect(url_for('account_setup_photo'))
                 flash("Password updated.", "success")
                 return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
             except Exception as e:
@@ -1895,123 +2071,271 @@ def account_setup_password():
                 flash("Your password could not be updated. Please try again.", "error")
             finally:
                 cur.close(); conn.close()
-        return redirect(url_for('account_setup_password'))
+        return redirect(url_for('account_setup_password', **({'change': 1} if changing else {})))
 
 
     return render_template('setup/setup_password.html', password_done=False, **_setup_ctx('password'))
+
+
+class _SetupProblem(Exception):
+    """A draft that can't be saved; the message is shown to the user."""
+
+def _setup_commit(username, draft, has_faculty):
+    """Save every Account Setup draft and mark setup complete, in one transaction.
+    Returns None, or the user-facing reason nothing was saved."""
+    conn = get_db_connection()
+    if conn is None:
+        return ("The system could not reach the database. Nothing was saved — "
+                "please try again in a moment.")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    old_photo = None
+    try:
+        cur.execute("SELECT profile_photo FROM accounts WHERE username = %s FOR UPDATE", (username,))
+        acc = cur.fetchone()
+        if not acc:
+            raise LookupError(username)
+        old_photo = acc['profile_photo']
+        cur.execute("SELECT passwordhash FROM account_setup_pending WHERE username = %s", (username,))
+        pending = cur.fetchone()
+        if session.get('must_change_password') and not pending:
+            session.pop('setup_password_set', None)
+            raise _SetupProblem("Please set your new password again, then confirm your information.")
+
+
+        sets, params = ["account_setup_complete = TRUE"], []
+        if pending:
+            sets += ["passwordhash = %s", "must_change_password = FALSE", "password_changed_at = NOW()"]
+            params.append(pending['passwordhash'])
+        for key, column in (('email', 'email'), ('contact', 'contactnumber'), ('photo', 'profile_photo')):
+            if key in draft:
+                sets.append(f"{column} = %s"); params.append(draft[key] or None)
+        cur.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE username = %s", params + [username])
+
+
+        fac = draft.get('faculty') or {}
+        if has_faculty and fac:
+            cols = {}
+            for field, (column, _max_len, _required) in _CORRECTION_NAME_COLUMNS.items():
+                if field in fac:
+                    cols[column] = fac[field] or None
+            lookups = (('Specialization', 'specializationid',
+                        "SELECT specializationid AS id FROM specialization WHERE specializationname = %s"),
+                       ('Employment Type', 'employeetypeid',
+                        "SELECT employeetypeid AS id FROM employeetype WHERE typename = %s"),
+                       ('Designation', 'designationid',
+                        "SELECT designationid AS id FROM designation WHERE designationname = %s"))
+            for field, column, sql in lookups:
+                if field not in fac:
+                    continue
+                if field == 'Designation' and not fac[field]:
+                    cols[column] = None
+                    continue
+                cur.execute(sql, (fac[field],))
+                row = cur.fetchone()
+                if not row:
+                    raise _SetupProblem(f"The {field} '{fac[field]}' no longer exists. Please choose another one.")
+                cols[column] = row['id']
+            if 'Employment Status' in fac:
+                cols['employeestatus'] = fac['Employment Status']
+            if cols:
+                cur.execute(f"UPDATE faculty SET {', '.join(c + ' = %s' for c in cols)} "
+                            "WHERE employeenumber = (SELECT employeenumber FROM accounts WHERE username = %s)",
+                            list(cols.values()) + [username])
+
+
+        cur.execute("DELETE FROM account_setup_pending WHERE username = %s", (username,))
+        conn.commit()
+    except LookupError:
+        conn.rollback()
+        return "Your account could not be found. Please sign in again."
+    except _SetupProblem as p:
+        conn.rollback()
+        return str(p)
+    except psycopg2.errors.UniqueViolation as e:
+        conn.rollback()
+        constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
+        if 'email' in constraint:
+            return ("That email address is now used by another account. Nothing was saved — "
+                    "please choose a different email address.")
+        if 'contact' in constraint:
+            return ("That contact number is now used by another account. Nothing was saved — "
+                    "please enter a different contact number.")
+        print(f"[account setup] complete failed: {constraint}")
+        return "Your setup could not be saved. Nothing was changed — please try again."
+    except Exception as e:
+        conn.rollback()
+        print(f"[account setup] complete failed: {type(e).__name__}: {e}")
+        return ("Your setup could not be saved because of a database error. Nothing was changed — "
+                "please press Save and Confirm again. If this keeps happening, contact the Administrator.")
+    finally:
+        cur.close(); conn.close()
+
+
+    if 'photo' in draft and old_photo and old_photo != draft['photo']:
+        _delete_profile_photo_file(username, old_photo)
+    session['must_change_password'] = False
+    session['account_setup_complete'] = True
+    for k in ('setup_draft', 'setup_password_set'):
+        session.pop(k, None)
+    session['setup_just_completed'] = True
+    return None
+
+def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names):
+    """Validate one Review-step Edit. Returns (draft changes, None) or (None, error)."""
+    form = request.form
+    if action == 'edit_name':
+        names = ('First Name', 'Middle Name', 'Last Name', 'Suffix')
+        if any(f in pending_fields for f in names):
+            return None, "A correction request for your name is waiting for the Administrator."
+        changes = {}
+        for field in names[:3]:
+            value = form.get(field, '').strip()
+            _column, max_len, required = _CORRECTION_NAME_COLUMNS[field]
+            if required and not value:
+                return None, f"Please enter your {field}."
+            if len(value) > max_len:
+                return None, f"Your {field} is too long (maximum {max_len} characters)."
+            changes[field] = value
+        suffix = form.get('Suffix', '').strip()
+        if suffix not in _NAME_SUFFIXES and suffix != saved['Suffix']:
+            return None, "Please choose a suffix from the list."
+        changes['Suffix'] = suffix
+        return changes, None
+    if action == 'edit_employment':
+        field, value = form.get('field', ''), form.get('value', '').strip()
+        options = {'Specialization':    [s['specializationname'] for s in specializations],
+                   'Employment Type':   employment_types,
+                   'Employment Status': list(_EMPLOYMENT_STATUSES)}
+        if field not in options or field in pending_fields:
+            return None, "That information can't be edited right now."
+        if value not in options[field] and value != saved[field]:
+            return None, f"Please choose a {field} from the list."
+        changes = {field: value}
+        if field == 'Employment Type':
+            # Only a Designee has a Designation (as in Add Faculty).
+            designation = form.get('designation', '').strip() if value == _DESIGNEE_TYPE else ''
+            if designation and designation not in designation_names:
+                return None, "Please choose a Designation from the list."
+            changes['Designation'] = designation
+        return changes, None
+    if action == 'edit_designation':
+        value = form.get('value', '').strip()
+        if 'Designation' in pending_fields:
+            return None, "That information can't be edited right now."
+        if value and info['Employment Type'] != _DESIGNEE_TYPE:
+            return None, f"Only a {_DESIGNEE_TYPE} has a Designation."
+        if value and value not in designation_names:
+            return None, "Please choose a Designation from the list."
+        return {'Designation': value}, None
+    return None, "That information can't be edited here."
 
 @app.route('/account-setup/verify', methods=['GET', 'POST'])
 def account_setup_verify():
     if 'loggedin' not in session:
         return redirect(url_for('login'))
-    if session.get('must_change_password'):
+    if _setup_needs_password():
         return redirect(url_for('account_setup_password'))
     if session.get('account_setup_complete', True):
         return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
 
 
     username = session.get('username')
-    info = query_db("""
-        SELECT f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
-               a.email, a.contactnumber, d.designationname, s.specializationname
+    draft = _setup_draft()
+    row = query_db("""
+        SELECT a.email, a.contactnumber, a.profile_photo,
+               f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix, f.employeestatus,
+               d.designationname, s.specializationname, et.typename
         FROM accounts a
         LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
         LEFT JOIN designation d ON f.designationid = d.designationid
         LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
         WHERE a.username = %s
     """, (username,), one=True)
+    if not row:
+        session.clear()
+        flash("Your account could not be found. Please sign in again.", "error")
+        return redirect(url_for('login'))
 
 
-    if not info or not info.get('employeenumber'):
-        # No linked faculty record (e.g. a pure Admin account) -- nothing to verify.
-        conn = get_db_connection(); cur = conn.cursor()
-        try:
-            cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
-        session['account_setup_complete'] = True
-        session.pop('setup_draft', None)
-        session['setup_just_completed'] = True
+    if not row.get('employeenumber'):
+        # No linked faculty record (e.g. a pure Admin account) -- nothing to review,
+        # so reaching this step confirms the earlier ones.
+        problem = _setup_commit(username, draft, has_faculty=False)
+        if problem:
+            flash(problem, "error")
+            return redirect(url_for('account_setup_password'))
         return redirect(url_for('account_setup_done'))
 
 
-    full_name = ' '.join(filter(None, [info.get('firstname'), info.get('middlename'),
-                                        info.get('lastname'), info.get('suffix')]))
-    current_values = {
-        'Employee ID':    info.get('employeenumber') or '',
-        'First Name':     info.get('firstname') or '',
-        'Middle Name':    info.get('middlename') or '',
-        'Last Name':      info.get('lastname') or '',
-        'Suffix':         info.get('suffix') or '',
-        'Designation':    info.get('designationname') or '',
-        'Specialization': info.get('specializationname') or '',
+    saved = {
+        'Employee ID':       row.get('employeenumber') or '',
+        'First Name':        row.get('firstname') or '',
+        'Middle Name':       row.get('middlename') or '',
+        'Last Name':         row.get('lastname') or '',
+        'Suffix':            row.get('suffix') or '',
+        'Designation':       row.get('designationname') or '',
+        'Specialization':    row.get('specializationname') or '',
+        'Employment Type':   row.get('typename') or '',
+        'Employment Status': row.get('employeestatus') or '',
     }
-
-
-    designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
-    specializations = query_db("SELECT specializationid, specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
-
-
-    if request.method == 'POST':
-        action = request.form.get('action')
-        if action == 'correction':
-            # A correction request is independent of finishing setup: it is saved for
-            # Admin review and the user stays on this page to review and confirm.
-            return _setup_submit_corrections(username, info.get('employeenumber'), current_values,
-                                             designations, specializations)
-        if action != 'confirm':
-            flash("Unrecognised action. Please use Save and Confirm to finish setup.", "error")
-            return redirect(url_for('account_setup_verify'))
-        conn = get_db_connection()
-        if conn is None:
-            flash("The system could not reach the database. Your information is unchanged — "
-                  "please try again in a moment.", "error")
-            return redirect(url_for('account_setup_verify'))
-        cur = conn.cursor()
-        try:
-            cur.execute("UPDATE accounts SET account_setup_complete = TRUE WHERE username = %s", (username,))
-            if cur.rowcount != 1:
-                raise LookupError(username)
-            conn.commit()
-        except LookupError:
-            conn.rollback()
-            session.clear()
-            flash("Your account could not be found. Please sign in again.", "error")
-            return redirect(url_for('login'))
-        except Exception as e:
-            conn.rollback()
-            print(f"[account setup] complete failed: {type(e).__name__}: {e}")
-            flash("Your setup could not be saved because of a database error. Nothing was lost — "
-                  "please press Save and Confirm again. If this keeps happening, contact the Administrator.", "error")
-            return redirect(url_for('account_setup_verify'))
-        finally:
-            cur.close(); conn.close()
-        session['account_setup_complete'] = True
-        session.pop('setup_draft', None)
-        session['setup_just_completed'] = True
-        return redirect(url_for('account_setup_done'))
-
-
-    profile_photo = query_db("SELECT profile_photo FROM accounts WHERE username = %s",
-                             (username,), one=True) or {}
+    info = dict(saved, **(draft.get('faculty') or {}))      # what the user will confirm
+    designations     = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
+    specializations  = query_db("SELECT specializationid, specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
+    employment_types = [r['typename'] for r in query_db("SELECT typename FROM employeetype ORDER BY employeetypeid")]
+    designation_names = [d['designationname'] for d in designations]
     pending = query_db("""
         SELECT field_name, current_value, proposed_value, created_at
         FROM personal_info_correction_request
         WHERE username = %s AND status = 'Pending'
         ORDER BY created_at, requestid
     """, (username,))
+    pending_fields = {p['field_name'] for p in pending}
 
 
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'confirm':
+            problem = _setup_commit(username, draft, has_faculty=True)
+            if problem:
+                flash(problem, "error")
+                return redirect(url_for('account_setup_verify'))
+            return redirect(url_for('account_setup_done'))
+        if action == 'correction':
+            # A correction request for the Admin is its own submission, independent of setup.
+            return _setup_submit_corrections(username, row['employeenumber'], saved,
+                                             designations, specializations)
+        changes, err = _setup_review_edit(action, saved, info, pending_fields, specializations,
+                                          employment_types, designation_names)
+        if err:
+            flash(err, "edit-error")
+        else:
+            fac = dict(draft.get('faculty') or {}, **changes)
+            _setup_set_draft(faculty={k: v for k, v in fac.items() if v != saved.get(k)})
+            flash("Updated. It is saved to your account when you press Save and Confirm.", "edit-success")
+        return redirect(url_for('account_setup_verify'))
+
+
+    full_name = ' '.join(filter(None, [info['First Name'], info['Middle Name'], info['Last Name'], info['Suffix']]))
+    email = (draft['email'] if 'email' in draft else row.get('email')) or ''
+    contact = (draft['contact'] if 'contact' in draft else row.get('contactnumber')) or ''
+    photo = (draft['photo'] if 'photo' in draft else row.get('profile_photo')) or ''
+    # Employee ID is the key every schedule and record points to, so it is never
+    # changed here; the Admin changes it in Faculty Management.
+    edit_allowed = {f: f not in pending_fields and f != 'Employee ID' for f in info}
     return render_template('setup/setup_verify.html',
-                           info=current_values, full_name=full_name,
-                           account_email=info.get('email') or '',
-                           email_verified=bool(info.get('email')) and
-                               (info.get('email') or '').strip().lower() == session.get('email_verified'),
-                           account_contact=info.get('contactnumber') or '',
-                           profile_photo=profile_photo.get('profile_photo') or '',
+                           info=info, full_name=full_name,
+                           account_email=email,
+                           email_verified=bool(email) and email.strip().lower() == session.get('email_verified'),
+                           account_contact=contact,
+                           profile_photo=photo,
                            pending_corrections=pending,
-                           clear_cart=session.pop('setup_corrections_saved', False),
+                           edit_allowed=edit_allowed,
+                           name_suffixes=_NAME_SUFFIXES,
+                           designee_type=_DESIGNEE_TYPE,
+                           is_designee=info['Employment Type'] == _DESIGNEE_TYPE,
+                           employment_types=employment_types,
+                           employment_statuses=list(_EMPLOYMENT_STATUSES),
                            designations=designations, specializations=specializations,
                            back_url=url_for('account_setup_contact'), **_setup_ctx('verify'))
 
@@ -2211,7 +2535,9 @@ def academic_my_teaching_assignment():
     own_emp_num = acc['employeenumber'] if acc else None
 
     active = query_db("""
-        SELECT ay.academicyearid, s.semestertype
+        SELECT ay.academicyearid, s.semestertype,
+               TO_CHAR(s.semstartdate, 'YYYY-MM-DD') AS sem_start,
+               TO_CHAR(s.semenddate,   'YYYY-MM-DD') AS sem_end
         FROM semester s
         JOIN academicyear ay ON s.academicyearid = ay.academicyearid
         WHERE s.isactive = TRUE LIMIT 1
@@ -2219,10 +2545,13 @@ def academic_my_teaching_assignment():
     active_ay_id = active['academicyearid'] if active else ''
     active_sem   = active['semestertype']    if active else 'A'
 
+    # Same page and script as the Faculty "My Teaching Assignment" (teaching.faculty.js).
     return render_template('academic/AcadTeachingAssign.html',
-                           own_emp_num=own_emp_num,
+                           emp_num=own_emp_num,
                            active_ay_id=active_ay_id,
-                           active_sem=active_sem)
+                           active_sem=active_sem,
+                           sem_start=(active or {}).get('sem_start') or '',
+                           sem_end=(active or {}).get('sem_end') or '')
 
 @app.route('/requests')
 def requests_view():
@@ -3006,13 +3335,18 @@ def api_requests_validate():
         if error:
             message, status = error
             return jsonify({'success': False, 'error': message}), status
+        # The Academic Head's unpublished Draft meetings this request clashes with. They
+        # never block it (faculty only see the Published schedule); approving removes them.
+        drafts = _request_draft_conflicts(req_type, req_id)
+        summary = dict(summary, draft_conflicts=drafts)
         # "Approve & Update Official" is offered only when the request would actually
         # pass the Official Publish checks (dry run; nothing written).
         if req_type == 'adjustment' and summary.get('all_ok'):
             _st = query_db("SELECT status FROM schedule_change_request WHERE requestid = %s",
                            [req_id], one=True)
             if _st and _st.get('status') == 'Pending':
-                ok, why = _official_publish_check(req_id)
+                ok, why = _official_publish_check(
+                    req_id, ignore_draft_sessionids=[d['sessionid'] for d in drafts])
                 summary = dict(summary, official_ok=ok, official_error=why)
         return jsonify(dict(summary, success=True))
     except Exception as e:
@@ -3349,10 +3683,11 @@ def _adjustment_group_ids(req_id, cur=None):
     return [r['requestid'] for r in rows] or [req_id]
 
 
-def _official_publish_check(req_id):
+def _official_publish_check(req_id, ignore_draft_sessionids=None):
     """(ok, reason) — would approving this Schedule Adjustment INTO the Official schedule
     pass every Publish gate (hard constraints + Settings)? A dry run of exactly what
-    'Approve & Update Official' publishes; nothing is written."""
+    'Approve & Update Official' publishes; nothing is written. `ignore_draft_sessionids`:
+    conflicting Draft meetings the approval would remove, so they do not count."""
     conn = get_db_connection()
     if conn is None:
         return False, 'The Official schedule check could not run (database unavailable).'
@@ -3386,7 +3721,8 @@ def _official_publish_check(req_id):
             'roomid': a.get('new_roomid') or a['official_roomid'],
             'official_sessionid': a['official_sessionid'],
         } for a in adjs]
-        ok, resp = _apply_adjustment_to_official(cur, adjs, overrides, dry_run=True)
+        ok, resp = _apply_adjustment_to_official(cur, adjs, overrides, dry_run=True,
+                                                 ignore_draft_sessionids=ignore_draft_sessionids)
         if ok:
             return True, None
         body = resp[0].get_json(silent=True) or {}
@@ -3438,7 +3774,163 @@ def _request_group_summary(req_type, req_id):
     return out, None
 
 
-def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False):
+def _request_meetings(req_type, req_id):
+    """The new meeting(s) a request asks for, as dicts of scheduleid, day, start_t, end_t
+    (time values), roomid and a display label. A Make-up is one meeting on its date's
+    weekday; a Schedule Adjustment is one per moved meeting (unspecified fields keep the
+    Official meeting's values, as approval does)."""
+    if req_type == 'makeup':
+        r = query_db("""
+            SELECT cmr.scheduleid, cmr.requested_date, cmr.new_roomid AS roomid,
+                   ts_s.timevalue AS start_t, ts_e.timevalue AS end_t
+            FROM class_meeting_request cmr
+            JOIN timeslot ts_s ON cmr.new_starttimeid = ts_s.timeid
+            JOIN timeslot ts_e ON cmr.new_endtimeid   = ts_e.timeid
+            WHERE cmr.requestid = %s
+        """, [req_id], one=True)
+        if not r or not r.get('requested_date'):
+            return []
+        return [dict(r, day=r['requested_date'].strftime('%A'), label='')]
+    if req_type != 'adjustment':
+        return []
+    rows = []
+    for gid in _adjustment_group_ids(req_id):
+        r = query_db("""
+            SELECT scr.scheduleid,
+                   COALESCE(scr.new_daydesc, ss.daydesc)       AS day,
+                   COALESCE(ts_s.timevalue, ots_s.timevalue)   AS start_t,
+                   COALESCE(ts_e.timevalue, ots_e.timevalue)   AS end_t,
+                   COALESCE(scr.new_roomid, ss.roomid)         AS roomid
+            FROM schedule_change_request scr
+            LEFT JOIN timeslot ts_s ON scr.new_starttimeid = ts_s.timeid
+            LEFT JOIN timeslot ts_e ON scr.new_endtimeid   = ts_e.timeid
+            LEFT JOIN schedule_sessions ss ON ss.sessionid = scr.official_sessionid
+            LEFT JOIN timeslot ots_s ON ss.starttimeid = ots_s.timeid
+            LEFT JOIN timeslot ots_e ON ss.endtimeid   = ots_e.timeid
+            WHERE scr.requestid = %s
+        """, [gid], one=True)
+        if r and r.get('day') and r.get('start_t') is not None and r.get('end_t') is not None:
+            rows.append(r)
+    return [dict(r, label=(f"{r['day']} {r['start_t'].strftime('%I:%M %p')}–{r['end_t'].strftime('%I:%M %p')}"
+                           if len(rows) > 1 else '')) for r in rows]
+
+
+def _request_draft_conflicts(req_type, req_id):
+    """Official DRAFT meetings (the Academic Head's unpublished schedule) that the
+    request's new meeting(s) would clash with — same room, same faculty, or the same
+    program/year level — in the request's semester and weekday. Drafts are invisible to
+    faculty and never block a request; they are only reported to the Academic Head, and
+    approving the request removes them (_remove_request_draft_conflicts). The requester's
+    own class is skipped (its Draft is not someone else's slot). One dict per Draft
+    meeting, ordered by section/subject."""
+    found = {}
+    for m in _request_meetings(req_type, req_id):
+        requester = _request_requester(m['scheduleid'])
+        if not requester:
+            continue
+        rows = query_db("""
+            SELECT dss.sessionid, dss.versionid, dss.roomid, dss.daydesc,
+                   dsc.sectionid, dsec.sectionname, dsec.programyearlevelid, dpyl.programcode,
+                   UPPER(dcs.subjectcode) AS subjectcode,
+                   COALESCE(dsv.employeenumber, dsc.employeenumber) AS employeenumber,
+                   dr.roomname,
+                   TO_CHAR(dts_s.timevalue, 'HH12:MI AM') AS start_t,
+                   TO_CHAR(dts_e.timevalue, 'HH12:MI AM') AS end_t
+            FROM schedule_sessions dss
+            JOIN schedule_version dsv  ON dss.versionid = dsv.versionid
+            JOIN schedule dsc          ON dsv.scheduleid = dsc.scheduleid
+            JOIN curriculumsubject dcs ON dsc.curriculumsubjectid = dcs.curriculumsubjectid
+            LEFT JOIN sections dsec    ON dsc.sectionid = dsec.sectionid
+            LEFT JOIN program_yearlevel dpyl ON dsec.programyearlevelid = dpyl.programyearlevelid
+            LEFT JOIN room dr          ON dss.roomid = dr.roomid
+            JOIN timeslot dts_s ON dss.starttimeid = dts_s.timeid
+            JOIN timeslot dts_e ON dss.endtimeid   = dts_e.timeid
+            WHERE dsv.status = 'Draft' AND dsv.source IS DISTINCT FROM 'local'
+              AND COALESCE(dsv.is_removal, FALSE) = FALSE
+              AND dsc.semesterid = %s
+              AND UPPER(dss.daydesc) = UPPER(%s)
+              AND dts_s.timevalue < %s AND dts_e.timevalue > %s
+              AND NOT (dsc.sectionid IS NOT DISTINCT FROM %s AND UPPER(dcs.subjectcode) = %s)
+              AND (dss.roomid = %s
+                   OR COALESCE(dsv.employeenumber, dsc.employeenumber)::text = %s::text
+                   OR dsec.programyearlevelid = %s)
+            ORDER BY dsec.sectionname, dcs.subjectcode, dts_s.timevalue
+        """, [requester['semesterid'], m['day'], m['end_t'], m['start_t'],
+              requester['sectionid'], requester['subjectcode'], m.get('roomid'),
+              requester.get('employeenumber'), requester.get('programyearlevelid')]) or []
+        for r in rows:
+            why = []
+            if m.get('roomid') is not None and r['roomid'] == m['roomid'] \
+                    and _request_occupant_blocks(requester, r, 'room'):
+                why.append('room')
+            if requester.get('employeenumber') and str(r.get('employeenumber') or '') == str(requester['employeenumber']) \
+                    and _request_occupant_blocks(requester, r, 'faculty'):
+                why.append('faculty')
+            if requester.get('programyearlevelid') is not None \
+                    and r.get('programyearlevelid') == requester['programyearlevelid']:
+                why.append('section')
+            if not why:
+                continue
+            item = found.setdefault(r['sessionid'], {
+                'sessionid': r['sessionid'], 'versionid': r['versionid'],
+                'subjectcode': r['subjectcode'], 'sectionname': r.get('sectionname'),
+                'day': r['daydesc'], 'start_time': r['start_t'], 'end_time': r['end_t'],
+                'roomname': r.get('roomname'), 'dimensions': [], 'meeting': m['label']})
+            item['dimensions'] = sorted(set(item['dimensions']) | set(why))
+    what = {'room': 'same room', 'faculty': 'same faculty', 'section': 'same program/year level'}
+    out = []
+    for d in found.values():
+        d['message'] = (f"{d['subjectcode']} ({d['sectionname'] or 'section'}) — {d['day']} "
+                        f"{d['start_time']}–{d['end_time']}"
+                        f"{', ' + d['roomname'] if d.get('roomname') else ''}"
+                        f" · {', '.join(what[x] for x in d['dimensions'])}")
+        out.append(d)
+    return out
+
+
+def _remove_request_draft_conflicts(cur, sessionids):
+    """Delete the given Official Draft meetings (never Published or Local rows) inside the
+    caller's transaction — what the Manual Editor's delete does: a Draft version left with
+    no meetings is archived and its subject keeps its faculty. Returns the number of
+    meetings removed."""
+    ids = sorted({int(x) for x in sessionids or []})
+    if not ids:
+        return 0
+    cur.execute("""
+        DELETE FROM schedule_sessions ss
+        USING schedule_version sv
+        WHERE ss.versionid = sv.versionid AND ss.sessionid = ANY(%s)
+          AND sv.status = 'Draft' AND sv.source IS DISTINCT FROM 'local'
+        RETURNING ss.versionid
+    """, [ids])
+    deleted = cur.fetchall() or []
+    versions = sorted({r['versionid'] for r in deleted})
+    for vid in versions:
+        cur.execute("SELECT COUNT(*) AS c FROM schedule_sessions WHERE versionid = %s", [vid])
+        if cur.fetchone()['c'] == 0:
+            cur.execute("UPDATE schedule_version SET status = 'Archive' "
+                        "WHERE versionid = %s AND status = 'Draft'", [vid])
+            cur.execute("SAVEPOINT keep_faculty")
+            try:
+                _keep_faculty_after_schedule_delete(cur, vid)
+                cur.execute("RELEASE SAVEPOINT keep_faculty")
+            except Exception as _kf:
+                cur.execute("ROLLBACK TO SAVEPOINT keep_faculty")   # never blocks the approval
+                print(f"[request draft removal] faculty not kept: {_kf}")
+    return len(deleted)
+
+
+def _publish_ignored_draft_sessionids():
+    """Official Draft meetings the current Publish must not count: the ones an Academic
+    Head confirmed removing while approving a request into the Official schedule (they are
+    deleted right after that Publish). Empty outside such an approval."""
+    try:
+        return [int(x) for x in (getattr(g, 'publish_ignore_draft_sessionids', None) or [])]
+    except RuntimeError:   # no app context (e.g. a background job)
+        return []
+
+
+def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False, ignore_draft_sessionids=None):
     """Approve a Schedule Adjustment INTO the Official schedule: the class's Published
     meetings with the moved ones replaced are published as the section's next Official
     version through api_approve_schedule itself — the same hard-constraint, Settings,
@@ -3492,7 +3984,12 @@ def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False):
         for k, v in keep.items():
             if v is not None:
                 session[k] = v
-        rv = api_approve_schedule()
+        _prev_ignore = getattr(g, 'publish_ignore_draft_sessionids', None)
+        g.publish_ignore_draft_sessionids = list(ignore_draft_sessionids or [])
+        try:
+            rv = api_approve_schedule()
+        finally:
+            g.publish_ignore_draft_sessionids = _prev_ignore
     resp, status = (rv[0], rv[1]) if isinstance(rv, tuple) else (rv, rv.status_code)
     body = resp.get_json(silent=True) or {}
     if status == 200 and body.get('success'):
@@ -3526,6 +4023,23 @@ def api_requests_decide():
         return jsonify({'success': False, 'error': 'Invalid decision'}), 400
 
     decided_by = session.get('employeenumber') or session.get('username', 'unknown')
+    # Draft meetings (the Academic Head's unpublished schedule) the request clashes with
+    # are removed on approval — but only the ones the Academic Head saw and confirmed.
+    confirmed_drafts = {int(x) for x in (data.get('remove_draft_sessionids') or [])
+                        if str(x).strip().isdigit()}
+    drafts_to_remove = []
+
+    def _draft_confirmation_needed():
+        """The 409 response asking to confirm removing conflicting Drafts, or None."""
+        drafts_to_remove[:] = _request_draft_conflicts(req_type, req_id)
+        if all(d['sessionid'] in confirmed_drafts for d in drafts_to_remove):
+            return None
+        return jsonify({
+            'success': False, 'code': 'DRAFT_CONFLICT_CONFIRM',
+            'draft_conflicts': drafts_to_remove,
+            'error': (f"This request clashes with {len(drafts_to_remove)} meeting(s) in your Draft "
+                      f"schedule. Approving it will remove them from the Draft."),
+        }), 409
 
     _conn = get_db_connection()
     _cur  = _conn.cursor(cursor_factory=RealDictCursor)
@@ -3562,6 +4076,10 @@ def api_requests_decide():
                         'code': 'REQUEST_NO_LONGER_VALID',
                         'conflicts': summary['conflicts'] if summary else [],
                     }), 409
+                _confirm = _draft_confirmation_needed()
+                if _confirm:
+                    _conn.rollback()
+                    return _confirm
             # A Make-up is ONE meeting on requested_date. The approved
             # class_meeting_request row itself is that occurrence: approval never
             # adds a recurring weekly Official session, so it neither changes the
@@ -3692,9 +4210,17 @@ def api_requests_decide():
                         'code': 'REQUEST_NO_LONGER_VALID',
                         'conflicts': summary['conflicts'] if summary else [],
                     }), 409
+                _confirm = _draft_confirmation_needed()
+                if _confirm:
+                    _conn.rollback()
+                    return _confirm
 
                 if apply_to == 'official':
-                    _pub_ok, _pub_resp = _apply_adjustment_to_official(_cur, adjs, _overrides)
+                    # The confirmed Draft meetings are removed below; the Publish must not
+                    # count them as occupying the new slot.
+                    _pub_ok, _pub_resp = _apply_adjustment_to_official(
+                        _cur, adjs, _overrides,
+                        ignore_draft_sessionids=[d['sessionid'] for d in drafts_to_remove])
                     if not _pub_ok:
                         _conn.rollback()
                         return _pub_resp
@@ -3801,14 +4327,20 @@ def api_requests_decide():
         else:
             return jsonify({'success': False, 'error': 'Invalid type'}), 400
 
+        drafts_removed = 0
+        if decision == 'Approved' and drafts_to_remove:
+            drafts_removed = _remove_request_draft_conflicts(
+                _cur, [d['sessionid'] for d in drafts_to_remove])
+
         _conn.commit()
         write_activity_log(
             action=f"Request {decision}",
-            details=f"{req_type.upper()} request #{req_id} {decision.lower()} by {decided_by}",
+            details=f"{req_type.upper()} request #{req_id} {decision.lower()} by {decided_by}"
+                    + (f"; {drafts_removed} conflicting Draft meeting(s) removed" if drafts_removed else ''),
             category='approval',
             color='green' if decision == 'Approved' else 'orange'
         )
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'drafts_removed': drafts_removed})
     except Exception as e:
         _conn.rollback()
         print(f"[api_requests_decide] Error: {e}")
@@ -16774,6 +17306,34 @@ def api_publish_local_arrangement(arr_id):
         return _safe_local_api_error()
 
 
+@app.route('/api/local/arrangement/<int:arr_id>/discard', methods=['POST'])
+def api_discard_local_draft(arr_id):
+    """Remove a Local Draft that Publish (or Restore) staged but could not publish, so it
+    never lingers or gets published later. Published/Archived arrangements are refused."""
+    auth_error = _require_academic_head_api()
+    if auth_error:
+        return auth_error
+    conn = cur = None
+    try:
+        _ensure_local_tables()
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        removed = _discard_local_drafts(cur, [arr_id])
+        if not removed:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Only an unpublished Local Draft can be discarded.'}), 409
+        conn.commit()
+        return jsonify({'success': True, 'arrangement_id': arr_id})
+    except Exception:
+        import traceback; traceback.print_exc()
+        if conn:
+            conn.rollback()
+        return _safe_local_api_error()
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
 @app.route('/api/local/arrangement/<int:arr_id>/restore', methods=['POST'])
 def api_restore_local_arrangement(arr_id):
     """Create a new editable Draft arrangement by copying sessions from a Published or Archived one.
@@ -17441,6 +18001,10 @@ def get_room_schedule(room_id):
     semester       = request.args.get('semester')
     program        = request.args.get('program')
     scheduler_mode = request.args.get('scheduler_mode', 'official')
+    # Drafts belong to the Academic Head until published: a Faculty account only ever
+    # gets the live (Published) view, whatever the page asks for.
+    if session.get('role') == 'Faculty':
+        scheduler_mode = 'local'
 
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -31947,7 +32511,7 @@ def faculty_teaching_assignment_export():
     faculty member's OWN load — the account comes from the session only.
     Same official letterhead and table design as the system's other exports
     (see teaching_assignment_export.py)."""
-    if 'loggedin' not in session or session.get('role') != 'Faculty':
+    if 'loggedin' not in session or session.get('role') not in ('Faculty', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     data   = request.get_json(silent=True) or {}
     # One or more formats: a single file for one format, a .zip for several
@@ -32060,7 +32624,7 @@ def faculty_weekly_schedule_export():
     the recurring classes that fall inside the semester that week, plus that
     week's approved make-up classes, for the chosen Official/Local source and
     Program filter. Same document design as the Teaching Assignment export."""
-    if 'loggedin' not in session or session.get('role') != 'Faculty':
+    if 'loggedin' not in session or session.get('role') not in ('Faculty', 'Academic Head'):
         return jsonify({'error': 'Unauthorized'}), 403
     data = request.get_json(silent=True) or {}
     raw = data.get('formats') if isinstance(data.get('formats'), list) else [data.get('format')]
@@ -32149,16 +32713,32 @@ _PROFILE_PHOTO_URL_PREFIX = '/static/uploads/profile_photos/'
 _PROFILE_PHOTO_MAX_BYTES  = 2 * 1024 * 1024
 _PROFILE_PHOTO_FORMATS    = {'JPEG': '.jpg', 'PNG': '.png'}
 
-def _save_profile_photo(username, file_storage):
-    """Store an uploaded profile picture for this account.
+def _profile_photo_owned(username, url):
+    """True when url is one of this account's photo files in our folder."""
+    safe_user = secure_filename(username) or 'user'
+    return bool(url) and url.startswith(_PROFILE_PHOTO_URL_PREFIX) and bool(re.fullmatch(
+        rf"profile_{re.escape(safe_user)}_[0-9a-f]{{12}}\.(jpg|png)", url[len(_PROFILE_PHOTO_URL_PREFIX):]))
 
+def _delete_profile_photo_file(username, url):
+    if _profile_photo_owned(username, url):
+        try: os.remove(os.path.join(_PROFILE_PHOTO_DIR, os.path.basename(url)))
+        except OSError: pass
 
-    The image file lives in static/uploads/profile_photos/ (the project's
-    existing file storage); the database keeps only its path, in
-    accounts.profile_photo, on the logged-in user's own account row. Each
-    upload gets a unique name (so browsers never show a cached old photo) and
-    the account's previous photo file is removed.
-    Returns (photo_url, None) or (None, user-facing error)."""
+def _sweep_profile_photo_files(username, keep_url):
+    """Remove this account's photo files other than keep_url (drafts left behind
+    by an Account Setup that was never confirmed)."""
+    try:
+        names = os.listdir(_PROFILE_PHOTO_DIR)
+    except OSError:
+        return
+    for name in names:
+        url = _PROFILE_PHOTO_URL_PREFIX + name
+        if url != keep_url and _profile_photo_owned(username, url):
+            _delete_profile_photo_file(username, url)
+
+def _write_profile_photo_file(username, file_storage):
+    """Check an uploaded picture and write it under a new unique name, without
+    linking it to the account. Returns (photo_url, None) or (None, user-facing error)."""
     if not file_storage or not file_storage.filename:
         return None, 'Please choose a photo to upload.'
     data = file_storage.read(_PROFILE_PHOTO_MAX_BYTES + 1)
@@ -32182,8 +32762,21 @@ def _save_profile_photo(username, file_storage):
     url       = _PROFILE_PHOTO_URL_PREFIX + filename
     with open(path, 'wb') as fh:
         fh.write(data)
+    return url, None
+
+def _save_profile_photo(username, file_storage):
+    """Store an uploaded profile picture for this account.
 
 
+    The image file lives in static/uploads/profile_photos/ (the project's
+    existing file storage); the database keeps only its path, in
+    accounts.profile_photo, on the logged-in user's own account row. Each
+    upload gets a unique name (so browsers never show a cached old photo) and
+    the account's previous photo file is removed.
+    Returns (photo_url, None) or (None, user-facing error)."""
+    url, err = _write_profile_photo_file(username, file_storage)
+    if err:
+        return None, err
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute("SELECT profile_photo FROM accounts WHERE username = %s FOR UPDATE", (username,))
@@ -32194,8 +32787,7 @@ def _save_profile_photo(username, file_storage):
         conn.commit()
     except Exception as e:
         conn.rollback()
-        try: os.remove(path)
-        except OSError: pass
+        _delete_profile_photo_file(username, url)
         print(f"[profile photo] save failed: {type(e).__name__}")
         return None, 'The photo could not be saved. Please try again.'
     finally:
@@ -32204,11 +32796,8 @@ def _save_profile_photo(username, file_storage):
 
     # Remove this account's previous photo file (only files it owns in our folder).
     old = (row or {}).get('profile_photo') or ''
-    old_name = os.path.basename(old)
-    if (old.startswith(_PROFILE_PHOTO_URL_PREFIX) and old_name != filename
-            and old_name.startswith(f"profile_{safe_user}")):
-        try: os.remove(os.path.join(_PROFILE_PHOTO_DIR, old_name))
-        except OSError: pass
+    if old != url:
+        _delete_profile_photo_file(username, old)
     return url, None
 
 
@@ -32498,9 +33087,16 @@ def api_user_email_request_code():
 
 @app.route('/api/user/email/update', methods=['POST'])
 def api_user_email_update():
+    in_setup = not session.get('account_setup_complete', True)
     def _confirm(c, u):
-        saved = _emailchange.confirm(c, u, request.form.get('email', ''), request.form.get('code', ''))
+        # During Account Setup the verified address is only a draft until Save and Confirm.
+        saved = _emailchange.confirm(c, u, request.form.get('email', ''), request.form.get('code', ''),
+                                     save=not in_setup)
         session['email_verified'] = saved.lower()     # the Review step shows this address as Verified
+        if in_setup:
+            _setup_set_draft(email=saved)
+            _setup_clear_draft('email_typed')
+            return jsonify({'success': True, 'email': saved})
         write_activity_log(action='Email Changed',
                            details=f"{u} changed their email address (verified by email code)",
                            category='account', color='blue')
@@ -32590,32 +33186,40 @@ def api_faculty_blocked_times():
             return jsonify({'success': True, 'blocked': []})
         # LIVE occupancy only (effective schedule, active semester): a Local Published move
         # frees its Official occurrence and occupies the new slot; Drafts never block.
-        def _live_blocks(where_sql, params):
+        # `kind` says what occupies the slot ('faculty' | 'room' | 'section') and the class
+        # holding it, so the request form can explain the overlap instead of a bare block.
+        def _live_blocks(where_sql, params, kind):
             rows = query_db("WITH " + faculty_load.EFFECTIVE_SESSIONS_CTE + f"""
                 SELECT DISTINCT
                     TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
                     TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time,
                     ts_s.timevalue                          AS start_raw,
-                    ts_e.timevalue                          AS end_raw
+                    ts_e.timevalue                          AS end_raw,
+                    UPPER(cs.subjectcode)                   AS subjectcode,
+                    sec.sectionname
                 FROM effective_sessions es
                 JOIN semester sem   ON es.semesterid  = sem.semesterid AND sem.isactive = TRUE
                 JOIN timeslot ts_s  ON es.starttimeid = ts_s.timeid
                 JOIN timeslot ts_e  ON es.endtimeid   = ts_e.timeid
+                LEFT JOIN curriculumsubject cs ON cs.curriculumsubjectid = es.curriculumsubjectid
+                LEFT JOIN sections sec ON sec.sectionid = es.sectionid
                 WHERE UPPER(es.daydesc) = UPPER(%s) AND {where_sql}
                 ORDER BY ts_s.timevalue
             """, [day] + list(params)) or []
             return [{'start_time': r['start_time'], 'end_time': r['end_time'],
-                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw'])}
+                     'start_raw': str(r['start_raw']), 'end_raw': str(r['end_raw']),
+                     'kind': kind, 'subjectcode': r.get('subjectcode'),
+                     'sectionname': r.get('sectionname')}
                     for r in rows]
 
-        blocked = _live_blocks("es.employeenumber = %s", [str(emp_num)])
+        blocked = _live_blocks("es.employeenumber = %s", [str(emp_num)], 'faculty')
         # When a specific room is provided, also block times that room is already occupied
         # so the time dropdown grays out those slots before the user selects them.
         if str(room_id).isdigit():
-            blocked += _live_blocks("es.roomid = %s", [int(room_id)])
+            blocked += _live_blocks("es.roomid = %s", [int(room_id)], 'room')
         # When a section is provided, also block times that section already has another class.
         if str(section_id).isdigit():
-            blocked += _live_blocks("es.sectionid = %s", [int(section_id)])
+            blocked += _live_blocks("es.sectionid = %s", [int(section_id)], 'section')
         return jsonify({'success': True, 'blocked': blocked})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -35101,6 +35705,9 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
     ph = ','.join(['%s'] * len(upper_excl)) if upper_excl else None
     excl_sql = f"AND UPPER(cs.subjectcode) NOT IN ({ph})" if ph else ""
     sect_sql = "AND sg.sectionid = %s" if section_id else ""
+    # Draft meetings an approval is about to remove (see _publish_ignored_draft_sessionids).
+    _ign = _publish_ignored_draft_sessionids()
+    ign_sql = "AND NOT (sv.status = 'Draft' AND ss.sessionid = ANY(%s))" if _ign else ""
     if published_only:
         status_filter = "'Published'"
     elif draft_only:
@@ -35128,7 +35735,9 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
           AND  sv.source != 'local'
           {excl_sql}
           {sect_sql}
-    """, [program, year_level, sem_id] + upper_excl + ([int(section_id)] if section_id else []))
+          {ign_sql}
+    """, [program, year_level, sem_id] + upper_excl + ([int(section_id)] if section_id else [])
+         + ([_ign] if _ign else []))
 
     rows = [dict(r) for r in cur.fetchall()]
     if not rows:
@@ -36945,7 +37554,8 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                   AND  ss.daydesc     IS NOT NULL
                   AND  ts_s.timevalue IS NOT NULL
                   AND  ts_e.timevalue IS NOT NULL
-            """, (sem_id, section_id, section_id))
+                  AND  NOT (ss.sessionid = ANY(%s::int[]))
+            """, (sem_id, section_id, section_id, _publish_ignored_draft_sessionids()))
             published.extend(cur.fetchall() or [])
         cur.close(); conn.close()
     except Exception as exc:
@@ -37237,6 +37847,106 @@ def _merge_candidates(code, term, acad_year_id, section_id, limit=3):
     return out
 
 
+def _auto_merge_incomplete(rows, term, acad_year_id, section_id, locked_sessions=()):
+    """Last step of generation for a class it could not place on its own (e.g. NSTP when
+    no room/instructor is free on Sunday): put it in ANOTHER section's class of the same
+    subject when that is a valid merge — the rule the Manual Editor uses
+    (merge_groups.detect_merges): same subject, same instructor or TBA, exactly the same
+    day, time and room. This section must be free then and the class's hours must match.
+    Nothing is recorded here: Save Draft / Publish show the usual merge confirmation.
+    Changes `rows` in place; returns [{'subject_code', 'with', 'slot'}] for each merge."""
+    cfg = load_scheduler_config()
+    sid = _section_id_or_none(section_id)
+    if (merge_groups.merge_model(cfg) != merge_groups.MODEL_GROUPS or sid is None
+            or not bool(_num_cfg(cfg.get('hc_merge_enabled', 1)))):
+        return []
+    todo = [g for g in rows if g.get('incomplete')]
+    if not todo:
+        return []
+    from datetime import datetime as _dtm
+    _locks = {(ls.get('subject_code') or '').strip().upper(): (ls.get('user_lock') or {})
+              for ls in (locked_sessions or ())}
+    from scheduler import format_time_12h as _f12
+    _WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    mins = lambda t: t.hour * 60 + t.minute
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    done = []
+    try:
+        sem_id = _get_semester_id(cur, acad_year_id, term)
+        if not sem_id:
+            return []
+        occ = [o for o in merge_groups.fetch_occurrences(cur, [sem_id], None, draft_preferred=True)
+               if o.get('origin') != 'Local' and merge_groups._int(o.get('sectionid')) != sid
+               and merge_groups.norm_room(o.get('roomid')) is not None]
+        cur.execute("SELECT sectionid, sectionname FROM sections")
+        sec_names = {r['sectionid']: r['sectionname'] for r in cur.fetchall() or []}
+        cur.execute("SELECT roomid, roomname, roomtype FROM room")
+        room_info = {r['roomid']: r for r in cur.fetchall() or []}
+        cur.execute("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty")
+        fac_names = {str(r['employeenumber']): r['fullname'] for r in cur.fetchall() or []}
+
+        for g in todo:
+            code = merge_groups.norm_code(g.get('subject_code'))
+            ul = _locks.get(code, {})
+            if any(ul.get(f) for f in ('schedule', 'day', 'time', 'room')):
+                continue                      # the Academic Head fixed where it goes
+            part_h = float((g.get('lab_hours') if g.get('class_type') == 'Lab' else g.get('lec_hours'))
+                           or g.get('total_subject_hrs') or 0)
+            my_fac = str(g.get('faculty_id') or '').strip()
+            my_fac = my_fac if faculty_load.has_assigned_faculty(my_fac) else ''
+            # Other sections' classes of this subject, one candidate per (section, time, room).
+            cands = {}
+            for o in occ:
+                if merge_groups.norm_code(o.get('subjectcode')) != code:
+                    continue
+                k = (o['sectionid'], o['start_time'], o['end_time'], merge_groups.norm_room(o['roomid']),
+                     str(o.get('faculty_id') or ''))
+                cands.setdefault(k, set()).add(o['day'])
+            for (osid, st_s, et_s, rid, ofac), days in sorted(cands.items(), key=lambda kv: str(kv[0])):
+                st = _dtm.strptime(st_s, '%H:%M').time(); et = _dtm.strptime(et_s, '%H:%M').time()
+                days = sorted(days, key=lambda d: _WEEK.index(d) if d in _WEEK else 9)
+                if part_h and abs((mins(et) - mins(st)) / 60 * len(days) - part_h) > 0.01:
+                    continue                  # not this class's hours
+                ofac = ofac if faculty_load.has_assigned_faculty(ofac) else ''
+                if my_fac and ofac and my_fac != ofac:
+                    continue                  # a different instructor is never a merge
+                # This section must be free then (its other classes in this result).
+                busy = any(r is not g and not r.get('incomplete') and r.get('start_time') and r.get('end_time')
+                           and set(r.get('days_list') or [r.get('day')]) & set(days)
+                           and mins(r['start_time']) < mins(et) and mins(r['end_time']) > mins(st)
+                           for r in rows)
+                if busy:
+                    continue
+                fac = my_fac or ofac
+                trial = {'subject_code': g.get('subject_code'), 'days_list': days, 'day': days[0],
+                         'start_time': st, 'end_time': et, 'room_id': rid, 'faculty_id': fac or None}
+                found = merge_groups.detect_merges(cur, cfg, sem_id, sid, [trial])
+                if found.get('problems') or {m['day'] for m in found.get('merges') or []} != set(days):
+                    continue
+                ri = room_info.get(rid) or {}
+                g.update({
+                    'days_list': days, 'day': days[0], 'start_time': st, 'end_time': et,
+                    'time': f"{_f12(st)} – {_f12(et)}",
+                    'days': '/'.join(d[:3].upper() for d in days),
+                    'room_id': rid, 'room': ri.get('roomname') or str(rid), 'room_type': ri.get('roomtype') or '',
+                    'faculty_id': fac or g.get('faculty_id'),
+                    'instructor': fac_names.get(fac) if fac else g.get('instructor'),
+                    'duration_hrs': round((mins(et) - mins(st)) / 60 * len(days), 2),
+                    'incomplete': not bool(fac), 'incomplete_components': [] if fac else ['faculty'],
+                    'incomplete_reason': [] if fac else ['No instructor yet (the merged class has none).'],
+                    'merge_with': sec_names.get(osid) or str(osid),
+                })
+                done.append({'subject_code': g.get('subject_code'), 'with': g['merge_with'],
+                             'slot': f"{'/'.join(d[:3] for d in days)} {g['time']}, {g['room']}"})
+                break
+        return done
+    except Exception as e:
+        print(f"[auto merge] skipped: {e}")
+        return done
+    finally:
+        cur.close(); conn.close()
+
+
 def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, violations=None):
     """Plain-language notices for classes the generator could not complete: what is
     missing (room / instructor / time), WHY in terms the Academic Head can act on (e.g.
@@ -37307,34 +38017,28 @@ def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, 
         if 'room' in comps:
             typed = [r for r in rooms if (r.get('roomtype') or '').lower().startswith('lab' if is_lab else 'lec')]
             free = [r for r in typed if _has_free_block(r['roomid'], block, days_for)]
+            # Short and direct: what is wrong, then one line on what to do.
             if not typed:
                 notices.append(dict(base, kind='no_room', title=f'No {kind} rooms set up',
-                    message=f'There are no active {kind} rooms in the system, so {code} has no room it can use.',
-                    suggestion=f'Add a {kind} room (Settings → Rooms), or save with the room as TBA and assign it later.'))
+                    message=f'There are no {kind} rooms in the system.',
+                    suggestion=f'Add one in Rooms, or save with the room as TBA.'))
             elif not free:
                 notices.append(dict(base, kind='no_room', title=f'All {kind} rooms are full',
-                    message=f'All {len(typed)} {kind} rooms are already booked by other classes — none has a free '
-                            f'{_notice_hours_label(block)} block {days_label}, 7:30 AM–9:00 PM' + (')' if not sunday_only else '') + '.',
-                    suggestion=f"Free up a {kind} room in another section's schedule, add a {kind} room, "
-                               f'or save this class with the room as TBA and assign it later.'))
+                    message=f'Every {kind} room is booked {"on Sunday" if sunday_only else "at every usable time"}.',
+                    suggestion=f'Save with the room as TBA, or free a room in another section.'))
             else:
                 instr = g.get('instructor') or ('an instructor' if 'faculty' in comps else 'the instructor')
                 notices.append(dict(base, kind='no_room_at_time', title=f'No {kind} room free at a usable time',
-                    message=f'{len(free)} of {len(typed)} {kind} rooms still have free {_notice_hours_label(block)} '
-                            f'blocks{" on Sunday" if sunday_only else ""}, but none at a time when this section and {instr} are both free.',
-                    suggestion='Use Re-generate Selected with Time/Days or Instructor unlocked, '
-                               'or set the room and time yourself in the Manual Editor.'))
+                    message=f'No {kind} room is free{" on Sunday" if sunday_only else ""} when this section and {instr} are both free.',
+                    suggestion='Re-generate with Time/Days or Instructor unlocked, or set it in the Manual Editor.'))
         if 'faculty' in comps:
             notices.append(dict(base, kind='no_faculty', title='No instructor available',
-                message=f'Every faculty member who can teach {code} is already at their maximum load '
-                        f'or is teaching at every time this class could be held.',
-                suggestion='Assign an instructor yourself (Manual Editor), raise a faculty member\'s load limit, '
-                           'or add a qualified faculty member.'))
+                message=f'Everyone who can teach {code} is at full load or busy at those times.',
+                suggestion='Assign an instructor in the Manual Editor.'))
         if 'schedule' in comps and 'room' not in comps and 'faculty' not in comps:
             notices.append(dict(base, kind='no_time', title='No free time slot',
-                message=f'There is no time when this section, its instructor and a suitable room are all free '
-                        f'for a {_notice_hours_label(block)} meeting.',
-                suggestion='Unlock Instructor or Room with Re-generate Selected, or place it yourself in the Manual Editor.'))
+                message='No time works for this section, its instructor and a room together.',
+                suggestion='Unlock Instructor or Room and re-generate, or place it in the Manual Editor.'))
         if not ({'room', 'faculty', 'schedule'} & comps):
             notices.append(dict(base, kind='other', title='Could not be completed',
                 message=(g.get('incomplete_reason') or ['This class could not be fully scheduled.'])[0],
@@ -37358,12 +38062,9 @@ def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, 
         if not opts or code in _merge_shown:
             continue
         _merge_shown.add(code)
-        n['merge_options'] = opts
-        n['suggestion'] = (
-            f"Merge it with another section's {code} class: save this schedule as a Draft now "
-            f"(only {code} stays incomplete), then in the Manual Editor give {code} the same day, "
-            f"time, room and instructor as one of these — " + '; '.join(opts) + '. '
-            + n.get('suggestion', ''))
+        # One short line — the sections it could join are visible in the Manual Editor.
+        n['suggestion'] = (n.get('suggestion', '') + f" You can also merge it manually with another "
+                           f"section's {code} class in the Manual Editor.").strip()
     return notices + load_notices
 
 
@@ -37598,6 +38299,31 @@ def api_generate_schedule():
             if _b2 < _best_bad:
                 res, result_status, cross_violations, cross_conflict_count, _best_bad = _r2, _s2, _cv2, _cc2, _b2
 
+    # Last resort: an incomplete class that can join another section's same class (a
+    # valid merge) takes that slot; Save Draft / Publish ask to confirm the merge.
+    auto_merges = _auto_merge_incomplete(res['schedule_data'], term, data.get('acadYear') or '',
+                                         _gen_section, locked_sessions)
+    if auto_merges:
+        _merged_codes = {m['subject_code'].strip().upper() for m in auto_merges}
+        for c in _merged_codes:
+            problems.pop(c, None) if isinstance(problems, dict) else None
+        cross_violations, cross_conflict_count = _cross(res['schedule_data'])
+        # The merge partner is not a clash: it is the class this one joins — a cross-section
+        # room/faculty "conflict" between a merged class and the SAME subject ("NSTP 001 /
+        # NSTP 001") at that slot is the merge itself (confirmed at Save Draft / Publish).
+        def _is_merge_partner(v):
+            code = (v.get('target_subject_code') or '').strip().upper()
+            if code not in _merged_codes:
+                return False
+            parts = [p.strip().upper() for p in str(v.get('subject') or '').split('/')]
+            return len(parts) == 2 and parts[0] == parts[1] == code
+        cross_violations = [v for v in cross_violations if not _is_merge_partner(v)]
+        res['violations'] = [v for v in (res.get('violations') or []) if not _is_merge_partner(v)]
+        cross_conflict_count = len(cross_violations)
+        _rows_m = res['schedule_data']
+        res['incomplete_count'] = sum(1 for g in _rows_m if g.get('incomplete'))
+        res['completion_rate'] = round((len(_rows_m) - res['incomplete_count']) / len(_rows_m) * 100, 1) if _rows_m else 100.0
+
     # The same advisory (e.g. one specialization notice) is raised once per session of a
     # subject — list each distinct notice once.
     _seen_v, _uniq_v = set(), []
@@ -37753,6 +38479,13 @@ def api_generate_schedule():
     except Exception as e:
         print(f"[shortage notices] skipped: {e}")
         shortage_notices = []
+    # A class generation placed by joining another section's same class (auto merge).
+    for _m in auto_merges or ():
+        shortage_notices.append({
+            'subject_code': _m['subject_code'], 'subject': _m['subject_code'], 'kind': 'merged', 'missing': [],
+            'title': 'Merged with another section',
+            'message': f"{_m['subject_code']} joins {_m['with']}'s class ({_m['slot']}).",
+            'suggestion': "You'll confirm the merge when you save."})
 
     return jsonify({
         'success':              result_status in ('COMPLETE_VALID', 'PARTIAL_VALID', 'REGENERATION_PARTIAL'),
@@ -41288,6 +42021,15 @@ def _run_startup_migrations():
     _step('sm_account_setup', [
         "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_setup_complete BOOLEAN NOT NULL DEFAULT TRUE",
+    ])
+
+    # New password chosen during Account Setup, kept here (not in the session cookie)
+    # until Save and Confirm. Leaving setup or signing in again deletes the row.
+    _step('sm_account_setup_pending', [
+        """CREATE TABLE IF NOT EXISTS account_setup_pending (
+               username     VARCHAR(50) PRIMARY KEY,
+               passwordhash VARCHAR(255) NOT NULL,
+               created_at   TIMESTAMP NOT NULL DEFAULT NOW())""",
     ])
 
     # Profile picture + last login on the account. The image itself is a file in

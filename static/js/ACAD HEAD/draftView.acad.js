@@ -152,18 +152,38 @@ function _sortDaysStr(daysStr) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#888;">No sessions found.</td></tr>';
             return;
         }
-        tbody.innerHTML = scheduleData.map(r => `
+        // One row per subject: its meetings (lec/lab slices) are stacked line by line in
+        // the Time / Days / Room columns instead of repeating the subject on every row.
+        const groups = new Map();
+        scheduleData.forEach(r => {
+            const key = (r.subject_code || r.description || r.subject_name || '').toUpperCase();
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(r);
+        });
+        const dayRank = r => {
+            const first = (_sortDaysStr(r.days || r.day) || '').split('/')[0];
+            return _DAY_SORT_ORDER[first.trim()] ?? 99;
+        };
+        const lines = vals => vals.map(v => `<div class="dv-meet">${v}</div>`).join('');
+
+        tbody.innerHTML = [...groups.values()].map(rows => {
+            const r = rows[0];
+            const meets = [...rows].sort((a, b) =>
+                (dayRank(a) - dayRank(b)) || ((parseRange(a.time).s ?? 0) - (parseRange(b.time).s ?? 0)));
+            const instructors = [...new Set(rows.map(x => x.instructor || '—'))];
+            return `
             <tr>
-                <td>${r.instructor || '—'}</td>
+                <td>${lines(instructors)}</td>
                 <td style="font-weight:800;color:#630100;">${r.subject_code || '—'}</td>
                 <td>${r.description || r.subject_name || '—'}</td>
                 <td>${r.lec_hours || 0}</td>
                 <td>${r.lab_hours || 0}</td>
                 <td>${r.units || r.credit_units || 0}</td>
-                <td>${r.time || '—'}</td>
-                <td>${_sortDaysStr(r.days || r.day) || '—'}</td>
-                <td>${r.room || 'TBA'}</td>
-            </tr>`).join('');
+                <td>${lines(meets.map(m => m.time || '—'))}</td>
+                <td>${lines(meets.map(m => _sortDaysStr(m.days || m.day) || '—'))}</td>
+                <td>${lines(meets.map(m => m.room || 'TBA'))}</td>
+            </tr>`;
+        }).join('');
     }
 
     function showCalView() {

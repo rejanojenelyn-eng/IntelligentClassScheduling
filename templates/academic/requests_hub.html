@@ -631,6 +631,7 @@
         <p style="font-size:0.78rem;color:#1a6b3c;background:#eafaf1;border:1px solid #a9dfbf;border-radius:6px;padding:8px 12px;margin:0 0 20px;">
             <i class="fas fa-info-circle" style="margin-right:5px;"></i><span id="approveModalNote">This will be saved as a local arrangement for the remainder of the semester.</span>
         </p>
+        <div id="approveModalDrafts" style="display:none;font-size:0.78rem;color:#8a5a00;background:#fff8e6;border:1px solid #f0c36d;border-radius:6px;padding:8px 12px;margin:-10px 0 20px;line-height:1.5;"></div>
         <div class="rhub-modal-actions">
             <button class="btn-modal-cancel" onclick="rhubCloseApprove()">CANCEL</button>
             <button class="btn-modal-confirm" style="background:#1a6b3c;" onclick="rhubConfirmApprove()"><i class="fas fa-check"></i> CONFIRM APPROVE</button>
@@ -744,6 +745,7 @@ function rhubRenderList() {
 /* ════ SELECT ════ */
 async function rhubSelect(type, id, el) {
     _activeKey = type + '_' + id;
+    _approveDrafts = [];
     document.querySelectorAll('.rhub-request-card').forEach(c => c.classList.remove('active'));
     el.classList.add('active');
     const req = _reqs.find(r => r.req_type === type && r.requestid === id);
@@ -915,6 +917,17 @@ function rhubRenderDetail(req, v) {
         const mBadge = mergeLocks.length
             ? `<span class="rhub-chip chip-bad" title="${_rhubEsc(mergeLocks[0].error)}"><i class="fas fa-object-group"></i> MERGED CLASS — ${_rhubEsc(mergeLocks[0].group || '')}</span>`
             : '';
+        // The Academic Head's unpublished Draft meetings at the requested slot. Faculty never
+        // see Drafts, so these never block the request; approving removes them from the Draft.
+        const drafts = v.draft_conflicts || [];
+        const draftHtml = drafts.length ? `
+            <div class="rhub-analytics-msg" style="color:#8a5a00;background:#fff8e6;border:1px solid #f0c36d;border-radius:6px;padding:8px 10px;margin-top:8px;">
+                <i class="fas fa-exclamation-triangle"></i> <b>Note: conflicts with your Draft schedule (not yet published).</b>
+                The faculty cannot see Drafts, so this request was allowed. Approving it will remove
+                ${drafts.length === 1 ? 'this Draft meeting' : `these ${drafts.length} Draft meetings`}:
+                <ul style="margin:6px 0 0 18px;padding:0;">${drafts.map(d =>
+                    `<li>${d.meeting ? _rhubEsc(d.meeting) + ': ' : ''}${_rhubEsc(d.message)}</li>`).join('')}</ul>
+            </div>` : '';
         const offHtml = (req.req_type === 'adjustment' && v.official_ok !== undefined)
             ? (v.official_ok
                 ? `<div class="rhub-analytics-msg" style="color:#1a4a7a"><i class="fas fa-landmark"></i> Can be applied to the Official schedule — every hard constraint and Setting passes.</div>`
@@ -922,7 +935,7 @@ function rhubRenderDetail(req, v) {
             : '';
         analyticsHtml = `
             <div class="rhub-chips">${mBadge}${rBadge}${fBadge}${sBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}${offHtml}`;
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}${offHtml}${draftHtml}`;
         // The server may know a newer status than the list (another reviewer decided it)
         if (v.status && v.status !== req.status) req.status = v.status;
     }
@@ -1026,7 +1039,10 @@ async function rhubValidate(type, id, req) {
     try {
         const res  = await fetch(`/api/requests/validate?type=${type}&id=${id}`);
         const data = await res.json();
-        if (data.success) rhubRenderDetail(req, data);
+        if (data.success) {
+            if (req.req_type + '_' + req.requestid === _activeKey) _approveDrafts = data.draft_conflicts || [];
+            rhubRenderDetail(req, data);
+        }
     } catch(e) { console.error('Validate error:', e); }
 }
 
@@ -1050,10 +1066,27 @@ function rhubToggleSort() {
 
 /* ════ APPROVE ════ */
 let _approveApplyTo = 'local';
+// Draft meetings (unpublished) the active request clashes with — from Validate, or from
+// the server's DRAFT_CONFLICT_CONFIRM answer. Approving removes exactly these.
+let _approveDrafts = [];
+function rhubRenderApproveDrafts() {
+    const box = document.getElementById('approveModalDrafts');
+    if (!box) return;
+    if (!_approveDrafts.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.innerHTML = `<i class="fas fa-exclamation-triangle" style="margin-right:5px;"></i>
+        <b>Your Draft schedule will be changed.</b> Approving removes
+        ${_approveDrafts.length === 1 ? 'this meeting' : `these ${_approveDrafts.length} meetings`}
+        from the Draft (the Published schedule is not affected). Re-place
+        ${_approveDrafts.length === 1 ? 'it' : 'them'} in the Manual Editor before publishing.
+        <ul style="margin:6px 0 0 18px;padding:0;">${_approveDrafts.map(d =>
+            `<li>${d.meeting ? _rhubEsc(d.meeting) + ': ' : ''}${_rhubEsc(d.message)}</li>`).join('')}</ul>`;
+    box.style.display = '';
+}
 function rhubApprove(applyTo) {
     const req = _reqs.find(r => r.req_type + '_' + r.requestid === _activeKey);
     if (!req) return;
     _approveApplyTo = applyTo === 'official' ? 'official' : 'local';
+    rhubRenderApproveDrafts();
     const how = req.req_type !== 'adjustment' ? ''
         : _approveApplyTo === 'official'
             ? ' The Official schedule (SIS) will be updated and republished; every hard constraint and Setting is checked first.'
@@ -1080,17 +1113,25 @@ async function rhubConfirmApprove() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: req.req_type, id: req.requestid, decision: 'Approved', remarks: '',
-                                   apply_to: _approveApplyTo })
+                                   apply_to: _approveApplyTo,
+                                   remove_draft_sessionids: _approveDrafts.map(d => d.sessionid) })
         });
         const data = await res.json();
         if (data.success) {
             _activeKey = null;
+            _approveDrafts = [];
+            const dr = data.drafts_removed || 0;
             document.getElementById('rhubDetailsBody').innerHTML =
                 `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved${
                     req.req_type === 'adjustment'
                         ? (_approveApplyTo === 'official' ? ' and the Official schedule was updated.' : ' as a Local arrangement.')
-                        : ' successfully.'}</div>`;
+                        : ' successfully.'}${dr ? ` ${dr} conflicting Draft meeting${dr === 1 ? ' was' : 's were'} removed from your Draft schedule.` : ''}</div>`;
             rhubLoad();
+        } else if (data.code === 'DRAFT_CONFLICT_CONFIRM') {
+            // The Draft changed since Validate (or Validate hadn't finished): show the
+            // current list and ask again — nothing was approved or removed.
+            _approveDrafts = data.draft_conflicts || [];
+            rhubApprove(_approveApplyTo);
         } else {
             _rhubDecisionError(data, 'Could not approve.');
         }

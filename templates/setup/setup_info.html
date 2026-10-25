@@ -15,7 +15,9 @@
         .brand-title { color: #4b0a0a; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.5px; }
         .brand-sub { color: #4b0a0a; font-weight: 700; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 28px; }
 
+
         p.step-sub { color: #666; font-size: 1.3rem; margin: 18px 0 28px; }
+
 
         .avatar-row { display: flex; align-items: center; justify-content: center; gap: 40px; margin-bottom: 12px; }
         .avatar-circle {
@@ -33,7 +35,9 @@
             display: flex; align-items: center; justify-content: center; }
         .skip-link { display: block; margin: 10px 0 30px; color: #999; font-size: 0.8rem; text-decoration: underline; cursor: pointer; background: none; border: none; }
 
+
         p.section-sub { color: #666; font-size: 1.1rem; margin-bottom: 22px; }
+
 
         .form-group { text-align: left; margin-bottom: 20px; }
         label { display: block; color: #800000; font-weight: 800; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 8px; }
@@ -45,7 +49,9 @@
         input[readonly] { opacity: 0.75; cursor: not-allowed; }
         input::placeholder { color: rgba(255,255,255,0.75); }
 
+
         .error-msg { color: #b22222; font-size: 0.85rem; margin-top: -8px; margin-bottom: 18px; font-weight: 600; text-align: left; }
+
 
         .btn-row { text-align: right; margin-top: 30px; }
         .btn-continue {
@@ -61,11 +67,13 @@
         <div class="brand-title">PUP LOPEZ</div>
         <div class="brand-sub">ACADEMIC SCHEDULING SYSTEM</div>
 
+
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <p class="error-msg">{{ message }}</p>
             {% endfor %}
         {% endwith %}
+
 
         <form method="POST" enctype="multipart/form-data" autocomplete="off">
             <p class="step-sub">Kindly add a profile picture</p>
@@ -77,6 +85,7 @@
                 <input type="file" id="photoInput" name="photo" accept=".jpg,.jpeg,.png" style="display:none" onchange="previewPhoto(this)">
             </div>
             <span class="skip-link" onclick="document.getElementById('photoInput').value=''">Skip for Now</span>
+
 
             <p class="section-sub">Check your email information.</p>
             <div class="form-group">
@@ -92,11 +101,13 @@
                 <input type="tel" name="contact_number" placeholder="09XXXXXXXXX" required>
             </div>
 
+
             <div class="btn-row">
                 <button type="submit" class="btn-continue">CONTINUE</button>
             </div>
         </form>
     </div>
+
 
 <script>
     function previewPhoto(input) {

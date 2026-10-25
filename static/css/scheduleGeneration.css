@@ -1039,7 +1039,10 @@
     box-shadow: var(--shadow-sm);
 }
 
-.timetable-wrapper { position: relative; overflow-x: auto; }
+/* Calendar scrolls inside its own box (like Table View) so the action buttons
+   below stay in view; the day header stays pinned above the scrolling pills. */
+.timetable-wrapper { position: relative; overflow-x: auto; overflow-y: auto; max-height: 520px; }
+.timetable-wrapper .timetable-grid thead th { position: sticky; top: 0; z-index: 60; }
 
 .timetable-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
@@ -1084,12 +1087,12 @@
 
 .schedule-pill {
     position: absolute;
-    border-radius: 5px;
-    padding: 5px 6px 4px;
+    border-radius: 6px;
+    padding: 8px 10px;
+    box-sizing: border-box;
     color: #fff;
     cursor: pointer;
     overflow: hidden;
-    opacity: 0.93;
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     transition: all 0.15s ease;
     display: flex;
@@ -1100,10 +1103,14 @@
     font-size: 0.7rem;
     z-index: 10;
 }
-.schedule-pill:hover { opacity: 1; transform: scale(1.03); box-shadow: 0 4px 12px rgba(0,0,0,0.35); z-index: 50; }
-.schedule-pill .pill-subject { font-weight: 800; font-size: 0.63rem; line-height: 1.2; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-clamp: 3; }
-.schedule-pill .pill-instructor { font-size: 0.6rem; opacity: 0.92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.schedule-pill .pill-room { font-size: 0.57rem; opacity: 0.85; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.schedule-pill:hover { transform: scale(1.03); box-shadow: 0 4px 12px rgba(0,0,0,0.35); z-index: 50; }
+/* One solid white for every line (no opacity fades); the lines differ by size/weight only. */
+.schedule-pill .pill-subject,
+.schedule-pill .pill-instructor,
+.schedule-pill .pill-room { color: #fff; max-width: 100%; text-shadow: 0 1px 1px rgba(0,0,0,0.18); }
+.schedule-pill .pill-subject { font-weight: 800; font-size: 0.66rem; line-height: 1.25; margin-bottom: 2px; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-clamp: 3; }
+.schedule-pill .pill-instructor { font-size: 0.6rem; font-weight: 600; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.schedule-pill .pill-room { font-size: 0.58rem; font-weight: 500; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── UTILITY ── */
 .hidden { display: none !important; }
@@ -1328,7 +1335,7 @@
 .info-modal-icon.warning { color: var(--warning); }
 .info-modal-content h3 { font-size: 18px; font-weight: 700; color: var(--maroon); margin: 0 0 12px; }
 .info-modal-content p  { font-size: 13px; color: var(--gray-700); margin: 0 0 20px; line-height: 1.6; }
-.info-modal-actions { display: flex; justify-content: center; gap: 10px; }
+.info-modal-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 .btn-primary-modal { background: var(--maroon); color: var(--white); border: none; padding: 10px 24px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: var(--transition); }
 .btn-primary-modal:hover { background: var(--maroon-dark); }
 .btn-secondary-modal { background: var(--white); color: var(--maroon); border: 1.5px solid var(--maroon); padding: 10px 24px; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: var(--transition); }
@@ -1372,6 +1379,13 @@
 .shortage-subject { font-weight: 700; color: #111827; margin-top: 2px; }
 .shortage-subject span { font-weight: 500; color: #6b7280; }
 .shortage-msg { margin-top: 3px; }
+.shortage-title span { font-weight: 600; color: #6b7280; }
+.shortage-msgs { margin: 4px 0 0 16px; padding: 0; }
+.shortage-msgs li { margin: 1px 0; }
+.shortage-merged { border: 1px solid #c8e8d1; border-left: 4px solid #1a9b45; background: #f1faf4; color: #1f5f33;
+    border-radius: 8px; padding: 7px 10px; font-size: .8rem; text-align: left; }
+.shortage-merged i { margin-right: 5px; }
+.shortage-merged span { color: #3d6b4b; }
 .shortage-tip { margin-top: 4px; color: #1f4f82; }
 
 /* ── Evaluation: quality score vs approval readiness; incomplete rows ─────── */

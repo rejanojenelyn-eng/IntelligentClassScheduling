@@ -36,6 +36,11 @@ class Config:
     # (used for rate limiting). Set TRUST_PROXY=1 on Railway only.
     TRUST_PROXY = _flag('TRUST_PROXY')
 
+    # Public address of the deployed site (e.g. https://your-app.up.railway.app).
+    # The landing page's Share popup and QR code poster point here. When empty,
+    # the address the visitor used to open the landing page is used instead.
+    PUBLIC_SITE_URL = os.environ.get('PUBLIC_SITE_URL', '').strip()
+
     # ── Outgoing email (verification codes) ──────────────────────────────
     # Railway blocks outbound SMTP below the Pro plan, so in production use
     # an HTTPS email API:

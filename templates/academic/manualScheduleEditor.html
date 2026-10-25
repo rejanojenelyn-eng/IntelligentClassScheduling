@@ -111,7 +111,7 @@
         padding:6px 14px; font-size:0.72rem; font-weight:800; letter-spacing:0.4px; cursor:pointer; }
     .cv-toggle-btn i { margin-right:4px; }
     .cv-toggle-btn.active { background:#8b1a1a; color:#fff; }
-    .cv-count { margin-left:auto; font-size:0.72rem; color:#888; font-style:italic; }
+    .cv-count { margin-right:auto; font-size:0.72rem; color:#888; font-style:italic; }
     /* Table mode keeps the calendar laid out (pills are positioned from its measurements)
        but out of sight. */
     .grid-container.cv-collapsed { height:0 !important; min-height:0 !important; overflow:hidden !important;
@@ -1318,13 +1318,13 @@
 
             <!-- Calendar / Table toggle (Room View + Program View) -->
             <div class="cv-toggle-bar" id="cvToggleBar">
+                <span class="cv-count" id="cvCount"></span>
                 <button type="button" class="cv-toggle-btn active" id="cvBtnCalendar" onclick="_setCalView('calendar')">
                     <i class="fas fa-calendar-alt"></i> CALENDAR VIEW
                 </button>
                 <button type="button" class="cv-toggle-btn" id="cvBtnTable" onclick="_setCalView('table')">
                     <i class="fas fa-table"></i> TABLE VIEW
                 </button>
-                <span class="cv-count" id="cvCount"></span>
             </div>
 
             <!-- Table View: the same sessions the calendar draws (see _renderSessionTable) -->
@@ -10067,35 +10067,6 @@ function _showLocalOverrideModal(conflicts) {
     });
 }
 
-async function publishLatestLocalDraft() {
-    const prog = document.getElementById('sel_prog')?.value || '';
-    const yl   = document.getElementById('sel_year')?.value || '';
-    const ay   = typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || '');
-    const sem  = typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || '');
-
-    if (!prog || !yl || !ay || !sem) {
-        await showValidationModal('Missing Context', 'Select Program, Year Level, AY, and Semester first.');
-        return;
-    }
-
-    // Find the latest Draft arrangement for this context
-    const params = new URLSearchParams({ program: prog, year_level: yl, ay_id: ay, sem, status: 'Draft' });
-    try {
-        const res  = await fetch('/api/local/arrangements?' + params.toString());
-        const data = await res.json();
-        const drafts = (data.arrangements || []).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-        drafts.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));
-        if (!drafts.length) {
-            await showValidationModal('No Draft Found', 'Save an arrangement as Draft first before publishing.');
-            return;
-        }
-        const btn = document.getElementById('btnPublishLocalArr');
-        await publishLocalArrangement(drafts[0].arrangementid, btn);
-    } catch(e) {
-        await showValidationModal('Error', e.message);
-    }
-}
-
 /* ── Make Up Class (Academic Head's own class, Local Scheduler) ─────────────────────
    A make-up is ONE meeting on a chosen DATE. The slice gives the time and room; the date is
    picked in the dialog (it defaults to the next date on the slice's day). It is saved already
@@ -11077,26 +11048,20 @@ async function _loadVersionHistoryPanel() {
                 return;
             }
 
-            const _grpOrder = {Published:0, Draft:1, Archived:2};
+            const _grpOrder = {Published:0, Archived:1};
             arr.sort((a,b) =>
                 (_grpOrder[a.status]||2) - (_grpOrder[b.status]||2) ||
                 new Date(b.created_at||0) - new Date(a.created_at||0)
             );
-            const _currentPubId   = (arr.find(a => a.status === 'Published') || {}).arrangementid;
-            const _currentDraftId = (arr.find(a => a.status === 'Draft')     || {}).arrangementid;
 
             function renderLocalCard(a, rNum) {
                 const dt  = a.created_at ? new Date(a.created_at) : null;
                 const ds  = _vhpFmtDateTime(dt);
                 const letters  = (a.programcode || '—').split('').join(' ');
-                const isCurPub = a.arrangementid === _currentPubId;
-                const isCurDrf = a.arrangementid === _currentDraftId;
-                const isCurrent = isCurPub || isCurDrf;
                 const canRestore = a.status === 'Archived' || a.status === 'Published';
 
                 let dotCls, cardCls, badgeHtml;
                 if (a.status === 'Published')       { dotCls = 'dot-local-pub';      cardCls = 'is-local-pub';   badgeHtml = '<span class="vhp-snap-badge badge-local-pub"><i class="fas fa-check-circle"></i> Published</span>'; }
-                else if (a.status === 'Draft')      { dotCls = 'dot-local-draft';    cardCls = 'is-local-draft'; badgeHtml = '<span class="vhp-snap-badge badge-local-draft"><i class="fas fa-file-alt"></i> Draft</span>'; }
                 else                                { dotCls = 'dot-local-archived'; cardCls = '';               badgeHtml = '<span class="vhp-snap-badge badge-local-archived"><i class="fas fa-box-archive"></i> Archived</span>'; }
 
                 const hcBadge  = a.has_hc_violation ? '<span class="vhp-snap-badge badge-hc-warn"><i class="fas fa-exclamation-triangle"></i> HC</span>' : '';
@@ -11123,8 +11088,7 @@ async function _loadVersionHistoryPanel() {
                             </div>
                         </div>
                         <div class="vhp-snap-actions">
-                            ${a.status === 'Draft' ? `<button class="vhp-btn vhp-btn-publish" onclick="publishLocalArrangement(${a.arrangementid},this)"><i class="fas fa-check-circle"></i> Publish</button>`
-                              : canRestore ? `<button class="vhp-btn vhp-btn-restore" onclick="restoreLocalArrangement(${a.arrangementid},this)"><i class="fas fa-undo-alt"></i> Restore</button>`
+                            ${canRestore ? `<button class="vhp-btn vhp-btn-restore" onclick="restoreLocalArrangement(${a.arrangementid},this)"><i class="fas fa-undo-alt"></i> Restore</button>`
                               : `<span class="vhp-snap-active-note"><i class="fas fa-circle" style="font-size:0.4rem;color:#880e4f;"></i> Active</span>`}
                             <button class="vhp-btn vhp-btn-view" style="margin-left:auto;"
                                 onclick="viewLocalArrangementInline(${a.arrangementid},this)">
@@ -11147,12 +11111,10 @@ async function _loadVersionHistoryPanel() {
             }
 
             const pubArr   = arr.filter(a => a.status === 'Published');
-            const draftArr = arr.filter(a => a.status === 'Draft');
             const archArr  = arr.filter(a => a.status === 'Archived');
             let html = '';
             html += buildLocalSection(pubArr,   'Published', 'vhp-section-local-pub',      'fa-check-circle', 0);
-            html += buildLocalSection(draftArr,  'Draft',     'vhp-section-local-draft',    'fa-file-alt',     pubArr.length);
-            html += buildLocalSection(archArr,   'Archived',  'vhp-section-local-archived', 'fa-box-archive',  pubArr.length + draftArr.length);
+            html += buildLocalSection(archArr,   'Archived',  'vhp-section-local-archived', 'fa-box-archive',  pubArr.length);
             cards.innerHTML = html || '<div class="vhp-empty"><i class="fas fa-layer-group"></i><div>No arrangements saved yet.</div></div>';
 
             // list rendered — user clicks View to preview in the fullscreen modal
@@ -11364,22 +11326,15 @@ async function viewLocalArrangementInline(arrId) {
 
 
 async function publishLocalArrangementFromEditor() {
-    // Save the current Local Scheduler state as a Draft first. Publishing is a
-    // separate lifecycle transition so the active Published Local Arrangement
-    // is never edited in place.
+    const noChangesMsg = "Nothing has changed in this section's schedule yet. Change a slice's day, time or room, then save it as a Local Arrangement.";
+    // The Local Scheduler has no Draft step: the current state is staged as a Draft row and
+    // published at once (the active Published Local Arrangement is never edited in place).
+    // A staged Draft that cannot be published is discarded, never kept for later.
     const _changes = _localChangedSlices();
     // Nothing changed: say so right away instead of asking for a reason and then failing.
-    // The one thing a no-change click can still do is publish a Local Draft saved earlier
-    // (e.g. from Version History) — there is no Draft step in this editor otherwise.
-    let _savedDraft = null;
     if (!_changes.length) {
-        _savedDraft = await _latestLocalDraftIdForSection();
-        if (_savedDraft === undefined) return;          // lookup failure already reported
-        if (!_savedDraft) {
-            await showValidationModal('No Changes',
-                "Nothing has changed in this section's schedule yet. Change a slice's day, time or room, then save it as a Local Arrangement.");
-            return;
-        }
+        await showValidationModal('No Changes', noChangesMsg);
+        return;
     }
     const reason = (typeof _showLocalReasonModal === 'function')
         ? await _showLocalReasonModal(_changes)
@@ -11395,51 +11350,34 @@ async function publishLocalArrangementFromEditor() {
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Publishing…'; }
     try {
         window.__lastLocalArrangementSaveResult = null;
-        // Step 1: pending edits are saved (or the identical Draft reused) first — errors are
-        // reported by the save itself. With no pending edits, publish the section's latest
-        // saved Draft (found above) instead.
-        const draft = _savedDraft ? null : await saveLocalArrangement(true, {
+        // Step 1: stage the pending edits — errors are reported by the save itself.
+        const draft = await saveLocalArrangement(true, {
             returnResult: true, reason: cleanReason, silent: true
         });
-        let draftId = _savedDraft || (draft && draft.success ? draft.arrangement_id : null);
-        if (!draftId && draft && draft.noChanges) {
-            draftId = await _latestLocalDraftIdForSection();
-            if (draftId === undefined) return;          // lookup failure already reported
-            if (!draftId) {
-                await showValidationModal('No Changes',
-                    "Nothing has changed in this section's schedule yet. Change a slice's day, time or room, then save it as a Local Arrangement.");
-                return;
-            }
+        if (draft && draft.noChanges) {
+            await showValidationModal('No Changes', noChangesMsg);
+            return;
         }
+        const draftId = draft && draft.success ? draft.arrangement_id : null;
         if (!draftId) return;
 
-        // Step 2: explicit Draft → Published transition for that exact Draft.
-        await _publishLocalArrangementRequest(draftId, cleanReason);
+        // Step 2: publish that exact staged Draft; if it is rejected, drop it.
+        if (!await _publishLocalArrangementRequest(draftId, cleanReason)) {
+            await _discardLocalDraft(draftId);
+        }
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
     }
 }
 
-// Newest Local Draft for the selected section (null when none; undefined when the
-// lookup itself failed and was already reported). Refreshes its stored updated_at.
-async function _latestLocalDraftIdForSection() {
-    const params = new URLSearchParams({
-        program:    document.getElementById('sel_prog')?.value || '',
-        year_level: document.getElementById('sel_year')?.value || '',
-        section_id: document.getElementById('sel_section')?.value || '',
-        ay_id:      typeof formAyFilter  === 'function' ? formAyFilter()  : (document.getElementById('sel_ay')?.value  || ''),
-        sem:        typeof formSemFilter === 'function' ? formSemFilter() : (document.getElementById('sel_sem')?.value || ''),
-        status:     'Draft',
-    });
-    const result = await _localApiRequest('/api/local/arrangements?' + params.toString());
-    if (result.kind !== 'ok') {
-        await _showLocalApiFailure(result, 'Cannot Publish');
-        return undefined;
+// Drop a staged Local Draft that could not be published (Local has no Draft step, so it
+// must not linger). Best effort: the server also clears leftover Drafts on startup.
+async function _discardLocalDraft(arrId) {
+    try {
+        await _localApiRequest(`/api/local/arrangement/${arrId}/discard`, { method: 'POST' });
+    } catch (e) {
+        console.warn('Could not discard the unpublished Local Draft', arrId, e);
     }
-    const drafts = (result.data.arrangements || [])
-        .slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-    drafts.forEach(a => _rememberLocalUpdatedAt(a.arrangementid, a.updated_at));
-    return drafts.length ? drafts[0].arrangementid : null;
 }
 
 // Shared Draft → Published request for the editor button and Version History.
@@ -11485,38 +11423,18 @@ async function _publishLocalArrangementRequest(arrId, reason) {
     return true;
 }
 
-async function publishLocalArrangement(arrId, btn) {
-    const ok = await showConfirmModal(
-        'Publishing this Draft will make it the active Local Arrangement for this section. The previous Published Local Arrangement (if any) will be archived.',
-        'Publish Local Arrangement'
-    );
-    if (!ok) return;
-
-    // PHASE 3 — the publication reason belongs to the Draft -> Published
-    // transition and is kept by the backend for audit/history. Optional for the
-    // user: a blank one is recorded as a plain Version History publish.
-    const reason = (typeof _showLocalReasonModal === 'function')
-        ? await _showLocalReasonModal()
-        : window.prompt('Reason for publishing this Local Arrangement (optional):');
-    if (reason === null) return;
-
-    const cleanReason = String(reason || '').trim() || 'Published from Version History';
-
-    const btnLabel = btn ? btn.innerHTML : '';
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
-    try {
-        await _publishLocalArrangementRequest(arrId, cleanReason);
-    } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
-    }
-}
-
 async function restoreLocalArrangement(arrId, btn) {
     const ok = await showConfirmModal(
-        'This will create a new Draft arrangement by copying the sessions from this version, referencing the current Published Official Schedule as the base.',
-        'Restore as Draft'
+        'This will publish a copy of this version as the active Local Arrangement for this section, on top of the current Published Official Schedule. The current Published Local Arrangement (if any) will be archived.',
+        'Restore Local Arrangement'
     );
     if (!ok) return;
+    // Optional reason, kept by the backend for audit/history.
+    const reason = (typeof _showLocalReasonModal === 'function')
+        ? await _showLocalReasonModal()
+        : window.prompt('Reason for restoring this Local Arrangement (optional):');
+    if (reason === null) return;
+    const cleanReason = String(reason || '').trim() || `Restored from Version History (#${arrId})`;
     const btnLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
     try {
@@ -11530,11 +11448,15 @@ async function restoreLocalArrangement(arrId, btn) {
             if ((result.data || {}).code === 'STALE_LOCAL_ARRANGEMENT') _loadVersionHistoryPanel();
             return;
         }
+        // The copy is staged as a Draft and published at once (Local has no Draft step);
+        // if the publish is rejected, the staged copy is dropped.
         const data = result.data;
         _rememberLocalUpdatedAt(data.new_arrangementid, data.updated_at);
-        await showValidationModal('Restored', `New Draft #${data.new_arrangementid} created. You can publish it when ready.`);
-        try { _loadVersionHistoryPanel(); }
-        catch (uiErr) { console.error('Local Arrangement restored, but refreshing history failed:', uiErr); }
+        if (!await _publishLocalArrangementRequest(data.new_arrangementid, cleanReason)) {
+            await _discardLocalDraft(data.new_arrangementid);
+            try { _loadVersionHistoryPanel(); }
+            catch (uiErr) { console.error('Refreshing Local history failed:', uiErr); }
+        }
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = btnLabel; }
     }
