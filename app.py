@@ -2327,7 +2327,7 @@ def _setup_review_edit(action, saved, info, pending_fields, specializations, emp
     form = request.form
     if employment_locked and action in ('edit_employment', 'edit_designation', 'edit_employee_id'):
         return None, ("You already used the account-setup edit of your employment information. "
-                      "Change it in Academic Information after setup (once), or use Request Correction.")
+                      "If it is wrong, use Request Correction in Academic Information.")
     if action == 'edit_employee_id':
         if 'Employee ID' in pending_fields:
             return None, "That information can't be edited right now."
@@ -7265,8 +7265,11 @@ def export_schedule():
 # ══════════════════════════════════════════════════════════════
 
 
-def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True):
+def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, published_only=False):
     """Return list of schedule rows (normalized + historical fallback).
+    published_only=True leaves Draft versions out (the Faculty Class Schedule and
+    its export show only what is Published).
+
     When merge=True (default), collapses multiple schedule_sessions rows per
     subject offering into one (used by Table View exports). When merge=False,
     returns one row per individual day/time session, needed by Calendar View
@@ -7288,6 +7291,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True):
             )
         )"""
     ], []
+    if published_only:
+        nf[0] = "sv.status = 'Published'"
     if ay_ids:
         nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); np_.extend(ay_ids)
     if sem_types:
@@ -7966,7 +7971,7 @@ def _sch_period_title(ay_label, sem_type):
     return _sch_official_title(_SCH_SEM_LABEL.get(sem_type, sem_type or 'All Semesters'), ay_label)
 
 
-def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table'):
+def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table', published_only=False):
     """Fetch + group Class Schedule rows and compute the semester/AY labels and
     full program names used by the 'official' SUBJECT OFFERINGS layout
     (_sch_gen_xlsx/docx/pdf) — the exact same data prep the Class Schedule SIS
@@ -7974,7 +7979,7 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     > Class Schedule (preview + export) calls this too so both stay identical
     to that feature instead of drifting into a separate report design."""
     layout = layout if layout in ('table', 'calendar') else 'table'
-    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, published_only=published_only)
     groups = _sch_exp_groups(rows)
 
     sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
@@ -7993,7 +7998,8 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     # can be placed in its own grid cell — only fetched when actually needed.
     cal_rows = cal_groups = None
     if layout == 'calendar':
-        cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False)
+        cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False,
+                                    published_only=published_only)
         cal_groups = _sch_exp_groups(cal_rows)
 
     return rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout
@@ -33213,7 +33219,7 @@ def api_user_me():
     try:
         username = session.get('username')
         cur.execute("""
-            SELECT a.last_login, a.profile_photo, a.employment_profile_edit_used, a.account_setup_complete,
+            SELECT a.last_login, a.profile_photo,
                    f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
                    a.email, a.contactnumber,
                    f.employeestatus,
@@ -33250,9 +33256,6 @@ def api_user_me():
             'email': row['email'] or '',
             'contact': row['contactnumber'] or '',
             'username': username,
-            # The one employment self-edit allowed after Account Setup (api_user_employment_update).
-            'employment_edit_available': bool(row['employeenumber']) and bool(row['account_setup_complete'])
-                                         and not row['employment_profile_edit_used'],
             'role': session.get('role', ''),
             'profile_editable': _PROFILE_SELF_EDIT_ENABLED,
             'photo_editable': True,   # own profile picture is always changeable
@@ -33363,89 +33366,6 @@ def api_user_name_update():
     return jsonify({'success': True})
 
 
-@app.route('/api/user/employment', methods=['POST'])
-def api_user_employment_update():
-    """Academic Information > Official Employment Information: the one self-edit allowed
-    after Account Setup (the setup had its own). Afterwards only Request Correction."""
-    if 'loggedin' not in session:
-        return jsonify({'success': False, 'error': 'Please log in again.'}), 401
-    username = session.get('username')
-    row = query_db("""
-        SELECT a.employeenumber, a.employment_profile_edit_used, a.account_setup_complete,
-               f.employeestatus, d.designationname, s.specializationname, et.typename
-        FROM accounts a
-        LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
-        LEFT JOIN designation d ON f.designationid = d.designationid
-        LEFT JOIN specialization s ON f.specializationid = s.specializationid
-        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
-        WHERE a.username = %s""", (username,), one=True)
-    if not row or not row.get('employeenumber'):
-        return jsonify({'success': False, 'error': 'Only accounts linked to a faculty record can do this.'}), 400
-    if row['employment_profile_edit_used'] or not row['account_setup_complete']:
-        return jsonify({'success': False, 'error': 'You already used your one edit. Please use Request Correction.'}), 403
-    saved = {'Employee ID': row['employeenumber'], 'Specialization': row['specializationname'] or '',
-             'Employment Type': row['typename'] or '', 'Employment Status': row['employeestatus'] or '',
-             'Designation': row['designationname'] or ''}
-    data = request.get_json(silent=True) or {}
-    wanted = {f: str(data.get(f, saved[f]) or '').strip() for f in _EMPLOYMENT_FIELDS}
-    if wanted['Employment Type'] != _DESIGNEE_TYPE:
-        wanted['Designation'] = ''                      # only a Designee has a Designation
-    changes = {f: v for f, v in wanted.items() if v != saved[f]}
-    if not changes:
-        return jsonify({'success': False, 'error': 'Nothing was changed.'}), 400
-    pending = {r['field_name'] for r in query_db(
-        "SELECT field_name FROM personal_info_correction_request WHERE username = %s AND status = 'Pending'",
-        (username,))}
-    blocked = sorted(set(changes) & pending)
-    if blocked:
-        return jsonify({'success': False, 'error': 'A correction request for ' + ', '.join(blocked) +
-                        ' is waiting for the Administrator. Wait for the decision first.'}), 400
-    options = {'Specialization':    {r['specializationname'] for r in query_db(
-                                        "SELECT specializationname FROM specialization WHERE isactive = TRUE")},
-               'Employment Type':   {r['typename'] for r in query_db("SELECT typename FROM employeetype")},
-               'Employment Status': set(_EMPLOYMENT_STATUSES),
-               'Designation':       {r['designationname'] for r in query_db(
-                                        "SELECT designationname FROM designation")} | {''}}
-    for field, value in changes.items():
-        if field in options and value not in options[field]:
-            return jsonify({'success': False, 'error': f"Please choose a {field} from the list."}), 400
-    if 'Employee ID' in changes and _approved_employee_id_change(username):
-        return jsonify({'success': False, 'error': 'Your approved Employee ID change is waiting for you to '
-                        'confirm it. Confirm it first (see the notice after you sign in).'}), 400
-    if 'Employee ID' in changes:
-        problem = _employee_id_problem(saved['Employee ID'], changes['Employee ID'])
-        if problem:
-            return jsonify({'success': False, 'error': problem}), 400
-
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'success': False, 'error': 'The system could not reach the database. Please try again.'}), 500
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cur.execute("""UPDATE accounts SET employment_profile_edit_used = TRUE
-                       WHERE username = %s AND NOT employment_profile_edit_used""", (username,))
-        if cur.rowcount != 1:
-            raise _SetupProblem('You already used your one edit. Please use Request Correction.')
-        new_username = _apply_employment_changes(cur, saved['Employee ID'], changes)
-        conn.commit()
-    except _SetupProblem as p:
-        conn.rollback()
-        return jsonify({'success': False, 'error': str(p)}), 400
-    except Exception as e:
-        conn.rollback()
-        print(f"[employment edit] save failed: {type(e).__name__}: {e}")
-        return jsonify({'success': False, 'error': 'Your changes could not be saved. Nothing was changed — please try again.'}), 500
-    finally:
-        cur.close(); conn.close()
-    if new_username:
-        session['username'] = new_username
-    write_activity_log(action='Employment Information Edited',
-                       details=f"{new_username or username} edited: {', '.join(changes)}"
-                               + (f" (Employee ID/username {username} → {new_username})" if new_username else ''),
-                       category='account', color='blue')
-    return jsonify({'success': True, 'new_username': new_username})
-
-
 def _contact_step(fn):
     if 'loggedin' not in session:
         return jsonify({'success': False, 'error': 'unauthorized', 'message': 'Please log in again.'}), 401
@@ -33464,21 +33384,15 @@ def _contact_step(fn):
     finally:
         conn.close()
 
-@app.route('/api/user/contact/request-code', methods=['POST'])
-def api_user_contact_request_code():
-    # No way to text the new number, so the code goes to the account's email.
-    return _contact_step(lambda c, u: jsonify(
-        _contactchange.request_code(c, u, request.form.get('contact', ''), Config)))
-
-@app.route('/api/user/contact/update', methods=['POST'])
+@app.route('/api/user/contact', methods=['POST'])
 def api_user_contact_update():
-    def _confirm(c, u):
-        saved = _contactchange.confirm(c, u, request.form.get('contact', ''), request.form.get('code', ''))
-        write_activity_log(action='Contact Number Changed',
-                           details=f"{u} changed their contact number (verified by email code)",
+    """Academic Information > Contact Number: saved right away (no verification code)."""
+    def _save(c, u):
+        saved = _contactchange.save(c, u, request.form.get('contact', ''))
+        write_activity_log(action='Contact Number Changed', details=f"{u} changed their contact number",
                            category='account', color='blue')
         return jsonify({'success': True, 'contact': saved})
-    return _contact_step(_confirm)
+    return _contact_step(_save)
 
 def _password_step(fn, *args):
     if 'loggedin' not in session:
@@ -42521,13 +42435,6 @@ def _run_startup_migrations():
     # migrations/2026-10-11_email_change_otp.sql).
     _step('sm_email_change_otp', _emailchange.ENSURE_SCHEMA_SQL)
 
-    # Self-service contact number change: code sent to the account email (see contact_change.py).
-    _step('sm_contact_change_otp', _contactchange.ENSURE_SCHEMA_SQL)
-
-    # Official employment information (Employee ID, Specialization, Employment Type,
-    # Employment Status, Designation) can be self-edited twice in all: once in the first
-    # Account Setup and once in Academic Information. After that, only by a correction
-    # request the Admin approves. (Replaces the earlier single employment_info_confirmed flag.)
     # When the account last finished Account Setup. With password_changed_at, it tells an
     # account that really set up (an Admin password reset then only changes the password)
     # from one marked complete without ever setting up (imported / pre-wizard accounts).
@@ -42535,10 +42442,15 @@ def _run_startup_migrations():
         "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMP NULL",
     ])
 
+    # Official employment information (Employee ID, Specialization, Employment Type,
+    # Employment Status, Designation) can be self-edited only in Account Setup, once:
+    # employment_setup_edit_used is set when setup is confirmed, changed or not. After
+    # that, only by a correction request the Admin approves. (employment_info_confirmed
+    # and employment_profile_edit_used belonged to earlier versions of this rule.)
     _step('sm_employment_self_edits', [
         "ALTER TABLE accounts DROP COLUMN IF EXISTS employment_info_confirmed",
-        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS employment_setup_edit_used   BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS employment_profile_edit_used BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE accounts DROP COLUMN IF EXISTS employment_profile_edit_used",
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS employment_setup_edit_used BOOLEAN NOT NULL DEFAULT FALSE",
     ])
 
     # Forgot Password (logged out): hashed one-time codes + reset windows, kept in

@@ -58,7 +58,7 @@ def env(monkeypatch):
         pytest.skip("no active faculty account to test with")
     username, role = row
     cur.execute("UPDATE accounts SET account_setup_complete = FALSE, must_change_password = FALSE, "
-                "employment_setup_edit_used = FALSE, employment_profile_edit_used = FALSE "
+                "employment_setup_edit_used = FALSE "
                 "WHERE username = %s", (username,))   # a first setup
     cur.execute("DELETE FROM personal_info_correction_request WHERE username = %s", (username,))
     shared.commit()
@@ -623,23 +623,19 @@ def test_employment_type_and_status_corrections_are_applied_on_approval(env):
                     WHERE a.username = %s""", (env.username,))[0] == (new_type, new_status)
 
 
-def test_contact_number_changes_only_with_the_emailed_code(env, monkeypatch):
-    import contact_change
-    sent = []
-    monkeypatch.setattr(contact_change.mailer, 'send_email', lambda cfg, to, subj, text, html: sent.append(text))
-    monkeypatch.setattr(contact_change, 'smtp_configured', lambda cfg: True)
-    env.q("UPDATE accounts SET email = %s, contactnumber = NULL WHERE username = %s RETURNING 1",
-          (f'{env.username}.test@example.com', env.username))
-    r = env.client.post('/api/user/contact/request-code', data={'contact': '+63 917 000 1234'}).get_json()
-    assert r['success'] and r['contact'] == '09170001234'
-    code = sent[0].split('code is: ')[1][:6]
+def test_contact_number_is_saved_right_away(env):
+    env.q("UPDATE accounts SET contactnumber = NULL WHERE username = %s RETURNING 1", (env.username,))
     def saved():
         return env.q("SELECT contactnumber FROM accounts WHERE username = %s", (env.username,))[0][0]
-    wrong = env.client.post('/api/user/contact/update', data={'contact': '+63 917 000 1234',
-                                                              'code': '000000' if code != '000000' else '111111'})
-    assert wrong.status_code == 400 and saved() is None
-    ok = env.client.post('/api/user/contact/update', data={'contact': '+63 917 000 1234', 'code': code}).get_json()
-    assert ok['success'] and saved() == '09170001234'
+    r = env.client.post('/api/user/contact', data={'contact': '+63 917 000 1234'}).get_json()
+    assert r['success'] and r['contact'] == '09170001234' and saved() == '09170001234'   # no code needed
+    r = env.client.post('/api/user/contact', data={'contact': '12'})
+    assert r.status_code == 400 and saved() == '09170001234'
+    taken = env.q("SELECT contactnumber FROM accounts WHERE BTRIM(COALESCE(contactnumber, '')) <> '' "
+                  "AND username <> %s LIMIT 1", (env.username,))
+    if taken:
+        r = env.client.post('/api/user/contact', data={'contact': taken[0][0]})
+        assert r.status_code == 409 and saved() == '09170001234'
 
 
 def test_academic_information_panel_layout(env):
@@ -709,26 +705,19 @@ def test_employee_id_already_used_is_rejected(env):
     assert b'already belongs to another account' in page
 
 
-def test_one_employment_edit_in_academic_information(env):
-    env.client.post('/account-setup/verify', data={'action': 'confirm'})          # finish setup
-    assert env.client.get('/api/user/me').get_json()['employment_edit_available'] is True
-    spec = _spec_choice(env)
-    r = env.client.post('/api/user/employment', json={'Specialization': spec})
-    assert r.get_json()['success'] and _faculty_spec(env) == spec
-    me = env.client.get('/api/user/me').get_json()
-    assert me['employment_edit_available'] is False
-    r = env.client.post('/api/user/employment', json={'Specialization': _spec_choice(env)})
-    assert r.status_code == 403 and 'Request Correction' in r.get_json()['error']
-
-
-def test_academic_information_employee_id_edit_renames_the_account(env):
-    import uuid
-    env.client.post('/account-setup/verify', data={'action': 'confirm'})
-    new = 'T-' + uuid.uuid4().hex[:8].upper()
-    data = env.client.post('/api/user/employment', json={'Employee ID': new}).get_json()
-    assert data['success'] and data['new_username'] == new
-    assert _emp(env, new) == new
-    assert env.client.get('/api/user/me').get_json()['emp_num'] == new          # session follows
+def test_employment_can_only_be_changed_in_setup_then_by_request(env):
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})          # setup done, nothing changed
+    page = env.client.get(_home(env), follow_redirects=True).get_data(as_text=True)
+    profile = page.split('id="profilePanel"')[1].split('id="emailPanel"')[0]
+    assert 'id="pfRequestCorrectionBtn"' in profile and 'pfEmpEditBtn' not in profile and 'pfEmpForm' not in profile
+    assert env.client.post('/api/user/employment', json={'Specialization': 'x'}).status_code in (404, 405)
+    # Even with setup reopened (e.g. a password reset), the setup edit is already used.
+    env.q("UPDATE accounts SET account_setup_complete = FALSE WHERE username = %s RETURNING 1", (env.username,))
+    with env.client.session_transaction() as sess:
+        sess['account_setup_complete'] = False
+    page = env.client.post('/account-setup/verify', data={'action': 'edit_employment', 'field': 'Specialization',
+                                                          'value': _spec_choice(env)}, follow_redirects=True).data
+    assert b'use Request Correction in Academic Information' in page
 
 
 def _home(env):
@@ -899,9 +888,9 @@ def test_admin_sidebar_shows_pending_request_count(env):
 def test_signing_in_with_a_changed_employee_id_says_so(env):
     import uuid
     import login_security as ls
-    env.client.post('/account-setup/verify', data={'action': 'confirm'})
     old, new = _emp(env), 'T-' + uuid.uuid4().hex[:8].upper()
-    env.client.post('/api/user/employment', json={'Employee ID': new})              # renamed (recorded)
+    env.client.post('/account-setup/verify', data={'action': 'edit_employee_id', 'value': new})
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})            # renamed (recorded)
     c = env.app.app.test_client()
     for _ in range(ls.MAX_FAILED_ATTEMPTS + 1):
         c.post('/login', data={'username': old.lower(), 'password': 'whatever'},

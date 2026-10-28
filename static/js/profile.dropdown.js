@@ -140,7 +140,7 @@ function _applyAvatar(circleId, iconId, photoUrl) {
 const _UP_PANELS = ['profilePanel', 'passwordPanel', 'emailPanel'];
 // Per-panel cleanup when it is hidden: unsaved input is discarded.
 const _UP_PANEL_RESET = {
-    profilePanel:  () => { _pendingPhoto = null; closeNameEdit(); closeContactEdit(); closeEmploymentEdit(); _collapseMyCorrections(); },
+    profilePanel:  () => { _pendingPhoto = null; closeNameEdit(); closeContactEdit(); _collapseMyCorrections(); },
     passwordPanel: () => _pwStop(),
     emailPanel:    () => _emStop(),
 };
@@ -210,10 +210,10 @@ window.addEventListener('pageshow', e => {
 
 /* ══════════════════════════════════════════════════════
    ACADEMIC INFORMATION (PROFILE) PANEL
-   Name: edited here and saved right away. Contact number: saved after the code sent
-   to the account email is entered. Official employment information: read-only here;
-   a wrong value goes through Request Correction (the Admin approves it). It could be
-   edited once, during the first account setup. Photo: saved with Save Changes.
+   Name and contact number: edited here and saved right away. Official employment
+   information: read-only here — it can be edited only during Account Setup; after
+   that, a change goes through Request Correction (the Admin approves it).
+   Photo: saved with Save Changes.
 ══════════════════════════════════════════════════════ */
 let _profileOptions = null;
 let _pendingPhoto = null;   // cropped photo waiting for Save Changes; dropped on Cancel / close
@@ -256,11 +256,6 @@ function _renderProfilePanel() {
     if (empSec) empSec.hidden = !hasFaculty;
     const desSec = document.getElementById('pfDesignationSection');
     if (desSec) desSec.hidden = !d.designation && d.employee_type !== 'Designee';
-    // One self-edit after setup; once it is used, Request Correction takes its place.
-    const empEdit = document.getElementById('pfEmpEditBtn');
-    const reqBtn  = document.getElementById('pfRequestCorrectionBtn');
-    if (empEdit) empEdit.hidden = !d.employment_edit_available;
-    if (reqBtn)  reqBtn.hidden  = !!d.employment_edit_available;
 
     const pending = document.getElementById('pfPhotoPending');
     if (pending) pending.hidden = true;
@@ -278,13 +273,11 @@ function _renderProfilePanel() {
 }
 
 
-const _empEditOpen = () => { const f = document.getElementById('pfEmpForm'); return !!f && !f.hidden; };
-
-/* Save Changes saves what is waiting: a cropped photo and/or the open employment edit. */
+/* Save Changes saves a cropped photo waiting to be kept. */
 function _syncProfileSaveBtn() {
     const saveBtn = document.getElementById('pfSaveBtn');
     if (!saveBtn) return;
-    const enabled = !!_pendingPhoto || _empEditOpen();
+    const enabled = !!_pendingPhoto;
     saveBtn.disabled = !enabled;
     saveBtn.style.opacity = enabled ? '' : '0.5';
     saveBtn.style.cursor  = enabled ? '' : 'not-allowed';
@@ -297,39 +290,24 @@ function closeProfilePanel() {
 
 
 async function saveProfile() {
-    const empOpen = _empEditOpen();
-    if (!_pendingPhoto && !empOpen) return;
+    if (!_pendingPhoto) return;
     const btn  = document.getElementById('pfSaveBtn');
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-        // The employment edit first: it asks for confirmation, and Go Back saves nothing.
-        let emp = null;
-        if (empOpen) {
-            emp = await saveEmployment();
-            if (!emp) return;
+        const pfd = new FormData(); pfd.append('photo', _pendingPhoto, 'profile.jpg');
+        const res  = await fetch('/api/user/photo/upload', { method: 'POST', body: pfd });
+        const data = await res.json();
+        if (!data.success) {
+            uiAlert({ title: 'Photo not saved', tone: 'error', message: data.error || 'Photo upload failed.' });
+            return;
         }
-        if (_pendingPhoto) {
-            const pfd = new FormData(); pfd.append('photo', _pendingPhoto, 'profile.jpg');
-            const res  = await fetch('/api/user/photo/upload', { method: 'POST', body: pfd });
-            const data = await res.json();
-            if (!data.success) {
-                uiAlert({ title: 'Photo not saved', tone: 'error', message: data.error || 'Photo upload failed.' });
-                return;
-            }
-            _pendingPhoto = null;
-        }
+        _pendingPhoto = null;
         _profileData = null;
         await _loadUserCard();
         closeProfilePanel();
-        if (emp && emp.new_username)
-            await uiAlert({ title: 'Saved', tone: 'success', okText: 'Got It',
-                html: `Your username is now <strong>${uiEsc(emp.new_username)}</strong>.
-                       <span class="uid-note"><i class="fas fa-circle-info"></i> Take note of it &mdash; use it to
-                       sign in from now on.</span>` });
-        else
-            _showUpToast(emp ? 'Employment information updated.' : 'Profile photo updated successfully.');
-    } catch(e) { uiAlert({ title: 'Not saved', tone: 'error', message: 'Network error. Please try again.' }); }
+        _showUpToast('Profile photo updated successfully.');
+    } catch(e) { uiAlert({ title: 'Photo not saved', tone: 'error', message: 'Network error. Please try again.' }); }
     finally { btn.textContent = orig; _syncProfileSaveBtn(); }
 }
 
@@ -442,197 +420,39 @@ async function saveName() {
 }
 
 
-/* ── Official employment information: the one self-edit after setup ── */
-function _fillSelect(id, values, current, blankLabel) {
-    const sel = document.getElementById(id);
-    const list = values.includes(current) || !current ? values : [current, ...values];
-    sel.innerHTML = (blankLabel !== undefined ? `<option value="">${_esc(blankLabel)}</option>` : '') +
-        list.map(v => `<option value="${_escAttr(v)}">${_esc(v)}</option>`).join('');
-    sel.value = current || '';
-}
-
-function _syncEmpIdNote() {
-    const d = _profileData || {};
-    const v = document.getElementById('pfEmpIdNew').value.trim();
-    const note = document.getElementById('pfEmpIdNote');
-    const changed = v && v !== d.emp_num;
-    note.innerHTML = changed
-        ? `<strong>Take note:</strong> your username will also change to <strong>${_esc(v)}</strong>. ` +
-          `Use it to sign in from now on.`
-        : 'Your Employee ID is also your username. Changing it changes your username too.';
-    note.style.color = changed ? '#a15c00' : '';
-}
-
-function _syncEmpDesignation() {
-    const opts = _profileOptions || {};
-    const designee = document.getElementById('pfTypeNew').value === (opts.designee_type || 'Designee');
-    document.getElementById('pfDesWrap').hidden = !designee;
-}
-
-async function openEmploymentEdit() {
-    closeNameEdit(); closeContactEdit();
-    const d = _profileData || {};
-    const o = await _loadProfileOptions();
-    document.getElementById('pfEmpIdNew').value = d.emp_num || '';
-    _fillSelect('pfSpecNew', (o.specializations || []).filter(x => x.isactive !== false).map(x => x.specializationname),
-                d.specialization);
-    _fillSelect('pfTypeNew', o.employment_types || [], d.employee_type);
-    _fillSelect('pfDesNew', (o.designations || []).map(x => x.designationname), d.designation, 'No Designation');
-    _fillSelect('pfStatusNew', o.employment_statuses || [], d.employment_status);
-    _syncEmpIdNote(); _syncEmpDesignation();
-    _upShowError('pfEmpError', '');
-    document.getElementById('pfEmpForm').hidden = false;
-    document.getElementById('pfEmpEditBtn').hidden = true;
-    _syncProfileSaveBtn();
-    document.getElementById('pfEmpIdNew').focus();
-}
-
-function closeEmploymentEdit() {
-    const form = document.getElementById('pfEmpForm');
-    if (!form || form.hidden) return;
-    form.hidden = true;
-    const btn = document.getElementById('pfEmpEditBtn');
-    if (btn) btn.hidden = !(_profileData && _profileData.employment_edit_available);
-    _syncProfileSaveBtn();
-}
-
-/* Called by Save Changes. Returns the server's answer on success, or null (nothing saved). */
-async function saveEmployment() {
-    const d = _profileData || {};
-    const val = id => document.getElementById(id).value.trim();
-    const body = { 'Employee ID': val('pfEmpIdNew'), 'Specialization': val('pfSpecNew'),
-                   'Employment Type': val('pfTypeNew'), 'Employment Status': val('pfStatusNew'),
-                   'Designation': document.getElementById('pfDesWrap').hidden ? '' : val('pfDesNew') };
-    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,29}$/.test(body['Employee ID'])) {
-        _upShowError('pfEmpError', 'Please enter a valid Employee ID: up to 30 letters, numbers or hyphens.');
-        return null;
-    }
-    const unchanged = body['Employee ID'] === (d.emp_num || '') && body['Specialization'] === (d.specialization || '') &&
-        body['Employment Type'] === (d.employee_type || '') && body['Employment Status'] === (d.employment_status || '') &&
-        body['Designation'] === (d.designation || '');
-    if (unchanged) { _upShowError('pfEmpError', 'Nothing was changed.'); return null; }
-    const idChanged = body['Employee ID'] !== d.emp_num;
-    const newId = uiEsc(body['Employee ID']);
-    const ok = await uiConfirm({
-        title: idChanged ? 'Your username will change' : 'Save your one-time edit?',
-        html: 'You can save this <strong>only once</strong>. After that, changes go through Request Correction.' +
-              (idChanged ? `<span class="uid-note"><i class="fas fa-circle-info"></i> Your Employee ID changes to
-                            <strong>${newId}</strong>, so your username also becomes <strong>${newId}</strong>.
-                            Take note of it &mdash; you will use it to sign in from now on.</span>` : ''),
-        confirmText: 'Save Changes', cancelText: 'Go Back', icon: idChanged ? 'fa-id-card' : 'fa-pen',
-    });
-    if (!ok) return null;
-    _upShowError('pfEmpError', '');
-    const res  = await fetch('/api/user/employment', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({ success: false }));
-    if (!data.success) {
-        _upShowError('pfEmpError', data.error || 'Your changes could not be saved.');
-        return null;
-    }
-    return data;
-}
-
-
-/* ── Contact number (saved after the emailed code) ── */
-let _ctSentFor = '';        // the number the last code was sent for (as typed)
-let _ctResendTimer = null;
-
+/* ── Contact number (saved right away) ── */
 function openContactEdit() {
     closeNameEdit();
-    _ctStop();
-    const hasEmail = !!(_profileData && _profileData.email);
-    document.getElementById('pfContactNoEmail').hidden = hasEmail;
-    ['pfContactNew', 'pfContactCode', 'pfContactSend', 'pfContactSave'].forEach(id => {
-        document.getElementById(id).disabled = !hasEmail;
-    });
+    const input = document.getElementById('pfContactNew');
+    input.value = '';
+    _upShowError('pfContactError', '');
     document.getElementById('pfContactForm').hidden = false;
     document.getElementById('pfContactBtn').hidden = true;
-    if (hasEmail) document.getElementById('pfContactNew').focus();
-}
-
-function _ctStop() {
-    if (_ctResendTimer) { clearInterval(_ctResendTimer); _ctResendTimer = null; }
-    _ctSentFor = '';
-    ['pfContactNew', 'pfContactCode'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-    const send = document.getElementById('pfContactSend');
-    if (send) { send.disabled = false; _upBtnLabel(send, 'Send Code'); }
-    const hint = document.getElementById('pfContactHint');
-    if (hint) hint.textContent = 'A Philippine mobile number like 09123456789, or +country code for another country. A 6-digit code will be sent to your email.';
-    _upShowError('pfContactError', '');
+    input.focus();
 }
 
 function closeContactEdit() {
     const form = document.getElementById('pfContactForm');
     if (!form || form.hidden) return;
-    _ctStop();
     form.hidden = true;
-    document.getElementById('pfContactBtn').hidden = false;
-}
-
-function _ctStartCooldown(seconds) {
-    const btn = document.getElementById('pfContactSend');
-    if (_ctResendTimer) clearInterval(_ctResendTimer);
-    let left = Math.max(0, Math.ceil(seconds || 0));
-    const tick = () => {
-        if (left <= 0) {
-            clearInterval(_ctResendTimer); _ctResendTimer = null;
-            btn.disabled = false; _upBtnLabel(btn, 'Resend Code');
-            return;
-        }
-        btn.disabled = true; _upBtnLabel(btn, `Resend (${_fmtCountdown(left)})`);
-        left -= 1;
-    };
-    tick();
-    _ctResendTimer = setInterval(tick, 1000);
-}
-
-async function requestContactCode() {
-    const contact = document.getElementById('pfContactNew').value.trim();
-    const btn = document.getElementById('pfContactSend');
     _upShowError('pfContactError', '');
-    if (!contact) return _upShowError('pfContactError', 'Please enter your new contact number first.');
-    btn.disabled = true; _upBtnLabel(btn, 'Sending…');
-    try {
-        const data = await _upPost('/api/user/contact/request-code', { contact });
-        if (data.success) {
-            _ctSentFor = contact;
-            document.getElementById('pfContactHint').textContent =
-                `We sent a 6-digit code to ${data.email_masked}. It expires in ${data.expires_in_minutes} minutes and can only be used once.`;
-            _ctStartCooldown(data.resend_after);
-            document.getElementById('pfContactCode').value = '';
-            document.getElementById('pfContactCode').focus();
-            return;
-        }
-        _upShowError('pfContactError', data.message || 'Could not send the verification code.');
-        if (data.error === 'too_soon') return _ctStartCooldown(data.retry_after);
-    } catch (e) {
-        _upShowError('pfContactError', 'Network error. Please try again.');
-    }
-    btn.disabled = false; _upBtnLabel(btn, _ctSentFor ? 'Resend Code' : 'Send Code');
+    document.getElementById('pfContactBtn').hidden = false;
 }
 
 async function saveContact() {
     const contact = document.getElementById('pfContactNew').value.trim();
-    const code    = document.getElementById('pfContactCode').value.trim();
     _upShowError('pfContactError', '');
-    if (!_ctSentFor) return _upShowError('pfContactError', 'Click Send Code to get a verification code first.');
-    if (contact !== _ctSentFor)
-        return _upShowError('pfContactError', `The code was sent for ${_ctSentFor}. Send a new code to use this number instead.`);
-    if (!/^\d{6}$/.test(code)) return _upShowError('pfContactError', 'Enter the 6-digit code from the email.');
+    if (!contact) return _upShowError('pfContactError', 'Please enter your new contact number.');
     const btn = document.getElementById('pfContactSave'), orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-        const data = await _upPost('/api/user/contact/update', { contact, code });
+        const data = await _upPost('/api/user/contact', { contact });
         if (data.success) {
             if (_profileData) _profileData.contact = data.contact;
             closeContactEdit();
             _renderProfilePanel();
             _showUpToast('Contact number updated successfully.');
             return;
-        }
-        if (['too_many_attempts', 'code_expired', 'no_code'].includes(data.error)) {
-            document.getElementById('pfContactCode').value = ''; _ctSentFor = '';
         }
         _upShowError('pfContactError', data.message || 'Failed to update the contact number.');
     } catch (e) {
