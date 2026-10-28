@@ -334,11 +334,50 @@ async function saveProfile() {
 }
 
 
+/* Camera button: Choose from Files / Take a Photo. */
+function togglePhotoMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('pfPhotoMenu');
+    if (!menu) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    document.getElementById('pfChangePhotoBtn')?.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('button')?.focus();
+}
+function _closePhotoMenu() {
+    const menu = document.getElementById('pfPhotoMenu');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    document.getElementById('pfChangePhotoBtn')?.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', e => { if (!e.target.closest('#pfPhotoMenu, #pfChangePhotoBtn')) _closePhotoMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closePhotoMenu(); });
+
+function pfChooseFile() {
+    _closePhotoMenu();
+    document.getElementById('profilePhotoInput')?.click();
+}
+
+async function pfTakePhoto() {
+    _closePhotoMenu();
+    if (typeof takeCameraPhoto !== 'function') return pfChooseFile();
+    const file = await takeCameraPhoto();
+    if (file) await _usePickedPhoto(file);
+}
+
 async function handlePhotoUpload(input) {
     const file = input.files[0];
     if (!file) return;
     input.value = '';   // so picking the same file again still fires onchange
-    if (file.size > 2 * 1024 * 1024) { uiAlert({ title: 'Photo too large', tone: 'error', message: 'Please choose a JPG or PNG up to 2 MB.' }); return; }
+    await _usePickedPhoto(file);
+}
+
+/* A picked or captured photo: fit it to the circle, then show it until Save Changes. */
+async function _usePickedPhoto(file) {
+    if (file.size > 2 * 1024 * 1024 && !/^camera\./.test(file.name)) {
+        uiAlert({ title: 'Photo too large', tone: 'error', message: 'Please choose a JPG or PNG up to 2 MB.' });
+        return;
+    }
     // Let the user fit the picture to the avatar circle before it is uploaded.
     const cropped = await openPhotoCropper(file);
     if (!cropped) return;

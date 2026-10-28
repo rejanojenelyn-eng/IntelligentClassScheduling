@@ -74,15 +74,21 @@
                     <i class="fas fa-user" id="profilePhotoIcon"></i>
                     <img id="profilePhotoImg" src="" alt="Your profile photo" style="display:none;">
                 </div>
-                <label class="pf-cam" id="pfChangePhotoBtn" for="profilePhotoInput" title="Choose or replace your photo" aria-label="Choose or replace your photo">
+                <button type="button" class="pf-cam" id="pfChangePhotoBtn" onclick="togglePhotoMenu(event)"
+                        aria-haspopup="menu" aria-expanded="false" aria-controls="pfPhotoMenu"
+                        title="Change your photo" aria-label="Change your photo">
                     <i class="fas fa-camera"></i>
-                </label>
+                </button>
+                <div class="pf-photo-menu" id="pfPhotoMenu" role="menu" hidden>
+                    <button type="button" role="menuitem" onclick="pfChooseFile()"><i class="fas fa-folder-open"></i> Choose from Files</button>
+                    <button type="button" role="menuitem" onclick="pfTakePhoto()"><i class="fas fa-camera"></i> Take a Photo</button>
+                </div>
                 <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
             </div>
             <div class="pf-hero-info">
                 <div class="pf-name" id="pfFullName">{{ current_user_display }}</div>
                 <div class="pf-role" id="pfRole">{{ session.get('role', '') }}</div>
-                <div class="pf-photo-hint">Click the camera button to choose or replace your photo · JPG or PNG, up to 2 MB</div>
+                <div class="pf-photo-hint">Click the camera button to choose a photo from your files or take one · JPG or PNG, up to 2 MB</div>
             </div>
         </div>
         <div class="pf-photo-pending" id="pfPhotoPending" hidden>

@@ -313,13 +313,28 @@ function _frsUpdateRangeLabel(dates) {
     const unit = _frsView === 'day' ? 'day' : 'week';
     const todayBtn = document.getElementById('frsTodayBtn');
     if (todayBtn) {
-        todayBtn.textContent = _frsView === 'day' ? 'Today' : 'This Week';
-        const showingNow = dates.some(d => d.getTime() === _frsToday().getTime());
-        todayBtn.disabled = showingNow;
+        todayBtn.textContent = _frsRelativeLabel(dates);
+        todayBtn.title = _frsView === 'day' ? 'Go to today' : 'Go to this week';
     }
     const prev = document.getElementById('frsPrevBtn'), next = document.getElementById('frsNextBtn');
     if (prev) { prev.title = `Previous ${unit}`; prev.setAttribute('aria-label', `Previous ${unit}`); }
     if (next) { next.title = `Next ${unit}`; next.setAttribute('aria-label', `Next ${unit}`); }
+}
+
+/* The middle navigation button names the shown week (or day) relative to today:
+   This Week / Next Week / Last Week / In 2 Weeks / 2 Weeks Ago (Today / Tomorrow / ... in Day view). */
+function _frsRelativeLabel(dates) {
+    const DAY = 86400000;
+    const today = _frsToday();
+    if (_frsView === 'day') {
+        const n = Math.round((dates[0] - today) / DAY);
+        return n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n === -1 ? 'Yesterday'
+             : n > 0 ? `In ${n} Days` : `${-n} Days Ago`;
+    }
+    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    const n = Math.round((dates[0] - mon) / (7 * DAY));
+    return n === 0 ? 'This Week' : n === 1 ? 'Next Week' : n === -1 ? 'Last Week'
+         : n > 0 ? `In ${n} Weeks` : `${-n} Weeks Ago`;
 }
 
 /* Previous / next week (Week view) or day (Day view). */

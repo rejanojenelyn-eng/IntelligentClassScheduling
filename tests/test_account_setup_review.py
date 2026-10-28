@@ -650,7 +650,8 @@ def test_academic_information_panel_layout(env):
     page = env.client.get(home, follow_redirects=True).data.decode()
     profile = page.split('id="profilePanel"')[1].split('id="emailPanel"')[0]
     assert 'Academic Information' in profile and 'Profile Settings' not in profile
-    assert 'Click the camera button to choose or replace your photo' in profile
+    assert 'Click the camera button to choose a photo from your files or take one' in profile
+    assert 'onclick="pfChooseFile()"' in profile and 'onclick="pfTakePhoto()"' in profile
     assert 'id="pfNameEditBtn"' in profile and 'id="pfContactBtn"' in profile
     assert 'Official Employment Information' in profile and 'Sign-in Details' not in profile
     for label in ('Employee ID', 'Specialization', 'Employment Type', 'Employment Status'):
@@ -910,3 +911,25 @@ def test_signing_in_with_a_changed_employee_id_says_so(env):
     assert 'Warning:' not in page and 'class="lock-box"' not in page              # not counted towards a lock
     assert env.q("SELECT COUNT(*) FROM login_throttle WHERE username_key = %s",
                  (ls.username_key(old),))[0][0] == 0
+
+
+def test_faculty_can_permanently_delete_only_cancelled_or_rejected_requests(env):
+    import pytest
+    rows = env.q("""SELECT r.requestid, r.status, a.username FROM schedule_change_request r
+                    JOIN accounts a ON a.employeenumber = r.submitted_by AND a.role = 'Faculty'
+                    WHERE r.status IN ('Cancelled', 'Pending', 'Approved') ORDER BY r.requestid""")
+    done = next((r for r in rows if r[1] == 'Cancelled'), None)
+    if not done:
+        pytest.skip("no cancelled adjustment request to test with")
+    c = env.app.app.test_client()
+    with c.session_transaction() as s:
+        s.update(loggedin=True, username=done[2], role='Faculty',
+                 must_change_password=False, account_setup_complete=True)
+    page = c.get('/faculty_requests').get_data(as_text=True)
+    assert 'function rfAskDelete' in page
+    for other in (r for r in rows if r[1] in ('Pending', 'Approved') and r[2] == done[2]):
+        r = c.delete(f'/api/faculty/my_requests/adjustment/{other[0]}/permanent')
+        assert r.status_code == 400 and 'cancelled or rejected' in r.get_json()['error']
+    r = c.delete(f'/api/faculty/my_requests/adjustment/{done[0]}/permanent')
+    assert r.get_json()['success']
+    assert env.q("SELECT 1 FROM schedule_change_request WHERE requestid = %s", (done[0],)) == []

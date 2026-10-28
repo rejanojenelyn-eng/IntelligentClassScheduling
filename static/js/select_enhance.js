@@ -3,6 +3,10 @@
    setup/_setup_layout.html, so it covers dropdowns in the page HTML and ones that
    scripts fill in later.
 
+   0. "Select…" prompts can't be picked. An empty option that only asks the user to
+      choose ("SELECT", "Select year level", "-SELECT PROGRAM-", "— Select subject —")
+      still shows while nothing is chosen, but is not in the list to click. "All …"
+      options are real filter choices and stay pickable.
    1. One real choice → pick it. A dropdown sitting on a placeholder ("SELECT",
       "-SELECT PROGRAM-", "ALL SECTIONS", …) whose only other option is a single real
       value selects that value and fires `change`, so the page loads what depends on
@@ -13,7 +17,8 @@
       browser's list. The <select> itself stays where it is and keeps its value,
       `change` events and form submission, so page code is unaffected.
 
-   Opt out per dropdown (or any ancestor): data-no-autoselect, data-no-search.
+   Opt out per dropdown (or any ancestor): data-allow-placeholder, data-no-autoselect,
+   data-no-search.
    Force search on a short list: data-searchable. */
 (function () {
     'use strict';
@@ -22,13 +27,38 @@
     const PLACEHOLDER_RE = /^[\s\-–—]*(select|choose|pick|all\b)/i;
     const TIME_RE = /^\s*\d{1,2}:\d{2}/;
 
+    const PROMPT_RE = /^[\s\-–—]*(select|choose|pick)\b/i;
     const isPlaceholder = o => o.value === '' && PLACEHOLDER_RE.test(o.textContent || '');
+    const isPrompt = o => o.value === '' && PROMPT_RE.test(o.textContent || '');
     const realOptions = sel => Array.from(sel.options).filter(o => o.value !== '' && !o.disabled && !o.hidden);
     const optedOut = (sel, attr) => !!sel.closest(`[${attr}]`);
     // A <select> hidden by itself backs a page's own custom picker (Generation's PROGRAM,
     // the SIS schedule's PROGRAM): that picker shows the value, so leave it alone. (Its own
     // display ignores hidden ancestors, so dropdowns in a closed modal still count.)
     const backsCustomPicker = sel => getComputedStyle(sel).display === 'none';
+
+    /* ── 0. A "Select…" prompt is shown, never picked ─────────────────── */
+    function lockPrompts(sel) {
+        if (sel.multiple || optedOut(sel, 'data-allow-placeholder')) return;
+        const others = Array.from(sel.options).some(o => !isPrompt(o) && o.defaultSelected);
+        Array.from(sel.options).forEach(o => {
+            if (!isPrompt(o) || o.disabled) return;
+            // Keep it as what a reset form returns to (when nothing else is the default),
+            // or a reset would jump to the first real option.
+            if (!others && o.selected) o.defaultSelected = true;
+            o.disabled = true;
+            o.hidden = true;
+        });
+    }
+
+    /* Hovering a dropdown shows the full selected text (long values get cut off). */
+    function syncTitle(sel) {
+        if (sel.multiple || (sel.title && !sel.dataset.seTitle)) return;   // keep a page's own title
+        const o = sel.options[sel.selectedIndex];
+        sel.title = o && o.value ? o.textContent.trim() : '';
+        sel.dataset.seTitle = '1';
+    }
+    document.addEventListener('change', e => { if (e.target.tagName === 'SELECT') syncTitle(e.target); }, true);
 
     /* ── 1. Auto-select the only real option ───────────────────────────── */
     function autoSelect(sel) {
@@ -216,7 +246,7 @@
         setTimeout(() => {
             scheduled = false;
             const sels = Array.from(pending); pending.clear();
-            sels.forEach(s => { if (s.isConnected) autoSelect(s); });
+            sels.forEach(s => { if (s.isConnected) { lockPrompts(s); autoSelect(s); syncTitle(s); } });
             if (menuSel && sels.includes(menuSel)) {
                 buildList(menu.querySelector('.se-search').value);
                 position();
@@ -244,5 +274,5 @@
     if (document.readyState === 'complete') start();
     else window.addEventListener('load', start);
 
-    window.SelectEnhance = { autoSelect, openMenu, closeMenu };
+    window.SelectEnhance = { autoSelect, lockPrompts, openMenu, closeMenu };
 })();

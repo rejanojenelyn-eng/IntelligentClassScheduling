@@ -32331,6 +32331,59 @@ def api_faculty_cancel_request(req_type, req_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/faculty/my_requests/<req_type>/<int:req_id>/permanent', methods=['DELETE'])
+def api_faculty_delete_request(req_type, req_id):
+    """My Request: remove a Cancelled or Rejected request for good. Pending ones are
+    cancelled first; Approved ones stay (they changed the schedule and are its record)."""
+    if 'loggedin' not in session or session.get('role') != 'Faculty':
+        return jsonify({'success': False}), 401
+    _ensure_request_tables()
+    emp_num = session.get('employeenumber')
+    if not emp_num:
+        acc = query_db("SELECT employeenumber FROM accounts WHERE username=%s",
+                       [session.get('username')], one=True)
+        emp_num = acc['employeenumber'] if acc else None
+    table = {'makeup': 'class_meeting_request', 'adjustment': 'schedule_change_request'}.get(req_type)
+    if not table or not emp_num:
+        return jsonify({'success': False, 'error': 'Unknown request.'}), 400
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'Database connection failed.'}), 500
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        group_col = ", request_group" if table == 'schedule_change_request' else ", NULL AS request_group"
+        cur.execute(f"""SELECT requestid, status{group_col} FROM {table}
+                        WHERE requestid = %s AND submitted_by = %s FOR UPDATE""", [req_id, emp_num])
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Request not found.'}), 404
+        if row['status'] not in ('Cancelled', 'Rejected'):
+            return jsonify({'success': False, 'error': 'Only cancelled or rejected requests can be deleted.'}), 400
+        # A multi-meeting adjustment is one request: its meetings go together.
+        if row['request_group']:
+            cur.execute(f"""SELECT requestid FROM {table} WHERE request_group = %s AND submitted_by = %s
+                            AND status IN ('Cancelled', 'Rejected')""", [row['request_group'], emp_num])
+            ids = [r['requestid'] for r in cur.fetchall()]
+        else:
+            ids = [req_id]
+        # Never remove a request something was built from (only an approved one should be).
+        for ref_table in ('local_schedule_adjustment', 'schedule_exception_log'):
+            cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", [ref_table])
+            if cur.fetchone()['ok']:
+                cur.execute(f"SELECT 1 FROM {ref_table} WHERE source_requestid = ANY(%s) LIMIT 1", [ids])
+                if cur.fetchone():
+                    return jsonify({'success': False, 'error': 'This request is part of the schedule record and '
+                                                               'cannot be deleted.'}), 400
+        cur.execute(f"DELETE FROM {table} WHERE requestid = ANY(%s) AND submitted_by = %s", [ids, emp_num])
+        conn.commit()
+        return jsonify({'success': True, 'deleted': cur.rowcount})
+    except Exception as e:
+        conn.rollback()
+        print(f"[my requests] delete failed: {type(e).__name__}: {e}")
+        return jsonify({'success': False, 'error': 'The request could not be deleted. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+
 # --- Route for 'My Requests' Page ---
 @app.route('/faculty_requests')
 def faculty_requests():
