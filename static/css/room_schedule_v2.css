@@ -135,6 +135,9 @@
     }
 
 .frs-v2 .frs-view-toggle button.active { background: #800000; color: #fff; }
+.frs-v2 .frs-date-nav button:hover { background: #fff; color: #800000; }
+.frs-v2 .frs-date-nav button:disabled { opacity: .4; cursor: default; background: transparent; color: #444; }
+.frs-v2 .frs-date-range { font: 700 .82rem 'Inter', sans-serif; color: #800000; white-space: nowrap; }
 /* Grid */
 
 .frs-v2 .frs-grid { min-width: 0; }

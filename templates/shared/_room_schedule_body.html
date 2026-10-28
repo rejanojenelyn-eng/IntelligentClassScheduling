@@ -58,6 +58,16 @@
                         </div>
                     </div>
                     <div class="frs-cal-actions">
+                        {# Previous / this / next week (or day): regular classes repeat every week;
+                           approved make-up classes show in the week of their date. #}
+                        <div class="frs-view-toggle frs-date-nav" role="group" aria-label="Change week">
+                            <button type="button" onclick="frsShiftDate(-1)" id="frsPrevBtn" aria-label="Previous week"
+                                    title="Previous week"><i class="fas fa-chevron-left"></i></button>
+                            <button type="button" onclick="frsGoToday()" id="frsTodayBtn">This Week</button>
+                            <button type="button" onclick="frsShiftDate(1)" id="frsNextBtn" aria-label="Next week"
+                                    title="Next week"><i class="fas fa-chevron-right"></i></button>
+                        </div>
+                        <span class="frs-date-range" id="frsDateRange" aria-live="polite"></span>
                         <div class="frs-view-toggle">
                             <button type="button" id="frsViewDay" onclick="frsSetView('day')"><i class="far fa-calendar"></i> Day</button>
                             <button type="button" id="frsViewWeek" class="active" onclick="frsSetView('week')"><i class="fas fa-table-cells"></i> Week</button>

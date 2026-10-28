@@ -176,6 +176,10 @@
         .lock-btn-outline:hover { background: rgba(255,255,255,0.15); }
 
         .lock-btn { font-family: inherit; cursor: pointer; }
+        .lock-timer { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,0.22);
+            font-size: 0.86rem; }
+        .lock-timer strong { font-size: 1.05rem; letter-spacing: 0.5px; color: #ffeb3b; font-variant-numeric: tabular-nums; }
+        .lock-timer.done strong { color: #b9f6ca; }
 
     </style>
 </head>
@@ -223,8 +227,13 @@
                 {% if category == 'locked' %}
                 {# Too many wrong passwords: temporary lock + Forgot Password #}
                 <div class="lock-box" role="alert">
-                    <div class="lock-head"><i class="fas fa-lock"></i> Account temporarily locked</div>
+                    <div class="lock-head"><i class="fas fa-lock"></i> Sign-in temporarily paused</div>
                     <p>{{ message }}</p>
+                    {% if lock_seconds %}
+                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" aria-live="polite">
+                        <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong>
+                    </div>
+                    {% endif %}
                     <div class="lock-actions">
                         <a href="{{ url_for('forgot_password', restart=1) }}" class="lock-btn"><i class="fas fa-key"></i> Forgot Password</a>
                     </div>
@@ -258,6 +267,26 @@
     if (document.querySelector('.error-msg')) {
         document.getElementById('mainPassword')?.focus();
     }
+</script>
+<script>
+    // Temporary lockout: count down to when the account can be tried again.
+    (function () {
+        const box = document.getElementById('lockTimer');
+        if (!box) return;
+        const end = Date.now() + parseInt(box.dataset.seconds, 10) * 1000;
+        const out = document.getElementById('lockLeft');
+        function tick() {
+            const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+            if (left === 0) {
+                box.classList.add('done');
+                box.innerHTML = '<i class="fas fa-lock-open"></i> <strong>You can sign in again now.</strong>';
+                return;
+            }
+            out.textContent = String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0');
+            setTimeout(tick, 1000);
+        }
+        tick();
+    })();
 </script>
 </body>
 </html>

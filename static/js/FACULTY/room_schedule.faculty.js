@@ -309,6 +309,32 @@ function _frsUpdateRangeLabel(dates) {
     el.textContent = dates.length === 1
         ? `${FRS_DAYS[(a.getDay() + 6) % 7]}, ${_FRS_MON[a.getMonth()]} ${a.getDate()}, ${a.getFullYear()}`
         : `${_FRS_MON[a.getMonth()]} ${a.getDate()} – ${_FRS_MON[b.getMonth()]} ${b.getDate()}, ${b.getFullYear()}`;
+    // Navigation labels follow the view: weeks in Week view, days in Day view.
+    const unit = _frsView === 'day' ? 'day' : 'week';
+    const todayBtn = document.getElementById('frsTodayBtn');
+    if (todayBtn) {
+        todayBtn.textContent = _frsView === 'day' ? 'Today' : 'This Week';
+        const showingNow = dates.some(d => d.getTime() === _frsToday().getTime());
+        todayBtn.disabled = showingNow;
+    }
+    const prev = document.getElementById('frsPrevBtn'), next = document.getElementById('frsNextBtn');
+    if (prev) { prev.title = `Previous ${unit}`; prev.setAttribute('aria-label', `Previous ${unit}`); }
+    if (next) { next.title = `Next ${unit}`; next.setAttribute('aria-label', `Next ${unit}`); }
+}
+
+/* Previous / next week (Week view) or day (Day view). */
+function frsShiftDate(dir) {
+    const d = new Date(_frsAnchor);
+    d.setDate(d.getDate() + dir * (_frsView === 'day' ? 1 : 7));
+    _frsAnchor = d;
+    _buildGrid();
+    _renderRoomCalendar(_frsSessions);
+}
+
+function frsGoToday() {
+    _frsAnchor = _frsToday();
+    _buildGrid();
+    _renderRoomCalendar(_frsSessions);
 }
 
 function frsSetView(view) {

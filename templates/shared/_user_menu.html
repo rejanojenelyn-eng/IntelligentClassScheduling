@@ -3,6 +3,11 @@
    so the panels open in the same spot as the menu, under the avatar, and Back returns
    to the menu. Behaviour: static/js/profile.dropdown.js; styles: static/css/style.css. #}
 
+{% if approved_employee_id %}
+{# An approved Employee ID change waits for the user to confirm it (profile.dropdown.js). #}
+<div id="approvedIdNotice" data-new-id="{{ approved_employee_id }}" hidden></div>
+{% endif %}
+
 <!-- ── User Dropdown Card ── -->
 <div class="up-dropdown" id="upDropdown">
     <div class="upd-head">
@@ -47,7 +52,7 @@
 </div>
 
 
-<!-- ── Profile Settings ── -->
+<!-- ── Academic Information (Profile) ── -->
 <div id="profilePanel" class="up-panel" style="display:none;">
     <div class="up-panel-box">
         <div class="up-panel-hd">
@@ -57,7 +62,7 @@
         <div class="up-panel-head">
             <span class="up-panel-icon"><i class="fas fa-user"></i></span>
             <div>
-                <h2 class="up-panel-title">Profile Settings</h2>
+                <h2 class="up-panel-title">Academic Information</h2>
                 <p class="up-panel-sub">Manage your personal information.</p>
             </div>
         </div>
@@ -69,7 +74,7 @@
                     <i class="fas fa-user" id="profilePhotoIcon"></i>
                     <img id="profilePhotoImg" src="" alt="Your profile photo" style="display:none;">
                 </div>
-                <label class="pf-cam" id="pfChangePhotoBtn" for="profilePhotoInput" title="Change photo" aria-label="Change photo">
+                <label class="pf-cam" id="pfChangePhotoBtn" for="profilePhotoInput" title="Choose or replace your photo" aria-label="Choose or replace your photo">
                     <i class="fas fa-camera"></i>
                 </label>
                 <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handlePhotoUpload(this)">
@@ -77,18 +82,76 @@
             <div class="pf-hero-info">
                 <div class="pf-name" id="pfFullName">{{ current_user_display }}</div>
                 <div class="pf-role" id="pfRole">{{ session.get('role', '') }}</div>
-                <div class="pf-photo-hint">Use the camera button to change your photo · JPG or PNG, up to 2 MB</div>
+                <div class="pf-photo-hint">Click the camera button to choose or replace your photo · JPG or PNG, up to 2 MB</div>
             </div>
         </div>
         <div class="pf-photo-pending" id="pfPhotoPending" hidden>
             <i class="fas fa-circle-info"></i> New photo selected — press <strong>Save Changes</strong> to keep it.
         </div>
 
-        <!-- Official information: read-only (comes from the Administrator's records) -->
+        <!-- Personal information: edited directly -->
         <section class="pf-section">
+            <div class="pf-section-hd"><span class="pf-section-title"><i class="fas fa-user"></i> Personal Information</span></div>
+
+            <div id="pfNameRow">
+                <div class="pf-link-row">
+                    <span class="pf-link-icon"><i class="fas fa-signature"></i></span>
+                    <span class="pf-link-main"><span class="pf-link-label">Name</span><span class="pf-link-value" id="pfNameValue">—</span></span>
+                    <button type="button" class="pf-link-btn" id="pfNameEditBtn" onclick="openNameEdit()">Edit</button>
+                </div>
+                <form class="pf-edit-form" id="pfNameForm" hidden novalidate onsubmit="saveName(); return false;">
+                    <div class="pf-edit-grid">
+                        <input type="text" class="up-input" id="pfFirst" maxlength="60" placeholder="First Name" aria-label="First Name">
+                        <input type="text" class="up-input" id="pfMiddle" maxlength="60" placeholder="Middle Name (optional)" aria-label="Middle Name">
+                        <input type="text" class="up-input" id="pfLast" maxlength="60" placeholder="Last Name" aria-label="Last Name">
+                        <select class="up-input" id="pfSuffix" aria-label="Suffix (optional)"></select>
+                    </div>
+                    <div class="up-error" id="pfNameError" style="display:none;"></div>
+                    <div class="pf-edit-actions">
+                        <button type="button" class="up-btn-cancel" onclick="closeNameEdit()">Cancel</button>
+                        <button type="submit" class="up-btn-save" id="pfNameSave">Save Name</button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="pfContactRow">
+                <div class="pf-link-row">
+                    <span class="pf-link-icon"><i class="fas fa-phone"></i></span>
+                    <span class="pf-link-main"><span class="pf-link-label">Contact Number</span><span class="pf-link-value" id="pfContactValue">—</span></span>
+                    <button type="button" class="pf-link-btn" id="pfContactBtn" onclick="openContactEdit()">Change</button>
+                </div>
+                <form class="pf-edit-form" id="pfContactForm" hidden novalidate onsubmit="saveContact(); return false;">
+                    <div class="up-panel-notice up-notice-warn" id="pfContactNoEmail" hidden>
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>The code is sent to your email, but your account has no email address yet.
+                            <button type="button" class="up-link-btn" onclick="openEmailPanel()">Add an email address</button></span>
+                    </div>
+                    <div class="up-code-row">
+                        <input type="tel" class="up-input" id="pfContactNew" inputmode="tel" maxlength="20"
+                               placeholder="09XXXXXXXXX" aria-label="New contact number" autocomplete="tel-national">
+                        <button type="button" class="up-btn-outline" id="pfContactSend" onclick="requestContactCode()"><i class="fas fa-paper-plane"></i> <span>Send Code</span></button>
+                    </div>
+                    <div class="up-field-hint" id="pfContactHint">A Philippine mobile number like 09123456789, or +country code for another country. A 6-digit code will be sent to your email.</div>
+                    <input type="text" class="up-input" id="pfContactCode" inputmode="numeric" maxlength="6"
+                           placeholder="Enter 6-digit code" aria-label="Verification code" autocomplete="one-time-code">
+                    <div class="up-error" id="pfContactError" style="display:none;"></div>
+                    <div class="pf-edit-actions">
+                        <button type="button" class="up-btn-cancel" onclick="closeContactEdit()">Cancel</button>
+                        <button type="submit" class="up-btn-save" id="pfContactSave">Save Number</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Official employment information: changed only by an approved correction request -->
+        <section class="pf-section" id="pfEmploymentSection">
             <div class="pf-section-hd">
-                <span class="pf-section-title"><i class="fas fa-id-badge"></i> Official Information</span>
+                <span class="pf-section-title"><i class="fas fa-id-badge"></i> Official Employment Information</span>
                 {% if session.get('role') != 'Admin' %}
+                {# One self-edit after setup (employment_edit_available); after it, Request Correction. #}
+                <button type="button" class="pf-correct-btn" id="pfEmpEditBtn" onclick="openEmploymentEdit()" hidden
+                        title="You can edit this information once. After that, use Request Correction.">
+                    <i class="fas fa-pen"></i> Edit (1 time left)</button>
                 <button type="button" class="pf-correct-btn" id="pfRequestCorrectionBtn" onclick="openCorrectionModal()"
                         aria-haspopup="dialog" title="Something wrong here? Ask the Administrator to correct it.">
                     <i class="fas fa-pen"></i> Request Correction</button>
@@ -96,34 +159,34 @@
                 <span class="pf-lock-tag" id="pfLockTag"><i class="fas fa-lock"></i> Managed by Admin</span>
                 {% endif %}
             </div>
-            <dl class="pf-grid">
-                <div class="pf-item"><dt>Employee ID</dt><dd id="pfEmpId">—</dd></div>
-                <div class="pf-item" id="pfStatusSection"><dt>Employment Status</dt>
-                    <dd><span id="pfStatusText">—</span>
-                        <select id="pfStatus" class="up-select" aria-label="Employment Status" hidden><option value="Permanent">Permanent</option><option value="Part-Time">Part-Time</option><option value="Temporary">Temporary</option></select></dd></div>
-                <div class="pf-item"><dt>First Name</dt><dd id="pfFirstName">—</dd></div>
-                <div class="pf-item"><dt>Middle Name</dt><dd id="pfMiddleName">—</dd></div>
-                <div class="pf-item pf-span2"><dt>Surname</dt><dd id="pfSurname">—</dd></div>
-                <div class="pf-item pf-span2" id="pfDesignationSection"><dt>Designation</dt>
-                    <dd><span id="pfDesignationText">—</span><select id="pfDesignation" class="up-select" aria-label="Designation" hidden></select></dd></div>
-                <div class="pf-item pf-span2" id="pfSpecializationSection"><dt>Specialization</dt>
-                    <dd><span id="pfSpecializationText">—</span><select id="pfSpecialization" class="up-select" aria-label="Specialization" hidden></select></dd></div>
-            </dl>
-        </section>
+            <div class="pf-emp-row"><div class="pf-emp-label">Employee ID</div><div class="pf-emp-value" id="pfEmpId">—</div></div>
+            <div class="pf-emp-row"><div class="pf-emp-label">Specialization</div><div class="pf-emp-value" id="pfSpecializationText">—</div></div>
+            <div class="pf-emp-row"><div class="pf-emp-label">Employment Type</div><div class="pf-emp-value" id="pfTypeText">—</div></div>
+            <div class="pf-emp-row" id="pfDesignationSection"><div class="pf-emp-label">Designation</div><div class="pf-emp-value" id="pfDesignationText">—</div></div>
+            <div class="pf-emp-row"><div class="pf-emp-label">Employment Status</div><div class="pf-emp-value" id="pfStatusText">—</div></div>
 
-        <!-- Sign-in details, with shortcuts to their own panels -->
-        <section class="pf-section">
-            <div class="pf-section-hd"><span class="pf-section-title"><i class="fas fa-key"></i> Sign-in Details</span></div>
-            <div class="pf-link-row">
-                <span class="pf-link-icon"><i class="fas fa-envelope"></i></span>
-                <span class="pf-link-main"><span class="pf-link-label">Email</span><span class="pf-link-value" id="pfEmail">—</span></span>
-                <button type="button" class="pf-link-btn" onclick="openEmailPanel()">Change</button>
-            </div>
-            <div class="pf-link-row">
-                <span class="pf-link-icon"><i class="fas fa-lock"></i></span>
-                <span class="pf-link-main"><span class="pf-link-label">Password</span><span class="pf-link-value">••••••••</span></span>
-                <button type="button" class="pf-link-btn" onclick="openPasswordPanel()">Change</button>
-            </div>
+            {# Saved with the panel's Save Changes (saveProfile), like a new photo. #}
+            <form class="pf-edit-form" id="pfEmpForm" hidden novalidate onsubmit="saveProfile(); return false;">
+                <div class="up-panel-notice up-notice-warn">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>You can save this <strong>only once</strong>. After that, changes go through Request Correction.</span>
+                </div>
+                <label class="pf-emp-label" for="pfEmpIdNew">Employee ID</label>
+                <input type="text" class="up-input" id="pfEmpIdNew" maxlength="30" aria-describedby="pfEmpIdNote"
+                       oninput="_syncEmpIdNote()">
+                <div class="up-field-hint" id="pfEmpIdNote">Your Employee ID is also your username.</div>
+                <label class="pf-emp-label" for="pfSpecNew">Specialization</label>
+                <select class="up-input" id="pfSpecNew"></select>
+                <label class="pf-emp-label" for="pfTypeNew">Employment Type</label>
+                <select class="up-input" id="pfTypeNew" onchange="_syncEmpDesignation()"></select>
+                <div id="pfDesWrap">
+                    <label class="pf-emp-label" for="pfDesNew">Designation</label>
+                    <select class="up-input" id="pfDesNew"></select>
+                </div>
+                <label class="pf-emp-label" for="pfStatusNew">Employment Status</label>
+                <select class="up-input" id="pfStatusNew"></select>
+                <div class="up-error" id="pfEmpError" style="display:none;"></div>
+            </form>
         </section>
 
         {% if session.get('role') != 'Admin' %}
@@ -139,7 +202,7 @@
         </div>
         {% endif %}
 
-        <div class="up-panel-notice pf-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Changes will be reflected across the system.</span></div>
+        <div class="up-panel-notice pf-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Employment information can be edited once. After that, use Request Correction.</span></div>
 
         <div class="up-panel-ft">
             <button type="button" class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
@@ -282,7 +345,7 @@
 
 
 {% if session.get('role') != 'Admin' %}
-<!-- ── Request Information Correction (pop-up from Profile Settings) ──
+<!-- ── Request Information Correction (pop-up from Academic Information) ──
      Same request as the account-setup Review step; the Administrator reviews it.
      Filled by openCorrectionModal() (profile.dropdown.js). -->
 <div class="crm-overlay" id="crModal" role="dialog" aria-modal="true" aria-labelledby="crmTitle" hidden

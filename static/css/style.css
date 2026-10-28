@@ -970,6 +970,20 @@ body {
 
 .nav-label { flex: 1; }
 
+/* Count of items waiting (e.g. pending correction requests on User Management) */
+.nav-link { position: relative; }
+.nav-badge {
+    min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; flex-shrink: 0;
+    background: var(--maroon); color: var(--white); font-size: .7rem; font-weight: 800; line-height: 20px;
+    text-align: center; box-shadow: 0 0 0 2px var(--white);
+}
+.nav-item.active > .nav-link .nav-badge { background: var(--white); color: var(--maroon); box-shadow: none; }
+/* Collapsed sidebar: a small count on the icon's corner */
+.sidebar.collapsed .nav-badge {
+    position: absolute; top: 4px; left: 32px; min-width: 16px; height: 16px; padding: 0 4px;
+    font-size: .6rem; line-height: 16px;
+}
+
 
 /* Hover */
 .nav-item:not(.active):hover > .nav-link {

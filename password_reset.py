@@ -3,7 +3,7 @@ Forgot Password (logged-out) for faculty accounts: emailed 6-digit code →
 new password → Login.
 
 
-    start()   Employee Number / Username → a reset request row; if it matches an
+    start()   Employee Number → a reset request row; if it matches an
               active Faculty / Academic Head account whose faculty record has an
               email, a code is emailed to that address (the address on file,
               never one typed by the user).
@@ -14,6 +14,7 @@ new password → Login.
               Only accounts.passwordhash (+ password_changed_at,
               must_change_password) change — email, contact number, photo,
               profile and account_setup_complete are left exactly as they are.
+              A temporary login lockout (login_security) ends with the reset.
 
 
 Every step is keyed by the request row id held in the signed session cookie;
@@ -36,6 +37,7 @@ from psycopg2.extras import RealDictCursor
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
+import login_security
 import mailer
 from password_change import password_problem
 
@@ -55,7 +57,7 @@ ALLOWED_ROLES        = ('Faculty', 'Academic Head')   # accounts with a faculty 
 SEND_IN_BACKGROUND = True    # tests switch this off to send inline
 
 
-GENERIC_SENT = ("If the Employee Number or Username you entered belongs to a faculty account "
+GENERIC_SENT = ("If the Employee Number you entered belongs to a faculty account "
                 "with a registered email address, we sent a 6-digit verification code to that "
                 f"email. The code expires in {CODE_TTL_MINUTES} minutes.")
 
@@ -111,7 +113,8 @@ def _new_code():
 # ─────────────────────────────────────────────────────────────
 def _find_account(cur, identifier):
     """Active Faculty / Academic Head account by username or employee number,
-    with its account email (None when missing)."""
+    with its account email (None when missing). (The username is the Employee
+    Number, so the page just asks for the Employee Number.)"""
     cur.execute("""
         SELECT a.userid, a.username, a.employeenumber,
                NULLIF(TRIM(a.email), '') AS email
@@ -276,9 +279,9 @@ def start(conn, cfg, identifier, ip):
     """Returns (request_row_id, mail_job|None). The caller shows GENERIC_SENT either way."""
     identifier = (identifier or '').strip()
     if not identifier:
-        raise ResetError(400, 'validation', 'Please enter your Employee Number or Username.')
+        raise ResetError(400, 'validation', 'Please enter your Employee Number.')
     if len(identifier) > 64:
-        raise ResetError(400, 'validation', 'That Employee Number or Username is too long.')
+        raise ResetError(400, 'validation', 'That Employee Number is too long.')
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         _check_ip(cur, ip)
@@ -449,6 +452,11 @@ def reset(conn, rid, token, new_pw, confirm_pw):
                        SET passwordhash = %s, password_changed_at = NOW(), must_change_password = FALSE,
                            pw_otp_verified_at = NULL
                        WHERE userid = %s""", [generate_password_hash(new_pw), acc['userid']])
+        # The emailed code proved who they are, so a temporary login lockout ends here:
+        # they can sign in with the new password right away.
+        cur.execute("""UPDATE login_throttle SET failed_count = 0, last_failed_at = NULL,
+                              locked_at = NULL, locked_until = NULL
+                       WHERE username_key = %s""", [login_security.username_key(acc['username'])])
         cur.execute("""UPDATE password_reset_requests SET used_at = NOW(), reset_token_hash = NULL
                        WHERE id = %s""", [row['id']])
         cur.execute("""UPDATE password_reset_requests

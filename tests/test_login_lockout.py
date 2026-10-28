@@ -1,6 +1,6 @@
 """
 Login protection: 5 consecutive wrong passwords -> 5-minute lock (any role), warnings
-on the 3rd and 4th, one security email per lockout, Forgot Password / Contact Admin on
+on the 3rd and 4th, one security email per lockout, Forgot Password on
 the lock notice, per-IP rate limit, no account enumeration, no bypass by racing.
 
 Uses a temporary account (removed afterwards) and test-only IPs (203.0.113.x), so no
@@ -86,8 +86,6 @@ def test_five_wrong_passwords_warn_then_lock(account, ip, mails):
     _, page = _login(c, account, 'wrong', ip)
     assert ls.LOCKED_MESSAGE in page and 'class="lock-box"' in page
     assert 'href="/forgot-password?restart=1"' in page and 'Forgot Password' in page
-    assert "openContactAdmin('Account Temporarily Locked')" in page and 'Contact Admin' in page
-    assert 'id="caModal"' in page
     assert _throttle(account)[0] == 5 and _throttle(account)[1] is not None
 
 
@@ -97,7 +95,7 @@ def test_locked_account_rejects_even_the_correct_password(account, ip, mails):
         _login(c, account, 'wrong', ip)
     r, page = _login(app_module.app.test_client(), account, PASSWORD, ip)    # another browser/device
     assert r.headers['Location'].endswith('/login')
-    assert 'temporarily locked' in page and 'try again in about 5 minutes' in page
+    assert 'Sign-in temporarily paused' in page and 'try again in about 5 minutes' in page
     with c.session_transaction() as s:
         assert not s.get('loggedin')
 
@@ -205,3 +203,15 @@ def test_simultaneous_attempts_cannot_exceed_the_limit(account, ip, monkeypatch)
     assert kinds.count('invalid') == 4 and kinds.count('locked') == 6
     assert sum(1 for r in results if r.get('new_lock')) == 1           # exactly one lockout event
     assert _throttle(account)[0] == 5
+
+
+def test_lock_notice_counts_down_to_the_unlock(account, ip, mails):
+    import re
+    c = app_module.app.test_client()
+    for _ in range(ls.MAX_FAILED_ATTEMPTS):
+        _, page = _login(c, account, 'wrong', ip)
+    m = re.search(r'id="lockTimer" data-seconds="(\d+)"', page)
+    assert m and 0 < int(m.group(1)) <= ls.LOCKOUT_MINUTES * 60
+    _, page = _login(c, account, PASSWORD, ip)                 # still locked: the countdown continues
+    m2 = re.search(r'id="lockTimer" data-seconds="(\d+)"', page)
+    assert m2 and int(m2.group(1)) <= int(m.group(1))

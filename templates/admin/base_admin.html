@@ -114,6 +114,10 @@
                     <li class="nav-item {{ 'active' if request.endpoint in ['admin_user_management', 'admin_account_corrections'] }}">
                         <a href="{{ url_for('admin_user_management') }}" class="nav-link">
                             <i class="fas fa-user-group"></i><span class="nav-label">User Management</span>
+                            {% if pending_correction_count %}
+                            <span class="nav-badge" title="{{ pending_correction_count }} correction request{{ 's' if pending_correction_count != 1 }} waiting for review"
+                                  aria-label="{{ pending_correction_count }} pending correction request{{ 's' if pending_correction_count != 1 }}">{{ pending_correction_count if pending_correction_count < 100 else '99+' }}</span>
+                            {% endif %}
                         </a>
                     </li>
 
@@ -196,6 +200,8 @@
 
     <script src="{{ url_for('static', filename='js/photo.cropper.js') }}"></script>
     <script src="{{ url_for('static', filename='js/profile.dropdown.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui_dialog.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/select_enhance.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ADMIN/base.admin.js') }}"></script>
     <script src="{{ url_for('static', filename='js/responsive.js') }}"></script>
     <script>

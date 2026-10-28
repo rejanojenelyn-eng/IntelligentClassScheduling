@@ -41,7 +41,7 @@ PH_TZ = timezone(timedelta(hours=8))   # Philippine Standard Time (UTC+8, no DST
 
 SEND_IN_BACKGROUND = True              # tests switch this off to send inline
 
-LOCKED_MESSAGE = ("Too many incorrect login attempts. Your account has been temporarily locked for "
+LOCKED_MESSAGE = ("Too many incorrect login attempts. Sign-in with this username is paused for "
                   f"{LOCKOUT_MINUTES} minutes. If you have forgotten your password, please use Forgot "
                   "Password or contact the System Administrator for assistance.")
 IP_LIMIT_MESSAGE = ("Too many login attempts from this network. Please wait a few minutes and try again. "
@@ -162,7 +162,8 @@ def invalid_message(failed, remaining):
     """The text shown after a wrong password that did not lock the account."""
     if failed >= WARN_FROM_ATTEMPT:
         return (f"{INVALID_MESSAGE} Warning: {remaining} attempt{'s' if remaining != 1 else ''} remaining "
-                f"before your account is temporarily locked for {LOCKOUT_MINUTES} minutes.")
+                f"before sign-in with this username is paused for {LOCKOUT_MINUTES} minutes. "
+                "Check that the username is your current Employee ID.")
     return INVALID_MESSAGE
 
 
@@ -170,7 +171,7 @@ def locked_message(seconds_left, new_lock):
     if new_lock:
         return LOCKED_MESSAGE
     minutes = max(1, -(-int(seconds_left) // 60))
-    return ("Your account is temporarily locked because of too many incorrect login attempts. "
+    return ("Sign-in with this username is paused because of too many incorrect login attempts. "
             f"Please try again in about {minutes} minute{'s' if minutes != 1 else ''}. "
             "If you have forgotten your password, please use Forgot Password or contact the "
             "System Administrator for assistance.")

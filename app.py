@@ -15,12 +15,13 @@ for _stream in (sys.stdout, sys.stderr):
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response, make_response, g
 import psycopg2.errors
+import psycopg2.sql
 import makeup_requests as _makeup
 import password_change as _pwchange
 import email_change as _emailchange
+import contact_change as _contactchange
 import password_reset as _pwreset
 import login_security as _loginsec
-import login_assistance as _loginhelp
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
 import qr_poster as _qr_poster
@@ -43,6 +44,22 @@ from docx_faculty_parser import parse_faculty_docx
 import faculty_load
 import merge_groups
 import threading
+
+_PERSON_NAME_RE = re.compile(r"^[A-ZÑ][A-ZÑ'\- ]+,\s+[A-ZÑ][A-Za-zñÑ'\-]+")   # "SURNAME, Given ..."
+
+def _check_specialization_value(value, first_name, last_name):
+    """Faculty import: an unknown Specialization becomes a new specialization, so refuse a
+    value that is a person's name (a shifted column once made "RAZONA, Ignacio B." a
+    specialization). Raises ValueError, which the import reports for that row."""
+    v = (value or '').strip()
+    if not v or v.upper() in ('NULL', 'N/A', '-'):
+        return
+    words = set(re.findall(r"[a-zñ'\-]+", v.lower()))
+    own = [n.strip().lower() for n in (last_name, first_name) if n and len(n.strip()) > 2]
+    if _PERSON_NAME_RE.match(v) or (own and all(set(re.findall(r"[a-zñ'\-]+", n)) <= words for n in own)):
+        raise ValueError(f"the Specialization \"{v}\" looks like a person's name, not a specialization. "
+                         "Check that the columns are in the right order.")
+
 
 def _friendly_faculty_db_error(e):
     """Map a raw Faculty INSERT/UPDATE failure to a message safe to show a
@@ -938,7 +955,9 @@ def inject_pending_corrections():
             return {'pending_correction_count': row['n'] if row else 0}
         row = query_db("SELECT COUNT(*) AS n FROM personal_info_correction_request "
                        "WHERE status = 'Pending' AND username = %s", (username,), one=True)
-        return {'my_pending_correction_count': row['n'] if row else 0}
+        approved = _approved_employee_id_change(username)
+        return {'my_pending_correction_count': row['n'] if row else 0,
+                'approved_employee_id': approved['proposed_value'] if approved else None}
     except Exception:
         return {'pending_correction_count': 0, 'my_pending_correction_count': 0}
 
@@ -1259,6 +1278,16 @@ def login():
         password = str(request.form.get('password')).strip()
         session['saved_username'] = username
 
+        # An Employee ID (= username) that was changed: tell them to use the new one, without
+        # naming it, and without counting this as a wrong password towards a lock.
+        if username and not query_db("SELECT 1 FROM accounts WHERE LOWER(username) = LOWER(%s)",
+                                     (username,), one=True) \
+                and query_db("SELECT 1 FROM employee_id_history WHERE LOWER(old_id) = LOWER(%s) LIMIT 1",
+                             (username,), one=True):
+            flash("This Employee ID was changed. Please sign in with your new Employee ID — it is now your "
+                  "username.", 'warning')
+            return redirect(url_for('login'))
+
         # Failed-attempt limit, temporary lockout and per-IP limit (login_security.py).
         # The decision is made in the database under a row lock, for every role.
         conn = get_db_connection()
@@ -1278,6 +1307,8 @@ def login():
             if outcome['new_lock'] and outcome.get('user'):
                 _loginsec.dispatch_lockout_email(Config, outcome['user'])   # once per lockout
             flash(_loginsec.locked_message(outcome['seconds_left'], outcome['new_lock']), 'locked')
+            # The login page counts down to this moment (see login()).
+            session['login_lock_until'] = datetime.now().timestamp() + int(outcome['seconds_left'])
             return redirect(url_for('login'))
         if outcome['result'] == 'invalid':
             flash(_loginsec.invalid_message(outcome['failed'], outcome['remaining']),
@@ -1297,13 +1328,20 @@ def login():
         setup_done  = bool(user_data.get('account_setup_complete', True))
         if not must_change and password in (f"PUP@{username}", username, 'password123'):
             must_change = True
-            setup_done  = False
+        # An account that has never set its own password (no password_changed_at) has
+        # never been through Account Setup, even when it is marked complete (accounts
+        # imported or created before the setup wizard): it gets the full setup. An account
+        # that did set up and only had its password reset by the Admin just changes the password.
+        never_set_up = (must_change and setup_done and user_data.get('password_changed_at') is None
+                        and user_data.get('setup_completed_at') is None)
+        if never_set_up:
+            setup_done = False
+        if must_change and (never_set_up or not user_data.get('must_change_password')):
             try:
                 _c3 = get_db_connection(); _cur3 = _c3.cursor()
-                _cur3.execute("""
-                    UPDATE accounts SET must_change_password = TRUE, account_setup_complete = FALSE
-                    WHERE username = %s
-                """, (username,))
+                _cur3.execute("""UPDATE accounts SET must_change_password = TRUE,
+                                     account_setup_complete = account_setup_complete AND NOT %s
+                                 WHERE username = %s""", (never_set_up, username))
                 _c3.commit(); _cur3.close(); _c3.close()
             except Exception: pass
 
@@ -1311,6 +1349,7 @@ def login():
         session.clear()
         session['loggedin'] = True
         session['username'] = user_data.get('username')
+        session['userid']   = user_data.get('userid')    # survives an Employee ID / username change
         session['role']     = db_role
         session['must_change_password']   = must_change
         session['account_setup_complete'] = setup_done
@@ -1352,27 +1391,33 @@ def login():
 
     saved_username = session.get('saved_username', '')
     flashes = session.get('_flashes')
+    lock_until = session.get('login_lock_until')
     session.clear()
     if flashes:
         session['_flashes'] = flashes
+    # Seconds until a temporary lockout ends, for the countdown in the lock notice.
+    lock_seconds = max(0, int(lock_until - datetime.now().timestamp())) if lock_until else 0
     resp = make_response(render_template('login.html', saved_username=saved_username,
-                                         support_email=Config.SUPPORT_EMAIL))
+                                         lock_seconds=lock_seconds))
 
 
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
 
 # Account Assistance (login-page "Contact Admin" requests and its Admin page) was removed —
-# Correction Requests covers the same need. login_assistance.py stays: password reset and
-# the startup schema still use it, and past requests remain in login_assistance_request.
+# Correction Requests covers the same need. Past requests stay in login_assistance_request.
 
 
 def _dashboard_url_for_role(role):
     return {'Admin': 'admin_dashboard', 'Academic Head': 'academic_my_dashboard',
             'Faculty': 'faculty_dashboard'}.get(role, 'login')
 
+_FP_STEPS = [('request', 'Employee Number', None), ('verify', 'Verify Code', None),
+             ('reset', 'New Password', None)]
+
 def _fp_page(step, status=200, **ctx):
     resp = make_response(render_template('shared/forgot_password.html', step=step,
+                                         steps=_FP_STEPS, step_index=[s[0] for s in _FP_STEPS].index(step),
                                          code_ttl=_pwreset.CODE_TTL_MINUTES, **ctx), status)
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
@@ -1496,7 +1541,8 @@ def forgot_password_new():
         conn.close()
     session.pop('fp_rid', None); session.pop('fp_token', None)
     session['saved_username'] = username          # pre-fills the Login form
-    flash('Your password has been reset. You can now log in with your new password.', 'success')
+    flash('Your password has been reset and your account is unlocked. You can now log in with your new password.',
+          'success')
     return redirect(url_for('login'))
 
 
@@ -1722,7 +1768,13 @@ def _enforce_account_setup():
         return
 
 
-    row = query_db("SELECT isactive FROM accounts WHERE username = %s", (session.get('username'),), one=True)
+    if session.get('userid'):
+        row = query_db("SELECT isactive, username FROM accounts WHERE userid = %s", (session['userid'],), one=True)
+        if row and row['username'] != session.get('username'):
+            # The Admin approved an Employee ID change: the new ID is now the username.
+            session['username'] = row['username']
+    else:
+        row = query_db("SELECT isactive FROM accounts WHERE username = %s", (session.get('username'),), one=True)
     if not row or not row.get('isactive'):
         session.clear()
         if request.path.startswith('/api/'):
@@ -2071,14 +2123,125 @@ def account_setup_password():
                 flash("Your password could not be updated. Please try again.", "error")
             finally:
                 cur.close(); conn.close()
-        return redirect(url_for('account_setup_password', **({'change': 1} if changing else {})))
+        # Show the form again with what was typed (the message says what to fix),
+        # instead of redirecting to an empty form.
+        return render_template('setup/setup_password.html', password_done=False, typed=request.form,
+                               password_only=not in_setup,
+                               **_setup_ctx('password'))
 
 
-    return render_template('setup/setup_password.html', password_done=False, **_setup_ctx('password'))
+    # password_only: setup was finished earlier (e.g. the Admin reset the password), so
+    # only the password changes; the setup steps are not shown or repeated.
+    return render_template('setup/setup_password.html', password_done=False, password_only=not in_setup,
+                           **_setup_ctx('password'))
 
 
 class _SetupProblem(Exception):
     """A draft that can't be saved; the message is shown to the user."""
+
+
+_EMPLOYEE_ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9\-]{0,29}')
+_EMPLOYMENT_FIELDS = ('Employee ID', 'Specialization', 'Employment Type', 'Employment Status', 'Designation')
+# Columns that hold a faculty's Employee ID without a foreign key (the foreign keys
+# to faculty are found in the catalog). History (activity/login logs, faculty_archive,
+# historical text) keeps the old ID on purpose.
+_EMPLOYEE_ID_PLAIN_COLUMNS = (('subject_faculty_assignment', 'employeenumber'),
+                              ('local_arrangement_sessions', 'faculty_employeenumber'),
+                              ('password_reset_requests', 'employeenumber'),
+                              ('personal_info_correction_request', 'employeenumber'))
+
+
+def _employee_id_problem(old, new):
+    """Why `new` can't replace Employee ID `old` (also the login username), or None."""
+    if not _EMPLOYEE_ID_RE.fullmatch(new or ''):
+        return "Please enter a valid Employee ID: up to 30 letters, numbers or hyphens."
+    if new == old:
+        return None
+    taken = query_db("""
+        SELECT 1 FROM faculty WHERE LOWER(employeenumber) = LOWER(%s) AND employeenumber <> %s
+        UNION ALL
+        SELECT 1 FROM accounts WHERE (LOWER(username) = LOWER(%s) OR LOWER(employeenumber) = LOWER(%s))
+                                 AND employeenumber IS DISTINCT FROM %s
+        LIMIT 1""", (new, old, new, new, old), one=True)
+    if taken:
+        return f"The Employee ID {new} already belongs to another account. Please check it."
+    return None
+
+
+def _change_employee_id(cur, old, new):
+    """Rename Employee ID `old` to `new` on the caller's transaction, everywhere it is
+    used, and make `new` the linked account's username. The foreign keys to faculty
+    are ON UPDATE NO ACTION, so the faculty row is copied under the new ID, every
+    reference is moved to it, and the old row is deleted. Returns the new username."""
+    cur.execute("""
+        INSERT INTO faculty
+        SELECT (jsonb_populate_record(NULL::faculty, to_jsonb(f) || jsonb_build_object('employeenumber', %s))).*
+        FROM faculty f WHERE employeenumber = %s
+    """, (new, old))
+    if cur.rowcount != 1:
+        raise _SetupProblem("Your faculty record could not be found. Please contact the Administrator.")
+    cur.execute("""
+        SELECT con.conrelid::regclass::text AS tbl, a.attname AS col
+        FROM pg_constraint con
+        JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+        WHERE con.contype = 'f' AND con.confrelid = 'faculty'::regclass AND array_length(con.conkey, 1) = 1
+    """)
+    refs = [(r['tbl'], r['col']) for r in cur.fetchall()]
+    for tbl, col in _EMPLOYEE_ID_PLAIN_COLUMNS:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (tbl,))
+        if cur.fetchone()['ok']:
+            refs.append((tbl, col))
+    for tbl, col in refs:
+        cur.execute(psycopg2.sql.SQL("UPDATE {} SET {} = %s WHERE {} = %s").format(
+            psycopg2.sql.SQL(tbl), psycopg2.sql.Identifier(col), psycopg2.sql.Identifier(col)), (new, old))
+    cur.execute("SELECT username FROM accounts WHERE employeenumber = %s", (new,))
+    accounts = cur.fetchall()
+    for acc in accounts:
+        cur.execute("UPDATE accounts SET username = %s WHERE username = %s", (new, acc['username']))
+        for tbl in ('personal_info_correction_request', 'account_setup_pending'):
+            cur.execute(f"UPDATE {tbl} SET username = %s WHERE username = %s", (new, acc['username']))
+    cur.execute("DELETE FROM faculty WHERE employeenumber = %s", (old,))
+    cur.execute("INSERT INTO employee_id_history (old_id, new_id) VALUES (%s, %s)", (old, new))
+    return new
+
+
+def _apply_employment_changes(cur, emp, fac):
+    """Write name / employment changes (field label -> value) to faculty `emp` on the
+    caller's transaction; an Employee ID change goes last. Raises _SetupProblem.
+    Returns the new username when the Employee ID changed, else None."""
+    cols = {}
+    for field, (column, _max_len, _required) in _CORRECTION_NAME_COLUMNS.items():
+        if field in fac:
+            cols[column] = fac[field] or None
+    lookups = (('Specialization', 'specializationid',
+                "SELECT specializationid AS id FROM specialization WHERE specializationname = %s"),
+               ('Employment Type', 'employeetypeid',
+                "SELECT employeetypeid AS id FROM employeetype WHERE typename = %s"),
+               ('Designation', 'designationid',
+                "SELECT designationid AS id FROM designation WHERE designationname = %s"))
+    for field, column, sql in lookups:
+        if field not in fac:
+            continue
+        if field == 'Designation' and not fac[field]:
+            cols[column] = None
+            continue
+        cur.execute(sql, (fac[field],))
+        row = cur.fetchone()
+        if not row:
+            raise _SetupProblem(f"The {field} '{fac[field]}' no longer exists. Please choose another one.")
+        cols[column] = row['id']
+    if 'Employment Status' in fac:
+        cols['employeestatus'] = fac['Employment Status']
+    if cols:
+        cur.execute(f"UPDATE faculty SET {', '.join(c + ' = %s' for c in cols)} WHERE employeenumber = %s",
+                    list(cols.values()) + [emp])
+    new_id = (fac.get('Employee ID') or '').strip()
+    if new_id and new_id != emp:
+        problem = _employee_id_problem(emp, new_id)
+        if problem:
+            raise _SetupProblem(problem)
+        return _change_employee_id(cur, emp, new_id)
+    return None
 
 def _setup_commit(username, draft, has_faculty):
     """Save every Account Setup draft and mark setup complete, in one transaction.
@@ -2088,7 +2251,7 @@ def _setup_commit(username, draft, has_faculty):
         return ("The system could not reach the database. Nothing was saved — "
                 "please try again in a moment.")
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    old_photo = None
+    old_photo = new_username = None
     try:
         cur.execute("SELECT profile_photo FROM accounts WHERE username = %s FOR UPDATE", (username,))
         acc = cur.fetchone()
@@ -2102,7 +2265,9 @@ def _setup_commit(username, draft, has_faculty):
             raise _SetupProblem("Please set your new password again, then confirm your information.")
 
 
-        sets, params = ["account_setup_complete = TRUE"], []
+        sets, params = ["account_setup_complete = TRUE", "setup_completed_at = NOW()"], []
+        if has_faculty:
+            sets.append("employment_setup_edit_used = TRUE")   # the setup's one employment edit
         if pending:
             sets += ["passwordhash = %s", "must_change_password = FALSE", "password_changed_at = NOW()"]
             params.append(pending['passwordhash'])
@@ -2112,38 +2277,11 @@ def _setup_commit(username, draft, has_faculty):
         cur.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE username = %s", params + [username])
 
 
+        cur.execute("DELETE FROM account_setup_pending WHERE username = %s", (username,))
         fac = draft.get('faculty') or {}
         if has_faculty and fac:
-            cols = {}
-            for field, (column, _max_len, _required) in _CORRECTION_NAME_COLUMNS.items():
-                if field in fac:
-                    cols[column] = fac[field] or None
-            lookups = (('Specialization', 'specializationid',
-                        "SELECT specializationid AS id FROM specialization WHERE specializationname = %s"),
-                       ('Employment Type', 'employeetypeid',
-                        "SELECT employeetypeid AS id FROM employeetype WHERE typename = %s"),
-                       ('Designation', 'designationid',
-                        "SELECT designationid AS id FROM designation WHERE designationname = %s"))
-            for field, column, sql in lookups:
-                if field not in fac:
-                    continue
-                if field == 'Designation' and not fac[field]:
-                    cols[column] = None
-                    continue
-                cur.execute(sql, (fac[field],))
-                row = cur.fetchone()
-                if not row:
-                    raise _SetupProblem(f"The {field} '{fac[field]}' no longer exists. Please choose another one.")
-                cols[column] = row['id']
-            if 'Employment Status' in fac:
-                cols['employeestatus'] = fac['Employment Status']
-            if cols:
-                cur.execute(f"UPDATE faculty SET {', '.join(c + ' = %s' for c in cols)} "
-                            "WHERE employeenumber = (SELECT employeenumber FROM accounts WHERE username = %s)",
-                            list(cols.values()) + [username])
-
-
-        cur.execute("DELETE FROM account_setup_pending WHERE username = %s", (username,))
+            cur.execute("SELECT employeenumber FROM accounts WHERE username = %s", (username,))
+            new_username = _apply_employment_changes(cur, cur.fetchone()['employeenumber'], fac)
         conn.commit()
     except LookupError:
         conn.rollback()
@@ -2178,11 +2316,26 @@ def _setup_commit(username, draft, has_faculty):
     for k in ('setup_draft', 'setup_password_set'):
         session.pop(k, None)
     session['setup_just_completed'] = True
+    if new_username:
+        session['username'] = new_username
+        session['setup_new_username'] = new_username     # the All Set page tells them
     return None
 
-def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names):
+def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names,
+                       employment_locked):
     """Validate one Review-step Edit. Returns (draft changes, None) or (None, error)."""
     form = request.form
+    if employment_locked and action in ('edit_employment', 'edit_designation', 'edit_employee_id'):
+        return None, ("You already used the account-setup edit of your employment information. "
+                      "Change it in Academic Information after setup (once), or use Request Correction.")
+    if action == 'edit_employee_id':
+        if 'Employee ID' in pending_fields:
+            return None, "That information can't be edited right now."
+        value = form.get('value', '').strip()
+        problem = _employee_id_problem(saved['Employee ID'], value)
+        if problem:
+            return None, problem
+        return {'Employee ID': value}, None
     if action == 'edit_name':
         names = ('First Name', 'Middle Name', 'Last Name', 'Suffix')
         if any(f in pending_fields for f in names):
@@ -2242,7 +2395,7 @@ def account_setup_verify():
     username = session.get('username')
     draft = _setup_draft()
     row = query_db("""
-        SELECT a.email, a.contactnumber, a.profile_photo,
+        SELECT a.email, a.contactnumber, a.profile_photo, a.employment_setup_edit_used,
                f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix, f.employeestatus,
                d.designationname, s.specializationname, et.typename
         FROM accounts a
@@ -2291,6 +2444,9 @@ def account_setup_verify():
         ORDER BY created_at, requestid
     """, (username,))
     pending_fields = {p['field_name'] for p in pending}
+    # The setup's one employment edit: a reopened setup (e.g. after a password reset)
+    # shows the employment fields read-only once it has been used.
+    employment_locked = bool(row.get('employment_setup_edit_used'))
 
 
     if request.method == 'POST':
@@ -2306,7 +2462,7 @@ def account_setup_verify():
             return _setup_submit_corrections(username, row['employeenumber'], saved,
                                              designations, specializations)
         changes, err = _setup_review_edit(action, saved, info, pending_fields, specializations,
-                                          employment_types, designation_names)
+                                          employment_types, designation_names, employment_locked)
         if err:
             flash(err, "edit-error")
         else:
@@ -2320,9 +2476,8 @@ def account_setup_verify():
     email = (draft['email'] if 'email' in draft else row.get('email')) or ''
     contact = (draft['contact'] if 'contact' in draft else row.get('contactnumber')) or ''
     photo = (draft['photo'] if 'photo' in draft else row.get('profile_photo')) or ''
-    # Employee ID is the key every schedule and record points to, so it is never
-    # changed here; the Admin changes it in Faculty Management.
-    edit_allowed = {f: f not in pending_fields and f != 'Employee ID' for f in info}
+    edit_allowed = {f: f not in pending_fields and not (employment_locked and f in _EMPLOYMENT_FIELDS)
+                    for f in info}
     return render_template('setup/setup_verify.html',
                            info=info, full_name=full_name,
                            account_email=email,
@@ -2330,7 +2485,8 @@ def account_setup_verify():
                            account_contact=contact,
                            profile_photo=photo,
                            pending_corrections=pending,
-                           edit_allowed=edit_allowed,
+                           edit_allowed=edit_allowed, employment_locked=employment_locked,
+                           new_username=(draft.get('faculty') or {}).get('Employee ID'),
                            name_suffixes=_NAME_SUFFIXES,
                            designee_type=_DESIGNEE_TYPE,
                            is_designee=info['Employment Type'] == _DESIGNEE_TYPE,
@@ -2351,11 +2507,15 @@ def account_setup_done():
     acc = _setup_account()
     email = acc.get('account_email') or ''
     return render_template('setup/setup_done.html', has_email=bool(email.strip()),
+                           new_username=session.pop('setup_new_username', None),
                            dashboard_url=dashboard, **_setup_ctx('verify'))
 
 
-_CORRECTION_FIELDS = ('First Name', 'Middle Name', 'Last Name', 'Suffix',
-                      'Designation', 'Specialization', 'Employee ID')
+# What a user can ask the Admin to correct: the official employment information. The
+# name is edited directly (Academic Information), so it is no longer requested, but
+# older name requests are still listed and can still be decided (_CORRECTION_FIELDS_ALL).
+_CORRECTION_FIELDS = ('Employee ID', 'Specialization', 'Employment Type', 'Employment Status', 'Designation')
+_CORRECTION_FIELDS_ALL = _CORRECTION_FIELDS + ('First Name', 'Middle Name', 'Last Name', 'Suffix')
 _CORRECTION_MAX_LEN = 255          # personal_info_correction_request.proposed_value
 _CORRECTION_REASON_MAX_LEN = 1000
 
@@ -2372,8 +2532,10 @@ def _save_correction_request(username, employeenumber, current_values, designati
     if len(reason) > _CORRECTION_REASON_MAX_LEN:
         return 0, f"The reason is too long (maximum {_CORRECTION_REASON_MAX_LEN} characters)."
 
-    allowed = {'Designation':    {d['designationname'] for d in designations},
-               'Specialization': {s['specializationname'] for s in specializations}}
+    allowed = {'Designation':       {d['designationname'] for d in designations} | {''},
+               'Specialization':    {s['specializationname'] for s in specializations},
+               'Employment Type':   {r['typename'] for r in query_db("SELECT typename FROM employeetype")},
+               'Employment Status': set(_EMPLOYMENT_STATUSES)}
     rows, seen = [], set()
     for item in items:
         if not isinstance(item, dict):
@@ -2383,9 +2545,9 @@ def _save_correction_request(username, employeenumber, current_values, designati
         if field_name not in _CORRECTION_FIELDS or field_name in seen:
             continue
         current_value = current_values.get(field_name, '')
-        # Middle Name / Suffix may legitimately be corrected to blank; every other
-        # field needs a value. A "correction" that changes nothing is dropped.
-        if field_name not in ('Middle Name', 'Suffix') and not proposed_value:
+        # A Designation may be corrected to none; every other field needs a value.
+        # A "correction" that changes nothing is dropped.
+        if field_name != 'Designation' and not proposed_value:
             return 0, f"Please enter the correct {field_name}."
         if proposed_value == current_value:
             continue
@@ -2399,6 +2561,9 @@ def _save_correction_request(username, employeenumber, current_values, designati
         rows.append((field_name, current_value, proposed_value))
     if not rows:
         return 0, "None of the requested values differ from what is on file. Please change at least one value."
+    if any(r[0] == 'Employee ID' for r in rows) and _approved_employee_id_change(username):
+        return 0, ("Your approved Employee ID change is waiting for you to confirm it (see the notice after you "
+                   "sign in). Confirm it first, then request another change if needed.")
 
     conn = get_db_connection()
     if conn is None:
@@ -4808,6 +4973,7 @@ def bulk_import():
                 first_name  = _titlecase_name(first_name)
                 middle_name = _titlecase_name(middle_name)
 
+                _check_specialization_value(spec_raw, first_name, last_name)
                 spec_id  = get_or_create_spec(spec_raw)
                 etype_id = resolve_etype(etype_raw)
                 desig_id = get_or_create_desig(desig_raw)
@@ -4955,6 +5121,7 @@ def _acad_insert_employees(rows, conn, cur):
             middle_name = _titlecase_name(emp.get('middle_name', ''))
             email       = str(emp.get('email',       '') or '').strip()
             contact     = _sanitize_contact(emp.get('contact', ''))
+            _check_specialization_value(emp.get('specialization', ''), first_name, last_name)
             spec_id     = get_or_create_spec(emp.get('specialization', ''))
             etype_id    = resolve_etype(emp.get('emp_type', ''))
             desig_id    = get_or_create_desig(emp.get('designation', ''))
@@ -23190,6 +23357,7 @@ def admin_bulk_import():
                 first_name  = _titlecase_name(first_name)
                 middle_name = _titlecase_name(middle_name)
 
+                _check_specialization_value(spec_raw, first_name, last_name)
                 spec_id  = get_or_create_spec(spec_raw)
                 etype_id = resolve_etype(etype_raw)
                 desig_id = get_or_create_desig(desig_raw)
@@ -23321,6 +23489,7 @@ def _admin_insert_employees(rows, conn, cur):
             middle_name = _titlecase_name(emp.get('middle_name', ''))
             email       = str(emp.get('email',       '') or '').strip()
             contact     = _sanitize_contact(emp.get('contact', ''))
+            _check_specialization_value(emp.get('specialization', ''), first_name, last_name)
             spec_id     = get_or_create_spec(emp.get('specialization', ''))
             etype_id    = resolve_etype(emp.get('emp_type', ''))
             desig_id    = get_or_create_desig(emp.get('designation', ''))
@@ -25788,7 +25957,7 @@ def admin_account_corrections():
     field  = request.args.get('field', '')
     sort   = request.args.get('sort', 'newest')
     if status not in ('All', 'Pending', 'Approved', 'Rejected'): status = 'Pending'
-    if field not in _CORRECTION_FIELDS: field = ''
+    if field not in _CORRECTION_FIELDS_ALL: field = ''
     if sort not in ('newest', 'oldest'): sort = 'newest'
     try:
         page = max(1, int(request.args.get('page', 1)))
@@ -25837,7 +26006,7 @@ def admin_account_corrections():
     """, tuple(args) + (_CORRECTIONS_PAGE_SIZE, (page - 1) * _CORRECTIONS_PAGE_SIZE))
 
     return render_template('admin/account_corrections_admin.html', requests=rows, counts=counts,
-                           fields=_CORRECTION_FIELDS, matched=matched, page=page, pages=pages,
+                           fields=_CORRECTION_FIELDS_ALL, matched=matched, page=page, pages=pages,
                            page_size=_CORRECTIONS_PAGE_SIZE,
                            filters={'q': q, 'status': status, 'field': field, 'sort': sort})
 
@@ -25885,9 +26054,10 @@ def admin_account_correction_decide(request_id):
 
         cur.execute("""
             UPDATE personal_info_correction_request
-            SET status = %s, decided_by = %s, decided_at = NOW(), admin_remarks = %s
+            SET status = %s, decided_by = %s, decided_at = NOW(), admin_remarks = %s,
+                applied_at = CASE WHEN %s = 'Approved' AND field_name <> 'Employee ID' THEN NOW() END
             WHERE requestid = %s AND status = 'Pending'
-        """, (decision, session.get('username'), admin_remarks, request_id))
+        """, (decision, session.get('username'), admin_remarks, decision, request_id))
         conn.commit()      # faculty update + status change land together, or not at all
         flash(f"{req['field_name']} correction for {req['employeenumber'] or req['username']} "
               f"{decision.lower()}." + (f" {applied_note}" if applied_note else ""), "success")
@@ -25910,11 +26080,28 @@ def _apply_correction(cur, req):
     if not emp:
         return None, "This request is not linked to a faculty record, so it cannot be applied."
     if field == 'Employee ID':
-        # Never auto-applied: it's the primary key referenced by accounts, schedules,
-        # merged classes, etc. with ON UPDATE NO ACTION, so rewriting it would orphan
-        # rows. The approval is recorded; the Admin changes it in Faculty Management.
-        return "Employee ID is not changed automatically — update it in Faculty Management.", None
-    if field in ('Designation', 'Specialization'):
+        # Not applied yet: the new ID is also the username, so the faculty member first
+        # confirms it in the notice shown after they sign in (api_user_accept_employee_id).
+        # Until then they keep signing in with the old one.
+        problem = _employee_id_problem(emp, value)
+        if problem:
+            return None, problem + " This request can't be approved; reject it with that reason."
+        return (f"The change to {value} takes effect once {emp} confirms it in the notice shown when they "
+                f"next sign in. From then on, {value} is also their username."), None
+    if field == 'Designation' and not value:
+        cur.execute("UPDATE faculty SET designationid = NULL WHERE employeenumber = %s", (emp,))
+    elif field == 'Employment Type':
+        cur.execute("SELECT employeetypeid AS id FROM employeetype WHERE LOWER(typename) = LOWER(%s)", (value,))
+        row = cur.fetchone()
+        if not row:
+            return None, (f"No employment type named '{value}' exists any more, so this request can't be "
+                          "approved. Reject it, or add the employment type first.")
+        cur.execute("UPDATE faculty SET employeetypeid = %s WHERE employeenumber = %s", (row['id'], emp))
+    elif field == 'Employment Status':
+        if value not in _EMPLOYMENT_STATUSES:
+            return None, f"'{value}' is not an employment status, so this request can't be approved."
+        cur.execute("UPDATE faculty SET employeestatus = %s WHERE employeenumber = %s", (value, emp))
+    elif field in ('Designation', 'Specialization'):
         table = field.lower()
         cur.execute(f"SELECT {table}id AS id FROM {table} WHERE LOWER({table}name) = LOWER(%s)", (value,))
         row = cur.fetchone()
@@ -25941,7 +26128,7 @@ def api_user_correction_requests():
     if 'loggedin' not in session: return jsonify({'success': False}), 401
     rows = query_db("""
         SELECT field_name, current_value, proposed_value, remarks, status, admin_remarks,
-               created_at, decided_at
+               created_at, decided_at, applied_at
         FROM personal_info_correction_request
         WHERE username = %s
         ORDER BY created_at DESC, requestid DESC
@@ -25950,7 +26137,64 @@ def api_user_correction_requests():
     return jsonify({'success': True, 'requests': [
         dict(field=r['field_name'], current=r['current_value'] or '', proposed=r['proposed_value'] or '',
              reason=r['remarks'] or '', status=r['status'], admin_remarks=r['admin_remarks'] or '',
-             submitted=fmt(r['created_at']), decided=fmt(r['decided_at'])) for r in rows]})
+             submitted=fmt(r['created_at']), decided=fmt(r['decided_at']),
+             applied=r['applied_at'] is not None) for r in rows]})
+
+
+def _approved_employee_id_change(username):
+    """An approved Employee ID change waiting for this user to confirm it, or None."""
+    return query_db("""
+        SELECT requestid, proposed_value FROM personal_info_correction_request
+        WHERE username = %s AND field_name = 'Employee ID' AND status = 'Approved' AND applied_at IS NULL
+        ORDER BY decided_at DESC, requestid DESC LIMIT 1""", (username,), one=True)
+
+
+@app.route('/api/user/employee-id/accept', methods=['POST'])
+def api_user_accept_employee_id():
+    """The faculty member confirms an approved Employee ID change. Only now does the new
+    ID (and username) take effect; until then they kept signing in with the old one."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Please log in again.'}), 401
+    username = session.get('username')
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'The system could not reach the database. Please try again.'}), 500
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT r.requestid, r.proposed_value, a.employeenumber
+            FROM personal_info_correction_request r JOIN accounts a ON a.username = r.username
+            WHERE r.username = %s AND r.field_name = 'Employee ID' AND r.status = 'Approved'
+              AND r.applied_at IS NULL
+            ORDER BY r.decided_at DESC, r.requestid DESC LIMIT 1 FOR UPDATE OF r""", (username,))
+        req = cur.fetchone()
+        if not req:
+            return jsonify({'success': False, 'error': 'There is no approved Employee ID change to confirm.'}), 400
+        new_id = (req['proposed_value'] or '').strip()
+        if req['employeenumber'] == new_id:
+            new_username = username              # already in effect: just record it
+        else:
+            problem = _employee_id_problem(req['employeenumber'], new_id)
+            if problem:
+                raise _SetupProblem(problem + " Please contact the Administrator.")
+            new_username = _change_employee_id(cur, req['employeenumber'], new_id)
+        cur.execute("UPDATE personal_info_correction_request SET applied_at = NOW() WHERE requestid = %s",
+                    (req['requestid'],))
+        conn.commit()
+    except _SetupProblem as p:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(p)}), 400
+    except Exception as e:
+        conn.rollback()
+        print(f"[employee id accept] failed: {type(e).__name__}: {e}")
+        return jsonify({'success': False, 'error': 'The change could not be applied. Nothing was changed — please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+    session['username'] = new_username
+    write_activity_log(action='Employee ID Changed',
+                       details=f"{username} confirmed the approved Employee ID change; username is now {new_username}",
+                       category='account', color='blue')
+    return jsonify({'success': True, 'new_username': new_username})
 
 @app.route('/api/user/correction-requests', methods=['POST'])
 def api_user_submit_correction_request():
@@ -25960,25 +26204,23 @@ def api_user_submit_correction_request():
         return jsonify({'success': False, 'error': 'Please log in again.'}), 401
     username = session.get('username')
     info = query_db("""
-        SELECT f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
-               d.designationname, s.specializationname
+        SELECT f.employeenumber, f.employeestatus, d.designationname, s.specializationname, et.typename
         FROM accounts a
         LEFT JOIN faculty f ON a.employeenumber = f.employeenumber
         LEFT JOIN designation d ON f.designationid = d.designationid
         LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
         WHERE a.username = %s
     """, (username,), one=True)
     if not info or not info.get('employeenumber'):
         return jsonify({'success': False,
                         'error': 'Only accounts linked to a faculty record can request corrections.'}), 400
     current_values = {
-        'Employee ID':    info.get('employeenumber') or '',
-        'First Name':     info.get('firstname') or '',
-        'Middle Name':    info.get('middlename') or '',
-        'Last Name':      info.get('lastname') or '',
-        'Suffix':         info.get('suffix') or '',
-        'Designation':    info.get('designationname') or '',
-        'Specialization': info.get('specializationname') or '',
+        'Employee ID':       info.get('employeenumber') or '',
+        'Specialization':    info.get('specializationname') or '',
+        'Employment Type':   info.get('typename') or '',
+        'Employment Status': info.get('employeestatus') or '',
+        'Designation':       info.get('designationname') or '',
     }
     designations    = query_db("SELECT designationname FROM designation ORDER BY designationname")
     specializations = query_db("SELECT specializationname FROM specialization WHERE isactive = TRUE ORDER BY specializationname")
@@ -26700,6 +26942,15 @@ def update_scheduler_config():
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
 
+def _reset_to_temporary_password(cur, userid, username):
+    """Temporary password PUP@<username> + required change at next login. Pending
+    Forgot Password codes stop working."""
+    cur.execute("UPDATE accounts SET passwordhash = %s, must_change_password = TRUE WHERE userid = %s",
+                (generate_password_hash(f"PUP@{username}"), userid))
+    cur.execute("""UPDATE password_reset_requests
+                   SET invalidated_at = NOW(), code_hash = NULL, reset_token_hash = NULL
+                   WHERE userid = %s AND used_at IS NULL AND invalidated_at IS NULL""", (userid,))
+
 @app.route('/admin/accounts/reset_password', methods=['POST'])
 def account_reset_password():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -26712,7 +26963,7 @@ def account_reset_password():
         # contact the faculty already set up) stays as it is, so a completed
         # profile setup is not restarted. Pending Forgot Password codes for the
         # account stop working.
-        _loginhelp.reset_to_temporary_password(cur, user_id, username)
+        _reset_to_temporary_password(cur, user_id, username)
         conn.commit()
         flash(f"Password for '{username}' reset to: PUP@{username}. They must change it on next login.", "success")
     except Exception as e:
@@ -32909,9 +33160,9 @@ def api_user_me():
     try:
         username = session.get('username')
         cur.execute("""
-            SELECT a.last_login, a.profile_photo,
+            SELECT a.last_login, a.profile_photo, a.employment_profile_edit_used, a.account_setup_complete,
                    f.employeenumber, f.firstname, f.middlename, f.lastname, f.suffix,
-                   a.email,
+                   a.email, a.contactnumber,
                    f.employeestatus,
                    d.designationid, d.designationname,
                    s.specializationid, s.specializationname,
@@ -32944,6 +33195,11 @@ def api_user_me():
             'last_login': ll.strftime('%B %d, %Y %I:%M %p') if ll else None,
             'photo_url': row['profile_photo'] or None,
             'email': row['email'] or '',
+            'contact': row['contactnumber'] or '',
+            'username': username,
+            # The one employment self-edit allowed after Account Setup (api_user_employment_update).
+            'employment_edit_available': bool(row['employeenumber']) and bool(row['account_setup_complete'])
+                                         and not row['employment_profile_edit_used'],
             'role': session.get('role', ''),
             'profile_editable': _PROFILE_SELF_EDIT_ENABLED,
             'photo_editable': True,   # own profile picture is always changeable
@@ -32960,10 +33216,15 @@ def api_user_options():
         designations    = query_db("SELECT designationid, designationname FROM designation ORDER BY designationname")
         # isactive: a correction request may only propose an active specialization.
         specializations = query_db("SELECT specializationid, specializationname, isactive FROM specialization ORDER BY specializationname")
+        employment_types = query_db("SELECT typename FROM employeetype ORDER BY employeetypeid")
         return jsonify({
             'success': True,
             'designations': [dict(r) for r in designations],
             'specializations': [dict(r) for r in specializations],
+            'employment_types': [r['typename'] for r in employment_types],
+            'employment_statuses': list(_EMPLOYMENT_STATUSES),
+            'designee_type': _DESIGNEE_TYPE,
+            'name_suffixes': list(_NAME_SUFFIXES),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -33005,6 +33266,166 @@ def api_user_photo_upload():
     if err:
         return jsonify({'success': False, 'error': err}), 400
     return jsonify({'success': True, 'photo_url': url})
+
+@app.route('/api/user/name', methods=['POST'])
+def api_user_name_update():
+    """Academic Information > Name: the user corrects their own name, saved right away
+    (the employment information instead goes through a correction request)."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Please log in again.'}), 401
+    username = session.get('username')
+    data = request.get_json(silent=True) or request.form
+    values = {f: str(data.get(f, '') or '').strip() for f in ('First Name', 'Middle Name', 'Last Name', 'Suffix')}
+    for field in ('First Name', 'Middle Name', 'Last Name'):
+        _column, max_len, required = _CORRECTION_NAME_COLUMNS[field]
+        if required and not values[field]:
+            return jsonify({'success': False, 'error': f"Please enter your {field}."}), 400
+        if len(values[field]) > max_len:
+            return jsonify({'success': False, 'error': f"Your {field} is too long (maximum {max_len} characters)."}), 400
+    acc = query_db("""SELECT a.employeenumber, f.suffix FROM accounts a
+                      LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+                      WHERE a.username = %s""", (username,), one=True)
+    if not acc or not acc.get('employeenumber'):
+        return jsonify({'success': False, 'error': 'Only accounts linked to a faculty record have a name to edit.'}), 400
+    if values['Suffix'] not in _NAME_SUFFIXES and values['Suffix'] != (acc.get('suffix') or ''):
+        return jsonify({'success': False, 'error': 'Please choose a suffix from the list.'}), 400
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'The system could not reach the database. Please try again.'}), 500
+    cur = conn.cursor()
+    try:
+        cur.execute("""UPDATE faculty SET firstname = %s, middlename = %s, lastname = %s, suffix = %s
+                       WHERE employeenumber = %s""",
+                    (values['First Name'], values['Middle Name'] or None, values['Last Name'],
+                     values['Suffix'] or None, acc['employeenumber']))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[profile name] save failed: {type(e).__name__}: {e}")
+        return jsonify({'success': False, 'error': 'Your name could not be saved. Please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+    write_activity_log(action='Name Changed', details=f"{username} updated their name",
+                       category='account', color='blue')
+    return jsonify({'success': True})
+
+
+@app.route('/api/user/employment', methods=['POST'])
+def api_user_employment_update():
+    """Academic Information > Official Employment Information: the one self-edit allowed
+    after Account Setup (the setup had its own). Afterwards only Request Correction."""
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Please log in again.'}), 401
+    username = session.get('username')
+    row = query_db("""
+        SELECT a.employeenumber, a.employment_profile_edit_used, a.account_setup_complete,
+               f.employeestatus, d.designationname, s.specializationname, et.typename
+        FROM accounts a
+        LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+        LEFT JOIN designation d ON f.designationid = d.designationid
+        LEFT JOIN specialization s ON f.specializationid = s.specializationid
+        LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
+        WHERE a.username = %s""", (username,), one=True)
+    if not row or not row.get('employeenumber'):
+        return jsonify({'success': False, 'error': 'Only accounts linked to a faculty record can do this.'}), 400
+    if row['employment_profile_edit_used'] or not row['account_setup_complete']:
+        return jsonify({'success': False, 'error': 'You already used your one edit. Please use Request Correction.'}), 403
+    saved = {'Employee ID': row['employeenumber'], 'Specialization': row['specializationname'] or '',
+             'Employment Type': row['typename'] or '', 'Employment Status': row['employeestatus'] or '',
+             'Designation': row['designationname'] or ''}
+    data = request.get_json(silent=True) or {}
+    wanted = {f: str(data.get(f, saved[f]) or '').strip() for f in _EMPLOYMENT_FIELDS}
+    if wanted['Employment Type'] != _DESIGNEE_TYPE:
+        wanted['Designation'] = ''                      # only a Designee has a Designation
+    changes = {f: v for f, v in wanted.items() if v != saved[f]}
+    if not changes:
+        return jsonify({'success': False, 'error': 'Nothing was changed.'}), 400
+    pending = {r['field_name'] for r in query_db(
+        "SELECT field_name FROM personal_info_correction_request WHERE username = %s AND status = 'Pending'",
+        (username,))}
+    blocked = sorted(set(changes) & pending)
+    if blocked:
+        return jsonify({'success': False, 'error': 'A correction request for ' + ', '.join(blocked) +
+                        ' is waiting for the Administrator. Wait for the decision first.'}), 400
+    options = {'Specialization':    {r['specializationname'] for r in query_db(
+                                        "SELECT specializationname FROM specialization WHERE isactive = TRUE")},
+               'Employment Type':   {r['typename'] for r in query_db("SELECT typename FROM employeetype")},
+               'Employment Status': set(_EMPLOYMENT_STATUSES),
+               'Designation':       {r['designationname'] for r in query_db(
+                                        "SELECT designationname FROM designation")} | {''}}
+    for field, value in changes.items():
+        if field in options and value not in options[field]:
+            return jsonify({'success': False, 'error': f"Please choose a {field} from the list."}), 400
+    if 'Employee ID' in changes and _approved_employee_id_change(username):
+        return jsonify({'success': False, 'error': 'Your approved Employee ID change is waiting for you to '
+                        'confirm it. Confirm it first (see the notice after you sign in).'}), 400
+    if 'Employee ID' in changes:
+        problem = _employee_id_problem(saved['Employee ID'], changes['Employee ID'])
+        if problem:
+            return jsonify({'success': False, 'error': problem}), 400
+
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'The system could not reach the database. Please try again.'}), 500
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""UPDATE accounts SET employment_profile_edit_used = TRUE
+                       WHERE username = %s AND NOT employment_profile_edit_used""", (username,))
+        if cur.rowcount != 1:
+            raise _SetupProblem('You already used your one edit. Please use Request Correction.')
+        new_username = _apply_employment_changes(cur, saved['Employee ID'], changes)
+        conn.commit()
+    except _SetupProblem as p:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(p)}), 400
+    except Exception as e:
+        conn.rollback()
+        print(f"[employment edit] save failed: {type(e).__name__}: {e}")
+        return jsonify({'success': False, 'error': 'Your changes could not be saved. Nothing was changed — please try again.'}), 500
+    finally:
+        cur.close(); conn.close()
+    if new_username:
+        session['username'] = new_username
+    write_activity_log(action='Employment Information Edited',
+                       details=f"{new_username or username} edited: {', '.join(changes)}"
+                               + (f" (Employee ID/username {username} → {new_username})" if new_username else ''),
+                       category='account', color='blue')
+    return jsonify({'success': True, 'new_username': new_username})
+
+
+def _contact_step(fn):
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'unauthorized', 'message': 'Please log in again.'}), 401
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'server_error', 'message': 'Database connection failed.'}), 500
+    try:
+        return fn(conn, session['username'])
+    except _contactchange.ContactChangeError as ce:
+        return jsonify(ce.to_json()), ce.status
+    except Exception as e:
+        conn.rollback()
+        print(f"[contact change] unexpected error: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'server_error',
+                        'message': 'Something went wrong. Please try again.'}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/user/contact/request-code', methods=['POST'])
+def api_user_contact_request_code():
+    # No way to text the new number, so the code goes to the account's email.
+    return _contact_step(lambda c, u: jsonify(
+        _contactchange.request_code(c, u, request.form.get('contact', ''), Config)))
+
+@app.route('/api/user/contact/update', methods=['POST'])
+def api_user_contact_update():
+    def _confirm(c, u):
+        saved = _contactchange.confirm(c, u, request.form.get('contact', ''), request.form.get('code', ''))
+        write_activity_log(action='Contact Number Changed',
+                           details=f"{u} changed their contact number (verified by email code)",
+                           category='account', color='blue')
+        return jsonify({'success': True, 'contact': saved})
+    return _contact_step(_confirm)
 
 def _password_step(fn, *args):
     if 'loggedin' not in session:
@@ -42047,6 +42468,26 @@ def _run_startup_migrations():
     # migrations/2026-10-11_email_change_otp.sql).
     _step('sm_email_change_otp', _emailchange.ENSURE_SCHEMA_SQL)
 
+    # Self-service contact number change: code sent to the account email (see contact_change.py).
+    _step('sm_contact_change_otp', _contactchange.ENSURE_SCHEMA_SQL)
+
+    # Official employment information (Employee ID, Specialization, Employment Type,
+    # Employment Status, Designation) can be self-edited twice in all: once in the first
+    # Account Setup and once in Academic Information. After that, only by a correction
+    # request the Admin approves. (Replaces the earlier single employment_info_confirmed flag.)
+    # When the account last finished Account Setup. With password_changed_at, it tells an
+    # account that really set up (an Admin password reset then only changes the password)
+    # from one marked complete without ever setting up (imported / pre-wizard accounts).
+    _step('sm_setup_completed_at', [
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMP NULL",
+    ])
+
+    _step('sm_employment_self_edits', [
+        "ALTER TABLE accounts DROP COLUMN IF EXISTS employment_info_confirmed",
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS employment_setup_edit_used   BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS employment_profile_edit_used BOOLEAN NOT NULL DEFAULT FALSE",
+    ])
+
     # Forgot Password (logged out): hashed one-time codes + reset windows, kept in
     # the database so they survive restarts (see password_reset.py /
     # migrations/2026-09-29_password_reset_requests.sql).
@@ -42056,9 +42497,6 @@ def _run_startup_migrations():
     # (see login_security.py / migrations/2026-10-15_login_lockout.sql).
     _step('sm_login_lockout', _loginsec.ENSURE_SCHEMA_SQL)
 
-    # Login assistance requests (Contact Admin on the login page; see login_assistance.py /
-    # migrations/2026-10-15_login_assistance.sql).
-    _step('sm_login_assistance', _loginhelp.ENSURE_SCHEMA_SQL)
     try:
         import mailer as _mailer
         if not _mailer.configured(Config):
@@ -42069,6 +42507,43 @@ def _run_startup_migrations():
             print(f"[email] sending verification codes via {_mailer.provider(Config)}", flush=True)
     except Exception as _e:
         print(f"[email] could not check email configuration: {type(_e).__name__}: {_e}", flush=True)
+
+    # applied_at: when an approved request took effect. An approved Employee ID change
+    # waits (NULL) until the faculty member confirms it in the notice shown after they
+    # sign in (api_user_accept_employee_id); requests decided before this existed count
+    # as applied, so nobody gets a notice for an old decision.
+    _step('sm_correction_applied_at', [
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('public.personal_info_correction_request') IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'personal_info_correction_request' AND column_name = 'applied_at') THEN
+                ALTER TABLE personal_info_correction_request ADD COLUMN applied_at TIMESTAMP NULL;
+                UPDATE personal_info_correction_request SET applied_at = COALESCE(decided_at, NOW())
+                WHERE status = 'Approved';
+            END IF;
+        END $$
+        """,
+    ])
+
+    # Old -> new Employee IDs (= usernames), so signing in with an old one can say the ID
+    # was changed instead of counting it as a wrong password (see login()).
+    _step('sm_employee_id_history', [
+        """CREATE TABLE IF NOT EXISTS employee_id_history (
+               id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+               old_id     VARCHAR(30) NOT NULL,
+               new_id     VARCHAR(30) NOT NULL,
+               changed_at TIMESTAMP NOT NULL DEFAULT NOW())""",
+        "CREATE INDEX IF NOT EXISTS ix_employee_id_history_old ON employee_id_history (LOWER(old_id))",
+        """INSERT INTO employee_id_history (old_id, new_id, changed_at)
+           SELECT r.current_value, r.proposed_value, r.applied_at
+           FROM personal_info_correction_request r
+           WHERE r.field_name = 'Employee ID' AND r.status = 'Approved' AND r.applied_at IS NOT NULL
+             AND r.current_value IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM employee_id_history h
+                             WHERE h.old_id = r.current_value AND h.new_id = r.proposed_value)""",
+    ])
 
     _step('sm_correction_requests', [
         """

@@ -4,7 +4,7 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Set Up Your Account - PUP Lopez</title>
+    <title>{% block title %}Set Up Your Account - PUP Lopez{% endblock %}</title>
     <link href="{{ url_for('static', filename='css/fonts.css') }}" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -98,7 +98,7 @@
             <p class="setup-lead">{% block lead %}{% endblock %}</p>
 
 
-            {% include "setup/_setup_steps.html" %}
+            {% if not password_only %}{% include "setup/_setup_steps.html" %}{% endif %}
             <hr class="setup-divider">
 
 
@@ -139,6 +139,8 @@
             {% endblock %}
         </section>
     </main>
+    <script src="{{ url_for('static', filename='js/ui_dialog.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/select_enhance.js') }}"></script>
     {% block scripts %}{% endblock %}
     <script>
         // Optional steps define window.setupValidateContinue() -> error text or ''.
