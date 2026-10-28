@@ -52,6 +52,12 @@
     </div>
 
 
+    {% if new_username %}
+    <p class="error-msg" role="alert" style="background:#fff8e1;border-color:#f3d48a;color:#7a5200;">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>Your Employee ID changed, so your username is now <strong>{{ new_username }}</strong>.
+            Take note of it &mdash; use it to sign in from now on.</span></p>
+    {% endif %}
     <ul class="done-list">
         <li>
             <div class="done-icon"><i class="fas fa-shield-halved"></i></div>

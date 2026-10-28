@@ -74,10 +74,8 @@
             </select></label>
         <label class="req-field"><span>Sort by</span>
             <select id="rfSort" onchange="rfApplyFilters()">
-                <option value="latest">Latest Request</option>
-                <option value="oldest">Oldest Request</option>
-                <option value="req-soon">Requested Date (Earliest)</option>
-                <option value="req-late">Requested Date (Latest)</option>
+                <option value="latest">Latest</option>
+                <option value="oldest">Oldest</option>
             </select></label>
     </div>
 
@@ -270,6 +268,8 @@
     display:inline-flex; align-items:center; justify-content:center; border:none; }
 #reqTable .action-btn.edit   { background:#800000; color:#fff; }
 #reqTable .action-btn.cancel { background:#fff; color:#800000; border:1.5px solid #800000; }
+#reqTable .action-btn.delete { background:#fff; color:#b42318; border:1.5px solid #e6a5a0; }
+#reqTable .action-btn.delete:hover { background:#fdecec; border-color:#b42318; }
 #reqTable .action-btn:disabled { opacity:.35; cursor:not-allowed; }
 #reqTable .prog-cell { font-weight:700; color:#5c0a0a; }
 
@@ -463,10 +463,7 @@ function rfApplyFilters() {
         if (b === null) return -1;
         return dir * (a - b) || (y.requestid - x.requestid);
     };
-    rows.sort(sort === 'oldest'   ? by('date_submitted', 1)
-            : sort === 'req-soon' ? by('requested_date', 1)
-            : sort === 'req-late' ? by('requested_date', -1)
-            :                       by('date_submitted', -1));
+    rows.sort(sort === 'oldest' ? by('date_submitted', 1) : by('date_submitted', -1));
     if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="8" class="req-empty"><i class="fas fa-filter"></i> No requests match your filters.</td></tr>';
         return;
@@ -490,6 +487,10 @@ function rfApplyFilters() {
             onclick="event.stopPropagation(); rfOpenEdit(${rJson})"><i class="fas fa-pen"></i></button>`;
         const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
             onclick="event.stopPropagation(); rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-xmark"></i></button>`;
+        // Cancelled / rejected: nothing to edit or cancel, but it can be removed for good.
+        const canDelete = r.status === 'Cancelled' || r.status === 'Rejected';
+        const deleteBtn = `<button class="action-btn delete" title="Delete permanently"
+            onclick="event.stopPropagation(); rfAskDelete('${r.req_type}',${r.requestid})"><i class="fas fa-trash-can"></i></button>`;
         const dateCell  = d => d ? `<span class="req-date"><i class="far fa-calendar"></i> ${_rfEsc(d)}</span>` : '—';
         return `<tr ondblclick="rfOpenView(JSON.parse(this.dataset.req))" data-req="${rJson}">
             <td class="prog-cell">${_rfEsc(prog)}</td>
@@ -499,7 +500,7 @@ function rfApplyFilters() {
             <td>${_rfEsc(room)}</td>
             <td>${dateCell(r.requested_date)}</td>
             <td>${dateCell(r.date_submitted)}</td>
-            <td><div class="actions-cell">${editBtn}${cancelBtn}</div></td>
+            <td><div class="actions-cell">${canDelete ? deleteBtn : editBtn + cancelBtn}</div></td>
         </tr>`;
     }).join('');
 }
@@ -747,6 +748,28 @@ async function rfConfirmCancel() {
             showToast(data.error || 'Could not cancel.', 'error');
         }
     } catch(e) { showToast('Network error. Please try again.', 'error'); }
+}
+
+/* ═══════════════════════════════════════════
+   DELETE (cancelled / rejected only)
+═══════════════════════════════════════════ */
+async function rfAskDelete(type, id) {
+    const ok = await uiConfirm({
+        title: 'Delete this request?', tone: 'error', icon: 'fa-trash-can',
+        html: 'It will be removed from your requests <strong>permanently</strong>. This cannot be undone.',
+        confirmText: 'Delete Permanently', cancelText: 'Keep It',
+    });
+    if (!ok) return;
+    try {
+        const res  = await fetch(`/api/faculty/my_requests/${type}/${id}/permanent`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({ success: false }));
+        if (data.success) {
+            showToast('Request deleted.', 'info');
+            await rfLoadRequests();
+        } else {
+            showToast(data.error || 'Could not delete the request.', 'error');
+        }
+    } catch (e) { showToast('Network error. Please try again.', 'error'); }
 }
 
 /* ═══════════════════════════════════════════

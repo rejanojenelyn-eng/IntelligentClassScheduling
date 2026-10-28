@@ -25,12 +25,17 @@
      onclick="if (event.target === this) closeLeaveDialog()">
     <div class="leave-card">
         <div class="leave-icon"><i class="fas fa-triangle-exclamation"></i></div>
+        {% if password_only %}
+        <h2 class="leave-title" id="leaveTitle">Leave without changing your password?</h2>
+        <p class="leave-text" id="leaveText">You will be signed out. You will need to change your password the next time you sign in.</p>
+        {% else %}
         <h2 class="leave-title" id="leaveTitle">Leave Account Setup?</h2>
         <p class="leave-text" id="leaveText">Leaving Account Setup will discard all your changes. Do you want to continue?</p>
+        {% endif %}
         <div class="leave-actions">
-            <button type="button" class="leave-btn leave-stay" id="leaveStay" onclick="closeLeaveDialog()">Stay in Setup</button>
+            <button type="button" class="leave-btn leave-stay" id="leaveStay" onclick="closeLeaveDialog()">{{ 'Stay' if password_only else 'Stay in Setup' }}</button>
             <form method="POST" action="{{ url_for('account_setup_leave') }}">
-                <button type="submit" class="leave-btn leave-go" id="leaveGo">Leave Setup</button>
+                <button type="submit" class="leave-btn leave-go" id="leaveGo">{{ 'Sign Out' if password_only else 'Leave Setup' }}</button>
             </form>
         </div>
     </div>

@@ -157,16 +157,22 @@ function fcsUpdateYearLevels() {
     }
 }
 
+// Only the newest section load may fill the dropdown: switching programs quickly
+// must not let an older response add another program's sections.
+let _fcsSectionLoadSeq = 0;
 async function fcsUpdateSections() {
     const prog = document.getElementById('view_prog').value;
     const yl   = document.getElementById('view_yl').value;
     const sel  = document.getElementById('view_section');
+    const seq  = ++_fcsSectionLoadSeq;
     sel.innerHTML = '<option value="">ALL SECTIONS</option>';
     if (!prog || !yl) return;
     try {
         const url = `/api/sections-by-program?program=${encodeURIComponent(prog)}&yearLevel=${encodeURIComponent(yl)}&ay=${encodeURIComponent(FCS_ACTIVE_AY)}&semester=${FCS_ACTIVE_SEM}`;
         const resp = await fetch(url);
         const data = await resp.json();
+        if (seq !== _fcsSectionLoadSeq) return;
+        sel.innerHTML = '<option value="">ALL SECTIONS</option>';
         (data.sections || []).forEach(s => {
             const opt = document.createElement('option');
             opt.value = s.id;
@@ -179,7 +185,9 @@ async function fcsUpdateSections() {
 /* ── Filter change handlers ── */
 function fcsOnProgChange() {
     fcsUpdateYearLevels();
-    document.getElementById('view_section').innerHTML = '<option value="">ALL SECTIONS</option>';
+    // The year level usually stays selected, so its change event never fires:
+    // load the new program's sections here (it was left at only "ALL SECTIONS").
+    fcsUpdateSections();
     fcsLoadSchedule();
 }
 
@@ -217,8 +225,9 @@ async function fcsLoadSchedule() {
     const instrSel = document.getElementById('view_instructor');
     const progText  = prog  ? progSel.options[progSel.selectedIndex].text.toUpperCase() : '';
     const ylOrdinals = ['1st','2nd','3rd','4th','5th'];
-    const ylText    = yl ? (ylOrdinals[parseInt(yl)-1] || yl) + ' Year' : '';
-    const secText   = sec ? ' · ' + secSel.options[secSel.selectedIndex].text : '';
+    // A picked section already names its year (BSBIO-PT3, BSIT 1): don't repeat "3rd Year".
+    const ylText    = yl && !sec ? (ylOrdinals[parseInt(yl)-1] || yl) + ' Year' : '';
+    const secText   = sec ? (progText ? '  —  ' : '') + secSel.options[secSel.selectedIndex].text : '';
     const instrText = instr && instrSel ? ' · ' + instrSel.options[instrSel.selectedIndex].text : '';
     const semLabel  = { A: '1ST SEMESTER', B: '2ND SEMESTER', C: 'SUMMER' }[FCS_ACTIVE_SEM] || FCS_ACTIVE_SEM;
     document.getElementById('gridLabel').innerText =
@@ -376,7 +385,11 @@ function fcsRenderTable(sessions) {
         const yl = sess.yearlevel || '';
         const prog = sess.programcode || '';
         const sec  = sess.sectionname || '';
-        const courseLabel = prog && yl ? `${prog} ${yl}${sec ? ' - ' + sec : ''}` : (prog || '-');
+        // A section name usually already says the program and year ("BSIT 1", "BSIT 1-2"):
+        // show it alone instead of "BSIT 1 - BSIT 1". Other names ("A") keep the prefix.
+        const secHasProg = sec && prog && sec.toUpperCase().startsWith(prog.toUpperCase());
+        const courseLabel = secHasProg ? sec
+            : prog && yl ? `${prog} ${yl}${sec ? ' - ' + sec : ''}` : (sec || prog || '-');
         const instrDisplay = sess.instructor && sess.instructor !== 'TBA'
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';

@@ -15,7 +15,43 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     _loadUserCard();
     _initGlobalSearch();
+    _showApprovedIdNotice();
 });
+
+
+/* An approved Employee ID change takes effect only when the user confirms it here; until
+   then they keep signing in with the old Employee ID (api_user_accept_employee_id). */
+async function _showApprovedIdNotice() {
+    const el = document.getElementById('approvedIdNotice');
+    if (!el || typeof uiConfirm !== 'function') return;
+    const newId = uiEsc(el.dataset.newId);
+    // Only "Got It": the change is applied now, so from the next sign-in only the new
+    // username works. (If applying fails, the notice comes back on the next page.)
+    await uiAlert({
+        title: 'Your Employee ID change was approved', icon: 'fa-id-card', tone: 'success',
+        html: `The Administrator approved your request. Your Employee ID becomes <strong>${newId}</strong>,
+               and so does your username.
+               <span class="uid-note"><i class="fas fa-circle-info"></i> From your next sign-in, use
+               <strong>${newId}</strong> as your username.</span>`,
+        okText: 'Got It', dismissible: false,
+    });
+    try {
+        const res  = await fetch('/api/user/employee-id/accept', { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({ success: false }));
+        if (!data.success) {
+            return uiAlert({ title: 'Not applied yet', tone: 'error',
+                             message: data.error || 'The change could not be applied. Please try again.' });
+        }
+        el.remove();
+        _profileData = null;
+        await _loadUserCard();
+        await uiAlert({ title: 'Employee ID updated', tone: 'success', okText: 'OK',
+            html: `Your Employee ID and username are now <strong>${uiEsc(data.new_username)}</strong>.
+                   <span class="uid-note"><i class="fas fa-circle-info"></i> Use it the next time you sign in.</span>` });
+    } catch (e) {
+        uiAlert({ title: 'Not applied yet', tone: 'error', message: 'Network error. Please try again.' });
+    }
+}
 
 
 /* ══════════════════════════════════════════════════════
@@ -37,6 +73,7 @@ function openUpDropdown() {
     if (dd)    dd.style.display = 'block';
     if (caret) caret.classList.add('open');
     _upOpen = true;
+    _loadUserCard();   // show the latest name/photo, not what was saved when the page loaded
 }
 function closeUpDropdown() {
     const dd    = document.getElementById('upDropdown');
@@ -57,6 +94,10 @@ async function _loadUserCard() {
         _applyAvatar('updAvatar', null, data.photo_url);
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
         set('updName', data.fullname || data.role || '—');
+        // The header name is rendered with the page; keep it in step with the card
+        // when the name changed after the page loaded (e.g. an approved correction).
+        const navName = document.querySelector('#upWrap .user-name');
+        if (navName && data.fullname) navName.textContent = data.fullname;
         set('updRole', data.role);
         set('updDept', data.specialization ? data.specialization + ' Department' : (data.role === 'Admin' ? 'Administrator' : '—'));
         set('updLastLogin', data.last_login ? 'Last login: ' + data.last_login : 'Last login: —');
@@ -99,7 +140,7 @@ function _applyAvatar(circleId, iconId, photoUrl) {
 const _UP_PANELS = ['profilePanel', 'passwordPanel', 'emailPanel'];
 // Per-panel cleanup when it is hidden: unsaved input is discarded.
 const _UP_PANEL_RESET = {
-    profilePanel:  () => { _pendingPhoto = null; _collapseMyCorrections(); },
+    profilePanel:  () => { _pendingPhoto = null; closeNameEdit(); closeContactEdit(); closeEmploymentEdit(); _collapseMyCorrections(); },
     passwordPanel: () => _pwStop(),
     emailPanel:    () => _emStop(),
 };
@@ -168,41 +209,61 @@ window.addEventListener('pageshow', e => {
 
 
 /* ══════════════════════════════════════════════════════
-   PROFILE SETTINGS PANEL
+   ACADEMIC INFORMATION (PROFILE) PANEL
+   Name: edited here and saved right away. Contact number: saved after the code sent
+   to the account email is entered. Official employment information: read-only here;
+   a wrong value goes through Request Correction (the Admin approves it). It could be
+   edited once, during the first account setup. Photo: saved with Save Changes.
 ══════════════════════════════════════════════════════ */
 let _profileOptions = null;
-let _profileEditable = false;
 let _pendingPhoto = null;   // cropped photo waiting for Save Changes; dropped on Cancel / close
+
+
+async function _loadProfileOptions() {
+    if (_profileOptions) return _profileOptions;
+    try { _profileOptions = await (await fetch('/api/user/options')).json(); }
+    catch (e) { _profileOptions = {}; }
+    return _profileOptions;
+}
 
 
 async function openProfilePanel() {
     _upOpenPanel('profilePanel');
     if (!_profileData) await _loadUserCard();
-    if (!_profileOptions) {
-        try {
-            const res = await fetch('/api/user/options');
-            _profileOptions = await res.json();
-        } catch(e) { _profileOptions = { designations: [], specializations: [] }; }
-    }
+    _renderProfilePanel();
+    _loadProfileOptions();
+}
 
 
+function _renderProfilePanel() {
     const d = _profileData || {};
     const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '—'; };
-    setText('pfFullName',   d.fullname || d.role);
-    setText('pfRole',       d.role);
-    setText('pfEmpId',      d.emp_num);
-    setText('pfFirstName',  d.firstname);
-    setText('pfMiddleName', d.middlename);
-    setText('pfSurname',    d.lastname);
-    setText('pfDesignationText',    d.designation    || 'Not set');
+    const hasFaculty = !!d.emp_num;
+    const fullName = [d.firstname, d.middlename, d.lastname, d.suffix].filter(Boolean).join(' ');
+    setText('pfFullName', d.fullname || d.role);
+    setText('pfRole',     d.role);
+    setText('pfNameValue', fullName || d.fullname || d.role);
+    setText('pfContactValue', d.contact || 'Not provided');
+    setText('pfEmpId',              d.emp_num);
     setText('pfSpecializationText', d.specialization || 'Not set');
+    setText('pfTypeText',           d.employee_type || 'Not set');
+    setText('pfDesignationText',    d.designation || 'No Designation');
     setText('pfStatusText',         d.employment_status || 'Not set');
-    setText('pfEmail',      d.email || 'No email on file');
+    // Only a faculty record has a name to edit and employment information to show.
+    const nameBtn = document.getElementById('pfNameEditBtn');
+    if (nameBtn) nameBtn.hidden = !hasFaculty;
+    const empSec = document.getElementById('pfEmploymentSection');
+    if (empSec) empSec.hidden = !hasFaculty;
+    const desSec = document.getElementById('pfDesignationSection');
+    if (desSec) desSec.hidden = !d.designation && d.employee_type !== 'Designee';
+    // One self-edit after setup; once it is used, Request Correction takes its place.
+    const empEdit = document.getElementById('pfEmpEditBtn');
+    const reqBtn  = document.getElementById('pfRequestCorrectionBtn');
+    if (empEdit) empEdit.hidden = !d.employment_edit_available;
+    if (reqBtn)  reqBtn.hidden  = !!d.employment_edit_available;
+
     const pending = document.getElementById('pfPhotoPending');
     if (pending) pending.hidden = true;
-
-
-    /* Photo */
     const photoImg  = document.getElementById('profilePhotoImg');
     const photoIcon = document.getElementById('profilePhotoIcon');
     if (d.photo_url) {
@@ -212,111 +273,18 @@ async function openProfilePanel() {
         photoImg.style.display = 'none';
         if (photoIcon) photoIcon.style.display = '';
     }
-
-
-    /* Designation dropdown — hide section if no faculty record */
-    const desSec = document.getElementById('pfDesignationSection');
-    const specSec = document.getElementById('pfSpecializationSection');
-    const statusSec = document.getElementById('pfStatusSection');
-    const hasFaculty = !!d.emp_num;
-
-
-    if (desSec)    desSec.style.display    = hasFaculty ? '' : 'none';
-    if (specSec)   specSec.style.display   = hasFaculty ? '' : 'none';
-    if (statusSec) statusSec.style.display = hasFaculty ? '' : 'none';
-
-
-    const desSel = document.getElementById('pfDesignation');
-    if (desSel) {
-        desSel.innerHTML = '<option value="">— None —</option>';
-        (_profileOptions?.designations || []).forEach(des => {
-            const opt = document.createElement('option');
-            opt.value = des.designationid; opt.textContent = des.designationname;
-            if (des.designationid === d.designation_id) opt.selected = true;
-            desSel.appendChild(opt);
-        });
-    }
-
-
-    const specSel = document.getElementById('pfSpecialization');
-    if (specSel) {
-        specSel.innerHTML = '<option value="">— None —</option>';
-        (_profileOptions?.specializations || []).forEach(sp => {
-            const opt = document.createElement('option');
-            opt.value = sp.specializationid; opt.textContent = sp.specializationname;
-            if (sp.specializationid === d.specialization_id) opt.selected = true;
-            specSel.appendChild(opt);
-        });
-    }
-
-
-    const statusSel = document.getElementById('pfStatus');
-    if (statusSel) {
-        statusSel.value = d.employment_status || 'Permanent';
-        // If the DB value doesn't match any option (e.g. blank/unrecognized), fall back
-        // to the first real option instead of leaving the select on nothing.
-        if (!statusSel.value) statusSel.value = 'Permanent';
-    }
-
-
     _pendingPhoto = null;
-    _applyProfileEditLock(d.profile_editable !== false, d.photo_editable !== false);
-}
-
-
-/* Profile Settings (Designation/Specialization/Employment Status/Photo) is temporarily
-   locked for every role while the feature is reworked — see _PROFILE_SELF_EDIT_ENABLED
-   in app.py, which api_user_me reflects here as profile_editable. Employee ID and the
-   name fields are always read-only regardless (they come from HR/import data, not
-   self-edit). Re-enabling the backend flag alone won't restore the UI — this still
-   needs to see profile_editable: true from the API. */
-function _applyProfileEditLock(editable, photoEditable = editable) {
-    _profileEditable = editable;
-    // Locked: show the values as plain text. Editable: show the dropdowns instead.
-    ['pfDesignation', 'pfSpecialization', 'pfStatus'].forEach(id => {
-        const sel  = document.getElementById(id);
-        const text = document.getElementById(id + 'Text');
-        if (sel)  { sel.disabled = !editable; sel.hidden = !editable; }
-        if (text) text.hidden = editable;
-    });
-    const lockTag = document.getElementById('pfLockTag');
-    if (lockTag) lockTag.hidden = editable;
-
-
-    // The profile picture is the user's own and stays changeable even while the
-    // HR-sourced fields above are locked (server: api_user_me.photo_editable).
-    const photoBtn   = document.getElementById('pfChangePhotoBtn');
-    const photoInput = document.getElementById('profilePhotoInput');
-    if (photoInput) photoInput.disabled = !photoEditable;
-    if (photoBtn) {
-        photoBtn.classList.toggle('disabled', !photoEditable);
-        photoBtn.style.pointerEvents = photoEditable ? '' : 'none';
-        photoBtn.style.opacity       = photoEditable ? '' : '0.5';
-    }
-
-
     _syncProfileSaveBtn();
-
-
-    const notice = document.getElementById('pfNotice');
-    if (notice) {
-        notice.textContent = editable
-            ? 'Changes will be reflected across the system.'
-            : (photoEditable
-                ? (document.getElementById('pfRequestCorrectionBtn')
-                    ? 'Official information is kept by the Administrator. If something is wrong, use Request Correction above.'
-                    : 'Official information is kept by the Administrator.')
-                : 'Profile editing is temporarily unavailable — this section is being reworked.');
-    }
 }
 
 
-/* Save Changes is usable when the profile fields are editable, or when there is a
-   cropped photo waiting to be saved (the photo stays changeable while the fields are locked). */
+const _empEditOpen = () => { const f = document.getElementById('pfEmpForm'); return !!f && !f.hidden; };
+
+/* Save Changes saves what is waiting: a cropped photo and/or the open employment edit. */
 function _syncProfileSaveBtn() {
     const saveBtn = document.getElementById('pfSaveBtn');
     if (!saveBtn) return;
-    const enabled = _profileEditable || !!_pendingPhoto;
+    const enabled = !!_pendingPhoto || _empEditOpen();
     saveBtn.disabled = !enabled;
     saveBtn.style.opacity = enabled ? '' : '0.5';
     saveBtn.style.cursor  = enabled ? '' : 'not-allowed';
@@ -329,40 +297,87 @@ function closeProfilePanel() {
 
 
 async function saveProfile() {
-    const btn  = document.querySelector('#profilePanel .up-btn-save');
+    const empOpen = _empEditOpen();
+    if (!_pendingPhoto && !empOpen) return;
+    const btn  = document.getElementById('pfSaveBtn');
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
+        // The employment edit first: it asks for confirmation, and Go Back saves nothing.
+        let emp = null;
+        if (empOpen) {
+            emp = await saveEmployment();
+            if (!emp) return;
+        }
         if (_pendingPhoto) {
             const pfd = new FormData(); pfd.append('photo', _pendingPhoto, 'profile.jpg');
             const res  = await fetch('/api/user/photo/upload', { method: 'POST', body: pfd });
             const data = await res.json();
-            if (!data.success) { alert(data.error || 'Photo upload failed.'); return; }
+            if (!data.success) {
+                uiAlert({ title: 'Photo not saved', tone: 'error', message: data.error || 'Photo upload failed.' });
+                return;
+            }
             _pendingPhoto = null;
-        }
-        if (_profileEditable) {
-            const fd = new FormData();
-            fd.append('designation_id',    document.getElementById('pfDesignation')?.value    || '');
-            fd.append('specialization_id', document.getElementById('pfSpecialization')?.value || '');
-            fd.append('employment_status', document.getElementById('pfStatus')?.value         || '');
-            const res  = await fetch('/api/user/profile/update', { method: 'POST', body: fd });
-            const data = await res.json();
-            if (!data.success) { alert(data.error || 'Failed to save profile.'); return; }
         }
         _profileData = null;
         await _loadUserCard();
         closeProfilePanel();
-        _showUpToast('Profile updated successfully.');
-    } catch(e) { alert('Error: ' + e.message); }
+        if (emp && emp.new_username)
+            await uiAlert({ title: 'Saved', tone: 'success', okText: 'Got It',
+                html: `Your username is now <strong>${uiEsc(emp.new_username)}</strong>.
+                       <span class="uid-note"><i class="fas fa-circle-info"></i> Take note of it &mdash; use it to
+                       sign in from now on.</span>` });
+        else
+            _showUpToast(emp ? 'Employment information updated.' : 'Profile photo updated successfully.');
+    } catch(e) { uiAlert({ title: 'Not saved', tone: 'error', message: 'Network error. Please try again.' }); }
     finally { btn.textContent = orig; _syncProfileSaveBtn(); }
 }
 
+
+/* Camera button: Choose from Files / Take a Photo. */
+function togglePhotoMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('pfPhotoMenu');
+    if (!menu) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    document.getElementById('pfChangePhotoBtn')?.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('button')?.focus();
+}
+function _closePhotoMenu() {
+    const menu = document.getElementById('pfPhotoMenu');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    document.getElementById('pfChangePhotoBtn')?.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', e => { if (!e.target.closest('#pfPhotoMenu, #pfChangePhotoBtn')) _closePhotoMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closePhotoMenu(); });
+
+function pfChooseFile() {
+    _closePhotoMenu();
+    document.getElementById('profilePhotoInput')?.click();
+}
+
+async function pfTakePhoto() {
+    _closePhotoMenu();
+    if (typeof takeCameraPhoto !== 'function') return pfChooseFile();
+    const file = await takeCameraPhoto();
+    if (file) await _usePickedPhoto(file);
+}
 
 async function handlePhotoUpload(input) {
     const file = input.files[0];
     if (!file) return;
     input.value = '';   // so picking the same file again still fires onchange
-    if (file.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); return; }
+    await _usePickedPhoto(file);
+}
+
+/* A picked or captured photo: fit it to the circle, then show it until Save Changes. */
+async function _usePickedPhoto(file) {
+    if (file.size > 2 * 1024 * 1024 && !/^camera\./.test(file.name)) {
+        uiAlert({ title: 'Photo too large', tone: 'error', message: 'Please choose a JPG or PNG up to 2 MB.' });
+        return;
+    }
     // Let the user fit the picture to the avatar circle before it is uploaded.
     const cropped = await openPhotoCropper(file);
     if (!cropped) return;
@@ -375,6 +390,254 @@ async function handlePhotoUpload(input) {
     const pending = document.getElementById('pfPhotoPending');
     if (pending) pending.hidden = false;
     _syncProfileSaveBtn();
+}
+
+
+/* ── Name (saved right away) ── */
+async function openNameEdit() {
+    closeContactEdit();
+    const d = _profileData || {};
+    const opts = await _loadProfileOptions();
+    const suffixes = opts.name_suffixes || ['', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V'];
+    const list = suffixes.includes(d.suffix || '') ? suffixes : [...suffixes, d.suffix];
+    const sel = document.getElementById('pfSuffix');
+    sel.innerHTML = list.map(s => `<option value="${_escAttr(s)}">${s ? _esc(s) : 'No suffix'}</option>`).join('');
+    sel.value = d.suffix || '';
+    document.getElementById('pfFirst').value  = d.firstname || '';
+    document.getElementById('pfMiddle').value = d.middlename || '';
+    document.getElementById('pfLast').value   = d.lastname || '';
+    _upShowError('pfNameError', '');
+    document.getElementById('pfNameForm').hidden = false;
+    document.getElementById('pfNameEditBtn').hidden = true;
+    document.getElementById('pfFirst').focus();
+}
+
+function closeNameEdit() {
+    const form = document.getElementById('pfNameForm');
+    if (!form || form.hidden) return;
+    form.hidden = true;
+    document.getElementById('pfNameEditBtn').hidden = !(_profileData && _profileData.emp_num);
+}
+
+async function saveName() {
+    const val = id => document.getElementById(id).value.trim();
+    const body = { 'First Name': val('pfFirst'), 'Middle Name': val('pfMiddle'),
+                   'Last Name': val('pfLast'), 'Suffix': document.getElementById('pfSuffix').value };
+    if (!body['First Name']) return _upShowError('pfNameError', 'Please enter your First Name.');
+    if (!body['Last Name'])  return _upShowError('pfNameError', 'Please enter your Last Name.');
+    const btn = document.getElementById('pfNameSave'), orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+        const res  = await fetch('/api/user/name', { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json().catch(() => ({ success: false }));
+        if (!data.success) return _upShowError('pfNameError', data.error || 'Your name could not be saved.');
+        closeNameEdit();
+        await _loadUserCard();      // also updates the name in the header
+        _renderProfilePanel();
+        _showUpToast('Name updated successfully.');
+    } catch (e) {
+        _upShowError('pfNameError', 'Network error. Please try again.');
+    } finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+
+/* ── Official employment information: the one self-edit after setup ── */
+function _fillSelect(id, values, current, blankLabel) {
+    const sel = document.getElementById(id);
+    const list = values.includes(current) || !current ? values : [current, ...values];
+    sel.innerHTML = (blankLabel !== undefined ? `<option value="">${_esc(blankLabel)}</option>` : '') +
+        list.map(v => `<option value="${_escAttr(v)}">${_esc(v)}</option>`).join('');
+    sel.value = current || '';
+}
+
+function _syncEmpIdNote() {
+    const d = _profileData || {};
+    const v = document.getElementById('pfEmpIdNew').value.trim();
+    const note = document.getElementById('pfEmpIdNote');
+    const changed = v && v !== d.emp_num;
+    note.innerHTML = changed
+        ? `<strong>Take note:</strong> your username will also change to <strong>${_esc(v)}</strong>. ` +
+          `Use it to sign in from now on.`
+        : 'Your Employee ID is also your username. Changing it changes your username too.';
+    note.style.color = changed ? '#a15c00' : '';
+}
+
+function _syncEmpDesignation() {
+    const opts = _profileOptions || {};
+    const designee = document.getElementById('pfTypeNew').value === (opts.designee_type || 'Designee');
+    document.getElementById('pfDesWrap').hidden = !designee;
+}
+
+async function openEmploymentEdit() {
+    closeNameEdit(); closeContactEdit();
+    const d = _profileData || {};
+    const o = await _loadProfileOptions();
+    document.getElementById('pfEmpIdNew').value = d.emp_num || '';
+    _fillSelect('pfSpecNew', (o.specializations || []).filter(x => x.isactive !== false).map(x => x.specializationname),
+                d.specialization);
+    _fillSelect('pfTypeNew', o.employment_types || [], d.employee_type);
+    _fillSelect('pfDesNew', (o.designations || []).map(x => x.designationname), d.designation, 'No Designation');
+    _fillSelect('pfStatusNew', o.employment_statuses || [], d.employment_status);
+    _syncEmpIdNote(); _syncEmpDesignation();
+    _upShowError('pfEmpError', '');
+    document.getElementById('pfEmpForm').hidden = false;
+    document.getElementById('pfEmpEditBtn').hidden = true;
+    _syncProfileSaveBtn();
+    document.getElementById('pfEmpIdNew').focus();
+}
+
+function closeEmploymentEdit() {
+    const form = document.getElementById('pfEmpForm');
+    if (!form || form.hidden) return;
+    form.hidden = true;
+    const btn = document.getElementById('pfEmpEditBtn');
+    if (btn) btn.hidden = !(_profileData && _profileData.employment_edit_available);
+    _syncProfileSaveBtn();
+}
+
+/* Called by Save Changes. Returns the server's answer on success, or null (nothing saved). */
+async function saveEmployment() {
+    const d = _profileData || {};
+    const val = id => document.getElementById(id).value.trim();
+    const body = { 'Employee ID': val('pfEmpIdNew'), 'Specialization': val('pfSpecNew'),
+                   'Employment Type': val('pfTypeNew'), 'Employment Status': val('pfStatusNew'),
+                   'Designation': document.getElementById('pfDesWrap').hidden ? '' : val('pfDesNew') };
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,29}$/.test(body['Employee ID'])) {
+        _upShowError('pfEmpError', 'Please enter a valid Employee ID: up to 30 letters, numbers or hyphens.');
+        return null;
+    }
+    const unchanged = body['Employee ID'] === (d.emp_num || '') && body['Specialization'] === (d.specialization || '') &&
+        body['Employment Type'] === (d.employee_type || '') && body['Employment Status'] === (d.employment_status || '') &&
+        body['Designation'] === (d.designation || '');
+    if (unchanged) { _upShowError('pfEmpError', 'Nothing was changed.'); return null; }
+    const idChanged = body['Employee ID'] !== d.emp_num;
+    const newId = uiEsc(body['Employee ID']);
+    const ok = await uiConfirm({
+        title: idChanged ? 'Your username will change' : 'Save your one-time edit?',
+        html: 'You can save this <strong>only once</strong>. After that, changes go through Request Correction.' +
+              (idChanged ? `<span class="uid-note"><i class="fas fa-circle-info"></i> Your Employee ID changes to
+                            <strong>${newId}</strong>, so your username also becomes <strong>${newId}</strong>.
+                            Take note of it &mdash; you will use it to sign in from now on.</span>` : ''),
+        confirmText: 'Save Changes', cancelText: 'Go Back', icon: idChanged ? 'fa-id-card' : 'fa-pen',
+    });
+    if (!ok) return null;
+    _upShowError('pfEmpError', '');
+    const res  = await fetch('/api/user/employment', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({ success: false }));
+    if (!data.success) {
+        _upShowError('pfEmpError', data.error || 'Your changes could not be saved.');
+        return null;
+    }
+    return data;
+}
+
+
+/* ── Contact number (saved after the emailed code) ── */
+let _ctSentFor = '';        // the number the last code was sent for (as typed)
+let _ctResendTimer = null;
+
+function openContactEdit() {
+    closeNameEdit();
+    _ctStop();
+    const hasEmail = !!(_profileData && _profileData.email);
+    document.getElementById('pfContactNoEmail').hidden = hasEmail;
+    ['pfContactNew', 'pfContactCode', 'pfContactSend', 'pfContactSave'].forEach(id => {
+        document.getElementById(id).disabled = !hasEmail;
+    });
+    document.getElementById('pfContactForm').hidden = false;
+    document.getElementById('pfContactBtn').hidden = true;
+    if (hasEmail) document.getElementById('pfContactNew').focus();
+}
+
+function _ctStop() {
+    if (_ctResendTimer) { clearInterval(_ctResendTimer); _ctResendTimer = null; }
+    _ctSentFor = '';
+    ['pfContactNew', 'pfContactCode'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const send = document.getElementById('pfContactSend');
+    if (send) { send.disabled = false; _upBtnLabel(send, 'Send Code'); }
+    const hint = document.getElementById('pfContactHint');
+    if (hint) hint.textContent = 'A Philippine mobile number like 09123456789, or +country code for another country. A 6-digit code will be sent to your email.';
+    _upShowError('pfContactError', '');
+}
+
+function closeContactEdit() {
+    const form = document.getElementById('pfContactForm');
+    if (!form || form.hidden) return;
+    _ctStop();
+    form.hidden = true;
+    document.getElementById('pfContactBtn').hidden = false;
+}
+
+function _ctStartCooldown(seconds) {
+    const btn = document.getElementById('pfContactSend');
+    if (_ctResendTimer) clearInterval(_ctResendTimer);
+    let left = Math.max(0, Math.ceil(seconds || 0));
+    const tick = () => {
+        if (left <= 0) {
+            clearInterval(_ctResendTimer); _ctResendTimer = null;
+            btn.disabled = false; _upBtnLabel(btn, 'Resend Code');
+            return;
+        }
+        btn.disabled = true; _upBtnLabel(btn, `Resend (${_fmtCountdown(left)})`);
+        left -= 1;
+    };
+    tick();
+    _ctResendTimer = setInterval(tick, 1000);
+}
+
+async function requestContactCode() {
+    const contact = document.getElementById('pfContactNew').value.trim();
+    const btn = document.getElementById('pfContactSend');
+    _upShowError('pfContactError', '');
+    if (!contact) return _upShowError('pfContactError', 'Please enter your new contact number first.');
+    btn.disabled = true; _upBtnLabel(btn, 'Sending…');
+    try {
+        const data = await _upPost('/api/user/contact/request-code', { contact });
+        if (data.success) {
+            _ctSentFor = contact;
+            document.getElementById('pfContactHint').textContent =
+                `We sent a 6-digit code to ${data.email_masked}. It expires in ${data.expires_in_minutes} minutes and can only be used once.`;
+            _ctStartCooldown(data.resend_after);
+            document.getElementById('pfContactCode').value = '';
+            document.getElementById('pfContactCode').focus();
+            return;
+        }
+        _upShowError('pfContactError', data.message || 'Could not send the verification code.');
+        if (data.error === 'too_soon') return _ctStartCooldown(data.retry_after);
+    } catch (e) {
+        _upShowError('pfContactError', 'Network error. Please try again.');
+    }
+    btn.disabled = false; _upBtnLabel(btn, _ctSentFor ? 'Resend Code' : 'Send Code');
+}
+
+async function saveContact() {
+    const contact = document.getElementById('pfContactNew').value.trim();
+    const code    = document.getElementById('pfContactCode').value.trim();
+    _upShowError('pfContactError', '');
+    if (!_ctSentFor) return _upShowError('pfContactError', 'Click Send Code to get a verification code first.');
+    if (contact !== _ctSentFor)
+        return _upShowError('pfContactError', `The code was sent for ${_ctSentFor}. Send a new code to use this number instead.`);
+    if (!/^\d{6}$/.test(code)) return _upShowError('pfContactError', 'Enter the 6-digit code from the email.');
+    const btn = document.getElementById('pfContactSave'), orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+        const data = await _upPost('/api/user/contact/update', { contact, code });
+        if (data.success) {
+            if (_profileData) _profileData.contact = data.contact;
+            closeContactEdit();
+            _renderProfilePanel();
+            _showUpToast('Contact number updated successfully.');
+            return;
+        }
+        if (['too_many_attempts', 'code_expired', 'no_code'].includes(data.error)) {
+            document.getElementById('pfContactCode').value = ''; _ctSentFor = '';
+        }
+        _upShowError('pfContactError', data.message || 'Failed to update the contact number.');
+    } catch (e) {
+        _upShowError('pfContactError', 'Network error. Please try again.');
+    } finally { btn.disabled = false; btn.textContent = orig; }
 }
 
 
@@ -742,9 +1005,10 @@ function closeEmailPanel() { _upClosePanel(); }
 function _crStatusText(r) {
     if (r.status === 'Pending')  return 'Awaiting Administrator review.';
     if (r.status === 'Rejected') return 'Rejected by the Administrator.';
-    return r.field === 'Employee ID'
-        ? 'Approved. The Administrator updates your Employee ID in Faculty Management.'
-        : 'Approved. Your official record was updated.';
+    if (r.field !== 'Employee ID') return 'Approved. Your official record was updated.';
+    return r.applied
+        ? `Approved. Your Employee ID is now ${r.proposed}, and so is your username — use it to sign in.`
+        : `Approved. Confirm it in the notice shown after you sign in; then use ${r.proposed} to sign in.`;
 }
 
 function _collapseMyCorrections() {
@@ -794,41 +1058,39 @@ async function toggleMyCorrections() {
 
 
 /* ══════════════════════════════════════════════════════
-   REQUEST CORRECTION — pop-up opened from Profile Settings > Official Information.
-   Same request (and server validation) as the account-setup Review step; the
-   Administrator reviews it and the record changes only once it is approved.
+   REQUEST CORRECTION — pop-up opened from Academic Information > Official Employment
+   Information. The Administrator reviews it and the record changes only once it is
+   approved. (The name is edited directly, so it is not part of a request.)
 ══════════════════════════════════════════════════════ */
-const _CRM_SUFFIXES = ['', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V'];
 const _escAttr = s => _esc(s).replace(/"/g, '&quot;');
 let _crmCurrent = {};
 
 function _crmFieldsFor(key) {
-    return { empid: ['Employee ID'], name: ['First Name', 'Middle Name', 'Last Name', 'Suffix'],
-             designation: ['Designation'], specialization: ['Specialization'] }[key];
+    return { empid: ['Employee ID'], specialization: ['Specialization'], type: ['Employment Type'],
+             status: ['Employment Status'], designation: ['Designation'] }[key];
 }
 
 function _crmItemHtml(key, label, icon, currentText, pending) {
     const allPending = _crmFieldsFor(key).every(f => pending.has(f));
     let proposed = '';
-    if (key === 'name') {
-        const sfx = _CRM_SUFFIXES.includes(_crmCurrent['Suffix']) ? _CRM_SUFFIXES : [..._CRM_SUFFIXES, _crmCurrent['Suffix']];
-        proposed = `<div class="crm-proposed-label">Proposed Full Name</div><div class="crm-grid">` +
-            ['First Name', 'Middle Name', 'Last Name'].map(f =>
-                `<input type="text" data-field="${f}" maxlength="60" placeholder="${f}" aria-label="Proposed ${f}"
-                        value="${_escAttr(_crmCurrent[f])}" ${pending.has(f) ? 'disabled' : ''}>`).join('') +
-            `<select data-field="Suffix" aria-label="Proposed suffix (optional)" ${pending.has('Suffix') ? 'disabled' : ''}>` +
-            sfx.map(s => `<option value="${_escAttr(s)}" ${s === _crmCurrent['Suffix'] ? 'selected' : ''}>${s ? _esc(s) : 'No suffix'}</option>`).join('') +
-            `</select></div>`;
-    } else if (key === 'empid') {
+    if (key === 'empid') {
         proposed = `<div class="crm-proposed-label">Proposed Employee ID</div>
-            <input type="text" data-field="Employee ID" maxlength="30" placeholder="Enter correct Employee ID">
-            <div class="crm-warn"><i class="fas fa-triangle-exclamation"></i> Employee ID is a sensitive identifier. The Administrator checks and updates it by hand.</div>`;
+            <input type="text" data-field="Employee ID" maxlength="30" placeholder="Enter correct Employee ID"
+                   autocomplete="off" data-lpignore="true" data-form-type="other" readonly
+                   onfocus="this.removeAttribute('readonly')">
+            <div class="crm-warn"><i class="fas fa-triangle-exclamation"></i> Your Employee ID is also your username. If the Administrator approves this, you will sign in with the new Employee ID.</div>`;
     } else {
-        const opts = key === 'designation'
-            ? (_profileOptions?.designations || []).map(o => o.designationname)
-            : (_profileOptions?.specializations || []).filter(o => o.isactive !== false).map(o => o.specializationname);
+        const o = _profileOptions || {};
+        const opts = {
+            designation:    (o.designations || []).map(x => x.designationname),
+            specialization: (o.specializations || []).filter(x => x.isactive !== false).map(x => x.specializationname),
+            type:           o.employment_types || [],
+            status:         o.employment_statuses || [],
+        }[key];
+        // The first option is the "choose" prompt; a Designation can also be corrected to none.
         proposed = `<div class="crm-proposed-label">Proposed ${label}</div>
-            <select data-field="${label}"><option value="">Select correct ${label.toLowerCase()}</option>` +
+            <select data-field="${label}"><option value="" selected>Select correct ${label.toLowerCase()}</option>` +
+            (key === 'designation' ? `<option value="">No Designation</option>` : '') +
             opts.map(n => `<option value="${_escAttr(n)}">${_esc(n)}</option>`).join('') + `</select>`;
     }
     return `<div class="crm-item" data-key="${key}">
@@ -866,10 +1128,7 @@ async function openCorrectionModal() {
     document.body.style.overflow = 'hidden';
 
     if (!_profileData) await _loadUserCard();
-    if (!_profileOptions) {
-        try { _profileOptions = await (await fetch('/api/user/options')).json(); }
-        catch (e) { _profileOptions = { designations: [], specializations: [] }; }
-    }
+    await _loadProfileOptions();
     let pending = new Set();
     try {
         const d = await (await fetch('/api/user/correction-requests', { credentials: 'same-origin' })).json();
@@ -877,18 +1136,22 @@ async function openCorrectionModal() {
     } catch (e) { /* the server still refuses a duplicate pending field */ }
 
     const p = _profileData || {};
-    _crmCurrent = { 'Employee ID': p.emp_num || '', 'First Name': p.firstname || '', 'Middle Name': p.middlename || '',
-                    'Last Name': p.lastname || '', 'Suffix': p.suffix || '',
-                    'Designation': p.designation || '', 'Specialization': p.specialization || '' };
-    const fullName = [p.firstname, p.middlename, p.lastname, p.suffix].filter(Boolean).join(' ');
+    _crmCurrent = { 'Employee ID': p.emp_num || '', 'Specialization': p.specialization || '',
+                    'Employment Type': p.employee_type || '', 'Employment Status': p.employment_status || '',
+                    'Designation': p.designation || '' };
     document.getElementById('crmItems').innerHTML =
         _crmItemHtml('empid', 'Employee ID', 'fa-id-card', p.emp_num, pending) +
-        _crmItemHtml('name', 'Full Name', 'fa-user', fullName, pending) +
-        _crmItemHtml('designation', 'Designation', 'fa-briefcase', p.designation, pending) +
-        _crmItemHtml('specialization', 'Specialization', 'fa-graduation-cap', p.specialization, pending);
+        _crmItemHtml('specialization', 'Specialization', 'fa-graduation-cap', p.specialization, pending) +
+        _crmItemHtml('type', 'Employment Type', 'fa-briefcase', p.employee_type, pending) +
+        _crmItemHtml('status', 'Employment Status', 'fa-user-clock', p.employment_status, pending) +
+        _crmItemHtml('designation', 'Designation', 'fa-sitemap', p.designation || 'No Designation', pending);
     document.querySelectorAll('#crmItems .crm-ok input').forEach(box => box.addEventListener('change', () => {
         const item = box.closest('.crm-item');
         item.classList.toggle('changing', !box.checked);
+        // Start from an empty proposal (never a value the browser filled in).
+        if (!box.checked) item.querySelectorAll('.crm-proposed input[data-field]').forEach(inp => {
+            if (inp.value.trim() === (_crmCurrent[inp.dataset.field] || '')) inp.value = '';
+        });
         if (!box.checked) item.querySelector('.crm-proposed [data-field]:not(:disabled)')?.focus();
         _upShowError('crmError', '');
         _crmSync();
@@ -917,8 +1180,9 @@ function _crmCollect() {
         for (const el of item.querySelectorAll('.crm-proposed [data-field]')) {
             if (el.disabled) continue;
             const field = el.dataset.field, value = el.value.trim();
+            if (el.tagName === 'SELECT' && el.selectedIndex === 0) return [null, `Please choose the correct ${field}.`];
             if (value === (_crmCurrent[field] || '')) continue;
-            if (!value && !['Middle Name', 'Suffix'].includes(field)) return [null, `Please enter the correct ${field}.`];
+            if (!value && field !== 'Designation') return [null, `Please enter the correct ${field}.`];
             items.push({ field_name: field, proposed_value: value });
             changed++;
         }

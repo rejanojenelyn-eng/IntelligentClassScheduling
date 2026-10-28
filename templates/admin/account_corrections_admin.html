@@ -121,7 +121,6 @@
     .acr-modal-body textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: inherit; resize: vertical; }
     .acr-modal-body textarea:focus { outline: none; border-color: #800000; }
     .acr-field-error { color: #b22222; font-size: 12px; font-weight: 600; margin-top: 6px; display: none; }
-    .acr-confirm-box { display: none; background: #eef7ef; color: #1e5b26; font-size: 13px; padding: 10px 12px; border-radius: 6px; margin-top: 12px; }
     .acr-modal-footer { padding: 14px 22px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #f0f0f0; flex-wrap: wrap; }
     .acr-btn { padding: 10px 18px; border-radius: 6px; font-size: 12px; font-weight: 800; cursor: pointer; border: none; text-transform: uppercase; }
     .acr-btn-cancel  { background: #e9ecef; color: #495057; }
@@ -237,7 +236,9 @@
                 <tr>
                     <td data-label="Employee ID">{{ r.employeenumber or '—' }}</td>
                     <td data-label="Faculty">{{ faculty_name(r) }}</td>
-                    <td data-label="Field">{{ r.field_name }}</td>
+                    <td data-label="Field">{{ r.field_name }}
+                        {% if r.field_name == 'Employee ID' %}<span class="cell-sub" style="color:#a15c00;font-weight:700;">
+                            <i class="fas fa-triangle-exclamation"></i> Also changes their username</span>{% endif %}</td>
                     <td data-label="Current" class="val-current">{{ r.current_value or '—' }}</td>
                     <td data-label="Proposed" class="val-proposed">{{ r.proposed_value or '(blank)' }}</td>
                     <td data-label="Status"><span class="status-pill status-{{ r.status }}">{{ r.status }}</span></td>
@@ -315,8 +316,10 @@
                 <span class="acr-label">Reason for correction</span>
                 <div class="acr-reason" id="rvReason"></div>
                 <div class="acr-warn" id="rvEmpIdNote" style="display:none;">
-                    <i class="fas fa-triangle-exclamation"></i> Employee ID is linked to schedules and accounts, so approving
-                    only records the decision. Update the ID yourself in Faculty Management.
+                    <i class="fas fa-triangle-exclamation"></i> <strong>The Employee ID is also this faculty member's username.</strong>
+                    Approving does not change it yet: the next time they sign in, they are asked to confirm it. Once
+                    they do, their record, schedules and loads move to <strong id="rvEmpIdNew"></strong>, which becomes
+                    their username. Until then they keep signing in with their current one.
                 </div>
 
                 <div id="rvDecided" style="display:none;">
@@ -331,9 +334,6 @@
                     <label class="acr-label" for="rvRemarks" id="rvRemarksLabel">Remarks (optional for approval, required for rejection)</label>
                     <textarea name="admin_remarks" id="rvRemarks" rows="3" maxlength="1000" placeholder="Notes for the faculty member and the record"></textarea>
                     <div class="acr-field-error" id="rvRemarksError">Please give a reason for rejecting this request.</div>
-                </div>
-                <div class="acr-confirm-box" id="rvConfirmBox">
-                    <i class="fas fa-circle-check"></i> <span id="rvConfirmText"></span>
                 </div>
             </div>
             <div class="acr-modal-footer">
@@ -364,7 +364,6 @@
         },
         {% endfor %}
     };
-    let _acrConfirming = null;   // 'Approved' once the Admin has been asked to confirm
 
     function _set(id, text) { document.getElementById(id).textContent = text; }
     function _show(id, on) { document.getElementById(id).style.display = on ? '' : 'none'; }
@@ -389,6 +388,7 @@
         if (drift) _set('rvDrift', 'Heads up: the value on file is now "' + (r.live || '—') +
                                    '", not the value the faculty member saw when they submitted this request.');
         _show('rvEmpIdNote', pending && r.field === 'Employee ID');
+        _set('rvEmpIdNew', r.proposed);
         _show('rvDecided', !pending);
         _set('rvDecidedBy', r.decidedBy); _set('rvDecidedAt', r.decidedAt); _set('rvAdminRemarks', r.adminRemarks);
         _show('rvRemarksWrap', pending);
@@ -399,8 +399,7 @@
     }
 
     function _resetConfirm() {
-        _acrConfirming = null;
-        _show('rvConfirmBox', false); _show('rvRemarksError', false);
+        _show('rvRemarksError', false);
         _set('rvApproveBtn', 'Approve Request'); _set('rvRejectBtn', 'Reject Request');
         ['rvApproveBtn', 'rvRejectBtn'].forEach(b => document.getElementById(b).disabled = false);
     }
@@ -417,17 +416,9 @@
                 document.getElementById('rvRemarks').focus();
                 e.preventDefault(); return false;
             }
-        } else if (_acrConfirming !== 'Approved') {
-            // First click asks for confirmation; the second click submits.
-            _acrConfirming = 'Approved';
-            const r = ACR_REQUESTS[document.getElementById('acrDecisionForm').action.match(/(\d+)\/decide$/)[1]];
-            _set('rvConfirmText', r.field === 'Employee ID'
-                ? 'Approve this request? The Employee ID itself will not be changed automatically.'
-                : 'Approve and change ' + r.field + ' on the faculty record to "' + (r.proposed || '(blank)') + '"?');
-            _show('rvConfirmBox', true);
-            _set('rvApproveBtn', 'Yes, Approve');
-            e.preventDefault(); return false;
         }
+        // One click: the review window itself (current → proposed value, reason, notes) is the
+        // confirmation, so Approve Request decides right away.
         document.getElementById('acrDecisionInput').value = decision;
         // Guard against a double submit while the page reloads.
         setTimeout(() => ['rvApproveBtn', 'rvRejectBtn'].forEach(b => document.getElementById(b).disabled = true), 0);

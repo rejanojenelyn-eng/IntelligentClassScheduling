@@ -155,6 +155,8 @@
     {% macro locked_note(field, pending_by_field) -%}
         {%- if field in pending_by_field -%}
         <div class="ed-hint"><i class="fas fa-hourglass-half"></i> A correction request you sent earlier is waiting for the Administrator, so this can be edited once it is decided.</div>
+        {%- elif employment_locked -%}
+        <div class="ed-hint"><i class="fas fa-lock"></i> You already used your account-setup edit. If it is wrong, change it in Academic Information after setup (one edit), or use Request Correction.</div>
         {%- else -%}
         <div class="ed-hint"><i class="fas fa-circle-exclamation"></i> Editing isn't available right now. Please try again later or contact the Administrator.</div>
         {%- endif -%}
@@ -240,22 +242,38 @@
     <section class="rv-panel" aria-labelledby="offTitle">
         <div class="rv-panel-head">
             <span class="rv-panel-title" id="offTitle"><i class="fas fa-briefcase"></i> Employment Information</span>
+            {% if employment_locked %}
+            <span class="rv-tag" style="background:#f1f1f3;color:#666;"><i class="fas fa-lock"></i> SETUP EDIT USED</span>
+            {% else %}
             <span class="rv-tag"><i class="fas fa-pen"></i> YOU CAN EDIT</span>
+            {% endif %}
         </div>
         <div class="rv-panel-body">
             <p class="rv-explain"><i class="fas fa-circle-info"></i>
-                Edit anything that is wrong before you confirm. A Designation is only for the
-                <strong>{{ designee_type }}</strong> employment type.</p>
+                {% if employment_locked %}
+                You already used your account-setup edit of this information. If something is wrong, you can
+                change it once in Academic Information after setup; after that, use Request Correction.
+                {% else %}
+                Edit anything that is wrong before you confirm. You can edit this information twice in all:
+                here, and once more in Academic Information after setup. After that, changes go through
+                Request Correction. A Designation is only for the <strong>{{ designee_type }}</strong> employment type.
+                {% endif %}</p>
             <div class="ed-row">
                 <div class="ed-main">
                     <div class="of-label">Employee ID</div>
                     <div class="of-value">{{ info['Employee ID'] }}</div>
+                    {% if new_username %}
+                    <p class="ot-note" role="note"><i class="fas fa-triangle-exclamation"></i>
+                        <strong>Take note:</strong> when you press Save and Confirm, your username also becomes
+                        <strong>{{ new_username }}</strong>. Use it to sign in from now on.</p>
+                    {% endif %}
                     {% if edit_allowed['Employee ID'] %}
                     <form class="ed-form" id="edEmpId" method="POST">
                         <input type="hidden" name="action" value="edit_employee_id">
                         <p class="ot-note"><i class="fas fa-triangle-exclamation"></i>
-                            Your Employee ID links your account to your schedules and records. Enter it exactly as it
-                            appears on your official ID. It must not belong to anyone else.</p>
+                            <strong>Your Employee ID is also your username.</strong> If you change it, you will sign in
+                            with the new Employee ID from now on. It links your account to your schedules and records,
+                            so enter it exactly as it appears on your official ID. It must not belong to anyone else.</p>
                         <input type="text" name="value" class="ed-one" value="{{ info['Employee ID'] }}" maxlength="30"
                                required pattern="[A-Za-z0-9][A-Za-z0-9\-]{0,29}" aria-label="Employee ID"
                                title="Up to 30 letters, numbers or hyphens">
@@ -403,7 +421,22 @@
             return false;
         }
         box.hidden = true;
+        {% if new_username %}
+        // The Employee ID changes, and with it the username: ask first (the form is sent
+        // only from the dialog's Save and Confirm).
+        const newId = {{ new_username | tojson }};
+        uiConfirm({
+            title: 'Your username will change',
+            html: `Your Employee ID changes to <strong>${uiEsc(newId)}</strong>, so your username also becomes
+                   <strong>${uiEsc(newId)}</strong>.
+                   <span class="uid-note"><i class="fas fa-circle-info"></i> Take note of it &mdash; you will use
+                   <strong>${uiEsc(newId)}</strong> to sign in from now on.</span>`,
+            confirmText: 'Save and Confirm', cancelText: 'Go Back', icon: 'fa-id-card',
+        }).then(ok => { if (ok) document.getElementById('confirmForm').submit(); });
+        return false;
+        {% else %}
         return true;
+        {% endif %}
     }
 
 

@@ -22,7 +22,8 @@ let _rooms      = [];
 let _activeBldg = null;
 let _activeRoom = null;
 let _floorFilter = '';
-let _frsView       = 'week';   // 'week' | 'day' (Day = today)
+let _frsView       = 'week';   // 'week' | 'day'
+let _frsAnchor     = null;     // a date inside the shown week (or the shown day); null = today
 let _frsSessions   = [];       // last loaded room sessions (redrawn on view change)
 let _frsRoomSearch = '';
 function _frsToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
@@ -231,10 +232,61 @@ async function frsSelectRoom(rid, rname, bid) {
 ═══════════════════════════════════════════ */
 const _FRS_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function _frsShownDates() {
-    const today = _frsToday();
-    if (_frsView === 'day') return [today];
-    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    const anchor = _frsAnchor ? new Date(_frsAnchor) : _frsToday();
+    if (_frsView === 'day') return [anchor];
+    const mon = new Date(anchor); mon.setDate(anchor.getDate() - ((anchor.getDay() + 6) % 7));
     return FRS_DAYS.map((_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
+}
+
+function _frsUpdateRangeLabel(dates) {
+    const el = document.getElementById('frsDateRange');
+    if (el) {
+        const a = dates[0], b = dates[dates.length - 1];
+        el.textContent = dates.length === 1
+            ? `${FRS_DAYS[(a.getDay() + 6) % 7]}, ${_FRS_MON[a.getMonth()]} ${a.getDate()}, ${a.getFullYear()}`
+            : `${_FRS_MON[a.getMonth()]} ${a.getDate()} – ${_FRS_MON[b.getMonth()]} ${b.getDate()}, ${b.getFullYear()}`;
+    }
+    // Navigation labels follow the view: weeks in Week view, days in Day view.
+    const unit = _frsView === 'day' ? 'day' : 'week';
+    const todayBtn = document.getElementById('frsTodayBtn');
+    if (todayBtn) {
+        todayBtn.textContent = _frsRelativeLabel(dates);
+        todayBtn.title = _frsView === 'day' ? 'Go to today' : 'Go to this week';
+    }
+    const prev = document.getElementById('frsPrevBtn'), next = document.getElementById('frsNextBtn');
+    if (prev) { prev.title = `Previous ${unit}`; prev.setAttribute('aria-label', `Previous ${unit}`); }
+    if (next) { next.title = `Next ${unit}`; next.setAttribute('aria-label', `Next ${unit}`); }
+}
+
+/* The middle navigation button names the shown week (or day) relative to today:
+   This Week / Next Week / Last Week / In 2 Weeks / 2 Weeks Ago (Today / Tomorrow / ... in Day view). */
+function _frsRelativeLabel(dates) {
+    const DAY = 86400000;
+    const today = _frsToday();
+    if (_frsView === 'day') {
+        const n = Math.round((dates[0] - today) / DAY);
+        return n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n === -1 ? 'Yesterday'
+             : n > 0 ? `In ${n} Days` : `${-n} Days Ago`;
+    }
+    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    const n = Math.round((dates[0] - mon) / (7 * DAY));
+    return n === 0 ? 'This Week' : n === 1 ? 'Next Week' : n === -1 ? 'Last Week'
+         : n > 0 ? `In ${n} Weeks` : `${-n} Weeks Ago`;
+}
+
+/* Previous / next week (Week view) or day (Day view). */
+function frsShiftDate(dir) {
+    const d = _frsAnchor ? new Date(_frsAnchor) : _frsToday();
+    d.setDate(d.getDate() + dir * (_frsView === 'day' ? 1 : 7));
+    _frsAnchor = d;
+    _buildGrid();
+    _renderRoomCalendar(_frsSessions);
+}
+
+function frsGoToday() {
+    _frsAnchor = null;
+    _buildGrid();
+    _renderRoomCalendar(_frsSessions);
 }
 function frsSetView(view) {
     _frsView = view === 'day' ? 'day' : 'week';
@@ -251,6 +303,7 @@ function _buildGrid() {
     const today = _frsToday().getTime();
     grid.classList.toggle('frs-week', _frsView === 'week');
     grid.classList.toggle('frs-day',  _frsView === 'day');
+    _frsUpdateRangeLabel(dates);
     const th = document.createElement('div');
     th.className = 'frs-grid-header-cell';
     th.textContent = 'TIME';

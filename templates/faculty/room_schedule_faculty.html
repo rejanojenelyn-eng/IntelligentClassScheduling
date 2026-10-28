@@ -372,6 +372,13 @@
     .tc-input.tc-warn { color: #b06000; font-weight: 600; }
     .tc-input.tc-bad  { border-color: #c0392b !important; box-shadow: 0 0 0 3px rgba(192,57,43,.12) !important; }
     .tc-menu { min-width: 150px; }
+    .tc-host .tc-input { padding-right: 30px !important; }
+    .tc-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 2;
+        width: 24px; height: 24px; border: 0; background: none; border-radius: 6px; cursor: pointer;
+        color: #8b1a1a; font-size: .72rem; display: flex; align-items: center; justify-content: center; }
+    .tc-toggle:hover { background: #fdf0f0; }
+    .tc-toggle:disabled { color: #bbb; cursor: not-allowed; background: none; }
+    .tc-host.tc-open .tc-toggle i { transform: rotate(180deg); }
     .frs-combo-option.tc-dis { color: #b5b5b5; cursor: not-allowed; font-weight: 600; }
     .frs-combo-option.tc-dis:hover { background: transparent; }
     .frs-combo-option.tc-sel { background: #800000; color: #fff; }
@@ -619,6 +626,7 @@
     .mu3-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
     .mu3-grid-sched { grid-template-columns: minmax(0, .9fr) minmax(0, 1.3fr); }
     .mu3-field { margin-bottom: 12px; min-width: 0; }
+    .mu3-field-full { grid-column: 1 / -1; }   /* long "CODE — subject name" values */
     .mu3-field > label { display: block; font-size: .76rem; font-weight: 700; color: #444; margin-bottom: 5px; }
     .mu3-field > label b { color: #c0392b; }
     .mu3-opt { font-weight: 500; color: #999; font-size: .7rem; }
@@ -923,6 +931,9 @@
         font: 700 .78rem 'Inter', sans-serif; color: #444; display: inline-flex; align-items: center; gap: 6px;
     }
     .frs-view-toggle button.active { background: #800000; color: #fff; }
+    .frs-date-nav button:hover { background: #fff; color: #800000; }
+    .frs-date-nav button:disabled { opacity: .4; cursor: default; background: transparent; color: #444; }
+    .frs-date-range { font: 700 .82rem 'Inter', sans-serif; color: #800000; white-space: nowrap; }
 
     /* Grid */
     .frs-grid { min-width: 0; }
@@ -1190,6 +1201,16 @@
                                 style="display:none;" onclick="frsRequestViewedRoom()">
                             <i class="fas fa-plus-circle"></i> REQUEST THIS ROOM
                         </button>
+                        {# Previous / this / next week (or day): regular classes repeat every week;
+                           approved make-up classes show in the week of their date. #}
+                        <div class="frs-view-toggle frs-date-nav" role="group" aria-label="Change week">
+                            <button type="button" onclick="frsShiftDate(-1)" id="frsPrevBtn" aria-label="Previous week"
+                                    title="Previous week"><i class="fas fa-chevron-left"></i></button>
+                            <button type="button" onclick="frsGoToday()" id="frsTodayBtn">This Week</button>
+                            <button type="button" onclick="frsShiftDate(1)" id="frsNextBtn" aria-label="Next week"
+                                    title="Next week"><i class="fas fa-chevron-right"></i></button>
+                        </div>
+                        <span class="frs-date-range" id="frsDateRange" aria-live="polite"></span>
                         <div class="frs-view-toggle">
                             <button type="button" id="frsViewDay" onclick="frsSetView('day')"><i class="far fa-calendar"></i> Day</button>
                             <button type="button" id="frsViewWeek" class="active" onclick="frsSetView('week')"><i class="fas fa-table-cells"></i> Week</button>
@@ -1610,7 +1631,7 @@
                         <div class="mu3-ctl"><i class="fas fa-users"></i>
                             <select id="muSectionSel" onchange="muCascade('sec')"><option value="">Select section</option></select></div>
                     </div>
-                    <div class="mu3-field">
+                    <div class="mu3-field mu3-field-full">
                         <label for="muSubjectSel">Subject <b>*</b></label>
                         <div class="mu3-ctl"><i class="fas fa-book-open"></i>
                             <select id="muSubjectSel" onchange="muCascade('subj')"><option value="">Select subject</option></select></div>
@@ -1687,7 +1708,7 @@
         </div>
         <div class="req-form-msg" id="muFormMsg" role="alert" style="display:none"></div>
         <div class="req-modal-ftr mu-ftr mu3-ftr">
-            <button class="btn-req-cancel" onclick="frsCloseForm('makeup')"><i class="fas fa-xmark"></i> CANCEL</button>
+            <button class="btn-req-cancel" onclick="frsBackToPicker('makeup')"><i class="fas fa-arrow-left"></i> BACK</button>
             <button class="btn-req-submit" onclick="reqSubmit('makeup')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
         </div>
     </div>
@@ -1826,7 +1847,7 @@
         </div>
         <div class="req-form-msg" id="adjFormMsg" role="alert" style="display:none"></div>
         <div class="req-modal-ftr mu-ftr">
-            <button class="btn-req-cancel" onclick="frsCloseForm('adjustment')"><i class="fas fa-xmark"></i> CANCEL</button>
+            <button class="btn-req-cancel" onclick="frsBackToPicker('adjustment')"><i class="fas fa-arrow-left"></i> BACK</button>
             <button class="btn-req-submit" onclick="reqSubmit('adjustment')"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
         </div>
     </div>
@@ -1937,9 +1958,16 @@ function _enhanceTimeSelect(sel) {
     const menu = document.createElement('div');
     menu.className = 'frs-combo-menu tc-menu';
     menu.setAttribute('role', 'listbox');
+    // A visible ▾: the field is also a dropdown, not only a text box.
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'tc-toggle';
+    toggle.tabIndex = -1;
+    toggle.setAttribute('aria-label', 'Show times');
+    toggle.innerHTML = '<i class="fas fa-chevron-down"></i>';
     sel.style.display = 'none';
     sel.tabIndex = -1;
-    sel.after(input, menu);
+    sel.after(input, toggle, menu);
 
     let items = [], active = -1, navigated = false;
     const opts = () => [...sel.options].filter(o => o.value);
@@ -1950,8 +1978,12 @@ function _enhanceTimeSelect(sel) {
         // A kept-but-occupied pick (see _muApplyTimeRules) shows in the warning colour.
         input.classList.toggle('tc-warn', !!(o && o.value && /—/.test(o.textContent)));
         input.disabled = sel.disabled;
+        toggle.disabled = sel.disabled;
     };
-    const close = () => { menu.classList.remove('open'); input.setAttribute('aria-expanded', 'false'); active = -1; };
+    const close = () => {
+        menu.classList.remove('open'); host.classList.remove('tc-open');
+        input.setAttribute('aria-expanded', 'false'); active = -1;
+    };
     const paint = () => {
         [...menu.querySelectorAll('.tc-opt')].forEach((el, i) => el.classList.toggle('tc-active', i === active));
         const a = menu.querySelector('.tc-active');
@@ -1962,7 +1994,7 @@ function _enhanceTimeSelect(sel) {
         menu.innerHTML = items.length
             ? items.map((o, i) => `<div class="frs-combo-option tc-opt${o.disabled ? ' tc-dis' : ''}${o.value === sel.value ? ' tc-sel' : ''}" data-i="${i}" role="option"${o.disabled ? ' aria-disabled="true"' : ''}>${esc(o.textContent)}</div>`).join('')
             : '<div class="frs-combo-empty">No matching time — try 9:30 AM or 2 PM</div>';
-        menu.classList.add('open');
+        menu.classList.add('open'); host.classList.add('tc-open');
         input.setAttribute('aria-expanded', 'true');
         active = q ? items.findIndex(o => !o.disabled) : items.findIndex(o => o.value === sel.value);
         navigated = false;
@@ -2000,6 +2032,14 @@ function _enhanceTimeSelect(sel) {
     };
 
     input.addEventListener('focus', () => { input.select(); render(''); });
+    // Already in the field (e.g. after closing the list): a click opens the list again.
+    input.addEventListener('click', () => { if (!menu.classList.contains('open')) render(''); });
+    toggle.addEventListener('mousedown', e => e.preventDefault());   // keep focus where it is
+    toggle.addEventListener('click', () => {
+        if (menu.classList.contains('open')) { close(); return; }
+        if (document.activeElement !== input) input.focus();          // focus opens the full list
+        else render('');
+    });
     input.addEventListener('input', () => render(input.value));
     input.addEventListener('keydown', e => {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -3300,8 +3340,19 @@ function frsOpenForm(type) {
             adjOnDayTimeChange();
         }
     }
+    _frsFormPreRoom = window._preRoom;   // kept for Back -> Next
     window._preRoom = null;
     if (!_myAssignments.length) _reqLoadAssignments();   // init load failed or is still pending
+}
+
+/* BACK in a request form: return to the type picker (with this type still selected and
+   a room chosen from "Request This Room" kept), instead of closing everything. */
+let _frsFormPreRoom = null;
+function frsBackToPicker(type) {
+    frsCloseForm(type);
+    window._preRoom = _frsFormPreRoom;
+    frsPickType(type);
+    document.getElementById('reqPickerOverlay').classList.add('open');
 }
 
 
