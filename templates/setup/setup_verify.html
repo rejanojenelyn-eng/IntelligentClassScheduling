@@ -156,7 +156,7 @@
         {%- if field in pending_by_field -%}
         <div class="ed-hint"><i class="fas fa-hourglass-half"></i> A correction request you sent earlier is waiting for the Administrator, so this can be edited once it is decided.</div>
         {%- elif employment_locked -%}
-        <div class="ed-hint"><i class="fas fa-lock"></i> You already used your account-setup edit. If it is wrong, change it in Academic Information after setup (one edit), or use Request Correction.</div>
+        <div class="ed-hint"><i class="fas fa-lock"></i> You already used your account-setup edit. If it is wrong, use Request Correction in Academic Information.</div>
         {%- else -%}
         <div class="ed-hint"><i class="fas fa-circle-exclamation"></i> Editing isn't available right now. Please try again later or contact the Administrator.</div>
         {%- endif -%}
@@ -251,12 +251,12 @@
         <div class="rv-panel-body">
             <p class="rv-explain"><i class="fas fa-circle-info"></i>
                 {% if employment_locked %}
-                You already used your account-setup edit of this information. If something is wrong, you can
-                change it once in Academic Information after setup; after that, use Request Correction.
+                You already used your account-setup edit of this information. If something is wrong, use
+                Request Correction in Academic Information; the Administrator reviews it.
                 {% else %}
-                Edit anything that is wrong before you confirm. You can edit this information twice in all:
-                here, and once more in Academic Information after setup. After that, changes go through
-                Request Correction. A Designation is only for the <strong>{{ designee_type }}</strong> employment type.
+                Edit anything that is wrong before you confirm &mdash; this is the only time you can change it
+                yourself. After setup, whether you changed it or not, changes go through Request Correction.
+                A Designation is only for the <strong>{{ designee_type }}</strong> employment type.
                 {% endif %}</p>
             <div class="ed-row">
                 <div class="ed-main">

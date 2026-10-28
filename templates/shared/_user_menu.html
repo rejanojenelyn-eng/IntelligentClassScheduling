@@ -127,19 +127,9 @@
                     <button type="button" class="pf-link-btn" id="pfContactBtn" onclick="openContactEdit()">Change</button>
                 </div>
                 <form class="pf-edit-form" id="pfContactForm" hidden novalidate onsubmit="saveContact(); return false;">
-                    <div class="up-panel-notice up-notice-warn" id="pfContactNoEmail" hidden>
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <span>The code is sent to your email, but your account has no email address yet.
-                            <button type="button" class="up-link-btn" onclick="openEmailPanel()">Add an email address</button></span>
-                    </div>
-                    <div class="up-code-row">
-                        <input type="tel" class="up-input" id="pfContactNew" inputmode="tel" maxlength="20"
-                               placeholder="09XXXXXXXXX" aria-label="New contact number" autocomplete="tel-national">
-                        <button type="button" class="up-btn-outline" id="pfContactSend" onclick="requestContactCode()"><i class="fas fa-paper-plane"></i> <span>Send Code</span></button>
-                    </div>
-                    <div class="up-field-hint" id="pfContactHint">A Philippine mobile number like 09123456789, or +country code for another country. A 6-digit code will be sent to your email.</div>
-                    <input type="text" class="up-input" id="pfContactCode" inputmode="numeric" maxlength="6"
-                           placeholder="Enter 6-digit code" aria-label="Verification code" autocomplete="one-time-code">
+                    <input type="tel" class="up-input" id="pfContactNew" inputmode="tel" maxlength="20"
+                           placeholder="09XXXXXXXXX" aria-label="New contact number" autocomplete="tel-national">
+                    <div class="up-field-hint">A Philippine mobile number like 09123456789, or +country code for another country.</div>
                     <div class="up-error" id="pfContactError" style="display:none;"></div>
                     <div class="pf-edit-actions">
                         <button type="button" class="up-btn-cancel" onclick="closeContactEdit()">Cancel</button>
@@ -154,10 +144,6 @@
             <div class="pf-section-hd">
                 <span class="pf-section-title"><i class="fas fa-id-badge"></i> Official Employment Information</span>
                 {% if session.get('role') != 'Admin' %}
-                {# One self-edit after setup (employment_edit_available); after it, Request Correction. #}
-                <button type="button" class="pf-correct-btn" id="pfEmpEditBtn" onclick="openEmploymentEdit()" hidden
-                        title="You can edit this information once. After that, use Request Correction.">
-                    <i class="fas fa-pen"></i> Edit (1 time left)</button>
                 <button type="button" class="pf-correct-btn" id="pfRequestCorrectionBtn" onclick="openCorrectionModal()"
                         aria-haspopup="dialog" title="Something wrong here? Ask the Administrator to correct it.">
                     <i class="fas fa-pen"></i> Request Correction</button>
@@ -170,29 +156,6 @@
             <div class="pf-emp-row"><div class="pf-emp-label">Employment Type</div><div class="pf-emp-value" id="pfTypeText">—</div></div>
             <div class="pf-emp-row" id="pfDesignationSection"><div class="pf-emp-label">Designation</div><div class="pf-emp-value" id="pfDesignationText">—</div></div>
             <div class="pf-emp-row"><div class="pf-emp-label">Employment Status</div><div class="pf-emp-value" id="pfStatusText">—</div></div>
-
-            {# Saved with the panel's Save Changes (saveProfile), like a new photo. #}
-            <form class="pf-edit-form" id="pfEmpForm" hidden novalidate onsubmit="saveProfile(); return false;">
-                <div class="up-panel-notice up-notice-warn">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span>You can save this <strong>only once</strong>. After that, changes go through Request Correction.</span>
-                </div>
-                <label class="pf-emp-label" for="pfEmpIdNew">Employee ID</label>
-                <input type="text" class="up-input" id="pfEmpIdNew" maxlength="30" aria-describedby="pfEmpIdNote"
-                       oninput="_syncEmpIdNote()">
-                <div class="up-field-hint" id="pfEmpIdNote">Your Employee ID is also your username.</div>
-                <label class="pf-emp-label" for="pfSpecNew">Specialization</label>
-                <select class="up-input" id="pfSpecNew"></select>
-                <label class="pf-emp-label" for="pfTypeNew">Employment Type</label>
-                <select class="up-input" id="pfTypeNew" onchange="_syncEmpDesignation()"></select>
-                <div id="pfDesWrap">
-                    <label class="pf-emp-label" for="pfDesNew">Designation</label>
-                    <select class="up-input" id="pfDesNew"></select>
-                </div>
-                <label class="pf-emp-label" for="pfStatusNew">Employment Status</label>
-                <select class="up-input" id="pfStatusNew"></select>
-                <div class="up-error" id="pfEmpError" style="display:none;"></div>
-            </form>
         </section>
 
         {% if session.get('role') != 'Admin' %}
@@ -208,7 +171,7 @@
         </div>
         {% endif %}
 
-        <div class="up-panel-notice pf-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">Employment information can be edited once. After that, use Request Correction.</span></div>
+        <div class="up-panel-notice pf-notice"><i class="fas fa-info-circle"></i><span id="pfNotice">To change your employment information, use Request Correction.</span></div>
 
         <div class="up-panel-ft">
             <button type="button" class="up-btn-cancel" onclick="closeProfilePanel()">Cancel</button>
