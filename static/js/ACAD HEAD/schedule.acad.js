@@ -318,7 +318,7 @@ async function onSectionChange() {
 const colorPalette = ['#16a085','#27ae60','#2980b9','#8e44ad','#2c3e50','#f39c12','#d35400','#c0392b'];
 function getSubjectColor(code) {
     let h = 0;
-    for (let i = 0; i < code.length; i++) h = code.charCodeAt(i) + ((h << 5) - h);
+    for (let i = 0; i < (code || '').length; i++) h = code.charCodeAt(i) + ((h << 5) - h);
     return colorPalette[Math.abs(h) % colorPalette.length];
 }
 
@@ -417,7 +417,8 @@ function renderCalendar(sessions, opts = {}) {
 
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
-            pill.style.backgroundColor = getSubjectColor(sess.subjectcode);
+            const _pc = getSubjectColor(sess.subjectcode);
+            pill.style.backgroundColor = _pc;
             const w = (colWidth - 6) / (overlapCount || 1);
             const pillH = (end - start) * pxPerMin - 2;
 
@@ -430,13 +431,17 @@ function renderCalendar(sessions, opts = {}) {
             pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${fmtTime(sess.start_time)} – ${fmtTime(sess.end_time)}\n${sess.roomname}`;
 
             const pillContent = `
-                <div class="pill-subject">${sess.subjectname}</div>
-                <div class="pill-instructor">${instrLast}</div>
-                <div class="pill-room">${sess.roomname}</div>`;
+                <div class="pill-code">${sess.subjectcode || ''}</div>
+                <div class="pill-subject">${sess.subjectname || ''}</div>
+                <div class="pill-instructor"><i class="fas fa-user"></i> ${instrLast}</div>
+                <div class="pill-time">${fmtTime(sess.start_time)} - ${fmtTime(sess.end_time)}</div>
+                <div class="pill-room"><i class="fas fa-door-open"></i> ${sess.roomname || 'TBA'}</div>`;
 
             if (pillH < 55) pill.classList.add('schedule-pill--compact');
             else if (pillH < 85) pill.classList.add('schedule-pill--medium');
             pill.innerHTML = pillContent;
+            // Double-click → full details (schedule_pill_detail.js)
+            pill._detail = { ...sess, time: `${fmtTime(sess.start_time)} – ${fmtTime(sess.end_time)}` };
             wrapper.appendChild(pill);
         });
     });
@@ -462,7 +467,7 @@ function renderTable(sessions, opts = {}) {
     const grouped = {};
     sessions.forEach(sess => {
         const key = `${sess.subjectcode}||${sess.instructor}`;
-        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [] };
+        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [], slots: [] };
         if (sess.daydesc) {
             const ab = dayAbbr(sess.daydesc);
             if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
@@ -470,6 +475,10 @@ function renderTable(sessions, opts = {}) {
         if (sess.start_time) {
             const t = `${fmtTime(sess.start_time)} - ${fmtTime(sess.end_time)}`;
             if (!grouped[key].timesArr.includes(t)) grouped[key].timesArr.push(t);
+            // Keep each meeting's day WITH its time: Days are listed in weekday order but
+            // times arrive in clock order, so two separate lists can't be read side by side.
+            const d = sess.daydesc ? dayAbbr(sess.daydesc) : '';
+            if (!grouped[key].slots.some(x => x.d === d && x.t === t)) grouped[key].slots.push({ d, t });
         }
     });
 
@@ -483,7 +492,11 @@ function renderTable(sessions, opts = {}) {
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';
         const daysDisplay  = sess.daysArr.length  ? _sortDays(sess.daysArr).join('/') : '<span style="color:#aaa;">—</span>';
-        const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
+        const _order = _sortDays(sess.daysArr);
+        const timeDisplay  = !sess.timesArr.length ? '<span style="color:#aaa;">—</span>'
+            : sess.timesArr.length === 1 ? sess.timesArr[0]           // same time every meeting day
+            : sess.slots.slice().sort((a, b) => _order.indexOf(a.d) - _order.indexOf(b.d))
+                  .map(x => x.t).join(' / ');   // in the same order as the Days column
         const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
             ? sess.roomname
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';

@@ -91,8 +91,11 @@ def test_pick_prefers_exact_then_equivalent_and_active():
             {'sectionid': 2, 'sectionname': 'BSIT 1-1', 'isactive': True},
             {'sectionid': 3, 'sectionname': 'BSIT1', 'isactive': False}]
     assert _pick_section_by_name(rows, 'BSIT 1')['sectionid'] == 1      # equivalent, active preferred
-    assert _pick_section_by_name(rows, 'bsit1')['sectionid'] == 3       # exact (case-insensitive) wins
+    assert _pick_section_by_name(rows, 'bsit1')['sectionid'] == 1       # active beats inactive exact
     assert _pick_section_by_name(rows, 'BSIT1-1')['sectionid'] == 2
+    inactive_only = [{'sectionid': 3, 'sectionname': 'BSIT1', 'isactive': False},
+                     {'sectionid': 4, 'sectionname': 'BSIT-1', 'isactive': False}]
+    assert _pick_section_by_name(inactive_only, 'bsit-1')['sectionid'] == 4   # exact among inactive
     assert _pick_section_by_name(rows, 'BSIT 1-2') is None              # a real new section
     assert _pick_section_by_name(rows, '') is None
 

@@ -248,6 +248,11 @@
     .si-hist-new      { background:#fff8ec; color:#b35900; }
     .si-hist-matched  { background:#eafaf1; color:#1a7a40; }
     .si-hist-ambiguous{ background:#fff3e0; color:#8a4b00; }
+    /* A row that still needs the user's decision (unresolved Section / Faculty). */
+    .si-res-scroll tr.si-row-needs td { background:#fdecec; }
+    .si-res-scroll tr.si-row-needs td:first-child { box-shadow:inset 3px 0 0 #c62828; font-weight:600; color:#8b1a1a; }
+    .si-res-scroll tr.si-row-needs .si-hist-sel,
+    .si-res-scroll tr.si-row-needs .si-hist-sec-res select { border-color:#c62828; box-shadow:0 0 0 2px rgba(198,40,40,.12); }
     .si-hist-sel { border:1px solid #d0d0d0; border-radius:6px; padding:5px 8px; font-size:.78rem; width:100%; max-width:260px; background:#fff; }
     .si-hist-add-btn { background:none; border:1px dashed #c8a8a8; color:#630100; border-radius:6px; padding:4px 10px; font-size:.72rem; font-weight:600; cursor:pointer; }
     .si-hist-add-btn:hover { background:#fff0f0; }
@@ -501,13 +506,14 @@
 
     <!-- Confirmation overlay (shown before final import) -->
     <div id="siConfirmOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.52);z-index:20;align-items:center;justify-content:center;border-radius:12px;">
-      <div style="background:#fff;border-radius:12px;padding:28px 26px;max-width:440px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,.35);">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <!-- Column layout: a long message scrolls; the title and buttons always stay visible. -->
+      <div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:540px;width:92%;max-height:calc(100% - 24px);display:flex;flex-direction:column;box-sizing:border-box;box-shadow:0 10px 40px rgba(0,0,0,.35);">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0;">
           <i id="siConfirmIcon" class="fas fa-exclamation-triangle" style="color:#e65100;font-size:1.2rem;"></i>
           <span id="siConfirmTitle" style="font-size:1rem;font-weight:800;color:#333;"></span>
         </div>
-        <div id="siConfirmMsg" style="font-size:.84rem;color:#555;line-height:1.65;margin-bottom:20px;"></div>
-        <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <div id="siConfirmMsg" style="font-size:.84rem;color:#555;line-height:1.55;margin-bottom:16px;overflow-y:auto;min-height:0;padding-right:4px;"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-shrink:0;">
           <button onclick="siConfirmCancel()" style="background:none;border:1.5px solid #ccc;color:#666;padding:9px 20px;border-radius:7px;font-size:.83rem;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s;" onmouseover="this.style.borderColor='#630100';this.style.color='#630100';" onmouseout="this.style.borderColor='#ccc';this.style.color='#666';">
             <i class="fas fa-times"></i> <span id="siConfirmCancelLbl">Cancel</span>
           </button>
@@ -739,14 +745,21 @@
                 const semLabel = SEM_FULL[_importSemType] || _importSemType;
                 const ayEl  = document.getElementById('siImportAy');
                 const ayTxt = ayEl && ayEl.value ? (ayEl.options[ayEl.selectedIndex]?.text || _importAyId) : _importAyId;
+                // Override also deletes every Local schedule and request of this period.
+                const hist = chk.history || {}, histLbl = chk.history_labels || {};
+                const histItems = Object.keys(hist)
+                    .map(k => `<li><strong>${hist[k]}</strong> ${histLbl[k] || k}</li>`).join('');
                 _showConfirm(
                     'fa-exclamation-triangle', '#e65100',
                     'Existing Schedule / Subject Offering Found',
-                    `A schedule or subject offering already exists for<br>` +
-                    `<strong>${semLabel} &mdash; A.Y. ${ayTxt}</strong>.<br><br>` +
-                    `<strong>${chk.count} existing record(s)</strong> were found for this period.<br>` +
-                    `Proceeding will import new records alongside the existing ones.<br><br>` +
-                    `Choose an option to continue:`,
+                    `<strong>${chk.count} existing record(s)</strong> already exist for ` +
+                    `<strong>${semLabel} &mdash; A.Y. ${ayTxt}</strong>. ` +
+                    `Overriding replaces them with the imported schedule.` +
+                    `<div style="background:#fff3e0;border-left:4px solid #e65100;padding:8px 12px;border-radius:6px;color:#8a2c00;margin-top:10px;">` +
+                    `<strong><i class="fas fa-trash-alt"></i> All Local schedules of this period will also be permanently deleted</strong>` +
+                    ` (Local Scheduler arrangements, Make-up and Schedule Adjustment requests). This cannot be undone.` +
+                    (histItems ? `<ul style="margin:4px 0 0 18px;padding:0;">${histItems}</ul>` : '') +
+                    `</div>`,
                     'Override Existing Schedule', true,
                     () => { _importOverride = true; _analyze(); }
                 );
@@ -1144,6 +1157,23 @@
         if (secEl) secEl.innerHTML = secCountsHtml(c.secMatched, c.secNew, c.secUnresolved);
         const facEl = document.getElementById('siFacCounts');
         if (facEl) facEl.innerHTML = facCountsHtml(c.facMatched, c.facUnresolved);
+        _refreshRowHighlights();
+    }
+
+    /* Red-highlight the Section / Faculty rows that still need a decision; cleared
+       live as soon as a row is resolved (rows carry their index into _preview). */
+    function _secNeedsAction(s) { return s.status === 'unresolved' && !_secResolvedLocally(s); }
+    function _refreshRowHighlights() {
+        if (!_preview) return;
+        const secs = _preview.hist_sections || [], facs = _preview.hist_faculty || [];
+        document.querySelectorAll('tr[data-sec-idx]').forEach(tr => {
+            const s = secs[+tr.dataset.secIdx];
+            tr.classList.toggle('si-row-needs', !!s && _secNeedsAction(s));
+        });
+        document.querySelectorAll('tr[data-fac-idx]').forEach(tr => {
+            const f = facs[+tr.dataset.facIdx];
+            tr.classList.toggle('si-row-needs', !!f && !_facResolvedLocally(f));
+        });
     }
 
     /* ── Collapsible Section/Faculty resolution summaries (spec §5-7) ──
@@ -1183,7 +1213,10 @@
         const sections = data.hist_sections || [];
         let secPanel = '';
         if (sections.length) {
-            const rowsHtml = sections.map(sec => {
+            const secOrder = sections.map((sec, i) => i)
+                .sort((a, b) => _secNeedsAction(sections[b]) - _secNeedsAction(sections[a]));
+            const rowsHtml = secOrder.map(secIdx => {
+                const sec = sections[secIdx];
                 const resolvedLocally = _secResolvedLocally(sec);
                 const badge = sec.status === 'existing'
                     ? '<span class="si-hist-badge si-hist-existing">Matched</span>'
@@ -1199,9 +1232,9 @@
                         `<select onchange="siHistSecField('${courseKey}','yearlevel',this.value)">${ylOpts.replace(`value="${st.yearlevel}"`, `value="${st.yearlevel}" selected`)}</select>` +
                         `</div>`;
                 }
-                return `<tr><td>${sec.course||'&mdash;'}</td><td>${sec.program||'&mdash;'}</td><td>${sec.yearlevel||'&mdash;'}</td><td>${badge}</td><td>${resolutionHtml}</td></tr>`;
+                return `<tr data-sec-idx="${secIdx}" class="${_secNeedsAction(sec) ? 'si-row-needs' : ''}"><td>${sec.course||'&mdash;'}</td><td>${sec.program||'&mdash;'}</td><td>${sec.yearlevel||'&mdash;'}</td><td>${badge}</td><td>${resolutionHtml}</td></tr>`;
             }).join('');
-            secPanel = `<details class="si-res-details">` +
+            secPanel = `<details class="si-res-details"${_counts.secUnresolved ? ' open' : ''}>` +
                 `<summary>` +
                     `<span class="si-res-summary-title"><i class="fas fa-users"></i> Sections (${sections.length})</span>` +
                     `<span class="si-res-summary-counts" id="siSecCounts">${_secCountsHtml(_counts.secMatched, _counts.secNew, _counts.secUnresolved)}</span>` +
@@ -1216,10 +1249,13 @@
         const faculty = data.hist_faculty || [];
         let facPanel = '';
         if (faculty.length) {
-            const rowsHtml = faculty.map(f => {
+            const facOrder = faculty.map((f, i) => i)
+                .sort((a, b) => !_facResolvedLocally(faculty[b]) - !_facResolvedLocally(faculty[a]));
+            const rowsHtml = facOrder.map(facIdx => {
+                const f = faculty[facIdx];
                 const nameKey = f.instructor.replace(/"/g, '&quot;');
                 if (f.status === 'matched') {
-                    return `<tr><td>${f.instructor}</td><td><span class="si-hist-badge si-hist-matched">Matched</span></td>` +
+                    return `<tr data-fac-idx="${facIdx}"><td>${f.instructor}</td><td><span class="si-hist-badge si-hist-matched">Matched</span></td>` +
                            `<td>${f.name||''} — <code>${f.employeenumber||''}</code></td></tr>`;
                 }
                 const st = _histFacState[f.instructor] || {};
@@ -1245,9 +1281,9 @@
                     resolutionHtml = `<button type="button" class="si-hist-add-btn" onclick="siHistFacAddNew('${nameKey}')" style="${st.action==='new'?'display:none;':''}" id="siHistAddBtn_${_histSlug(f.instructor)}">+ Add as New Faculty (optional)</button>` +
                         `<div id="siHistNewForm_${_histSlug(f.instructor)}">${st.action==='new' ? _histNewFacultyFormHtml(f.instructor, st, specOpts, typeOpts, desigOpts, statusOpts) : ''}</div>`;
                 }
-                return `<tr><td>${f.instructor}</td><td>${badge}</td><td>${resolutionHtml}</td></tr>`;
+                return `<tr data-fac-idx="${facIdx}" class="${_facResolvedLocally(f) ? '' : 'si-row-needs'}"><td>${f.instructor}</td><td>${badge}</td><td>${resolutionHtml}</td></tr>`;
             }).join('');
-            facPanel = `<details class="si-res-details">` +
+            facPanel = `<details class="si-res-details"${_counts.facUnresolved ? ' open' : ''}>` +
                 `<summary>` +
                     `<span class="si-res-summary-title"><i class="fas fa-chalkboard-teacher"></i> Faculty (${faculty.length})</span>` +
                     `<span class="si-res-summary-counts" id="siFacCounts">${_countsHtml(_counts.facMatched, _counts.facUnresolved)}</span>` +

@@ -765,6 +765,10 @@ CREATE INDEX IF NOT EXISTS idx_local_displaced_section_context
 CREATE OR REPLACE FUNCTION public.guard_local_arrangement_history()
 RETURNS trigger AS $$
 BEGIN
+    -- An explicit schedule Override purge (_purge_schedule_history) may remove it.
+    IF current_setting('dss.purge_schedule_history', true) = 'on' THEN
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    END IF;
     IF TG_OP = 'DELETE' AND OLD.status = 'Archived' THEN
         RAISE EXCEPTION 'Archived Local Arrangement history is immutable';
     END IF;
@@ -786,6 +790,9 @@ CREATE OR REPLACE FUNCTION public.guard_local_archived_sessions()
 RETURNS trigger AS $$
 DECLARE parent_status VARCHAR(20);
 BEGIN
+    IF current_setting('dss.purge_schedule_history', true) = 'on' THEN
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    END IF;
     SELECT status INTO parent_status
     FROM public.local_arrangement
     WHERE arrangementid = OLD.arrangementid;

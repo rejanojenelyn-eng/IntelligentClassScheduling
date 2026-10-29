@@ -922,3 +922,20 @@ def test_faculty_can_permanently_delete_only_cancelled_or_rejected_requests(env)
     r = c.delete(f'/api/faculty/my_requests/adjustment/{done[0]}/permanent')
     assert r.get_json()['success']
     assert env.q("SELECT 1 FROM schedule_change_request WHERE requestid = %s", (done[0],)) == []
+
+
+def test_add_faculty_without_email_or_contact(env):
+    import uuid
+    spec = env.q("SELECT specializationid FROM specialization WHERE isactive LIMIT 1")[0][0]
+    etype = env.q("SELECT employeetypeid FROM employeetype WHERE typename <> 'Designee' LIMIT 1")[0][0]
+    admin, _ = env.admin_client()
+    emp = 'T-' + uuid.uuid4().hex[:8].upper()
+    r = admin.post('/admin/api/add_employee', json={
+        'employee_number': emp, 'first_name': 'Pauleen', 'middle_name': 'Jesareth', 'last_name': 'Convento',
+        'email': '', 'contact': '', 'specialization_id': spec, 'type_id': etype, 'status': 'Part-Time'})
+    assert r.get_json()['success'], r.get_json()
+    assert env.q("SELECT email, contactnumber FROM accounts WHERE employeenumber = %s", (emp,)) == [(None, None)]
+    r = admin.post('/admin/api/add_employee', json={
+        'employee_number': emp + 'X', 'first_name': 'A', 'last_name': 'B', 'contact': '09-12',
+        'specialization_id': spec, 'type_id': etype, 'status': 'Part-Time'})
+    assert r.status_code == 400 and 'numbers only' in r.get_json()['error']        # a given number is still checked

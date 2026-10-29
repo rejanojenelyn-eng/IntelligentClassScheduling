@@ -629,8 +629,10 @@ document.addEventListener('mousedown', e => {
     if (e.target.closest('#frsStartComboMenu, #frsEndComboMenu')) e.preventDefault();
 });
 
+// Only the filter combos (.frs-combo): the request forms' time pickers reuse the
+// .frs-combo-menu look but handle their own open/close (_enhanceTimeSelect).
 document.addEventListener('click', (e) => {
-    const optEl = e.target.closest('.frs-combo-option');
+    const optEl = e.target.closest('.frs-combo .frs-combo-option');
     if (optEl) {
         const wrap    = optEl.closest('.frs-combo');
         const cfg     = _frsCombos[wrap.id];
@@ -644,7 +646,7 @@ document.addEventListener('click', (e) => {
         return;
     }
     if (!e.target.closest('.frs-combo')) {
-        document.querySelectorAll('.frs-combo-menu.open').forEach(m => m.classList.remove('open'));
+        document.querySelectorAll('.frs-combo .frs-combo-menu.open').forEach(m => m.classList.remove('open'));
     }
 });
 

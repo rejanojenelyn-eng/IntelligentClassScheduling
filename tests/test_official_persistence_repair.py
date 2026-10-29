@@ -102,9 +102,22 @@ def scope(tx):
         ORDER BY 1 LIMIT 2
     """, (row['program'], row['yearlevel'], row['semestertype']))
     codes = [r['code'] for r in cur.fetchall()]
-    cur.execute("SELECT roomid FROM room WHERE isactive AND roomtype = 'Lecture' ORDER BY roomid LIMIT 2")
-    rooms = [r['roomid'] for r in cur.fetchall()]
-    cur.execute("SELECT employeenumber FROM faculty WHERE isactive ORDER BY employeenumber LIMIT 1")
+    # Two fresh Lecture rooms and a fresh faculty member (rolled back with the test):
+    # Save Draft blocks a slot another section's Published class already holds, and
+    # the live data may fill every real room at the times these tests use.
+    rooms = []
+    for n in (1, 2):
+        cur.execute("""INSERT INTO room (roomname, roomtype, roomcapacity, buildingid, isactive)
+                       SELECT %s, 'Lecture', roomcapacity, buildingid, TRUE
+                       FROM room WHERE roomtype = 'Lecture' ORDER BY roomid LIMIT 1
+                       RETURNING roomid""", (f'ZZ-TEST-{n}',))
+        rooms.append(cur.fetchone()['roomid'])
+    cur.execute("""INSERT INTO faculty (employeenumber, firstname, lastname, specializationid,
+                                        employeetypeid, designationid, employeestatus, isactive)
+                   SELECT 'ZZT90001', 'Test', 'Faculty', specializationid, employeetypeid, NULL,
+                          employeestatus, TRUE
+                   FROM faculty WHERE isactive ORDER BY employeenumber LIMIT 1
+                   RETURNING employeenumber""")
     fac = cur.fetchone()['employeenumber']
     cur.execute("SELECT username FROM accounts WHERE isactive ORDER BY userid LIMIT 1")
     user = cur.fetchone()['username']
@@ -345,6 +358,29 @@ def test_generate_then_save_draft_keeps_published_live(tx, scope, client):
     st = _state(tx, scope)
     assert st[(A, 'Published')] == [('Monday', '07:30')]
     assert st[(A, 'Draft')] == [('Wednesday', '10:00')]
+
+
+@requires_db
+def test_save_draft_on_top_of_a_published_subject_is_blocked(tx, scope, client):
+    """Another person's Published subject of THIS section is live: a Draft that overlaps
+    it is refused, unless that subject has its own pending Draft (which may move it)."""
+    A, B = scope['A'], scope['B']
+    _seed(tx, scope, 'Published', 1, [_row(scope, A, 'Monday', '07:30', '09:00')])
+    def save(rows):
+        return client.post('/api/schedule/save-draft', data=json.dumps({
+            'schedule_data': rows,
+            'context': {'program': scope['program'], 'yearLevel': scope['yearlevel'],
+                        'term': scope['semestertype'], 'acadYear': scope['academicyearid'],
+                        'section': scope['sectionid']},
+        }), content_type='application/json')
+    r = save([_row(scope, B, 'Monday', '08:00', '09:30', room_idx=1)])
+    body = r.get_json()
+    assert r.status_code == 400 and body['code'] == 'PUBLISHED_CONFLICT', body
+    assert body['violations'][0]['rule'] == 'HC12'
+    assert (B, 'Draft') not in _state(tx, scope)                  # nothing written
+    # A is being moved in a pending Draft: B may take its old Published slot.
+    assert save([_row(scope, A, 'Wednesday', '10:00', '11:30')]).get_json()['success']
+    assert save([_row(scope, B, 'Monday', '08:00', '09:30', room_idx=1)]).get_json()['success']
 
 
 @requires_db

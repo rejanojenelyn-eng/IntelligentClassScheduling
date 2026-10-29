@@ -1947,7 +1947,9 @@ function _enhanceTimeSelect(sel) {
     input.className = 'tc-input';
     input.autocomplete = 'off';
     input.spellcheck = false;
-    input.placeholder = (sel.options[0] && !sel.options[0].value ? sel.options[0].textContent : 'Time') + ' (type or pick)';
+    // Short placeholder: the half-width time fields cut off a longer one.
+    input.placeholder = sel.options[0] && !sel.options[0].value ? sel.options[0].textContent : 'Time';
+    input.title = 'Type a time (e.g. 9:30 AM or 2 PM) or pick one from the list';
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-expanded', 'false');
     if (sel.id) {
@@ -1991,6 +1993,7 @@ function _enhanceTimeSelect(sel) {
     };
     const render = q => {
         items = opts().filter(o => _timeLabelMatches(o.value, q));
+        menu._sig = opts().map(o => o.value + (o.disabled ? '!' : '') + o.textContent).join('|');
         menu.innerHTML = items.length
             ? items.map((o, i) => `<div class="frs-combo-option tc-opt${o.disabled ? ' tc-dis' : ''}${o.value === sel.value ? ' tc-sel' : ''}" data-i="${i}" role="option"${o.disabled ? ' aria-disabled="true"' : ''}>${esc(o.textContent)}</div>`).join('')
             : '<div class="frs-combo-empty">No matching time — try 9:30 AM or 2 PM</div>';
@@ -1999,6 +2002,12 @@ function _enhanceTimeSelect(sel) {
         active = q ? items.findIndex(o => !o.disabled) : items.findIndex(o => o.value === sel.value);
         navigated = false;
         paint();
+        // Nothing picked yet: open at the first free time instead of the top of the list,
+        // which may be a long run of greyed "occupied" slots.
+        if (!q && active < 0) {
+            const free = menu.querySelector('.tc-opt:not(.tc-dis)');
+            if (free) menu.scrollTop = free.offsetTop - menu.clientTop;
+        }
     };
     const choose = o => {
         close();
@@ -2078,7 +2087,18 @@ function _enhanceTimeSelect(sel) {
         get() { return proto.get.call(this); },
         set(v) { proto.set.call(this, v); sync(); },
     });
-    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, characterData: true });
+    // An open list is redrawn too (the occupied times often arrive just after it opened),
+    // but ONLY when the times really changed and never mid-press: a redraw between
+    // pressing and releasing an option replaces it and the pick is lost.
+    let pressing = false;
+    menu.addEventListener('pointerdown', () => { pressing = true; });
+    document.addEventListener('pointerup', () => { pressing = false; }, true);
+    const optSig = () => opts().map(o => o.value + (o.disabled ? '!' : '') + o.textContent).join('|');
+    new MutationObserver(() => {
+        sync();
+        if (!menu.classList.contains('open') || navigated || pressing || optSig() === menu._sig) return;
+        render(document.activeElement === input && input.value.trim() !== sel.value ? input.value : '');
+    }).observe(sel, { childList: true, subtree: true, attributes: true, characterData: true });
     sel._tc = { input, sync };
     _tcCombos.add(sel);
     sync();
@@ -2153,21 +2173,37 @@ function _muApplyTimeRules() {
         o.style.color   = bad ? (keep ? '#b06000' : '#b5b5b5') : '';
     };
 
+    // The last slot (9:00 PM) is closing time: a class can end there but never start.
+    const lastMins = Math.max(...[...endSel.options].filter(o => o.value).map(o => _amPmToMins(o.value)));
     [...startSel.options].forEach(o => {
         if (!o.value) return;
         const m = _amPmToMins(o.value);
-        mark(o, overlaps(m, m + 30), 'occupied');
+        if (m >= lastMins) mark(o, true, 'closing time');
+        else mark(o, overlaps(m, m + 30), 'occupied');
     });
 
     const st = startSel.value ? _amPmToMins(startSel.value) : null;
+    const maxMins = _muMaxHours() * 60;
     [...endSel.options].forEach(o => {
         if (!o.value) return;
         const m = _amPmToMins(o.value);
         if (st === null)  mark(o, overlaps(m - 30, m), 'occupied');
         else if (m <= st) mark(o, true, '');
+        else if (maxMins && m - st > maxMins) mark(o, true, `over ${_muMaxHours()}h`);
         else              mark(o, overlaps(st, m), 'occupied');
     });
     _muRenderTimeNotice();
+}
+
+/* Longest make-up for the chosen subject: one regular session (lecture + laboratory
+   hours) — the same limit the server enforces (makeup_duration_error). 0 = unknown. */
+function _muMaxHours() {
+    const subj = document.getElementById('muSubject')?.value;
+    const sec  = document.getElementById('muSection')?.value;
+    if (!subj) return 0;
+    const a = _myAssignments.find(x => x.subjectcode === subj && String(x.sectionid) === String(sec))
+           || _myAssignments.find(x => x.subjectcode === subj);
+    return a ? (+a.lecturehours || 0) + (+a.laboratoryhours || 0) : 0;
 }
 
 function _reqEsc(t) {
@@ -2201,6 +2237,13 @@ function _muRenderTimeNotice() {
     const lines = [];
     if (sv && ev && _amPmToMins(ev) <= _amPmToMins(sv)) {
         lines.push('The end time must be later than the start time.');
+    }
+    const maxH = _muMaxHours();
+    if (sv && ev && maxH && _amPmToMins(ev) - _amPmToMins(sv) > maxH * 60) {
+        const span = (_amPmToMins(ev) - _amPmToMins(sv)) / 60;
+        lines.push(`<b>${_reqEsc(sv)}–${_reqEsc(ev)} is ${span}h,</b> but a make-up for ` +
+            `${_reqEsc(document.getElementById('muSubject').value)} can be at most ${maxH}h ` +
+            `(one regular session). Please choose an earlier end time.`);
     }
     const hits = _muTimeOverlaps();
     if (hits.length) {
@@ -2306,10 +2349,11 @@ function _buildSubjectSelects() {
 }
 
 
-/* Schedule Adjustment: Subject and Section can be picked in EITHER order. Each list
-   shows only what this faculty teaches given the other pick (a section shows only the
-   subjects taught there, a subject only its sections); a single remaining choice is
-   picked automatically. src: 'subject' | 'section' | 'reset'. */
+/* Schedule Adjustment: Subject and Section can be picked in either order. The Subject
+   list always shows every subject this faculty teaches (narrowing it by section made
+   subjects "disappear" after a section was picked or auto-picked); the Section list shows
+   only the sections of the chosen subject. A single remaining choice is picked
+   automatically. src: 'subject' | 'section' | 'reset'. */
 function _adjPairChanged(src) {
     const subjSel = document.getElementById('adjSubjectSel');
     const secSel  = document.getElementById('adjSectionSel');
@@ -2319,7 +2363,7 @@ function _adjPairChanged(src) {
         const subj = subjSel.value, sec = secSel.value;
         const subjects = new Map(), sections = new Map();
         _myAssignments.forEach(a => {
-            if (!sec || String(a.sectionid) === sec) subjects.set(a.subjectcode, a);
+            subjects.set(a.subjectcode, a);
             if (a.sectionid && (!subj || a.subjectcode === subj)) sections.set(String(a.sectionid), a);
         });
         subjSel.innerHTML = '<option value="">— Select subject —</option>' + [...subjects.values()]
@@ -2328,13 +2372,16 @@ function _adjPairChanged(src) {
             .map(([sid, a]) => `<option value="${sid}" data-prog="${a.programcode || ''}" data-yl="${a.yearlevel || ''}"`
                              + ` data-name="${a.sectionname || ''}">${a.sectionname || 'Section ' + sid}</option>`).join('');
         subjSel.value = subjects.has(subj) ? subj : '';
+        // A section that the (new) subject is not taught in is cleared, not kept.
         secSel.value  = sections.has(sec)  ? sec  : '';
-        // The pick just made narrows the other list; take its only option.
+        // The pick just made: take the other list's only fitting option.
         if (src2 === 'subject' && subjSel.value && !secSel.value && sections.size === 1) {
-            secSel.value = [...sections.keys()][0]; return true;
+            secSel.value = [...sections.keys()][0]; return false;
         }
-        if (src2 === 'section' && secSel.value && !subjSel.value && subjects.size === 1) {
-            subjSel.value = [...subjects.keys()][0]; return true;
+        if (src2 === 'section' && secSel.value && !subjSel.value) {
+            const taught = _myAssignments.filter(a => String(a.sectionid) === secSel.value);
+            const codes = [...new Set(taught.map(a => a.subjectcode))];
+            if (codes.length === 1) { subjSel.value = codes[0]; return true; }
         }
         return false;
     };
@@ -3003,7 +3050,9 @@ function _buildRoomDropdown(p, rooms) {
 }
 
 
+const _reqRoomLoadSeq = {};   // bumped by each lookup and by _resetReqForm
 async function _loadFormRooms(p, statusId, params) {
+    const seq     = _reqRoomLoadSeq[p] = (_reqRoomLoadSeq[p] || 0) + 1;
     const status  = document.getElementById(statusId);
     const chosen  = p === 'mu' ? _muRoomChosen : _adjRoomChosen;
     const pending = _pendingRoom;
@@ -3017,6 +3066,8 @@ async function _loadFormRooms(p, statusId, params) {
     try {
         const res   = await fetch('/api/faculty/available_rooms?' + params.toString());
         const data  = await res.json();
+        // A newer lookup or a form reset happened meanwhile: this answer is stale.
+        if (seq !== _reqRoomLoadSeq[p]) return;
         const rooms = data.rooms || [];
         _buildRoomDropdown(p, rooms);
         if (status) status.textContent = rooms.length
@@ -3047,6 +3098,7 @@ async function _loadFormRooms(p, statusId, params) {
         }
         _pendingRoom = null;
     } catch(e) {
+        if (seq !== _reqRoomLoadSeq[p]) return;
         const list = document.getElementById(p + 'RoomList');
         if (list) list.innerHTML = '<div style="padding:10px 12px;color:#aaa;font-size:0.8rem;">Error loading rooms</div>';
         if (status) status.textContent = '';
@@ -3256,6 +3308,15 @@ function _resetReqForm(p) {
 
 
     _resetRoomDisplay(p, p === 'mu' ? '— Select date & time first —' : '— Select day & time first —');
+    // The previous attempt's room lookup: its "N available room(s)" label, list and pick
+    // (and any lookup still in flight — _loadFormRooms ignores a response from before this).
+    _reqRoomLoadSeq[p] = (_reqRoomLoadSeq[p] || 0) + 1;
+    const roomStatus = document.getElementById(p + 'RoomStatus');
+    if (roomStatus) roomStatus.textContent = '';
+    const roomList = document.getElementById(p + 'RoomList');
+    if (roomList) roomList.innerHTML = '';
+    const roomVal = document.getElementById(p + 'Room');
+    if (roomVal) roomVal.value = '';
     const wrap = document.getElementById(p + 'RoomWrap');
     const box  = wrap ? wrap.querySelector('.room-sel-box') : null;
     if (wrap) wrap.classList.remove('no-rooms', 'open');

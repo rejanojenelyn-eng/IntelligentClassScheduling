@@ -12,7 +12,7 @@ from psycopg2.extras import RealDictCursor
 import app as app_module
 import merge_groups as mg
 from conftest import requires_db
-from test_merge_groups_p2_api import _context, _make_group, _row, head, tx, world  # noqa: F401
+from test_merge_groups_p2_api import _context, _make_group, _other_room, _row, head, tx, world  # noqa: F401
 from test_merge_groups_p5_api import _publish
 
 pytestmark = requires_db
@@ -99,11 +99,12 @@ def test_different_faculty_or_slot_is_never_a_merge(head, tx, world, case):
     if case == 'other_faculty':
         row = _row(world, fac=world['facs'][1])
     else:
-        other = next(r for r in mg.load_rooms(_cur(tx)).values()
-                     if r['roomid'] != world['room']['roomid'] and r['roomtype'] == 'Lecture')
-        row = _row(world, room=other['roomid'], fac=world['facs'][0])
+        row = _row(world, room=_other_room(tx, world)['roomid'], fac=world['facs'][0])
     body = _save(head, world, [row]).get_json()
-    assert body.get('success') is True and body['merged'] == [], body     # saved as an ordinary class
+    # Not a merge: a plain room (other faculty) / faculty (other room) clash with B's
+    # Published class, which Save Draft refuses like Publish does.
+    assert body.get('success') is False and body['code'] == 'PUBLISHED_CONFLICT', body
+    assert {v['rule'] for v in body['violations']} == {'HC11' if case == 'other_faculty' else 'HC10'}, body
     assert _groups_of(tx, world) == []
 
 

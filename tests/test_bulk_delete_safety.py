@@ -99,10 +99,15 @@ def test_schedule_list_delete_never_hard_deletes():
     assert 'DELETE FROM schedule' not in src and "SET status = 'Archive'" in src
 
 
-@pytest.mark.parametrize('fn', ['sis_import_confirm', 'admin_delete_curriculum'])
-def test_every_bulk_delete_path_checks_references_before_deleting(fn):
+@pytest.mark.parametrize('fn, guard_call', [
+    # The import Override explicitly purges the period's request / Local history first
+    # (the override dialog lists it); curriculum delete refuses instead.
+    ('sis_import_confirm', '_purge_schedule_history('),
+    ('admin_delete_curriculum', '_schedule_delete_blockers('),
+])
+def test_every_bulk_delete_path_checks_references_before_deleting(fn, guard_call):
     src = inspect.getsource(getattr(app_module, fn))
-    guard = src.index('_schedule_delete_blockers(')
+    guard = src.index(guard_call)
     first_delete = min(i for i in (src.find('DELETE FROM schedule_version'),
                                    src.find('DELETE FROM schedule_sessions')) if i >= 0)
     assert guard < first_delete
@@ -110,3 +115,32 @@ def test_every_bulk_delete_path_checks_references_before_deleting(fn):
 
 def test_curriculum_delete_no_longer_deletes_request_history():
     assert 'DELETE FROM class_meeting_request' not in inspect.getsource(app_module.admin_delete_curriculum)
+
+
+@requires_db
+def test_override_purge_removes_local_and_request_history(tx, ls):
+    """Import Override: every Local arrangement (Archived included) and request that
+    references the schedules is removed, so the schedules can then be deleted."""
+    app_module._ensure_local_tables()
+    o = ls['occ'][0]
+    cur = _cur(tx)
+    cur.execute("""INSERT INTO local_arrangement (programcode, yearlevel, sectionid, semesterid,
+                       ref_versionid, is_active, status) VALUES (%s,%s,%s,%s,%s,FALSE,'Archived')
+                   RETURNING arrangementid""",
+                (ls['program'], ls['yearlevel'], ls['sectionid'], ls['semesterid'], o['versionid']))
+    arr = cur.fetchone()['arrangementid']
+    cur.execute("""INSERT INTO local_arrangement_sessions (arrangementid, subjectcode, daydesc, starttimeid,
+                       endtimeid, roomid, official_sessionid) VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (arr, o['code'], o['daydesc'], o['starttimeid'], o['endtimeid'], o['roomid'], o['sessionid']))
+    cur.execute("""INSERT INTO class_meeting_request (scheduleid, requested_date, new_starttimeid,
+                       new_endtimeid, reason, submitted_by, status)
+                   VALUES (%s, %s, %s, %s, 'x', %s, 'Pending')""",
+                (o['scheduleid'], datetime.date.today(), o['starttimeid'], o['endtimeid'], o['fac']))
+    removed = app_module._purge_schedule_history(cur, [o['scheduleid']], [ls['semesterid']])
+    assert removed.get('local_arrangements') and removed.get('makeup_requests')
+    assert app_module._schedule_delete_blockers(cur, [o['scheduleid']]) == {}
+    cur.execute("SELECT COUNT(*) AS n FROM local_arrangement WHERE arrangementid = %s", (arr,))
+    assert cur.fetchone()['n'] == 0
+    # The trigger bypass ends with the purge: Archived history is protected again.
+    cur.execute("SELECT current_setting('dss.purge_schedule_history', true) AS v")
+    assert cur.fetchone()['v'] == 'off'
