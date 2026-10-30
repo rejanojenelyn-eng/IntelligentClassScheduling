@@ -64,7 +64,9 @@ def world(tx):
     if not sem:
         pytest.skip('no active semester')
     sections, subjects = mg.load_offered(cur, sem['semesterid'])
-    occ = mg.fetch_occurrences(cur, [sem['semesterid']])
+    # Draft-preferred view + the LIVE Published view (a pending Draft hides its
+    # Published slot from the first, but Save Draft / Publish still see it).
+    occ = mg.fetch_occurrences(cur, [sem['semesterid']])         + mg.fetch_occurrences(cur, [sem['semesterid']], draft_preferred=False)
     busy_subject = {(o['sectionid'], mg.norm_code(o['subjectcode'])) for o in occ}
     by_code = {}
     for sid, sec in sections.items():
@@ -96,10 +98,14 @@ def world(tx):
                 room = next((r for r in rooms if all(free(o) for o in occ if o['roomid'] == r['roomid'])), None)
                 if not room:
                     continue
-                cur.execute("SELECT employeenumber FROM faculty WHERE isactive ORDER BY employeenumber LIMIT 2")
-                facs = [r['employeenumber'] for r in cur.fetchall()]
+                # Faculty free at the slot: Save Draft / Publish block a faculty who
+                # already teaches another section's Published class then (HC10).
+                busy_fac = {str(o['faculty_id']) for o in occ if o.get('faculty_id') and not free(o)}
+                cur.execute("SELECT employeenumber FROM faculty WHERE isactive ORDER BY employeenumber")
+                facs = [r['employeenumber'] for r in cur.fetchall()
+                        if str(r['employeenumber']) not in busy_fac][:2]
                 if len(facs) < 2:
-                    pytest.skip('needs two active faculty')
+                    continue                    # try another slot
                 mg.set_merge_model(cur, 'groups')
                 tx.handle().commit()
                 return {'sem': sem, 'code': code, 'a': (a, a_cs), 'b': (b, b_cs), 'sec': sections,
@@ -145,8 +151,19 @@ def _draft_count(tx, w, which='a'):
 
 
 def _other_room(tx, w):
-    return next(r for r in mg.load_rooms(_cur(tx)).values()
-                if r['roomid'] != w['room']['roomid'] and r['roomtype'] == 'Lecture')
+    """Another Lecture room that is FREE at the world's slot (Save Draft blocks a room
+    already taken by another section's Published class)."""
+    cur = _cur(tx)
+    occ = mg.fetch_occurrences(cur, [w['sem']['semesterid']])         + mg.fetch_occurrences(cur, [w['sem']['semesterid']], draft_preferred=False)
+    def free(o):
+        return not (o['day'] == w['day'] and _minutes(o['start_time']) < _minutes(w['end'])
+                    and _minutes(o['end_time']) > _minutes(w['start']))
+    room = next((r for r in mg.load_rooms(cur).values()
+                 if r['roomid'] != w['room']['roomid'] and r['roomtype'] == 'Lecture' and r['isactive']
+                 and all(free(o) for o in occ if o['roomid'] == r['roomid'])), None)
+    if not room:
+        pytest.skip('no second free Lecture room at the slot')
+    return room
 
 
 # ── 25. Save Draft ──────────────────────────────────────────────────────────────

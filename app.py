@@ -451,6 +451,10 @@ def _apply_local_tables():
             CREATE OR REPLACE FUNCTION public.guard_local_arrangement_history()
             RETURNS trigger AS $$
             BEGIN
+                -- An explicit schedule Override purge (_purge_schedule_history) may remove it.
+                IF current_setting('dss.purge_schedule_history', true) = 'on' THEN
+                    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+                END IF;
                 IF TG_OP = 'DELETE' AND OLD.status = 'Archived' THEN
                     RAISE EXCEPTION 'Archived Local Arrangement history is immutable';
                 END IF;
@@ -475,6 +479,9 @@ def _apply_local_tables():
             RETURNS trigger AS $$
             DECLARE parent_status VARCHAR(20);
             BEGIN
+                IF current_setting('dss.purge_schedule_history', true) = 'on' THEN
+                    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+                END IF;
                 SELECT status INTO parent_status
                 FROM public.local_arrangement
                 WHERE arrangementid = OLD.arrangementid;
@@ -667,6 +674,14 @@ from rf_dss import resolve_faculty_names
 # 1. INITIALIZE APP FIRST
 app = Flask(__name__)
 app.secret_key = Config.SECRET_KEY # Required for Login Sessions
+# Login cookie hardening: unreadable from page scripts (HttpOnly), not sent on requests
+# that other sites start — forms / fetches posting here from elsewhere (SameSite=Lax,
+# the main CSRF defence until per-form tokens exist), HTTPS-only once deployed (Secure).
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=Config.SESSION_COOKIE_SECURE,
+)
 
 
 # Static files (CSS/JS/fonts/images): every url_for('static', ...) carries ?v=<file
@@ -829,7 +844,9 @@ def session_heartbeat():
             entry = _open_pages.setdefault(session['sid'], {'pages': {}, 'closed_at': None})
             entry['pages'][page_id] = datetime.now().timestamp()
             entry['closed_at'] = None
-    return jsonify({'success': True})
+    # The account the browser is signed in as NOW — a page opened as someone else
+    # (another tab signed in since) shows the account-changed notice.
+    return jsonify({'success': True, **_session_identity()})
 
 
 @app.route('/api/session/page_closed', methods=['POST'])
@@ -844,6 +861,26 @@ def session_page_closed():
             if entry and entry['pages'].pop(page_id, None) is not None and not entry['pages']:
                 entry['closed_at'] = datetime.now().timestamp()
     return ('', 204)
+
+
+def _session_identity():
+    """{user, name, role} of the signed-in account — what session_guard.js compares
+    across tabs. The display name is looked up once per login and kept in the session."""
+    user = str(session.get('userid') or session.get('username') or '')
+    if session.get('_display_name_for') != user:
+        name = session.get('username') or ''
+        try:
+            row = query_db("""
+                SELECT TRIM(COALESCE(f.firstname, '') || ' ' || COALESCE(f.lastname, '')) AS name
+                FROM accounts a LEFT JOIN faculty f ON f.employeenumber = a.employeenumber
+                WHERE a.userid = %s
+            """, [session.get('userid')], one=True) if session.get('userid') else None
+            if row and row.get('name'):
+                name = row['name']
+        except Exception:
+            pass
+        session['_display_name'], session['_display_name_for'] = name, user
+    return {'user': user, 'name': session.get('_display_name') or '', 'role': session.get('role') or ''}
 
 
 @app.after_request
@@ -869,8 +906,14 @@ def _inject_session_guard(resp):
                     entry = _open_pages.setdefault(session['sid'], {'pages': {}, 'closed_at': None})
                     entry['pages'][page_id] = datetime.now().timestamp()
                     entry['closed_at'] = None
+            # Who this page was opened as: tabs of one browser share the login cookie, so a
+            # sign-in on another tab silently turns this tab into that account. The guard
+            # compares and blocks the stale tab instead (see session_guard.js).
+            who = _session_identity()
+            from markupsafe import escape as _esc_attr
             tag = (f'<script src="{url_for("static", filename="js/session_guard.js")}"'
-                   f' data-page="{page_id}"></script>')
+                   f' data-page="{page_id}" data-user="{_esc_attr(who["user"])}"'
+                   f' data-name="{_esc_attr(who["name"])}" data-role="{_esc_attr(who["role"])}"></script>')
             resp.set_data(html[:cut] + tag + html[cut:])
     return resp
 
@@ -4611,8 +4654,8 @@ def add_employee():
         f_name = request.form['first_name']
         m_name = request.form.get('middle_name')
         l_name = request.form['last_name']
-        email = request.form['email']
-        contact = request.form['contact']
+        email = (request.form.get('email') or '').strip()
+        contact = (request.form.get('contact') or '').strip()
         spec_id = request.form['specialization_id']
         type_id = request.form['type_id']
         status = request.form['status']
@@ -4641,8 +4684,8 @@ def edit_employee():
         f_name = request.form['first_name']
         m_name = request.form.get('middle_name')
         l_name = request.form['last_name']
-        email = request.form['email']
-        contact = request.form['contact']
+        email = (request.form.get('email') or '').strip()
+        contact = (request.form.get('contact') or '').strip()
         spec_id = request.form['specialization_id']
         type_id = request.form['type_id']
         status = request.form['status']
@@ -4747,9 +4790,9 @@ def api_add_employee():
     type_id  = data.get('type_id')
     status   = data.get('status')
     desig_id = data.get('designation_id') or None
-    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+    if not all([emp_num, f_name, l_name, spec_id, type_id, status]):   # email / contact optional
         return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
-    if not contact.isdigit():
+    if contact and not contact.isdigit():
         return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
 
 
@@ -4784,9 +4827,9 @@ def api_edit_employee():
     type_id  = data.get('type_id')
     status   = data.get('status')
     desig_id = data.get('designation_id') or None
-    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+    if not all([emp_num, f_name, l_name, spec_id, type_id, status]):   # email / contact optional
         return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
-    if not contact.isdigit():
+    if contact and not contact.isdigit():
         return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
 
 
@@ -5825,18 +5868,22 @@ def _section_name_key(name):
 def _pick_section_by_name(rows, name):
     """From candidate section rows (sectionid, sectionname[, isactive]) pick the one
     an imported name refers to: an exact (case-insensitive) name first, else the
-    same _section_name_key. Active sections are preferred. None if no match."""
+    same _section_name_key. Any ACTIVE match beats an inactive one, exact or not —
+    an inactive 'BSIT-1' next to an active 'BSIT 1' must not take the import, or its
+    schedules land on a section no view shows. None if no match."""
     key = _section_name_key(name)
     if not key:
         return None
     want = str(name or '').strip().upper()
-    rows = sorted(rows or [], key=lambda r: (not r.get('isactive', True), r['sectionid']))
-    for r in rows:
-        if str(r['sectionname'] or '').strip().upper() == want:
-            return r
-    for r in rows:
-        if _section_name_key(r['sectionname']) == key:
-            return r
+    rows = sorted(rows or [], key=lambda r: r['sectionid'])
+    for active in (True, False):
+        group = [r for r in rows if bool(r.get('isactive', True)) == active]
+        for r in group:
+            if str(r['sectionname'] or '').strip().upper() == want:
+                return r
+        for r in group:
+            if _section_name_key(r['sectionname']) == key:
+                return r
     return None
 
 
@@ -13175,17 +13222,15 @@ def sis_import_confirm():
         cur.execute("DELETE FROM historical_data WHERE semesterid = ANY(%s)", (all_sem_ids,))
         print(f"[SIS Confirm] Purged historical_data for semesterids={all_sem_ids}")
 
-        # Override: clear ALL schedule data across every semesterid for this AY+type —
-        # refused (and the historical_data purge above rolled back) when request or Local
-        # Scheduler history still references those schedules.
+        # Override: clear ALL schedule data across every semesterid for this AY+type,
+        # including every Local Scheduler arrangement and Make-up / Schedule Adjustment
+        # request of that period (the override dialog lists them before confirming).
         if override:
             cur.execute("SELECT scheduleid FROM schedule WHERE semesterid = ANY(%s)", (all_sem_ids,))
-            _ov_blockers = _schedule_delete_blockers(cur, [r['scheduleid'] for r in cur.fetchall()])
-            if _ov_blockers:
-                conn.rollback()
-                return jsonify({'success': False, 'code': 'SCHEDULE_HISTORY_REFERENCED',
-                                'error': _schedule_delete_blocked_message(_ov_blockers),
-                                'references': _ov_blockers}), 409
+            _ov_removed = _purge_schedule_history(
+                cur, [r['scheduleid'] for r in cur.fetchall()], all_sem_ids)
+            if _ov_removed:
+                print(f"[SIS Override] Removed request / Local history: {_ov_removed}")
             cur.execute("""
                 DELETE FROM schedule_sessions
                 WHERE versionid IN (
@@ -13482,6 +13527,10 @@ def sis_import_confirm():
                     # ("BSIT1" = "BSIT 1" = "BSIT-1") — see _section_name_key.
                     _sr = _find_section_like(cur, _pyl_id, _sec_nm)
                     sec_id = _sr['sectionid'] if _sr else None
+                    # Only an inactive section matched: a current/future import offers it
+                    # this term, so reactivate it — its schedules would otherwise be hidden.
+                    if sec_id and is_cur and not _sr.get('isactive', True):
+                        cur.execute("UPDATE sections SET isactive = TRUE WHERE sectionid = %s", (sec_id,))
 
                     if sec_id:
                         _mark_section_start_sem(cur, sec_id, sem_type)
@@ -14763,7 +14812,17 @@ def schedule_import_check_existing():
         )
         sched_count = cur.fetchone()[0]
 
-        return jsonify({'exists': sched_count > 0, 'count': sched_count})
+        # What an Override would also delete (Local Scheduler + request history).
+        cur.execute("SELECT scheduleid FROM schedule WHERE semesterid = ANY(%s)", (sem_ids,))
+        history = _schedule_delete_blockers(cur, [r[0] for r in cur.fetchall()])
+        cur.execute("SELECT COUNT(*) FROM local_arrangement WHERE semesterid = ANY(%s)", (sem_ids,))
+        local_count = cur.fetchone()[0]
+        if local_count > history.get('local_arrangements', 0):
+            history['local_arrangements'] = local_count
+
+        return jsonify({'exists': sched_count > 0, 'count': sched_count,
+                        'history': history,
+                        'history_labels': {k: _SCHEDULE_REFERENCE_LABELS.get(k, k) for k in history}})
     except Exception as e:
         return jsonify({'exists': False, 'count': 0, 'error': str(e)})
     finally:
@@ -23001,14 +23060,14 @@ def admin_add_employee():
         f_name = request.form['first_name']
         m_name = request.form.get('middle_name')
         l_name = request.form['last_name']
-        email = request.form['email']
-        contact = request.form['contact']
+        email = (request.form.get('email') or '').strip()
+        contact = (request.form.get('contact') or '').strip()
         spec_id = request.form['specialization_id']
         type_id = request.form['type_id']
         status = request.form['status']
         desig_id = request.form.get('designation_id')
         if not desig_id or desig_id == '': desig_id = None
-        if not contact.isdigit():
+        if contact and not contact.isdigit():
             flash("Contact Number must contain numbers only.", "error")
             return redirect(url_for('admin_employee'))
 
@@ -23052,14 +23111,14 @@ def admin_edit_employee():
         f_name = request.form['first_name']
         m_name = request.form.get('middle_name')
         l_name = request.form['last_name']
-        email = request.form['email']
-        contact = request.form['contact']
+        email = (request.form.get('email') or '').strip()
+        contact = (request.form.get('contact') or '').strip()
         spec_id = request.form['specialization_id']
         type_id = request.form['type_id']
         status = request.form['status']
         desig_id = request.form.get('designation_id')
         if not desig_id or desig_id == '': desig_id = None
-        if not contact.isdigit():
+        if contact and not contact.isdigit():
             flash("Contact Number must contain numbers only.", "error")
             return redirect(url_for('admin_employee'))
 
@@ -23109,9 +23168,9 @@ def admin_api_add_employee():
     type_id  = data.get('type_id')
     status   = data.get('status')
     desig_id = data.get('designation_id') or None
-    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+    if not all([emp_num, f_name, l_name, spec_id, type_id, status]):   # email / contact optional
         return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
-    if not contact.isdigit():
+    if contact and not contact.isdigit():
         return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
 
 
@@ -23165,9 +23224,9 @@ def admin_api_edit_employee():
     type_id  = data.get('type_id')
     status   = data.get('status')
     desig_id = data.get('designation_id') or None
-    if not all([emp_num, f_name, l_name, email, contact, spec_id, type_id, status]):
+    if not all([emp_num, f_name, l_name, spec_id, type_id, status]):   # email / contact optional
         return jsonify({'success': False, 'error': 'Please fill in all required fields.'}), 400
-    if not contact.isdigit():
+    if contact and not contact.isdigit():
         return jsonify({'success': False, 'error': 'Contact Number must contain numbers only.'}), 400
 
 
@@ -33513,6 +33572,10 @@ def api_faculty_my_assignments():
             SELECT DISTINCT
                 cs.subjectcode,
                 cs.subjectname,
+                -- one regular session = lecture + laboratory hours: the make-up form's
+                -- longest allowed span (makeup_requests.makeup_duration_error)
+                COALESCE(cs.lecturehours, 0)::float                AS lecturehours,
+                COALESCE(cs.laboratoryhours, 0)::float             AS laboratoryhours,
                 es.scheduleid,
                 es.versionid,
                 es.official_sessionid,
@@ -35545,6 +35608,54 @@ def _schedule_delete_blockers(cur, scheduleids):
     row = cur.fetchone() or {}
     row = row if isinstance(row, dict) else dict(zip(_SCHEDULE_REFERENCE_LABELS, row))
     return {k: int(v) for k, v in row.items() if v}
+
+
+def _purge_schedule_history(cur, scheduleids, semester_ids=None):
+    """Explicit Override only: hard-delete every request / Local Scheduler record that
+    references these Official schedules (plus every Local arrangement of `semester_ids`),
+    so the schedules themselves can then be deleted. Archived Local history is immutable,
+    so the guard triggers are bypassed for the rest of this transaction only via the
+    dss.purge_schedule_history setting. Returns the {kind: count} that was removed."""
+    ids = [int(i) for i in (scheduleids or [])]
+    sem_ids = [int(i) for i in (semester_ids or [])]
+    removed = _schedule_delete_blockers(cur, ids)
+    if not ids and not sem_ids:
+        return removed
+    cur.execute("SELECT set_config('dss.purge_schedule_history', 'on', true)")
+    p = {'ids': ids, 'sems': sem_ids}
+    cur.execute("""
+        SELECT DISTINCT la.arrangementid FROM public.local_arrangement la
+        WHERE la.semesterid = ANY(%(sems)s)
+           OR la.ref_versionid IN (SELECT versionid FROM public.schedule_version
+                                   WHERE scheduleid = ANY(%(ids)s))
+           OR la.arrangementid IN (
+                SELECT las.arrangementid FROM public.local_arrangement_sessions las
+                JOIN public.schedule_sessions ss ON ss.sessionid = las.official_sessionid
+                JOIN public.schedule_version sv ON sv.versionid = ss.versionid
+                WHERE sv.scheduleid = ANY(%(ids)s))
+    """, p)
+    p['arr'] = [r['arrangementid'] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+    p['sess'] = """(SELECT ss.sessionid FROM public.schedule_sessions ss
+                    JOIN public.schedule_version sv ON sv.versionid = ss.versionid
+                    WHERE sv.scheduleid = ANY(%(ids)s))"""
+    cur.execute("DELETE FROM public.local_displaced_subjects WHERE displaced_by = ANY(%(arr)s)", p)
+    cur.execute("""DELETE FROM public.local_arrangement_sessions
+                   WHERE arrangementid = ANY(%(arr)s) OR official_sessionid IN """ + p['sess'], p)
+    cur.execute("""UPDATE public.local_arrangement SET restored_from_arrangementid = NULL
+                   WHERE restored_from_arrangementid = ANY(%(arr)s)
+                     AND NOT (arrangementid = ANY(%(arr)s))""", p)
+    cur.execute("DELETE FROM public.local_arrangement WHERE arrangementid = ANY(%(arr)s)", p)
+    cur.execute("""DELETE FROM public.schedule_change_request
+                   WHERE scheduleid = ANY(%(ids)s)
+                      OR versionid IN (SELECT versionid FROM public.schedule_version
+                                       WHERE scheduleid = ANY(%(ids)s))
+                      OR official_sessionid IN """ + p['sess'], p)
+    cur.execute("DELETE FROM public.class_meeting_request WHERE scheduleid = ANY(%(ids)s)", p)
+    cur.execute("DELETE FROM public.schedule_exception_log WHERE scheduleid = ANY(%(ids)s)", p)
+    cur.execute("""DELETE FROM public.local_schedule_adjustment
+                   WHERE scheduleid = ANY(%(ids)s) OR sessionid IN """ + p['sess'], p)
+    cur.execute("SELECT set_config('dss.purge_schedule_history', 'off', true)")
+    return removed
 
 
 def _schedule_delete_blocked_message(blockers):
@@ -39555,6 +39666,36 @@ def api_save_draft():
                 'night_violations': _night_viols,
             }), 400
 
+        # ── Conflicts with OTHER sections' Published schedule — blocking ──────
+        # A Draft may be unfinished, but it may never take a room / faculty / section
+        # slot that is already LIVE elsewhere: several Academic Heads (or several people
+        # on one account) building sections at once would otherwise each save a Draft on
+        # top of a Published class and find out only at Publish. Same effective-schedule
+        # checker as Publish (Published Official minus Published Local replacements, plus
+        # active Published Local, HC16 merges allowed), Published only: other sections'
+        # Drafts are still work in progress and are enforced when this Draft publishes.
+        if draft_source != 'local' and _pre_rehydrated:
+            try:
+                _pub_conflicts, _pub_count = _check_cross_schedule_conflicts(
+                    _pre_rehydrated, program, year_level, term, ay,
+                    section_id=ctx_section_id, fail_closed=True)
+            except ConstraintCheckUnavailable as _cce:
+                conn.rollback()
+                return jsonify({
+                    'success': False, 'code': 'CONSTRAINT_CHECK_UNAVAILABLE',
+                    'error': (f'Cannot save draft: the conflict check against the Published '
+                              f'schedule could not be completed ({_cce}). Nothing was saved.'),
+                }), 503
+            if _pub_conflicts:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'code': 'PUBLISHED_CONFLICT',
+                    'error': (f'Cannot save draft: {_pub_count} conflict(s) with the Published '
+                              'schedule of other sections.'),
+                    'violations': _pub_conflicts,
+                }), 400
+
         # ── Server-side section conflict check ──
         # Phase A2 audit note (NOT removed -- see the Phase A2 report):
         #   - The pairwise loop below (`for i, a in enumerate(incoming): ...`)
@@ -39602,7 +39743,8 @@ def api_save_draft():
 
         if incoming:
             cur.execute("""
-                SELECT UPPER(cs2.subjectcode) AS subjectcode, ss.daydesc, ss.starttimeid, ss.endtimeid
+                SELECT UPPER(cs2.subjectcode) AS subjectcode, ss.daydesc, ss.starttimeid, ss.endtimeid,
+                       sv.status, sc.sectionid
                 FROM   schedule_sessions ss
                 JOIN   schedule_version sv  ON ss.versionid           = sv.versionid
                 JOIN   schedule sc          ON sv.scheduleid           = sc.scheduleid
@@ -39620,13 +39762,35 @@ def api_save_draft():
             """.format(','.join(['%s'] * len(submitted_codes))),
             [program, year_level, sem_id, ctx_section_id, ctx_section_id] + submitted_codes)
             existing = cur.fetchall()
+            # A Published subject of THIS section is live: overlapping it blocks the save,
+            # unless that subject has its own pending Draft / removal (which may move it).
+            _pending = set(all_codes_to_archive) | {
+                s['subjectcode'] for s in (existing or []) if s['status'] == 'Draft'}
+            if ctx_section_id:
+                _pending |= set(_removal_draft_codes(cur, sem_id, ctx_section_id))
+            _live_hits = []
             for sess in (existing or []):
                 for inc in incoming:
                     if sess['daydesc'] == inc['day'] and \
                        sess['starttimeid'] < inc['end'] and sess['endtimeid'] > inc['start']:
-                        draft_warnings.append({'rule': 'HC12', 'subject': f"{inc['code']} / {sess['subjectcode']}",
-                            'detail': (f"Section conflict: {inc['code']} overlaps with "
-                                       f"{sess['subjectcode']} already scheduled on {sess['daydesc']}.")})
+                        w = {'rule': 'HC12', 'subject': f"{inc['code']} / {sess['subjectcode']}",
+                             'detail': (f"Section conflict: {inc['code']} overlaps with "
+                                        f"{sess['subjectcode']} already scheduled on {sess['daydesc']}.")}
+                        if (ctx_section_id and sess['status'] == 'Published'
+                                and sess['subjectcode'] not in _pending):
+                            _live_hits.append({**w, 'detail': w['detail'].replace(
+                                'already scheduled', 'already Published')})
+                        else:
+                            draft_warnings.append(w)
+            if _live_hits:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'code': 'PUBLISHED_CONFLICT',
+                    'error': (f"Cannot save draft: {len(_live_hits)} conflict(s) with this "
+                              "section's Published subjects."),
+                    'violations': [dict(t) for t in {tuple(sorted(v.items())) for v in _live_hits}],
+                }), 400
 
         # Carry forward only subjects that have an active Draft (not Published-only ones).
         # This keeps the Draft snapshot pure — it only contains genuine Draft-state content.

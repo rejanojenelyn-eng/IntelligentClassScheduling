@@ -328,7 +328,8 @@ function fcsRenderCalendar(sessions) {
 
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
-            pill.style.backgroundColor = fcsSubjectColor(sess.subjectcode);
+            const _pc = fcsSubjectColor(sess.subjectcode);
+            pill.style.backgroundColor = _pc;
             const w = (colWidth - 6) / (overlapCount || 1);
             const pillH = (end - start) * pxPerMin - 2;
 
@@ -341,13 +342,17 @@ function fcsRenderCalendar(sessions) {
             pill.title = `${sess.subjectcode}\n${sess.subjectname}\n${sess.instructor}\n${fcsFmtTime(sess.start_time)} – ${fcsFmtTime(sess.end_time)}\n${sess.roomname}`;
 
             const pillContent = `
-                <div class="pill-subject">${sess.subjectname}</div>
-                <div class="pill-instructor">${instrLast}</div>
-                <div class="pill-room">${sess.roomname || 'TBA'}</div>`;
+                <div class="pill-code">${sess.subjectcode || ''}</div>
+                <div class="pill-subject">${sess.subjectname || ''}</div>
+                <div class="pill-instructor"><i class="fas fa-user"></i> ${instrLast}</div>
+                <div class="pill-time">${fcsFmtTime(sess.start_time)} - ${fcsFmtTime(sess.end_time)}</div>
+                <div class="pill-room"><i class="fas fa-door-open"></i> ${sess.roomname || 'TBA'}</div>`;
 
             if (pillH < 55) pill.classList.add('schedule-pill--compact');
             else if (pillH < 85) pill.classList.add('schedule-pill--medium');
             pill.innerHTML = pillContent;
+            // Double-click → full details (schedule_pill_detail.js)
+            pill._detail = { ...sess, time: `${fcsFmtTime(sess.start_time)} – ${fcsFmtTime(sess.end_time)}` };
             wrapper.appendChild(pill);
         });
     });
@@ -364,7 +369,7 @@ function fcsRenderTable(sessions) {
     const grouped = {};
     sessions.forEach(sess => {
         const key = `${sess.subjectcode}||${sess.instructor}||${sess.sectionname}`;
-        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [] };
+        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [], slots: [] };
         if (sess.daydesc) {
             const ab = _fcsDayAbbr(sess.daydesc);
             if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
@@ -372,6 +377,10 @@ function fcsRenderTable(sessions) {
         if (sess.start_time) {
             const t = `${fcsFmtTime(sess.start_time)} - ${fcsFmtTime(sess.end_time)}`;
             if (!grouped[key].timesArr.includes(t)) grouped[key].timesArr.push(t);
+            // Keep each meeting's day WITH its time: Days are listed in weekday order but
+            // times arrive in clock order, so two separate lists can't be read side by side.
+            const d = sess.daydesc ? _fcsDayAbbr(sess.daydesc) : '';
+            if (!grouped[key].slots.some(x => x.d === d && x.t === t)) grouped[key].slots.push({ d, t });
         }
     });
 
@@ -394,7 +403,11 @@ function fcsRenderTable(sessions) {
             ? `<span title="${sess.instructor}">${sess.instructor}</span>`
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';
         const daysDisplay  = sess.daysArr.length  ? _sortDays(sess.daysArr).join('/') : '<span style="color:#aaa;">—</span>';
-        const timeDisplay  = sess.timesArr.length ? sess.timesArr.join(' / ') : '<span style="color:#aaa;">—</span>';
+        const _order = _sortDays(sess.daysArr);
+        const timeDisplay  = !sess.timesArr.length ? '<span style="color:#aaa;">—</span>'
+            : sess.timesArr.length === 1 ? sess.timesArr[0]           // same time every meeting day
+            : sess.slots.slice().sort((a, b) => _order.indexOf(a.d) - _order.indexOf(b.d))
+                  .map(x => x.t).join(' / ');   // in the same order as the Days column
         const roomDisplay  = sess.roomname && sess.roomname !== 'TBA'
             ? sess.roomname
             : '<span style="color:#aaa;font-style:italic;">TBA</span>';

@@ -256,3 +256,56 @@
 .sis-schedule-page .schedule-pill .pill-subject { font-weight: 700; letter-spacing: 0.1px; }
 .sis-schedule-page .schedule-pill .pill-instructor,
 .sis-schedule-page .schedule-pill .pill-room { font-weight: 500; }
+
+/* Calendar cards: the strong subject colour (unlike the Room Schedule's light cards),
+   no side accent bar, white text — code / name / time / instructor / room. */
+.sis-schedule-page .schedule-pill {
+    padding: 7px 9px; gap: 2px; border: 0 !important; border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(43,0,0,.2); color: #fff !important; line-height: 1.3;
+    align-items: flex-start !important; justify-content: flex-start !important; text-align: left !important;
+    cursor: zoom-in; user-select: none;
+}
+.sis-schedule-page .schedule-pill:hover { box-shadow: 0 6px 16px rgba(43,0,0,.32); transform: translateY(-1px); }
+.sis-schedule-page .schedule-pill > div { color: #fff !important; text-shadow: none !important;
+    text-transform: none !important; text-align: left !important; max-width: 100%; }
+.sis-schedule-page .schedule-pill .pill-code { font-size: .82rem; font-weight: 900; letter-spacing: .3px; }
+.sis-schedule-page .schedule-pill .pill-subject {
+    font-size: .72rem; font-weight: 500 !important; opacity: .95; letter-spacing: 0; margin-bottom: 4px;
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.sis-schedule-page .schedule-pill .pill-time {
+    order: 3; font-size: .68rem; font-weight: 700; background: rgba(0,0,0,.2); border-radius: 4px;
+    padding: 1px 6px; margin-bottom: 3px; width: auto !important; max-width: 100%; white-space: nowrap;
+}
+.sis-schedule-page .schedule-pill .pill-instructor { order: 4; }
+.sis-schedule-page .schedule-pill .pill-room       { order: 5; }
+.sis-schedule-page .schedule-pill .pill-instructor,
+.sis-schedule-page .schedule-pill .pill-room { font-size: .7rem; font-weight: 500; opacity: .92;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0; }
+.sis-schedule-page .schedule-pill .pill-instructor i,
+.sis-schedule-page .schedule-pill .pill-room i { width: 12px; text-align: center; font-size: .64rem; opacity: .85; }
+/* Short blocks: code + time (+ instructor when it fits); the rest is in the double-click popup. */
+.sis-schedule-page .schedule-pill--medium .pill-subject { -webkit-line-clamp: 1; line-clamp: 1; }
+.sis-schedule-page .schedule-pill--medium .pill-room { display: none; }
+.sis-schedule-page .schedule-pill--compact { padding: 3px 7px; }
+.sis-schedule-page .schedule-pill--compact .pill-subject,
+.sis-schedule-page .schedule-pill--compact .pill-instructor,
+.sis-schedule-page .schedule-pill--compact .pill-room { display: none; }
+
+/* Double-click detail popup (schedule_pill_detail.js) */
+.spd-overlay { position: fixed; inset: 0; background: rgba(20,0,0,.45); z-index: 100000;
+    display: flex; align-items: center; justify-content: center; padding: 16px; }
+.spd-box { width: min(440px, 100%); background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 18px 50px rgba(0,0,0,.3); font-family: 'Inter', sans-serif; }
+.spd-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; color: #fff; background: #800000; }
+.spd-code { font-size: .75rem; font-weight: 800; letter-spacing: .6px; opacity: .9; }
+.spd-title { font-size: 1.1rem; font-weight: 800; line-height: 1.3; margin-top: 2px; }
+.spd-close { margin-left: auto; background: rgba(255,255,255,.18); border: 0; color: #fff; width: 30px; height: 30px;
+    border-radius: 50%; font-size: 1.2rem; line-height: 1; cursor: pointer; flex-shrink: 0; }
+.spd-close:hover { background: rgba(255,255,255,.32); }
+.spd-body { padding: 8px 18px 16px; }
+.spd-row { display: flex; align-items: baseline; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f1e6e6; font-size: .88rem; }
+.spd-row:last-child { border-bottom: 0; }
+.spd-row i { color: #800000; width: 16px; text-align: center; flex-shrink: 0; }
+.spd-k { color: #777; font-weight: 600; width: 82px; flex-shrink: 0; }
+.spd-v { color: #222; font-weight: 600; }

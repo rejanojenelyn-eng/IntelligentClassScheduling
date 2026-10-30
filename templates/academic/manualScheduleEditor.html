@@ -6106,6 +6106,13 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
             if (_chkHours > 0) {
                 const _chkSched = _getScheduledHoursForCode(_chkCode, _chkAy, _chkSem);
                 if (_chkSched >= _chkHours) {
+                    // An Academic Head's class in the Local Scheduler: + still adds a MAKE UP
+                    // class (one meeting on one date) — the same form faculty get for theirs.
+                    const _muBtn = document.getElementById('btnSaveMakeupClass');
+                    if (_muBtn && _muBtn.style.display !== 'none' && !_muBtn.disabled) {
+                        saveAsMakeupClass({ fromPlus: true });
+                        return;
+                    }
                     showValidationModal('Subject Fully Scheduled',
                         `"${_chkCode}" already has all ${_chkHours}h scheduled. No additional sessions can be added.`);
                     return;
@@ -10146,7 +10153,10 @@ function _revertSliceToLoaded(rowId) {
     row.dataset.dirty = '';
 }
 
-async function saveAsMakeupClass() {
+// opts.fromPlus: opened from TIME ALLOTMENT's + on a fully scheduled subject — the form
+// starts from a slice's values but never touches the slices (no revert after saving).
+async function saveAsMakeupClass(opts = {}) {
+    const fromPlus = !!opts.fromPlus;
     const rows = [...document.querySelectorAll('.ts-row')];
     const row = (_activeSliceId != null && document.getElementById(`ts-row-${_activeSliceId}`)) || rows[0];
     if (!row) { await showValidationModal('No Slice', 'Open your subject first, then pick the slice to make up.'); return; }
@@ -10195,7 +10205,9 @@ async function saveAsMakeupClass() {
             <div class="mu-hint" id="muLen"></div></div>
           <div class="mu-row"><label>Room</label>
             <select id="muRoom"><option value="">-- Room --</option>${roomOpts}</select>
-            <div class="mu-hint">Filled in from Slice ${sliceNo}${day ? ` (its regular meeting: ${_ownMuEsc(day)} ${_ownMuEsc(start)} – ${_ownMuEsc(end)})` : ''} — change any of them here.</div></div>
+            <div class="mu-hint">${fromPlus
+                ? `All weekly hours are already scheduled, so + adds a make-up class instead. Time and room start from Slice ${sliceNo}${day ? ` (${_ownMuEsc(day)} ${_ownMuEsc(start)} – ${_ownMuEsc(end)})` : ''} — change them here.`
+                : `Filled in from Slice ${sliceNo}${day ? ` (its regular meeting: ${_ownMuEsc(day)} ${_ownMuEsc(start)} – ${_ownMuEsc(end)})` : ''} — change any of them here.`}</div></div>
           <div class="mu-row"><label>Reason</label>
             <textarea id="muReason" rows="3" placeholder="e.g. Class suspended on Oct 21 (typhoon)"></textarea></div>
           <div class="mu-hint" style="margin-bottom:14px;">Saved as approved — ${isMine ? 'it is your own class' : "it is an Academic Head's class"}. It is one meeting on that date only; the weekly schedule does not change.</div>
@@ -10269,7 +10281,7 @@ async function saveAsMakeupClass() {
                 return;
             }
             close();
-            _revertSliceToLoaded(rowId);
+            if (!fromPlus) _revertSliceToLoaded(rowId);   // + never edited a slice
             _renderOwnMakeups(data.makeups || []);
             const shown = new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
             await showValidationModal('Make Up Class Saved',

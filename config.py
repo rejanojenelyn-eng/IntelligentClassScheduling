@@ -36,6 +36,11 @@ class Config:
     # (used for rate limiting). Set TRUST_PROXY=1 on Railway only.
     TRUST_PROXY = _flag('TRUST_PROXY')
 
+    # Login cookie sent over HTTPS only. On by default where the site is deployed behind
+    # the HTTPS proxy (TRUST_PROXY=1); keep it off for local http:// runs, where the
+    # browser would otherwise drop the cookie and no login would stick.
+    SESSION_COOKIE_SECURE = _flag('SESSION_COOKIE_SECURE', '1' if TRUST_PROXY else '0')
+
     # Public address of the deployed site (e.g. https://your-app.up.railway.app).
     # The landing page's Share popup and QR code poster point here. When empty,
     # the address the visitor used to open the landing page is used instead.

@@ -204,6 +204,11 @@ def test_publish_opts_every_cross_section_check_into_fail_closed():
 
 def test_advisory_callers_stay_non_blocking():
     save_draft = APP_SRC[APP_SRC.index('def api_save_draft'):APP_SRC.index('def api_draft_sessions')]
-    assert 'fail_closed' not in save_draft
+    # Save Draft blocks only on the LIVE (Published) schedule of other sections, and
+    # refuses when that check cannot run; other sections' Drafts stay Publish-only.
+    call = save_draft[save_draft.index('_check_cross_schedule_conflicts('):]
+    call = call[:call.index(')\n')]
+    assert 'fail_closed=True' in call and 'include_drafts' not in call
+    assert save_draft.count('fail_closed') == 1
     generate = APP_SRC[APP_SRC.index('def api_generate_schedule'):APP_SRC.index('def api_save_draft')]
     assert 'fail_closed' not in generate
