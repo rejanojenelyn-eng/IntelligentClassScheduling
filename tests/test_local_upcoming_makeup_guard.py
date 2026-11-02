@@ -1,8 +1,9 @@
 """An approved make-up class holds its room / faculty / section on its one date.
 
 A weekly change onto that weekday + time (Local Scheduler save/publish, or the
-Academic Head approving a faculty's Schedule Adjustment) must wait until the
-make-up date has passed. The faculty may still SUBMIT the adjustment request.
+Local Scheduler save/publish) must wait until the make-up date has passed. A
+faculty's Schedule Adjustment can be submitted AND approved meanwhile: approval
+records apply_on (the day after the make-up) and the sweep applies it then.
 """
 import re
 from datetime import date, timedelta
@@ -52,7 +53,23 @@ def test_wait_message_wording():
     msg = _makeup_wait_message({'subjectcode': 'COMP 018', 'start_t': '02:00 PM', 'end_t': '04:00 PM',
                                 'requested_date': date(2026, 10, 12)}, 'room', 'This adjustment')
     assert msg == ('The room has an approved make-up class (COMP 018, 02:00 PM–04:00 PM) on '
-                   'October 12, 2026. This adjustment can only be approved after that date.')
+                   'October 12, 2026. If approved, this adjustment takes effect on October 13, 2026.')
+    local = _makeup_wait_message({'subjectcode': 'COMP 018', 'start_t': '02:00 PM', 'end_t': '04:00 PM',
+                                  'requested_date': date(2026, 10, 12)}, 'room', 'This Local Arrangement', 'saved')
+    assert local.endswith('This Local Arrangement can only be saved after that date.')
+
+
+def test_adjustment_held_only_by_a_makeup_is_approvable_later():
+    import inspect
+    summary = inspect.getsource(app_module._request_conflict_summary)
+    assert "'apply_on':" in summary and 'makeup_waits[d]' in summary
+    decide = inspect.getsource(app_module.api_requests_decide)
+    assert 'apply_on=%s' in decide and "_apply_on = (summary.get('apply_on')" in decide
+    submit = inspect.getsource(app_module.api_faculty_submit_request)
+    assert "_sum.get('apply_on')" in submit                # submitted, not deleted
+    sweep = inspect.getsource(app_module._apply_scheduled_adjustments)
+    assert 'apply_on <= CURRENT_DATE' in sweep and 'api_requests_decide()' in sweep
+    assert '_apply_scheduled_adjustments()' in inspect.getsource(app_module._sweep_expired_makeups)
 
 
 @pytest.fixture

@@ -222,8 +222,23 @@ def test_confirm_finishes_setup_and_shows_all_set_page_once(env):
     with env.app.app.test_request_context():
         from flask import url_for
         dashboard = url_for(env.app._dashboard_url_for_role(role))
-    assert f'href="{dashboard}"'.encode() in page.data and b'Go to Dashboard' in page.data
+    assert b'href="/intro-video"' in page.data and b'Go to Dashboard' in page.data
     again = env.client.get('/account-setup/done')         # shown only right after finishing
+    assert again.headers['Location'].endswith(dashboard)
+
+
+def test_intro_video_plays_once_after_setup(env):
+    env.client.post('/account-setup/verify', data={'action': 'confirm'})
+    with env.client.session_transaction() as s:
+        role = s['role']
+    with env.app.app.test_request_context():
+        from flask import url_for
+        dashboard = url_for(env.app._dashboard_url_for_role(role))
+    page = env.client.get('/intro-video')
+    assert page.status_code == 200 and b'video/intro.mp4' in page.data
+    assert env.q("SELECT intro_video_seen FROM accounts WHERE username = %s",
+                 (env.username,))[0][0] is True
+    again = env.client.get('/intro-video')                # never shown a second time
     assert again.headers['Location'].endswith(dashboard)
 
 
@@ -855,6 +870,20 @@ def test_forgot_password_uses_the_account_setup_layout(env):
     r = c.post('/forgot-password', data={'identifier': 'NO-SUCH-EMP-123'}, environ_base={'REMOTE_ADDR': '203.0.113.79'})
     page = c.get(r.headers['Location']).get_data(as_text=True)
     assert 'Step 2 of 3' in page and 'class="alert-info"' in page and 'If the Employee Number you entered' in page
+
+
+def test_password_reset_ends_on_a_success_page(env):
+    """After the new password is saved: a confirmation step (Done) with LOG IN NOW and
+    BACK TO HOME — not a silent jump to Login. Shown once; a revisit goes to Login."""
+    c = env.app.app.test_client()
+    with c.session_transaction() as s:
+        s['fp_done'] = 'EMP-TEST'
+    page = c.get('/forgot-password/done').get_data(as_text=True)
+    assert 'Password reset successful' in page and 'EMP-TEST' in page
+    assert 'class="setup-steps"' not in page                  # a notice, not a step
+    assert 'LOG IN NOW' in page and 'BACK TO HOME' in page
+    r = c.get('/forgot-password/done')
+    assert r.status_code == 302 and r.headers['Location'].endswith('/login')
 
 
 def test_account_marked_complete_but_never_set_up_gets_the_full_setup(env):

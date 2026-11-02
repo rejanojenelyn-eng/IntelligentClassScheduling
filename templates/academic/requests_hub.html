@@ -180,7 +180,7 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 3px;
+    margin-bottom: 6px;
 }
 .rhub-card-name { font-size: 0.78rem; font-weight: 900; color: #222; text-transform: uppercase; }
 .rhub-card-info { font-size: 0.62rem; color: #666; margin-bottom: 5px; }
@@ -207,6 +207,10 @@
 .status-Approved { background: #D4EDDA; color: #155724; }
 .status-Rejected { background: #F8D7DA; color: #721C24; }
 .status-Cancelled{ background: #e2e3e5; color: #495057; }
+.rhub-card-row3 { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.rhub-card-time { font-size:.62rem; font-weight:600; color:#888; white-space:nowrap; }
+.rhub-card-time i { margin-right:3px; }
+.status-Expired  { background: #ececec; color: #6c6c6c; border: 1px dashed #b5b5b5; }   /* date passed, no decision */
 
 /* ── DETAILS PANEL ── */
 .rhub-details {
@@ -384,6 +388,15 @@
 .chip-ok      { background: #1e7e34; color: #fff; }
 .chip-warn    { background: #e65100; color: #fff; }
 .chip-bad     { background: #c62828; color: #fff; }
+.chip-neutral { background: #8a8a8a; color: #fff; }
+.rhub-merge-note { margin-top:8px; padding:8px 10px; border-radius:6px; background:#eef5ff; border:1px solid #bcd3f5;
+                   color:#1a4a7a; font-size:.76rem; line-height:1.5; }
+.rhub-merge-note.rhub-merge-over { background:#fff8e6; border-color:#f0c36d; color:#7a4a00; }
+.rhub-local-warn { display:flex; gap:8px; background:#fff8e6; border:1px solid #f0c36d; color:#7a4a00;
+                   border-radius:8px; padding:9px 12px; font-size:.78rem; line-height:1.5; }
+.rhub-local-warn > i { margin-top:3px; }
+.rhub-local-warn ul { margin:3px 0 4px 16px; padding:0; }
+.rhub-local-warn ul i { font-size:.7rem; }
 .chip-spin    { background: #888; color: #fff; }
 .rhub-analytics-msg {
     font-size: 0.65rem;
@@ -463,6 +476,18 @@
     padding: 26px 24px;
     box-shadow: 0 8px 32px rgba(0,0,0,.22);
 }
+/* Approve dialog: what is being approved */
+.rhub-apv-card { background:#f8f9fb; border:1px solid #e6e8ec; border-radius:8px; padding:4px 14px; margin:0 0 14px; }
+.rhub-apv-row { display:flex; gap:12px; padding:9px 0; border-bottom:1px solid #eceef2; font-size:.84rem; line-height:1.4; }
+.rhub-apv-row:last-child { border-bottom:0; }
+.rhub-apv-k { width:64px; flex-shrink:0; color:#888; font-weight:700; font-size:.68rem; text-transform:uppercase; letter-spacing:.4px; padding-top:2px; }
+.rhub-apv-v { color:#222; flex:1; min-width:0; }
+.rhub-apv-sub { font-size:.76rem; color:#666; margin-top:2px; }
+.rhub-apv-move { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.rhub-apv-move + .rhub-apv-move { margin-top:6px; }
+.rhub-apv-move i { color:#1a6b3c; font-size:.75rem; }
+.rhub-apv-old { color:#8a8a8a; text-decoration:line-through; }
+.rhub-apv-new { color:#1a6b3c; font-weight:700; }
 .rhub-modal-title {
     font-size: 0.9rem;
     font-weight: 900;
@@ -557,7 +582,7 @@
         </div>
         <div class="rhub-stat-card stat-rejected">
             <div>
-                <div class="rhub-stat-label">REJECTED/CANCELLED</div>
+                <div class="rhub-stat-label">REJECTED/CANCELLED/EXPIRED</div>
                 <div class="rhub-stat-value" id="statRejected">—</div>
             </div>
             <i class="fas fa-envelope rhub-stat-icon"></i>
@@ -626,11 +651,13 @@
 <!-- APPROVE CONFIRMATION MODAL -->
 <div class="rhub-modal-overlay" id="approveModal">
     <div class="rhub-modal-box">
-        <div class="rhub-modal-title" style="color:#1a6b3c;"><i class="fas fa-check-circle"></i> Approve Request</div>
-        <p id="approveModalBody" style="font-size:0.88rem;color:#333;margin:12px 0 10px;line-height:1.5;"></p>
-        <p style="font-size:0.78rem;color:#1a6b3c;background:#eafaf1;border:1px solid #a9dfbf;border-radius:6px;padding:8px 12px;margin:0 0 20px;">
+        <div class="rhub-modal-title" style="color:#1a6b3c;"><i class="fas fa-check-circle"></i> <span id="approveModalTitle">Approve Request?</span></div>
+        <!-- What is being approved: who, which class, and the exact change. -->
+        <div class="rhub-apv-card" id="approveModalBody"></div>
+        <p style="font-size:0.78rem;color:#1a6b3c;background:#eafaf1;border:1px solid #a9dfbf;border-radius:6px;padding:8px 12px;margin:0 0 20px;line-height:1.5;">
             <i class="fas fa-info-circle" style="margin-right:5px;"></i><span id="approveModalNote">This will be saved as a local arrangement for the remainder of the semester.</span>
         </p>
+        <div id="approveModalLocal" class="rhub-local-warn" style="display:none;margin:-10px 0 20px;"></div>
         <div id="approveModalDrafts" style="display:none;font-size:0.78rem;color:#8a5a00;background:#fff8e6;border:1px solid #f0c36d;border-radius:6px;padding:8px 12px;margin:-10px 0 20px;line-height:1.5;"></div>
         <div class="rhub-modal-actions">
             <button class="btn-modal-cancel" onclick="rhubCloseApprove()">CANCEL</button>
@@ -690,6 +717,14 @@ async function rhubLoad() {
         const s = data.stats || {};
         document.getElementById('statTotal').textContent    = s.total    ?? 0;
         document.getElementById('statPending').textContent  = s.pending  ?? 0;
+        // The sidebar's Requests badge follows decisions made here without a page reload.
+        const _nb = document.getElementById('navPendingRequests');
+        if (_nb) {
+            const n = +(s.pending ?? 0);
+            _nb.textContent = n < 100 ? n : '99+';
+            _nb.style.display = n ? '' : 'none';
+            _nb.title = `${n} request${n === 1 ? '' : 's'} waiting for a decision`;
+        }
         document.getElementById('statApproved').textContent = s.approved ?? 0;
         document.getElementById('statRejected').textContent = s.rejected ?? 0;
 
@@ -734,10 +769,12 @@ function rhubRenderList() {
                 <span class="rhub-card-name">${r.faculty_name}</span>
                 <span class="rhub-status-badge status-${r.status}">${r.status}</span>
             </div>
-            <div class="rhub-card-info">${r.subjectcode} &ndash; ${r.room_name || 'N/A'}</div>
-            <span class="rhub-card-type-chip ${r.req_type === 'makeup' ? 'chip-makeup' : 'chip-adjustment'}">
-                ${r.req_type_label}
-            </span>
+            <!-- Subject, room and submitted time are in the details panel. -->
+            <div class="rhub-card-row3">
+                <span class="rhub-card-type-chip ${r.req_type === 'makeup' ? 'chip-makeup' : 'chip-adjustment'}">
+                    ${r.req_type_label}
+                </span>
+            </div>
         </div>`;
     }).join('');
 }
@@ -751,7 +788,9 @@ async function rhubSelect(type, id, el) {
     const req = _reqs.find(r => r.req_type === type && r.requestid === id);
     if (!req) return;
     rhubRenderDetail(req, null);     // immediate render
-    rhubValidate(type, id, req);     // async constraint check
+    // Analytics helps decide a Pending request. A decided one is never re-checked: an
+    // approved change is now part of the schedule and would only "conflict" with itself.
+    if (req.status === 'Pending') rhubValidate(type, id, req);     // async constraint check
 }
 
 function _rhubEsc(t) {
@@ -886,7 +925,19 @@ function rhubRenderDetail(req, v) {
 
     // Analytics section
     let analyticsHtml;
-    if (!v) {
+    const _when = req.date_decided ? ` on ${_rhubEsc(req.date_decided)}` : '';
+    if (req.status !== 'Pending') {
+        const decided = {
+            Approved:  ['chip-ok',  'fa-check-circle', 'APPROVED',
+                        `Checked against every constraint and applied when it was approved${_when}. No further check is needed.`],
+            Rejected:  ['chip-bad', 'fa-times-circle', 'REJECTED', `Rejected${_when}. No check is needed.`],
+            Cancelled: ['chip-neutral', 'fa-ban', 'CANCELLED', 'Cancelled by the faculty before a decision. No check is needed.'],
+            Expired:   ['chip-neutral', 'fa-hourglass-end', 'EXPIRED', 'The requested date passed without a decision. No check is needed.'],
+        }[req.status] || ['chip-neutral', 'fa-info-circle', String(req.status || '').toUpperCase(), 'No check is needed.'];
+        analyticsHtml = `
+            <div class="rhub-chips"><span class="rhub-chip ${decided[0]}"><i class="fas ${decided[1]}"></i> ${decided[2]}</span></div>
+            <div class="rhub-analytics-msg" style="color:#555">${decided[3]}</div>`;
+    } else if (!v) {
         analyticsHtml = `
             <div class="rhub-chips">
                 <span class="rhub-chip chip-spin"><i class="fas fa-spinner fa-spin"></i> VALIDATING...</span>
@@ -908,7 +959,13 @@ function rhubRenderDetail(req, v) {
         const msg     = v.all_ok
             ? 'CONSTRAINT VALIDATION SUCCESSFUL, THERE ARE NO CONFLICTS TO THIS REQUEST'
             : (v.conflicts || []).join(' | ') || 'Conflicts detected.';
-        const msgColor = v.all_ok ? '#1a6b3c' : '#c0392b';
+        const msgColor = v.all_ok ? '#1a6b3c' : v.apply_on ? '#8a5a00' : '#c0392b';
+        // Held only by an approved make-up still to come: approvable now, starts after it.
+        const laterHtml = (!v.all_ok && v.apply_on) ? `
+            <div class="rhub-local-warn" style="margin:8px 0 0;"><i class="fas fa-calendar-day"></i>
+                You can approve it now — it takes effect on <b>${new Date(v.apply_on + 'T00:00:00').toLocaleDateString('en-US',
+                    { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</b>, after the make-up class.
+                Until then the class keeps its current schedule.</div>` : '';
         const warnHtml = (v.warnings || []).length
             ? `<div class="rhub-analytics-msg" style="color:#856404">Advisory: ${v.warnings.map(w => w.message).join(' | ')}</div>`
             : '';
@@ -935,7 +992,17 @@ function rhubRenderDetail(req, v) {
             : '';
         analyticsHtml = `
             <div class="rhub-chips">${mBadge}${rBadge}${fBadge}${sBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${warnHtml}${offHtml}${draftHtml}`;
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${laterHtml}${warnHtml}${offHtml}${draftHtml}`
+            + ((v.merge_with || []).length && v.merge_over_limit ? `
+            <div class="rhub-merge-note rhub-merge-over"><i class="fas fa-triangle-exclamation"></i> <b>Over the merge limit:</b>
+                merging ${_rhubEsc(req.section_name || 'this section')} with <b>${v.merge_with.map(_rhubEsc).join(' + ')}</b> would make
+                ${v.merge_over_limit.size} sections — more than the ${v.merge_over_limit.limit} allowed in Settings → Class Merging.
+                It can only be approved as a <b>Local arrangement</b>.</div>`
+            : (v.merge_with || []).length ? `
+            <div class="rhub-merge-note"><i class="fas fa-object-group"></i> <b>Merged class:</b> this request merges
+                ${_rhubEsc(req.section_name || 'this section')} with <b>${v.merge_with.map(_rhubEsc).join(' + ')}</b> — the same
+                ${_rhubEsc(req.subjectcode)} class, faculty, time and room. Approving publishes it to the Official schedule
+                as one combined class.</div>` : '');
         // The server may know a newer status than the list (another reviewer decided it)
         if (v.status && v.status !== req.status) req.status = v.status;
     }
@@ -957,9 +1024,14 @@ function rhubRenderDetail(req, v) {
                              : _rhubEsc(_offWhy);
     // A Schedule Adjustment can be applied as a Local arrangement or written into the
     // Official schedule (republished with every hard-constraint check).
+    // A merge is a merged class in the Official schedule: no Local approval for it.
+    const _isMerge = !!(v && (v.merge_with || []).length && !v.merge_over_limit);
+    const _locDis = _isMerge
+        ? 'disabled title="A merged class is part of the Official schedule — use Approve &amp; Update Official" style="opacity:.5;cursor:not-allowed"'
+        : _dis;
     const approveBtns = req.req_type === 'adjustment' ? `
-            <button class="btn-rhub-approve" onclick="rhubApprove('local')" ${_dis}
-                    title="Approve as a Local arrangement — the Official schedule (SIS) stays as it is">
+            <button class="btn-rhub-approve" onclick="rhubApprove('local')" ${_locDis}
+                    ${_isMerge ? '' : 'title="Approve as a Local arrangement — the Official schedule (SIS) stays as it is"'}>
                 <i class="fas fa-check-circle"></i> APPROVE AS LOCAL
             </button>
             <button class="btn-rhub-approve btn-rhub-official" onclick="rhubApprove('official')" ${_offDis}
@@ -996,11 +1068,21 @@ function rhubRenderDetail(req, v) {
                 <div>${req.date_submitted || '—'}</div>
             </div>
         </div>
+        ${req.status === 'Expired' ? `
+        <div style="margin:0 0 14px;padding:10px 14px;border-radius:8px;background:#f4f4f4;border:1px dashed #b5b5b5;color:#555;font-size:.82rem;">
+            <i class="fas fa-hourglass-end" style="margin-right:6px;"></i>
+            <b>Expired</b> — the make-up date passed before a decision was made, so it can no longer be approved or rejected.
+            The faculty can submit a new request for another date.
+        </div>` : ''}
 
         <div class="rhub-dbox-lbl" style="margin-bottom:8px">${reqLabel}${
             req.status === 'Approved' && req.applied_to
-                ? ` · <span style="color:#1a6b3c">APPLIED TO ${req.applied_to === 'Official' ? 'OFFICIAL SCHEDULE' : 'LOCAL ARRANGEMENT'}</span>` : ''}</div>
+                ? ` · <span style="color:#1a6b3c">${req.apply_on ? 'WILL APPLY' : 'APPLIED'} TO ${req.applied_to === 'Official' ? 'OFFICIAL SCHEDULE' : 'LOCAL ARRANGEMENT'}</span>` : ''}</div>
+        ${req.status === 'Approved' && req.apply_on ? `<div class="rhub-local-warn" style="margin:0 0 10px;">
+            <i class="fas fa-calendar-day"></i> Takes effect on <b>${req.apply_on}</b>, after the approved make-up class
+            that uses this slot. Until then the class keeps its current schedule.</div>` : ''}
         ${rhubCompareHtml(req)}
+        ${req.status === 'Pending' && _rhubLocalWarn(req) ? `<div class="rhub-local-warn" style="margin:10px 0 0;">${_rhubLocalWarn(req)}</div>` : ''}
 
         <div class="rhub-detail-grid">
             <div class="rhub-detail-box">
@@ -1041,6 +1123,7 @@ async function rhubValidate(type, id, req) {
         const data = await res.json();
         if (data.success) {
             if (req.req_type + '_' + req.requestid === _activeKey) _approveDrafts = data.draft_conflicts || [];
+            req._v = data;      // the approve dialog shows what the check found (e.g. a merge)
             rhubRenderDetail(req, data);
         }
     } catch(e) { console.error('Validate error:', e); }
@@ -1087,19 +1170,76 @@ function rhubApprove(applyTo) {
     if (!req) return;
     _approveApplyTo = applyTo === 'official' ? 'official' : 'local';
     rhubRenderApproveDrafts();
-    const how = req.req_type !== 'adjustment' ? ''
-        : _approveApplyTo === 'official'
-            ? ' The Official schedule (SIS) will be updated and republished; every hard constraint and Setting is checked first.'
-            : ' It will be applied as a Local arrangement; the Official schedule (SIS) stays as it is.';
-    document.getElementById('approveModalBody').textContent =
-        `Approve ${req.req_type_label} request from ${req.faculty_name}?${how}`;
+    const isMakeup = req.req_type === 'makeup';
+    document.getElementById('approveModalTitle').textContent =
+        isMakeup ? 'Approve Make-up Class?' : 'Approve Schedule Adjustment?';
+    document.getElementById('approveModalBody').innerHTML = _rhubApproveDetails(req);
     const note = document.getElementById('approveModalNote');
-    if (note) note.textContent = req.req_type === 'makeup'
+    if (note) note.textContent = isMakeup
         ? 'This is a one-time make-up session on the requested date; the regular schedule does not change.'
         : _approveApplyTo === 'official'
-            ? 'The class\'s Official schedule (SIS) will be republished with this change. Any Local arrangement for these meetings will be archived.'
-            : 'This will be saved as a local arrangement for the remainder of the semester.';
+            ? 'The class\'s Official schedule (SIS) will be republished with this change.'
+            : 'Applied as a Local arrangement for the rest of the semester; the Official schedule (SIS) stays as it is.';
+    // Approving into the Official schedule archives the class's whole Local arrangement.
+    const lw = document.getElementById('approveModalLocal');
+    const lwHtml = !isMakeup && _approveApplyTo === 'official' ? _rhubLocalWarn(req, true) : '';
+    lw.innerHTML = lwHtml; lw.style.display = lwHtml ? '' : 'none';
     document.getElementById('approveModal').classList.add('open');
+}
+/* The class's active Local arrangement, which an approval into the Official schedule
+   removes (the subject is republished; its Local sessions are archived). '' when none. */
+function _rhubLocalWarn(req, inDialog) {
+    const lo = Array.isArray(req.local_overrides) ? req.local_overrides : [];
+    if (req.req_type !== 'adjustment' || !lo.length) return '';
+    const items = lo.map(x => {
+        const from = x.orig_day ? `${x.orig_day} ${x.orig_start} – ${x.orig_end}` : '';
+        const to = `${x.day} ${x.start} – ${x.end}${x.room ? ' · ' + x.room : ''}`;
+        return `<li>${from ? _rhubEsc(from) + ' <i class="fas fa-arrow-right"></i> ' : ''}<b>${_rhubEsc(to)}</b></li>`;
+    }).join('');
+    return `<i class="fas fa-triangle-exclamation"></i><div>
+        <b>${_rhubEsc(req.subjectcode)} has an active Local arrangement:</b><ul>${items}</ul>
+        ${inDialog
+            ? 'Approving into the Official schedule <b>removes it</b>: the class follows the new Official schedule.'
+            : '<b>Approve &amp; Update Official</b> removes it (the class follows the new Official schedule); <b>Approve</b> as a Local arrangement keeps it.'}
+        </div>`;
+}
+
+/* The approve dialog's details: faculty, class, and the exact change (old → new). */
+function _rhubApproveDetails(req) {
+    const row = (label, val) => `<div class="rhub-apv-row"><span class="rhub-apv-k">${label}</span><span class="rhub-apv-v">${val}</span></div>`;
+    const key = v => String(v || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const prog = req.program_code ? `${req.program_code}-${req.year_level}` : '';
+    // The section only when it adds something (BSIT 3-1), not when it repeats BSIT-3.
+    const sec  = req.section_name && key(req.section_name) !== key(prog) ? `Section ${req.section_name}` : '';
+    const cls  = `<b>${_rhubEsc(req.subjectcode || '')}</b>${req.subjectname ? ' — ' + _rhubEsc(req.subjectname) : ''}`
+               + `<div class="rhub-apv-sub">${[prog, sec].filter(Boolean).map(_rhubEsc).join(' · ')}</div>`;
+    const t = (a, b) => (a && b) ? `${a} – ${b}` : '';
+    let change;
+    if (req.req_type === 'makeup') {
+        const date = [req.requested_weekday, req.requested_date_fmt].filter(Boolean).join(', ');
+        change = `<b>${_rhubEsc(date)}</b><div class="rhub-apv-sub">`
+               + [t(req.start_time, req.end_time), req.room_full || req.room_name || ''].filter(Boolean).map(_rhubEsc).join(' · ')
+               + `</div>`;
+    } else {
+        const members = (Array.isArray(req.members) && req.members.length) ? req.members : [req];
+        change = members.map(m => {
+            const from = [m.orig_day, t(m.orig_start, m.orig_end), m.orig_room].filter(Boolean).join(' · ');
+            const to   = [m.new_daydesc || m.orig_day, t(m.start_time, m.end_time),
+                          m.room_full || m.room_name || m.orig_room].filter(Boolean).join(' · ');
+            return `<div class="rhub-apv-move"><span class="rhub-apv-old">${_rhubEsc(from || '—')}</span>`
+                 + `<i class="fas fa-arrow-right"></i><span class="rhub-apv-new">${_rhubEsc(to)}</span></div>`;
+        }).join('');
+        if (req.requested_date_fmt) change += `<div class="rhub-apv-sub">Effective ${_rhubEsc(req.requested_date_fmt)}</div>`;
+    }
+    const merge = (req._v && req._v.merge_with) || [];
+    const over  = req._v && req._v.merge_over_limit;
+    return row('Faculty', _rhubEsc(req.faculty_name || ''))
+         + row('Class', cls)
+         + row(req.req_type === 'makeup' ? 'Make-up' : 'Change', change)
+         + (merge.length && over ? row('Merge', `Same class as <b>${merge.map(_rhubEsc).join(' + ')}</b>`
+                                       + `<div class="rhub-apv-sub">Not merged: ${over.size} sections is more than the ${over.limit} allowed — applied as a Local arrangement.</div>`)
+            : merge.length ? row('Merge', `Combined with <b>${merge.map(_rhubEsc).join(' + ')}</b>`
+                                       + `<div class="rhub-apv-sub">One merged class: the same subject, faculty, time and room.</div>`) : '');
 }
 function rhubCloseApprove() {
     document.getElementById('approveModal').classList.remove('open');
@@ -1123,7 +1263,11 @@ async function rhubConfirmApprove() {
             const dr = data.drafts_removed || 0;
             document.getElementById('rhubDetailsBody').innerHTML =
                 `<div class="rhub-empty-state"><i class="fas fa-check-circle" style="color:#1a6b3c"></i>Request approved${
-                    req.req_type === 'adjustment'
+                    data.apply_on
+                        ? `. It takes effect on ${new Date(data.apply_on + 'T00:00:00').toLocaleDateString('en-US',
+                              { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}, after the make-up class`
+                          + (_approveApplyTo === 'official' ? ' (Official schedule).' : ' (Local arrangement).')
+                    : req.req_type === 'adjustment'
                         ? (_approveApplyTo === 'official' ? ' and the Official schedule was updated.' : ' as a Local arrangement.')
                         : ' successfully.'}${dr ? ` ${dr} conflicting Draft meeting${dr === 1 ? ' was' : 's were'} removed from your Draft schedule.` : ''}</div>`;
             rhubLoad();
@@ -1143,7 +1287,7 @@ async function rhubConfirmApprove() {
 function _rhubDecisionError(data, fallback) {
     const msg = (data && data.error) || fallback || 'Something went wrong.';
     if (typeof showAlertPopup === 'function') showAlertPopup('error', msg); else alert(msg);
-    if (data && data.code === 'REQUEST_ALREADY_DECIDED') { _activeKey = null; rhubLoad(); }
+    if (data && (data.code === 'REQUEST_ALREADY_DECIDED' || data.code === 'REQUEST_EXPIRED')) { _activeKey = null; rhubLoad(); }
 }
 
 /* ════ REJECT ════ */

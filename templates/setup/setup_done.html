@@ -77,6 +77,10 @@
     </ul>
 
 
+    {% if dashboard_url.endswith('/intro-video') %}
+    {# Download the intro video now, so it starts right away on the next page. #}
+    <link rel="prefetch" href="{{ url_for('static', filename='video/intro.mp4') }}" as="video">
+    {% endif %}
     <div class="setup-actions done-actions">
         <a href="{{ dashboard_url }}" class="btn-continue">
             <i class="fas fa-right-to-bracket"></i> Go to Dashboard <i class="fas fa-arrow-right"></i>

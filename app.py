@@ -624,6 +624,27 @@ def _apply_request_tables():
         """)
         for _col in ["decided_by VARCHAR(100)", "decided_at TIMESTAMP", "remarks TEXT", "notes TEXT"]:
             _cur.execute(f"ALTER TABLE public.class_meeting_request ADD COLUMN IF NOT EXISTS {_col}")
+        # 'Expired': a Pending make-up whose date/time passed without a decision
+        # (_expire_past_makeup_requests). Not reviewed, like Cancelled.
+        _cur.execute("""
+            DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_cmr_status'
+                           AND conrelid = 'public.class_meeting_request'::regclass
+                           AND pg_get_constraintdef(oid) NOT LIKE '%Expired%') THEN
+                ALTER TABLE public.class_meeting_request DROP CONSTRAINT chk_cmr_status;
+                ALTER TABLE public.class_meeting_request ADD CONSTRAINT chk_cmr_status
+                  CHECK (status IN ('Pending','Approved','Rejected','Cancelled','Expired'));
+              END IF;
+              IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_cmr_review'
+                           AND conrelid = 'public.class_meeting_request'::regclass
+                           AND pg_get_constraintdef(oid) NOT LIKE '%Expired%') THEN
+                ALTER TABLE public.class_meeting_request DROP CONSTRAINT chk_cmr_review;
+                ALTER TABLE public.class_meeting_request ADD CONSTRAINT chk_cmr_review CHECK (
+                  (status IN ('Pending','Cancelled','Expired') AND reviewed_by IS NULL AND reviewed_at IS NULL)
+                  OR (status IN ('Approved','Rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL));
+              END IF;
+            END $$;
+        """)
 
         _cur.execute("""
             CREATE TABLE IF NOT EXISTS public.schedule_change_request (
@@ -649,7 +670,10 @@ def _apply_request_tables():
                      "request_group VARCHAR(40)",
                      # How an approved adjustment was applied: 'Local' (Local arrangement) or
                      # 'Official' (republished into the Official schedule). NULL until approved.
-                     "applied_to VARCHAR(20)"]:
+                     "applied_to VARCHAR(20)",
+                     # Approved while an approved make-up still held the new slot: applied
+                     # (to applied_to) on this date by _apply_scheduled_adjustments; NULL once applied.
+                     "apply_on DATE"]:
             _cur.execute(f"ALTER TABLE public.schedule_change_request ADD COLUMN IF NOT EXISTS {_col}")
         _cur.execute("CREATE INDEX IF NOT EXISTS ix_schedule_change_request_group "
                      "ON public.schedule_change_request (request_group)")
@@ -662,6 +686,116 @@ def _apply_request_tables():
     finally:
         _cur.close()
         _conn.close()
+
+MAKEUP_EXPIRED_REMARK = 'Expired — the requested date passed without a decision.'
+
+
+def _expire_past_makeup_requests(cur=None, request_id=None):
+    """Pending make-up requests whose date + start time has passed become 'Expired'.
+
+    Not 'Rejected': nobody decided — the date simply went by. Expired is final (it can't
+    be approved, edited or resubmitted; the faculty files a new request) and, like
+    Cancelled, it has no reviewer. `request_id` limits it to one request. Returns the
+    number expired."""
+    own = cur is None
+    conn = get_db_connection() if own else None
+    c = conn.cursor() if own else cur
+    try:
+        c.execute(f"""
+            UPDATE public.class_meeting_request cmr
+            SET status = 'Expired', decided_at = NOW(),
+                remarks = COALESCE(NULLIF(TRIM(cmr.remarks), ''), %s)
+            WHERE cmr.status = 'Pending'
+              {'AND cmr.requestid = %s' if request_id is not None else ''}
+              AND cmr.requested_date + COALESCE(
+                    (SELECT ts.timevalue FROM public.timeslot ts WHERE ts.timeid = cmr.new_starttimeid),
+                    TIME '00:00') <= %s
+        """, [MAKEUP_EXPIRED_REMARK] + ([request_id] if request_id is not None else []) + [datetime.now()])
+        n = c.rowcount
+        if own:
+            conn.commit()
+        return n
+    except Exception:
+        if own:
+            conn.rollback()
+        raise
+    finally:
+        if own:
+            c.close(); conn.close()
+
+
+# Every page / count sees past make-ups as Expired — swept at most once a minute
+# (approval re-checks the exact request itself, see api_requests_decide).
+_makeup_expiry_last = 0.0
+
+
+def _sweep_expired_makeups():
+    global _makeup_expiry_last
+    import time as _clock          # `time` here is datetime.time
+    now = _clock.time()
+    if now - _makeup_expiry_last < 60:
+        return
+    _makeup_expiry_last = now
+    try:
+        _ensure_request_tables()
+        _expire_past_makeup_requests()
+    except Exception as e:
+        print(f"[makeup-expiry] {e}")
+    try:
+        _apply_scheduled_adjustments()
+    except Exception as e:
+        print(f"[scheduled-adjustments] {e}")
+
+
+def _apply_scheduled_adjustments():
+    """Schedule Adjustments approved while an approved make-up still held the new slot
+    (apply_on): from that date they are applied through api_requests_decide itself, so
+    every rule is checked again against the schedule as it is then. One that no longer
+    fits goes back to Pending with a remark for the Academic Head."""
+    due = query_db("""
+        SELECT MIN(requestid) AS requestid, MAX(applied_to) AS applied_to,
+               MAX(decided_by) AS decided_by, MAX(remarks) AS remarks, MAX(apply_on) AS apply_on
+        FROM schedule_change_request
+        WHERE status = 'Approved' AND apply_on IS NOT NULL AND apply_on <= CURRENT_DATE
+        GROUP BY COALESCE(request_group, requestid::text)
+    """) or []
+    for r in due:
+        ids = _adjustment_group_ids(r['requestid'])
+        # Back to Pending for the decision (it only decides Pending requests); the
+        # row-count check makes sure only one worker applies it.
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            cur.execute("""UPDATE schedule_change_request SET status = 'Pending', apply_on = NULL
+                           WHERE requestid = ANY(%s) AND status = 'Approved' AND apply_on IS NOT NULL""",
+                        [ids])
+            claimed = cur.rowcount
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+        if not claimed:
+            continue
+        payload = {'type': 'adjustment', 'id': r['requestid'], 'decision': 'Approved',
+                   'remarks': r.get('remarks') or '',
+                   'apply_to': 'official' if r.get('applied_to') == 'Official' else 'local'}
+        with app.test_request_context('/api/requests/decide', method='POST', json=payload):
+            session.update({'loggedin': True, 'role': 'Academic Head',
+                            'employeenumber': r.get('decided_by'), 'username': r.get('decided_by')})
+            try:
+                rv = api_requests_decide()
+                res = (rv[0] if isinstance(rv, tuple) else rv).get_json() or {}
+            except Exception as e:
+                res = {'success': False, 'error': str(e)}
+        if res.get('success'):
+            continue
+        when = r['apply_on'].strftime('%b %d, %Y') if hasattr(r.get('apply_on'), 'strftime') else r.get('apply_on')
+        query_db("UPDATE schedule_change_request SET remarks = %s "
+                 "WHERE requestid = ANY(%s) AND status = 'Pending' RETURNING requestid",
+                   [f"Approved to take effect on {when}, but it could not be applied then: "
+                    f"{res.get('error') or 'the schedule changed'} Please review it again.", ids])
+        write_activity_log(action='Scheduled adjustment not applied',
+                           details=f"ADJUSTMENT request #{r['requestid']} returned to Pending: {res.get('error')}",
+                           category='approval', color='orange')
+
 
 # ─────────────────────────────────────────────────────────────
 #  RANDOM FOREST DSS  (Manual Scheduling — see rf_dss.py)
@@ -1003,6 +1137,23 @@ def inject_pending_corrections():
                 'approved_employee_id': approved['proposed_value'] if approved else None}
     except Exception:
         return {'pending_correction_count': 0, 'my_pending_correction_count': 0}
+
+
+@app.context_processor
+def inject_pending_requests():
+    """Academic Head sidebar: how many requests wait for a decision (the Requests Hub's
+    PENDING DECISIONS count — a multi-meeting adjustment is one request)."""
+    if session.get('role') != 'Academic Head' or not session.get('loggedin'):
+        return {}
+    try:
+        row = query_db("""
+            SELECT (SELECT COUNT(*) FROM class_meeting_request WHERE status = 'Pending')
+                 + (SELECT COUNT(DISTINCT COALESCE(request_group, requestid::text))
+                    FROM schedule_change_request WHERE status = 'Pending') AS n
+        """, one=True)
+        return {'pending_request_count': int(row['n'] or 0) if row else 0}
+    except Exception:
+        return {'pending_request_count': 0}
 
 
 def _auto_archive_semester(cur, old_sem_id):
@@ -1350,8 +1501,10 @@ def login():
             if outcome['new_lock'] and outcome.get('user'):
                 _loginsec.dispatch_lockout_email(Config, outcome['user'])   # once per lockout
             flash(_loginsec.locked_message(outcome['seconds_left'], outcome['new_lock']), 'locked')
-            # The login page counts down to this moment (see login()).
+            # The login page counts down to this moment on every visit until it passes
+            # (see login()); a password reset lifts it (forgot_password_new).
             session['login_lock_until'] = datetime.now().timestamp() + int(outcome['seconds_left'])
+            session['login_lock_user'] = username
             return redirect(url_for('login'))
         if outcome['result'] == 'invalid':
             flash(_loginsec.invalid_message(outcome['failed'], outcome['remaining']),
@@ -1435,13 +1588,17 @@ def login():
     saved_username = session.get('saved_username', '')
     flashes = session.get('_flashes')
     lock_until = session.get('login_lock_until')
+    lock_user = session.get('login_lock_user', '')
     session.clear()
     if flashes:
         session['_flashes'] = flashes
-    # Seconds until a temporary lockout ends, for the countdown in the lock notice.
+    # Seconds until a temporary lockout ends, for the countdown in the lock notice. Kept
+    # across visits while it lasts, so reopening the login page still shows the time left.
     lock_seconds = max(0, int(lock_until - datetime.now().timestamp())) if lock_until else 0
-    resp = make_response(render_template('login.html', saved_username=saved_username,
-                                         lock_seconds=lock_seconds))
+    if lock_seconds:
+        session['login_lock_until'], session['login_lock_user'] = lock_until, lock_user
+    resp = make_response(render_template('login.html', saved_username=saved_username or lock_user,
+                                         lock_seconds=lock_seconds, lock_user=lock_user))
 
 
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
@@ -1459,8 +1616,12 @@ _FP_STEPS = [('request', 'Employee Number', None), ('verify', 'Verify Code', Non
              ('reset', 'New Password', None)]
 
 def _fp_page(step, status=200, **ctx):
+    # 'done' is a success notice after the last step, not a step: no step bar.
+    keys = [s[0] for s in _FP_STEPS]
+    if step not in keys:
+        ctx['password_only'] = True
     resp = make_response(render_template('shared/forgot_password.html', step=step,
-                                         steps=_FP_STEPS, step_index=[s[0] for s in _FP_STEPS].index(step),
+                                         steps=_FP_STEPS, step_index=keys.index(step) if step in keys else len(keys) - 1,
                                          code_ttl=_pwreset.CODE_TTL_MINUTES, **ctx), status)
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
@@ -1572,7 +1733,7 @@ def forgot_password_new():
         if request.method == 'GET':
             return _fp_page('reset')
         try:
-            username = _pwreset.reset(conn, rid, token, request.form.get('new_password', ''),
+            username, was_locked = _pwreset.reset(conn, rid, token, request.form.get('new_password', ''),
                                       request.form.get('confirm_password', ''))
         except _pwreset.ResetError as e:
             if e.error == 'not_verified':
@@ -1584,9 +1745,25 @@ def forgot_password_new():
         conn.close()
     session.pop('fp_rid', None); session.pop('fp_token', None)
     session['saved_username'] = username          # pre-fills the Login form
-    flash('Your password has been reset and your account is unlocked. You can now log in with your new password.',
-          'success')
-    return redirect(url_for('login'))
+    # The reset lifted any lockout: the login page must not keep counting it down.
+    session.pop('login_lock_until', None); session.pop('login_lock_user', None)
+    # A confirmation page (not a silent jump to Login): the reset worked, with
+    # LOG IN NOW / BACK TO HOME. Redirected, so a refresh never re-posts the form.
+    session['fp_done'] = username
+    session['fp_done_unlocked'] = bool(was_locked)
+    return redirect(url_for('forgot_password_done'))
+
+
+@app.route('/forgot-password/done')
+def forgot_password_done():
+    r = _fp_logged_in_redirect()
+    if r:
+        return r
+    username = session.pop('fp_done', None)       # shown once; a later visit goes to Login
+    unlocked = session.pop('fp_done_unlocked', False)
+    if not username:
+        return redirect(url_for('login'))
+    return _fp_page('done', username=username, unlocked=unlocked)
 
 
 
@@ -1790,6 +1967,13 @@ def _ensure_runtime_schema_before_views():
     at startup here, before the view opens a connection. No-op once everything ran."""
     if not _runtime_schema_ready() and not request.path.startswith('/static/'):
         _ensure_runtime_schema()
+
+
+@app.before_request
+def _expire_past_makeups_before_views():
+    """Past-date Pending make-up requests read as Expired on every signed-in page."""
+    if session.get('loggedin') and not request.path.startswith('/static/'):
+        _sweep_expired_makeups()
 
 
 
@@ -2549,9 +2733,38 @@ def account_setup_done():
         return redirect(dashboard)
     acc = _setup_account()
     email = acc.get('account_email') or ''
+    seen = query_db("SELECT intro_video_seen FROM accounts WHERE username = %s",
+                    (session.get('username'),), one=True)
+    next_url = dashboard if (seen or {}).get('intro_video_seen') else url_for('intro_video')
     return render_template('setup/setup_done.html', has_email=bool(email.strip()),
                            new_username=session.pop('setup_new_username', None),
-                           dashboard_url=dashboard, **_setup_ctx('verify'))
+                           dashboard_url=next_url, **_setup_ctx('verify'))
+
+
+@app.route('/intro-video')
+def intro_video():
+    """The system intro video, shown once per account after Account Setup. It is
+    marked seen as soon as it is shown, so it never comes back, even if skipped."""
+    if 'loggedin' not in session:
+        return redirect(url_for('login'))
+    dashboard = url_for(_dashboard_url_for_role(session.get('role')))
+    if not session.get('account_setup_complete', True):
+        return redirect(dashboard)
+    conn = get_db_connection()
+    if conn is None:
+        return redirect(dashboard)
+    try:
+        cur = conn.cursor()
+        cur.execute("""UPDATE accounts SET intro_video_seen = TRUE
+                       WHERE username = %s AND intro_video_seen = FALSE""", (session.get('username'),))
+        first_time = cur.rowcount == 1
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+    if not first_time:
+        return redirect(dashboard)
+    return render_template('setup/intro_video.html', dashboard_url=dashboard)
 
 
 # What a user can ask the Admin to correct: the official employment information. The
@@ -3128,7 +3341,8 @@ def api_requests_list():
                 'makeup'        AS req_type,
                 'MAKE-UP CLASS' AS req_type_label,
                 cmr.status,
-                TO_CHAR(cmr.created_at, 'Mon DD, YYYY') AS date_submitted,
+                TO_CHAR(cmr.created_at, 'Dy, Mon DD, YYYY · HH12:MI AM') AS date_submitted,
+                TO_CHAR(cmr.decided_at, 'Dy, Mon DD, YYYY · HH12:MI AM') AS date_decided,
                 cmr.created_at::text                    AS created_at_raw,
                 TO_CHAR(cmr.requested_date, 'Mon DD, YYYY') AS requested_date_fmt,
                 COALESCE(cmr.requested_date::text, '')  AS requested_date,
@@ -3168,7 +3382,8 @@ def api_requests_list():
                 'adjustment'           AS req_type,
                 'SCHEDULE ADJUSTMENT'  AS req_type_label,
                 scr.status,
-                TO_CHAR(scr.created_at, 'Mon DD, YYYY') AS date_submitted,
+                TO_CHAR(scr.created_at, 'Dy, Mon DD, YYYY · HH12:MI AM') AS date_submitted,
+                TO_CHAR(scr.decided_at, 'Dy, Mon DD, YYYY · HH12:MI AM') AS date_decided,
                 scr.created_at::text                    AS created_at_raw,
                 TO_CHAR(scr.effective_from, 'Mon DD, YYYY') AS requested_date_fmt,
                 COALESCE(scr.effective_from::text, '')  AS requested_date,
@@ -3193,7 +3408,31 @@ def api_requests_list():
                 COALESCE(TO_CHAR(ots_e.timevalue, 'HH12:MI AM'), '') AS orig_end,
                 COALESCE(ob.buildingname || ' – ' || orr.roomname, orr.roomname, '') AS orig_room,
                 scr.request_group, COALESCE(scr.applied_to, '') AS applied_to,
-                (""" + _REQ_ORIGINAL_MEETINGS_SQL + """) AS orig_meetings
+                TO_CHAR(scr.apply_on, 'Dy, Mon DD, YYYY') AS apply_on,
+                (""" + _REQ_ORIGINAL_MEETINGS_SQL + """) AS orig_meetings,
+                -- The class's active Local arrangement (this section + subject): approving
+                -- into the Official schedule republishes the subject and archives it
+                -- (_plan_local_for_official_republish), so the Hub warns first.
+                (SELECT COALESCE(json_agg(json_build_object(
+                            'orig_day',   COALESCE(lo.daydesc, ''),
+                            'orig_start', COALESCE(TO_CHAR(lt3.timevalue, 'HH12:MI AM'), ''),
+                            'orig_end',   COALESCE(TO_CHAR(lt4.timevalue, 'HH12:MI AM'), ''),
+                            'day',   las.daydesc,
+                            'start', TO_CHAR(lt1.timevalue, 'HH12:MI AM'),
+                            'end',   TO_CHAR(lt2.timevalue, 'HH12:MI AM'),
+                            'room',  COALESCE(lrm.roomname, ''))
+                            ORDER BY las.sessionid), '[]'::json)
+                 FROM local_arrangement la
+                 JOIN local_arrangement_sessions las ON las.arrangementid = la.arrangementid
+                 JOIN timeslot lt1 ON lt1.timeid = las.starttimeid
+                 JOIN timeslot lt2 ON lt2.timeid = las.endtimeid
+                 LEFT JOIN room lrm ON lrm.roomid = las.roomid
+                 LEFT JOIN schedule_sessions lo ON lo.sessionid = las.official_sessionid
+                 LEFT JOIN timeslot lt3 ON lt3.timeid = lo.starttimeid
+                 LEFT JOIN timeslot lt4 ON lt4.timeid = lo.endtimeid
+                 WHERE la.status = 'Published' AND la.is_active
+                   AND la.sectionid = sc.sectionid AND la.semesterid = sc.semesterid
+                   AND UPPER(las.subjectcode) = UPPER(cs.subjectcode)) AS local_overrides
             FROM schedule_change_request scr
             JOIN schedule sc ON scr.scheduleid = sc.scheduleid
             JOIN faculty f ON sc.employeenumber = f.employeenumber
@@ -3256,17 +3495,19 @@ def api_requests_list():
             'total':    len(all_rows),
             'pending':  sum(1 for r in all_rows if r['status'] == 'Pending'),
             'approved': sum(1 for r in all_rows if r['status'] == 'Approved'),
-            'rejected': sum(1 for r in all_rows if r['status'] in ('Rejected', 'Cancelled')),
+            'rejected': sum(1 for r in all_rows if r['status'] in ('Rejected', 'Cancelled', 'Expired')),
         }
 
-        for i, r in enumerate(all_rows, 1):
-            r['request_number'] = i
+        # Numbered in the order received (oldest = REQ #1), so a request keeps its number
+        # when newer ones arrive; the list itself stays newest first.
+        for i, r in enumerate(all_rows):
+            r['request_number'] = len(all_rows) - i
             r.pop('created_at_raw', None)
 
         filtered = all_rows
         if status_filter != 'all':
             if status_filter == 'rejected':
-                filtered = [r for r in filtered if r['status'] in ('Rejected', 'Cancelled')]
+                filtered = [r for r in filtered if r['status'] in ('Rejected', 'Cancelled', 'Expired')]
             else:
                 filtered = [r for r in filtered if r['status'].lower() == status_filter]
         if category != 'all':
@@ -3476,9 +3717,14 @@ def _makeup_wait_message(mk, dimension, what='This change', verb='approved'):
     d = mk.get('requested_date')
     d_txt = d.strftime('%B %d, %Y').replace(' 0', ' ') if hasattr(d, 'strftime') else str(d or '')
     whose = {'room': 'The room', 'faculty': 'The faculty', 'section': 'The section'}.get(dimension, 'This slot')
-    return (f"{whose} has an approved make-up class ({mk.get('subjectcode')}, "
-            f"{mk.get('start_t')}–{mk.get('end_t')}) on {d_txt}. "
-            f"{what} can only be {verb} after that date.")
+    head = (f"{whose} has an approved make-up class ({mk.get('subjectcode')}, "
+            f"{mk.get('start_t')}–{mk.get('end_t')}) on {d_txt}. ")
+    if what == 'This adjustment' and hasattr(d, 'strftime'):
+        # A Schedule Adjustment can still be approved now; it takes effect the day after.
+        from datetime import timedelta as _td
+        nxt = (d + _td(days=1)).strftime('%B %d, %Y').replace(' 0', ' ')
+        return head + f"If approved, this adjustment takes effect on {nxt}."
+    return head + f"{what} can only be {verb} after that date."
 
 
 def _local_upcoming_makeup_block(cur, sessions, semester_id, section_id, today=None):
@@ -3549,12 +3795,18 @@ def api_requests_validate():
         summary = dict(summary, draft_conflicts=drafts)
         # "Approve & Update Official" is offered only when the request would actually
         # pass the Official Publish checks (dry run; nothing written).
-        if req_type == 'adjustment' and summary.get('all_ok'):
+        if req_type == 'adjustment' and (summary.get('all_ok') or summary.get('apply_on')):
             _st = query_db("SELECT status FROM schedule_change_request WHERE requestid = %s",
                            [req_id], one=True)
             if _st and _st.get('status') == 'Pending':
-                ok, why = _official_publish_check(
-                    req_id, ignore_draft_sessionids=[d['sessionid'] for d in drafts])
+                if summary.get('merge_over_limit'):
+                    _ov = summary['merge_over_limit']
+                    ok, why = False, (f"Merging would make {_ov['size']} sections — more than the {_ov['limit']} "
+                                      f"allowed in Settings → Class Merging. Approve it as a Local arrangement.")
+                else:
+                    ok, why = _official_publish_check(
+                        req_id, ignore_draft_sessionids=[d['sessionid'] for d in drafts],
+                        confirm_merges=bool(summary.get('merge_with')))
                 summary = dict(summary, official_ok=ok, official_error=why)
         return jsonify(dict(summary, success=True))
     except Exception as e:
@@ -3562,10 +3814,95 @@ def api_requests_validate():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _request_merge_partners(semester_id, day, start_t, end_t, room_id, requester):
+    """Other sections' Official classes a Schedule Adjustment would MERGE with (HC16, as
+    Settings → Class Merging defines it): the same subject (in the merge scope, e.g. NSTP)
+    and faculty, at exactly this day, start and end, in the same room. Moving there is one
+    combined class, not a double booking. Returns
+    {'partners': [{scheduleid, sectionid, sectionname}], 'other_room': {...} | None} —
+    other_room: the same class exists at this time but in another room (no merge)."""
+    out = {'partners': [], 'other_room': None}
+    if not (requester and semester_id and day and start_t is not None and end_t is not None):
+        return out
+    code = requester.get('subjectcode') or ''
+    fac = requester.get('employeenumber')
+    if not code or not faculty_load.has_assigned_faculty(fac):
+        return out
+    if not faculty_load.is_merge_in_scope(code, requester.get('_cfg') or load_scheduler_config()):
+        return out
+    rows = query_db("""
+        SELECT DISTINCT sc2.scheduleid, sc2.sectionid, sec.sectionname, ss.roomid,
+               COALESCE(r.roomname, '') AS roomname
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
+        JOIN schedule sc2 ON sv.scheduleid = sc2.scheduleid
+        JOIN curriculumsubject cs ON sc2.curriculumsubjectid = cs.curriculumsubjectid
+        JOIN sections sec ON sc2.sectionid = sec.sectionid
+        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+        LEFT JOIN room r ON r.roomid = ss.roomid
+        WHERE sc2.semesterid = %s AND UPPER(ss.daydesc) = UPPER(%s)
+          AND ts_s.timevalue = %s AND ts_e.timevalue = %s
+          AND UPPER(cs.subjectcode) = UPPER(%s) AND sc2.employeenumber = %s
+          AND sc2.sectionid <> %s
+          AND NOT EXISTS (
+              SELECT 1 FROM public.local_arrangement la_x
+              JOIN public.local_arrangement_sessions las_x ON las_x.arrangementid = la_x.arrangementid
+              WHERE la_x.status = 'Published' AND la_x.is_active = TRUE
+                AND la_x.semesterid = sc2.semesterid AND la_x.sectionid = sc2.sectionid
+                AND las_x.official_sessionid = ss.sessionid)
+        ORDER BY sec.sectionname
+    """, [semester_id, day, start_t, end_t, code, str(fac), requester.get('sectionid') or -1]) or []
+    same = [r for r in rows if room_id and str(r['roomid'] or '') == str(room_id)]
+    out['partners'] = [{'scheduleid': r['scheduleid'], 'sectionid': r['sectionid'],
+                        'sectionname': r['sectionname']} for r in same]
+    if not same and rows and rows[0].get('roomid'):
+        out['other_room'] = {'roomname': rows[0]['roomname'],
+                             'sections': sorted({r['sectionname'] for r in rows})}
+        # Can it be combined there at all? Not when that room also holds ANOTHER class
+        # at this time (e.g. the same subject with a different faculty) — then the hint
+        # says so instead of pointing at a room the room list can't offer.
+        _theirs = [r['scheduleid'] for r in rows if r['roomid'] == rows[0]['roomid']]
+        other = _request_official_conflict(semester_id, day, start_t, end_t, room_id=rows[0]['roomid'],
+                                           exclude_schedule_id=requester.get('scheduleid'),
+                                           exclude_schedule_ids=_theirs)
+        if other:
+            out['other_room']['blocked_by'] = (f"{other.get('subjectcode')}"
+                                               f"{' (' + other['sectionname'] + ')' if other.get('sectionname') else ''}")
+    return out
+
+
+def _request_merge_over_limit(semester_id, requester, partners):
+    """{'size', 'limit'} when merging the requester's section with `partners` (and the
+    merged classes they already belong to) would exceed the most sections Settings
+    allows for the subject (e.g. NSTP 2–3) — then it can't be an Official merged class
+    (only a Local arrangement). None when within the limit or no limit is set."""
+    if not partners:
+        return None
+    import merge_groups as _mg
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        limit = _mg.merge_section_limit(cur, requester.get('subjectcode'))
+        if not limit:
+            return None
+        code = _mg.norm_code(requester.get('subjectcode') or '')
+        secs = {requester.get('sectionid')} | {p['sectionid'] for p in partners}
+        for g in _mg.load_groups(cur, load_scheduler_config(), semester_ids=[semester_id]):
+            if not g.get('is_active'):
+                continue
+            mem = {m['sectionid'] for m in g.get('members') or ()
+                   if _mg.norm_code(m.get('subjectcode') or '') == code}
+            if mem & {p['sectionid'] for p in partners}:
+                secs |= mem
+        return {'size': len(secs), 'limit': limit} if len(secs) > limit else None
+    finally:
+        conn.rollback(); cur.close(); conn.close()
+
+
 def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None,
                                employee_number=None, programyearlevelid=None, section_id=None,
                                requester=None, exclude_official_sessionid=None,
-                               exclude_schedule_id=None):
+                               exclude_schedule_id=None, exclude_schedule_ids=None):
     """First EFFECTIVE Official occurrence blocking the slot, else None.
 
     Effective Official = Published Official sessions of the same semester minus
@@ -3605,6 +3942,9 @@ def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None
         where.append("ss.sessionid <> %s"); params.append(exclude_official_sessionid)
     if exclude_schedule_id is not None:
         where.append("sc2.scheduleid <> %s"); params.append(exclude_schedule_id)
+    if exclude_schedule_ids:
+        # The classes a request merges into (_request_merge_partners): one class, no clash.
+        where.append("NOT (sc2.scheduleid = ANY(%s))"); params.append([int(x) for x in exclude_schedule_ids])
     rows = query_db(f"""
         SELECT UPPER(cs.subjectcode) AS subjectcode, sc2.employeenumber, sc2.sectionid,
                sec.sectionname, pyl.programcode,
@@ -3643,6 +3983,8 @@ def _request_conflict_summary(req_type, req_id, exclude_ids=None):
     Returns (summary, None) or (None, (message, http_status))."""
     from datetime import date as _date
     makeup_waits = {}   # dimension -> upcoming make-up row that alone blocks an adjustment
+    merge_with = []     # an adjustment merging with other sections' same class (HC16)
+    merge_over_limit = None   # ...that would exceed Settings' max sections (Local only)
     if req_type == 'makeup':
         row = query_db("""
             SELECT cmr.*, sc.employeenumber, sc.scheduleid AS orig_sched,
@@ -3742,10 +4084,19 @@ def _request_conflict_summary(req_type, req_id, exclude_ids=None):
         own = ({'exclude_official_sessionid': _vacated} if occ_id is not None
                else {'exclude_schedule_id': sched_id})
         today = _date.today()
+        # Moving onto the same class of other sections (HC16: same subject in the merge
+        # scope, faculty, day, time AND room) merges with it: those classes are not room /
+        # faculty conflicts. Approval publishes it to the Official schedule as a merged class.
+        _merge = _request_merge_partners(sem_id, day, start_t, end_t, room_id, requester)
+        merge_with = [p['sectionname'] for p in _merge['partners']]
+        _mx = {'exclude_schedule_ids': [p['scheduleid'] for p in _merge['partners']]} if merge_with else {}
+        # More sections than Settings allows: still requestable, but only as a Local
+        # arrangement (an Official merged class must respect the limit).
+        merge_over_limit = _request_merge_over_limit(sem_id, requester, _merge['partners'])
 
         if room_id and day and start_t and end_t:
             rc1 = _request_official_conflict(sem_id, day, start_t, end_t, room_id=room_id,
-                                             requester=requester, **own)
+                                             requester=requester, **own, **_mx)
             rc2 = _request_makeup_occupancy(sem_id, day, start_t, end_t, from_date=today,
                                             room_id=room_id, requester=requester)
             room_local = _request_local_conflict(
@@ -3760,7 +4111,7 @@ def _request_conflict_summary(req_type, req_id, exclude_ids=None):
 
         if emp_num and day and start_t and end_t:
             fc1 = _request_official_conflict(sem_id, day, start_t, end_t, employee_number=emp_num,
-                                             requester=requester, **own)
+                                             requester=requester, **own, **_mx)
             fc2 = _request_makeup_occupancy(sem_id, day, start_t, end_t, from_date=today,
                                             employee_number=emp_num, requester=requester)
             faculty_local = _request_local_conflict(
@@ -3851,13 +4202,29 @@ def _request_conflict_summary(req_type, req_id, exclude_ids=None):
     if not program_ok:
         conflicts.append(_makeup_wait_message(makeup_waits['section'], 'section', 'This adjustment')
                          if 'section' in makeup_waits else 'Program/Year Level has a class conflict at the requested time.')
+    # Blocked ONLY by approved make-ups still to come: approvable now, taking effect the
+    # day after the last of them (api_requests_decide schedules it; the sweep applies it).
+    apply_on = None
+    _failing = [d for d, ok in (('room', room_available), ('faculty', faculty_free),
+                                ('section', program_ok)) if not ok]
+    if req_type == 'adjustment' and _failing and not merge_locked \
+            and all(d in makeup_waits for d in _failing):
+        from datetime import timedelta as _td
+        _last = max(makeup_waits[d]['requested_date'] for d in _failing)
+        if hasattr(_last, 'isoformat'):
+            apply_on = _last + _td(days=1)
     return {
+        'apply_on':       apply_on.isoformat() if apply_on else None,
         'room_available': room_available,
         'faculty_free':   faculty_free,
         'program_ok':     program_ok,
         'conflicts':      conflicts,
         'all_ok':         room_available and faculty_free and program_ok and not merge_locked,
         'merge_restrictions': merge_locked,
+        # Sections whose same class this adjustment merges with: approved into the
+        # Official schedule only (a Local arrangement can't be part of a merged class).
+        'merge_with':     merge_with,
+        'merge_over_limit': merge_over_limit,
         'warnings':       warnings,
         # Phase 3D: semantic mapping only. The SQL above intentionally
         # remains date/database-aware; these IDs identify the frozen
@@ -3891,7 +4258,7 @@ def _adjustment_group_ids(req_id, cur=None):
     return [r['requestid'] for r in rows] or [req_id]
 
 
-def _official_publish_check(req_id, ignore_draft_sessionids=None):
+def _official_publish_check(req_id, ignore_draft_sessionids=None, confirm_merges=False):
     """(ok, reason) — would approving this Schedule Adjustment INTO the Official schedule
     pass every Publish gate (hard constraints + Settings)? A dry run of exactly what
     'Approve & Update Official' publishes; nothing is written. `ignore_draft_sessionids`:
@@ -3930,7 +4297,8 @@ def _official_publish_check(req_id, ignore_draft_sessionids=None):
             'official_sessionid': a['official_sessionid'],
         } for a in adjs]
         ok, resp = _apply_adjustment_to_official(cur, adjs, overrides, dry_run=True,
-                                                 ignore_draft_sessionids=ignore_draft_sessionids)
+                                                 ignore_draft_sessionids=ignore_draft_sessionids,
+                                                 confirm_merges=confirm_merges)
         if ok:
             return True, None
         body = resp[0].get_json(silent=True) or {}
@@ -3965,7 +4333,9 @@ def _request_group_summary(req_type, req_id):
     vacated = [m['official_sessionid'] for m in members if m.get('official_sessionid') is not None]
     out = {'room_available': True, 'faculty_free': True, 'program_ok': True,
            'conflicts': [], 'all_ok': True, 'merge_restrictions': [], 'warnings': [],
-           'constraint_rules': [], 'member_ids': ids}
+           'constraint_rules': [], 'member_ids': ids, 'merge_with': [], 'merge_over_limit': None,
+           'apply_on': None}
+    _waits_only = True   # every blocked meeting is blocked only by upcoming make-ups
     for m in members:
         summary, error = _request_conflict_summary('adjustment', m['requestid'], exclude_ids=vacated)
         if error:
@@ -3975,10 +4345,19 @@ def _request_group_summary(req_type, req_id):
             out[k] = out[k] and bool(summary.get(k))
         out['conflicts'] += [f'{label}: {c}' for c in summary.get('conflicts') or []]
         out['merge_restrictions'] += summary.get('merge_restrictions') or []
+        out['merge_with'] += [s_ for s_ in summary.get('merge_with') or [] if s_ not in out['merge_with']]
+        out['merge_over_limit'] = out['merge_over_limit'] or summary.get('merge_over_limit')
+        if not summary.get('all_ok'):
+            if summary.get('apply_on'):
+                out['apply_on'] = max(out['apply_on'] or '', summary['apply_on'])
+            else:
+                _waits_only = False
         out['warnings'] += [dict(w, message=f"{label}: {w.get('message')}") for w in summary.get('warnings') or []]
         for r in summary.get('constraint_rules') or []:
             if r not in out['constraint_rules']:
                 out['constraint_rules'].append(r)
+    if not _waits_only:
+        out['apply_on'] = None
     return out, None
 
 
@@ -4138,7 +4517,8 @@ def _publish_ignored_draft_sessionids():
         return []
 
 
-def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False, ignore_draft_sessionids=None):
+def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False, ignore_draft_sessionids=None,
+                                  confirm_merges=False):
     """Approve a Schedule Adjustment INTO the Official schedule: the class's Published
     meetings with the moved ones replaced are published as the section's next Official
     version through api_approve_schedule itself — the same hard-constraint, Settings,
@@ -4186,6 +4566,8 @@ def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False, ignore_dr
                     'sectionId': adj.get('sectionid'), 'section_id': adj.get('sectionid')},
         'override': True,
         'dry_run': bool(dry_run),
+        # The Academic Head approved a request that showed this merge (Requests Hub).
+        'confirm_merges': bool(confirm_merges),
     }
     keep = {k: session.get(k) for k in ('loggedin', 'role', 'username', 'employeenumber', 'id')}
     with app.test_request_context('/api/schedule/approve', method='POST', json=payload):
@@ -4236,6 +4618,7 @@ def api_requests_decide():
     confirmed_drafts = {int(x) for x in (data.get('remove_draft_sessionids') or [])
                         if str(x).strip().isdigit()}
     drafts_to_remove = []
+    _apply_on = None    # set when an adjustment is approved to take effect after a make-up
 
     def _draft_confirmation_needed():
         """The 409 response asking to confirm removing conflicting Drafts, or None."""
@@ -4260,12 +4643,25 @@ def api_requests_decide():
                 return jsonify({'success': False, 'error': 'Make-up request not found.'}), 404
             # Locked above: a second Approve/Reject (another Academic Head at the same
             # moment, or a double click) waits here, then sees the first decision.
+            if mk.get('status') == 'Expired':
+                _conn.rollback()
+                return jsonify({'success': False, 'code': 'REQUEST_EXPIRED', 'current_status': 'Expired',
+                                'error': 'This make-up date has already passed, so the request can no '
+                                         'longer be approved or rejected. It is marked Expired.'}), 409
             if mk.get('status') != 'Pending':
                 _conn.rollback()
                 return jsonify({'success': False, 'code': 'REQUEST_ALREADY_DECIDED',
                                 'current_status': mk.get('status'),
                                 'error': f"This request was already {str(mk.get('status')).lower()}. "
                                          f"Refresh to see its current status."}), 409
+            # Its date/time already passed: no decision is possible any more (approving would
+            # schedule a class in the past). It becomes Expired — not Rejected — on the spot.
+            if (mk.get('requested_date') and mk['requested_date'] <= date.today()
+                    and _expire_past_makeup_requests(_cur, request_id=mk['requestid'])):
+                _conn.commit()
+                return jsonify({'success': False, 'code': 'REQUEST_EXPIRED', 'current_status': 'Expired',
+                                'error': 'This make-up date has already passed, so the request can no '
+                                         'longer be approved or rejected. It is now marked Expired.'}), 409
             if decision == 'Approved':
                 if not (mk.get('scheduleid') and mk.get('new_starttimeid')
                         and mk.get('new_endtimeid') and mk.get('requested_date')):
@@ -4409,7 +4805,11 @@ def api_requests_decide():
                 # Revalidate against the LATEST effective schedule (every moved meeting
                 # vacated). Nothing is written if any new meeting is invalid.
                 summary, error = _request_group_summary('adjustment', req_id)
-                if error or not summary['all_ok']:
+                # Blocked only by approved make-ups still to come: approved now, applied the
+                # day after the last of them (_apply_scheduled_adjustments).
+                _apply_on = (summary.get('apply_on')
+                             if summary and not error and not summary['all_ok'] else None)
+                if (error or not summary['all_ok']) and not _apply_on:
                     _conn.rollback()
                     return jsonify({
                         'success': False,
@@ -4418,17 +4818,63 @@ def api_requests_decide():
                         'code': 'REQUEST_NO_LONGER_VALID',
                         'conflicts': summary['conflicts'] if summary else [],
                     }), 409
+                # A merge with other sections' same class (HC16) is a merged class in the
+                # Official schedule; a Local arrangement can't take part in one.
+                _merge_with = summary.get('merge_with') or []
+                _over = summary.get('merge_over_limit')
+                if _over and apply_to == 'official':
+                    _conn.rollback()
+                    return jsonify({'success': False, 'code': 'MERGE_LIMIT', 'error':
+                        f"Cannot update the Official schedule: {adj['subjectcode']} can merge at most "
+                        f"{_over['limit']} sections (Settings → Class Merging) and this would make {_over['size']}. "
+                        f"Approve it as a Local arrangement instead."}), 409
+                if _merge_with and not _over and apply_to != 'official':
+                    _conn.rollback()
+                    return jsonify({'success': False, 'code': 'MERGE_NEEDS_OFFICIAL', 'error':
+                        'This request merges the class with ' + ', '.join(_merge_with) + '. A merged class is '
+                        'part of the Official schedule: use Approve & Update Official.'}), 409
                 _confirm = _draft_confirmation_needed()
                 if _confirm:
                     _conn.rollback()
                     return _confirm
 
-                if apply_to == 'official':
+                if _apply_on:
+                    # Every other rule is checked now (nothing written), so only the
+                    # make-up date stands between approval and the schedule change.
+                    if apply_to == 'official':
+                        _pre_ok, _pre_reason = _official_publish_check(
+                            req_id, ignore_draft_sessionids=[d['sessionid'] for d in drafts_to_remove],
+                            confirm_merges=bool(_merge_with))
+                    else:
+                        _pre_ok, _pre_reason = True, None
+                        for _o in _overrides:
+                            if _o['roomid'] is not None:
+                                _pre_ok, _pre_reason = _validate_local_editable_dimensions(
+                                    _cur, _o, adj.get('employeenumber'))
+                                if not _pre_ok:
+                                    break
+                        if _pre_ok:
+                            _pre_ok, _pre_reason = _validate_local_faculty_service_rules(
+                                _cur, _overrides, adj.get('semesterid'))
+                    if not _pre_ok:
+                        _conn.rollback()
+                        return jsonify({'success': False, 'code': 'REQUEST_NO_LONGER_VALID',
+                                        'error': f'Cannot approve: {_pre_reason}'}), 409
+                    _cur.execute("""
+                        UPDATE schedule_change_request
+                        SET status='Approved', decided_by=%s, decided_at=NOW(), remarks=%s,
+                            reviewed_by=%s, reviewed_at=NOW(), applied_to=%s, apply_on=%s
+                        WHERE requestid = ANY(%s)
+                    """, [decided_by, remarks, decided_by,
+                          'Official' if apply_to == 'official' else 'Local', _apply_on, group_ids])
+                elif apply_to == 'official':
                     # The confirmed Draft meetings are removed below; the Publish must not
-                    # count them as occupying the new slot.
+                    # count them as occupying the new slot. A merge the Hub showed before
+                    # this approval is confirmed here, so Publish records the merged class.
                     _pub_ok, _pub_resp = _apply_adjustment_to_official(
                         _cur, adjs, _overrides,
-                        ignore_draft_sessionids=[d['sessionid'] for d in drafts_to_remove])
+                        ignore_draft_sessionids=[d['sessionid'] for d in drafts_to_remove],
+                        confirm_merges=bool(_merge_with))
                     if not _pub_ok:
                         _conn.rollback()
                         return _pub_resp
@@ -4518,13 +4964,14 @@ def api_requests_decide():
                                   _o['endtimeid'], _o['roomid'], _o['faculty_employeenumber'],
                                   _o['official_sessionid']))
 
-                _cur.execute("""
-                    UPDATE schedule_change_request
-                    SET status=%s, decided_by=%s, decided_at=NOW(), remarks=%s,
-                        reviewed_by=%s, reviewed_at=NOW(), applied_to=%s
-                    WHERE requestid = ANY(%s)
-                """, [decision, decided_by, remarks, decided_by,
-                      'Official' if apply_to == 'official' else 'Local', group_ids])
+                if not _apply_on:
+                    _cur.execute("""
+                        UPDATE schedule_change_request
+                        SET status=%s, decided_by=%s, decided_at=NOW(), remarks=%s,
+                            reviewed_by=%s, reviewed_at=NOW(), applied_to=%s, apply_on=NULL
+                        WHERE requestid = ANY(%s)
+                    """, [decision, decided_by, remarks, decided_by,
+                          'Official' if apply_to == 'official' else 'Local', group_ids])
             else:
                 _cur.execute("""
                     UPDATE schedule_change_request
@@ -4548,7 +4995,8 @@ def api_requests_decide():
             category='approval',
             color='green' if decision == 'Approved' else 'orange'
         )
-        return jsonify({'success': True, 'drafts_removed': drafts_removed})
+        return jsonify({'success': True, 'drafts_removed': drafts_removed,
+                        **({'apply_on': _apply_on} if _apply_on else {})})
     except Exception as e:
         _conn.rollback()
         print(f"[api_requests_decide] Error: {e}")
@@ -12637,6 +13085,300 @@ def _parse_sis_excel(file_obj, dedupe=True):
     return deduped
 
 
+# ── SIS rows → class meetings (shared by the import itself and its analysis) ────────
+# One rule for how a row's Day/s + Time (+ Room) become meetings, so what the analysis
+# reports (double bookings, overloads, combined classes) is exactly what Confirm saves.
+_SIS_DAY_MAP = {
+    'M': 'Monday', 'MON': 'Monday',
+    'T': 'Tuesday', 'TUE': 'Tuesday', 'TUES': 'Tuesday',
+    'W': 'Wednesday', 'WED': 'Wednesday',
+    'TH': 'Thursday', 'THU': 'Thursday', 'THUR': 'Thursday', 'THURS': 'Thursday',
+    'F': 'Friday', 'FRI': 'Friday',
+    'SAT': 'Saturday', 'S': 'Saturday', 'SUN': 'Sunday',
+}
+
+
+def _sis_parse_days(days_raw):
+    """'THU/SAT' / 'MWF' → day tokens ('THU', 'SAT' / 'M', 'W', 'F')."""
+    tk = ['THURS', 'THUR', 'WED', 'SAT', 'SUN', 'THU', 'TH', 'MON', 'TUES', 'TUE', 'FRI', 'M', 'T', 'W', 'F', 'S']
+    def _g(s):
+        res, s = [], s.upper().strip()
+        while s:
+            for t in tk:
+                if s.startswith(t):
+                    res.append(t); s = s[len(t):]; break
+            else:
+                s = s[1:]
+        return res
+    days_raw = str(days_raw or '')
+    if '/' in days_raw:
+        out = []
+        for p in days_raw.split('/'):
+            p = p.strip()
+            if not p:
+                continue
+            if p.upper() in _SIS_DAY_MAP: out.append(p.upper())
+            else: out.extend(_g(p))
+        return out
+    return _g(days_raw)
+
+
+def _sis_parse_clock(t, force_pm=False):
+    """'9:30', '1:00 PM' → 'HH:MM:00' (an unmarked 1:00–7:29 is PM), or None."""
+    m = re.match(r'(\d{1,2}):(\d{2})\s*(AM|PM)?', str(t or '').strip(), re.IGNORECASE)
+    if not m:
+        return None
+    h, mi, mer = int(m.group(1)), int(m.group(2)), (m.group(3) or '').upper()
+    if mer == 'PM' and h != 12: h += 12
+    elif mer == 'AM' and h == 12: h = 0
+    elif not mer and force_pm and h != 12: h += 12
+    elif not mer:
+        if 60 <= h * 60 + mi < 7 * 60 + 30: h += 12
+    return f"{h:02d}:{mi:02d}:00"
+
+
+def _sis_span_hours(ts):
+    if not ts or '-' not in ts: return 0.0
+    pp = re.split(r'\s*-\s*', ts, maxsplit=1)
+    if len(pp) != 2: return 0.0
+    s2, e2 = _sis_parse_clock(pp[0].strip()), _sis_parse_clock(pp[1].strip())
+    if not s2 or not e2: return 0.0
+    d = (int(e2[:2]) * 60 + int(e2[3:5])) - (int(s2[:2]) * 60 + int(s2[3:5]))
+    return (d + 720 if d <= 0 else d) / 60.0
+
+
+def _sis_pair_slots(days_raw, time_raw, room_raw, hrs):
+    """[(day_token, time_text, room_text)] — the import's day/time/room pairing."""
+    days_p = _sis_parse_days(days_raw) if days_raw else []
+    times_p = []
+    for b in ([x.strip() for x in re.split(r'[/\n]', time_raw) if x.strip()] if time_raw else []):
+        times_p.extend(s.strip() for s in re.split(r'(?<=\d)\s+(?=\d{1,2}:\d{2}\s*-)', b) if s.strip())
+    rooms_p = [x.strip() for x in room_raw.split('/') if x.strip()] if room_raw else []
+    rf = lambda i: (rooms_p[i] if i < len(rooms_p) else rooms_p[0]) if rooms_p else ''
+    nd, nt = len(days_p), len(times_p)
+    if nd == 0 or nt == 0:
+        return []
+    if nd == 1:
+        return [(days_p[0], times_p[t], rf(t)) for t in range(nt)]
+    if hrs <= 0:
+        return [(days_p[i], times_p[i % nt], rf(i % nt)) for i in range(nd)]
+    if sum(_sis_span_hours(t) for t in times_p) * nd <= hrs:
+        return [(days_p[d], times_p[t], rf(t)) for d in range(nd) for t in range(nt)]
+    return [(days_p[i], times_p[i % nt], rf(i % nt)) for i in range(nd)]
+
+
+def _sis_time_range(ts):
+    """'7:30 - 10:30 AM' → ('07:30', '10:30') with the import's AM/PM recovery, or None."""
+    if not ts or '-' not in ts:
+        return None
+    pp = re.split(r'\s*-\s*', ts, maxsplit=1)
+    if len(pp) != 2:
+        return None
+    sr, er = pp[0].strip(), pp[1].strip()
+    em = re.search(r'(AM|PM)\s*$', er, re.IGNORECASE)
+    sm = re.search(r'(AM|PM)', sr, re.IGNORECASE)
+    s = _sis_parse_clock(sr, force_pm=bool(em and em.group(1).upper() == 'PM' and not sm))
+    e = _sis_parse_clock(er)
+    if not s or not e:
+        return None
+    if e <= s and int(e[:2]) < 12:                       # unmarked PM end
+        e = f"{int(e[:2]) + 12:02d}{e[2:]}"
+    if e <= s:                                           # start was wrongly forced to PM
+        s2 = _sis_parse_clock(sr, force_pm=False)
+        if s2 and s2 < e:
+            s = s2
+    return (s[:5], e[:5]) if s < e else None
+
+
+def _sis_room_key(room):
+    """Comparable room name ('LQ-205' / '205' / 'Q' → same key as the import resolves)."""
+    r = str(room or '').strip().upper()
+    if not r or r == 'TBA':
+        return ''
+    if r in ('G', 'GYM', 'PUP GYM'): return 'PUP GYM'
+    if r in ('Q', 'QUAD', 'LQ-QUAD'): return 'QUAD'
+    return r[3:] if r.startswith('LQ-') else r
+
+
+def _sis_schedule_issues(cur, rows, sem_id=None):
+    """What importing these rows (a current/future term) would put in the schedule:
+    combined classes (HC16: same subject, faculty, day, start, end AND room in several
+    sections — registered as merged classes on Confirm), double bookings of a room, a
+    faculty member or a section, and faculty over their load limit (a combined class
+    counted once). Advisory: the import can still be approved."""
+    def mins(hm): return int(hm[:2]) * 60 + int(hm[3:5])
+    meets = []                                            # one per class meeting in the file
+    for i, r in enumerate(rows):
+        if r.get('status') == 'blocked':
+            continue
+        sec = (r.get('course') or '').strip()
+        subj = (r.get('subj_code') or '').strip().upper()
+        fac = (r.get('instructor') or '').strip()
+        fac = '' if fac.upper() in _TBA_NAMES else fac
+        hrs = float(r.get('hours') or 0) or float(r.get('lec_hrs') or 0) + float(r.get('lab_hrs') or 0)
+        for day_tok, ts, rm in _sis_pair_slots(str(r.get('days') or '').strip(), str(r.get('time') or '').strip(),
+                                               str(r.get('room') or '').strip(), hrs):
+            tr = _sis_time_range(ts)
+            day = _SIS_DAY_MAP.get(day_tok.upper(), day_tok)
+            if not tr or not day:
+                continue
+            meets.append({'row': i, 'section': sec, 'subject': subj, 'faculty': fac, 'day': day,
+                          'start': tr[0], 'end': tr[1], 's': mins(tr[0]), 'e': mins(tr[1]),
+                          'room': _sis_room_key(rm), 'room_label': (rm or '').strip()})
+
+    # Combined classes: identical subject / faculty / day / time / room in 2+ sections.
+    combo = {}
+    for m in meets:
+        if m['faculty'] and m['room']:
+            combo.setdefault((m['subject'], m['faculty'], m['day'], m['start'], m['end'], m['room']), []).append(m)
+    combined = [{'subject': k[0], 'faculty': k[1], 'day': k[2], 'start': k[3], 'end': k[4],
+                 'room': v[0]['room_label'], 'sections': sorted({m['section'] for m in v})}
+                for k, v in combo.items() if len({m['section'] for m in v}) > 1]
+    # More sections than Settings allows for the subject (e.g. NSTP 2–3): not registered.
+    if combined:
+        import merge_groups as _mgl
+        _lim = {}
+        for c in combined:
+            if c['subject'] not in _lim:
+                _lim[c['subject']] = _mgl.merge_section_limit(cur, c['subject'])
+            if _lim[c['subject']] and len(c['sections']) > _lim[c['subject']]:
+                c['already'] = (f"{len(c['sections'])} sections — more than the {_lim[c['subject']]} allowed in "
+                                f"Settings → Class Merging; not registered as a merged class")
+    # A section already in a Merge Group for that subject keeps it: that combined class
+    # is not registered by the import (_register_imported_merges) — say so here.
+    if combined and sem_id:
+        import merge_groups as _mg
+        from database import load_scheduler_config as _lsc
+        in_group = {}
+        for g in _mg.load_groups(cur, _lsc(), semester_ids=[sem_id]):
+            for mem in g['members']:
+                in_group[(_section_name_key(mem.get('sectionname') or mem.get('section_label') or ''),
+                          _mg.norm_code(mem.get('subjectcode') or ''))] = g.get('groupname')
+        for c in combined:
+            taken = [(s_, in_group[(_section_name_key(s_), _mg.norm_code(c['subject']))]) for s_ in c['sections']
+                     if (_section_name_key(s_), _mg.norm_code(c['subject'])) in in_group]
+            if taken and not c.get('already'):
+                c['already'] = f"{taken[0][0]} is already in merged class \"{taken[0][1]}\" — not registered; fix it in Settings → Class Merging"
+    combo_of = {}
+    for k, v in combo.items():
+        if len({m['section'] for m in v}) > 1:
+            for m in v:
+                combo_of[id(m)] = k
+
+    def same_class(a, b):
+        return combo_of.get(id(a)) is not None and combo_of.get(id(a)) == combo_of.get(id(b))
+
+    def label(m):
+        return f"{m['subject']} ({m['section']})"
+
+    def t12(hm):
+        h, mi = int(hm[:2]), hm[3:5]
+        return f"{(h % 12) or 12}:{mi} {'AM' if h < 12 else 'PM'}"
+
+    seen, room_c, fac_c, sec_c = set(), [], [], []
+    by_day = {}
+    for m in meets:
+        by_day.setdefault(m['day'], []).append(m)
+    for day, ms in by_day.items():
+        ms.sort(key=lambda m: m['s'])
+        for i, a in enumerate(ms):
+            for b in ms[i + 1:]:
+                if b['s'] >= a['e']:
+                    break
+                if same_class(a, b) or (a['section'] == b['section'] and a['subject'] == b['subject']):
+                    continue
+                when = f"{day} {t12(max(a['start'], b['start']))}–{t12(min(a['end'], b['end']))}"
+                pair = tuple(sorted((label(a), label(b))))
+                if a['room'] and a['room'] == b['room'] and ('r',) + pair not in seen:
+                    seen.add(('r',) + pair)
+                    room_c.append(f"Room {a['room_label']}: {pair[0]} and {pair[1]} — {when}")
+                if a['faculty'] and a['faculty'] == b['faculty'] and ('f',) + pair not in seen:
+                    seen.add(('f',) + pair)
+                    fac_c.append(f"{a['faculty']}: {pair[0]} and {pair[1]} — {when}")
+                if a['section'] and a['section'] == b['section'] and ('s',) + pair not in seen:
+                    seen.add(('s',) + pair)
+                    sec_c.append(f"Section {a['section']}: {a['subject']} and {b['subject']} — {when}")
+
+    # Faculty load: each distinct meeting counted once (a combined class is one meeting).
+    hours = {}
+    for k in {(m['faculty'], m['subject'], m['day'], m['start'], m['end'], m['room'] or m['section'])
+              for m in meets if m['faculty']}:
+        hours[k[0]] = hours.get(k[0], 0) + (mins(k[4]) - mins(k[3])) / 60.0
+    overload = []
+    if hours:
+        fmap = resolve_faculty_names(cur, sorted(hours))
+        for name, h in sorted(hours.items()):
+            emp = (fmap.get(name) or {}).get('employeenumber')
+            if not emp:
+                continue
+            row = _faculty_identity_and_caps_row(cur, emp)
+            if not row:
+                continue
+            reg, pt, ts = faculty_load.get_faculty_caps(dict(row))
+            cap = reg + pt + ts
+            if cap and h > cap + 0.01:
+                overload.append(f"{name}: {h:g}h in this file — limit {cap:g}h (over by {h - cap:g}h)")
+    return {'combined': combined, 'room': room_c, 'faculty': fac_c, 'section': sec_c, 'overload': overload}
+
+
+def _register_imported_merges(sem_id, username='SIS import'):
+    """After a current/future import: register its combined classes as Merge Groups —
+    the HC16 rule (same subject, faculty, day, start, end AND room in 2+ sections), which
+    the import analysis listed before it was approved. A section already in a Merge
+    Group for that subject is left alone. Returns the created groups' names."""
+    import merge_groups as _mg
+    from database import load_scheduler_config as _lsc
+    cfg = _lsc()
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    made = []
+    try:
+        occ = _mg.fetch_occurrences(cur, [sem_id], draft_preferred=False)
+        grouped = {(m['sectionid'], _mg.norm_code(m.get('subjectcode') or ''))
+                   for g in _mg.load_groups(cur, cfg, semester_ids=[sem_id]) for m in g['members']}
+        slots = {}
+        for o in occ:
+            if o.get('faculty_id') and o.get('roomid') and o.get('sectionid'):
+                slots.setdefault((_mg.norm_code(o['subjectcode']), str(o['faculty_id']), o['day'],
+                                  o['start_time'], o['end_time'], o['roomid']), []).append(o)
+        for key, rows in sorted(slots.items(), key=lambda kv: str(kv[0])):
+            secs = {o['sectionid']: o for o in rows}
+            if len(secs) < 2 or any((sid, key[0]) in grouped for sid in secs):
+                continue
+            r0 = rows[0]
+            data = {'groupname': f"{r0['subjectcode']} · " + ' + '.join(sorted(o['sectionname'] for o in secs.values())),
+                    'semesterid': sem_id, 'ref_curriculumsubjectid': r0['curriculumsubjectid'],
+                    'faculty_mode': 'SAME_FACULTY', 'employeenumber': None, 'is_active': True,
+                    'members': [{'sectionid': o['sectionid'], 'curriculumsubjectid': o['curriculumsubjectid']}
+                                for o in secs.values()],
+                    'meetings': [{'class_type': 'Lecture', 'daydesc': r0['day'], 'starttimeid': r0['starttimeid'],
+                                  'endtimeid': r0['endtimeid'], 'roomid': r0['roomid']}]}
+            cur.execute('SAVEPOINT imp_merge')
+            try:
+                res = _mg.save_group(cur, data, cfg, username=username, origin='migrated', confirm_impact=True)
+            except Exception as e:
+                cur.execute('ROLLBACK TO SAVEPOINT imp_merge')
+                print(f"[import merges] {data['groupname']}: {type(e).__name__}: {e}")
+                continue
+            if res.get('ok'):
+                cur.execute('RELEASE SAVEPOINT imp_merge')
+                made.append(data['groupname'])
+                grouped.update((sid, key[0]) for sid in secs)
+            else:
+                cur.execute('ROLLBACK TO SAVEPOINT imp_merge')
+                print(f"[import merges] {data['groupname']} not created: {res.get('errors')}")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[import merges] skipped: {type(e).__name__}: {e}")
+    finally:
+        cur.close(); conn.close()
+    if made:
+        write_activity_log('Merged Classes From Import',
+                           f"Registered {len(made)} combined class(es) from the SIS import: " + '; '.join(made),
+                           category='settings', color=_LOG_COLORS.get('settings', 'gray'))
+    return made
+
+
 @app.route('/academic/schedule/import/sis/preview', methods=['POST'])
 def sis_import_preview():
     if session.get('role') != 'Academic Head':
@@ -13681,19 +14423,8 @@ def sis_import_confirm():
                             if not rooms_p: return ''
                             return rooms_p[i] if i < len(rooms_p) else rooms_p[0]
 
-                        nd, nt = len(days_p), len(times_p)
-                        if nd == 0 or nt == 0:
-                            sp = []
-                        elif nd == 1:
-                            sp = [(days_p[0], times_p[t], _rf(t)) for t in range(nt)]
-                        elif hrs <= 0:
-                            sp = [(days_p[i], times_p[i%nt], _rf(i%nt)) for i in range(nd)]
-                        else:
-                            bh = [_sh(t) for t in times_p]; sh2 = sum(bh)
-                            if sh2 * nd <= hrs:
-                                sp = [(days_p[d], times_p[t], _rf(t)) for d in range(nd) for t in range(nt)]
-                            else:
-                                sp = [(days_p[i], times_p[i%nt], _rf(i%nt)) for i in range(nd)]
+                        # Same day/time/room pairing the import analysis reports on.
+                        sp = _sis_pair_slots(days_raw, time_raw, room_raw, hrs)
 
                         si_cnt = 0
                         _substep = 'inserting schedule session(s)'
@@ -13754,7 +14485,14 @@ def sis_import_confirm():
             msg += f' {saved_skip} row(s) could not be placed in the schedule and were skipped (see skip reasons below).'
         if saved_h:
             msg += f' {saved_h} row(s) archived to historical data (past semester).'
-        return jsonify({'success': True, 'message': msg, 'saved_current': saved_c, 'saved_historical': saved_h, 'saved_skipped': saved_skip, 'faculty_created': _new_faculty_created, 'skipped_details': skipped_details})
+        # Combined classes the analysis listed become merged classes (HC16), so each
+        # counts once in the faculty's load (HC17) instead of once per section.
+        merged = _register_imported_merges(sem_id, session.get('username') or 'SIS import') \
+            if is_cur and saved_c else []
+        if merged:
+            msg += f' {len(merged)} combined class(es) registered as merged classes.'
+        return jsonify({'success': True, 'message': msg, 'saved_current': saved_c, 'saved_historical': saved_h, 'saved_skipped': saved_skip, 'faculty_created': _new_faculty_created, 'skipped_details': skipped_details,
+                        'merged_classes': merged})
 
     except Exception as e:
         conn.rollback()
@@ -15035,6 +15773,20 @@ def schedule_unified_validate():
 
         cur.execute("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
         programs = [dict(r) for r in cur.fetchall()]
+
+        # A current/future term goes straight into the live schedule: show what it would
+        # contain — double bookings, overloads, combined classes — before it is approved.
+        schedule_issues = None
+        if period in ('current', 'future'):
+            try:
+                try:
+                    _iss_sem = _get_semester_id(cur, ay_id, sem_type)
+                except Exception:
+                    _iss_sem = None
+                schedule_issues = _sis_schedule_issues(cur, preview_rows, _iss_sem)
+            except Exception as _si_e:
+                conn.rollback()
+                print(f"[import analysis] schedule issues skipped: {type(_si_e).__name__}: {_si_e}")
     finally:
         cur.close(); conn.close()
 
@@ -15060,6 +15812,7 @@ def schedule_unified_validate():
         'faculty_options':     faculty_options,
         'programs':            programs,
         'unresolved_required': unresolved_required,
+        'schedule_issues':     schedule_issues,
     })
 
 
@@ -32194,6 +32947,7 @@ def api_faculty_my_requests():
                 COALESCE(scr.remarks,'')              AS remarks,
                 scr.request_group,
                 COALESCE(scr.applied_to,'')           AS applied_to,
+                TO_CHAR(scr.apply_on,'Dy, Mon DD, YYYY') AS apply_on,
                 scr.official_sessionid,
                 COALESCE(os.daydesc,'')               AS orig_day,
                 COALESCE(TO_CHAR(ots_s.timevalue,'HH12:MI AM'),'') AS orig_start,
@@ -32398,7 +33152,7 @@ def api_faculty_cancel_request(req_type, req_id):
 
 @app.route('/api/faculty/my_requests/<req_type>/<int:req_id>/permanent', methods=['DELETE'])
 def api_faculty_delete_request(req_type, req_id):
-    """My Request: remove a Cancelled or Rejected request for good. Pending ones are
+    """My Request: remove a Cancelled, Rejected or Expired request for good. Pending ones are
     cancelled first; Approved ones stay (they changed the schedule and are its record)."""
     if 'loggedin' not in session or session.get('role') != 'Faculty':
         return jsonify({'success': False}), 401
@@ -32422,8 +33176,8 @@ def api_faculty_delete_request(req_type, req_id):
         row = cur.fetchone()
         if not row:
             return jsonify({'success': False, 'error': 'Request not found.'}), 404
-        if row['status'] not in ('Cancelled', 'Rejected'):
-            return jsonify({'success': False, 'error': 'Only cancelled or rejected requests can be deleted.'}), 400
+        if row['status'] not in ('Cancelled', 'Rejected', 'Expired'):
+            return jsonify({'success': False, 'error': 'Only cancelled, rejected or expired requests can be deleted.'}), 400
         # A multi-meeting adjustment is one request: its meetings go together.
         if row['request_group']:
             cur.execute(f"""SELECT requestid FROM {table} WHERE request_group = %s AND submitted_by = %s
@@ -32500,7 +33254,18 @@ def api_faculty_my_schedule_subjects():
               AND sem.isactive = TRUE
             ORDER BY cs.subjectcode, sec.sectionname, ss.daydesc, ts_s.timevalue
         """, [str(emp_num)]) or []
-        return jsonify({'success': True, 'subjects': [dict(r) for r in rows]})
+        rows = [dict(r) for r in rows]
+        # Merged-class meetings (Merge Group members) can't be moved by an adjustment request.
+        try:
+            _locked = {x['official_sessionid']: x for x in _merged_occurrence_restrictions(
+                None, [(r['official_sessionid'], None) for r in rows],
+                action='Schedule Adjustment request', targeted=True)}
+        except Exception:
+            _locked = {}
+        for r in rows:
+            x = _locked.get(r['official_sessionid'])
+            r['merged_class'] = x.get('group') if x else None
+        return jsonify({'success': True, 'subjects': rows})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -32692,11 +33457,15 @@ def api_faculty_my_teaching_load():
         buckets = faculty_load.compute_load_buckets(sessions, fac, config=_load_cfg_for(ay_id, sem, cur=cur))
 
         cur.execute("""
-            SELECT TO_CHAR(semstartdate,'MM/DD/YYYY') AS effectivity
-            FROM semester WHERE academicyearid = %s AND semestertype = %s LIMIT 1
+            SELECT TO_CHAR(s.semstartdate,'MM/DD/YYYY') AS effectivity, ay.yearstart, ay.yearend
+            FROM semester s JOIN academicyear ay ON ay.academicyearid = s.academicyearid
+            WHERE s.academicyearid = %s AND s.semestertype = %s LIMIT 1
         """, (ay_id, sem))
         sem_row = cur.fetchone()
         effectivity = (sem_row['effectivity'] if sem_row and sem_row.get('effectivity') else '—')
+        # Labels for the export modal / filename (same as _my_teaching_load_payload)
+        ay_label  = f"{sem_row['yearstart']}-{sem_row['yearend']}" if sem_row and sem_row.get('yearstart') else ay_id
+        sem_label = _ta_export.SEM_LABELS.get(sem, sem)
 
         def _row(g):
             return {
@@ -32718,6 +33487,8 @@ def api_faculty_my_teaching_load():
             'fullname': fac['fullname'],
             'employee_type': fac['employee_type'],
             'ay_id': ay_id, 'semester': sem,
+            'ay_label': ay_label, 'sem_label': sem_label,
+            'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
             'regular':  [_row(g) for g in buckets['groupedReg']],
             'partTime': [_row(g) for g in buckets['groupedPt']],
             'totals': {
@@ -33864,6 +34635,12 @@ def _save_makeup_request(data, faculty_empno, existing_requestid=None):
                 raise _makeup.MakeupError(400, 'validation_error', 'Please select a subject and section.')
             ctx = _makeup.schedule_context_by_subject_section(cur, subject, section_id)
         else:
+            # A request whose date/time already passed is Expired — final, never edited.
+            if _expire_past_makeup_requests(cur, request_id=existing_requestid):
+                conn.commit()
+                raise _makeup.MakeupError(409, 'request_expired',
+                    'This request has expired — its make-up date already passed. '
+                    'Submit a new make-up request instead.')
             cur.execute("""
                 SELECT requestid, scheduleid FROM class_meeting_request
                 WHERE requestid = %s AND submitted_by = %s AND status = 'Pending'
@@ -33906,14 +34683,16 @@ def _save_makeup_request(data, faculty_empno, existing_requestid=None):
             """, [vals['scheduleid'], vals['requested_date'], vals['starttimeid'],
                   vals['endtimeid'], vals['roomid'], vals['reason'], notes, str(faculty_empno)])
         else:
+            # Additional notes change only when the edit form sends them (kept otherwise).
             cur.execute("""
                 UPDATE class_meeting_request
                 SET requested_date = %s, new_starttimeid = %s, new_endtimeid = %s,
-                    new_roomid = %s, reason = %s
+                    new_roomid = %s, reason = %s,
+                    notes = CASE WHEN %s THEN %s ELSE notes END
                 WHERE requestid = %s AND status = 'Pending'
                 RETURNING requestid
             """, [vals['requested_date'], vals['starttimeid'], vals['endtimeid'],
-                  vals['roomid'], vals['reason'], existing_requestid])
+                  vals['roomid'], vals['reason'], 'note' in data, notes, existing_requestid])
         saved = cur.fetchone()
         conn.commit()
         return jsonify({'success': True, 'requestid': saved['requestid'], 'status': 'Pending', 'advisories': _edit_notes})
@@ -34155,6 +34934,10 @@ def _makeup_submit_problems(subject, section_id, faculty_empno, request_date, st
             et = _makeup.resolve_timeslot(cur, end_time, 'end')
             if et['timevalue'] <= st['timevalue']:
                 raise _makeup.MakeupError(400, 'validation_error', 'End Time must be later than Start Time.')
+            # Today, but at a time that already passed (it would be Expired at once).
+            if _dtm.combine(req_date, st['timevalue']) <= _dtm.now():
+                raise _makeup.MakeupError(400, 'validation_error',
+                    'That start time has already passed today. Pick a later time or another date.')
             from scheduler import SCHEDULING_DAY_OPEN as _open, SCHEDULING_DAY_CLOSE as _close, format_time_12h as _f12
             if st['timevalue'] < _open or et['timevalue'] > _close:
                 raise _makeup.MakeupError(400, 'validation_error',
@@ -34262,7 +35045,7 @@ def _makeup_submit_problems(subject, section_id, faculty_empno, request_date, st
                         f"Cancel or change that request first.")
     if conflicts:
         return {'success': False, 'error': 'schedule_conflict',
-                'message': 'This make-up class conflicts with an existing schedule.',
+                'message': 'This make-up class conflicts with another class or request.',
                 'conflicts': conflicts, '_status': 409}
     return None
 
@@ -34426,11 +35209,12 @@ def api_faculty_submit_request():
                         return jsonify({'success': False,
                             'error': 'The selected Official meeting is no longer available. Please select it again.'}), 400
 
-                    # A meeting already replaced by an approved Local arrangement, or with a
-                    # request still pending, cannot be requested again.
+                    # A meeting already replaced by an approved Local arrangement CAN be
+                    # requested again: approval replaces that Local session (rejection keeps
+                    # it), and the form says so. Its CURRENT slot is the Local one, which the
+                    # "no change" check below compares with. A pending request still blocks.
                     _local_now = query_db("""
-                        SELECT las.daydesc, TO_CHAR(t1.timevalue, 'HH12:MI AM') AS st,
-                               TO_CHAR(t2.timevalue, 'HH12:MI AM') AS en, r.roomname
+                        SELECT las.daydesc, las.starttimeid, las.endtimeid, las.roomid
                         FROM local_arrangement_sessions las
                         JOIN local_arrangement la ON la.arrangementid = las.arrangementid
                         LEFT JOIN timeslot t1 ON t1.timeid = las.starttimeid
@@ -34440,12 +35224,6 @@ def api_faculty_submit_request():
                           AND la.status = 'Published' AND la.is_active = TRUE
                         LIMIT 1
                     """, [official_sessionid], one=True)
-                    if _local_now:
-                        return jsonify({'success': False, 'error':
-                            f"This meeting already has an approved Local arrangement "
-                            f"({_local_now['daydesc']} {_local_now['st']} – {_local_now['en']}"
-                            f"{' · ' + _local_now['roomname'] if _local_now.get('roomname') else ''}). "
-                            f"Ask the Academic Head to change it in the Local Scheduler."}), 409
                     if query_db("""SELECT 1 FROM schedule_change_request
                                    WHERE official_sessionid = %s AND status = 'Pending' LIMIT 1""",
                                 [official_sessionid], one=True):
@@ -34469,12 +35247,16 @@ def api_faculty_submit_request():
                         return jsonify({'success': False, 'error': 'Please select a room for each new meeting.'}), 400
                     moved_hours += (occurrence['endtimeid'] - occurrence['starttimeid']) * 0.5
                     new_hours   += (m_end - m_start) * 0.5
+                    _now = _local_now or {'daydesc': occurrence.get('daydesc'),
+                                          'starttimeid': occurrence['starttimeid'],
+                                          'endtimeid': occurrence['endtimeid'],
+                                          'roomid': occurrence.get('roomid')}
                     rows.append({'official_sessionid': official_sessionid, 'day': day,
                                  'start': m_start, 'end': m_end, 'room': m_room,
-                                 'same_as_now': (day == occurrence.get('daydesc')
-                                                 and m_start == occurrence['starttimeid']
-                                                 and m_end == occurrence['endtimeid']
-                                                 and m_room == occurrence.get('roomid'))})
+                                 'same_as_now': (day == _now.get('daydesc')
+                                                 and m_start == _now['starttimeid']
+                                                 and m_end == _now['endtimeid']
+                                                 and m_room == _now.get('roomid'))})
 
                 # Teaching hours never change: the new meetings carry exactly the hours of
                 # the meetings they replace (any split of that total).
@@ -34489,12 +35271,23 @@ def api_faculty_submit_request():
                         'The new schedule is the same as the current one. Change the day, time or room.'}), 400
                 # A new meeting can't overlap one of this class's meetings that is NOT being
                 # moved (the class would meet twice at once).
+                # Where each kept meeting meets NOW: its approved Local slot when it has one.
                 _kept = query_db("""
-                    SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid,
+                    SELECT ss.sessionid,
+                           COALESCE(lo.daydesc, ss.daydesc)         AS daydesc,
+                           COALESCE(lo.starttimeid, ss.starttimeid) AS starttimeid,
+                           COALESCE(lo.endtimeid, ss.endtimeid)     AS endtimeid,
                            TO_CHAR(t1.timevalue, 'HH12:MI AM') AS st, TO_CHAR(t2.timevalue, 'HH12:MI AM') AS en
                     FROM schedule_sessions ss
-                    JOIN timeslot t1 ON t1.timeid = ss.starttimeid
-                    JOIN timeslot t2 ON t2.timeid = ss.endtimeid
+                    LEFT JOIN LATERAL (
+                        SELECT las.daydesc, las.starttimeid, las.endtimeid
+                        FROM local_arrangement_sessions las
+                        JOIN local_arrangement la ON la.arrangementid = las.arrangementid
+                        WHERE las.official_sessionid = ss.sessionid
+                          AND la.status = 'Published' AND la.is_active = TRUE
+                        LIMIT 1) lo ON TRUE
+                    JOIN timeslot t1 ON t1.timeid = COALESCE(lo.starttimeid, ss.starttimeid)
+                    JOIN timeslot t2 ON t2.timeid = COALESCE(lo.endtimeid, ss.endtimeid)
                     WHERE ss.versionid = %s AND NOT (ss.sessionid = ANY(%s))
                 """, [versionid, [r['official_sessionid'] for r in rows]]) or []
                 for r in rows:
@@ -34519,7 +35312,13 @@ def api_faculty_submit_request():
                            for r in rows],
                     action='Schedule Adjustment request', targeted=True)
                 if _merge_locked:
-                    return _merged_restriction_response(_merge_locked)
+                    # Short notice for the faculty (the long Merge Group explanation is
+                    # for the scheduling office's own screens).
+                    _x = _merge_locked[0]
+                    return jsonify({'success': False, 'code': 'MERGED_OCCURRENCE_LOCKED', 'error':
+                        f"{_x.get('subject')} of {_x.get('section')} is a merged class ({_x.get('group')}), "
+                        f"so its schedule can't be changed with a request. A make-up class for one date "
+                        f"is still possible."}), 409
 
                 import uuid as _uuid
                 request_group = _uuid.uuid4().hex[:20] if len(rows) > 1 else None
@@ -34554,7 +35353,11 @@ def api_faculty_submit_request():
                 except Exception as _ce:
                     print(f"[submit_request adjustment check] {_ce}")
                     _sum, _err = None, ('The schedule could not be checked for conflicts. Please try again.', 503)
-                if _err or not _sum.get('all_ok'):
+                if not _err and not _sum.get('all_ok') and _sum.get('apply_on'):
+                    # Only an approved make-up still to come holds the slot: submitted, and
+                    # if approved it takes effect after that make-up.
+                    _advisories = list(_advisories) + (_sum.get('conflicts') or [])
+                elif _err or not _sum.get('all_ok'):
                     cur.execute("DELETE FROM schedule_change_request WHERE requestid = ANY(%s) AND status = 'Pending'",
                                 (_adj_ids,))
                     conn.commit()
@@ -34649,7 +35452,21 @@ def api_faculty_check_request_conflicts():
                 _on_date = None
         _excl = {'exclude_schedule_id': own_sched} if own_sched else {}
 
+        # Schedule Adjustment onto the same class of other sections (HC16: same subject in
+        # the merge scope, faculty, day, time AND room) merges with it — not a room /
+        # faculty clash. The form says which sections; the Academic Head's approval
+        # publishes it as a merged class.
+        _merge = (_request_merge_partners(sem_id_for_check, day, _st, _en,
+                                          int(room_id) if room_id and room_id.isdigit() else None, requester)
+                  if not _is_makeup_check and requester and _st and _en else {'partners': [], 'other_room': None})
+        merge_with = [p_['sectionname'] for p_ in _merge['partners']]
+        _merge_ids = [p_['scheduleid'] for p_ in _merge['partners']]
+        merge_over_limit = (_request_merge_over_limit(sem_id_for_check, requester, _merge['partners'])
+                            if merge_with else None)
+
         def _official(**dim):
+            if _merge_ids and ('employee_number' in dim or 'room_id' in dim):
+                dim = dict(dim, exclude_schedule_ids=_merge_ids)
             return _request_official_conflict(sem_id_for_check, day, _st, _en,
                                               requester=requester, **dim, **_excl)
 
@@ -34663,32 +35480,56 @@ def api_faculty_check_request_conflicts():
             return _request_local_conflict(own_sched, day, _st, _en, requester=requester,
                                            semester_id=sem_id_for_check, **dim)
 
+        # Say WHAT it clashes with — a regular weekly class or an approved one-date make-up —
+        # in the same words as the submit check (_makeup_submit_problems), so the live
+        # notice and the one after Submit never disagree.
+        when = (_on_date.strftime('%a, %b %d, %Y').replace(' 0', ' ') if _on_date
+                else f"{day}s" if day else 'that day')
+        def _cls(r):
+            return f"{r.get('subjectcode')}{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}"
+        def _span(r):
+            return f" ({r['start_t']}–{r['end_t']})" if r.get('start_t') and r.get('end_t') else ''
+
         if emp_num and _st and _en:
-            r = _official(employee_number=str(emp_num)) or _makeup(employee_number=str(emp_num))
+            r = _official(employee_number=str(emp_num))
+            mk = None if r else _makeup(employee_number=str(emp_num))
             if r:
                 faculty_conflict = True
-                faculty_detail = f"You already have {r['subjectcode']} ({r['start_t']}–{r['end_t']}) on {day}."
+                faculty_detail = f"You already teach {_cls(r)}{_span(r)} on {when}."
+            elif mk:
+                faculty_conflict = True
+                faculty_detail = f"You already have an approved make-up class of {mk.get('subjectcode')}{_span(mk)} on {when}."
             elif _local(employee_number=str(emp_num)):
                 faculty_conflict = True
-                faculty_detail = f"You have a Local Arrangement on {day} at this time."
+                faculty_detail = f"You already have a Local schedule commitment at that time on {when}."
 
         if section_id and section_id.isdigit() and _st and _en:
-            r2 = _official(section_id=int(section_id)) or _makeup(section_id=int(section_id))
+            r2 = _official(section_id=int(section_id))
+            mk2 = None if r2 else _makeup(section_id=int(section_id))
             if r2:
                 section_conflict = True
-                section_detail = f"This section already has {r2['subjectcode']} ({r2['start_t']}–{r2['end_t']}) on {day}."
+                section_detail = f"The students already have {_cls(r2)}{_span(r2)} on {when}."
+            elif mk2:
+                section_conflict = True
+                section_detail = f"The students already have an approved make-up class of {mk2.get('subjectcode')}{_span(mk2)} on {when}."
             elif _local(section_id=int(section_id)):
                 section_conflict = True
-                section_detail = f"This section has a Local Arrangement on {day} at this time."
+                section_detail = f"The students have a Local arrangement class at that time on {when}."
 
         if room_id and room_id.isdigit() and _st and _en:
-            r3 = _official(room_id=int(room_id)) or _makeup(room_id=int(room_id))
+            _rn = (query_db("SELECT roomname FROM room WHERE roomid = %s", [int(room_id)], one=True) or {}).get('roomname') or 'The selected room'
+            _rl = f"Room {_rn}" if _rn != 'The selected room' else _rn
+            r3 = _official(room_id=int(room_id))
+            mk3 = None if r3 else _makeup(room_id=int(room_id))
             if r3:
                 room_conflict = True
-                room_detail = f"The selected room is already occupied by {r3['subjectcode']} ({r3['start_t']}–{r3['end_t']}) on {day}."
+                room_detail = f"{_rl} is used by {_cls(r3)}{_span(r3)} on {when}."
+            elif mk3:
+                room_conflict = True
+                room_detail = f"{_rl} is booked by an approved make-up class of {mk3.get('subjectcode')}{_span(mk3)} on {when}."
             elif _local(room_id=int(room_id)):
                 room_conflict = True
-                room_detail = f"The selected room has a Local Arrangement on {day} at this time."
+                room_detail = f"{_rl} is used by a Local arrangement at that time on {when}."
 
         # Schedule Adjustment (weekly): an approved make-up still to come on this weekday
         # doesn't stop the faculty from submitting, but the Academic Head can approve
@@ -34752,6 +35593,10 @@ def api_faculty_check_request_conflicts():
             'room_detail':       room_detail,
             'duration_detail':   duration_detail,
             'makeup_notice':     makeup_notice,
+            'merge_with':        merge_with,
+            'merge_over_limit':  merge_over_limit,
+            # Same class at this time but in another room: no merge (HC16 needs the room).
+            'merge_room_hint':   _merge['other_room'],
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -34866,8 +35711,53 @@ def api_faculty_available_rooms():
             except Exception as _me:
                 print(f"[available_rooms makeup check] {_me}")
 
-        available  = [{**dict(r), 'available': r['roomid'] not in booked_ids} for r in all_rooms]
-        # Return only truly available rooms
+        # Schedule Adjustment of a class (schedule_id): a room whose ONLY occupants at this
+        # time are the same class of other sections — same subject (merge scope), faculty,
+        # exact start and end — is offered as a merge (HC16), not hidden as booked.
+        merge_rooms = {}
+        _sched_q = request.args.get('schedule_id', '').strip()
+        if _sched_q.isdigit() and day and start_time and end_time and not req_date:
+            try:
+                _rq = _request_requester(int(_sched_q))
+                if _rq and faculty_load.has_assigned_faculty(_rq.get('employeenumber')) \
+                        and faculty_load.is_merge_in_scope(_rq.get('subjectcode') or '', _rq.get('_cfg') or {}):
+                    occ = query_db("""
+                        SELECT ss.roomid, UPPER(cs.subjectcode) AS code, s.employeenumber, sec.sectionname,
+                               s.sectionid, TO_CHAR(ts_s.timevalue, 'HH24:MI') AS st, TO_CHAR(ts_e.timevalue, 'HH24:MI') AS en
+                        FROM schedule_sessions ss
+                        JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
+                        JOIN schedule s ON sv.scheduleid = s.scheduleid
+                        JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
+                        JOIN sections sec ON sec.sectionid = s.sectionid
+                        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+                        JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
+                        WHERE UPPER(ss.daydesc) LIKE UPPER(%s) AND ts_s.timevalue < %s::time
+                          AND ts_e.timevalue > %s::time AND ss.roomid IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM local_arrangement_sessions las_x
+                              JOIN local_arrangement la_x ON las_x.arrangementid = la_x.arrangementid
+                              WHERE la_x.status = 'Published' AND la_x.is_active = TRUE
+                                AND la_x.semesterid = s.semesterid AND la_x.sectionid = s.sectionid
+                                AND las_x.official_sessionid = ss.sessionid)
+                    """, (f'%{day}%', end_time, start_time)) or []
+                    _st5, _en5 = str(_parse_time_str(start_time))[:5], str(_parse_time_str(end_time))[:5]
+                    by_room = {}
+                    for o in occ:
+                        by_room.setdefault(o['roomid'], []).append(o)
+                    local_ids = {r['roomid'] for r in booked_local}
+                    for rid, os_ in by_room.items():
+                        if rid in local_ids:
+                            continue
+                        if all(o['code'] == (_rq['subjectcode'] or '').upper() and str(o['employeenumber']) == str(_rq['employeenumber'])
+                               and o['st'] == _st5 and o['en'] == _en5 and o['sectionid'] != _rq.get('sectionid') for o in os_):
+                            merge_rooms[rid] = sorted({o['sectionname'] for o in os_})
+            except Exception as _mre:
+                print(f"[available_rooms merge rooms] {_mre}")
+
+        available  = [{**dict(r), 'available': r['roomid'] not in booked_ids or r['roomid'] in merge_rooms,
+                       **({'merge_with': merge_rooms[r['roomid']]} if r['roomid'] in merge_rooms else {})}
+                      for r in all_rooms]
+        # Return only truly available rooms (a merge room is one: it hosts the same class)
         available  = [r for r in available if r['available']]
         return jsonify({'success': True, 'rooms': available})
     except Exception as e:
@@ -37721,6 +38611,14 @@ def _merge_confirmation_gate(cur, cfg, sem_id, section_id, rows, data):
     if _mg.merge_model(cfg) != _mg.MODEL_GROUPS or not section_id or not sem_id or not rows:
         return None, []
     found = _mg.detect_merges(cur, cfg, sem_id, section_id, rows)
+    # A would-be merge that can't be recorded (e.g. more sections than Settings allows
+    # for the subject) is refused with its reason, not left to look like a plain clash.
+    if found['problems']:
+        return (jsonify(_mg.serialize({
+            'success': False, 'code': 'MERGE_NOT_ALLOWED',
+            'error': 'This class cannot be merged: ' + ' '.join(
+                sorted({p_['reason'] for p_ in found['problems'] if p_.get('reason')})),
+            'merge_problems': found['problems']})), 409), []
     if not found['merges']:
         return None, []
     if not data.get('confirm_merges'):
@@ -37885,7 +38783,7 @@ def _hc16_member_faculty_conflicts(rows, policy, sem_id, section_id, cur=None):
 
 
 def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, acad_year_id, section_id=None,
-                                    fail_closed=False, include_drafts=False):
+                                    fail_closed=False, include_drafts=False, merge_cur=None):
     """
     Check a freshly-generated schedule (raw, with datetime.time objects) against
     existing Published sessions from OTHER sections in the same semester.
@@ -37897,6 +38795,8 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     include_drafts=True (Publish only): OTHER sections' saved Draft sessions also
     reserve their room/faculty, so a publish cannot take a slot another section's
     Draft already holds. Generation / Save Draft keep counting Published only.
+    merge_cur: the caller's cursor, so a merge it just confirmed (recorded in its
+    still-open transaction) counts as a merge here rather than as a clash.
     """
     if not schedule_data or not acad_year_id or not term:
         return [], 0
@@ -38088,7 +38988,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     # merge interpretation — HC10/HC11 are waived only for the same usable merged event,
     # never by scope/pairs/NSTP prefix. None under the legacy model (code below unchanged).
     try:
-        _merge_pol = _merge_policy_for(_merge_cfg, sem_id=sem_id, section_id=section_id)
+        _merge_pol = _merge_policy_for(_merge_cfg, sem_id=sem_id, section_id=section_id, cur=merge_cur)
     except Exception as exc:
         if fail_closed:
             raise ConstraintCheckUnavailable(f'cross-schedule conflicts (HC15/HC16): {exc}') from exc
@@ -39678,7 +40578,7 @@ def api_save_draft():
             try:
                 _pub_conflicts, _pub_count = _check_cross_schedule_conflicts(
                     _pre_rehydrated, program, year_level, term, ay,
-                    section_id=ctx_section_id, fail_closed=True)
+                    section_id=ctx_section_id, fail_closed=True, merge_cur=cur)
             except ConstraintCheckUnavailable as _cce:
                 conn.rollback()
                 return jsonify({
@@ -42604,6 +43504,11 @@ def _run_startup_migrations():
     # from one marked complete without ever setting up (imported / pre-wizard accounts).
     _step('sm_setup_completed_at', [
         "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMP NULL",
+    ])
+
+    # The system intro video plays once per account, right after Account Setup.
+    _step('sm_intro_video_seen', [
+        "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS intro_video_seen BOOLEAN NOT NULL DEFAULT FALSE",
     ])
 
     # Official employment information (Employee ID, Specialization, Employment Type,

@@ -15,8 +15,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            /* dark overlay + PUP maroon tint (the photo itself is untinted) */
             background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
-                url("{{ url_for('static', filename='img/LogInUI.png') }}");
+                linear-gradient(rgba(128,0,0,0.55), rgba(128,0,0,0.55)),
+                url("{{ url_for('static', filename='img/login_bg_pup_lopez.jpg') }}");
             background-size: cover;
             background-position: center;
         }
@@ -223,6 +225,21 @@
             </form>
 
             {% with messages = get_flashed_messages(with_categories=true) %}
+            {# A lockout still running when the page is reopened: the same notice and countdown,
+               even though its message was already shown once. #}
+            {% if lock_seconds and not (messages | selectattr(0, 'equalto', 'locked') | list) %}
+                <div class="lock-box" role="alert">
+                    <div class="lock-head"><i class="fas fa-lock"></i> Sign-in temporarily paused</div>
+                    <p>Sign-in{% if lock_user %} for <b>{{ lock_user }}</b>{% endif %} is paused because of too many incorrect
+                       login attempts. If you have forgotten your password, use Forgot Password &mdash; it lifts the pause.</p>
+                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" aria-live="polite">
+                        <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong> <span id="lockUntil"></span>
+                    </div>
+                    <div class="lock-actions">
+                        <a href="{{ url_for('forgot_password', restart=1) }}" class="lock-btn"><i class="fas fa-key"></i> Forgot Password</a>
+                    </div>
+                </div>
+            {% endif %}
             {% for category, message in messages %}
                 {% if category == 'locked' %}
                 {# Too many wrong passwords: temporary lock + Forgot Password #}
@@ -231,7 +248,7 @@
                     <p>{{ message }}</p>
                     {% if lock_seconds %}
                     <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" aria-live="polite">
-                        <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong>
+                        <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong> <span id="lockUntil"></span>
                     </div>
                     {% endif %}
                     <div class="lock-actions">
@@ -262,8 +279,6 @@
         }
     }
 
-    // After a failed login attempt, jump straight into the (empty) password field
-    // so the user can retype it without an extra click.
     if (document.querySelector('.error-msg')) {
         document.getElementById('mainPassword')?.focus();
     }
@@ -275,6 +290,8 @@
         if (!box) return;
         const end = Date.now() + parseInt(box.dataset.seconds, 10) * 1000;
         const out = document.getElementById('lockLeft');
+        const until = document.getElementById('lockUntil');
+        const untilText = `(until ${new Date(end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })})`;
         function tick() {
             const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
             if (left === 0) {
@@ -282,7 +299,11 @@
                 box.innerHTML = '<i class="fas fa-lock-open"></i> <strong>You can sign in again now.</strong>';
                 return;
             }
-            out.textContent = String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0');
+            // "14 min 32 sec" / "1 hr 05 min", and the clock time the pause ends.
+            const h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), sec = left % 60;
+            out.textContent = h ? `${h} hr ${String(m).padStart(2, '0')} min`
+                                : (m ? `${m} min ${String(sec).padStart(2, '0')} sec` : `${sec} sec`);
+            if (until) until.textContent = untilText;
             setTimeout(tick, 1000);
         }
         tick();

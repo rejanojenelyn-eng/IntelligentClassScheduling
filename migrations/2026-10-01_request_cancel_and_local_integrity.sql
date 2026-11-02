@@ -12,12 +12,14 @@
 -- 10.1 Request cancellation. A faculty member may cancel their OWN Pending request
 -- (DELETE /api/faculty/my_requests/<makeup|adjustment>/<id>), on both request tables.
 -- A cancelled request was never reviewed, so it must carry no reviewer.
+-- 'Expired' (2026-11-01): a Pending make-up whose date/time passed with no decision —
+-- never reviewed either (app._expire_past_makeup_requests).
 ALTER TABLE public.class_meeting_request DROP CONSTRAINT IF EXISTS chk_cmr_status;
 ALTER TABLE public.class_meeting_request ADD CONSTRAINT chk_cmr_status
-    CHECK (status IN ('Pending', 'Approved', 'Rejected', 'Cancelled'));
+    CHECK (status IN ('Pending', 'Approved', 'Rejected', 'Cancelled', 'Expired'));
 ALTER TABLE public.class_meeting_request DROP CONSTRAINT IF EXISTS chk_cmr_review;
 ALTER TABLE public.class_meeting_request ADD CONSTRAINT chk_cmr_review
-    CHECK ((status IN ('Pending', 'Cancelled') AND reviewed_by IS NULL AND reviewed_at IS NULL)
+    CHECK ((status IN ('Pending', 'Cancelled', 'Expired') AND reviewed_by IS NULL AND reviewed_at IS NULL)
         OR (status IN ('Approved', 'Rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL));
 
 ALTER TABLE public.schedule_change_request DROP CONSTRAINT IF EXISTS chk_scr_status;

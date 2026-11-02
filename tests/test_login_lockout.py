@@ -215,3 +215,40 @@ def test_lock_notice_counts_down_to_the_unlock(account, ip, mails):
     _, page = _login(c, account, PASSWORD, ip)                 # still locked: the countdown continues
     m2 = re.search(r'id="lockTimer" data-seconds="(\d+)"', page)
     assert m2 and int(m2.group(1)) <= int(m.group(1))
+
+
+def test_reopened_login_page_still_shows_the_time_left(account, ip, mails):
+    """The countdown is not a one-time message: reopening the login page while the
+    account is still paused shows it again (and names the paused account)."""
+    import re
+    c = app_module.app.test_client()
+    for _ in range(ls.MAX_FAILED_ATTEMPTS):
+        _login(c, account, 'wrong', ip)
+    for _ in range(2):                                        # plain reloads, no new attempt
+        page = c.get('/login', environ_base={'REMOTE_ADDR': ip}).get_data(as_text=True)
+        assert re.search(r'id="lockTimer" data-seconds="\d+"', page)
+        assert account in page and 'Sign-in temporarily paused' in page
+
+
+def test_password_reset_lifts_the_lock_and_the_countdown(account, ip, mails, monkeypatch):
+    """After Forgot Password the account signs in again at once, the login page no longer
+    counts down, and the confirmation says the lock was removed (only because it was)."""
+    import re
+    c = app_module.app.test_client()
+    for _ in range(ls.MAX_FAILED_ATTEMPTS):
+        _login(c, account, 'wrong', ip)
+    assert _throttle(account)[1] is not None
+    monkeypatch.setattr(app_module._pwreset, 'is_verified', lambda *a: True)
+    monkeypatch.setattr(app_module._pwreset, 'reset', lambda *a: (account, True))
+    _q("UPDATE login_throttle SET failed_count = 0, locked_until = NULL WHERE username_key = %s",
+       (ls.username_key(account),))                           # what the real reset() does
+    with c.session_transaction() as s:
+        s['fp_rid'], s['fp_token'] = 1, 'x'
+    r = c.post('/forgot-password/new-password', data={'new_password': 'x', 'confirm_password': 'x'},
+               environ_base={'REMOTE_ADDR': ip})
+    done = c.get(r.headers['Location']).get_data(as_text=True)
+    assert 'temporary sign-in lock on your account was also removed' in done
+    page = c.get('/login', environ_base={'REMOTE_ADDR': ip}).get_data(as_text=True)
+    assert not re.search(r'id="lockTimer"', page)
+    r, _ = _login(c, account, PASSWORD, ip)
+    assert r.status_code == 302 and '/login' not in r.headers['Location']

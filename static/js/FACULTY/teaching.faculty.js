@@ -64,7 +64,7 @@ function populateProgramFilter() {
     const sel = document.getElementById('programFilter');
     const current = sel.value;
     const programs = Array.from(new Set(_sessions.map(s => s.programcode).filter(Boolean))).sort();
-    sel.innerHTML = '<option value="">BY PROGRAM</option>' +
+    sel.innerHTML = '<option value="">ALL PROGRAMS</option>' +
         programs.map(p => `<option value="${p}">${p}</option>`).join('');
     if (programs.includes(current)) sel.value = current;
 }
@@ -403,7 +403,18 @@ function renderCalendar() {
     Object.keys(byDay).forEach(day => {
         const dayIdx = DAYS.indexOf(day);
         if (dayIdx < 0) return;
-        const daySessions = byDay[day].slice().sort((a,b) => a.starttimeid - b.starttimeid);
+        // One subject at the same time in several sections (e.g. a combined NSTP class) is
+        // ONE block listing every section, not a narrow block per section side by side.
+        const merged = {};
+        byDay[day].forEach(sv => {
+            const k = [sv.subjectcode, sv.starttimeid, sv.endtimeid, sv.isMakeup ? 'mu' : ''].join('|');
+            const label = sv.sectionname || (sv.yearlevel ? `${sv.yearlevel} - ${sv.programcode || ''}` : (sv.programcode || ''));
+            if (!merged[k]) merged[k] = { ...sv, _sections: [], _rooms: [] };
+            if (label && !merged[k]._sections.includes(label)) merged[k]._sections.push(label);
+            const rm = sv.roomname || 'TBA';
+            if (!merged[k]._rooms.includes(rm)) merged[k]._rooms.push(rm);
+        });
+        const daySessions = Object.values(merged).sort((a,b) => a.starttimeid - b.starttimeid);
 
 
         daySessions.forEach((sess, idx) => {
@@ -429,12 +440,15 @@ function renderCalendar() {
             pill.style.top    = (topOff + (s - 1) * rowH + 2) + 'px';
 
 
-            const yearSec = sess.yearlevel ? `${sess.yearlevel} - ${sess.programcode || ''}` : (sess.programcode || '');
+            const yearSec = sess._sections.join(' · ');
+            const many = sess._sections.length > 1;
             pill.innerHTML = `
                 <div class="cal-pill-code">${sess.subjectcode}</div>
-                <div class="cal-pill-sub">${yearSec || sess.roomname || ''}</div>
+                <div class="cal-pill-sub${many ? ' cal-pill-secs' : ''}">${many
+                    ? sess._sections.map(x => `<div>${x}</div>`).join('')      // one section per line
+                    : (yearSec || sess.roomname || '')}</div>
                 ${sess.isMakeup ? '<span class="cal-pill-badge">MAKE-UP</span>' : ''}`;
-            pill.title = `${sess.isMakeup ? 'MAKE-UP CLASS · ' + sess.exception_date + '\n' : ''}${sess.subjectcode} – ${sess.subjectname}\n${sess.time_range || ''}\nRoom: ${sess.roomname || 'TBA'}\nYear/Section: ${yearSec || '—'}`;
+            pill.title = `${sess.isMakeup ? 'MAKE-UP CLASS · ' + sess.exception_date + '\n' : ''}${sess.subjectcode} – ${sess.subjectname}\n${sess.time_range || ''}\nRoom: ${sess._rooms.join(', ')}\n${many ? `Sections (${sess._sections.length})` : 'Year/Section'}: ${yearSec || '—'}`;
             pill.onclick = () => openDetail(sess);
             inner.appendChild(pill);
         });

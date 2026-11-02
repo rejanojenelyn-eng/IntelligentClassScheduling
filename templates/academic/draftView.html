@@ -357,6 +357,77 @@
     .dv-btn { border-radius: 8px; padding: 12px 22px; font-size: .85rem; }
     .dv-btn-solid { background: #800000; }
 
+    /* ── Approve & publish review (publishModal) ── */
+    .pm-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(20,10,10,.5);
+                  display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .pm-box { background: #fff; border-radius: 14px; width: min(680px, 100%); max-height: min(86vh, 860px);
+              display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 48px rgba(0,0,0,.28); }
+    .pm-head { display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px; background: #630100; color: #fff; }
+    .pm-head-icon { flex: 0 0 42px; height: 42px; border-radius: 10px; background: rgba(255,255,255,.14);
+                    display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+    .pm-head-text { flex: 1; min-width: 0; }
+    .pm-eyebrow { font-size: .62rem; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase; opacity: .75; }
+    .pm-title { font-size: 1.12rem; font-weight: 800; margin-top: 2px; }
+    .pm-context { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pm-context span { font-size: .7rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.16); }
+    .pm-close { background: none; border: 0; color: #fff; opacity: .75; font-size: 1.05rem; cursor: pointer;
+                width: 32px; height: 32px; border-radius: 8px; }
+    .pm-close:hover { opacity: 1; background: rgba(255,255,255,.12); }
+
+    .pm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+                  padding: 12px 20px; background: #fbf7f7; border-bottom: 1px solid #f0e4e4; }
+    .pm-count { font-size: .78rem; color: #555; }
+    .pm-count b { color: #630100; }
+
+    .pm-check { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
+    .pm-check input { width: 17px; height: 17px; margin: 0; accent-color: #630100; cursor: pointer; flex: 0 0 auto; }
+    .pm-all span { font-size: .8rem; font-weight: 700; color: #333; }
+
+    .pm-list { overflow-y: auto; flex: 1; padding: 14px 20px; background: #fff; }
+    .pm-subj { border: 1px solid #ece4e4; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .pm-subj:last-child { margin-bottom: 0; }
+    .pm-subj-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fdf9f9;
+                    border-bottom: 1px solid #f3eaea; }
+    .pm-code { font-size: .7rem; font-weight: 800; color: #630100; background: #f8e6e6; border-radius: 6px;
+               padding: 3px 8px; white-space: nowrap; }
+    .pm-name { font-size: .84rem; font-weight: 700; color: #2b2b2b; flex: 1; min-width: 0; }
+    .pm-subj-meta { font-size: .7rem; color: #888; white-space: nowrap; }
+
+    .pm-row { display: grid; grid-template-columns: 17px 46px minmax(130px, 1fr) auto minmax(0, 170px);
+              align-items: center; gap: 12px; padding: 9px 12px; cursor: pointer; transition: opacity .15s; }
+    .pm-row + .pm-row { border-top: 1px solid #f5f0f0; }
+    .pm-row:hover { background: #fffafa; }
+    .pm-row input { width: 17px; height: 17px; margin: 0; accent-color: #630100; cursor: pointer; }
+    .pm-row.off { opacity: .45; }
+    .pm-day { font-size: .68rem; font-weight: 800; letter-spacing: .5px; text-align: center; color: #630100;
+              background: #f8e6e6; border-radius: 6px; padding: 4px 0; }
+    .pm-time { font-size: .8rem; font-weight: 600; color: #333; white-space: nowrap; }
+    .pm-room, .pm-fac { font-size: .76rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pm-room i, .pm-fac i, .pm-time i { color: #b08a8a; margin-right: 5px; font-size: .72rem; }
+    .pm-fac { font-weight: 600; color: #630100; }
+
+    .pm-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+               padding: 14px 20px; border-top: 1px solid #eee; background: #fff; }
+    .pm-foot-note { font-size: .74rem; color: #888; }
+    .pm-foot-note i { margin-right: 4px; }
+    .pm-foot-actions { display: flex; gap: 10px; margin-left: auto; }
+    .pm-btn { border-radius: 8px; padding: 10px 20px; font-size: .82rem; font-weight: 700; cursor: pointer;
+              display: inline-flex; align-items: center; gap: 7px; font-family: inherit; }
+    .pm-btn-ghost { background: #fff; border: 1.5px solid #d6caca; color: #555; }
+    .pm-btn-ghost:hover { border-color: #630100; color: #630100; }
+    .pm-btn-go { background: #1e8449; border: 0; color: #fff; }
+    .pm-btn-go:hover:not(:disabled) { background: #186a3b; }
+    .pm-btn-go:disabled { background: #b9c9bf; cursor: not-allowed; }
+
+    @media (max-width: 560px) {
+        .pm-head { padding: 16px; }
+        .pm-list, .pm-toolbar, .pm-foot { padding-left: 14px; padding-right: 14px; }
+        .pm-row { grid-template-columns: 17px 46px 1fr; row-gap: 4px; }
+        .pm-room, .pm-fac { grid-column: 3; }
+        .pm-foot-actions { width: 100%; }
+        .pm-foot-actions .pm-btn { flex: 1; justify-content: center; }
+    }
+
     @media (max-width: 900px) {
         .dv-context-item { border-right: 0; padding: 6px 14px; }
         .dv-status-badge { margin: 6px 14px; }
@@ -489,28 +560,35 @@
 </div>
 
 <!-- ── Publish Selection Modal ── -->
-<div id="publishModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9000;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:12px;width:min(620px,94vw);max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.22);">
-        <div style="background:#630100;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;">
-            <div>
-                <div style="font-size:0.6rem;font-weight:900;letter-spacing:2px;opacity:0.7;margin-bottom:2px;">ACTION REQUIRED</div>
-                <div style="font-size:1rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;">Select Sessions to Publish</div>
+<div id="publishModal" class="pm-overlay" style="display:none;" onclick="if (event.target === this) closePublishModal()">
+    <div class="pm-box" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
+        <div class="pm-head">
+            <div class="pm-head-icon"><i class="fas fa-calendar-check"></i></div>
+            <div class="pm-head-text">
+                <div class="pm-eyebrow">Approve &amp; publish</div>
+                <div class="pm-title" id="pmTitle">Review schedules to publish</div>
+                <div class="pm-context" id="pmContext"></div>
             </div>
-            <button onclick="document.getElementById('publishModal').style.display='none'" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;opacity:0.7;">✕</button>
-        </div>
-        <div style="padding:14px 22px 6px;font-size:0.78rem;color:#555;border-bottom:1px solid #eee;">
-            Choose which Draft sessions to publish. Unchecked sessions will remain as Draft.
-        </div>
-        <div id="publishSessionList" style="overflow-y:auto;flex:1;padding:12px 22px;"></div>
-        <div style="padding:16px 22px;border-top:1px solid #eee;display:flex;gap:10px;justify-content:flex-end;">
-            <button onclick="document.getElementById('publishModal').style.display='none'"
-                style="padding:10px 22px;border-radius:6px;border:2px solid #630100;background:#fff;color:#630100;font-weight:800;font-size:0.78rem;letter-spacing:0.5px;cursor:pointer;">
-                CANCEL
+            <button type="button" class="pm-close" onclick="closePublishModal()" aria-label="Close">
+                <i class="fas fa-times"></i>
             </button>
-            <button id="publishConfirmBtn" onclick="confirmPublishSelected()"
-                style="padding:10px 22px;border-radius:6px;border:none;background:#630100;color:#fff;font-weight:800;font-size:0.78rem;letter-spacing:0.5px;cursor:pointer;">
-                <i class="fas fa-check-circle"></i> PUBLISH SELECTED
-            </button>
+        </div>
+        <div class="pm-toolbar">
+            <label class="pm-check pm-all">
+                <input type="checkbox" id="pmSelectAll" onchange="pmSelectAll(this.checked)">
+                <span>Select all</span>
+            </label>
+            <div class="pm-count" id="pmCount"></div>
+        </div>
+        <div id="publishSessionList" class="pm-list"></div>
+        <div class="pm-foot">
+            <div class="pm-foot-note"><i class="fas fa-info-circle"></i> Unchecked meetings stay in the Draft.</div>
+            <div class="pm-foot-actions">
+                <button type="button" class="pm-btn pm-btn-ghost" onclick="closePublishModal()">Cancel</button>
+                <button type="button" class="pm-btn pm-btn-go" id="publishConfirmBtn" onclick="confirmPublishSelected()">
+                    <i class="fas fa-check-circle"></i> <span id="pmGoLabel">Publish</span>
+                </button>
+            </div>
         </div>
     </div>
 </div>

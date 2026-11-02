@@ -641,6 +641,7 @@
     .mu3 .mu3-ctl > select:disabled { background: #f6f6f7; color: #9a9a9a; cursor: not-allowed; }
     .mu3-time { display: flex; align-items: center; gap: 8px; }
     .mu3-to { font-size: .72rem; font-weight: 700; color: #888; }
+    .mu3-day-hint { font-size: .72rem; font-weight: 600; color: #8b1a1a; margin-top: 4px; min-height: 1em; }
     .mu3-ctl-room .room-sel-wrap { flex: 1; min-width: 0; }
     .mu3 .mu3-ctl-room .room-sel-box { min-height: 38px; border: 1px solid #dcdcdc; border-radius: 8px; padding-left: 33px; }
     .mu3 .mu3-area {
@@ -689,6 +690,23 @@
     .adj-meet-main { font-size: .82rem; font-weight: 700; color: #333; }
     .adj-meet-hrs { font-size: .66rem; font-weight: 800; color: #800000; background: #fbe9e9; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
     .adj-meet-now { font-size: .72rem; color: #1a4a7a; margin-top: 3px; }
+    .adj-merge-note { color: #1a4a7a; background: #eef5ff; border: 1px solid #bcd3f5; border-radius: 6px; padding: 6px 9px; margin-top: 4px; line-height: 1.45; }
+    .adj-merge-note:first-child { margin-top: 0; }
+    .adj-merge-note.adj-merge-over { color: #7a4a00; background: #fff8e6; border-color: #f0c36d; }
+    .adj-local-note { display: flex; gap: 8px; margin-top: 10px; padding: 9px 12px; border-radius: 8px; background: #fff8e6;
+        border: 1px solid #f0c36d; color: #7a4a00; font-size: .76rem; line-height: 1.45; }
+    .adj-local-note > i { margin-top: 2px; }
+    .adj-local-note ul { margin: 3px 0 4px 16px; padding: 0; }
+    /* Submit confirmation for a class with an approved Local arrangement */
+    .adj-confirm-ov { position: fixed; inset: 0; z-index: 100000; background: rgba(20,0,0,.45);
+        display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .adj-confirm { width: min(480px, 100%); background: #fff; border-radius: 12px; overflow: hidden;
+        box-shadow: 0 18px 50px rgba(0,0,0,.3); }
+    .adj-confirm-hd { background: #800000; color: #fff; padding: 14px 18px; font-weight: 800; font-size: .95rem; }
+    .adj-confirm-hd i { margin-right: 6px; color: #ffd54f; }
+    .adj-confirm-body { padding: 14px 18px 4px; }
+    .adj-confirm-body .adj-local-note { margin-top: 0; }
+    .adj-confirm-ft { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 18px 16px; }
     .adj-hours { margin-left: auto; font-size: .7rem; font-weight: 800; padding: 2px 10px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
     .adj-hours.ok  { background: #d4edda; color: #155724; }
     .adj-hours.bad { background: #fdecea; color: #a61b1b; }
@@ -1651,6 +1669,7 @@
                         <label for="muDate">Date <b>*</b></label>
                         <div class="mu3-ctl"><i class="far fa-calendar"></i>
                             <input type="date" id="muDate" onchange="muOnDateTimeChange()"></div>
+                        <div class="mu3-day-hint" id="muDayHint"></div>
                     </div>
                     <div class="mu3-field">
                         <label for="muStart">Time <b>*</b></label>
@@ -1687,7 +1706,7 @@
                 <div id="muConflictBanner" class="mu3-conflict" style="display:none;">
                     <div class="mu3-conflict-hd"><i class="fas fa-triangle-exclamation"></i> Schedule conflict detected</div>
                     <div id="muConflictText"></div>
-                    <div class="mu3-conflict-hint">A make-up class can't be submitted while it conflicts. Choose another date, time, or room.</div>
+                    <div class="mu3-conflict-hint">A make-up class can't be submitted while it conflicts. Choose other schedule.</div>
                 </div>
             </section>
 
@@ -1971,18 +1990,27 @@ function _enhanceTimeSelect(sel) {
     sel.tabIndex = -1;
     sel.after(input, toggle, menu);
 
-    let items = [], active = -1, navigated = false;
+    // typed: the user is mid-typing in the box — only then does the box keep its own text.
+    let items = [], active = -1, navigated = false, typed = false;
+    // The combo's own writes go through the native setter (never depend on the instance
+    // override below, which only mirrors writes made by other code).
+    const proto  = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    const setVal = v => proto.set.call(sel, v);
+    const getVal = () => proto.get.call(sel);
     const opts = () => [...sel.options].filter(o => o.value);
     const esc  = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const sync = () => {
         const o = sel.options[sel.selectedIndex];
-        if (document.activeElement !== input) input.value = o && o.value ? o.value : '';
+        // A value set by code while the box has focus shows too (otherwise leaving the box
+        // would read the stale empty text as "cleared" and drop the time).
+        if (document.activeElement !== input || !typed) input.value = o && o.value ? o.value : '';
         // A kept-but-occupied pick (see _muApplyTimeRules) shows in the warning colour.
         input.classList.toggle('tc-warn', !!(o && o.value && /—/.test(o.textContent)));
         input.disabled = sel.disabled;
         toggle.disabled = sel.disabled;
     };
     const close = () => {
+        typed = false;
         menu.classList.remove('open'); host.classList.remove('tc-open');
         input.setAttribute('aria-expanded', 'false'); active = -1;
     };
@@ -1995,11 +2023,11 @@ function _enhanceTimeSelect(sel) {
         items = opts().filter(o => _timeLabelMatches(o.value, q));
         menu._sig = opts().map(o => o.value + (o.disabled ? '!' : '') + o.textContent).join('|');
         menu.innerHTML = items.length
-            ? items.map((o, i) => `<div class="frs-combo-option tc-opt${o.disabled ? ' tc-dis' : ''}${o.value === sel.value ? ' tc-sel' : ''}" data-i="${i}" role="option"${o.disabled ? ' aria-disabled="true"' : ''}>${esc(o.textContent)}</div>`).join('')
+            ? items.map((o, i) => `<div class="frs-combo-option tc-opt${o.disabled ? ' tc-dis' : ''}${o.value === getVal() ? ' tc-sel' : ''}" data-i="${i}" role="option"${o.disabled ? ' aria-disabled="true"' : ''}>${esc(o.textContent)}</div>`).join('')
             : '<div class="frs-combo-empty">No matching time — try 9:30 AM or 2 PM</div>';
         menu.classList.add('open'); host.classList.add('tc-open');
         input.setAttribute('aria-expanded', 'true');
-        active = q ? items.findIndex(o => !o.disabled) : items.findIndex(o => o.value === sel.value);
+        active = q ? items.findIndex(o => !o.disabled) : items.findIndex(o => o.value === getVal());
         navigated = false;
         paint();
         // Nothing picked yet: open at the first free time instead of the top of the list,
@@ -2012,8 +2040,8 @@ function _enhanceTimeSelect(sel) {
     const choose = o => {
         close();
         if (!o) { sync(); return; }
-        const changed = sel.value !== o.value;
-        sel.value = o.value;
+        const changed = getVal() !== o.value;
+        setVal(o.value);
         input.value = o.value;
         sync();
         if (changed) sel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2022,11 +2050,11 @@ function _enhanceTimeSelect(sel) {
         const text = input.value.trim();
         if (!text) {                                            // cleared by the user
             close();
-            if (sel.value) { sel.value = ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+            if (getVal()) { setVal(''); sel.dispatchEvent(new Event('change', { bubbles: true })); }
             sync();
             return;
         }
-        if (text === sel.value) { close(); sync(); return; }
+        if (text === getVal()) { close(); sync(); return; }
         // A typed time is accepted even when occupied: the form explains the overlap
         // (it is never silently dropped). Only non-times / out-of-hours are refused.
         const hit = _nearestTimeSlot(text, opts(), 'value');
@@ -2034,7 +2062,7 @@ function _enhanceTimeSelect(sel) {
             input.classList.add('tc-bad');
             input.title = 'Type a time between 7:30 AM and 9:00 PM, e.g. 9:30 AM or 2 PM';
             setTimeout(() => { input.classList.remove('tc-bad'); input.title = ''; }, 1800);
-            close(); input.value = sel.value; sync();   // keep the previous time
+            close(); input.value = getVal(); sync();   // keep the previous time
             return;
         }
         choose(hit);
@@ -2049,7 +2077,7 @@ function _enhanceTimeSelect(sel) {
         if (document.activeElement !== input) input.focus();          // focus opens the full list
         else render('');
     });
-    input.addEventListener('input', () => render(input.value));
+    input.addEventListener('input', () => { typed = true; render(input.value); });
     input.addEventListener('keydown', e => {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
@@ -2066,12 +2094,12 @@ function _enhanceTimeSelect(sel) {
             if (navigated && items[active]) choose(items[active]); else commit();
         } else if (e.key === 'Escape') {
             if (menu.classList.contains('open')) e.stopPropagation();   // close the list, not the modal
-            close(); input.value = sel.value; sync();
+            close(); input.value = getVal(); sync();
         } else if (e.key === 'Tab') {
             commit();
         }
     });
-    input.addEventListener('blur', () => { if (menu.classList.contains('open') || input.value.trim() !== sel.value) commit(); });
+    input.addEventListener('blur', () => { if (menu.classList.contains('open') || input.value.trim() !== getVal()) commit(); });
     menu.addEventListener('mousedown', e => e.preventDefault());   // keep focus: no blur-commit first
     menu.addEventListener('click', e => {
         const el = e.target.closest('.tc-opt');
@@ -2081,7 +2109,6 @@ function _enhanceTimeSelect(sel) {
     });
 
     // Mirror every programmatic change: `sel.value = …` and option rebuilds / re-marking.
-    const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
     Object.defineProperty(sel, 'value', {
         configurable: true,
         get() { return proto.get.call(this); },
@@ -2160,7 +2187,18 @@ function _fillTimeSelect(sel, blocked) {
    - End:   greyed out when it isn't after Start, or [Start, End) would run into an occupied slot.
    Greying only affects NEW picks. A time already chosen (e.g. carried over from the Room
    Schedule filter) is never cleared: it stays, and _muRenderTimeNotice says what it overlaps. */
+/* The weekday of the picked date, under the Date field ("Monday, November 2, 2026"),
+   so nobody has to check a calendar. Runs on every date change, reset and prefill. */
+function _muSyncDayHint() {
+    const el = document.getElementById('muDayHint');
+    if (!el) return;
+    const v = document.getElementById('muDate')?.value;
+    el.textContent = v ? new Date(v + 'T00:00:00').toLocaleDateString('en-US',
+        { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
+}
+
 function _muApplyTimeRules() {
+    _muSyncDayHint();
     const startSel = document.getElementById('muStart');
     const endSel   = document.getElementById('muEnd');
     if (!startSel || !endSel) return;
@@ -2173,24 +2211,43 @@ function _muApplyTimeRules() {
         o.style.color   = bad ? (keep ? '#b06000' : '#b5b5b5') : '';
     };
 
-    // The last slot (9:00 PM) is closing time: a class can end there but never start.
-    const lastMins = Math.max(...[...endSel.options].filter(o => o.value).map(o => _amPmToMins(o.value)));
+    // First slot (7:30 AM) is opening time: a class can start there but never end there.
+    // Last slot (9:00 PM) is closing time: a class can end there but never start there.
+    const slotMins = [...endSel.options].filter(o => o.value).map(o => _amPmToMins(o.value));
+    const firstMins = Math.min(...slotMins), lastMins = Math.max(...slotMins);
+    // A make-up today can't start at a time that already passed (the server refuses it too).
+    const now = new Date();
+    const nowMins = document.getElementById('muDate')?.value === _reqTodayIso()
+        ? now.getHours() * 60 + now.getMinutes() : -1;
+
+    // Impossible picks are dropped (not just flagged): a start that already passed today,
+    // and an end that isn't after the start. Occupied picks stay, with the notice below.
+    if (startSel.value && _amPmToMins(startSel.value) <= nowMins) startSel.value = '';
     [...startSel.options].forEach(o => {
         if (!o.value) return;
         const m = _amPmToMins(o.value);
-        if (m >= lastMins) mark(o, true, 'closing time');
-        else mark(o, overlaps(m, m + 30), 'occupied');
+        if (m >= lastMins)     mark(o, true, 'closing time');
+        else if (m <= nowMins) mark(o, true, 'passed');
+        else                   mark(o, overlaps(m, m + 30), 'occupied');
     });
 
     const st = startSel.value ? _amPmToMins(startSel.value) : null;
+    if (endSel.value) {
+        const em = _amPmToMins(endSel.value);
+        if (em <= firstMins || (st !== null && em <= st) || em <= nowMins + 30) endSel.value = '';
+    }
     const maxMins = _muMaxHours() * 60;
     [...endSel.options].forEach(o => {
         if (!o.value) return;
         const m = _amPmToMins(o.value);
-        if (st === null)  mark(o, overlaps(m - 30, m), 'occupied');
-        else if (m <= st) mark(o, true, '');
+        if (m <= firstMins)          mark(o, true, '');                  // opening time
+        else if (st === null) {
+            if (m <= nowMins + 30)   mark(o, true, 'passed');            // no start left before it
+            else                     mark(o, overlaps(m - 30, m), 'occupied');
+        }
+        else if (m <= st)            mark(o, true, '');                  // not after the start
         else if (maxMins && m - st > maxMins) mark(o, true, `over ${_muMaxHours()}h`);
-        else              mark(o, overlaps(st, m), 'occupied');
+        else                         mark(o, overlaps(st, m), 'occupied');
     });
     _muRenderTimeNotice();
 }
@@ -2235,6 +2292,12 @@ function _muRenderTimeNotice() {
     const sv = document.getElementById('muStart')?.value;
     const ev = document.getElementById('muEnd')?.value;
     const lines = [];
+    // Today, late: every start time already passed (_muApplyTimeRules greys them out).
+    const _startSel = document.getElementById('muStart');
+    if (document.getElementById('muDate')?.value === _reqTodayIso() && _startSel
+        && ![..._startSel.options].some(o => o.value && !o.disabled)) {
+        lines.push('There are no make-up times left today. Please choose another date.');
+    }
     if (sv && ev && _amPmToMins(ev) <= _amPmToMins(sv)) {
         lines.push('The end time must be later than the start time.');
     }
@@ -2362,21 +2425,25 @@ function _adjPairChanged(src) {
     const fill = (src2) => {
         const subj = subjSel.value, sec = secSel.value;
         const subjects = new Map(), sections = new Map();
+        // Section always lists every section taught (so it can always be switched); Subject
+        // lists only the subjects taught in the chosen section — never another section's.
         _myAssignments.forEach(a => {
-            subjects.set(a.subjectcode, a);
-            if (a.sectionid && (!subj || a.subjectcode === subj)) sections.set(String(a.sectionid), a);
+            if (!sec || String(a.sectionid) === sec) subjects.set(a.subjectcode, a);
+            if (a.sectionid) sections.set(String(a.sectionid), a);
         });
         subjSel.innerHTML = '<option value="">— Select subject —</option>' + [...subjects.values()]
             .map(a => `<option value="${a.subjectcode}">${a.subjectcode} — ${a.subjectname || ''}</option>`).join('');
         secSel.innerHTML = '<option value="">— Select section —</option>' + [...sections.entries()]
             .map(([sid, a]) => `<option value="${sid}" data-prog="${a.programcode || ''}" data-yl="${a.yearlevel || ''}"`
                              + ` data-name="${a.sectionname || ''}">${a.sectionname || 'Section ' + sid}</option>`).join('');
+        // A subject not taught in the (new) section is cleared, not kept.
         subjSel.value = subjects.has(subj) ? subj : '';
-        // A section that the (new) subject is not taught in is cleared, not kept.
         secSel.value  = sections.has(sec)  ? sec  : '';
         // The pick just made: take the other list's only fitting option.
-        if (src2 === 'subject' && subjSel.value && !secSel.value && sections.size === 1) {
-            secSel.value = [...sections.keys()][0]; return false;
+        const subjSecs = [...new Set(_myAssignments
+            .filter(a => a.sectionid && a.subjectcode === subjSel.value).map(a => String(a.sectionid)))];
+        if (src2 === 'subject' && subjSel.value && !secSel.value && subjSecs.length === 1) {
+            secSel.value = subjSecs[0]; return true;
         }
         if (src2 === 'section' && secSel.value && !subjSel.value) {
             const taught = _myAssignments.filter(a => String(a.sectionid) === secSel.value);
@@ -2609,11 +2676,12 @@ function _adjBuildMeetings() {
         const nowTxt = now ? `<div class="adj-meet-now"><i class="fas fa-arrow-right-long"></i> Currently: `
             + `${now.daydesc} ${now.start_time} – ${now.end_time}${now.roomname ? ' · ' + now.roomname : ''} `
             + `(approved Local arrangement)</div>` : '';
-        // Already adjusted (approved Local arrangement) or already requested (pending):
-        // not selectable again.
+        // A meeting with an approved Local arrangement can be requested again (the notice
+        // below explains what approval / rejection does); one already requested can't.
         const pending = _adjPendingIds.has(id);
-        const lockTxt = now ? 'Already adjusted — ask the Academic Head to change it in the Local Scheduler.'
-                      : pending ? 'A request for this meeting is already pending.' : '';
+        const lockTxt = m.merged_class
+            ? `Merged class (${m.merged_class}) — its schedule can't be changed with a request.`
+            : pending ? 'A request for this meeting is already pending.' : '';
         return `<label class="adj-meet${lockTxt ? ' locked' : ''}" data-id="${id}">
             <input type="checkbox" value="${id}" onchange="_adjToggleMeeting(this)"${lockTxt ? ' disabled' : ''}>
             <div><div class="adj-meet-main">${m.daydesc} · ${m.start_time} – ${m.end_time}`
@@ -2626,6 +2694,54 @@ function _adjBuildMeetings() {
         if (cb) { cb.checked = true; _adjToggleMeeting(cb); return; }
     }
     _adjRenderRows();
+}
+
+/* This class has an approved Local arrangement: approving any adjustment of the class into
+   the Official schedule republishes the subject, which removes that Local arrangement (the
+   class then follows the new Official schedule) — say so before the faculty submits. */
+function _adjLocalNotice() {
+    const locals = _adjMeetings.map(m => ({ m, now: _myAssignments.find(a =>
+        a.source === 'Local' && String(a.official_sessionid) === String(m.official_sessionid)) })).filter(x => x.now);
+    if (!locals.length) return '';
+    const lines = locals.map(({ m, now }) =>
+        `<li>${m.daydesc} ${m.start_time} – ${m.end_time} <i class="fas fa-arrow-right-long"></i> `
+        + `<b>${now.daydesc} ${now.start_time} – ${now.end_time}${now.roomname ? ' · ' + now.roomname : ''}</b></li>`).join('');
+    return `<div class="adj-local-note"><i class="fas fa-triangle-exclamation"></i><div>
+        <b>This class has an approved Local arrangement:</b><ul>${lines}</ul>
+        If the Academic Head <b>approves</b> this request, it <b>replaces</b> the current arrangement (an
+        approval into the Official schedule removes this class's Local arrangement altogether). If it is
+        <b>rejected</b>, the current arrangement stays as it is.</div></div>`;
+}
+
+/* Submit Request on a class with an approved Local arrangement: the notice above as a
+   confirmation. Resolves true for SUBMIT REQUEST, false for CANCEL / Esc / outside click. */
+function _adjConfirmLocal() {
+    return new Promise(resolve => {
+        const ov = document.createElement('div');
+        ov.className = 'adj-confirm-ov';
+        ov.innerHTML = `<div class="adj-confirm" role="alertdialog" aria-modal="true">
+            <div class="adj-confirm-hd"><i class="fas fa-triangle-exclamation"></i> Submit this request?</div>
+            <div class="adj-confirm-body">${_adjLocalNotice()}</div>
+            <div class="adj-confirm-ft">
+                <button type="button" class="btn-req-cancel" data-ok="0">CANCEL</button>
+                <button type="button" class="btn-req-submit" data-ok="1"><i class="fas fa-paper-plane"></i> SUBMIT REQUEST</button>
+            </div></div>`;
+        const done = ok => { ov.remove(); document.removeEventListener('keydown', onKey, true); resolve(ok); };
+        const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+        ov.addEventListener('click', e => {
+            const b = e.target.closest('button[data-ok]');
+            if (b) done(b.dataset.ok === '1'); else if (e.target === ov) done(false);
+        });
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(ov);
+        ov.querySelector('button[data-ok="1"]').focus();
+    });
+}
+
+/* The approved Local session now replacing this Official meeting, or null. */
+function _adjLocalNow(m) {
+    return _myAssignments.find(a => a.source === 'Local'
+        && String(a.official_sessionid) === String(m.official_sessionid)) || null;
 }
 
 function _adjToggleMeeting(cb) {
@@ -2657,18 +2773,29 @@ function _adjRenderRows() {
     const totalH = sel.reduce((t, m) => t + _adjHours(m.start_time, m.end_time), 0);
     const rows = combine
         ? [{ key: 'combined', label: `One continuous meeting · ${_adjFmtH(totalH)}`, hours: totalH }]
-        : sel.map(m => ({ key: String(m.official_sessionid), hours: _adjHours(m.start_time, m.end_time),
-                          label: `Replaces ${m.daydesc} ${m.start_time} – ${m.end_time} · ${_adjFmtH(_adjHours(m.start_time, m.end_time))}` }));
+        : sel.map(m => {
+            const now = _adjLocalNow(m);
+            return { key: String(m.official_sessionid), hours: _adjHours(m.start_time, m.end_time),
+                     label: `Replaces ${m.daydesc} ${m.start_time} – ${m.end_time} · ${_adjFmtH(_adjHours(m.start_time, m.end_time))}`
+                          + (now ? ` (now ${now.daydesc} ${now.start_time} – ${now.end_time} · Local)` : '') };
+        });
     const slotOpts = (val, ph) => `<option value="">${ph}</option>` + _REQ_SLOTS.map(t =>
         `<option${t === val ? ' selected' : ''}>${t}</option>`).join('');
     wrap.innerHTML = rows.map(r => {
+        const fresh = !_adjRowState[r.key];
         const st = _adjRowState[r.key] || (_adjRowState[r.key] = { day: '', start: '', end: '', room: '' });
-        // Room preferred from the Available Rooms page ("Request this room") / its filters
-        if (!st.room && window._adjPrefill) {
+        // Room preferred from the Available Rooms page ("Request this room") / its filters.
+        // Kept for the whole form, so a row rebuilt after changing the subject / section /
+        // meetings starts from it again (a row the faculty already edited keeps their pick).
+        if (fresh && window._adjPrefill) {
             st.day = st.day || window._adjPrefill.day || '';
             st.start = st.start || window._adjPrefill.start || '';
             st.room = window._adjPrefill.room || '';
+            st.roomName = window._adjPrefill.roomName || '';
         }
+        // A start without an end (e.g. pre-filled from the filter): the end follows from this
+        // meeting's own length, as when a start is picked (_adjRowChanged).
+        if (st.start && !st.end && !combine) st.end = _adjAddHours(st.start, r.hours);
         const endField = combine
             ? `<input type="text" readonly value="${st.start ? _adjAddHours(st.start, r.hours) : ''}" placeholder="End (auto)">`
             : `<select data-time onchange="_adjRowChanged('${r.key}','end',this.value)">${slotOpts(st.end, 'End')}</select>`;
@@ -2688,7 +2815,6 @@ function _adjRenderRows() {
         </div>`;
     }).join('');
     wrap.querySelectorAll('select[data-time]').forEach(_enhanceTimeSelect);
-    window._adjPrefill = null;
     rows.forEach(r => _adjRowRefresh(r.key));
     _adjUpdateSummary();
 }
@@ -2696,6 +2822,8 @@ function _adjRenderRows() {
 function _adjRowChanged(key, field, value) {
     const st = _adjRowState[key] || (_adjRowState[key] = {});
     st[field] = value;
+    // A server answer about the previous day/time no longer applies; the row's own note re-checks.
+    _hideConflictBanner('adj');
     const row = document.querySelector(`.adj-row[data-key="${key}"]`);
     // Picking a start fills the end with this meeting's own length (still editable to re-split).
     if (field === 'start' && key !== 'combined' && row) {
@@ -2706,6 +2834,10 @@ function _adjRowChanged(key, field, value) {
     if (field === 'start' && key === 'combined' && row) {
         const endIn = row.querySelector('input[readonly]');
         if (endIn) endIn.value = value ? _adjAddHours(value, +row.dataset.hours) : '';
+    }
+    if (field === 'room') {     // the room's name, for the "isn't free then" note
+        const opt = row?.querySelector('.adj-room')?.selectedOptions[0];
+        st.roomName = value && opt ? opt.textContent.split(' — ')[0].trim() : '';
     }
     if (field !== 'room') _adjRowRefresh(key);
     else _adjRowConflicts(key);
@@ -2727,20 +2859,33 @@ async function _adjRowRefresh(key) {
     const { day, start, end } = _adjRowTimes(key);
     const st = _adjRowState[key] || {};
     if (!day || !start || !end || _adjHours(start, end) <= 0) {
-        sel.innerHTML = '<option value="">— Room (pick day &amp; time) —</option>';
+        // The room chosen with "Request this room" shows at once (its availability is
+        // checked when the day and time are known).
+        sel.innerHTML = st.room && st.roomName
+            ? `<option value="${st.room}" selected>${st.roomName} — pick a time to check it's free</option>`
+            : '<option value="">— Room (pick day &amp; time) —</option>';
         _adjRowConflicts(key);
         return;
     }
     sel.innerHTML = '<option value="">Loading rooms…</option>';
     try {
-        const r = await fetch('/api/faculty/available_rooms?' + new URLSearchParams({ day, start_time: start, end_time: end }));
+        // The class itself, so a room hosting its same class (another section) is offered as a merge.
+        const cls = _myAssignments.find(a => a.subjectcode === document.getElementById('adjSubject').value
+                                          && String(a.sectionid) === String(document.getElementById('adjSection').value));
+        const q = { day, start_time: start, end_time: end };
+        if (cls && cls.scheduleid) q.schedule_id = cls.scheduleid;
+        const r = await fetch('/api/faculty/available_rooms?' + new URLSearchParams(q));
         const d = await r.json();
         const rooms = d.rooms || [];
-        sel.innerHTML = `<option value="">${rooms.length ? `— Select room (${rooms.length} free) —` : 'No free room at this time'}</option>`
+        // The chosen room is busy at this time: say so instead of dropping it silently.
+        const busy = st.room && !rooms.some(x => String(x.roomid) === String(st.room));
+        const head = busy && st.roomName ? `— ${st.roomName} isn't free then — pick another room —`
+                   : rooms.length ? '— Select room —' : 'No free room at this time';
+        sel.innerHTML = `<option value="">${head}</option>`
             + rooms.map(x => {
                 const lab = (x.roomtype || '').toLowerCase() === 'laboratory';
                 return `<option value="${x.roomid}"${String(x.roomid) === String(st.room) ? ' selected' : ''}>`
-                     + `${x.roomname} [${lab ? 'Lab' : 'Lecture'}]</option>`;
+                     + `${x.roomname}${(x.merge_with || []).length ? ` — merge with ${x.merge_with.join(' + ')}` : ''}</option>`;
             }).join('');
         if (st.room && sel.value !== String(st.room)) st.room = '';
     } catch (e) {
@@ -2757,13 +2902,16 @@ function _adjRowOwnProblem(key) {
     if (!day || !start || !end) return '';
     const a = _adjSlotIdx(start), b = _adjSlotIdx(end);
     const moving = new Set(_adjSelectedMeetings().map(m => String(m.official_sessionid)));
-    const kept = _adjMeetings.find(m => !moving.has(String(m.official_sessionid)) && m.daydesc === day
-        && a < _adjSlotIdx(m.end_time) && _adjSlotIdx(m.start_time) < b);
+    // Compared with where each meeting meets NOW (its approved Local slot, if any).
+    const cur = m => _adjLocalNow(m) || m;
+    const kept = _adjMeetings.map(cur).find((c, i) => !moving.has(String(_adjMeetings[i].official_sessionid))
+        && c.daydesc === day && a < _adjSlotIdx(c.end_time) && _adjSlotIdx(c.start_time) < b);
     if (kept) {
         return `Overlaps this class's own ${kept.daydesc} ${kept.start_time} – ${kept.end_time} meeting, `
              + `which is not being moved. Choose another time, or check that meeting too.`;
     }
-    const orig = _adjMeetings.find(m => String(m.official_sessionid) === String(key));
+    const origM = _adjMeetings.find(m => String(m.official_sessionid) === String(key));
+    const orig  = origM && cur(origM);
     if (orig && orig.daydesc === day && orig.start_time === start && orig.end_time === end
             && (!st.room || String(st.room) === String(orig.roomid))) {
         return 'Same day, time and room as the current meeting — change at least one of them.';
@@ -2773,10 +2921,12 @@ function _adjRowOwnProblem(key) {
 
 /* Faculty/section/room hint for one new meeting (advisory — the Academic Head's review
    re-checks everything), after the form's own blocking checks. */
+const _adjRowCheckSeq = {};   // key -> latest check; an older (slower) answer must not overwrite it
 async function _adjRowConflicts(key) {
     const row  = document.querySelector(`.adj-row[data-key="${key}"]`);
     const warn = row?.querySelector('.adj-row-warn');
     if (!warn) return;
+    const seq = _adjRowCheckSeq[key] = (_adjRowCheckSeq[key] || 0) + 1;
     const { day, start, end } = _adjRowTimes(key);
     const st = _adjRowState[key] || {};
     warn.style.display = 'none';
@@ -2799,12 +2949,34 @@ async function _adjRowConflicts(key) {
     if (cls && cls.scheduleid) params.set('schedule_id', cls.scheduleid);
     try {
         const d = await (await fetch('/api/faculty/check_request_conflicts?' + params)).json();
-        if (!d.success) return;
+        if (!d.success || seq !== _adjRowCheckSeq[key]) return;   // a newer day/time is being checked
         const lines = [];
         if (d.room_conflict)    lines.push(`<b>Room:</b> ${d.room_detail}`);
         if (d.faculty_conflict) lines.push(`<b>Faculty:</b> ${d.faculty_detail}`);
         if (d.section_conflict) lines.push(`<b>Section:</b> ${d.section_detail}`);
-        if (lines.length) { warn.innerHTML = '<i class="fas fa-triangle-exclamation"></i> ' + lines.join('<br>'); warn.style.display = ''; }
+        // Same class of other sections in another room: the merge needs that room (HC16).
+        const hint = d.faculty_conflict && d.merge_room_hint;
+        if (hint) lines.push(hint.blocked_by
+            ? `Can't merge with ${hint.sections.join(' + ')}: <b>${hint.roomname}</b> is also used by `
+              + `<b>${hint.blocked_by}</b>. Choose another time.`
+            : `To combine with ${hint.sections.join(' + ')} instead, use their room <b>${hint.roomname}</b>.`);
+        // Same subject, faculty, day, time and room: one combined class, not a clash.
+        const over = d.merge_over_limit;
+        const merge = !(d.merge_with || []).length ? ''
+            : over
+            ? `<div class="adj-merge-note adj-merge-over"><i class="fas fa-triangle-exclamation"></i> <b>Same class as ${d.merge_with.join(' + ')}</b>, `
+              + `but merging would make <b>${over.size} sections</b> — more than the ${over.limit} allowed in Settings. `
+              + `It can still be requested; if approved, it becomes a <b>Local arrangement</b> (not merged in the Official schedule).</div>`
+            : `<div class="adj-merge-note"><i class="fas fa-object-group"></i> <b>Merged class:</b> this request will be merged with `
+              + `<b>${d.merge_with.join(' + ')}</b> into one combined class. If approved, the Academic Head publishes it to the Official schedule.</div>`;
+        // An approved make-up still to come holds this slot: requestable; if approved,
+        // the change starts the day after that make-up.
+        const later = d.makeup_notice
+            ? `<div class="adj-merge-note"><i class="fas fa-calendar-day"></i> ${d.makeup_notice}</div>` : '';
+        if (lines.length || merge || later) {
+            warn.innerHTML = (lines.length ? '<i class="fas fa-triangle-exclamation"></i> ' + lines.join('<br>') : '') + merge + later;
+            warn.style.display = '';
+        }
     } catch (e) { /* hint only */ }
 }
 
@@ -2887,6 +3059,9 @@ function _hideConflictBanner(p) {
 
 
 async function _checkConflicts(p) {
+    // Schedule Adjustment: each NEW SCHEDULE row shows its own conflict note
+    // (_adjRowConflicts). The form-wide banner read the hidden legacy fields.
+    if (p === 'adj') { _hideConflictBanner('adj'); return; }
     const isMakeup = p === 'mu';
     const sectionId = document.getElementById(p + 'Section')?.value;
     const start     = document.getElementById(isMakeup ? 'muStart' : 'adjStart')?.value;
@@ -3135,6 +3310,7 @@ async function _muRefreshTimeDropdowns() {
 
 /* Make-up: when DATE changes — update blocked times + rebuild time selects (preserve room) */
 async function muOnDateTimeChange() {
+    _muSyncDayHint();
     await _muRefreshTimeDropdowns();
     // Only reload rooms if all three values are present.
     const date  = document.getElementById('muDate').value;
@@ -3375,31 +3551,22 @@ function frsOpenForm(type) {
         }
     } else {
         _resetReqForm('adj');
+        // The filter's day / start / room pre-fill the NEW SCHEDULE row(s) once a meeting is
+        // ticked (_adjRenderRows). The day comes from the filter's Date when Day is blank.
+        // The old single-meeting fields (#adjLegacyFields) are hidden and no longer filled or
+        // checked: a conflict banner about a day/time not shown in the row only confused.
+        const filterDate = document.getElementById('frsAvailDate')?.value || '';
+        const dateDay = filterDate
+            ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(filterDate + 'T00:00:00').getDay()]
+            : '';
         window._adjPrefill = {
-            day:   document.getElementById('frsAvailDay')?.value || '',
+            day:   document.getElementById('frsAvailDay')?.value || dateDay || '',
             start: _toAmPm(document.getElementById('frsAvailStart')?.value || ''),
             room:  window._preRoom ? String(window._preRoom.id) : '',
+            roomName: window._preRoom ? (window._preRoom.name || '') : '',
         };
         document.getElementById('reqAdjOverlay').classList.add('open');
-        const pre         = window._preRoom;
-        const filterDay   = document.getElementById('frsAvailDay')?.value   || '';
-        const filterStart = document.getElementById('frsAvailStart')?.value || '';
-        const filterEnd   = document.getElementById('frsAvailEnd')?.value   || '';
-        if (!pre) _resetRoomDisplay('adj', '— Select day & time first —');
-        if (filterDay)   document.getElementById('adjDay').value   = filterDay;
-        if (filterStart) _setSelectVal('adjStart', _toAmPm(filterStart));
-        if (filterEnd)   _setSelectVal('adjEnd',   _toAmPm(filterEnd));
-        if (pre) {
-            _adjRoomChosen = { id: String(pre.id), name: pre.name, building: pre.building || '' };
-            document.getElementById('adjRoom').value = String(pre.id);
-            const disp = document.getElementById('adjRoomDisplay');
-            disp.textContent = `ROOM ${pre.name}`;
-            disp.classList.remove('ph');
-            _pendingRoom = String(pre.id);
-        }
-        if (filterDay || filterStart || filterEnd) {
-            adjOnDayTimeChange();
-        }
+        _resetRoomDisplay('adj', '— Select day & time first —');
     }
     _frsFormPreRoom = window._preRoom;   // kept for Back -> Next
     window._preRoom = null;
@@ -3528,6 +3695,10 @@ async function reqSubmit(type) {
     }
 
 
+    // The class has an approved Local arrangement: say what approval / rejection does to it
+    // before sending (Cancel keeps the form as it is).
+    if (!isMakeup && _adjLocalNotice() && !(await _adjConfirmLocal())) return;
+
     const submitBtn = document.querySelector(`#req${isMakeup ? 'Makeup' : 'Adj'}Overlay .btn-req-submit`);
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'SUBMITTING...'; }
 
@@ -3555,8 +3726,12 @@ async function reqSubmit(type) {
                 textEl.innerHTML = data.conflicts
                     .map(c => `<b>${labels[c.type] || 'Conflict'}:</b> ${c.message}`).join('<br>');
                 banner.style.display = '';
+                // The banner names each conflict; no second, vaguer message under the form.
+                _reqFormMsg(p, '');
+                banner.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            } else {
+                _reqFormMsg(p, data.message || 'The requested time conflicts with another class or request.');
             }
-            _reqFormMsg(p, data.message || 'The requested period conflicts with an existing schedule.');
         } else {
             _reqFormMsg(p, data.message || data.error || 'Could not submit request.');
         }

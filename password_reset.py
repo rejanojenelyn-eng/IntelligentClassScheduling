@@ -416,7 +416,8 @@ def is_verified(conn, rid, token):
 
 
 def reset(conn, rid, token, new_pw, confirm_pw):
-    """Sets the new password. Returns the account's username."""
+    """Sets the new password. Returns (username, was_locked): was_locked says whether a
+    temporary login lockout was active (and is now lifted)."""
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         row = _load_row(cur, rid, lock=True)
@@ -453,7 +454,12 @@ def reset(conn, rid, token, new_pw, confirm_pw):
                            pw_otp_verified_at = NULL
                        WHERE userid = %s""", [generate_password_hash(new_pw), acc['userid']])
         # The emailed code proved who they are, so a temporary login lockout ends here:
-        # they can sign in with the new password right away.
+        # they can sign in with the new password right away. Whether one was active is
+        # remembered so the confirmation only says "unlocked" when it really was locked.
+        cur.execute("""SELECT 1 FROM login_throttle
+                       WHERE username_key = %s AND locked_until > NOW()""",
+                    [login_security.username_key(acc['username'])])
+        was_locked = cur.fetchone() is not None
         cur.execute("""UPDATE login_throttle SET failed_count = 0, last_failed_at = NULL,
                               locked_at = NULL, locked_until = NULL
                        WHERE username_key = %s""", [login_security.username_key(acc['username'])])
@@ -464,7 +470,7 @@ def reset(conn, rid, token, new_pw, confirm_pw):
                        WHERE userid = %s AND id <> %s AND used_at IS NULL AND invalidated_at IS NULL""",
                     [acc['userid'], row['id']])
         conn.commit()
-        return acc['username']
+        return acc['username'], was_locked
     except ResetError:
         conn.rollback()
         raise

@@ -12,15 +12,18 @@ Faculty requests vs the Academic Head's Draft schedule.
 No real database is touched.
 """
 import inspect
-from datetime import date, time
+from datetime import date, time, timedelta
 
 import app as app_module
 
 REQUESTER = {'scheduleid': 501, 'semesterid': 7, 'sectionid': 9, 'employeenumber': 'F1',
              'subjectcode': 'IT101', 'sectionname': 'A', 'programyearlevelid': 3,
              'programcode': 'BSIT'}
+# A future Monday (the Draft meetings below are on Mondays): a past make-up date would
+# make the request Expired instead of decidable.
+_MONDAY = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 or 7)
 MAKEUP = {'requestid': 11, 'scheduleid': 501, 'employeenumber': 'F1',
-          'requested_date': date(2026, 10, 5), 'start_t': time(9, 0), 'end_t': time(10, 30),
+          'requested_date': _MONDAY, 'start_t': time(9, 0), 'end_t': time(10, 30),
           'new_roomid': 12, 'roomid': 12, 'new_starttimeid': 2, 'new_endtimeid': 3}
 
 
@@ -59,6 +62,7 @@ def _setup(monkeypatch, db):
     monkeypatch.setattr(app_module, '_ensure_request_tables', lambda *a, **k: None)
     monkeypatch.setattr(app_module, '_ensure_local_tables', lambda *a, **k: None)
     monkeypatch.setattr(app_module, 'write_activity_log', lambda *a, **k: None)
+    monkeypatch.setattr(app_module, '_sweep_expired_makeups', lambda: None)   # real-DB background sweep
     client = app_module.app.test_client()
     with client.session_transaction() as s:
         s.update(loggedin=True, role='Academic Head', username='draft-test', employeenumber='AH1')
@@ -93,6 +97,8 @@ def test_unrelated_draft_row_is_not_a_conflict(monkeypatch):
 
 
 class _Cur:
+    rowcount = 0          # the past-date expiry UPDATE (a no-op here) reports nothing expired
+
     def __init__(self):
         self.executed, self._last = [], ''
 
@@ -103,7 +109,7 @@ class _Cur:
     def fetchone(self):
         if 'FROM class_meeting_request WHERE requestid' in self._last:
             return {'requestid': 11, 'scheduleid': 501, 'new_starttimeid': 2, 'new_endtimeid': 3,
-                    'requested_date': date(2026, 10, 5), 'new_roomid': 12, 'status': 'Pending'}
+                    'requested_date': _MONDAY, 'new_roomid': 12, 'status': 'Pending'}
         if 'COUNT(*) AS c FROM schedule_sessions' in self._last:
             return {'c': 0}
         return None

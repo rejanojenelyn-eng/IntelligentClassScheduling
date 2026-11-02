@@ -77,7 +77,8 @@ function _buildDraftCard(d) {
             <a href="${editorUrl.replace(/&/g, '&amp;')}" class="btn-dc btn-dc-edit-editor">
                 <i class="fas fa-edit"></i> Edit to Manual Editor
             </a>
-            <a href="/schedule/drafts/${d.versionid}" class="btn-dc btn-dc-approve">
+            <a href="/schedule/drafts/${d.versionid}?approve=1" class="btn-dc btn-dc-approve"
+               title="Review this draft's schedules and confirm before publishing">
                 <i class="fas fa-check-circle"></i> Approve
             </a>
             <button class="btn-dc btn-dc-delete"
