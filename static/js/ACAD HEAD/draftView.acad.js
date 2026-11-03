@@ -253,37 +253,114 @@ function _sortDaysStr(daysStr) {
         window.location.href = _buildManualEditorProgramUrl();
     };
 
+    const _esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    // "MON" / "Monday" / "M/TH" → short label for the day pill.
+    function _dayLabel(s) {
+        const raw = _sortDaysStr(s.days || s.day || '') || '';
+        return raw.split('/').map(d => {
+            const full = DAY_MAP[d.trim().toUpperCase()] || d.trim();
+            return full.slice(0, 3).toUpperCase();
+        }).join('/') || '—';
+    }
+
+    // Program · Year · Semester · AY (and section) chips for the review header.
+    function _pmContextChips() {
+        const ctx = draftContext;
+        const term = { A: '1st Semester', B: '2nd Semester', C: 'Summer' }[ctx.term] || ctx.term;
+        const ay = String(ctx.acadYear || '').replace(/^AY/, '');
+        return [ctx.program, ctx.sectionName || (ctx.yearLevel ? `Year ${ctx.yearLevel}` : ''), term,
+                ay.length >= 4 ? `AY 20${ay.slice(0, 2)}–20${ay.slice(2, 4)}` : ctx.acadYear]
+            .filter(Boolean).map(t => `<span>${_esc(t)}</span>`).join('');
+    }
+
+    // Keep "Select all", each subject's checkbox (incl. indeterminate), the faded rows,
+    // the count and the Publish button in step with the meeting checkboxes.
+    function _pmUpdate() {
+        const all = [...document.querySelectorAll('#publishSessionList .pub-sess-chk')];
+        const on  = all.filter(c => c.checked);
+        all.forEach(c => c.closest('.pm-row').classList.toggle('off', !c.checked));
+        document.querySelectorAll('#publishSessionList .pm-subj').forEach(g => {
+            const rows = [...g.querySelectorAll('.pub-sess-chk')];
+            const n = rows.filter(c => c.checked).length;
+            const head = g.querySelector('.pub-subj-chk');
+            head.checked = n === rows.length;
+            head.indeterminate = n > 0 && n < rows.length;
+        });
+        const sa = document.getElementById('pmSelectAll');
+        sa.checked = on.length === all.length && all.length > 0;
+        sa.indeterminate = on.length > 0 && on.length < all.length;
+        const subjects = new Set(on.map(c => c.closest('.pm-subj').dataset.code)).size;
+        document.getElementById('pmCount').innerHTML =
+            `<b>${on.length}</b> of ${all.length} meeting${all.length !== 1 ? 's' : ''} · ` +
+            `<b>${subjects}</b> subject${subjects !== 1 ? 's' : ''} selected`;
+        document.getElementById('pmGoLabel').textContent =
+            on.length ? `Publish ${on.length} meeting${on.length !== 1 ? 's' : ''}` : 'Nothing selected';
+        document.getElementById('publishConfirmBtn').disabled = !on.length;
+    }
+
+    window.pmSelectAll = function(checked) {
+        document.querySelectorAll('#publishSessionList .pub-sess-chk').forEach(c => { c.checked = checked; });
+        _pmUpdate();
+    };
+
+    window.closePublishModal = function() {
+        document.getElementById('publishModal').style.display = 'none';
+    };
+    document.addEventListener('keydown', e => {
+        const m = document.getElementById('publishModal');
+        if (e.key === 'Escape' && m && m.style.display === 'flex') window.closePublishModal();
+    });
+
     window.approveDraft = function() {
         if (!scheduleData.length) { alert('No sessions loaded.'); return; }
-        // Build publish selection modal
         const list = document.getElementById('publishSessionList');
         if (!list) { alert('Publish modal not found.'); return; }
 
-        // Group sessions by subject
-        const groups = {};
+        // Group meetings by subject; meetings ordered Mon→Sun, then by start time.
+        const groups = new Map();
         scheduleData.forEach((s, idx) => {
             const code = s.subject_code || s.subjectcode || '?';
-            if (!groups[code]) groups[code] = { name: s.description || code, sessions: [] };
-            groups[code].sessions.push({ ...s, _idx: idx });
+            if (!groups.has(code)) groups.set(code, { name: s.description || s.subject_name || code, sessions: [] });
+            groups.get(code).sessions.push({ ...s, _idx: idx });
         });
+        const dayRank = s => _DAY_SORT_ORDER[(_sortDaysStr(s.days || s.day || '') || '').split('/')[0].trim()] ?? 99;
 
-        list.innerHTML = Object.entries(groups).map(([code, g]) => `
-            <div style="margin-bottom:14px;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;font-size:0.8rem;color:#630100;margin-bottom:4px;">
-                    <input type="checkbox" class="pub-subj-chk" data-code="${code}" checked
-                        onchange="this.closest('div').querySelectorAll('.pub-sess-chk').forEach(c=>c.checked=this.checked)">
-                    ${code} — ${g.name}
+        list.innerHTML = [...groups.entries()].map(([code, g]) => {
+            const rows = g.sessions.sort((a, b) =>
+                (dayRank(a) - dayRank(b)) || ((parseRange(a.time).s ?? 0) - (parseRange(b.time).s ?? 0)));
+            return `
+            <div class="pm-subj" data-code="${_esc(code)}">
+                <label class="pm-subj-head pm-check">
+                    <input type="checkbox" class="pub-subj-chk" checked aria-label="Select all meetings of ${_esc(code)}">
+                    <span class="pm-code">${_esc(code)}</span>
+                    <span class="pm-name">${_esc(g.name)}</span>
+                    <span class="pm-subj-meta">${rows.length} meeting${rows.length !== 1 ? 's' : ''}</span>
                 </label>
-                ${g.sessions.map(s => `
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;background:#f9f6f6;margin-bottom:3px;font-size:0.76rem;color:#333;">
-                        <input type="checkbox" class="pub-sess-chk" data-idx="${s._idx}" checked
-                            onchange="(function(el){const all=el.closest('div').querySelectorAll('.pub-sess-chk');const subjChk=el.closest('div').querySelector('.pub-subj-chk');if(subjChk)subjChk.checked=[...all].every(c=>c.checked);})(this)">
-                        <span style="color:#555;"><b>${s.days || (s.day||'').substring(0,3).toUpperCase()}</b> · ${s.time || ''}</span>
-                        <span style="margin-left:auto;color:#888;">${s.room || '—'}</span>
-                        <span style="color:#630100;font-weight:700;">${s.instructor || '—'}</span>
-                    </label>`).join('')}
-            </div>`).join('');
+                ${rows.map(s => `
+                <label class="pm-row">
+                    <input type="checkbox" class="pub-sess-chk" data-idx="${s._idx}" checked>
+                    <span class="pm-day">${_esc(_dayLabel(s))}</span>
+                    <span class="pm-time"><i class="far fa-clock"></i>${_esc(s.time || '—')}</span>
+                    <span class="pm-room"><i class="fas fa-location-dot"></i>${_esc(s.room || 'TBA')}</span>
+                    <span class="pm-fac" title="${_esc(s.instructor || 'TBA')}"><i class="fas fa-user"></i>${_esc(s.instructor || 'TBA')}</span>
+                </label>`).join('')}
+            </div>`;
+        }).join('');
 
+        // One delegated listener: a subject checkbox toggles its meetings; any change re-syncs.
+        list.onchange = e => {
+            if (e.target.classList.contains('pub-subj-chk')) {
+                e.target.closest('.pm-subj').querySelectorAll('.pub-sess-chk')
+                    .forEach(c => { c.checked = e.target.checked; });
+            }
+            _pmUpdate();
+        };
+
+        document.getElementById('pmContext').innerHTML = _pmContextChips();
+        _pmUpdate();
+        list.scrollTop = 0;
         document.getElementById('publishModal').style.display = 'flex';
     };
 
@@ -457,6 +534,14 @@ function _sortDaysStr(daysStr) {
 
         renderTable();
         renderCalendar();
+
+        // Draft List "Approve" (?approve=1): open the publish review straight away — the
+        // schedules to publish, then the two confirmations — instead of only showing the draft.
+        // The flag is dropped from the URL so a reload doesn't reopen it.
+        if (new URLSearchParams(window.location.search).get('approve') === '1') {
+            history.replaceState(null, '', window.location.pathname);
+            window.approveDraft();
+        }
 
     } catch(e) {
         console.error('Draft load error:', e);

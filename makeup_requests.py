@@ -462,6 +462,10 @@ def validate_submission(cur, *, faculty_empno, ctx, request_date, start_time,
     et = resolve_timeslot(cur, end_time, 'end')
     if et['timevalue'] <= st['timevalue']:
         raise MakeupError(400, 'validation_error', 'End Time must be later than Start Time.')
+    # Today, at a time that already passed (checked against the real clock only).
+    if req_date == _date.today() and _datetime.combine(req_date, st['timevalue']) <= _datetime.now():
+        raise MakeupError(400, 'validation_error',
+                          'That start time has already passed today. Pick a later time or another date.')
 
 
     required = float(ctx.get('lecturehours') or 0) + float(ctx.get('laboratoryhours') or 0)

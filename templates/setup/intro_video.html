@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='landing/assets/logo.png') }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome - PUP Lopez</title>
+    <link rel="preload" href="{{ url_for('static', filename='video/intro.mp4') }}" as="video" type="video/mp4">
+    <style>
+        /* Light background while the video loads, so the screen never shows black.
+           The video covers the whole screen (cropping its edges a little on wide screens). */
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #ecebe6; }
+        .intro-video { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover;
+            background: #ecebe6; opacity: 0; transition: opacity 0.6s ease; }
+        .intro-video.is-playing { opacity: 1; }
+        .intro-loading { position: fixed; left: 50%; top: 50%; width: 120px; transform: translate(-50%, -50%);
+            opacity: 0.85; transition: opacity 0.4s ease; }
+        .intro-loading.is-hidden { opacity: 0; }
+        /* Fade to light at the end, into the (light) dashboard. */
+        .intro-fade { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none;
+            transition: opacity 0.4s ease-in; }
+        .intro-fade.is-on { opacity: 1; }
+    </style>
+</head>
+<body>
+    <img class="intro-loading" id="introLoading" src="{{ url_for('static', filename='landing/assets/logo.png') }}" alt="">
+    <video id="introVideo" class="intro-video" src="{{ url_for('static', filename='video/intro.mp4') }}"
+           autoplay playsinline preload="auto"></video>
+    <div class="intro-fade" id="introFade"></div>
+    <script>
+        (function () {
+            var video = document.getElementById('introVideo');
+            var fade = document.getElementById('introFade');
+            var dashboard = {{ dashboard_url|tojson }};
+            var FADE_SECONDS = 0.4, leaving = false;
+
+            // Brighten and start loading the dashboard at the same moment: the browser keeps
+            // this (now white) page on screen until the dashboard is ready, so there is no wait.
+            function leave() {
+                if (leaving) return;
+                leaving = true;
+                fade.classList.add('is-on');
+                window.location.replace(dashboard);
+            }
+
+            // While the video plays, open the dashboard once in a hidden frame so its CSS, JS,
+            // icon fonts and CDN files are already cached when the real page opens.
+            function warmDashboard() {
+                if (document.getElementById('introWarm')) return;
+                var frame = document.createElement('iframe');
+                frame.id = 'introWarm';
+                frame.src = dashboard;
+                frame.setAttribute('aria-hidden', 'true');
+                frame.tabIndex = -1;
+                frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:720px;border:0;visibility:hidden;';
+                document.body.appendChild(frame);
+            }
+
+            video.addEventListener('playing', function () {
+                video.classList.add('is-playing');
+                document.getElementById('introLoading').classList.add('is-hidden');
+                setTimeout(warmDashboard, 800);   // after the video has buffered
+            });
+            // Start brightening just before the last frame, so the fade overlaps the ending.
+            video.addEventListener('timeupdate', function () {
+                if (video.duration && video.duration - video.currentTime <= FADE_SECONDS) leave();
+            });
+            video.addEventListener('ended', leave);
+            video.addEventListener('error', leave);
+
+            // Browsers block autoplay with sound; fall back to muted autoplay.
+            var p = video.play();
+            if (p && p.catch) p.catch(function () { video.muted = true; video.play().catch(leave); });
+        })();
+    </script>
+</body>
+</html>

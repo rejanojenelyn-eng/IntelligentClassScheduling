@@ -2282,6 +2282,33 @@ def _payload_to_group(payload, ctx, group_id=None, *, state_cfg=None):
     return g
 
 
+def merge_section_limit(cur, subjectcode):
+    """The most sections one merged class of `subjectcode` may join, from Settings →
+    Class Merging (the HC17 rule's section range, e.g. NSTP 2–3 → 3), or None when no
+    rule covers the subject. A rule saved as 'NSTP' covers every NSTP/OU code — the same
+    matching the HC17 load policy uses (app._merge_policy_rules_for)."""
+    code = norm_code(subjectcode or '')
+    if not code:
+        return None
+    cur.execute("SELECT to_regclass('public.merge_load_policy') IS NOT NULL AS ok")
+    row = cur.fetchone()
+    if not (row and (row['ok'] if isinstance(row, dict) else row[0])):
+        return None
+    cur.execute("SELECT UPPER(subjectcode) AS code, max_sections FROM public.merge_load_policy")
+    limits = []
+    for r in cur.fetchall() or []:
+        pc = norm_code(r['code'] if isinstance(r, dict) else r[0])
+        mx = _int(r['max_sections'] if isinstance(r, dict) else r[1])
+        if mx and (pc == code or (pc == 'NSTP' and code.startswith(('NSTP', 'OU')))):
+            limits.append(mx)
+    return max(limits) if limits else None
+
+
+def merge_limit_error(subjectcode, sections, limit):
+    return (f"{subjectcode} can merge at most {limit} sections (Settings → Class Merging); "
+            f"this merged class would have {sections}.")
+
+
 def preview(cur, data, cfg, *, group_id=None, action='save'):
     """Validate a proposed create/update (or the effect of deactivate/delete) without
     writing. Returns {'errors','members','completeness','state','impact'}."""
@@ -2309,6 +2336,12 @@ def preview(cur, data, cfg, *, group_id=None, action='save'):
     if payload is not None:
         errs, resolved = validate_group(payload, ctx)
         errors.extend(errs)
+        # Never more sections than Settings allows for this subject (e.g. NSTP 2–3).
+        _subj = (ctx.get('subjects') or {}).get(payload.get('ref_curriculumsubjectid')) or {}
+        _limit = merge_section_limit(cur, _subj.get('subjectcode'))
+        _n = len({m.get('sectionid') for m in payload.get('members') or []})
+        if _limit and _n > _limit:
+            errors.append(merge_limit_error(_subj.get('subjectcode'), _n, _limit))
         proposed = _payload_to_group(payload, ctx, group_id, state_cfg=cfg)
         completeness, state = proposed['completeness'], proposed['state']
     elif action == 'activate' and existing is not None:
@@ -2614,6 +2647,7 @@ def detect_merges(cur, cfg, sem_id, section_id, rows, *, policy=None):
         return (faculty.get(emp) or {}).get('fullname') or emp or 'TBA'
 
     seen = set()
+    limits, planned = {}, defaultdict(set)   # Settings' max sections per subject; sections per slot
     for r in rows or ():
         code = norm_code(r.get('subject_code') or r.get('subjectcode'))
         room = norm_room(r.get('room_id') if r.get('room_id') is not None else r.get('roomid'))
@@ -2681,6 +2715,17 @@ def detect_merges(cur, cfg, sem_id, section_id, rows, *, policy=None):
                         if clash is not None:
                             reason = (f"Merged class '{g.get('groupname')}' already meets "
                                       f"{GroupMergePolicy._meeting_text(clash)}, which overlaps this slot.")
+                if reason is None:
+                    # Never more sections than Settings allows (e.g. NSTP 2–3): the merged
+                    # class's sections after this save, counting other merges in the same slot.
+                    if code not in limits:
+                        limits[code] = merge_section_limit(cur, code)
+                    slot = planned[(code, d, st, et, room)]
+                    slot.update({sid, osid})
+                    if g is not None:
+                        slot.update(m['sectionid'] for m in g.get('members') or ())
+                    if limits[code] and len(slot) > limits[code]:
+                        reason = merge_limit_error(code, len(slot), limits[code])
                 (out['problems'] if reason else out['merges']).append(dict(info, reason=reason) if reason else info)
     return out
 

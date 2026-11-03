@@ -234,6 +234,10 @@
     .si-res-warn { color:#b35900; }
     .si-res-err  { color:#c62828; }
     .si-res-body { padding:2px 14px 10px; }
+    .si-iss-note { font-size:.74rem; color:#7a4a00; background:#fff8e6; border:1px solid #f0c36d; border-radius:6px; padding:6px 10px; margin:4px 0 8px; }
+    .si-iss-grp { margin-top:6px; }
+    .si-iss-hd { font-size:.76rem; font-weight:800; margin-bottom:2px; }
+    .si-iss-grp ul { margin:0 0 4px 18px; padding:0; max-height:150px; overflow-y:auto; font-size:.74rem; color:#333; line-height:1.5; }
 
     /* Sections/Faculty tables inside a resolution panel -- own scrollbar,
        capped so a long list never grows the modal itself (spec §5-6). */
@@ -449,6 +453,7 @@
 
         <!-- Collapsible Section/Faculty resolution summaries -->
         <div id="siResPanels"></div>
+        <div id="siIssuePanel"></div>
       </div>
 
       <!-- ── Filter bar belongs to the Schedule Preview below, not the resolution panels ── -->
@@ -1388,12 +1393,51 @@
         return resolutions;
     }
 
+    /* Schedule check (current/future terms): what this import would put in the live
+       schedule — double bookings, faculty over their load, combined classes. Advisory:
+       the import can still be approved; it opens by itself when something is wrong. */
+    function _renderIssuePanel(iss) {
+        const host = document.getElementById('siIssuePanel');
+        if (!host) return;
+        if (!iss) { host.innerHTML = ''; return; }
+        const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,
+            c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const t12 = hm => { const h = +hm.slice(0, 2); return `${(h % 12) || 12}:${hm.slice(3, 5)} ${h < 12 ? 'AM' : 'PM'}`; };
+        const groups = [
+            ['room',     'Room double bookings',    'fa-door-open',     'si-res-err'],
+            ['faculty',  'Faculty double bookings', 'fa-user-clock',    'si-res-err'],
+            ['section',  'Section double bookings', 'fa-users',         'si-res-err'],
+            ['overload', 'Faculty over their load', 'fa-weight-hanging','si-res-err'],
+        ];
+        const problems = groups.reduce((n, g) => n + (iss[g[0]] || []).length, 0);
+        const combined = iss.combined || [];
+        const counts = groups.filter(g => (iss[g[0]] || []).length)
+            .map(g => `<span class="${g[3]}">${(iss[g[0]] || []).length} ${g[1].toLowerCase()}</span>`);
+        if (combined.length) counts.push(`<span class="si-res-new">${combined.length} combined class${combined.length === 1 ? '' : 'es'}</span>`);
+        if (!problems && !combined.length) counts.push('<span class="si-res-ok"><i class="fas fa-check"></i> no conflicts found</span>');
+        const list = (title, icon, cls, items) => items.length ? `
+            <div class="si-iss-grp"><div class="si-iss-hd ${cls}"><i class="fas ${icon}"></i> ${title} (${items.length})</div>
+            <ul>${items.map(x => `<li>${x}</li>`).join('')}</ul></div>` : '';
+        host.innerHTML = `<details class="si-res-details"${problems ? ' open' : ''}>
+            <summary><span class="si-res-summary-title"><i class="fas fa-clipboard-check"></i> Schedule check</span>
+                <span class="si-res-summary-counts">${counts.join('')}</span></summary>
+            <div class="si-res-body">
+                ${problems ? '<div class="si-iss-note">These would be in the live schedule after import. You can still approve and fix them afterwards in the Manual Editor.</div>' : ''}
+                ${groups.map(g => list(g[1], g[2], g[3], (iss[g[0]] || []).map(esc))).join('')}
+                ${list('Combined classes — registered as merged classes on import', 'fa-object-group', 'si-res-new',
+                       combined.map(c => `${esc(c.subject)} · ${esc(c.faculty)} · ${esc(c.day)} ${t12(c.start)}–${t12(c.end)} · ${esc(c.room)}: `
+                                       + `<b>${c.sections.map(esc).join(' + ')}</b>`
+                                       + (c.already ? ` <span class="si-res-warn">— ${esc(c.already)}</span>` : '')))}
+            </div></details>`;
+    }
+
     function _renderPreview(data) {
         _histFacState = {};
         _histSecState = {};
         _renderPeriodBadge(data.period);
         _renderHistBanner(data);
         _renderResPanels(data);
+        _renderIssuePanel(data.schedule_issues);
         const s = data.stats;
         document.getElementById('siNProg').textContent = s.programs||0;
         document.getElementById('siNSubj').textContent = s.subjects||0;

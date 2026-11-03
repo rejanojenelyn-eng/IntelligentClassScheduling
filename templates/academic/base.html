@@ -104,6 +104,11 @@
                         <a href="/requests" class="nav-link">
                             <i class="fas fa-inbox"></i>
                             <span class="nav-label">Requests</span>
+                            {# Requests waiting for a decision (inject_pending_requests); the Hub keeps it current. #}
+                            <span class="nav-badge" id="navPendingRequests"
+                                  title="{{ pending_request_count or 0 }} request{{ 's' if pending_request_count != 1 }} waiting for a decision"
+                                  aria-label="{{ pending_request_count or 0 }} pending request{{ 's' if pending_request_count != 1 }}"
+                                  {% if not pending_request_count %}style="display:none"{% endif %}>{{ pending_request_count if (pending_request_count or 0) < 100 else '99+' }}</span>
                         </a>
                     </li>
                     <li class="nav-item {{ 'active' if request.path == '/reports' or request.path.startswith('/reports/') }}">

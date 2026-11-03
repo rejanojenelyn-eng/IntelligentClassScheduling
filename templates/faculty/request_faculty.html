@@ -70,7 +70,7 @@
             <select id="rfStatus" onchange="rfApplyFilters()">
                 <option value="">All Status</option>
                 <option>Pending</option><option>Approved</option>
-                <option>Rejected</option><option>Cancelled</option>
+                <option>Rejected</option><option>Cancelled</option><option>Expired</option>
             </select></label>
         <label class="req-field"><span>Sort by</span>
             <select id="rfSort" onchange="rfApplyFilters()">
@@ -105,39 +105,44 @@
      EDIT MODAL — Make-up Class
 ══════════════════════════════════════════ -->
 <div class="rfeq-overlay" id="editMakeupOverlay">
-    <div class="rfeq-modal">
+    <div class="rfeq-modal rfeq-narrow">
         <div class="rfeq-hdr makeup">
             <span>Edit Make-up Class Request</span>
             <button onclick="rfCloseEdit()" class="rfeq-close">✕</button>
         </div>
         <div class="rfeq-body">
             <input type="hidden" id="editMuId">
-            <div class="rfeq-row">
-                <div class="rfeq-group">
-                    <label>*Date</label>
-                    <input type="date" id="editMuDate" onchange="editMuLoadRooms()">
-                </div>
+            <!-- The class being edited (read-only), so it is clear which request this is. -->
+            <div class="rfeq-class" id="editMuClass"></div>
+            <div class="rfeq-group full">
+                <label>*Date</label>
+                <input type="date" id="editMuDate" onchange="editMuLoadBlocked(); editMuLoadRooms()">
+                <div class="rfeq-day-hint" id="editMuDayHint"></div>
+            </div>
+            <div class="rfeq-row rfeq-2col">
                 <div class="rfeq-group">
                     <label>*Start Time</label>
-                    <select id="editMuStart" onchange="editMuLoadRooms()"><option value="">SELECT</option></select>
+                    <select id="editMuStart" onchange="editMuTimeRules(); editMuLoadRooms()"><option value="">SELECT</option></select>
                 </div>
                 <div class="rfeq-group">
                     <label>*End Time</label>
-                    <select id="editMuEnd" onchange="editMuLoadRooms()"><option value="">SELECT</option></select>
+                    <select id="editMuEnd" onchange="editMuTimeRules(); editMuLoadRooms()"><option value="">SELECT</option></select>
                 </div>
             </div>
-            <div class="rfeq-row">
-                <div class="rfeq-group full">
-                    <label>*Room <span class="rfeq-room-status" id="editMuRoomStatus"></span></label>
-                    <select id="editMuRoom"><option value="">— Select date &amp; time first —</option></select>
-                </div>
+            <div class="rfeq-tnotice" id="editMuTimeNotice" role="status" style="display:none;"></div>
+            <div class="rfeq-group full">
+                <label>*Room <span class="rfeq-room-status" id="editMuRoomStatus"></span></label>
+                <select id="editMuRoom" onchange="editMuLoadBlocked()"><option value="">— Select date &amp; time first —</option></select>
             </div>
-            <div class="rfeq-row">
-                <div class="rfeq-group full">
-                    <label>Reason</label>
-                    <textarea id="editMuReason" placeholder="Reason for this make-up class..." autocomplete="off"></textarea>
-                </div>
+            <div class="rfeq-group full">
+                <label>*Reason</label>
+                <textarea id="editMuReason" placeholder="Reason for this make-up class..." autocomplete="off"></textarea>
             </div>
+            <div class="rfeq-group full">
+                <label>Additional notes <span class="rfeq-opt">(optional)</span></label>
+                <textarea id="editMuNote" placeholder="Anything else the Academic Head should know..." autocomplete="off"></textarea>
+            </div>
+            <div class="rfeq-err" id="editMuErr" role="alert" style="display:none;"></div>
         </div>
         <div class="rfeq-ftr">
             <button class="rfeq-btn-cancel" onclick="rfCloseEdit()">CANCEL</button>
@@ -305,6 +310,8 @@
     display: flex; align-items: center; justify-content: center; font-size: .85rem; flex-shrink: 0; }
 .rv-status.pending   { background: #ececf0; color: #4a5160; }
 .rv-status.cancelled { background: #eeeeee; color: #777; }
+.rv-status.expired   { background: #ececec; color: #6c6c6c; border: 1px dashed #b5b5b5; }
+.rv-remarks.expired  { background: #f4f4f4; border: 1px dashed #b5b5b5; color: #555; }
 .rv-remarks { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; padding: 10px 14px;
     background: #fdf3f3; border-left: 3px solid #7a0000; border-radius: 4px; }
 .rv-remarks.approved { background: #f1faf4; border-left-color: #146c34; }
@@ -374,6 +381,24 @@
 
 /* ══ Room select optgroup ══ */
 .rfeq-group select optgroup { font-weight:900; color:#800000; }
+/* Edit Make-up: a tall, narrow form (one field per row; Start/End side by side). */
+.rfeq-modal.rfeq-narrow { width:min(460px,95vw); max-height:92vh; display:flex; flex-direction:column; }
+.rfeq-narrow .rfeq-body { overflow-y:auto; gap:14px; }
+.rfeq-narrow .rfeq-hdr, .rfeq-narrow .rfeq-ftr { flex-shrink:0; }
+.rfeq-2col { flex-wrap:nowrap; }
+.rfeq-2col .rfeq-group { min-width:0; }
+.rfeq-class { background:#fdecee; border-radius:8px; padding:10px 12px; line-height:1.4; }
+.rfeq-class-code { font-size:.88rem; font-weight:800; color:#800000; }
+.rfeq-class-sub  { font-size:.78rem; color:#555; margin-top:2px; }
+.rfeq-opt { font-weight:500; color:#999; text-transform:none; letter-spacing:0; }
+.rfeq-day-hint { font-size:.72rem; font-weight:600; color:#800000; min-height:1em; }
+.rfeq-err { background:#fdecea; border:1px solid #f5c2c0; color:#a12622; border-radius:8px;
+            padding:10px 12px; font-size:.8rem; line-height:1.45; display:flex; gap:8px; }
+.rfeq-err i { margin-top:2px; }
+.rfeq-tnotice { background:#fff8e6; border:1px solid #f0c36d; color:#7a4a00; border-radius:8px;
+                padding:9px 12px; font-size:.78rem; line-height:1.45; }
+.rfeq-tnotice .rfeq-tn-head { font-weight:700; }
+.rfeq-tnotice ul { margin:4px 0 0 18px; padding:0; }
 </style>
 
 <script>
@@ -469,7 +494,7 @@ function rfApplyFilters() {
         return;
     }
     tbody.innerHTML = rows.map(r => {
-        const prog    = `${r.programcode || ''}${r.yearlevel ? ' - ' + r.yearlevel : ''}${r.sectionname ? ' (' + r.sectionname + ')' : ''}`;
+        const prog    = _rfProgLabel(r);
         const typeChip = r.req_type === 'makeup'
             ? '<span class="req-type-chip chip-makeup">MAKE-UP CLASS</span>'
             : '<span class="req-type-chip chip-adj">SCHEDULE ADJUSTMENT</span>';
@@ -487,8 +512,8 @@ function rfApplyFilters() {
             onclick="event.stopPropagation(); rfOpenEdit(${rJson})"><i class="fas fa-pen"></i></button>`;
         const cancelBtn = `<button class="action-btn cancel" title="Cancel Request" ${isPending ? '' : 'disabled'}
             onclick="event.stopPropagation(); rfAskCancel('${r.req_type}',${r.requestid})"><i class="fas fa-xmark"></i></button>`;
-        // Cancelled / rejected: nothing to edit or cancel, but it can be removed for good.
-        const canDelete = r.status === 'Cancelled' || r.status === 'Rejected';
+        // Cancelled / rejected / expired: nothing to edit or cancel, but it can be removed for good.
+        const canDelete = r.status === 'Cancelled' || r.status === 'Rejected' || r.status === 'Expired';
         const deleteBtn = `<button class="action-btn delete" title="Delete permanently"
             onclick="event.stopPropagation(); rfAskDelete('${r.req_type}',${r.requestid})"><i class="fas fa-trash-can"></i></button>`;
         const dateCell  = d => d ? `<span class="req-date"><i class="far fa-calendar"></i> ${_rfEsc(d)}</span>` : '—';
@@ -505,12 +530,26 @@ function rfApplyFilters() {
     }).join('');
 }
 
+/* Program / year / section without repeating itself: "BSIT-3" when the section is just
+   the program + year (BSIT3, BSIT 3), the section itself when it adds to it (BSIT 3-1),
+   else "BSIT-3 (A)". */
+function _rfProgLabel(r) {
+    const prog = String(r.programcode || '').trim(), yl = String(r.yearlevel || '').trim();
+    const sec  = String(r.sectionname || '').trim();
+    const base = prog && yl ? `${prog}-${yl}` : (prog || yl);
+    const key  = v => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!sec || key(sec) === key(prog + yl)) return base || sec || '—';
+    if (prog && key(sec).startsWith(key(prog))) return sec;
+    return base ? `${base} (${sec})` : sec;
+}
+
 function _rfStatusBadge(status, remarks) {
     const map = {
         'Pending':   'pending',
         'Approved':  'approved',
         'Rejected':  'rejected',
-        'Cancelled': 'cancelled'
+        'Cancelled': 'cancelled',
+        'Expired':   'expired'      // its date passed with no decision
     };
     const cls = map[status] || 'pending';
     let extra = '';
@@ -550,7 +589,17 @@ function rfOpenEdit(req) {
         _rfSetSelect('editMuStart', req.start_time);
         _rfSetSelect('editMuEnd',   req.end_time);
         document.getElementById('editMuReason').value = req.reason || '';
+        document.getElementById('editMuNote').value   = req.notes || '';
+        const _prog = [req.programcode, req.yearlevel ? `Year ${req.yearlevel}` : ''].filter(Boolean).join(' · ');
+        document.getElementById('editMuClass').innerHTML =
+            `<div class="rfeq-class-code">${_rfEsc(req.subjectcode)}${req.subjectname ? ' — ' + _rfEsc(req.subjectname) : ''}</div>` +
+            `<div class="rfeq-class-sub">${_rfEsc(_prog)}${req.sectionname ? ' · Section ' + _rfEsc(req.sectionname) : ''}</div>`;
+        _editMuErr('');
+        window._editMuReq = req;
+        _editMuBlocked = [];
         _rfApplyDateMins();
+        editMuTimeRules();
+        editMuLoadBlocked();
         document.getElementById('editMakeupOverlay').classList.add('open');
         editMuLoadRooms(req.roomid);
     } else {
@@ -575,6 +624,117 @@ function rfCloseEdit() {
     document.getElementById('editAdjOverlay').classList.remove('open');
 }
 
+/* Edit Make-up: errors show inside the form (one box above the buttons). */
+function _editMuErr(msg) {
+    const el = document.getElementById('editMuErr');
+    if (!el) return;
+    el.innerHTML = msg ? `<i class="fas fa-circle-exclamation"></i><div>${_rfEsc(msg).replace(/\n/g, '<br>')}</div>` : '';
+    el.style.display = msg ? '' : 'none';
+    if (msg) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+/* Same time rules as the request form: 7:30 AM is never an end and 9:00 PM never a start,
+   the end is after the start (an impossible end is cleared), today's passed times can't be
+   picked, and times when the faculty, the section's students or the chosen room already
+   have a class on that date are greyed out "— occupied" (_editMuBlocked, from
+   /api/faculty/blocked_times). An occupied time already picked stays, and the notice under
+   the times says what it overlaps. */
+let _editMuBlocked = [], _editMuBlockedSeq = 0;
+async function editMuLoadBlocked() {
+    const date = document.getElementById('editMuDate').value;
+    const req  = window._editMuReq || {};
+    const seq  = ++_editMuBlockedSeq;
+    if (!date) { _editMuBlocked = []; editMuTimeRules(); return; }
+    const q = new URLSearchParams({ date });
+    if (req.sectionid) q.set('section_id', req.sectionid);
+    const room = document.getElementById('editMuRoom').value;
+    if (room) q.set('room_id', room);
+    try {
+        const d = await fetch('/api/faculty/blocked_times?' + q).then(r => r.json());
+        if (seq !== _editMuBlockedSeq) return;            // a newer date/room was picked meanwhile
+        _editMuBlocked = (d.success ? d.blocked || [] : []).map(b => ({ ...b,
+            s: _rfSlotMins(b.start_time), e: _rfSlotMins(b.end_time) }));
+    } catch (e) { _editMuBlocked = []; }
+    editMuTimeRules();
+}
+function editMuTimeRules() {
+    // The weekday of the picked date, so nobody has to check a calendar.
+    const _dv = document.getElementById('editMuDate').value, _dh = document.getElementById('editMuDayHint');
+    if (_dh) _dh.textContent = _dv ? new Date(_dv + 'T00:00:00').toLocaleDateString('en-US',
+        { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
+    const S = document.getElementById('editMuStart'), E = document.getElementById('editMuEnd');
+    if (!S || !E) return;
+    const idx = v => _RF_SLOTS.indexOf(v);                // slot order is enough to compare
+    const first = 0, last = _RF_SLOTS.length - 1;
+    let nowIdx = -1;
+    if (document.getElementById('editMuDate').value === _rfTodayIso()) {
+        const n = new Date(), nm = n.getHours() * 60 + n.getMinutes();
+        _RF_SLOTS.forEach((t, i) => { if (_rfSlotMins(t) <= nm) nowIdx = i; });
+    }
+    const overlaps = (a, b) => _editMuBlocked.some(x => a < x.e && b > x.s);
+    if (S.value && idx(S.value) <= nowIdx) S.value = '';
+    const st = S.value ? idx(S.value) : -1;
+    if (E.value && (idx(E.value) <= first || idx(E.value) <= st || idx(E.value) <= nowIdx + 1)) E.value = '';
+    const mark = (o, off, tag) => {
+        const keep = o.selected && tag === 'occupied';     // a picked occupied time is explained, not dropped
+        o.disabled = off && !keep;
+        o.textContent = off && tag ? `${o.value} — ${tag}` : o.value;
+        o.style.color = off ? (keep ? '#b06000' : '#aaa') : '';
+    };
+    [...S.options].forEach(o => {
+        if (!o.value) return;
+        const i = idx(o.value), m = _rfSlotMins(o.value);
+        if (i >= last)            mark(o, true, '');
+        else if (i <= nowIdx)     mark(o, true, 'passed');
+        else                      mark(o, overlaps(m, m + 30), 'occupied');
+    });
+    const sm = st >= 0 ? _rfSlotMins(S.value) : null;
+    [...E.options].forEach(o => {
+        if (!o.value) return;
+        const i = idx(o.value), m = _rfSlotMins(o.value);
+        if (i <= first || i <= nowIdx + 1 || (st >= 0 && i <= st)) mark(o, true, '');
+        else if (sm === null)     mark(o, overlaps(m - 30, m), 'occupied');
+        else                      mark(o, overlaps(sm, m), 'occupied');
+    });
+    _editMuRenderNotice();
+}
+/* Under the times: what the chosen time overlaps (faculty / students / room), if anything. */
+function _editMuRenderNotice() {
+    const box = document.getElementById('editMuTimeNotice');
+    if (!box) return;
+    const sv = document.getElementById('editMuStart').value, ev = document.getElementById('editMuEnd').value;
+    const lines = [];
+    if (sv) {
+        const s = _rfSlotMins(sv), e = ev && _rfSlotMins(ev) > s ? _rfSlotMins(ev) : s + 30;
+        const seen = new Set(), req = window._editMuReq || {};
+        const room = document.getElementById('editMuRoom');
+        const roomName = room && room.value ? room.options[room.selectedIndex]?.text : 'The room';
+        _editMuBlocked.filter(b => s < b.e && e > b.s).forEach(b => {
+            const key = [b.subjectcode, b.sectionname, b.start_time].join('|');
+            if (seen.has(key)) return; seen.add(key);
+            const cls = `${_rfEsc(b.subjectcode || 'a class')}${b.sectionname ? ' (' + _rfEsc(b.sectionname) + ')' : ''}`;
+            const what = b.kind === 'room'    ? `<b>Room:</b> ${_rfEsc(roomName)} is used by ${cls}`
+                       : b.kind === 'section' ? `<b>Students:</b> Section ${_rfEsc(b.sectionname || req.sectionname || '')} already has ${_rfEsc(b.subjectcode || 'a class')}`
+                       :                        `<b>Faculty:</b> You already teach ${cls}`;
+            lines.push(`${what} — ${_rfEsc(b.start_time)}–${_rfEsc(b.end_time)}`);
+        });
+    }
+    box.innerHTML = lines.length
+        ? `<div class="rfeq-tn-head"><i class="fas fa-triangle-exclamation"></i> This time overlaps an existing class. Choose other schedule.</div><ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul>`
+        : '';
+    box.style.display = lines.length ? '' : 'none';
+}
+function _rfSlotMins(t) {
+    const m = String(t).match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!m) return 0;
+    let h = +m[1] % 12; if (m[3].toUpperCase() === 'PM') h += 12;
+    return h * 60 + +m[2];
+}
+function _rfTodayIso() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /* ═══════════════════════════════════════════
    ROOM LOADERS FOR EDIT MODALS
 ═══════════════════════════════════════════ */
@@ -597,6 +757,7 @@ async function editMuLoadRooms(preselect) {
         _rfBuildRoomSelect(sel, data.rooms || []);
         if (st) st.textContent = (data.rooms||[]).length ? `${data.rooms.length} available` : 'No rooms available';
         if (preselect) sel.value = String(preselect);
+        editMuLoadBlocked();          // the room's own bookings join the occupied times
     } catch(e) { sel.innerHTML = '<option value="">Error loading rooms</option>'; }
 }
 
@@ -634,9 +795,7 @@ function _rfBuildRoomSelect(sel, rooms) {
         const grp = document.createElement('optgroup'); grp.label = bname.toUpperCase();
         bRooms.forEach(r => {
             const o = document.createElement('option'); o.value = r.roomid;
-            const typ = (r.roomtype||'').toLowerCase()==='laboratory' ? 'Lab' : 'Lecture';
-            const cap = r.roomcapacity ? ` · Cap ${r.roomcapacity}` : '';
-            o.textContent = `${r.roomname}  [${typ}${cap}]`;
+            o.textContent = r.roomname;
             grp.appendChild(o);
         });
         sel.appendChild(grp);
@@ -656,13 +815,15 @@ async function rfSaveEdit(type) {
             end_time:     document.getElementById('editMuEnd').value,
             room_id:      document.getElementById('editMuRoom').value,
             reason:       document.getElementById('editMuReason').value,
+            note:         document.getElementById('editMuNote').value,
         };
-        if (!payload.request_date) return showToast('Please select a date.', 'warning');
-        if (!payload.room_id)      return showToast('Please select a room.', 'warning');
-        if (payload.start_time && payload.end_time &&
-            _RF_SLOTS.indexOf(payload.end_time) <= _RF_SLOTS.indexOf(payload.start_time)) {
-            return showToast('End Time must be later than Start Time.', 'warning');
-        }
+        _editMuErr('');
+        if (!payload.request_date) return _editMuErr('Please select a date.');
+        if (!payload.start_time || !payload.end_time) return _editMuErr('Please select both a start and an end time.');
+        if (_RF_SLOTS.indexOf(payload.end_time) <= _RF_SLOTS.indexOf(payload.start_time))
+            return _editMuErr('End Time must be later than Start Time.');
+        if (!payload.room_id)      return _editMuErr('Please select a room.');
+        if (!payload.reason.trim()) return _editMuErr('Please give a reason for the make-up class.');
     } else {
         id = document.getElementById('editAdjId').value;
         const _adjDay    = document.getElementById('editAdjDay').value;
@@ -718,9 +879,15 @@ async function rfSaveEdit(type) {
             showToast('Request updated and resubmitted successfully.', 'success');
             await rfLoadRequests();
         } else {
-            showToast(data.error || 'Could not save.', 'error');
+            // A make-up conflict: say exactly what it clashes with (one notice, not the code).
+            const _list = (Array.isArray(data.conflicts) ? data.conflicts : []).map(c => c.message || c);
+            const _msg  = _list.length ? _list.join('\n') : (data.message || data.error || 'Could not save.');
+            if (type === 'makeup') _editMuErr(_msg); else showToast(_msg, 'error');
         }
-    } catch(e) { showToast('Network error. Please try again.', 'error'); }
+    } catch(e) {
+        if (type === 'makeup') _editMuErr('Network error. Please try again.');
+        else showToast('Network error. Please try again.', 'error');
+    }
 }
 
 /* ═══════════════════════════════════════════
@@ -782,6 +949,13 @@ function _isoDate(d) {
     if (parts.length === 3) return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
     return d;
 }
+// "11/03/2026" -> "Tuesday, 11/03/2026"
+function _rfWithDay(d) {
+    const iso = _isoDate(d);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return d;
+    const dt = new Date(iso + 'T00:00:00');
+    return isNaN(dt) ? d : `${dt.toLocaleDateString('en-US', { weekday: 'long' })}, ${d}`;
+}
 function _rfSetSelect(id, val) {
     const s = document.getElementById(id); if (!s || !val) return;
     for (const o of s.options) { if (o.value===val||o.textContent.trim()===val) { s.value=o.value; return; } }
@@ -806,8 +980,8 @@ function rfOpenView(req) {
         `View the details of your ${typeName.toLowerCase()} request.`;
     document.getElementById('viewReqIcon').className = isMakeup ? 'far fa-calendar-alt' : 'fas fa-arrows-rotate';
 
-    /* Footer: Edit while Pending; Request Again once Rejected / Cancelled */
-    const canAgain = status === 'Rejected' || status === 'Cancelled';
+    /* Footer: Edit while Pending; Request Again once Rejected / Cancelled / Expired */
+    const canAgain = status === 'Rejected' || status === 'Cancelled' || status === 'Expired';
     document.getElementById('viewReqEditBtn').style.display = status === 'Pending' ? 'inline-flex' : 'none';
     const again = document.getElementById('viewReqAgainBtn');
     again.style.display = canAgain ? 'inline-flex' : 'none';
@@ -823,6 +997,7 @@ function rfOpenView(req) {
         Approved:  { cls: 'approved',  icon: 'fas fa-circle-check' },
         Rejected:  { cls: 'rejected',  icon: 'far fa-circle-xmark' },
         Cancelled: { cls: 'cancelled', icon: 'fas fa-ban' },
+        Expired:   { cls: 'expired',   icon: 'fas fa-hourglass-end' },
     }[status] || { cls: 'pending', icon: 'far fa-hourglass-half' };
 
     let html = `
@@ -836,6 +1011,15 @@ function rfOpenView(req) {
                 <div><b>Request Completed</b>
                     <div>Your ${typeName.toLowerCase()} request has been approved. No further action is required.
                     ${isMakeup ? 'Please attend the scheduled session.' : 'The new schedule applies from its effective date.'}</div></div>
+            </div>`;
+    }
+    if (status === 'Expired') {
+        html += `
+            <div class="rv-remarks expired">
+                <i class="fas fa-hourglass-end"></i>
+                <div><div class="rv-remarks-label">EXPIRED</div><div class="rv-remarks-text">
+                    The make-up date passed before the Academic Head made a decision, so this request
+                    can no longer be approved or edited. Use <b>Request Again</b> to submit a new one for another date.</div></div>
             </div>`;
     }
     if (req.remarks && (status === 'Rejected' || status === 'Approved')) {
@@ -857,13 +1041,13 @@ function rfOpenView(req) {
             </div>
         </div>`;
 
-    const prog = `${req.programcode||''}${req.yearlevel?' - '+req.yearlevel:''}${req.sectionname?' ('+req.sectionname+')':''}`;
+    const prog = _rfProgLabel(req);
     const time = (req.start_time || req.end_time) ? `${req.start_time || ''} — ${req.end_time || ''}` : '—';
     html += field('fas fa-graduation-cap', 'PROGRAM / YEAR LEVEL', prog);
     html += field('fas fa-book-open', 'SUBJECT', `${req.subjectcode||''}${req.subjectname?' — '+req.subjectname:''}`);
     html += field('fas fa-building', 'ROOM', req.roomname ? 'ROOM ' + req.roomname : '—');
     if (isMakeup) {
-        html += field('far fa-calendar', 'DATE', req.requested_date);
+        html += field('far fa-calendar', 'DATE', _rfWithDay(req.requested_date));
         html += field('far fa-clock', 'TIME', time);
     } else {
         // Each moved meeting: current Official meeting -> requested new meeting.
@@ -878,11 +1062,14 @@ function rfOpenView(req) {
         if (req.status === 'Approved' && req.applied_to) {
             html += field('fas fa-landmark', 'APPLIED TO',
                 req.applied_to === 'Official' ? 'Official schedule (SIS)' : 'Local arrangement');
+            // Approved while an approved make-up still held the slot: starts after it.
+            if (req.apply_on) html += field('fas fa-calendar-day', 'TAKES EFFECT ON',
+                `${req.apply_on} (after the approved make-up class; until then your current schedule stays)`);
         }
     }
     if (req.reason) html += field('far fa-file-lines', 'REASON', req.reason);
     if (req.notes)  html += field('far fa-note-sticky', 'ADDITIONAL NOTES', req.notes);
-    html += field('far fa-calendar-check', 'DATE SUBMITTED', req.date_submitted);
+    html += field('far fa-calendar-check', 'DATE SUBMITTED', _rfWithDay(req.date_submitted));
 
     if (canAgain) {
         html += `

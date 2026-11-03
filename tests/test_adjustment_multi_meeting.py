@@ -229,10 +229,37 @@ def test_a_meeting_with_a_pending_request_cannot_be_requested_again(tx, cls):
     assert not again['success'] and 'already has a pending adjustment request' in again['error']
 
 
-def test_a_meeting_with_an_approved_local_arrangement_cannot_be_requested(tx, cls):
-    assert _approve(tx, cls, 'local')['success']
-    again = _submit(cls, _resplit(cls), reason='after approval')
-    assert not again['success'] and 'already has an approved Local arrangement' in again['error']
+def _later(c):
+    """Both meetings 30 min later, same days/rooms: each keeps its own hours (what an
+    Approve-as-Local needs)."""
+    return [{'official_sessionid': m['sessionid'], 'day': m['daydesc'], 'start_time': _shift_end(m['st'], 1),
+             'end_time': _shift_end(m['en'], 1), 'room_id': m['roomid']} for m in c['meets']]
+
+
+def test_a_meeting_with_an_approved_local_arrangement_can_be_requested_again(tx, cls):
+    """It can be moved again (approval replaces that Local session; rejection keeps it).
+    Its CURRENT slot is the Local one: asking for exactly that is "no change"."""
+    try:
+        moved = _later(cls)
+    except IndexError:
+        pytest.skip('the meetings end at closing time')
+    sub = _submit(cls, moved, reason='move later')
+    if not sub['success']:
+        pytest.skip(f'the later slot is not available in live data: {sub.get("error")}')
+    rid = _rows(tx, 'move later')[0]['requestid']
+    head = _client('Academic Head', cls['head']['username'], cls['head']['employeenumber'])
+    v = head.get(f'/api/requests/validate?type=adjustment&id={rid}').get_json()
+    if not v.get('all_ok'):
+        pytest.skip(f'the later slot conflicts with live data: {v.get("conflicts")}')
+    assert head.post('/api/requests/decide', json={'type': 'adjustment', 'id': rid, 'decision': 'Approved',
+                                                   'remarks': '', 'apply_to': 'local'}).get_json()['success']
+    same = _submit(cls, moved, reason='same as the Local slot')
+    assert not same['success'] and 'same as the current one' in same['error']
+    assert 'already has an approved Local arrangement' not in (same.get('error') or '')
+    back = _submit(cls, [{'official_sessionid': m['sessionid'], 'day': m['daydesc'], 'start_time': m['st'],
+                          'end_time': m['en'], 'room_id': m['roomid']} for m in cls['meets']],
+                   reason='back to the Official slot')
+    assert back['success'], back                               # a real change from the Local slot
 
 
 def test_a_reason_is_required(tx, cls):
@@ -288,3 +315,13 @@ def test_validate_reports_why_it_cannot_go_into_the_official_schedule(tx, cls, m
     v = _validate(cls, rid)
     assert v['all_ok'] is True                               # still approvable as Local
     assert v['official_ok'] is False and 'night' in v['official_error']
+
+
+def test_submit_no_longer_refuses_a_meeting_with_a_local_arrangement():
+    """Re-adjusting is allowed; only a PENDING request blocks the meeting, and "no change"
+    is judged against the meeting's current (Local) slot."""
+    import inspect
+    src = inspect.getsource(app_module.api_faculty_submit_request)
+    assert 'already has an approved Local arrangement' not in src
+    assert 'already has a pending adjustment request' in src
+    assert "_now = _local_now or" in src

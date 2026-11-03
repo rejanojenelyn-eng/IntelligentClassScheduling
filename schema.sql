@@ -513,9 +513,10 @@ CREATE TABLE IF NOT EXISTS public.class_meeting_request
 
     CONSTRAINT chk_cmr_reason             CHECK (TRIM(reason) <> ''),
     CONSTRAINT chk_cmr_different_times    CHECK (new_starttimeid <> new_endtimeid),
-    CONSTRAINT chk_cmr_status             CHECK (status IN ('Pending','Approved','Rejected','Cancelled')),
+    -- 'Expired': still Pending when its make-up date/time passed (never reviewed).
+    CONSTRAINT chk_cmr_status             CHECK (status IN ('Pending','Approved','Rejected','Cancelled','Expired')),
     CONSTRAINT chk_cmr_review             CHECK (
-        (status IN ('Pending','Cancelled') AND reviewed_by IS NULL AND reviewed_at IS NULL)
+        (status IN ('Pending','Cancelled','Expired') AND reviewed_by IS NULL AND reviewed_at IS NULL)
         OR (status IN ('Approved','Rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 

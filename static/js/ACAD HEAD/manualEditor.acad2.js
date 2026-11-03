@@ -3675,9 +3675,12 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
             // pill. Prefer the entry with a real versionid / non-empty sectionname since the
             // local mirror copy doesn't always carry that from its source API response.
             const bySection = new Map();
+            const editedSects = new Set(), sectKeyOf = new Map();
             group.forEach(s => {
                 const sectKey = String(s.section_id || s.sectionid || '') || (s.sectionname || '') ||
                     `${s.programcode || ''}-${s.year_level || ''}`;
+                if (s.isEdited) editedSects.add(sectKey);
+                sectKeyOf.set(s, sectKey);
                 const existing = bySection.get(sectKey);
                 if (!existing || (!existing.versionid && s.versionid) || (!existing.sectionname && s.sectionname)) {
                     bySection.set(sectKey, s);
@@ -3692,6 +3695,9 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 status:      s.status      || 'Draft',
                 versionid:   s.versionid   || null,
                 temp_id:     s.temp_id     || null,
+                // Moved / changed on the board but not saved yet: the saved status
+                // (PUB / DRAFT) describes the OLD slot, not this one.
+                edited:      editedSects.has(sectKeyOf.get(s)),
             }));
             // The delete/edit action should target the CURRENTLY SELECTED section's entry,
             // not just any entry sharing this program/year level. A merged pill can hold
@@ -3839,10 +3845,10 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 const _sectHtml = _mergedSects.map(ms => {
                     const lbl = ms.sectionname || (ms.programcode ? `${ms.programcode}-${ms.year_level}` : '');
                     if (!lbl) return '';
-                    const isSaved = !!ms.versionid;
+                    const isSaved = !!ms.versionid && !ms.edited;
                     const isPub   = isSaved && (ms.status || '').toLowerCase() === 'published';
-                    const clr     = isSaved ? (isPub ? '#a5d6a7' : '#ffe082') : '#ddd';
-                    const suffix  = isSaved ? ` · ${isPub ? 'PUB' : 'DRAFT'}` : '';
+                    const clr     = ms.edited ? '#bbdefb' : isSaved ? (isPub ? '#a5d6a7' : '#ffe082') : '#ddd';
+                    const suffix  = ms.edited ? ' · UNSAVED' : isSaved ? ` · ${isPub ? 'PUB' : 'DRAFT'}` : '';
                     return `<div style="font-size:0.52rem;background:${clr};color:#222;border-radius:2px;padding:1px 3px;margin-top:2px;font-weight:700;">${lbl}${suffix}</div>`;
                 }).join('');
 

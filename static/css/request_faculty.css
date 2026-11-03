@@ -79,6 +79,7 @@ tbody td {
 .status-badge.pending    { background: #6c757d; }
 .status-badge.rejected   { background: #dc3545; }
 .status-badge.cancelled  { background: #aaa; }
+.status-badge.expired    { background: #9e9e9e; }
 
 /* ═══ STATUS REMARKS ═══ */
 .req-status-wrap { display: flex; flex-direction: column; gap: 4px; }
@@ -184,6 +185,7 @@ tbody td:last-child { border-right: 0; }
 .status-badge.approved  { background: #d5f2df; color: #146c34; }
 .status-badge.pending   { background: #e7e9ee; color: #4a5160; }
 .status-badge.cancelled { background: #eeeeee; color: #888; }
+.status-badge.expired   { background: #ececec; color: #6c6c6c; border: 1px dashed #b5b5b5; }
 .req-remark-link { font-size: .7rem; color: #555; text-decoration: underline; }
 .req-remark-link:hover { color: #7a0000; }
 
