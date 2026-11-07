@@ -605,7 +605,12 @@ async function onFacultySelect(empNum) {
             const subjCode = (document.getElementById('sel_subj')?.value || '').trim();
             const compat   = _getSpecCompatibility(spec, subjCode);
             if (compat.level === 'mismatch') {
-                const facName = (_facInfo.fullname || 'This faculty').trim();
+                // /api/manual/faculty_info has no name field — use the picked faculty's name.
+                const facName = (_facInfo.fullname
+                    || document.getElementById('fac_display_name')?.value
+                    || (typeof allFaculty !== 'undefined'
+                        ? (allFaculty.find(f => String(f.id) === String(empNum)) || {}).name : '')
+                    || 'This faculty').trim();
                 const group   = _SUBJ_SPEC_GROUPS.find(g => g.prefixes.some(pfx => subjCode.toUpperCase().startsWith(pfx)));
                 const primary = group ? group.primary : 'the required field';
                 window._specPromptOpen = true;   // never stack a second copy of this prompt
@@ -2942,6 +2947,7 @@ async function _confirmLocalRepublishImpact(selectedDrafts, prog, yl, ay, sem, s
         const d = await r.json();
         if (!d.success) throw new Error(d.error || 'lookup failed');
         sessions = d.sessions || [];
+        var officialNow = d.official || {};
     } catch (e) {
         // Can't tell what would be archived — ask rather than publish blind.
         return await showConfirmModal(
@@ -2962,6 +2968,24 @@ async function _confirmLocalRepublishImpact(selectedDrafts, prog, yl, ay, sem, s
     // only Local sessions of subjects this publish changes (published or removed) are
     // removed; every other Local adjustment in the section is kept (re-linked to the new
     // Official snapshot). Nothing affected → no prompt.
+    // A subject published exactly as its current Official (e.g. unchanged in a restored
+    // revision) keeps its Local adjustment — same key as the server's _official_slot_key.
+    const hm = t => {
+        const m = String(t || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M)?$/i);
+        if (!m) return String(t || '').trim().slice(0, 5);
+        let h = +m[1];
+        if (m[3]) { const pm = m[3].toUpperCase() === 'PM'; if (h === 12) h = pm ? 12 : 0; else if (pm) h += 12; }
+        return `${String(h).padStart(2, '0')}:${m[2]}`;
+    };
+    const blank = v => { const t = String(v ?? '').trim(); return ['', 'TBA', 'NONE', 'NULL', 'UNDEFINED'].includes(t.toUpperCase()) ? '' : t; };
+    const title = v => String(v || '').trim().toLowerCase().replace(/\b\w/g, ch => ch.toUpperCase());
+    const keysOf = list => list.flatMap(c => ((c.days_list && c.days_list.length) ? c.days_list : [c.daydesc || c.day]).map(dy =>
+        [title(dy), hm(c.start_time), hm(c.end_time), blank(c.roomid ?? c.room_id),
+         blank(c.employeenumber ?? c.faculty_id)].join('|'))).sort();
+    for (const [code, list] of pubBySubj) {
+        const now = (officialNow[code] || []).slice().sort();
+        if (now.length && JSON.stringify(now) === JSON.stringify(keysOf(list))) pubBySubj.delete(code);
+    }
     const affectedCodes = new Set([...pubBySubj.keys(), ...(removedSubjects || []).map(norm)]);
     sessions = sessions.filter(s => affectedCodes.has(norm(s.subjectcode)));
     if (!sessions.length) return true;
@@ -3022,7 +3046,7 @@ function _showLocalImpactModal(rows) {
             <div class="lim-box" role="dialog" aria-modal="true">
                 <div class="lim-icon"><i class="fas fa-exclamation"></i></div>
                 <h3 class="lim-title">LOCAL ARRANGEMENTS WILL BE REMOVED</h3>
-                <p class="lim-sub">Some subjects you are publishing have Local Scheduler arrangements. Publishing the Official schedule will remove those Local arrangements.</p>
+                <p class="lim-sub">Some subjects you are publishing have Local Scheduler arrangements. They were based on the Official schedule before this change, so publishing will remove them.</p>
 
                 <div class="lim-card lim-card-pink">
                     <div class="lim-card-icon"><i class="far fa-calendar"></i></div>

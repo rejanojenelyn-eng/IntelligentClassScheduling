@@ -765,7 +765,10 @@ def _apply_scheduled_adjustments():
         # row-count check makes sure only one worker applies it.
         conn = get_db_connection(); cur = conn.cursor()
         try:
-            cur.execute("""UPDATE schedule_change_request SET status = 'Pending', apply_on = NULL
+            # chk_scr_review: a Pending request carries no review; the decision below
+            # records it again (or it stays Pending for the Academic Head).
+            cur.execute("""UPDATE schedule_change_request
+                           SET status = 'Pending', apply_on = NULL, reviewed_by = NULL, reviewed_at = NULL
                            WHERE requestid = ANY(%s) AND status = 'Approved' AND apply_on IS NOT NULL""",
                         [ids])
             claimed = cur.rowcount
@@ -3808,10 +3811,93 @@ def api_requests_validate():
                         req_id, ignore_draft_sessionids=[d['sessionid'] for d in drafts],
                         confirm_merges=bool(summary.get('merge_with')))
                 summary = dict(summary, official_ok=ok, official_error=why)
+                if ok:
+                    _sh = _request_official_shadowed(req_id)
+                    if _sh:
+                        _c = get_db_connection(); _k = _c.cursor(cursor_factory=RealDictCursor)
+                        try:
+                            _sok, _sresp = _official_shadow_moves(_k, _sh, dry_run=True)
+                        finally:
+                            _c.rollback(); _k.close(); _c.close()
+                        if not _sok:
+                            ok, why = False, ((_sresp[0].get_json(silent=True) or {}).get('error')
+                                              or 'A class held here by a Local arrangement cannot be moved to its Local slot.')
+                    summary = dict(summary, official_ok=ok, official_error=why, official_shadowed=_sh if ok else [])
         return jsonify(dict(summary, success=True))
     except Exception as e:
         print(f"[api_requests_validate] Error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _request_official_shadowed(req_id):
+    """Official classes a Schedule Adjustment's new slot overlaps (same room or same
+    faculty) that are free only because a Local Arrangement moved them away. Approving it
+    as Local is fine; "Approve & Update Official" leaves both in the Official schedule —
+    a double booking there that shows the day that Local arrangement is removed."""
+    ids = _adjustment_group_ids(req_id)
+    if not ids:
+        return []
+    rows = query_db("""
+        SELECT DISTINCT UPPER(cs.subjectcode) AS subjectcode, sec.sectionname,
+               ss.daydesc, TO_CHAR(t1.timevalue, 'HH12:MI AM') AS start_t,
+               TO_CHAR(t2.timevalue, 'HH12:MI AM') AS end_t, r.roomname,
+               las.daydesc AS l_day, TO_CHAR(lt1.timevalue, 'HH12:MI AM') AS l_start,
+               TO_CHAR(lt2.timevalue, 'HH12:MI AM') AS l_end, lr.roomname AS l_room,
+               CASE WHEN ss.roomid = scr.new_roomid THEN 'room' ELSE 'faculty' END AS why,
+               ss.sessionid AS official_sessionid, sv.versionid, s.semesterid, s.sectionid,
+               pyl.programcode, pyl.yearlevel,
+               COALESCE(sv.employeenumber, s.employeenumber) AS employeenumber,
+               las.daydesc AS new_daydesc, las.starttimeid AS new_starttimeid,
+               las.endtimeid AS new_endtimeid, las.roomid AS new_roomid
+        FROM schedule_change_request scr
+        JOIN schedule rs ON rs.scheduleid = scr.scheduleid
+        JOIN timeslot nt1 ON nt1.timeid = scr.new_starttimeid
+        JOIN timeslot nt2 ON nt2.timeid = scr.new_endtimeid
+        JOIN schedule s ON s.semesterid = rs.semesterid AND s.scheduleid <> rs.scheduleid
+        JOIN schedule_version sv ON sv.scheduleid = s.scheduleid AND sv.status = 'Published'
+             AND sv.source IS DISTINCT FROM 'local'
+        JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+        JOIN timeslot t1 ON t1.timeid = ss.starttimeid
+        JOIN timeslot t2 ON t2.timeid = ss.endtimeid
+        JOIN curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+        LEFT JOIN sections sec ON sec.sectionid = s.sectionid
+        LEFT JOIN program_yearlevel pyl ON pyl.programyearlevelid = sec.programyearlevelid
+        LEFT JOIN room r ON r.roomid = ss.roomid
+        JOIN local_arrangement_sessions las ON las.official_sessionid = ss.sessionid
+        JOIN local_arrangement la ON la.arrangementid = las.arrangementid
+             AND la.status = 'Published' AND la.is_active = TRUE AND la.sectionid = s.sectionid
+        LEFT JOIN timeslot lt1 ON lt1.timeid = las.starttimeid
+        LEFT JOIN timeslot lt2 ON lt2.timeid = las.endtimeid
+        LEFT JOIN room lr ON lr.roomid = las.roomid
+        WHERE scr.requestid = ANY(%s)
+          AND UPPER(ss.daydesc) = UPPER(scr.new_daydesc)
+          AND t1.timevalue < nt2.timevalue AND t2.timevalue > nt1.timevalue
+          AND (ss.roomid = scr.new_roomid
+               OR COALESCE(sv.employeenumber, s.employeenumber) = scr.submitted_by)
+        ORDER BY 1, 2
+    """, [ids]) or []
+    return [dict(r) for r in rows]
+
+
+def _official_shadow_moves(cur, shadowed, dry_run=False):
+    """Approve & Update Official over classes held elsewhere by a Local arrangement
+    (_request_official_shadowed): each one's Official meeting moves to its Local slot —
+    its old Official slot is freed and its Local arrangement is removed by that publish,
+    so the Official schedule isn't double-booked. One publish per class (version), through
+    _apply_adjustment_to_official. Returns (True, None) or (False, response)."""
+    by_ver = {}
+    for x in shadowed or []:
+        by_ver.setdefault(x['versionid'], []).append(x)
+    for vid, items in by_ver.items():
+        ok, resp = _apply_adjustment_to_official(
+            cur, [dict(items[0])],
+            [{'official_sessionid': x['official_sessionid'], 'daydesc': x['new_daydesc'],
+              'starttimeid': x['new_starttimeid'], 'endtimeid': x['new_endtimeid'],
+              'roomid': x['new_roomid']} for x in items],
+            dry_run=dry_run)
+        if not ok:
+            return False, resp
+    return True, None
 
 
 def _request_merge_partners(semester_id, day, start_t, end_t, room_id, requester):
@@ -4868,6 +4954,17 @@ def api_requests_decide():
                     """, [decided_by, remarks, decided_by,
                           'Official' if apply_to == 'official' else 'Local', _apply_on, group_ids])
                 elif apply_to == 'official':
+                    # Classes free here only through a Local arrangement take their Local
+                    # slot as Official first (checked, then published), so the Official
+                    # schedule never holds both.
+                    _shadowed = _request_official_shadowed(req_id)
+                    if _shadowed:
+                        _s_ok, _s_resp = _official_shadow_moves(_cur, _shadowed, dry_run=True)
+                        if _s_ok:
+                            _s_ok, _s_resp = _official_shadow_moves(_cur, _shadowed)
+                        if not _s_ok:
+                            _conn.rollback()
+                            return _s_resp
                     # The confirmed Draft meetings are removed below; the Publish must not
                     # count them as occupying the new slot. A merge the Hub showed before
                     # this approval is confirmed here, so Publish records the merged class.
@@ -7053,6 +7150,38 @@ def api_schedule_list_delete():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _attach_upcoming_changes(rows):
+    """Adds 'upcoming_change' to Official meetings that an approved Schedule Adjustment
+    will move on a later date (apply_on: approved while a make-up held the new slot), so
+    the Class Schedule can say so instead of looking unchanged."""
+    ids = {r.get('official_sessionid') or r.get('sessionid') for r in rows}
+    ids = [int(i) for i in ids if str(i or '').isdigit()]
+    if not ids:
+        return rows
+    try:
+        found = query_db("""
+            SELECT scr.official_sessionid, scr.new_daydesc, scr.applied_to,
+                   TO_CHAR(scr.apply_on, 'Mon DD, YYYY') AS apply_on,
+                   TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
+                   TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time, r.roomname
+            FROM schedule_change_request scr
+            LEFT JOIN timeslot ts_s ON ts_s.timeid = scr.new_starttimeid
+            LEFT JOIN timeslot ts_e ON ts_e.timeid = scr.new_endtimeid
+            LEFT JOIN room r ON r.roomid = scr.new_roomid
+            WHERE scr.status = 'Approved' AND scr.apply_on IS NOT NULL
+              AND scr.official_sessionid = ANY(%s)
+        """, [ids]) or []
+    except Exception as e:
+        print(f"[upcoming changes] {e}")
+        return rows
+    by_id = {f['official_sessionid']: dict(f) for f in found}
+    for r in rows:
+        f = by_id.get(r.get('official_sessionid') or r.get('sessionid'))
+        if f:
+            r['upcoming_change'] = f
+    return rows
+
+
 @app.route('/api/get_offerings_schedule')
 def get_offerings_schedule():
     import re
@@ -7195,7 +7324,7 @@ def get_offerings_schedule():
                   AND sem2.semestertype = %s
                   {local_extra_clause}
             """, official_params + la_params)
-            return jsonify([dict(r) for r in (cur.fetchall() or [])])
+            return jsonify(_attach_upcoming_changes([dict(r) for r in (cur.fetchall() or [])]))
 
         # ── Determine data source: current semester → schedule tables,
         #    past semester (ended before today) → historical_data only ──────
@@ -7544,7 +7673,7 @@ def get_offerings_schedule():
         print(f"[DEBUG] combined={len(combined)} norm_timed={len(norm_timed)} hist_extra={len(hist_extra)} untimed_fb={len(norm_untimed_fallback)}")
         for c in combined[:3]:
             print(f"  out: subj={c['subjectcode']!r} day={c['daydesc']!r} start={c['start_time']!r} hours={c['total_hours']!r}")
-        return jsonify(combined)
+        return jsonify(_attach_upcoming_changes(combined))
  
     except Exception as e:
         print(f"[get_offerings_schedule] ERROR: {e}")
@@ -16888,6 +17017,60 @@ def _archive_local_for_official_republish(cur, programcode, yearlevel, semesteri
             category='schedule', color='orange'
         )
     return archived_count
+
+
+def _official_slot_key(day, start, end, room, faculty):
+    """(day, HH:MM, HH:MM, room, faculty) of one Official meeting — compares a submitted
+    slice with a Published session whatever the time format."""
+    def hm(t):
+        if t is None or t == '':
+            return ''
+        if hasattr(t, 'strftime'):
+            return t.strftime('%H:%M')
+        try:
+            pt = _parse_time_str(str(t).strip())
+            return pt.strftime('%H:%M') if hasattr(pt, 'strftime') else str(t).strip()[:5]
+        except Exception:
+            return str(t).strip()[:5]
+    room = '' if room is None or str(room).strip().upper() in ('', 'TBA', 'NONE') else str(room).strip()
+    fac = '' if faculty is None or str(faculty).strip().upper() in ('', 'TBA', 'NONE') else str(faculty).strip()
+    return (str(day or '').strip().title(), hm(start), hm(end), room, fac)
+
+
+def _unchanged_official_subjects(cur, semesterid, sectionid, sched_data, codes):
+    """Subjects (of `codes`) whose submitted meetings are exactly their current Published
+    ones (same days, times, rooms, faculty) — e.g. a restored revision that didn't change
+    them. Their Local Arrangements stay (re-linked), since nothing they were based on moved."""
+    codes = {str(c).strip().upper() for c in (codes or []) if str(c).strip()}
+    if not (codes and sectionid):
+        return set()
+    new = {}
+    for cls in sched_data or []:
+        code = str(cls.get('subjectcode') or cls.get('subject_code') or '').strip().upper()
+        if code not in codes:
+            continue
+        days = list(cls.get('days_list') or []) or [cls.get('daydesc') or cls.get('day')]
+        for d in days:
+            new.setdefault(code, []).append(_official_slot_key(
+                d, cls.get('start_time'), cls.get('end_time'),
+                cls.get('roomid') or cls.get('room_id'),
+                cls.get('employeenumber') or cls.get('faculty_id')))
+    cur.execute("""
+        SELECT UPPER(cs.subjectcode) AS code, ss.daydesc, t1.timevalue AS st, t2.timevalue AS et,
+               ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS fac
+        FROM public.schedule_version sv
+        JOIN public.schedule s ON s.scheduleid = sv.scheduleid
+        JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+        JOIN public.schedule_sessions ss ON ss.versionid = sv.versionid
+        JOIN public.timeslot t1 ON t1.timeid = ss.starttimeid
+        JOIN public.timeslot t2 ON t2.timeid = ss.endtimeid
+        WHERE s.semesterid = %s AND s.sectionid = %s AND sv.status = 'Published'
+          AND sv.source IS DISTINCT FROM 'local' AND UPPER(cs.subjectcode) = ANY(%s)
+    """, (semesterid, sectionid, sorted(codes)))
+    old = {}
+    for r in cur.fetchall() or []:
+        old.setdefault(r['code'], []).append(_official_slot_key(r['daydesc'], r['st'], r['et'], r['roomid'], r['fac']))
+    return {c for c in codes if c in old and sorted(old[c]) == sorted(new.get(c) or [])}
 
 
 def _plan_local_for_official_republish(cur, programcode, yearlevel, semesterid, sectionid,
@@ -34743,7 +34926,8 @@ def _own_makeup_rows(cur, emp_num, scheduleid):
     cur.execute("""
         SELECT cmr.requestid, cmr.requested_date, cmr.status, cmr.reason, cmr.new_roomid,
                TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_time,
-               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time, r.roomname
+               TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_time, r.roomname,
+               ts_s.timevalue AS start_tv, ts_e.timevalue AS end_tv
         FROM class_meeting_request cmr
         JOIN timeslot ts_s ON ts_s.timeid = cmr.new_starttimeid
         JOIN timeslot ts_e ON ts_e.timeid = cmr.new_endtimeid
@@ -34753,13 +34937,17 @@ def _own_makeup_rows(cur, emp_num, scheduleid):
         ORDER BY cmr.requested_date, ts_s.timevalue
     """, [scheduleid, str(emp_num)])
     out = []
+    now = datetime.now()
     for r in cur.fetchall() or []:
         d = r['requested_date']
+        # Done once its end time has passed; it can't be removed once it has started.
+        started = datetime.combine(d, r['start_tv']) <= now
         out.append({'requestid': r['requestid'], 'date': d.isoformat(), 'day': d.strftime('%A'),
                     'date_label': d.strftime('%a, %b %d, %Y'), 'status': r['status'],
                     'start_time': r['start_time'], 'end_time': r['end_time'],
                     'room_id': r['new_roomid'], 'room': r['roomname'] or 'TBA',
-                    'reason': r['reason'] or '', 'past': d < date.today()})
+                    'reason': r['reason'] or '', 'started': started,
+                    'past': datetime.combine(d, r['end_tv']) <= now})
     return out
 
 
@@ -34888,13 +35076,14 @@ def api_manual_own_makeup_cancel(req_id):
             SET status = 'Cancelled', reviewed_by = NULL, reviewed_at = NULL,   -- chk_cmr_review
                 remarks = 'Removed by the Academic Head'
             WHERE requestid = %s AND submitted_by = ANY(%s) AND status IN ('Pending', 'Approved')
-              AND requested_date >= CURRENT_DATE
+              AND requested_date + (SELECT ts.timevalue FROM timeslot ts
+                                    WHERE ts.timeid = class_meeting_request.new_starttimeid) > %s
             RETURNING scheduleid, submitted_by
-        """, [req_id, heads])
+        """, [req_id, heads, datetime.now()])
         row = cur.fetchone()
         if not row:
             conn.rollback()
-            return jsonify({'success': False, 'error': 'This make-up class can no longer be removed (already past or removed).'}), 409
+            return jsonify({'success': False, 'error': 'This make-up class can no longer be removed (it has already started or was removed).'}), 409
         conn.commit()
         return jsonify({'success': True, 'makeups': _own_makeup_rows(cur, row['submitted_by'], row['scheduleid'])})
     finally:
@@ -41514,7 +41703,28 @@ def api_local_republish_impact():
             ORDER BY CASE WHEN la.status = 'Published' THEN 0 ELSE 1 END,
                      las.subjectcode, las.daydesc, las.starttimeid
         """, (program, int(year_level), ay_id, sem, int(section_id))) or []
-        return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
+        # Each subject's current Official meetings ("Day|HH:MM|HH:MM|room|faculty"), so the
+        # editor leaves out subjects a publish doesn't change (_unchanged_official_subjects).
+        official = {}
+        codes = sorted({r['subjectcode'] for r in rows})
+        if codes:
+            for o in query_db("""
+                SELECT UPPER(cs.subjectcode) AS code, ss.daydesc, t1.timevalue AS st, t2.timevalue AS et,
+                       ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS fac
+                FROM public.schedule_version sv
+                JOIN public.schedule s ON s.scheduleid = sv.scheduleid
+                JOIN public.semester sm ON sm.semesterid = s.semesterid
+                JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
+                JOIN public.schedule_sessions ss ON ss.versionid = sv.versionid
+                JOIN public.timeslot t1 ON t1.timeid = ss.starttimeid
+                JOIN public.timeslot t2 ON t2.timeid = ss.endtimeid
+                WHERE sm.academicyearid = %s AND sm.semestertype = %s AND s.sectionid = %s
+                  AND sv.status = 'Published' AND sv.source IS DISTINCT FROM 'local'
+                  AND UPPER(cs.subjectcode) = ANY(%s)
+            """, (ay_id, sem, int(section_id), codes)) or []:
+                official.setdefault(o['code'], []).append(
+                    '|'.join(_official_slot_key(o['daydesc'], o['st'], o['et'], o['roomid'], o['fac'])))
+        return jsonify({'success': True, 'sessions': [dict(r) for r in rows], 'official': official})
     except Exception as e:
         print(f"[local_republish_impact] {e}")
         return jsonify({'success': False, 'error': 'Could not check Local Scheduler arrangements.'}), 500
@@ -41902,9 +42112,13 @@ def api_approve_schedule():
 
         # Only Local Arrangements of the subjects this publish changes are archived; the
         # rest are re-linked to the new snapshot after it is inserted (below).
+        # A submitted subject whose meetings didn't change (e.g. same as the current
+        # Official in a restored revision) keeps its Local Arrangement.
+        _unchanged_codes = _unchanged_official_subjects(
+            cur, sem_id, _ctx_section_id, sched_data, submitted_codes)
         _local_plan = _plan_local_for_official_republish(
             cur, program, year_level, sem_id, _ctx_section_id,
-            set(submitted_codes) | set(removed_subjects)
+            (set(submitted_codes) - _unchanged_codes) | set(removed_subjects)
         )
         archived_local_count = _local_plan['archived']
 

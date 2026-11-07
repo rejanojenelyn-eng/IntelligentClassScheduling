@@ -3719,12 +3719,17 @@ class IntelligentScheduler:
         runs its pairwise rules over whatever list it's given, so passing
         placed_genes + [gene] safely evaluates a partial schedule — instead of
         duplicating any hard-constraint rule. Returns only the violations that
-        name this gene's own subject code.
+        name this gene's own subject code, plus HC9 load violations of this gene's
+        faculty (HC9 reports subject 'multiple', so it would never match a code and an
+        over-limit CBR faculty used to be protected anyway).
         """
         code = (gene.get('subject_code') or '').upper()
+        fac_id = gene.get('faculty_id')
         violations = self.csp.validate(placed_genes + [gene], faculty_map,
                                         existing_load=existing_load)
-        return [v for v in violations if code and code in (v.get('subject') or '').upper()]
+        return [v for v in violations
+                if (code and code in (v.get('subject') or '').upper())
+                or (v.get('rule') == 'HC9' and fac_id and v.get('faculty_id') == fac_id)]
 
     def build_cbr_protection_map(self, cbr_assignments: list, subjects_by_code: dict,
                                  faculty_map: dict, existing_load: dict = None,
@@ -3837,6 +3842,11 @@ class IntelligentScheduler:
                     'day':       (a.days_list[0] if part_time_ok and a.days_list else None),
                     'start_time': a.start_time if part_time_ok else None,
                     'end_time':   a.end_time   if part_time_ok else None,
+                    # Real elapsed hours, as every other gene path sets them: HC9 counts a
+                    # faculty's load from duration_hrs, so without it an over-limit CBR
+                    # faculty prevalidated as 0 hours and was protected anyway.
+                    'duration_hrs': (round(duration_hours(a.start_time, a.end_time) * len(a.days_list), 2)
+                                     if part_time_ok else 0),
                 }
 
                 # CSP's rules (room/faculty overlap, time windows, load) are all

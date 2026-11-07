@@ -464,8 +464,22 @@
 
 .timetable-grid {
     width: 100%;
+    /* Never squeeze 7 day columns into a phone screen (headers ran together and pills
+       overlapped). Below this width .timetable-wrapper scrolls sideways instead. */
+    min-width: 860px;
     border-collapse: collapse;
     table-layout: fixed;
+}
+
+/* Keep the TIME column visible while scrolling the days sideways. */
+.timetable-grid .time-header,
+.timetable-grid td.time-cell {
+    position: sticky;
+    left: 0;
+    z-index: 30;          /* above pills (10, hover 50 only while touched) */
+}
+.timetable-wrapper {
+    -webkit-overflow-scrolling: touch;
 }
 
 /* TIME column */

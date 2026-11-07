@@ -581,6 +581,29 @@ function _rfApplyDateMins() {
     if (from && end && from.value && from.value > today) end.min = from.value;
 }
 
+/* What the edit form holds, so Save can tell "nothing was changed" apart from a real
+   edit (an unchanged resubmit used to run the conflict check against the request's
+   own slot and report a misleading conflict). Room is compared to the request's own
+   room id because the room list loads asynchronously. */
+const _RF_EDIT_FIELDS = {
+    makeup:     ['editMuDate', 'editMuStart', 'editMuEnd', 'editMuReason', 'editMuNote'],
+    adjustment: ['editAdjDay', 'editAdjStart', 'editAdjEnd', 'editAdjFrom', 'editAdjEndDate', 'editAdjReason'],
+};
+const _RF_EDIT_ROOM = { makeup: 'editMuRoom', adjustment: 'editAdjRoom' };
+let _rfEditSnap = null;
+let _rfSaving   = false;
+function _rfEditValues(type) {
+    const v = {};
+    _RF_EDIT_FIELDS[type].forEach(id => { v[id] = String(document.getElementById(id)?.value || '').trim(); });
+    return v;
+}
+function _rfEditUnchanged(type) {
+    if (!_rfEditSnap || _rfEditSnap.type !== type) return false;
+    const now = _rfEditValues(type);
+    if (Object.keys(now).some(k => now[k] !== _rfEditSnap.values[k])) return false;
+    return String(document.getElementById(_RF_EDIT_ROOM[type])?.value || '') === _rfEditSnap.room;
+}
+
 function rfOpenEdit(req) {
     if (typeof req === 'string') req = JSON.parse(req);
     if (req.req_type === 'makeup') {
@@ -600,6 +623,7 @@ function rfOpenEdit(req) {
         _rfApplyDateMins();
         editMuTimeRules();
         editMuLoadBlocked();
+        _rfEditSnap = { type: 'makeup', values: _rfEditValues('makeup'), room: String(req.roomid || '') };
         document.getElementById('editMakeupOverlay').classList.add('open');
         editMuLoadRooms(req.roomid);
     } else {
@@ -614,6 +638,7 @@ function rfOpenEdit(req) {
         document.getElementById('editAdjEndDate').value = req.end_date || '';
         document.getElementById('editAdjReason').value  = req.reason || '';
         _rfApplyDateMins();
+        _rfEditSnap = { type: 'adjustment', values: _rfEditValues('adjustment'), room: String(req.roomid || '') };
         document.getElementById('editAdjOverlay').classList.add('open');
         editAdjLoadRooms(req.roomid);
     }
@@ -806,6 +831,18 @@ function _rfBuildRoomSelect(sel, rooms) {
    SAVE EDIT
 ═══════════════════════════════════════════ */
 async function rfSaveEdit(type) {
+    // One save at a time — repeated taps stacked the same notice several times.
+    if (_rfSaving) return;
+    if (_rfEditUnchanged(type)) {
+        const _m = 'No changes were made to this request. Edit the day, time, room, dates or reason before resubmitting.';
+        if (type === 'makeup') _editMuErr(_m); else showToast(_m, 'info');
+        return;
+    }
+    _rfSaving = true;
+    try { return await _rfSaveEditInner(type); } finally { _rfSaving = false; }
+}
+
+async function _rfSaveEditInner(type) {
     let payload, id;
     if (type === 'makeup') {
         id = document.getElementById('editMuId').value;

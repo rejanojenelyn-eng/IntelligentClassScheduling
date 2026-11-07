@@ -197,11 +197,14 @@
 
 .frs-v2 .frs-avail-filters {
         flex: 0 0 230px; background: #fff; border: 1px solid #eceef2; border-radius: 12px;
-        box-shadow: 0 2px 10px rgba(16,24,40,.04); overflow: hidden;
+        box-shadow: 0 2px 10px rgba(16,24,40,.04);
+        /* visible, not hidden: the Building / Room Number / time dropdowns must be able
+           to extend past the card's bottom edge (they were cut off at the panel). */
+        overflow: visible;
     }
 
 .frs-v2 .frs-avail-filters-header {
-        background: #fff; color: #800000; border-radius: 0; justify-content: space-between;
+        background: #fff; color: #800000; border-radius: 12px 12px 0 0; justify-content: space-between;
         padding: 14px 16px 6px; font-size: .95rem;
     }
 
@@ -214,7 +217,15 @@
 
 .frs-v2 .frs-clear-all:hover { text-decoration: underline; }
 
-.frs-v2 .frs-avail-filters-body { border: 0; border-radius: 0; padding: 8px 16px 16px; }
+.frs-v2 .frs-avail-filters-body { border: 0; border-radius: 0 0 12px 12px; padding: 8px 16px 16px; }
+
+/* Phones / small tablets: Filters on top, results below (side by side squeezed the
+   results off-screen). */
+@media (max-width: 760px) {
+    .frs-v2 .frs-avail-wrap { flex-direction: column; align-items: stretch; }
+    .frs-v2 .frs-avail-filters { flex: none; width: 100%; }
+    .frs-v2 .frs-avail-results { width: 100%; }
+}
 
 .frs-v2 .frs-avail-filter-group { margin-bottom: 14px; }
 

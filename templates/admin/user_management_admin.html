@@ -84,6 +84,39 @@
         .btn-corrections { width: 100%; justify-content: center; }
     }
 
+    /* Search / filter toolbar */
+    .um-toolbar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+        margin-bottom: 14px;
+    }
+    .um-search {
+        position: relative; flex: 1 1 260px; max-width: 380px;
+    }
+    .um-search i {
+        position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+        color: #adb5bd; font-size: 13px; pointer-events: none;
+    }
+    .um-search input, .um-filter {
+        width: 100%; box-sizing: border-box; height: 38px;
+        border: 1px solid #ced4da; border-radius: 6px; background: #fff;
+        font-size: 13px; color: #495057; outline: none; transition: border-color 0.2s;
+    }
+    .um-search input { padding: 0 12px 0 34px; }
+    .um-filter { width: auto; min-width: 170px; padding: 0 10px; cursor: pointer; }
+    .um-search input:focus, .um-filter:focus { border-color: #800000; }
+    .um-btn-clear {
+        height: 38px; padding: 0 14px; border-radius: 6px; cursor: pointer;
+        border: 1px solid #ced4da; background: #fff; color: #495057;
+        font-size: 12px; font-weight: 700; text-transform: uppercase;
+    }
+    .um-btn-clear:hover { border-color: #800000; color: #800000; }
+    .um-result-count { margin-left: auto; font-size: 12px; color: #6c757d; font-weight: 600; }
+    @media (max-width: 640px) {
+        .um-search { max-width: none; flex-basis: 100%; }
+        .um-filter { flex: 1 1 140px; }
+        .um-result-count { margin-left: 0; width: 100%; }
+    }
+
     /* Table Styling */
     .table-container {
         background: #fff;
@@ -333,6 +366,27 @@
         </span>
     </div>
 
+    <!-- Search / Filters -->
+    <div class="um-toolbar">
+        <div class="um-search">
+            <i class="fas fa-search"></i>
+            <input type="search" id="umSearch" placeholder="Search employee no. or name..." autocomplete="off" aria-label="Search users">
+        </div>
+        <select id="umRoleFilter" class="um-filter" aria-label="Filter by employment type">
+            <option value="">All Employment Types</option>
+            {% for r in accounts|map(attribute='role')|select|unique|sort %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+        </select>
+        <select id="umStatusFilter" class="um-filter" aria-label="Filter by status">
+            <option value="">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+        </select>
+        <button type="button" class="um-btn-clear" id="umClear">Clear</button>
+        <span class="um-result-count" id="umCount"></span>
+    </div>
+
     <!-- Table Container -->
     <div class="table-container">
         <table class="table-users">
@@ -348,7 +402,10 @@
             </thead>
             <tbody>
                 {% for acc in accounts %}
-                <tr>
+                <tr class="um-row"
+                    data-search="{{ ((acc.username or '') ~ ' ' ~ (acc.fullname or ''))|lower }}"
+                    data-role="{{ acc.role }}"
+                    data-status="{{ 'active' if acc.isactive else 'inactive' }}">
                     <td class="col-emp-no">{{ acc.username }}</td>
                     <td class="col-name">{{ acc.fullname }}</td>
                     <td>
@@ -395,6 +452,9 @@
                     <td colspan="6" style="padding:30px; text-align:center; color:#6c757d;">No system accounts found.</td>
                 </tr>
                 {% endfor %}
+                <tr id="umNoMatch" style="display:none;">
+                    <td colspan="6" style="padding:30px; text-align:center; color:#6c757d;">No users match your search or filters.</td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -451,6 +511,40 @@
 </div>
 
 <script>
+// ── Search / filters (client-side) ──
+(function () {
+    const search = document.getElementById('umSearch');
+    const role   = document.getElementById('umRoleFilter');
+    const status = document.getElementById('umStatusFilter');
+    const count  = document.getElementById('umCount');
+    const noMatch = document.getElementById('umNoMatch');
+    const rows   = Array.from(document.querySelectorAll('tr.um-row'));
+
+    function apply() {
+        const q = search.value.trim().toLowerCase();
+        const r = role.value, s = status.value;
+        let shown = 0;
+        rows.forEach(tr => {
+            const ok = (!q || tr.dataset.search.includes(q)) &&
+                       (!r || tr.dataset.role === r) &&
+                       (!s || tr.dataset.status === s);
+            tr.style.display = ok ? '' : 'none';
+            if (ok) shown++;
+        });
+        noMatch.style.display = (rows.length && !shown) ? '' : 'none';
+        count.textContent = `Showing ${shown} of ${rows.length} user${rows.length === 1 ? '' : 's'}`;
+    }
+
+    search.addEventListener('input', apply);
+    role.addEventListener('change', apply);
+    status.addEventListener('change', apply);
+    document.getElementById('umClear').addEventListener('click', () => {
+        search.value = ''; role.value = ''; status.value = '';
+        apply(); search.focus();
+    });
+    apply();
+})();
+
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function openModal(id)  { document.getElementById(id).style.display = 'flex'; }
 

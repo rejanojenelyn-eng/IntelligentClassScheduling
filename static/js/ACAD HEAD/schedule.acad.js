@@ -467,7 +467,10 @@ function renderTable(sessions, opts = {}) {
     const grouped = {};
     sessions.forEach(sess => {
         const key = `${sess.subjectcode}||${sess.instructor}`;
-        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [], slots: [] };
+        if (!grouped[key]) grouped[key] = { ...sess, daysArr: [], timesArr: [], slots: [], upcoming: [] };
+        // Approved adjustment that moves this meeting on a later date (after a make-up).
+        const u = sess.upcoming_change;
+        if (u && !grouped[key].upcoming.some(x => x.official_sessionid === u.official_sessionid)) grouped[key].upcoming.push(u);
         if (sess.daydesc) {
             const ab = dayAbbr(sess.daydesc);
             if (!grouped[key].daysArr.includes(ab)) grouped[key].daysArr.push(ab);
@@ -508,7 +511,10 @@ function renderTable(sessions, opts = {}) {
             <td>${sess.laboratoryhours || 0}</td>
             <td class="td-units">${sess.creditunits || 0}</td>
             <td>${courseLabel}</td>
-            <td class="td-time">${timeDisplay}</td>
+            <td class="td-time">${timeDisplay}${sess.upcoming.map(u =>
+                `<div class="sis-upcoming" title="Approved schedule adjustment">`
+                + `<i class="fas fa-calendar-day"></i> Moves to ${dayAbbr(u.new_daydesc || '')} ${u.start_time || ''}–${u.end_time || ''}`
+                + `${u.roomname ? ' · ' + u.roomname : ''} on ${u.apply_on} (approved)</div>`).join('')}</td>
             <td>${sess.total_hours || 0}</td>
             <td class="td-days">${daysDisplay}</td>
             <td class="td-room">${roomDisplay}</td>

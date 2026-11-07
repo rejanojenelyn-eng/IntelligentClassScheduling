@@ -309,3 +309,11 @@
 .spd-row i { color: #800000; width: 16px; text-align: center; flex-shrink: 0; }
 .spd-k { color: #777; font-weight: 600; width: 82px; flex-shrink: 0; }
 .spd-v { color: #222; font-weight: 600; }
+
+/* Approved Schedule Adjustment that moves this meeting on a later date */
+.sis-upcoming {
+    margin-top: 4px; padding: 2px 6px; border-radius: 4px; display: inline-block;
+    background: #fff8e6; border: 1px solid #f0c36d; color: #8a5a00;
+    font-size: .68rem; font-weight: 600; line-height: 1.35; white-space: normal;
+}
+.sis-upcoming i { margin-right: 3px; }

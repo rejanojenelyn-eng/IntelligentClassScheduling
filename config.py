@@ -69,4 +69,3 @@ class Config:
     SMTP_FROM     = os.environ.get('SMTP_FROM', os.environ.get('SMTP_USER', ''))
     SMTP_USE_SSL  = os.environ.get('SMTP_USE_SSL', '0') == '1'     # port 465
     SMTP_STARTTLS = os.environ.get('SMTP_STARTTLS', '1') == '1'    # port 587
-

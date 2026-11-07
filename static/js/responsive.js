@@ -20,7 +20,18 @@
         backdrop.className = 'rsp-backdrop';
         document.body.appendChild(backdrop);
 
+        // Where the drawer starts: just under the top bar and the ☰ bar, so it opens
+        // below the header like the laptop sidebar instead of covering it.
+        function placeDrawer() {
+            const bar = document.querySelector('.sub-header') || document.querySelector('.top-nav');
+            const top = bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : 0;
+            document.documentElement.style.setProperty('--rsp-drawer-top', top + 'px');
+        }
+        placeDrawer();
+        window.addEventListener('resize', placeDrawer);
+
         function setDrawer(open) {
+            if (open) placeDrawer();
             sidebar.classList.toggle('rsp-open', open);
             backdrop.classList.toggle('show', open);
             document.body.classList.toggle('rsp-drawer-open', open);

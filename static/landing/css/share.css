@@ -7,6 +7,10 @@
   width: 42px; height: 42px; border-radius: 50%;
   background: transparent; color: #fff; cursor: pointer;
   border: 2px solid rgba(255,255,255,.85); transition: .2s;
+  /* Sit near the right edge of the bar: cancel most of the topbar's 5% side padding,
+     leaving a 16px gutter. */
+  margin-left: .6rem;
+  margin-right: min(0px, calc(16px - 5vw));
 }
 .share-btn svg { width: 20px; height: 20px; fill: currentColor; }
 .share-btn:hover, .share-btn:focus-visible { background: #fff; color: var(--maroon); outline: none; }

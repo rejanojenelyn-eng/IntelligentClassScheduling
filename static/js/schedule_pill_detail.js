@@ -21,9 +21,6 @@
             ['fa-clock',         'Time',       d.time],
             ['fa-door-open',     'Room',       room],
             ['fa-users',         'Section',    sec],
-            ['fa-book',          'Hours',      (d.lecturehours != null || d.laboratoryhours != null)
-                ? `Lec ${d.lecturehours || 0} · Lab ${d.laboratoryhours || 0}`
-                  + (d.creditunits != null ? ` · ${d.creditunits} unit(s)` : '') : ''],
         ].filter(r => r[2]);
         const ov = document.createElement('div');
         ov.id = 'spdOverlay';
@@ -57,4 +54,35 @@
         window.getSelection?.().removeAllRanges();   // a double-click also selects the text
         open(pill._detail, pill.style.backgroundColor);
     });
+
+    // Phones/tablets: mobile browsers use a double-tap to zoom and often never fire
+    // `dblclick`, so detect the double-tap ourselves — two taps on the same block within
+    // 350 ms and without the finger moving (a scroll/drag is not a tap).
+    const TAP_MS = 350, TAP_MOVE = 12;
+    let lastTap = null, down = null;
+    document.addEventListener('pointerdown', e => {
+        if (e.pointerType !== 'touch') return;
+        down = { x: e.clientX, y: e.clientY };
+    }, { passive: true });
+    document.addEventListener('pointerup', e => {
+        if (e.pointerType !== 'touch' || !down) return;
+        const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > TAP_MOVE;
+        down = null;
+        const pill = e.target.closest?.('.schedule-pill');
+        if (moved || !pill || !pill._detail) { lastTap = null; return; }
+        const now = Date.now();
+        if (lastTap && lastTap.pill === pill && now - lastTap.t < TAP_MS) {
+            lastTap = null;
+            e.preventDefault();
+            open(pill._detail, pill.style.backgroundColor);
+        } else {
+            lastTap = { pill, t: now };
+        }
+    });
+
+    // Stop the browser's own double-tap zoom on schedule blocks so the second tap
+    // reaches the handler above (scrolling and pinch-zoom still work).
+    const st = document.createElement('style');
+    st.textContent = '.schedule-pill{touch-action:manipulation;-webkit-tap-highlight-color:transparent;}';
+    document.head.appendChild(st);
 })();
