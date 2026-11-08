@@ -391,6 +391,12 @@ function closeReqDetail() {
     document.getElementById('reqDetailModal').style.display = 'none';
 }
 
+// HTML-escape a value before it is placed in innerHTML.
+function _dashEsc(v) {
+    return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function openKpiModal(type) {
     const modal = document.getElementById('kpiModal');
     const title = document.getElementById('modalTitle');
@@ -431,16 +437,19 @@ function openKpiModal(type) {
                 body.innerHTML = `<tr><td colspan="4" style="text-align:center;">No records found.</td></tr>`;
                 return;
             }
+            // Database text (names typed by users) is HTML-escaped before it goes into
+            // innerHTML, so a stored value like <img onerror=...> shows as text, never runs.
+            const e = _dashEsc;
             data.forEach(item => {
                 let row = `<tr>`;
                 if (type === 'programs') {
-                    row += `<td>${item.programcode}</td><td>${item.programname}</td><td>${item.programtype}</td>`;
+                    row += `<td>${e(item.programcode)}</td><td>${e(item.programname)}</td><td>${e(item.programtype)}</td>`;
                 } else if (type === 'faculty') {
-                    row += `<td>${item.employeenumber}</td><td>${item.name}</td><td>${item.typename}</td><td>${item.employeestatus}</td>`;
+                    row += `<td>${e(item.employeenumber)}</td><td>${e(item.name)}</td><td>${e(item.typename)}</td><td>${e(item.employeestatus)}</td>`;
                 } else if (type === 'rooms') {
-                    row += `<td>${item.roomname}</td><td>${item.roomtype}</td><td>${item.buildingname}</td>`;
+                    row += `<td>${e(item.roomname)}</td><td>${e(item.roomtype)}</td><td>${e(item.buildingname)}</td>`;
                 } else if (type === 'requests') {
-                    row += `<td>${item.type}</td><td>${item.faculty}</td><td>${item.subjectcode}</td><td><span style="color:#ea580c; font-weight:700;">${item.status}</span></td>`;
+                    row += `<td>${e(item.type)}</td><td>${e(item.faculty)}</td><td>${e(item.subjectcode)}</td><td><span style="color:#ea580c; font-weight:700;">${e(item.status)}</span></td>`;
                 }
                 row += `</tr>`;
                 body.innerHTML += row;

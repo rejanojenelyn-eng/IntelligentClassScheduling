@@ -17,7 +17,7 @@ from datetime import time
 import pytest
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 
 FIELDS = ('faculty', 'schedule', 'room')
 
@@ -93,7 +93,7 @@ def test_approve_rejects_nonexistent_references_but_accepts_tba_room_and_faculty
             app_module._serialize_class(_row(subject_code='GEED 003', faculty_id='NOPE-1')),
             app_module._serialize_class(_row(subject_code='GEED 004', room_id='99999999', room='ZZ999')),
             app_module._serialize_class(_row(subject_code='GEED 005', faculty_id='TBA', instructor='TBA'))]
-    resp = app_module.app.test_client().post('/api/schedule/approve', json={
+    resp = signed_in_client().post('/api/schedule/approve', json={
         'schedule_data': rows,
         'context': {'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627'}})
     body = resp.get_json()
@@ -135,7 +135,7 @@ def _regen(monkeypatch, solver, rows):
     monkeypatch.setattr(app_module.scheduler_engine, 'generate_draft', solver)
     monkeypatch.setattr(app_module, '_check_cross_schedule_conflicts', lambda *a, **k: ([], 0))
     payload = [app_module._serialize_class(r) for r in rows]
-    return app_module.app.test_client().post('/api/schedule/generate', json={
+    return signed_in_client().post('/api/schedule/generate', json={
         'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627', 'curriculum': '2022-2023',
         'locked_sessions': payload}).get_json()
 
@@ -208,7 +208,7 @@ def test_failure_only_after_every_auto_kept_field_was_released(monkeypatch):
 
 @pytest.fixture(scope='module')
 def beed4():
-    body = app_module.app.test_client().post('/api/schedule/retrieve-previous', json={
+    body = signed_in_client().post('/api/schedule/retrieve-previous', json={
         'program': 'BEED', 'yearLevel': 4, 'term': 'A', 'acadYear': 'AY2627',
         'section': '12', 'curriculum': '2022-2023'}).get_json()
     assert body['success'] is True
@@ -227,7 +227,7 @@ def _live_regen(rows, locks, users=None):
                     lock=locks.get(r['subject_code'], {f: True for f in FIELDS}),
                     user_lock=users.get(r['subject_code'], {}))
                for r in rows]
-    return app_module.app.test_client().post('/api/schedule/generate', json={
+    return signed_in_client().post('/api/schedule/generate', json={
         'program': 'BEED', 'yearLevel': 4, 'term': 'A', 'acadYear': 'AY2627', 'section': '12',
         'curriculum': '2022-2023', 'locked_sessions': payload}).get_json()
 

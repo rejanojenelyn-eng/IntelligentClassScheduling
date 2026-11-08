@@ -12,7 +12,7 @@ import copy
 import pytest
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 
 build = app_module._build_conflict_list
 
@@ -104,7 +104,7 @@ def beed3():
                       JOIN program_yearlevel p ON p.programyearlevelid = s.programyearlevelid
                       WHERE p.programcode = 'BEED' AND p.yearlevel = 3
                         AND p.academicyearid = 'AY2627' LIMIT 1""", one=True)['sectionid']
-    body = app_module.app.test_client().post('/api/schedule/retrieve-previous', json={
+    body = signed_in_client().post('/api/schedule/retrieve-previous', json={
         'program': 'BEED', 'yearLevel': 3, 'term': 'A', 'acadYear': 'AY2627',
         'section': str(sid)}).get_json()
     assert body['success'] is True

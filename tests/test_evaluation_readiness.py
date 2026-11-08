@@ -20,7 +20,7 @@ from datetime import time
 import pytest
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 from constraints.hard_constraints import VIOLATION_EMITTING_IDS
 from test_reference_validation_and_progressive_regen import _row as _base_row
 
@@ -89,7 +89,7 @@ def test_4_high_historical_match_does_not_make_an_incomplete_schedule_approvable
                       LIMIT 1""", one=True)
     if not sid:
         pytest.skip('no BSA 3 section')
-    body = app_module.app.test_client().post('/api/schedule/retrieve-previous', json={
+    body = signed_in_client().post('/api/schedule/retrieve-previous', json={
         'program': 'BSA', 'yearLevel': 3, 'term': 'A', 'acadYear': 'AY2627',
         'section': str(sid['sectionid']), 'curriculum': '2022-2023'}).get_json()
     if not body.get('success'):
@@ -127,7 +127,7 @@ def test_10_backend_approval_and_evaluation_use_the_same_completeness_result():
     ev = _eval(rows)
     assert [(e['subject_code'], e['components']) for e in ev['incomplete']] == [('GEED 003', ['room'])]
     assert ev['incompleteComponentCount'] == 1 and ev['incompleteCount'] == 1
-    body = app_module.app.test_client().post('/api/schedule/approve', json={
+    body = signed_in_client().post('/api/schedule/approve', json={
         'schedule_data': [app_module._serialize_class(r) for r in rows],
         'context': {'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627',
                     'curriculum': '2022-2023'}}).get_json()

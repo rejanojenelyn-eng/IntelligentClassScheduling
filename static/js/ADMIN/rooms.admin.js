@@ -426,22 +426,22 @@ function _domAddRoomRow(r) {
     tr.dataset.roomId     = r.roomid;
     tr.dataset.buildingId = r.buildingid;
     tr.innerHTML = `
-        <td class="td-room-name" style="font-weight:700;">${r.roomname}</td>
-        <td class="td-room-type">${r.roomtype}</td>
-        <td class="td-room-cap">${r.roomcapacity}</td>
-        <td class="td-building">${r.buildingname}</td>
+        <td class="td-room-name" style="font-weight:700;">${_html(r.roomname)}</td>
+        <td class="td-room-type">${_html(r.roomtype)}</td>
+        <td class="td-room-cap">${_html(r.roomcapacity)}</td>
+        <td class="td-building">${_html(r.buildingname)}</td>
         <td>
             <div class="action-btns-wrapper" style="justify-content:center;">
                 <button class="btn-action view" title="View"
-                    onclick="openRoomScheduleModal(${r.roomid})">
+                    onclick="openRoomScheduleModal(${Number(r.roomid)})">
                     <i class="fas fa-eye"></i>
                 </button>
                 <button class="btn-action edit" title="Edit"
-                    onclick="openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid ?? null})">
+                    onclick="openEditRoomModal(${Number(r.roomid)},'${_esc(r.roomname)}','${_esc(r.roomtype)}',${Number(r.roomcapacity)},${r.buildingid == null ? null : Number(r.buildingid)})">
                     <i class="fas fa-pen"></i>
                 </button>
                 <button class="btn-action delete" title="Delete"
-                    onclick="doDeleteRoom(${r.roomid},'${_esc(r.roomname)}')">
+                    onclick="doDeleteRoom(${Number(r.roomid)},'${_esc(r.roomname)}')">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
@@ -459,12 +459,23 @@ function _domUpdateRoomRow(r) {
     tr.querySelector('.td-building').textContent  = r.buildingname;
     const editBtn = tr.querySelector('.btn-action.edit');
     if (editBtn) editBtn.setAttribute('onclick',
-        `openEditRoomModal(${r.roomid},'${_esc(r.roomname)}','${r.roomtype}',${r.roomcapacity},${r.buildingid})`);
+        `openEditRoomModal(${Number(r.roomid)},'${_esc(r.roomname)}','${_esc(r.roomtype)}',${Number(r.roomcapacity)},${r.buildingid == null ? null : Number(r.buildingid)})`);
     const delBtn = tr.querySelector('.btn-action.delete');
-    if (delBtn) delBtn.setAttribute('onclick', `doDeleteRoom(${r.roomid},'${_esc(r.roomname)}')`);
+    if (delBtn) delBtn.setAttribute('onclick', `doDeleteRoom(${Number(r.roomid)},'${_esc(r.roomname)}')`);
 }
 
-function _esc(s) { return String(s || '').replace(/'/g, "\\'").replace(/"/g, '\\"'); }
+// JS string literal for an inline onclick: quotes, backslash, < > & and line breaks become
+// \uXXXX escapes, so the value can end neither the string nor the HTML attribute
+// (safe both inside innerHTML markup and in setAttribute).
+function _esc(s) {
+    return String(s ?? '').replace(/[\\'"<>&\n\r\u2028\u2029]/g,
+        c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+}
+// HTML-escape text placed in innerHTML.
+function _html(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function _adjustStat(id, delta) {
     const el = document.getElementById(id);

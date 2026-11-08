@@ -128,9 +128,13 @@ def test_analyze_endpoints_reject_invalid_year(admin):
     r = admin.post('/admin/curriculum/import/csv/analyze',
                    data=dict(MAP, file=(io.BytesIO(CSV), 'c.csv'), curriculum_year='2023-2024'))
     assert r.status_code == 200 and r.get_json()['subject_count'] == 1      # valid year still works
-    for path, name in (('/admin/curriculum/import/pdf/analyze', 'c.pdf'),
-                       ('/admin/curriculum/import/docx/analyze', 'c.docx')):
-        r = admin.post(path, data={'file': (io.BytesIO(b'x'), name), 'curriculum_year': '2023-2025'})
+    # The upload check (app._validate_uploads) refuses files that are not really PDF/DOCX
+    # before the view runs, so these carry a real signature; the year is still checked first.
+    from docx import Document
+    _docx = io.BytesIO(); Document().save(_docx)
+    for path, name, body in (('/admin/curriculum/import/pdf/analyze', 'c.pdf', b'%PDF-1.4\n%%EOF\n'),
+                             ('/admin/curriculum/import/docx/analyze', 'c.docx', _docx.getvalue())):
+        r = admin.post(path, data={'file': (io.BytesIO(body), name), 'curriculum_year': '2023-2025'})
         assert r.status_code == 400 and 'spans 2 years' in r.get_json()['error']
 
 

@@ -23,7 +23,7 @@ from datetime import time
 import pytest
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 
 CTX = {'program': 'BEED', 'yearLevel': 3, 'term': 'A', 'acadYear': 'AY2627'}
 
@@ -56,7 +56,7 @@ def beed3():
                       JOIN program_yearlevel p ON p.programyearlevelid = s.programyearlevelid
                       WHERE p.programcode = 'BEED' AND p.yearlevel = 3
                         AND p.academicyearid = 'AY2627' LIMIT 1""", one=True)['sectionid']
-    body = app_module.app.test_client().post(
+    body = signed_in_client().post(
         '/api/schedule/retrieve-previous', json=dict(CTX, section=str(sid))).get_json()
     assert body['success'] is True
     return {'section': str(sid), 'rows': body['schedule_data'], 'retrieve_eval': body['evaluation']}
@@ -176,7 +176,7 @@ def test_evaluation_refreshes_with_zero_conflicts(beed3):
 
 @requires_db
 def test_accuracy_endpoint_matches_retrieve_evaluation_including_cross_section_conflicts(beed3):
-    body = app_module.app.test_client().post('/api/schedule/accuracy', json={
+    body = signed_in_client().post('/api/schedule/accuracy', json={
         'schedule_data': beed3['rows'], 'program': 'BEED', 'year_level': 3, 'term': 'A',
         'acad_year': 'AY2627', 'section': beed3['section']}).get_json()
     for k in ('overallScore', 'hardViolationCount', 'cspPassed'):
@@ -195,7 +195,7 @@ def _regenerate(beed3, code):
                     selected=r['subject_code'] == code,
                     lock=_UNLOCKED if r['subject_code'] == code else _LOCKED)
                for r in beed3['rows']]
-    return app_module.app.test_client().post('/api/schedule/generate', json=dict(
+    return signed_in_client().post('/api/schedule/generate', json=dict(
         CTX, curriculum='2022-2023', section=beed3['section'], locked_sessions=payload)).get_json()
 
 
@@ -208,7 +208,7 @@ def test_regenerate_selected_returns_evaluation_of_the_new_schedule(beed3):
     res = _regenerate(beed3, 'ELED 318')
     assert res['success'] is True, res.get('error')
     new = next(g for g in res['schedule_data'] if g['subject_code'] == 'ELED 318')
-    fresh = app_module.app.test_client().post('/api/schedule/accuracy', json={
+    fresh = signed_in_client().post('/api/schedule/accuracy', json={
         'schedule_data': res['schedule_data'], 'program': 'BEED', 'year_level': 3, 'term': 'A',
         'acad_year': 'AY2627', 'section': beed3['section']}).get_json()
     ev = res['evaluation']

@@ -926,7 +926,7 @@ async function confirmDeleteCurriculum(id, year) {
     confirmBtn.style.opacity = "";
     confirmBtn.style.cursor = "";
     confirmBtn.onclick = function () {
-        window.location.href = "/admin/curriculum/delete/" + deleteTargetId;
+        csrfPost("/admin/curriculum/delete/" + encodeURIComponent(deleteTargetId));   // POST + CSRF token
     };
     document.getElementById('deleteCurriculumModal').style.display = "flex";
 

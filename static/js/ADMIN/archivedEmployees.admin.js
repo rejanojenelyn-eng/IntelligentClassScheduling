@@ -45,7 +45,11 @@ function deselectAll() {
 // ── Restore modals ────────────────────────────────────────────────────────────
 function openRestoreModal(archiveId, name) {
     document.getElementById('restoreEmployeeName').textContent = name;
-    document.getElementById('confirmRestoreBtn').href = `/admin/restore_employee/${archiveId}`;
+    // POST + CSRF token (csrf.js), not a GET link: a link could be triggered from another site.
+    document.getElementById('confirmRestoreBtn').onclick = function (e) {
+        e.preventDefault();
+        csrfPost(`/admin/restore_employee/${encodeURIComponent(archiveId)}`);
+    };
     document.getElementById('restoreConfirmModal').style.display = 'block';
 }
 function closeRestoreModal() { document.getElementById('restoreConfirmModal').style.display = 'none'; }

@@ -129,6 +129,7 @@ def _section_schedule_sql(monkeypatch, mode):
          f'&semester=A&section_id=9&scheduler_mode={mode}')
     with app_module.app.test_request_context(q):
         session['loggedin'] = True
+        session['role'] = 'Academic Head'     # the endpoint is limited to Admin / Academic Head
         app_module.api_manual_section_schedule()
     return cap.sql
 

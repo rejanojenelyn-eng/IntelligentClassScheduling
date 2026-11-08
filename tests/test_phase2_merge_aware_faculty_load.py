@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 import app as app_module
+from conftest import signed_in_client
 import faculty_load
 from scheduler import CSPValidator
 
@@ -347,7 +348,7 @@ def test_teaching_assignments_collapses_only_a_full_hc16_clique(monkeypatch, cfg
     monkeypatch.setattr(app_module, 'get_db_connection', lambda: _TaConn(sessions))
     monkeypatch.setattr(database, 'load_scheduler_config', lambda: cfg)
     monkeypatch.setattr(app_module, 'load_scheduler_config', lambda: cfg)
-    body = app_module.app.test_client().get(
+    body = signed_in_client().get(
         '/api/faculty/teaching_assignments?emp_num=F1&ay_id=AY2627&sem=A').get_json()
     assert body['success'] is True, body
     assert body['total_teaching_hours'] == expected_hrs

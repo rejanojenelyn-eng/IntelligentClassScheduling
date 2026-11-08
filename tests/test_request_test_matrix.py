@@ -131,7 +131,7 @@ def test_fsv09_missing_subject_is_refused(tx, cls):
 
 @requires_db
 def test_fsv10_special_characters_are_kept_and_shown_safely(tx, cls):
-    reason = 'Math@101! <b>bold</b> & "quotes"'
+    reason = "Math@101! & \"quotes\" O'Neil (units < 3)"
     r = _submit(cls, reason=reason)
     assert r.status_code == 200, _msg(r)
     cur = _cur(tx)
@@ -140,6 +140,19 @@ def test_fsv10_special_characters_are_kept_and_shown_safely(tx, cls):
     assert cur.fetchone()['reason'] == reason
     hub = open('templates/academic/requests_hub.html', encoding='utf-8').read()
     assert '${_rhubEsc(req.reason)}' in hub and '${_rhubEsc(req.notes)}' in hub
+
+
+@requires_db
+def test_fsv10b_html_tags_in_a_reason_are_refused_and_nothing_is_stored(tx, cls):
+    # Stored-XSS defence (app._reject_html_markup): HTML tags are never stored, because many
+    # pages build tables with innerHTML. Ordinary special characters are kept (test above).
+    cur = _cur(tx)
+    cur.execute("SELECT COUNT(*) AS n FROM class_meeting_request WHERE submitted_by = %s", [cls['employeenumber']])
+    before = cur.fetchone()['n']
+    r = _submit(cls, reason='Math@101! <b>bold</b> <img src=x onerror=alert(1)>')
+    assert r.status_code == 400 and 'reason' in r.get_json()['error']
+    cur.execute("SELECT COUNT(*) AS n FROM class_meeting_request WHERE submitted_by = %s", [cls['employeenumber']])
+    assert cur.fetchone()['n'] == before
 
 
 # ── Category 2: scheduling conflicts ──

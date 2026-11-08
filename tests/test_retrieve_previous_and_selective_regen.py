@@ -16,7 +16,7 @@ import pytest
 
 import app as app_module
 import scheduler
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 
 JS_PATH = (pathlib.Path(__file__).resolve().parent.parent
            / "static" / "js" / "ACAD HEAD" / "scheduleGeneration.acad.js")
@@ -24,7 +24,7 @@ CTX = {'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627'}
 
 
 def _client():
-    return app_module.app.test_client()
+    return signed_in_client()
 
 
 def _gene(code, fid, room_id, start, end, days, class_type='Lecture', course='BEED'):

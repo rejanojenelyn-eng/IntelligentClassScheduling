@@ -686,7 +686,11 @@ function toggleDesignation(modalType) {
 
 // --- SINGLE / BULK ARCHIVE ---
 function openArchiveModal(empNum) {
-    document.getElementById("confirmArchiveBtn").href = `/admin/archive_employee/${empNum}`;
+    // POST + CSRF token (csrf.js), not a GET link: a link could be triggered from another site.
+    document.getElementById("confirmArchiveBtn").onclick = function (e) {
+        e.preventDefault();
+        csrfPost(`/admin/archive_employee/${encodeURIComponent(empNum)}`);
+    };
     document.getElementById("archiveConfirmModal").style.display = "block";
 }
 function closeArchiveModal() { document.getElementById("archiveConfirmModal").style.display = "none"; }

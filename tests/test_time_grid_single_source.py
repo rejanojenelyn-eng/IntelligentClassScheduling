@@ -22,7 +22,7 @@ import scheduler
 from scheduler import CSPValidator, STANDARD_BLOCKS, get_blocks_for_hours, duration_hours
 from constraints import ConstraintService
 from constraints.policy import SchedulingPolicy
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 
 # Mirrors the live Settings value (all pairs are also in STANDARD_BLOCKS).
 SETTINGS_GRID = json.dumps([[7, 30, 9, 0], [9, 0, 10, 30], [10, 30, 12, 0], [12, 0, 13, 30],
@@ -65,7 +65,7 @@ def test_b1b_settings_grid_adds_nothing_the_generator_cannot_produce():
 @requires_db
 def test_b2_manual_editor_validation_endpoint_uses_the_same_rule():
     import app as app_module
-    client = app_module.app.test_client()
+    client = signed_in_client()
     bad = client.post('/api/schedule/validate', json={'schedule_data': [
         {'subject_code': 'GEED 006', 'day': 'Saturday', 'days_list': ['Saturday'],
          'start_time': '03:00 PM', 'end_time': '04:30 PM', 'room_type': 'Lecture'}]}).get_json()
@@ -79,7 +79,7 @@ def test_b2_manual_editor_validation_endpoint_uses_the_same_rule():
 @requires_db
 def test_b2b_manual_editor_accepts_nstp_2pm_to_5pm():
     import app as app_module
-    client = app_module.app.test_client()
+    client = signed_in_client()
     ok = client.post('/api/schedule/validate', json={'schedule_data': [
         {'subject_code': 'NSTP 001', 'day': 'Sunday', 'days_list': ['Sunday'],
          'start_time': '02:00 PM', 'end_time': '05:00 PM', 'room_type': 'Lecture'}]}).get_json()
@@ -131,7 +131,7 @@ def test_b7_valid_current_time_is_not_flagged():
 @requires_db
 def test_b3b_retrieve_previous_reports_hc6_for_bpa_saturday_2_to_5():
     import app as app_module
-    body = app_module.app.test_client().post('/api/schedule/retrieve-previous', json={
+    body = signed_in_client().post('/api/schedule/retrieve-previous', json={
         'program': 'BPA', 'yearLevel': 2, 'term': 'A', 'acadYear': 'AY2627',
         'section': '14', 'curriculum': '2022-2023'}).get_json()
     if not body.get('success'):

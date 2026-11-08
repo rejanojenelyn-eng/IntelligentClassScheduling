@@ -109,7 +109,9 @@
     }
 
     window.addEventListener('pagehide', function () {
-        var body = new Blob([JSON.stringify({ page: pageId })], { type: 'application/json' });
+        // sendBeacon cannot set headers, so the CSRF token (csrf.js) rides in the body.
+        var body = new Blob([JSON.stringify({ page: pageId, csrf_token: window.CSRF_TOKEN || '' })],
+                            { type: 'application/json' });
         if (navigator.sendBeacon) navigator.sendBeacon('/api/session/page_closed', body);
     });
 

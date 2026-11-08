@@ -21,7 +21,7 @@ from datetime import time
 import pytest
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, signed_in_client
 from test_reference_validation_and_progressive_regen import _row as _base_row
 
 
@@ -50,7 +50,7 @@ class _FakeSolver:
 def _generate(monkeypatch, solver):
     monkeypatch.setattr(app_module.scheduler_engine, 'generate_draft', solver)
     monkeypatch.setattr(app_module, '_check_cross_schedule_conflicts', lambda *a, **k: ([], 0))
-    return app_module.app.test_client().post('/api/schedule/generate', json={
+    return signed_in_client().post('/api/schedule/generate', json={
         'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627',
         'curriculum': '2022-2023'}).get_json()
 
@@ -127,7 +127,7 @@ def test_approve_counts_other_section_hours_for_the_load_rule(monkeypatch):
 
 def _approve(rows):
     payload = [app_module._serialize_class(r) for r in rows]
-    return app_module.app.test_client().post('/api/schedule/approve', json={
+    return signed_in_client().post('/api/schedule/approve', json={
         'schedule_data': payload,
         'context': {'program': 'BEED', 'yearLevel': 1, 'term': 'A', 'acadYear': 'AY2627',
                     'curriculum': '2022-2023'}})

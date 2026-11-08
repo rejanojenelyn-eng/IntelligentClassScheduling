@@ -626,7 +626,11 @@ let _archiveIdsForBulk = [];
 function openArchiveModal(empNum, name) {
     _archiveEmpNum = empNum;
     document.getElementById('archiveEmployeeName').textContent = name;
-    document.getElementById('confirmArchiveBtn').href = `/archive_employee/${empNum}`;
+    // POST + CSRF token (csrf.js), not a GET link: a link could be triggered from another site.
+    document.getElementById('confirmArchiveBtn').onclick = function (e) {
+        e.preventDefault();
+        csrfPost(`/archive_employee/${encodeURIComponent(empNum)}`);
+    };
     document.getElementById('archiveConfirmModal').style.display = 'block';
 }
 function closeArchiveModal() { document.getElementById('archiveConfirmModal').style.display = 'none'; }

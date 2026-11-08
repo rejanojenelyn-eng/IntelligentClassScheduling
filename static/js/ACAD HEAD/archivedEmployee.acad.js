@@ -5,7 +5,11 @@ const _ARCH_XLSX_ROUTE = '/archived-employee/export/xlsx';
 // ── Restore modals ────────────────────────────────────────────────────────────
 function openRestoreModal(archiveId, name) {
     document.getElementById('restoreEmployeeName').textContent = name;
-    document.getElementById('confirmRestoreBtn').href = `/restore_employee/${archiveId}`;
+    // POST + CSRF token (csrf.js), not a GET link: a link could be triggered from another site.
+    document.getElementById('confirmRestoreBtn').onclick = function (e) {
+        e.preventDefault();
+        csrfPost(`/restore_employee/${encodeURIComponent(archiveId)}`);
+    };
     document.getElementById('restoreConfirmModal').style.display = 'block';
 }
 function closeRestoreModal() { document.getElementById('restoreConfirmModal').style.display = 'none'; }

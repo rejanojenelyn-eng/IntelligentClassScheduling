@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 import app
+from conftest import signed_in_client
 
 ROOT = Path(__file__).resolve().parents[1]
 GEN_JS = (ROOT / 'static' / 'js' / 'ACAD HEAD' / 'scheduleGeneration.acad.js').read_text(encoding='utf-8')
@@ -114,7 +115,7 @@ def test_editor_override_archives_draft_only(monkeypatch):
     # stays live until a successful Publish replaces it.
     log = []
     monkeypatch.setattr(app, 'get_db_connection', lambda: _Conn(log))
-    resp = app.app.test_client().post('/api/schedule/archive-draft-for-editor', json={
+    resp = signed_in_client().post('/api/schedule/archive-draft-for-editor', json={
         'program': 'BSA', 'yearLevel': 3, 'term': 'A', 'acadYear': 'AY2627', 'section': '478',
     })
     assert resp.get_json()['success'] is True

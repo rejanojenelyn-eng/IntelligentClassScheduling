@@ -182,6 +182,9 @@ class _Conn:
 def _client(monkeypatch):
     # before_request account-status guard (same stub as test_manual_editor_state._room)
     monkeypatch.setattr(app_module, 'query_db', lambda *a, **k: {'isactive': True})
+    # The signed-in housekeeping hook (expire past make-up requests) writes through the same
+    # stubbed connection and is throttled, so whether it ran depended on earlier tests.
+    monkeypatch.setattr(app_module, '_sweep_expired_makeups', lambda *a, **k: None)
     client = app_module.app.test_client()
     with client.session_transaction() as s:
         s.update(loggedin=True, role='Academic Head', username='sib-test')

@@ -1,7 +1,11 @@
+import functools
+import hmac
 import os
 import re
+import secrets
 import sys
 import uuid
+import zipfile
 
 # Log lines use characters like '→' and '–'. On Windows, when the server's output is
 # redirected (a log file, a service, a pipe) it is cp1252, and print() of such a line
@@ -13,7 +17,10 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response, make_response, g
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, jsonify, session, flash, Response, make_response, g
+from werkzeug.exceptions import HTTPException
+from markupsafe import escape as _html_escape
+from jinja2.utils import htmlsafe_json_dumps as _htmlsafe_json
 import psycopg2.errors
 import psycopg2.sql
 import makeup_requests as _makeup
@@ -787,7 +794,7 @@ def _apply_scheduled_adjustments():
                 rv = api_requests_decide()
                 res = (rv[0] if isinstance(rv, tuple) else rv).get_json() or {}
             except Exception as e:
-                res = {'success': False, 'error': str(e)}
+                res = {'success': False, 'error': _public_error(e)}
         if res.get('success'):
             continue
         when = r['apply_on'].strftime('%b %d, %Y') if hasattr(r.get('apply_on'), 'strftime') else r.get('apply_on')
@@ -959,6 +966,380 @@ def _expire_stale_session():
     # A heartbeat only counts as activity when the user actually did something.
     g.session_active = (request.endpoint != 'session_heartbeat'
                         or bool((request.get_json(silent=True) or {}).get('active')))
+
+
+# ─────────────────────────────────────────────────────────────
+#  ACCESS CONTROL (authentication + role authorization)
+# ─────────────────────────────────────────────────────────────
+# Default deny: every endpoint needs a signed-in account unless it is listed here.
+# Pages only a signed-out visitor needs (landing, login, Forgot Password) and the
+# first-run /setup (which answers 404 once any account exists).
+PUBLIC_ENDPOINTS = frozenset(_SESSION_PUBLIC_ENDPOINTS + (
+    'session_page_closed',          # pagehide beacon; only ever touches the caller's own login
+    'setup',
+    'forgot_password', 'forgot_password_verify', 'forgot_password_resend',
+    'forgot_password_new', 'forgot_password_done',
+    'account_setup_leave',          # discards the caller's own setup draft and signs out
+))
+
+ROLE_ADMIN, ROLE_ACAD_HEAD, ROLE_FACULTY = 'Admin', 'Academic Head', 'Faculty'
+STAFF_ROLES = (ROLE_ADMIN, ROLE_ACAD_HEAD)     # the same pair as _ROOM_ROLES / _FACSUB_ROLES
+
+
+def _is_page_navigation():
+    """A browser opening a page (answered with a redirect), as opposed to a fetch/XHR or
+    API call (answered with a JSON status). Same rule as _expire_stale_session."""
+    mode = request.headers.get('Sec-Fetch-Mode')
+    if mode:
+        return mode == 'navigate'
+    return request.method == 'GET' and not request.path.startswith('/api/')
+
+
+def _access_denied(status):
+    """401 = not signed in, 403 = signed in with a role that may not use this endpoint."""
+    if _is_page_navigation():
+        if status == 401:
+            return redirect(url_for('login'))
+        flash('You do not have access to that page.', 'error')
+        return redirect(url_for(_dashboard_url_for_role(session.get('role'))))
+    message = ('Authentication required. Please log in.' if status == 401
+               else 'You do not have permission to perform this action.')
+    return jsonify({'success': False, 'error': message, 'session_expired': status == 401}), status
+
+
+@app.before_request
+def _require_login():
+    """Central authentication gate. Registered right after _expire_stale_session, so an
+    expired login is already cleared, and before every other hook, so an anonymous
+    request is refused before any view code or database work runs."""
+    if request.endpoint is None:            # unknown URL / wrong method: Flask answers 404 / 405
+        return
+    if request.endpoint in PUBLIC_ENDPOINTS or session.get('loggedin'):
+        return
+    return _access_denied(401)
+
+
+def roles_required(*roles):
+    """Route decorator: only these roles may use the endpoint. Place it directly under
+    the @app.route line(s). Signing in is already enforced by _require_login; this adds
+    the authorization check (403 for any other role)."""
+    allowed = frozenset(roles)
+
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapper(*args, **kwargs):
+            if not session.get('loggedin'):
+                return _access_denied(401)
+            if session.get('role') not in allowed:
+                return _access_denied(403)
+            return view(*args, **kwargs)
+        wrapper.allowed_roles = allowed     # read by tests/test_route_access_control.py
+        return wrapper
+    return decorator
+
+
+def _safe_back_url():
+    """Where to send a refused form post: the page it came from when that page is on this
+    site, otherwise the user's dashboard (never an outside address from the Referer)."""
+    ref = request.referrer or ''
+    if ref.startswith(request.host_url):
+        return ref
+    return url_for(_dashboard_url_for_role(session.get('role')) if session.get('loggedin') else 'login')
+
+
+# ─────────────────────────────────────────────────────────────
+#  CSRF PROTECTION (synchronizer token; client side: static/js/csrf.js)
+# ─────────────────────────────────────────────────────────────
+# Every POST/PUT/PATCH/DELETE must carry the session's token: the X-CSRFToken header
+# (fetch / XMLHttpRequest, added by csrf.js), a csrf_token form field (forms, csrfPost)
+# or, for the sendBeacon tab-close notice only, a csrf_token key in its JSON body. A
+# page on another site cannot read the token, so it cannot forge the request. Runs
+# after _require_login (a signed-out request is answered 401 first) and before every
+# view, so a refused request changes nothing.
+CSRF_SESSION_KEY = '_csrf_token'
+_CSRF_SAFE_METHODS = frozenset({'GET', 'HEAD', 'OPTIONS', 'TRACE'})
+
+_PAGE_EXPIRED_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page Expired</title>
+<style>body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333;display:flex;align-items:center;
+justify-content:center;min-height:100vh;margin:0}.box{background:#fff;padding:32px 36px;border-radius:10px;
+max-width:440px;box-shadow:0 4px 14px rgba(0,0,0,.08);text-align:center}h1{color:#800000;font-size:22px}
+a{display:inline-block;margin-top:14px;background:#800000;color:#fff;padding:10px 18px;border-radius:6px;
+text-decoration:none}</style></head>
+<body><div class="box"><h1>Page Expired</h1>
+<p>This page was open too long or was opened before you signed in again, so it can no longer send changes.
+Nothing was saved. Please open the page again and retry.</p>
+<a href="{{ target }}">{{ label }}</a></div></body></html>"""
+
+
+def csrf_token():
+    """This session's CSRF token (created on first use)."""
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = session[CSRF_SESSION_KEY] = secrets.token_urlsafe(32)
+    return token
+
+
+def _csrf_submitted_token():
+    token = request.headers.get('X-CSRFToken') or request.form.get('csrf_token')
+    if not token and request.endpoint == 'session_page_closed':     # navigator.sendBeacon
+        token = (request.get_json(silent=True, force=True) or {}).get('csrf_token')
+    return token if isinstance(token, str) else None
+
+
+@app.before_request
+def _csrf_protect():
+    if request.method in _CSRF_SAFE_METHODS or request.endpoint in (None, 'static'):
+        return
+    expected, sent = session.get(CSRF_SESSION_KEY), _csrf_submitted_token()
+    if expected and sent and hmac.compare_digest(sent, expected):
+        return
+    if _is_page_navigation():
+        signed_in = bool(session.get('loggedin'))
+        return render_template_string(
+            _PAGE_EXPIRED_HTML,
+            target=url_for(_dashboard_url_for_role(session.get('role')) if signed_in else 'login'),
+            label='Go to your dashboard' if signed_in else 'Go to login'), 400
+    return jsonify({'success': False, 'csrf_failed': True,
+                    'error': 'This page has expired. Please reload the page and try again.'}), 400
+
+
+@app.after_request
+def _inject_csrf(resp):
+    """Every HTML page gets the token and csrf.js as the first thing in <head>, so csrf.js
+    is in place before any of the page's own scripts send a request."""
+    if resp.mimetype != 'text/html' or resp.direct_passthrough:
+        return resp
+    html = resp.get_data(as_text=True)
+    m = re.search(r'<head\b[^>]*>', html, re.I)
+    if not m or 'name="csrf-token"' in html:
+        return resp
+    tag = (f'\n<meta name="csrf-token" content="{csrf_token()}">'
+           f'\n<script src="{url_for("static", filename="js/csrf.js")}"></script>')
+    resp.set_data(html[:m.end()] + tag + html[m.end():])
+    return resp
+
+
+# ─────────────────────────────────────────────────────────────
+#  STORED-XSS DEFENCE: no HTML markup is accepted into the database
+# ─────────────────────────────────────────────────────────────
+# Output escaping is the primary defence, but the front-end builds many tables with
+# innerHTML; so every text value a state-changing request submits (form fields and JSON
+# bodies, plus the text inside uploaded CSV/XLSX/DOCX files — see _upload_problem) is
+# refused when it contains an HTML tag such as <script>, <img ...> or </b>. A lone "<"
+# (e.g. "units < 3") is still allowed. Passwords are never inspected.
+_HTML_TAG_RE = re.compile(r'<\s*[a-zA-Z!/?]')
+
+
+def _skip_markup_check(key):
+    k = str(key or '').lower()
+    return 'password' in k or k == 'csrf_token'
+
+
+def _find_markup(value, key=''):
+    """The field name of the first string containing an HTML tag, or None."""
+    if isinstance(value, str):
+        return key or 'value' if _HTML_TAG_RE.search(value) and not _skip_markup_check(key) else None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if _skip_markup_check(k):
+                continue
+            found = _find_markup(str(k), key) or _find_markup(v, str(k))
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            found = _find_markup(v, key)
+            if found:
+                return found
+    return None
+
+
+def _reject_input(message):
+    if _is_page_navigation():
+        flash(message, 'error')
+        return redirect(_safe_back_url())
+    return jsonify({'success': False, 'error': message}), 400
+
+
+@app.before_request
+def _reject_html_markup():
+    if request.method in _CSRF_SAFE_METHODS or request.endpoint in (None, 'static'):
+        return
+    field = None
+    for k in request.form:
+        if not _skip_markup_check(k):
+            field = _find_markup(request.form.getlist(k), k)
+            if field:
+                break
+    if not field and request.is_json:
+        field = _find_markup(request.get_json(silent=True))
+    if field:
+        return _reject_input(f'"{field}" cannot contain HTML tags such as <b> or <script>. '
+                             'Please remove the "<" character and try again.')
+
+
+# ─────────────────────────────────────────────────────────────
+#  FILE UPLOADS: size limit, allowed types, real content checks
+# ─────────────────────────────────────────────────────────────
+# Every file in every request is checked here, before any view parses it: the extension
+# must be one the app imports, the content must really be that kind of file (signature /
+# structure, not just the name), Office files may not expand into a zip bomb, and text
+# inside CSV/XLSX/DOCX may not contain HTML tags (it ends up on pages). The views keep
+# their own checks (e.g. Pillow verify for profile photos) as a second layer.
+# Whole request; larger answers 413. The largest real import is ~300 KB (subject
+# offerings .xlsx) and curriculum PDFs are under 100 KB, so 5 MB leaves ample room.
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES
+_ZIP_MAX_UNCOMPRESSED = 100 * 1024 * 1024        # an .xlsx/.docx may not expand beyond this
+_ZIP_MAX_ENTRIES = 5000
+_ALLOWED_UPLOADS = {
+    '.csv': 'CSV', '.xlsx': 'Excel', '.xls': 'Excel', '.docx': 'Word', '.pdf': 'PDF',
+    '.jpg': 'JPG', '.jpeg': 'JPG', '.png': 'PNG',
+}
+_EXECUTABLE_MAGIC = (b'MZ', b'\x7fELF', b'#!', b'PK\x03\x04', b'%PDF', b'\xd0\xcf\x11\xe0')
+_ESCAPED_TAG_RE = re.compile(rb'&lt;\s*[a-zA-Z!/?]')   # how a "<tag" is stored inside Office XML
+
+
+def _zip_problem(data, must_contain):
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            infos = zf.infolist()
+            names = {i.filename for i in infos}
+            if '[Content_Types].xml' not in names or not any(n.startswith(must_contain) for n in names):
+                return 'is not a valid file of this type'
+            if len(infos) > _ZIP_MAX_ENTRIES or sum(i.file_size for i in infos) > _ZIP_MAX_UNCOMPRESSED:
+                return 'is too large once opened'
+            text_parts = [n for n in names if n in ('xl/sharedStrings.xml', 'word/document.xml')
+                          or n.startswith('xl/worksheets/sheet')]
+            for n in text_parts:
+                if _ESCAPED_TAG_RE.search(zf.read(n)):
+                    return 'contains HTML tags (such as <script>) in its text'
+    except (zipfile.BadZipFile, ValueError, OSError, RuntimeError, NotImplementedError):
+        return 'is not a valid file of this type'
+    return None
+
+
+def _upload_problem(fs):
+    """Why this uploaded FileStorage must be refused (a short phrase), or None if it is fine."""
+    name = (fs.filename or '').strip()
+    ext = os.path.splitext(name)[1].lower()
+    kind = _ALLOWED_UPLOADS.get(ext)
+    if not kind:
+        return 'is not an allowed file type (CSV, XLSX, DOCX, PDF, JPG or PNG)'
+    data = fs.stream.read()
+    fs.stream.seek(0)
+    if not data:
+        return 'is empty'
+    if ext == '.pdf':
+        return None if data[:1024].lstrip().startswith(b'%PDF-') else 'is not a real PDF file'
+    if ext == '.xlsx':
+        return _zip_problem(data, 'xl/')
+    if ext == '.docx':
+        return _zip_problem(data, 'word/')
+    if ext == '.xls':
+        return None if data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1') else 'is not a real Excel file'
+    if ext in ('.jpg', '.jpeg'):
+        return None if data.startswith(b'\xff\xd8\xff') else 'is not a real JPG image'
+    if ext == '.png':
+        return None if data.startswith(b'\x89PNG\r\n\x1a\n') else 'is not a real PNG image'
+    # .csv: plain text only
+    if b'\x00' in data[:65536] or data.startswith(_EXECUTABLE_MAGIC):
+        return 'is not a plain-text CSV file'
+    if _HTML_TAG_RE.search(data.decode('utf-8', errors='ignore')):
+        return 'contains HTML tags (such as <script>) in its text'
+    return None
+
+
+@app.before_request
+def _validate_uploads():
+    if request.method in _CSRF_SAFE_METHODS or request.mimetype != 'multipart/form-data':
+        return
+    for field, fs in request.files.items(multi=True):
+        if not (fs.filename or '').strip():
+            continue                     # an empty <input type="file"> is the view's business
+        problem = _upload_problem(fs)
+        if problem:
+            shown = secure_filename(fs.filename) or 'The file'
+            return _reject_input(f'{shown} {problem}. Please choose a different file.')
+
+
+@app.errorhandler(413)
+def _upload_too_large(e):
+    message = f'The file is too large. The maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.'
+    if _is_page_navigation():
+        flash(message, 'error')
+        return redirect(_safe_back_url())
+    return jsonify({'success': False, 'error': message}), 413
+
+
+# ─────────────────────────────────────────────────────────────
+#  ERROR HANDLING: no database errors, stack traces or internals reach the user
+# ─────────────────────────────────────────────────────────────
+GENERIC_ERROR_MESSAGE = 'Something went wrong while processing your request. Please try again.'
+# Modules whose exception messages are written for users (validation / workflow errors).
+_USER_MESSAGE_MODULES = frozenset({
+    '__main__', 'app', 'makeup_requests', 'password_change', 'email_change', 'contact_change',
+    'password_reset', 'login_security', 'faculty_load', 'merge_groups', 'scheduler', 'constraints',
+})
+
+
+def _public_error(e, generic=GENERIC_ERROR_MESSAGE):
+    """The message a user may see for exception e. The app's own ValueError / workflow
+    messages are passed through; database errors (psycopg2), programming errors (KeyError,
+    TypeError, ...) and third-party library errors are logged here, with a reference id,
+    and replaced by a generic message."""
+    module = (type(e).__module__ or '').split('.')[0]
+    if not isinstance(e, psycopg2.Error) and (
+            type(e) is ValueError or (isinstance(e, ValueError) and module in _USER_MESSAGE_MODULES)
+            or (module in _USER_MESSAGE_MODULES and not isinstance(e, (LookupError, TypeError,
+                                                                      AttributeError, NameError)))):
+        text = str(e).strip()
+        if text:
+            return text
+    from flask import has_request_context
+    ref = uuid.uuid4().hex[:8]
+    where = f'{request.method} {request.path}' if has_request_context() else '-'
+    print(f'[error {ref}] {where}: {type(e).__name__}: {e}', flush=True)
+    return f'{generic} (Reference: {ref})'
+
+
+@app.errorhandler(Exception)
+def _unhandled_error(e):
+    """Any exception a view did not catch: log the traceback server-side, answer generically."""
+    if isinstance(e, HTTPException):
+        return e                                   # 404, 405, 413 ... keep Flask's answers
+    import traceback
+    ref = uuid.uuid4().hex[:8]
+    print(f'[error {ref}] unhandled {request.method} {request.path}\n{traceback.format_exc()}', flush=True)
+    message = f'{GENERIC_ERROR_MESSAGE} (Reference: {ref})'
+    if _is_page_navigation():
+        return render_template_string(_ERROR_HTML, message=message, target=url_for('index')), 500
+    return jsonify({'success': False, 'error': message}), 500
+
+
+_ERROR_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Something went wrong</title>
+<style>body{font-family:Arial,sans-serif;background:#f4f4f4;color:#333;display:flex;align-items:center;
+justify-content:center;min-height:100vh;margin:0}.box{background:#fff;padding:32px 36px;border-radius:10px;
+max-width:440px;box-shadow:0 4px 14px rgba(0,0,0,.08);text-align:center}h1{color:#800000;font-size:22px}
+a{display:inline-block;margin-top:14px;background:#800000;color:#fff;padding:10px 18px;border-radius:6px;
+text-decoration:none}</style></head>
+<body><div class="box"><h1>Something went wrong</h1><p>{{ message }}</p>
+<a href="{{ target }}">Go to the home page</a></div></body></html>"""
+
+
+@app.after_request
+def _security_headers(resp):
+    """Browser hardening that needs no page changes: no MIME sniffing (an upload can't be run
+    as a script), no framing by other sites (clickjacking), no plugins, no <base> hijack."""
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    resp.headers.setdefault('Referrer-Policy', 'same-origin')
+    resp.headers.setdefault('Content-Security-Policy', "object-src 'none'; base-uri 'self'; frame-ancestors 'self'")
+    return resp
 
 
 @app.after_request
@@ -1455,7 +1836,7 @@ def setup():
         conn.commit()
         return "Setup Success! Login with password123"
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error: {_public_error(e)}"
     finally:
         cur.close()
         conn.close()
@@ -2518,7 +2899,7 @@ def _setup_commit(username, draft, has_faculty):
         return "Your account could not be found. Please sign in again."
     except _SetupProblem as p:
         conn.rollback()
-        return str(p)
+        return _public_error(p)
     except psycopg2.errors.UniqueViolation as e:
         conn.rollback()
         constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
@@ -3106,6 +3487,7 @@ _EMPTY_DASHBOARD_ANALYTICS = {
 
 
 @app.route('/api/dashboard/analytics')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_analytics():
     if 'loggedin' not in session: return jsonify(_EMPTY_DASHBOARD_ANALYTICS)
     try:
@@ -3265,12 +3647,14 @@ def dashboard():
 # --- API Endpoints for Dashboard Popups ---
 
 @app.route('/api/dashboard/programs_list')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_programs_list():
     if 'loggedin' not in session: return jsonify([])
     rows = query_db("SELECT programcode, programname, programtype FROM programs WHERE isactive = TRUE ORDER BY programname")
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/dashboard/faculty_list')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_faculty_list():
     if 'loggedin' not in session: return jsonify([])
     rows = query_db("""
@@ -3283,6 +3667,7 @@ def api_dashboard_faculty_list():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/dashboard/rooms_list')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_rooms_list():
     if 'loggedin' not in session: return jsonify([])
     rows = query_db("""
@@ -3293,6 +3678,7 @@ def api_dashboard_rooms_list():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/dashboard/requests_list')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_requests_list():
     if 'loggedin' not in session: return jsonify([])
     _ensure_request_tables()
@@ -3523,7 +3909,7 @@ def api_requests_list():
         return jsonify({'success': True, 'requests': filtered, 'stats': stats})
     except Exception as e:
         print(f"[api_requests_list] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 def _request_local_conflict(schedule_id, day, start_t, end_t, *,
@@ -3828,7 +4214,7 @@ def api_requests_validate():
         return jsonify(dict(summary, success=True))
     except Exception as e:
         print(f"[api_requests_validate] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 def _request_official_shadowed(req_id):
@@ -5109,12 +5495,14 @@ def api_requests_decide():
 
 
 @app.route('/api/dashboard/buildings_list')
+@roles_required(*STAFF_ROLES)
 def api_dashboard_buildings_list():
     if 'loggedin' not in session: return jsonify([])
     rows = query_db("SELECT buildingname FROM building WHERE isactive = TRUE ORDER BY buildingname")
     return jsonify([dict(r) for r in rows])
 
 @app.route('/employee')
+@roles_required(ROLE_ACAD_HEAD)
 def employee():
     if 'loggedin' not in session: return redirect(url_for('login'))
 
@@ -5194,6 +5582,7 @@ def employee():
                                active_ay_id='', active_sem='', acad_years=[])
 
 @app.route('/add_employee', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def add_employee():
     if 'loggedin' not in session: return redirect(url_for('login'))
     if request.method == 'POST':
@@ -5217,13 +5606,14 @@ def add_employee():
             flash("Employee added successfully!", "success")
         except Exception as e:
             conn.rollback()
-            flash(f"Error adding employee: {e}", "error")
+            flash(f"Error adding employee: {_public_error(e)}", "error")
         finally:
             cur.close()
             conn.close()
         return redirect(url_for('employee'))
 
 @app.route('/edit_employee', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def edit_employee():
     if 'loggedin' not in session: return redirect(url_for('login'))
     if request.method == 'POST':
@@ -5253,7 +5643,7 @@ def edit_employee():
             flash("Employee details updated successfully!", "success")
         except Exception as e:
             conn.rollback()
-            flash(f"Error updating employee: {e}", "error")
+            flash(f"Error updating employee: {_public_error(e)}", "error")
         finally:
             cur.close()
             conn.close()
@@ -5323,6 +5713,7 @@ def _do_archive_employees(cur, emp_ids):
     cur.execute(f"DELETE FROM Faculty WHERE EmployeeNumber IN ({placeholders})", tuple(emp_ids))
 
 @app.route('/api/add_employee', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def api_add_employee():
     if 'loggedin' not in session:
         return jsonify({'success': False, 'error': 'Not logged in.'}), 401
@@ -5360,6 +5751,7 @@ def api_add_employee():
         cur.close(); conn.close()
 
 @app.route('/api/edit_employee', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def api_edit_employee():
     if 'loggedin' not in session:
         return jsonify({'success': False, 'error': 'Not logged in.'}), 401
@@ -5403,7 +5795,8 @@ def api_edit_employee():
         cur.close(); conn.close()
 
 
-@app.route('/archive_employee/<emp_num>')
+@app.route('/archive_employee/<emp_num>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
+@roles_required(*STAFF_ROLES)
 def archive_employee(emp_num):
     if 'loggedin' not in session: return redirect(url_for('login'))
 
@@ -5421,13 +5814,14 @@ def archive_employee(emp_num):
     except Exception as e:
         conn.rollback()
         flash(f"Error archiving employee {emp_num}: this may still be linked to other records in the system. "
-              f"({str(e)})", "error")
+              f"({_public_error(e)})", "error")
     finally:
         cur.close()
         conn.close()
     return redirect(url_for('employee'))
 
 @app.route('/bulk_archive', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def bulk_archive():
     if 'loggedin' not in session: return jsonify({'error': 'Unauthorized'}), 401
     
@@ -5447,12 +5841,13 @@ def bulk_archive():
         return jsonify({'success': f'{len(emp_ids)} employees archived successfully'})
     except Exception as e:
         conn.rollback()
-        return jsonify({'error': f'Error archiving: this may still be linked to other records in the system. ({str(e)})'}), 500
+        return jsonify({'error': f'Error archiving: this may still be linked to other records in the system. ({_public_error(e)})'}), 500
     finally:
         cur.close()
         conn.close()
 
 @app.route('/bulk_import', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def bulk_import():
     if 'loggedin' not in session: return redirect(url_for('login'))
     if 'file' not in request.files: return redirect(url_for('employee'))
@@ -5590,13 +5985,13 @@ def bulk_import():
 
             except ValueError as ve:
                 conn.rollback()
-                flash(f"Import failed at row {row_num}: {ve}", "error")
+                flash(f"Import failed at row {row_num}: {_public_error(ve)}", "error")
                 return redirect(url_for('employee'))
         conn.commit()
         flash("Bulk import completed successfully.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"An error occurred: {e}", "error")
+        flash(f"An error occurred: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -5744,12 +6139,13 @@ def _acad_insert_employees(rows, conn, cur):
             if inserted:
                 _save_faculty_contact(cur, emp_num, email, contact)
         except ValueError as ve:
-            errors.append(f"Row {i}: {ve}")
+            errors.append(f"Row {i}: {_public_error(ve)}")
     return errors
 
 
 # ── Academic Head: XLSX faculty import ───────────────────────────────────────
 @app.route('/faculty/import/xlsx', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_import_xlsx():
     if 'loggedin' not in session: return redirect(url_for('login'))
     if 'file' not in request.files or request.files['file'].filename == '':
@@ -5810,7 +6206,7 @@ def acad_faculty_import_xlsx():
             flash(f"XLSX import successful — {len(employees)} employee(s) processed.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Import error: {e}", "error")
+        flash(f"Import error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -5994,6 +6390,7 @@ def _parse_xlsx_employees(file_bytes):
 
 # ── Academic Head: CSV faculty analyze ───────────────────────────────────────
 @app.route('/faculty/import/csv/analyze', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_csv_analyze():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6006,11 +6403,12 @@ def acad_faculty_csv_analyze():
         result = _parse_csv_employees(f.read())
         return jsonify(result), (400 if 'error' in result else 200)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Academic Head: XLSX faculty analyze ──────────────────────────────────────
 @app.route('/faculty/import/xlsx/analyze', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_xlsx_analyze():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6023,11 +6421,12 @@ def acad_faculty_xlsx_analyze():
         result = _parse_xlsx_employees(f.read())
         return jsonify(result), (400 if 'error' in result else 200)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Academic Head: PDF faculty analyze ───────────────────────────────────────
 @app.route('/faculty/import/pdf/analyze', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_pdf_analyze():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6037,11 +6436,12 @@ def acad_faculty_pdf_analyze():
         data = parse_faculty_pdf(request.files['file'].read())
         return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Academic Head: DOCX faculty analyze ──────────────────────────────────────
 @app.route('/faculty/import/docx/analyze', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_docx_analyze():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6051,11 +6451,12 @@ def acad_faculty_docx_analyze():
         data = parse_faculty_docx(request.files['file'].read())
         return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Academic Head: pre-import duplicate check ────────────────────────────────
 @app.route('/faculty/import/check-duplicates', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_check_duplicates():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6087,13 +6488,14 @@ def acad_faculty_check_duplicates():
 
         return jsonify({'active': active, 'archived': archived})
     except Exception as e:
-        return jsonify({'active': [], 'archived': [], 'error': str(e)})
+        return jsonify({'active': [], 'archived': [], 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
 
 # ── Academic Head: restore archived employee during import ───────────────────
 @app.route('/faculty/import/restore-archived', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_restore_archived():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6122,13 +6524,14 @@ def acad_faculty_restore_archived():
         return jsonify({'success': True, 'emp_num': emp_num})
     except Exception as e:
         conn.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 
 # ── Academic Head: PDF/DOCX faculty confirm ──────────────────────────────────
 @app.route('/faculty/import/doc/confirm', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_faculty_doc_confirm():
     if 'loggedin' not in session: return redirect(url_for('login'))
     raw = request.form.get('employees_data', '[]')
@@ -6148,14 +6551,15 @@ def acad_faculty_doc_confirm():
             flash(f"Import successful — {len(employees)} employee(s) processed.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Import error: {e}", "error")
+        flash(f"Import error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
     return redirect(url_for('employee'))
 
 
-@app.route('/restore_employee/<int:archive_id>')
+@app.route('/restore_employee/<int:archive_id>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
+@roles_required(*STAFF_ROLES)
 def acad_restore_employee(archive_id):
     if 'loggedin' not in session: return redirect(url_for('login'))
 
@@ -6184,13 +6588,14 @@ def acad_restore_employee(archive_id):
         flash(f"Employee {emp_num} restored successfully.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error restoring employee: {e}", "error")
+        flash(f"Error restoring employee: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('archived_employees'))
 
 
 @app.route('/employee/bulk_restore', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def acad_bulk_restore():
     if 'loggedin' not in session:
         return jsonify({"success": False, "message": "Unauthorized"}), 403
@@ -6227,12 +6632,13 @@ def acad_bulk_restore():
         return jsonify({"success": True, "message": f"{len(emp_nums)} employees restored successfully."})
     except Exception as e:
         conn.rollback()
-        return jsonify({"success": False, "message": str(e)}), 500
+        return jsonify({"success": False, "message": _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 
 @app.route('/employee/archived')
+@roles_required(ROLE_ACAD_HEAD)
 def archived_employees():
     if 'loggedin' not in session: return redirect(url_for('login'))
     
@@ -6562,6 +6968,7 @@ def _reassign_curriculum_for_program(cur, programcode):
 
 
 @app.route('/api/program-yearlevel/auto-setup', methods=['POST'])
+@roles_required(ROLE_ADMIN)
 def api_program_yearlevel_auto_setup():
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 403
@@ -6572,12 +6979,13 @@ def api_program_yearlevel_auto_setup():
         return jsonify({'success': True, 'upserted': upserted})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 
 @app.route('/curriculum')
+@roles_required(ROLE_ACAD_HEAD)
 def curriculum():
     if 'loggedin' not in session: return redirect(url_for('login'))
     
@@ -6638,6 +7046,7 @@ def curriculum():
     return render_template('academic/curriculum.html', programs=programs, curriculums=curriculums, selected_program=selected_program, cohorts=cohorts)
 
 @app.route('/curriculum/view/<int:curriculum_id>')
+@roles_required(ROLE_ACAD_HEAD)
 def view_curriculum(curriculum_id):
     if 'loggedin' not in session: return redirect(url_for('login'))
     
@@ -6806,7 +7215,7 @@ def room_view(room_id):
         return render_template('academic/room_detail.html',
                                room=dict(room_info),
                                buildings=buildings or [],
-                               rooms_by_bldg_json=json.dumps(rooms_by_bldg),
+                               rooms_by_bldg_json=_htmlsafe_json(rooms_by_bldg),   # <, >, & escaped: safe inside <script>
                                active_ay_id=active_ay_id,
                                active_sem=active_sem,
                                is_modal=is_modal,
@@ -6819,6 +7228,7 @@ def room_view(room_id):
 # Insert these routes into the "ACADEMIC HEAD SPECIFIC ROUTES" section of your app.py
 
 @app.route('/schedule')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule():
     if 'loggedin' not in session: return redirect(url_for('login'))
 
@@ -7066,7 +7476,7 @@ def api_schedule_list_release():
         return jsonify({'success': True, 'released': released, 'changed': len(changed)})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -7149,7 +7559,7 @@ def api_schedule_list_delete():
             conn.rollback()
             try: cur.close(); conn.close()
             except: pass
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 def _attach_upcoming_changes(rows):
@@ -7185,6 +7595,7 @@ def _attach_upcoming_changes(rows):
 
 
 @app.route('/api/get_offerings_schedule')
+@roles_required(*STAFF_ROLES)
 def get_offerings_schedule():
     import re
     prog          = request.args.get('program')
@@ -7686,6 +8097,7 @@ def get_offerings_schedule():
         conn.close()
 
 @app.route('/api/debug_hist')
+@roles_required(ROLE_ADMIN)
 def debug_hist():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -7701,6 +8113,7 @@ def debug_hist():
         cur.close(); conn.close()
 
 @app.route('/api/schedule/diagnose')
+@roles_required(ROLE_ADMIN)
 def schedule_diagnose():
     """Diagnostic endpoint — shows exactly what data exists for the given filters."""
     prog = request.args.get('program', '')
@@ -7768,7 +8181,8 @@ def schedule_diagnose():
         })
     except Exception as e:
         import traceback
-        return jsonify({'error': str(e), 'traceback': traceback.format_exc()})
+        print(traceback.format_exc(), flush=True)     # server log only, never the response
+        return jsonify({'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
@@ -7881,7 +8295,7 @@ def export_schedule():
                         headers={"Content-Disposition": f"attachment; filename={filename}"})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -8673,7 +9087,7 @@ def schedule_export_count():
         return jsonify({'count': len(rows), 'programs': len(groups)})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -8748,7 +9162,7 @@ def schedule_export_multi():
                             headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
     
@@ -8912,6 +9326,7 @@ def _faculty_schedule_export_multi(data):
 
 
 @app.route('/api/schedule/export-generated', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def api_export_generated_schedule():
     """
     Export the in-memory generated schedule (not yet saved to DB) in the requested format.
@@ -8976,7 +9391,7 @@ def api_export_generated_schedule():
                         headers={'Content-Disposition': f'attachment; filename="{filename_base}{ext}"'})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 def _sch_gen_csv(rows):
@@ -11709,7 +12124,7 @@ def facsub_export_count():
         return jsonify({'count': len(rows), 'faculty': len(roster)})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -11796,7 +12211,7 @@ def facsub_export():
         return _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename)
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -12723,7 +13138,7 @@ def import_schedule():
         _yl_name = {1:'First',2:'Second',3:'Third',4:'Fourth',5:'Fifth'}.get(yl, str(yl))
         _ctx = f"Program: {prog or '(unknown)'}, {_yl_name} Year, Subject: {s_code or '(unknown)'}"
         print(f"Import Error Detail [{_ctx}]: {str(e)}")
-        flash(f"Import failed — {_ctx}: {str(e)}")
+        flash(f"Import failed — {_ctx}: {_public_error(e)}")
     finally: cur.close(); conn.close()
     return redirect(url_for('schedule'))
 
@@ -13524,7 +13939,7 @@ def sis_import_preview():
     try:
         raw_rows = _parse_sis_excel(file.stream)
     except Exception as e:
-        return jsonify({'error': f'Could not parse Excel file: {e}'}), 400
+        return jsonify({'error': f'Could not parse Excel file: {_public_error(e)}'}), 400
 
     if not raw_rows:
         return jsonify({'error': 'No data rows found. Ensure the file is in SIS format.'}), 400
@@ -13996,7 +14411,7 @@ def sis_import_confirm():
         _period_info = _classify_schedule_period(cur, ay_id, sem_type)
     except Exception as _pe:
         conn.rollback(); cur.close(); conn.close()
-        return jsonify({'error': f'Could not classify import period: {_pe}'}), 400
+        return jsonify({'error': f'Could not classify import period: {_public_error(_pe)}'}), 400
     if not _period_info:
         cur.close(); conn.close()
         return jsonify({'error': 'Semester not found'}), 400
@@ -14008,7 +14423,7 @@ def sis_import_confirm():
             return jsonify(_hist_result)
         except Exception as _he:
             conn.rollback()
-            return jsonify({'error': str(_he)}), 400
+            return jsonify({'error': _public_error(_he)}), 400
         finally:
             cur.close(); conn.close()
 
@@ -14630,7 +15045,7 @@ def sis_import_confirm():
         _yl_name = {1:'First',2:'Second',3:'Third',4:'Fourth',5:'Fifth'}.get(yl, str(yl))
         _ctx = f"Program: {prog or '(unknown)'}, {_yl_name} Year, Subject: {s_code or '(unknown)'}, while {_substep}"
         print(f'SIS Import Confirm Error [{_ctx}]: {e}')
-        return jsonify({'error': f'{_ctx} — {str(e)}'}), 500
+        return jsonify({'error': f'{_ctx} — {_public_error(e)}'}), 500
     finally:
         cur.close(); conn.close()
 
@@ -15693,7 +16108,7 @@ def schedule_import_check_existing():
                         'history': history,
                         'history_labels': {k: _SCHEDULE_REFERENCE_LABELS.get(k, k) for k in history}})
     except Exception as e:
-        return jsonify({'exists': False, 'count': 0, 'error': str(e)})
+        return jsonify({'exists': False, 'count': 0, 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
@@ -15746,7 +16161,7 @@ def schedule_unified_analyze():
             return jsonify({'error': f'Unsupported format: .{ext}'}), 400
     except Exception as e:
         cur.close(); conn.close()
-        return jsonify({'error': f'Parse error ({fmt or "unknown"}): {e}'}), 400
+        return jsonify({'error': f'Parse error ({fmt or "unknown"}): {_public_error(e)}'}), 400
 
     if not raw_rows:
         cur.close(); conn.close()
@@ -15975,7 +16390,7 @@ def schedule_unified_preview():
             ext = fname.rsplit('.', 1)[-1].upper() if '.' in fname else 'unknown'
             return jsonify({'error': f'Unsupported format: .{ext}. Use CSV, XLSX, DOCX, or PDF.'}), 400
     except Exception as e:
-        return jsonify({'error': f'Parse error ({fmt or "unknown"}): {e}'}), 400
+        return jsonify({'error': f'Parse error ({fmt or "unknown"}): {_public_error(e)}'}), 400
 
     if not raw_rows:
         return jsonify({'error': 'No schedule data found. Check that the file is a valid schedule document.'}), 400
@@ -16181,6 +16596,7 @@ def manual_schedule_editor():
 
 
 @app.route('/schedule/local-editor')
+@roles_required(ROLE_ACAD_HEAD)
 def local_schedule_editor():
     """Backward-compat redirect — all scheduler modes now share one route."""
     return redirect(url_for('manual_schedule_editor', scheduler='local'))
@@ -16189,6 +16605,7 @@ def local_schedule_editor():
 # ── Local Scheduler pages ────────────────────────────────────────────────────
 
 @app.route('/schedule/local-arrangements')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule_local_arrangements():
     if 'loggedin' not in session:
         return redirect(url_for('login'))
@@ -16714,6 +17131,7 @@ def api_get_local_arrangements():
 
 
 @app.route('/api/local/arrangement/<int:arr_id>')
+@roles_required(ROLE_ACAD_HEAD)
 def api_get_local_arrangement(arr_id):
     if 'loggedin' not in session:
         return jsonify({'success': False}), 401
@@ -19420,6 +19838,7 @@ def get_room_schedule(room_id):
 
 
 @app.route('/api/rooms_occupancy_by_day')
+@roles_required(*STAFF_ROLES)
 def api_rooms_occupancy_by_day():
     """
     Bulk effective-room occupancy for the Manual Editor room dropdown.
@@ -19575,6 +19994,13 @@ def api_get_faculty_schedule():
     semester   = request.args.get('semester')
     program    = request.args.get('program')
     year_level = request.args.get('year_level')
+    # Ownership: a Faculty account reads only its own schedule (its pages only ever pass
+    # their own EMP_NUM) and never Draft slices — without this, any faculty member could
+    # list every colleague's schedule, or an unpublished draft, by changing emp_num.
+    if session.get('role') == ROLE_FACULTY:
+        own = _session_employee_number()
+        if not own or (emp_num or '').strip() != str(own) or request.args.get('prefer_draft') == '1':
+            return _access_denied(403)
     prefer_draft = request.args.get('prefer_draft') == '1' and bool(emp_num and ay_id and semester)
     # official_only=1: Published Official only — Local arrangements neither replace an
     # Official meeting nor get added (a faculty's "Official Schedule" view). The Local
@@ -19875,6 +20301,7 @@ def api_faculty_my_local_schedule():
 
 
 @app.route('/api/manual/faculty_schedule')
+@roles_required(*STAFF_ROLES)
 def api_manual_faculty_schedule():
     """Faculty occupancy source for Manual/Local conflict checking.
 
@@ -20011,6 +20438,7 @@ def api_manual_faculty_schedule():
         return jsonify([]), 500
 
 @app.route('/api/get_curriculum')
+@roles_required(*STAFF_ROLES)
 def api_get_curriculum():
     prog  = request.args.get('program')
     ay_id = request.args.get('ay_id')
@@ -20096,6 +20524,7 @@ def api_get_curriculum():
         cur.close(); conn.close()
 
 @app.route('/api/get_existing_schedule_periods')
+@roles_required(*STAFF_ROLES)
 def api_get_existing_schedule_periods():
     prog = request.args.get('program')
     ay_id = request.args.get('ay_id')
@@ -20143,6 +20572,7 @@ def api_get_existing_schedule_periods():
         cur.close(); conn.close()
 
 @app.route('/api/dss/suggest')
+@roles_required(*STAFF_ROLES)
 def api_dss_suggest():
     import re
     subject_code = request.args.get('subject_code', '').strip()
@@ -20704,11 +21134,12 @@ def api_dss_suggest():
             "times":   {"recommended": recommended_times}
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        return jsonify({"success": False, "error": _public_error(e)})
     finally:
         cur.close(); conn.close()
 
 @app.route('/api/hc_config')
+@roles_required(*STAFF_ROLES)
 def api_hc_config():
     """Return hard-constraint settings for the manual editor frontend."""
     from database import load_scheduler_config as _lsc
@@ -20739,6 +21170,7 @@ def api_hc_config():
     })
 
 @app.route('/api/manual/subject_info')
+@roles_required(*STAFF_ROLES)
 def api_manual_subject_info():
     subject_code = request.args.get('subject_code', '').strip()
     if not subject_code:
@@ -20784,6 +21216,7 @@ def api_manual_subject_info():
 
 
 @app.route('/api/manual/faculty_info')
+@roles_required(*STAFF_ROLES)
 def api_manual_faculty_info():
     emp_num = request.args.get('emp_num', '').strip()
     subject_code = request.args.get('subject_code', '').strip()
@@ -20849,11 +21282,12 @@ def api_manual_faculty_info():
 
 
 @app.route('/api/manual/faculty_load')
+@roles_required(*STAFF_ROLES)
 def api_manual_faculty_load():
     try:
         return _api_manual_faculty_load_impl()
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
 
 def _api_manual_faculty_load_impl():
     emp_num        = request.args.get('emp_num', '').strip()
@@ -21334,6 +21768,7 @@ def _subject_load_info(cur, subjectcode):
     return dict(row) if row else {}
 
 @app.route('/admin/settings/merge_load_policies/subject_preview', methods=['GET'])
+@roles_required(ROLE_ADMIN)
 def api_merge_load_policy_subject_preview():
     """Read-only preview of the creditunits/tuitionhours a rule would apply for the given
     subject — used by the Add/Edit rule row so an admin can see what will be credited
@@ -21358,6 +21793,7 @@ def _hc17_policy_groups(cur, policy_ids):
 
 
 @app.route('/admin/settings/merge_load_policies', methods=['GET'])
+@roles_required(ROLE_ADMIN)
 def api_list_merge_load_policies():
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -21386,7 +21822,7 @@ def api_list_merge_load_policies():
         return jsonify({'success': True, 'policies': rows, 'model': _mg.merge_model(cfg)})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -21408,6 +21844,7 @@ def _validate_merge_policy_payload(data):
             'policyname': policyname}, None
 
 @app.route('/admin/settings/merge_load_policies', methods=['POST'])
+@roles_required(ROLE_ADMIN)
 def api_create_merge_load_policy():
     data = request.json or {}
     payload, err = _validate_merge_policy_payload(data)
@@ -21439,11 +21876,12 @@ def api_create_merge_load_policy():
         return jsonify({'success': True, 'policyid': new_id})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 @app.route('/admin/settings/merge_load_policies/<int:policyid>', methods=['PUT'])
+@roles_required(ROLE_ADMIN)
 def api_update_merge_load_policy(policyid):
     data = request.json or {}
     payload, err = _validate_merge_policy_payload(data)
@@ -21483,7 +21921,7 @@ def api_update_merge_load_policy(policyid):
                   payload['policyname'], policyid))
         except _pg_errors.ExclusionViolation as e:
             conn.rollback()
-            return jsonify({'success': False, 'error': f'Ambiguous HC17 policy range: {e.diag.message_primary}'}), 409
+            return jsonify({'success': False, 'error': 'Ambiguous HC17 policy range: it overlaps the section range of another policy for the same subject.'}), 409
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({'success': False, 'error': 'Rule not found.'}), 404
@@ -21492,7 +21930,7 @@ def api_update_merge_load_policy(policyid):
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -21616,7 +22054,7 @@ def api_merge_load_policy_groups(policyid):
         return jsonify(_mg.serialize({'success': True, 'policy': dict(pol), 'groups': available}))
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -21673,14 +22111,15 @@ def api_set_merge_load_policy_groups(policyid):
         return jsonify({'success': True, 'mergegroupids': wanted})
     except _pg_errors.ExclusionViolation as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': f'Ambiguous HC17 configuration: {e.diag.message_primary}'}), 409
+        return jsonify({'success': False, 'error': 'Ambiguous HC17 configuration: a selected merge group is already covered by another policy with an overlapping section range.'}), 409
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 @app.route('/admin/settings/merge_load_policies/<int:policyid>', methods=['DELETE'])
+@roles_required(ROLE_ADMIN)
 def api_delete_merge_load_policy(policyid):
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -21691,11 +22130,12 @@ def api_delete_merge_load_policy(policyid):
         return jsonify({'success': True, 'deleted': deleted})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 @app.route('/api/subjects/all', methods=['GET'])
+@roles_required(*STAFF_ROLES)
 def api_list_all_subjects():
     """Distinct subjectcode+subjectname across every curriculum — used to populate the
     Subject dropdown for Merged Class Faculty Load Policy rules (no standalone `subject`
@@ -21806,7 +22246,7 @@ def api_list_merge_groups():
                          'groups': groups})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21847,7 +22287,7 @@ def api_merge_group_options():
                          'days': list(_mg.DAYS)})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21868,7 +22308,7 @@ def api_merge_group_member_candidates():
         return _mg_json(dict(out, success=True))
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21893,7 +22333,7 @@ def api_merge_group_preview():
                          'completeness': pv['completeness'], 'impact': pv['impact']})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21927,7 +22367,7 @@ def api_create_merge_group():
         return _mg_unique_violation_response(conn, e)
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21952,7 +22392,7 @@ def api_update_merge_group(group_id):
         return _mg_unique_violation_response(conn, e)
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -21981,7 +22421,7 @@ def api_set_merge_group_active(group_id):
         return _mg_unique_violation_response(conn, e)
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22004,7 +22444,7 @@ def api_delete_merge_group(group_id):
         return resp
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22029,7 +22469,7 @@ def api_merge_group_sections():
         return _mg_json({'success': True, 'semesterid': sem_id, 'sections': rows})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22051,7 +22491,7 @@ def api_merge_group_common_subjects():
         return _mg_json({'success': True, 'subjects': out})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22083,12 +22523,12 @@ def api_create_merge_set():
         return _mg_json(dict(result, success=True), 201)
     except _mg.MergeApplyError as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e), 'errors': [str(e)]}, 400)
+        return _mg_json({'success': False, 'error': _public_error(e), 'errors': [_public_error(e)]}, 400)
     except _pg_errors.UniqueViolation as e:
         return _mg_unique_violation_response(conn, e)
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22110,7 +22550,7 @@ def api_remove_merge_group_member(group_id, section_id):
         return resp
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22130,7 +22570,7 @@ def api_merge_group_discovery():
         return _mg_json(dict(out, success=True, semester_ids=sem_ids))
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22175,7 +22615,7 @@ def api_merge_group_discovery_confirm():
         return _mg_json({'success': True, 'created': len(created), 'results': results})
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
@@ -22197,11 +22637,12 @@ def api_merge_group_dry_run():
         return _mg_json(dict(report, success=True, model=_mg.merge_model(cfg), semester_ids=sem_ids))
     except Exception as e:
         conn.rollback()
-        return _mg_json({'success': False, 'error': str(e)}, 500)
+        return _mg_json({'success': False, 'error': _public_error(e)}, 500)
     finally:
         cur.close(); conn.close()
 
 @app.route('/api/manual/assign_faculty', methods=['GET'])
+@roles_required(*STAFF_ROLES)
 def api_manual_get_assignments():
     program    = request.args.get('program', '').strip()
     year_level = request.args.get('year_level', '').strip()
@@ -22229,9 +22670,10 @@ def api_manual_get_assignments():
         cur.close(); conn.close()
         return jsonify({'success': True, 'assignments': [dict(r) for r in rows]})
     except Exception as e:
-        return jsonify({'success': True, 'assignments': [], 'error': str(e)})
+        return jsonify({'success': True, 'assignments': [], 'error': _public_error(e)})
 
 @app.route('/api/manual/assign_faculty', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_manual_save_assignment():
     data = request.json or {}
     program     = data.get('program', '').strip()
@@ -22270,9 +22712,10 @@ def api_manual_save_assignment():
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 @app.route('/api/manual/assign_faculty/<subjectcode>', methods=['DELETE'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_manual_delete_assignment(subjectcode):
     program    = request.args.get('program', '').strip()
     year_level = request.args.get('year_level', '').strip()
@@ -22294,10 +22737,11 @@ def api_manual_delete_assignment(subjectcode):
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/manual/curriculum_lock')
+@roles_required(*STAFF_ROLES)
 def api_manual_curriculum_lock():
     """A section's curriculum (Regular vs Bridging) for the Manual Editor and Schedule
     Generation. It comes from the section itself — Program Management → "With Bridging"
@@ -22314,10 +22758,11 @@ def api_manual_curriculum_lock():
             return jsonify({'success': True, 'locked': False})
         return jsonify({'success': True, 'locked': True, 'curriculum_mode': _mode, 'source': 'section'})
     except Exception as e:
-        return jsonify({'success': False, 'locked': False, 'error': str(e)})
+        return jsonify({'success': False, 'locked': False, 'error': _public_error(e)})
 
 
 @app.route('/api/manual/existing_days')
+@roles_required(*STAFF_ROLES)
 def api_manual_existing_days():
     subj  = request.args.get('subject_code', '').strip()
     ay_id = request.args.get('ay_id', '').strip()
@@ -22351,6 +22796,7 @@ def api_manual_existing_days():
 
 
 @app.route('/api/manual/existing_sessions')
+@roles_required(*STAFF_ROLES)
 def api_manual_existing_sessions():
     subj          = request.args.get('subject_code', '').strip()
     ay_id         = request.args.get('ay_id', '').strip()
@@ -22577,6 +23023,7 @@ def _merge_occupancy_policy(ay_id, semester):
 
 
 @app.route('/api/manual/merge_context', methods=['GET', 'POST'])
+@roles_required(*STAFF_ROLES)
 def api_manual_merge_context():
     """Manual Editor (P5): server-provided Merge Group metadata for ONE section.
 
@@ -22625,12 +23072,13 @@ def api_manual_merge_context():
     except Exception as e:
         conn.rollback()
         import traceback; traceback.print_exc()
-        return jsonify({'success': False, 'error': f'Merge Group context unavailable: {e}'}), 500
+        return jsonify({'success': False, 'error': f'Merge Group context unavailable: {_public_error(e)}'}), 500
     finally:
         cur.close(); conn.close()
 
 
 @app.route('/api/manual/section_schedule')
+@roles_required(*STAFF_ROLES)
 def api_manual_section_schedule():
     """
     Section schedule source for the Manual Editor / Local Scheduler.
@@ -22802,6 +23250,7 @@ def api_manual_section_schedule():
 
 
 @app.route('/api/get_valid_semesters')
+@roles_required(*STAFF_ROLES)
 def api_get_valid_semesters():
     curr_id = request.args.get('curriculum_id')
     yl = request.args.get('year_level')
@@ -22819,6 +23268,7 @@ def api_get_valid_semesters():
         cur.close(); conn.close()
 
 @app.route('/api/get_subjects')
+@roles_required(*STAFF_ROLES)
 def api_get_subjects():
     curr_id        = request.args.get('curriculum_id')
     yl             = request.args.get('year_level')
@@ -22994,6 +23444,7 @@ def api_get_subjects():
 
 
 @app.route('/reports')
+@roles_required(ROLE_ACAD_HEAD)
 def reports():
     if 'loggedin' not in session: return redirect(url_for('login'))
     ay_list         = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
@@ -24039,7 +24490,7 @@ def admin_add_employee():
             flash("Employee added successfully and account created!", "success")
         except Exception as e:
             conn.rollback()
-            flash(f"Error adding employee: {e}", "error")
+            flash(f"Error adding employee: {_public_error(e)}", "error")
         finally:
             cur.close()
             conn.close()
@@ -24089,7 +24540,7 @@ def admin_edit_employee():
             flash("Employee details updated successfully!", "success")
         except Exception as e:
             conn.rollback()
-            flash(f"Error updating employee: {e}", "error")
+            flash(f"Error updating employee: {_public_error(e)}", "error")
         finally:
             cur.close()
             conn.close()
@@ -24206,7 +24657,7 @@ def admin_api_edit_employee():
         cur.close(); conn.close()
 
 
-@app.route('/admin/archive_employee/<emp_num>')
+@app.route('/admin/archive_employee/<emp_num>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
 def admin_archive_employee(emp_num):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     
@@ -24224,7 +24675,7 @@ def admin_archive_employee(emp_num):
     except Exception as e:
         conn.rollback()
         flash(f"Error archiving employee {emp_num}: this may still be linked to other records in the system. "
-              f"({str(e)})", "error")
+              f"({_public_error(e)})", "error")
     finally:
         cur.close()
         conn.close()
@@ -24251,7 +24702,7 @@ def admin_bulk_archive():
         return jsonify({'success': f'{len(emp_ids)} employees archived and their accounts deactivated.'})
     except Exception as e:
         conn.rollback()
-        return jsonify({'error': f'Error archiving: this may still be linked to other records in the system. ({str(e)})'}), 500
+        return jsonify({'error': f'Error archiving: this may still be linked to other records in the system. ({_public_error(e)})'}), 500
     finally:
         cur.close()
         conn.close()
@@ -24411,14 +24862,14 @@ def admin_bulk_import():
 
             except ValueError as ve:
                 conn.rollback()
-                flash(f"Import Error at row {i}: {ve}", "error")
+                flash(f"Import Error at row {i}: {_public_error(ve)}", "error")
                 return redirect(url_for('admin_employee'))
 
         conn.commit()
         flash("Bulk import completed successfully. New employees have been given accounts.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"An error occurred during bulk import: {e}", "error")
+        flash(f"An error occurred during bulk import: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -24541,7 +24992,7 @@ def _admin_insert_employees(rows, conn, cur):
                 _save_faculty_contact(cur, emp_num, email, contact, role)
 
         except ValueError as ve:
-            errors.append(f"Row {i}: {ve}")
+            errors.append(f"Row {i}: {_public_error(ve)}")
     return errors
 
 
@@ -24607,7 +25058,7 @@ def admin_faculty_import_xlsx():
             flash(f"XLSX import successful — {len(employees)} employee(s) processed.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Import error: {e}", "error")
+        flash(f"Import error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -24628,7 +25079,7 @@ def admin_faculty_csv_analyze():
         result = _parse_csv_employees(f.read())
         return jsonify(result), (400 if 'error' in result else 200)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Admin: XLSX faculty analyze ──────────────────────────────────────────────
@@ -24645,7 +25096,7 @@ def admin_faculty_xlsx_analyze():
         result = _parse_xlsx_employees(f.read())
         return jsonify(result), (400 if 'error' in result else 200)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Admin: PDF faculty analyze ───────────────────────────────────────────────
@@ -24659,7 +25110,7 @@ def admin_faculty_pdf_analyze():
         data = parse_faculty_pdf(request.files['file'].read())
         return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Admin: DOCX faculty analyze ──────────────────────────────────────────────
@@ -24673,7 +25124,7 @@ def admin_faculty_docx_analyze():
         data = parse_faculty_docx(request.files['file'].read())
         return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 
 # ── Admin: pre-import duplicate check ───────────────────────────────────────
@@ -24709,7 +25160,7 @@ def admin_faculty_check_duplicates():
 
         return jsonify({'active': active, 'archived': archived})
     except Exception as e:
-        return jsonify({'active': [], 'archived': [], 'error': str(e)})
+        return jsonify({'active': [], 'archived': [], 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
@@ -24744,7 +25195,7 @@ def admin_faculty_restore_archived():
         return jsonify({'success': True, 'emp_num': emp_num})
     except Exception as e:
         conn.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -24770,7 +25221,7 @@ def admin_faculty_doc_confirm():
             flash(f"Import successful — {len(employees)} employee(s) processed.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Import error: {e}", "error")
+        flash(f"Import error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -24802,7 +25253,7 @@ def admin_archived_employees():
                            employee_types=et_rows,
                            specializations=spec_rows)
 
-@app.route('/admin/restore_employee/<int:archive_id>')
+@app.route('/admin/restore_employee/<int:archive_id>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
 def admin_restore_employee(archive_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     
@@ -24831,7 +25282,7 @@ def admin_restore_employee(archive_id):
         flash(f"Employee {emp_num} restored successfully and their account has been reactivated.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error restoring employee: {e}", "error")
+        flash(f"Error restoring employee: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -24873,7 +25324,7 @@ def admin_bulk_restore():
         return jsonify({"success": True, "message": f"{len(emp_nums)} employees restored and reactivated."})
     except Exception as e:
         conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": _public_error(e)}), 500
     finally:
         cur.close()
         conn.close()
@@ -24915,6 +25366,7 @@ def admin_rooms():
                            acad_years=acad_years)
 
 @app.route('/admin/add_building', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def add_building():
     name = (request.form.get('bldg_name') or '').strip()
     if name:
@@ -24927,12 +25379,13 @@ def add_building():
                 flash(f"Building '{name}' added successfully!", "success")
             except Exception as e:
                 conn.rollback()
-                flash(f"Error: {e}", "error")
+                flash(f"Error: {_public_error(e)}", "error")
             finally:
                 cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
 
 @app.route('/admin/add_room', methods=['POST'])
+@roles_required(*STAFF_ROLES)
 def add_room():
     name = (request.form.get('room_name') or '').strip()
     conn = get_db_connection()
@@ -24947,12 +25400,12 @@ def add_room():
             flash(f"Room '{name}' added successfully!", "success")
         except Exception as e:
             conn.rollback()
-            flash(f"Error: {e}", "error")
+            flash(f"Error: {_public_error(e)}", "error")
         finally:
             cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
 
-@app.route('/admin/delete_room/<int:room_id>')
+@app.route('/admin/delete_room/<int:room_id>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
 def delete_room(room_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     try:
@@ -24965,7 +25418,7 @@ def delete_room(room_id):
             conn.commit()
             flash("Room deleted successfully.", "success")
     except Exception as e:
-        flash(f"Error: {e}", "error")
+        flash(f"Error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
@@ -24999,7 +25452,7 @@ def edit_room_submit():
         cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
 
-@app.route('/admin/delete_building/<int:bldg_id>')
+@app.route('/admin/delete_building/<int:bldg_id>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
 def delete_building(bldg_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
     try:
@@ -25016,7 +25469,7 @@ def delete_building(bldg_id):
             cur.execute("DELETE FROM Building WHERE BuildingID = %s", (bldg_id,))
             conn.commit()
             flash("Building and its rooms deleted.", "success")
-    except Exception as e: flash(f"Error: {e}", "error")
+    except Exception as e: flash(f"Error: {_public_error(e)}", "error")
     finally: cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
 
@@ -25034,7 +25487,7 @@ def edit_building():
             cur.execute("UPDATE Building SET BuildingName = %s WHERE BuildingID = %s", (new_name, b_id))
             conn.commit()
             flash("Building renamed successfully.", "success")
-    except Exception as e: flash(f"Error: {e}", "error")
+    except Exception as e: flash(f"Error: {_public_error(e)}", "error")
     finally: cur.close(); conn.close()
     return redirect(url_for('admin_rooms'))
 # ── Room / Building JSON API (Admin + Academic Head) ─────────────────────────
@@ -25059,7 +25512,7 @@ def api_add_building():
         return jsonify({'success': True, 'buildingid': bldg_id, 'buildingname': name})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25094,7 +25547,7 @@ def api_add_room():
                         'buildingname': brow['buildingname'] if brow else ''})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25134,7 +25587,7 @@ def api_edit_room():
                         'buildingname': brow['buildingname'] if brow else ''})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25156,7 +25609,7 @@ def api_edit_building():
         return jsonify({'success': True, 'buildingid': bldg_id, 'buildingname': new_name})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25176,7 +25629,7 @@ def api_delete_room():
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25200,7 +25653,7 @@ def api_delete_building():
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25464,7 +25917,7 @@ def room_schedule_export_count():
         return jsonify({'count': len(rows), 'rooms': len(groups)})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25526,7 +25979,7 @@ def room_schedule_export():
                             headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -25808,6 +26261,7 @@ def _year_import_error(curr_year, rows=None, cc_index=None):
 
 
 @app.route('/admin/curriculum/import', methods=['POST'])
+@roles_required(ROLE_ADMIN)
 def import_curriculum():
     file = request.files.get('file')
     prog_code = request.form.get('program_code')
@@ -25934,7 +26388,7 @@ def import_curriculum():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Import failed while {step}: {e}")
+        flash(f"Import failed while {step}: {_public_error(e)}")
     finally:
         cur.close(); conn.close()
     return redirect(request.referrer)
@@ -25964,7 +26418,7 @@ def analyze_curriculum_csv():
         stream = io.StringIO(file.stream.read().decode('UTF8'), newline=None)
         data_rows = list(csv.reader(stream))[1:]  # skip header
     except Exception as e:
-        return jsonify({'error': f'Failed to read CSV: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
+        return jsonify({'error': f'Failed to read CSV: {_public_error(e)}', 'subjects': [], 'confidence': 0, 'warnings': [_public_error(e)], 'subject_count': 0}), 400
 
     year_err = _year_import_error(curr_year, data_rows, idx.get('cc'))
     if year_err:
@@ -26039,7 +26493,7 @@ def analyze_curriculum_xlsx():
         wb = openpyxl.load_workbook(io.BytesIO(file.stream.read()), data_only=True)
         data_rows = list(wb.active.iter_rows(values_only=True))[1:]  # skip header
     except Exception as e:
-        return jsonify({'error': f'Failed to read Excel file: {e}', 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 400
+        return jsonify({'error': f'Failed to read Excel file: {_public_error(e)}', 'subjects': [], 'confidence': 0, 'warnings': [_public_error(e)], 'subject_count': 0}), 400
 
     year_err = _year_import_error(curr_year, data_rows, idx.get('cc'))
     if year_err:
@@ -26125,7 +26579,7 @@ def analyze_curriculum_pdf():
                 _cur.close(); _conn.close()
         return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e), 'subjects': [], 'confidence': 0, 'warnings': [str(e)], 'subject_count': 0}), 500
+        return jsonify({'error': _public_error(e), 'subjects': [], 'confidence': 0, 'warnings': [_public_error(e)], 'subject_count': 0}), 500
 
 
 @app.route('/admin/curriculum/import/pdf/confirm', methods=['POST'])
@@ -26257,7 +26711,7 @@ def confirm_pdf_import():
         flash(f"{import_source} Import Successful: {prog_code} C.Y {curr_year} — {len(subjects)} subjects {action_word}{type_note}{bridging_note}.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Import failed while {step}: {e}")
+        flash(f"Import failed while {step}: {_public_error(e)}")
     finally:
         cur.close(); conn.close()
 
@@ -26266,6 +26720,7 @@ def confirm_pdf_import():
 
 # ── Excel (.xlsx) curriculum import ──────────────────────────────────────────
 @app.route('/admin/curriculum/import/xlsx', methods=['POST'])
+@roles_required(ROLE_ADMIN)
 def import_curriculum_xlsx():
     file      = request.files.get('file')
     prog_code = request.form.get('program_code')
@@ -26293,7 +26748,7 @@ def import_curriculum_xlsx():
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
     except Exception as e:
-        flash(f"Failed to read Excel file: {e}")
+        flash(f"Failed to read Excel file: {_public_error(e)}")
         return redirect(request.referrer)
 
     if len(rows) < 2:
@@ -26411,7 +26866,7 @@ def import_curriculum_xlsx():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Import failed while {step}: {e}")
+        flash(f"Import failed while {step}: {_public_error(e)}")
     finally:
         cur.close(); conn.close()
 
@@ -26457,8 +26912,8 @@ def analyze_curriculum_docx_route():
         return jsonify(result)
     except Exception as e:
         return jsonify({
-            'error': str(e), 'subjects': [], 'confidence': 0,
-            'warnings': [str(e)], 'subject_count': 0
+            'error': _public_error(e), 'subjects': [], 'confidence': 0,
+            'warnings': [_public_error(e)], 'subject_count': 0
         }), 500
 
 
@@ -26530,12 +26985,12 @@ def curriculum_blocking_schedules(curriculum_id):
             'historical_count': historical_count,
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
 
-@app.route('/admin/curriculum/delete/<int:curriculum_id>')
+@app.route('/admin/curriculum/delete/<int:curriculum_id>', methods=['POST'])   # POST + CSRF token only: a GET link could be forged
 def admin_delete_curriculum(curriculum_id):
     if session.get('role') != 'Admin': return redirect(url_for('login'))
 
@@ -26659,7 +27114,7 @@ def admin_delete_curriculum(curriculum_id):
     except Exception as e:
         conn.rollback()
         print(f"[delete_curriculum] ERROR: {e}")
-        flash(f"Error deleting curriculum: {str(e)}", "error")
+        flash(f"Error deleting curriculum: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -26711,7 +27166,7 @@ def assign_curriculum():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        flash(f"Database Error: {str(e)}")
+        flash(f"Database Error: {_public_error(e)}")
     finally:
         cur.close(); conn.close()
 
@@ -26727,7 +27182,7 @@ def autogenerate_assignments():
         flash(f"Program year levels updated. {count} row(s) processed.")
     except Exception as e:
         conn.rollback()
-        flash(f"Error: {str(e)}")
+        flash(f"Error: {_public_error(e)}")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_curriculum'))
@@ -26930,7 +27385,7 @@ def admin_user_management():
 
         return render_template('admin/user_management_admin.html', accounts=accounts)
     except Exception as e:
-        flash(f"Error loading accounts: {e}", "error")
+        flash(f"Error loading accounts: {_public_error(e)}", "error")
         return redirect(url_for('admin_dashboard'))
     finally:
         cur.close(); conn.close()
@@ -27190,7 +27645,7 @@ def api_user_accept_employee_id():
         conn.commit()
     except _SetupProblem as p:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(p)}), 400
+        return jsonify({'success': False, 'error': _public_error(p)}), 400
     except Exception as e:
         conn.rollback()
         print(f"[employee id accept] failed: {type(e).__name__}: {e}")
@@ -27387,7 +27842,7 @@ def _validate_ay_no_gaps(cur, year_start, year_end, ay_id):
 
         return True, None
     except (ValueError, TypeError, IndexError) as e:
-        return False, f"Error validating year sequence: {e}"
+        return False, f"Error validating year sequence: {_public_error(e)}"
 
 
 def _validate_ay_no_overlap(cur, ay_id, sem_configs):
@@ -27724,7 +28179,7 @@ def admin_settings():
                                current_sem_label=current_sem_label,
                                max_existing_year_end=max_existing_year_end)
     except Exception as e:
-        flash(f"Error loading settings: {e}", "error")
+        flash(f"Error loading settings: {_public_error(e)}", "error")
         return redirect(url_for('admin_dashboard'))
     finally:
         cur.close(); conn.close()
@@ -27915,7 +28370,7 @@ def admin_program_management():
                                mgmt_sem_options=mgmt_sem_options,
                                selected_mgmt_sem=selected_mgmt_sem)
     except Exception as e:
-        flash(f"Error loading program management: {e}", "error")
+        flash(f"Error loading program management: {_public_error(e)}", "error")
         return redirect(url_for('admin_dashboard'))
     finally:
         cur.close(); conn.close()
@@ -27944,7 +28399,7 @@ def update_scheduler_config():
         flash("Scheduling constraint weights updated successfully.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error saving constraints: {e}", "error")
+        flash(f"Error saving constraints: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
@@ -27975,7 +28430,7 @@ def account_reset_password():
         flash(f"Password for '{username}' reset to: PUP@{username}. They must change it on next login.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error resetting password: {e}", "error")
+        flash(f"Error resetting password: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_user_management'))
@@ -27998,7 +28453,7 @@ def account_toggle_status():
         flash(f"Account {label} successfully.", "success")
     except Exception as e:
         conn.rollback()
-        flash(f"Error updating account status: {e}", "error")
+        flash(f"Error updating account status: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_user_management'))
@@ -28030,7 +28485,7 @@ def add_designation():
             )
     except Exception as e:
         conn.rollback()
-        flash(f"Database Error: {str(e)}", "error")
+        flash(f"Database Error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -28088,7 +28543,7 @@ def activate_period():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Error: {str(e)}", "error")
+        flash(f"Error: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -28152,7 +28607,7 @@ def finalize_ay():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Error finalizing Academic Year: {e}", "error")
+        flash(f"Error finalizing Academic Year: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -28268,7 +28723,7 @@ def delete_ay():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Error deleting Academic Year: {e}", "error")
+        flash(f"Error deleting Academic Year: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -28550,7 +29005,7 @@ def upsert_ay():
 
     except Exception as e:
         conn.rollback()
-        flash(f"Database Error: {str(e)}", "error")
+        flash(f"Database Error: {_public_error(e)}", "error")
     finally:
         cur.close()
         conn.close()
@@ -28589,7 +29044,7 @@ def update_emp_type():
         )
     except Exception as e:
         conn.rollback()
-        flash(f"Error: {str(e)}", "error")
+        flash(f"Error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
         
@@ -28624,7 +29079,7 @@ def update_designation():
         )
     except Exception as e:
         conn.rollback()
-        flash(f"Error: {str(e)}", "error")
+        flash(f"Error: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
 
@@ -28645,7 +29100,7 @@ def get_hard_constraints():
         result = {k: v for k, v in cfg.items() if k.startswith('hc_') and k != _mg.MODEL_KEY}
         return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
 
 @app.route('/admin/settings/hard_constraints', methods=['POST'])
 def save_hard_constraints():
@@ -28699,7 +29154,7 @@ def save_hard_constraints():
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -28745,7 +29200,7 @@ def settings_add_program():
                         'programcode': code})   # page opens the new program after reload
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': f'Error adding program: {e}'})
+        return jsonify({'success': False, 'error': f'Error adding program: {_public_error(e)}'})
     finally:
         cur.close(); conn.close()
 
@@ -28819,7 +29274,7 @@ def settings_edit_program():
         return jsonify({'success': True, 'message': f"Program '{code}' updated."})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': f'Error updating program: {e}'})
+        return jsonify({'success': False, 'error': f'Error updating program: {_public_error(e)}'})
     finally:
         cur.close(); conn.close()
 
@@ -28844,7 +29299,7 @@ def settings_toggle_program_yearlevel():
         return jsonify({'success': True, 'updated': updated, 'isactive': isactive})
     except Exception as e:
         if conn: conn.rollback()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -28911,7 +29366,7 @@ def settings_delete_program():
                            f'Program {code}: marked inactive, cascaded to current/future cohorts+sections only (past AYs untouched)',
                            category='program', color=_LOG_COLORS['program'])
     except Exception as e:
-        conn.rollback(); flash(f"Error deactivating program: {e}", "error")
+        conn.rollback(); flash(f"Error deactivating program: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_program_management'))
@@ -28953,7 +29408,7 @@ def settings_add_curriculum():
                            f'Created curriculum track {code} ({year}) for program {pcode}',
                            category='curriculum', color=_LOG_COLORS['curriculum'])
     except Exception as e:
-        conn.rollback(); flash(f"Error adding curriculum: {e}", "error")
+        conn.rollback(); flash(f"Error adding curriculum: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
@@ -28983,7 +29438,7 @@ def settings_edit_curriculum():
                            f'Modified curriculum ID {cid} to code {code}, year {year}',
                            category='curriculum', color=_LOG_COLORS['curriculum'])
     except Exception as e:
-        conn.rollback(); flash(f"Error updating curriculum: {e}", "error")
+        conn.rollback(); flash(f"Error updating curriculum: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
@@ -29005,7 +29460,7 @@ def settings_delete_curriculum():
                                f'Removed empty curriculum ID {cid}',
                                category='curriculum', color=_LOG_COLORS['curriculum'])
     except Exception as e:
-        conn.rollback(); flash(f"Error deleting curriculum: {e}", "error")
+        conn.rollback(); flash(f"Error deleting curriculum: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
@@ -29038,7 +29493,7 @@ def settings_toggle_curriculum_active():
         if conn:
             try: conn.rollback()
             except Exception: pass
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29184,7 +29639,7 @@ def settings_update_program_yearlevel():
         })
     except Exception as e:
         if conn: conn.rollback()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29275,7 +29730,7 @@ def settings_add_section():
                                f"Added section '{section_name}' (Year {year_level}) to program {prog_code}",
                                category='program', color=_LOG_COLORS.get('program', 'blue'))
     except Exception as e:
-        conn.rollback(); flash(f"Error adding section: {e}", "error")
+        conn.rollback(); flash(f"Error adding section: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_program_management'))
@@ -29294,7 +29749,7 @@ def settings_deactivate_section():
                            f"Section ID {section_id} marked as inactive",
                            category='program', color=_LOG_COLORS.get('program', 'blue'))
     except Exception as e:
-        conn.rollback(); flash(f"Error deactivating section: {e}", "error")
+        conn.rollback(); flash(f"Error deactivating section: {_public_error(e)}", "error")
     finally:
         cur.close(); conn.close()
     return redirect(url_for('admin_settings'))
@@ -29341,7 +29796,7 @@ def settings_toggle_program_active():
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
@@ -29413,7 +29868,7 @@ def settings_edit_section():
         return jsonify({'success': True, 'sectionid': sid, 'sectionname': sname, 'withbridging': swb})
     except Exception as e:
         if conn: conn.rollback()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29488,7 +29943,7 @@ def settings_delete_section():
         })
     except Exception as e:
         if conn: conn.rollback()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29628,7 +30083,7 @@ def settings_add_offering():
             except Exception: pass
         import traceback
         print(f"[AddOffering] ERROR: {e}\n{traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29809,7 +30264,7 @@ def settings_edit_offering():
             except Exception: pass
         import traceback
         print(f"[EditOffering] ERROR: {e}\n{traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -29904,7 +30359,7 @@ def settings_delete_offering():
             except Exception: pass
         import traceback
         print(f"[DeleteOffering] ERROR: {e}\n{traceback.format_exc()}")
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         if cur:  cur.close()
         if conn: conn.close()
@@ -30214,7 +30669,7 @@ def reports_data():
             return jsonify({'error': 'Unknown report type'}), 400
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -31857,6 +32312,7 @@ _RPT_FILENAMES = {
 
 
 @app.route('/reports/class_schedule/sections')
+@roles_required(*STAFF_ROLES)
 def report_class_schedule_sections():
     """Sections dropdown for the Class Schedule report filter, scoped to the
     checked Academic Year/Program/Year Level filters (ay_ids, programs,
@@ -31902,6 +32358,7 @@ def report_class_schedule_sections():
 # Replaces the stub at the bottom of app.py (around line 14389)
 # ══════════════════════════════════════════════════════════════════════════════
 @app.route('/reports/preview/<report_type>')
+@roles_required(*STAFF_ROLES)
 def report_preview(report_type):
     if 'loggedin' not in session:
         return redirect(url_for('login'))
@@ -32353,6 +32810,7 @@ def report_preview(report_type):
 # Called from the Export modal on the preview page
 # ══════════════════════════════════════════════════════════════════════════════
 @app.route('/reports/export/<report_type>', methods=['POST'])
+@roles_required(*STAFF_ROLES)   # was: only 'faculty_subject' checked the role
 def report_export(report_type):
     if 'loggedin' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
@@ -32407,7 +32865,7 @@ def report_export(report_type):
                                            _as_list(payload.get('faculty_types')), formats, filename)
         except Exception as e:
             import traceback; traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _public_error(e)}), 500
         finally:
             cur.close(); conn.close()
 
@@ -32476,7 +32934,7 @@ def report_export(report_type):
                                 headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
         except Exception as e:
             import traceback; traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _public_error(e)}), 500
         finally:
             cur.close(); conn.close()
 
@@ -32534,7 +32992,7 @@ def report_export(report_type):
                                 headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
         except Exception as e:
             import traceback; traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _public_error(e)}), 500
         finally:
             cur.close(); conn.close()
 
@@ -32584,7 +33042,7 @@ def report_export(report_type):
                                 headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
         except Exception as e:
             import traceback; traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _public_error(e)}), 500
         finally:
             cur.close(); conn.close()
 
@@ -32633,7 +33091,7 @@ def report_export(report_type):
                                 headers={'Content-Disposition': f'attachment; filename="{filename}.zip"'})
         except Exception as e:
             import traceback; traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _public_error(e)}), 500
         finally:
             cur.close(); conn.close()
 
@@ -32660,7 +33118,7 @@ def report_export(report_type):
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 # ==============================================================================
@@ -32869,7 +33327,7 @@ def faculty_dashboard():
     except Exception as e:
         if conn:
             conn.close()
-        return f"<div style='padding: 50px;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
+        return f"<div style='padding: 50px;'><h2 style='color: red;'>Error</h2><p>{_html_escape(_public_error(e))}</p></div>"
 
 # --- Route for Teaching Assignment ---
 @app.route('/faculty_teaching_assignment')
@@ -32948,7 +33406,7 @@ def faculty_teaching_assignment():
                                ta_terms=terms if preview_terms else [],
                                is_preview=bool(chosen))
     except Exception as e:
-        return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>Error</h2><p>{str(e)}</p></div>"
+        return f"<div style='padding: 50px; font-family: Arial;'><h2 style='color: red;'>Error</h2><p>{_html_escape(_public_error(e))}</p></div>"
 
 # --- Route for Class Schedule (SIS) Page ---
 @app.route('/faculty_schedule')
@@ -33194,7 +33652,7 @@ def api_faculty_my_requests():
         combined.sort(key=lambda x: x.get('date_submitted',''), reverse=True)
         return jsonify({'success': True, 'requests': combined})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 # --- API: Update a pending faculty request ---
 @app.route('/api/faculty/my_requests/<req_type>/<int:req_id>', methods=['PUT'])
@@ -33301,7 +33759,7 @@ def api_faculty_update_request(req_type, req_id):
 
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 # --- API: Cancel a pending faculty request ---
 @app.route('/api/faculty/my_requests/<req_type>/<int:req_id>', methods=['DELETE'])
@@ -33345,7 +33803,7 @@ def api_faculty_cancel_request(req_type, req_id):
             conn3.close()
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 @app.route('/api/faculty/my_requests/<req_type>/<int:req_id>/permanent', methods=['DELETE'])
 def api_faculty_delete_request(req_type, req_id):
@@ -33464,7 +33922,7 @@ def api_faculty_my_schedule_subjects():
             r['merged_class'] = x.get('group') if x else None
         return jsonify({'success': True, 'subjects': rows})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 # --- API: Current faculty profile (name, designation) ---
@@ -33498,7 +33956,7 @@ def api_faculty_me():
             'designation': row['designation'],
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 _DAY_ABBR = {'Monday': 'M', 'Tuesday': 'T', 'Wednesday': 'W', 'Thursday': 'TH',
@@ -33698,7 +34156,7 @@ def api_faculty_my_teaching_load():
             },
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -34228,7 +34686,7 @@ def api_search():
 
         return jsonify({'results': results})
     except Exception as e:
-        return jsonify({'results': [], 'error': str(e)})
+        return jsonify({'results': [], 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
 
@@ -34288,7 +34746,7 @@ def api_user_me():
             'photo_editable': True,   # own profile picture is always changeable
         })
     except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+        conn.rollback(); return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally: cur.close(); conn.close()
 
 
@@ -34310,7 +34768,7 @@ def api_user_options():
             'name_suffixes': list(_NAME_SUFFIXES),
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 @app.route('/api/user/profile/update', methods=['POST'])
 def api_user_profile_update():
@@ -34337,7 +34795,7 @@ def api_user_profile_update():
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
-        conn.rollback(); return jsonify({'success': False, 'error': str(e)}), 500
+        conn.rollback(); return jsonify({'success': False, 'error': _public_error(e)}), 500
     finally: cur.close(); conn.close()
 
 @app.route('/api/user/photo/upload', methods=['POST'])
@@ -34576,7 +35034,7 @@ def api_faculty_my_assignments():
         return jsonify({'success': True, 'assignments': [dict(r) for r in rows],
                         '_debug_emp': str(emp_num), '_count': len(rows)})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e), '_debug_emp': str(emp_num) if 'emp_num' in dir() else 'N/A'}), 500
+        return jsonify({'success': False, 'error': _public_error(e), '_debug_emp': str(emp_num) if 'emp_num' in dir() else 'N/A'}), 500
 
 # --- API: Faculty's blocked time slots for a given day (published schedule occupancy) ---
 @app.route('/api/faculty/blocked_times')
@@ -34641,7 +35099,7 @@ def api_faculty_blocked_times():
             blocked += _live_blocks("es.sectionid = %s", [int(section_id)], 'section')
         return jsonify({'success': True, 'blocked': blocked})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 # --- API: Faculty full schedule (with lec/lab hours) ---
 @app.route('/api/faculty/schedule')
@@ -34812,7 +35270,7 @@ def api_faculty_schedule_full():
         return jsonify({'success': True, 'sessions': effective})
     except Exception as e:
         print(f"[api_faculty_schedule_full] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 def _save_makeup_request(data, faculty_empno, existing_requestid=None):
     _ensure_request_tables()
@@ -35802,7 +36260,7 @@ def api_faculty_check_request_conflicts():
             'merge_room_hint':   _merge['other_room'],
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/faculty/available_rooms')
@@ -35965,7 +36423,7 @@ def api_faculty_available_rooms():
         return jsonify({'success': True, 'rooms': available})
     except Exception as e:
         print(f"[api_faculty_available_rooms] Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 
@@ -36653,7 +37111,7 @@ def _fmt_12h(t_str):
 def _get_semester_id(cur, acad_year, term):
     cur.execute("SELECT semesterid FROM public.semester WHERE academicyearid = %s AND semestertype = %s", (acad_year, term))
     result = cur.fetchone()
-    if not result: raise Exception(f"Semester not found for {acad_year} {term}")
+    if not result: raise ValueError(f"Semester not found for {acad_year} {term}")
     return result['semesterid']
 
 # ── DATABASE BATCH VERSIONING LOGIC ───────────────────────────────────
@@ -37362,17 +37820,20 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
 
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route('/schedule/drafts')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule_drafts_list():
     if 'loggedin' not in session:
         return redirect(url_for('login'))
     return render_template('academic/drafts.html')
 
 @app.route('/schedule/drafts/<int:version_id>')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule_draft_detail(version_id):
     if 'loggedin' not in session: return redirect(url_for('login'))
     return render_template('academic/draftView.html', version_id=version_id)
 
 @app.route('/schedule/version-history')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule_version_history():
     if 'loggedin' not in session: return redirect(url_for('login'))
     return render_template('academic/versionHistory.html')
@@ -37438,6 +37899,7 @@ def room_schedule_view():
     )
 
 @app.route('/academic/schedule-generation')
+@roles_required(ROLE_ACAD_HEAD)
 def schedule_generation_view():
     if 'loggedin' not in session: return redirect(url_for('login'))
     from datetime import date as _date
@@ -39671,6 +40133,7 @@ def _generation_shortage_notices(schedule_rows, term, acad_year_id, section_id, 
 
 
 @app.route('/api/schedule/generate', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 @merge_groups.reuse_policies()   # read-only: build the HC16/HC17 policy once, not once per check
 def api_generate_schedule():
     data = request.json or {}
@@ -40126,6 +40589,7 @@ def api_generate_schedule():
 
 
 @app.route('/api/schedule/check-existing', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_check_existing_schedule():
     """Return whether a Draft or Published schedule already exists for the given section context."""
     try:
@@ -40180,10 +40644,11 @@ def api_check_existing_schedule():
         return jsonify({'exists': False}), 200
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'exists': False, 'error': str(e)}), 200
+        return jsonify({'exists': False, 'error': _public_error(e)}), 200
 
 
 @app.route('/api/schedule/archive-draft-for-editor', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_archive_draft_for_editor():
     """Replace path for Generation (Save Draft / Go to Manual Editor): retire the section's
     current Official DRAFT so the generated schedule becomes the new Draft.
@@ -40240,10 +40705,11 @@ def api_archive_draft_for_editor():
         import traceback; traceback.print_exc()
         try: conn.rollback()
         except Exception: pass
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/accuracy', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_schedule_accuracy():
     """
     Standalone re-scoring endpoint — same shared evaluation object as
@@ -40287,10 +40753,11 @@ def api_schedule_accuracy():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/retrieve-previous', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_retrieve_previous_schedule():
     """
     Retrieve the schedule of the IMMEDIATELY PREVIOUS academic year for the same
@@ -40565,6 +41032,7 @@ def api_retrieve_previous_schedule():
 
 
 @app.route('/api/schedule/save-draft', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 @merge_groups.reuse_offered()   # read the offered curriculum once per request (merge groups stay fresh)
 def api_save_draft():
     conn = None; cur = None
@@ -40787,7 +41255,7 @@ def api_save_draft():
                 return jsonify({
                     'success': False, 'code': 'CONSTRAINT_CHECK_UNAVAILABLE',
                     'error': (f'Cannot save draft: the conflict check against the Published '
-                              f'schedule could not be completed ({_cce}). Nothing was saved.'),
+                              f'schedule could not be completed ({_public_error(_cce)}). Nothing was saved.'),
                 }), 503
             if _pub_conflicts:
                 conn.rollback()
@@ -41076,6 +41544,7 @@ def _keep_faculty_after_schedule_delete(cur, version_id):
 
 
 @app.route('/api/schedule/delete_session', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_delete_session():
     """Delete one time-slot session of a DRAFT version.
 
@@ -41200,10 +41669,11 @@ def api_delete_session():
         return jsonify({'success': True, 'whole_version_deleted': whole_version_deleted,
                         'version_id': int(version_id)})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/draft_sessions')
+@roles_required(*STAFF_ROLES)
 def api_draft_sessions():
     """Return current Official Draft sessions for a program/year/ay/sem, formatted for the
     approve endpoint. Pass section_id to scope to one section: Publish (incl. Approve All)
@@ -41304,9 +41774,10 @@ def api_draft_sessions():
             """, (section_id, ay, sem)) or [])]
         return jsonify({'success': True, 'sessions': sessions, 'removed_subjects': removed})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': _public_error(e)})
 
 @app.route('/api/schedule/validate', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 @merge_groups.reuse_offered()   # read the offered curriculum once per request
 def api_validate_schedule():
     """Run CSP validation on submitted schedule_data and return violations without saving."""
@@ -41356,10 +41827,11 @@ def api_validate_schedule():
             'has_violations': bool(violations)
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/manual/designee_night_check', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_designee_night_check():
     """Final HC8 (Designee PT Teaching-Night Limit) for one Manual Editor
     placement: the candidate + the editor's other pending rows for this faculty,
@@ -41385,7 +41857,7 @@ def api_designee_night_check():
         return jsonify({'success': True, 'violations': violations,
                         'has_violations': bool(violations)})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 def _sync_mergedclass_for_semester(cur, sem_id):
@@ -41669,6 +42141,7 @@ def _not_approvable(message, total_rows, incomplete_rows, hard_violation_count, 
 
 
 @app.route('/api/schedule/local_republish_impact')
+@roles_required(ROLE_ACAD_HEAD)
 def api_local_republish_impact():
     """Preview for Official Approve: the section's active Local Arrangement sessions that
     publishing will archive (_archive_local_for_official_republish archives the WHOLE
@@ -42273,7 +42746,7 @@ def api_approve_schedule():
         return jsonify({
             'success': False,
             'code':    'CONSTRAINT_CHECK_UNAVAILABLE',
-            'error':   f'Cannot approve: a required constraint check could not be completed ({e}). '
+            'error':   f'Cannot approve: a required constraint check could not be completed ({_public_error(e)}). '
                        'Nothing was published. Please try again.',
         }), 503
     except Exception as e:
@@ -42292,6 +42765,7 @@ def api_approve_schedule():
         return jsonify({'success': False, 'error': _friendly_db_error(e)}), 500
 
 @app.route('/api/schedule/drafts/<int:version_id>', methods=['DELETE'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_delete_draft(version_id):
     """Archive all Draft schedule_versions for the same section/program/yearlevel/semester as version_id."""
     try:
@@ -42317,9 +42791,10 @@ def api_delete_draft(version_id):
                         section_id=row['sectionid'])
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True})
-    except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e: return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 @app.route('/api/faculty/teaching_assignments')
+@roles_required(*STAFF_ROLES)
 def api_faculty_teaching_assignments():
     emp_num = request.args.get('emp_num', '').strip()
     ay_id   = request.args.get('ay_id', '').strip()
@@ -42765,10 +43240,11 @@ def api_faculty_teaching_assignments():
             'display_buckets': display_buckets,
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/faculty/assigned_list')
+@roles_required(*STAFF_ROLES)
 def api_faculty_assigned_list():
     """Return faculty who have assignments for the given AY/sem, optionally filtered by program + year level."""
     ay_id      = request.args.get('ay_id',      '').strip()
@@ -42811,11 +43287,12 @@ def api_faculty_assigned_list():
         cur.close(); conn.close()
         return jsonify({'success': True, 'faculty': [dict(r) for r in rows]})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/drafts')
 @app.route('/api/schedule/versions')
+@roles_required(*STAFF_ROLES)
 def api_list_versions():
     try:
         is_drafts = 'drafts' in request.path
@@ -42909,9 +43386,10 @@ def api_list_versions():
                 'sectionname':             r.get('sectionname', ''),
             })
         return jsonify(sorted(output, key=lambda x: x['datecreated'], reverse=True))
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e: return jsonify({"error": _public_error(e)}), 500
 
 @app.route('/api/schedule/versions/<int:version_id>/restore', methods=['POST'])
+@roles_required(ROLE_ACAD_HEAD)
 def api_restore_version(version_id):
     """Restore a historical revision of one section as a NEW DRAFT.
 
@@ -43005,10 +43483,11 @@ def api_restore_version(version_id):
         conn.commit(); cur.close(); conn.close()
         return jsonify({'success': True, 'new_version': new_v, 'restore_as': target_status})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/versions/<int:version_id>/check')
+@roles_required(*STAFF_ROLES)
 def api_check_version_state(version_id):
     """Return the current Draft/Published state for the program/year/semester of a version.
     Used by the frontend to show context-aware restore warnings before performing a restore."""
@@ -43056,10 +43535,11 @@ def api_check_version_state(version_id):
             'hasActivePublished':   'Published' in active_statuses
         })
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/versions/<int:version_id>/sessions')
+@roles_required(*STAFF_ROLES)
 def api_overlay_sessions(version_id):
     """Return all schedule sessions for a historical versionid for timetable overlay comparison."""
     try:
@@ -43100,10 +43580,11 @@ def api_overlay_sessions(version_id):
         """, (version_id,)) or []
         return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/version_sessions')
+@roles_required(*STAFF_ROLES)
 def api_version_sessions():
     """Fetch all sessions for every subject at a specific version_number for a section."""
     prog    = request.args.get('program', '').strip()
@@ -43143,10 +43624,11 @@ def api_version_sessions():
         """, (prog, int(yl), int(ver_num), ay_id, sem)) or []
         return jsonify({'success': True, 'sessions': [dict(r) for r in rows]})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/load-draft/<int:version_id>')
+@roles_required(*STAFF_ROLES)
 def api_load_draft(version_id):
     try:
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -43217,10 +43699,11 @@ def api_load_draft(version_id):
             'savedAt': dates['saved_at'].isoformat() if dates.get('saved_at') else None,
             'lastEdited': dates['last_edited'].isoformat() if dates.get('last_edited') else None
         }})
-    except Exception as e: return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e: return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/schedule/latest-draft')
+@roles_required(*STAFF_ROLES)
 def api_schedule_latest_draft():
     """Return the latest Draft sessions for a context so Generate Schedule can display
     the most recently saved Manual Editor draft when the user navigates back."""
@@ -43315,10 +43798,11 @@ def api_schedule_latest_draft():
 
         return jsonify({'success': True, 'schedule_data': sched, 'version': max_v})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/year-levels-by-program')
+@roles_required(*STAFF_ROLES)
 def api_year_levels_by_program():
     """Return active year levels for a program in the current Academic Year."""
     program = request.args.get('program', '').strip()
@@ -43429,7 +43913,7 @@ def api_sections_by_program():
             for r in (rows or [])
         ]})
     except Exception as e:
-        return jsonify({'sections': [], 'error': str(e)}), 500
+        return jsonify({'sections': [], 'error': _public_error(e)}), 500
 
 # --- STARTUP MIGRATIONS ---
 def _backfill_historical_empnums(cur):
@@ -43885,4 +44369,7 @@ _run_startup_migrations()
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
-   app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+   # The Werkzeug debugger shows stack traces and an interactive console in the browser, so
+   # it is opt-in (FLASK_DEBUG=1) and then only on this machine, never the whole network.
+   _debug = os.environ.get('FLASK_DEBUG', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+   app.run(host='127.0.0.1' if _debug else '0.0.0.0', port=5000, debug=_debug, use_reloader=False)
