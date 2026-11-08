@@ -3116,7 +3116,9 @@ def api_dashboard_analytics():
 
 @app.route('/dashboard')
 def dashboard():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    # Academic Head dashboard — other roles have their own (TC-05-019)
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
     
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -16000,12 +16002,16 @@ def schedule_unified_preview():
 
 @app.route('/schedule/generation')
 def schedule_generation():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    # Academic Head only (TC-05-016)
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
     return render_template('academic/scheduleGeneration.html')
 
 @app.route('/schedule/manual-editor')
 def manual_schedule_editor():
-    if 'loggedin' not in session: return redirect(url_for('login'))
+    # Academic Head only (TC-05-016)
+    if 'loggedin' not in session or session.get('role') != 'Academic Head':
+        return redirect(url_for('login'))
 
     scheduler_mode = request.args.get('scheduler', 'official')   # 'official' | 'local'
     if scheduler_mode not in ('official', 'local'):
@@ -28735,7 +28741,8 @@ def settings_add_program():
         conn.commit()
         write_activity_log("Added Academic Program", f'Created new program: {code} — {name}',
                            category='program', color=_LOG_COLORS['program'])
-        return jsonify({'success': True, 'message': f"Program '{code}' added successfully."})
+        return jsonify({'success': True, 'message': f"Program '{code}' added successfully.",
+                        'programcode': code})   # page opens the new program after reload
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': f'Error adding program: {e}'})
@@ -28932,6 +28939,13 @@ def settings_add_curriculum():
             INSERT INTO curriculum (curriculumcode, programcode, curriculumyear)
             VALUES (%s, %s, %s)
         """, (code, pcode, year))
+        # A new program has no program_yearlevel rows yet, and the reassign below only
+        # UPDATEs existing rows — create them first, same as the curriculum import flow.
+        _pyl_cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            _auto_setup_program_yearlevels(_pyl_cur, prog_filter=pcode)
+        finally:
+            _pyl_cur.close()
         _reassign_curriculum_for_program(cur, pcode)
         conn.commit()
         flash(f"Curriculum '{code}' added to {pcode}.", "success")
@@ -41733,6 +41747,13 @@ def api_local_republish_impact():
 @app.route('/api/schedule/approve', methods=['POST'])
 @merge_groups.reuse_offered()   # read the offered curriculum once per request (merge groups stay fresh)
 def api_approve_schedule():
+    # Refuse before reading the payload (TC-05-018). The internal Requests Hub publish
+    # (_apply_adjustment_to_official) copies loggedin/role into its request context,
+    # so it still passes as the Academic Head who approved the request.
+    if 'loggedin' not in session:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    if session.get('role') != 'Academic Head':
+        return jsonify({'success': False, 'error': 'Forbidden: only the Academic Head can publish schedules.'}), 403
     try:
         data, ctx = request.json or {}, (request.json or {}).get('context', {})
         program, year_level, term, ay = ctx.get('program'), int(ctx.get('yearLevel')), ctx.get('term'), ctx.get('acadYear')

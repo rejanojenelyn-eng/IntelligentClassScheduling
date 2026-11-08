@@ -1024,3 +1024,30 @@
 }
 
 
+
+/* ══ Narrower windows (half-screen laptop, tablet, phone) ══════════════════
+   The filter bar used to wrap into one field per line with the buttons stranded
+   on the far right. Below 1200px: all filters in one even grid row across the
+   full width, with Add / Export / Import on their own row underneath. */
+@media (max-width: 1200px) {
+    .filter-container { flex-direction: column; align-items: stretch; gap: 14px; }
+    .filter-container .filter-inputs-row {
+        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px; width: 100%; align-items: end;
+    }
+    .filter-container .filter-group { min-width: 0; }
+    .filter-container .filter-group select,
+    .filter-container .search-wrapper input,
+    .filter-container .spec-search-wrapper,
+    .filter-container .spec-search-trigger { width: 100%; }
+    .filter-container .filter-secondary-actions {
+        align-self: stretch; justify-content: flex-end; flex-wrap: wrap;
+    }
+}
+@media (max-width: 768px) {
+    .filter-container .filter-inputs-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .filter-container .filter-secondary-actions > * { flex: 1 1 auto; justify-content: center; }
+}
+@media (max-width: 420px) {
+    .filter-container .filter-inputs-row { grid-template-columns: minmax(0, 1fr); }
+}
